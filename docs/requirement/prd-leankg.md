@@ -6,7 +6,7 @@
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:** 
-- v1.2 - Tech stack: Rust + KuzuDB (recommended), Go + libSQL (alternative)
+- v1.2 - Tech stack: Rust + SurrealDB
 - v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP
 
 ---
@@ -211,30 +211,22 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Core Language | Rust | Single binary, excellent performance, memory safety |
-| Database | KuzuDB | Embedded graph DB, native traversal, no external process |
+| Database | SurrealDB | Embedded graph DB, native traversal, no external process |
 | Code Parsing | tree-sitter | Efficient, multi-language support, mature Rust bindings |
 | MCP Server | Custom Rust | Standard MCP protocol, optimal performance |
 | CLI | Clap | Standard Rust CLI patterns |
 | Web UI | Leptos / Axum | Rust web framework, WASM-compatible |
 | Embeddings | Optional (local Ollama or cloud API) | For semantic search (Phase 2) |
 
-**Alternative Stack (Faster MVP Development):**
-
-| Component | Technology | Rationale |
-|-----------|------------|-----------|
-| Core Language | Go | Cross-platform, single binary, faster to develop |
-| Database | libSQL (Turso) | Embedded, SQLite-compatible, mature Go bindings |
-| Code Parsing | tree-sitter | Same efficient parser |
-| MCP Server | Custom Go | Standard MCP protocol |
-| CLI | Cobra | Standard Go CLI patterns |
-| Web UI | HTMX + Go templates | Lightweight, no complex frontend |
-
-**Why KuzuDB over SQLite for Graph:**
+**Why SurrealDB for Graph:**
 - Native graph data model (nodes/edges as first-class citizens)
 - Optimized for traversal queries (BFS, DFS, path finding)
 - 10-100x faster than recursive SQL queries for multi-hop traversal
 - Embedded, no external process required
 - Supports queries like "find all nodes within N hops"
+- Multi-model: graph + document + relational in one database
+- Real-time collaborative API built-in
+- Single binary deployment with excellent Rust performance
 
 ### 6.2 Data Model
 
@@ -373,8 +365,8 @@ The following features are explicitly out of scope for MVP:
 
 ### 11.2 References
 
-- KuzuDB: https://github.com/kuzudb/kuzu (Embedded graph database)
+- SurrealDB: https://github.com/surrealdb/surrealdb (Embedded multi-model graph database)
 - tree-sitter: https://tree-sitter.github.io/tree-sitter/ (Code parsing)
 - MCP Protocol: https://modelcontextprotocol.io/ (AI tool integration)
 - code-review-graph: https://github.com/tirth8205/code-review-graph (Inspiration for impact analysis)
-- Comparison: Graphiti requires Neo4j; FalkorDB needs external process; KuzuDB is embedded with native graph traversal
+- Comparison: Graphiti requires Neo4j; FalkorDB needs external process; SurrealDB is embedded with native graph traversal and multi-model support

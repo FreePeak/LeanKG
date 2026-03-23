@@ -5,7 +5,7 @@
 **Dựa trên:** PRD v1.1  
 **Trạng thái:** Bản nháp  
 **Changelog:** 
-- v1.2 - Tech stack: Rust + KuzuDB (recommended), Go + libSQL (alternative)
+- v1.2 - Tech stack: Rust + SurrealDB
 - v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP, per-project DB
 
 ---
@@ -37,7 +37,7 @@ graph TB
     subgraph "User's Machine"
         subgraph "LeanKG System"
             KG[LeanKG Application]
-            DB[(libSQL Database)]
+            DB[(SurrealDB<br/>Database)]
             KG --- DB
         end
         
@@ -86,18 +86,18 @@ graph TB
 ```mermaid
 graph TB
     subgraph "LeanKG Application"
-        CLI[CLI Interface<br/>Cobra]
+        CLI[CLI Interface<br/>Clap]
         MCP[MCP Server<br/>Protocol Handler]
-        Web[Web UI Server<br/>HTMX]
+        Web[Web UI Server<br/>Axum + Leptos]
         
         Indexer[Code Indexer<br/>tree-sitter]
         Graph[Graph Engine<br/>Query Processor]
         DocGen[Doc Generator]
-        Watcher[File Watcher<br/>FSWatcher]
+        Watcher[File Watcher<br/>notify]
         Impact[Impact Analyzer<br/>Blast Radius]
         Qual[Code Quality<br/>Metrics]
         
-        DB[(libSQL<br/>Database)]
+        DB[(SurrealDB<br/>Database)]
         
         CLI --> Indexer
         CLI --> Graph
@@ -135,16 +135,16 @@ graph TB
 
 | Container | Responsibility | Technology |
 |-----------|---------------|------------|
-| CLI Interface | Command-line interaction | Cobra (Go) |
-| MCP Server | MCP protocol communication | Custom Go implementation |
-| Web UI Server | HTTP server for UI | Go + HTMX |
-| Code Indexer | Parse source code with tree-sitter | tree-sitter + Go |
-| Graph Engine | Query and traverse knowledge graph | Go |
-| Doc Generator | Generate markdown documentation | Go templates |
-| File Watcher | Monitor file changes | fsnotify |
-| Impact Analyzer | Calculate blast radius / impact radius | Go (BFS traversal) |
-| Code Quality | Detect large functions, code metrics | Go |
-| libSQL Database | Persistent storage (per-project) | libSQL (Turso) |
+| CLI Interface | Command-line interaction | Clap (Rust) |
+| MCP Server | MCP protocol communication | Custom Rust implementation |
+| Web UI Server | HTTP server for UI | Axum + Leptos (Rust) |
+| Code Indexer | Parse source code with tree-sitter | tree-sitter (Rust) |
+| Graph Engine | Query and traverse knowledge graph | Rust |
+| Doc Generator | Generate markdown documentation | Rust templates |
+| File Watcher | Monitor file changes | notify (Rust) |
+| Impact Analyzer | Calculate blast radius / impact radius | Rust (BFS traversal) |
+| Code Quality | Detect large functions, code metrics | Rust |
+| SurrealDB | Persistent storage (per-project) | SurrealDB (embedded) |
 
 **Interactions:**
 
@@ -239,7 +239,7 @@ graph TB
         Handler --> Install
     end
     
-    Builder -->|Writes| DB[(libSQL)]
+    Builder -->|Writes| DB[(SurrealDB)]
     Query -.->|Reads| DB
     Sync -.->|Reads| DB
     Tools -.->|Queries| Graph
@@ -294,7 +294,7 @@ graph TB
                 end
                 
                 subgraph "Data Layer"
-                    DB[(libSQL<br/>.leankg/graph.db)]
+                    DB[(SurrealDB<br/>.leankg/graph.db)]
                     Cache[Query Cache<br/>In-memory]
                 end
                 
@@ -350,8 +350,8 @@ graph TB
 | LeanKG Binary | - | Main application process |
 | HTTP Server | 8080 | Web UI server (optional) |
 | MCP Server | 3000 | MCP protocol endpoint |
-| File Watcher | - | Background fsnotify process |
-| libSQL | - | Embedded in-process database |
+| File Watcher | - | Background notify process |
+| SurrealDB | - | Embedded in-process database |
 
 ---
 
@@ -367,7 +367,7 @@ sequenceDiagram
     participant Parse as Parser
     participant Extract as Entity Extractor
     participant Build as Graph Builder
-    participant DB as libSQL
+    participant DB as SurrealDB
 
     Dev->>CLI: leankg index ./src
     CLI->>Parse: Parse directory
@@ -391,7 +391,7 @@ sequenceDiagram
     participant Query as Query Processor
     participant Search as Search Engine
     participant Relate as Relationship Engine
-    participant DB as libSQL
+    participant DB as SurrealDB
 
     AI->>MCP: query_dependencies(file.ts)
     MCP->>Query: Process query
@@ -415,7 +415,7 @@ sequenceDiagram
     participant Doc as Doc Generator
     participant Template as Template Engine
     participant Render as Renderer
-    participant DB as libSQL
+    participant DB as SurrealDB
 
     Dev->>CLI: leankg generate docs
     CLI->>Doc: Generate all
@@ -434,7 +434,7 @@ sequenceDiagram
     participant AI as AI Tool
     participant MCP as MCP Server
     participant BFS as BFS Traversal
-    participant DB as libSQL
+    participant DB as SurrealDB
     participant Context as Review Context<br/>Generator
 
     AI->>MCP: get_impact_radius(file.ts, depth=3)
@@ -698,11 +698,11 @@ documentation:
 
 ## 11. Dependencies
 
-### 11.1 Direct Dependencies (Rust + KuzuDB)
+### 11.1 Direct Dependencies (Rust + SurrealDB)
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| kuzu | latest | Embedded graph database |
+| surrealdb | latest | Embedded multi-model graph database |
 | tree-sitter | latest | Code parsing |
 | clap | latest | CLI framework |
 | notify | latest | File watching |
@@ -715,17 +715,6 @@ documentation:
 |------------|---------|---------|
 | Rust | 1.75+ | Build toolchain |
 | tree-sitter parsers | bundled | Language support (Go, TS, Python, Rust, etc.) |
-
-### 11.3 Alternative Stack (Go + libSQL)
-
-If using Go instead of Rust:
-
-| Dependency | Version | Purpose |
-|------------|---------|---------|
-| libSQL / turso | latest | Embedded SQLite-compatible DB |
-| tree-sitter-go | latest | Code parsing |
-| Cobra | latest | CLI framework |
-| fsnotify | latest | File watching |
 
 ---
 
@@ -747,7 +736,7 @@ If using Go instead of Rust:
 ### 12.2 References
 
 - C4 Model: https://c4model.com/
-- KuzuDB: https://github.com/kuzudb/kuzu (Embedded graph database)
+- SurrealDB: https://github.com/surrealdb/surrealdb (Embedded multi-model graph database)
 - tree-sitter: https://tree-sitter.github.io/tree-sitter/
 - MCP Protocol: https://modelcontextprotocol.io/
 - code-review-graph: https://github.com/tirth8205/code-review-graph (inspiration for impact analysis)
