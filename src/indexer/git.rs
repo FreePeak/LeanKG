@@ -155,10 +155,10 @@ pub fn find_dependents(target_file: &str, all_relationships: &[(String, String)]
 
     for (source, target) in all_relationships {
         let target_norm = target.replace('\\', "/");
-        if target_norm == target_normalized || target_norm.ends_with(&target_normalized) {
-            if !dependents.contains(source) {
-                dependents.push(source.clone());
-            }
+        if (target_norm == target_normalized || target_norm.ends_with(&target_normalized))
+            && !dependents.contains(source)
+        {
+            dependents.push(source.clone());
         }
     }
 

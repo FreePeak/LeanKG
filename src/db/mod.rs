@@ -21,13 +21,13 @@ pub async fn create_business_logic(
         user_story_id: user_story_id.map(String::from),
         feature_id: feature_id.map(String::from),
     };
-    
+
     let result: Option<models::BusinessLogic> = db
         .query("CREATE business_logic CONTENT $bl RETURN *")
         .bind(("bl", bl))
         .await?
         .take(0)?;
-    
+
     result.ok_or_else(|| "Failed to create business logic".into())
 }
 
@@ -119,9 +119,7 @@ pub async fn search_business_logic(
 pub async fn all_business_logic(
     db: &Surreal<Db>,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let result: Vec<models::BusinessLogic> = db
-        .query("SELECT * FROM business_logic")
-        .await?
-        .take(0)?;
+    let result: Vec<models::BusinessLogic> =
+        db.query("SELECT * FROM business_logic").await?.take(0)?;
     Ok(result)
 }

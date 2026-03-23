@@ -17,6 +17,7 @@ pub enum DocError {
 
 pub struct DocGenerator {
     graph: GraphEngine,
+    #[allow(dead_code)]
     output_path: PathBuf,
     templates_path: PathBuf,
 }
@@ -210,7 +211,7 @@ impl DocGenerator {
             for m in modules.iter().take(20) {
                 content.push_str(&format!("- `{}` ({})\n", m.qualified_name, m.file_path));
             }
-            content.push_str("\n");
+            content.push('\n');
         }
 
         content.push_str("### Files\n\n");
@@ -220,7 +221,7 @@ impl DocGenerator {
         if files.len() > 30 {
             content.push_str(&format!("- ... and {} more files\n", files.len() - 30));
         }
-        content.push_str("\n");
+        content.push('\n');
 
         content.push_str("### Functions\n\n");
         for elem in funcs.iter().take(50) {
@@ -232,7 +233,7 @@ impl DocGenerator {
         if funcs.len() > 50 {
             content.push_str(&format!("- ... and {} more functions\n", funcs.len() - 50));
         }
-        content.push_str("\n");
+        content.push('\n');
 
         content.push_str("### Classes/Structs\n\n");
         for elem in classes.iter().take(30) {
@@ -244,7 +245,7 @@ impl DocGenerator {
         if classes.len() > 30 {
             content.push_str(&format!("- ... and {} more classes\n", classes.len() - 30));
         }
-        content.push_str("\n");
+        content.push('\n');
 
         content.push_str("---\n\n## Relationship Types\n\n");
         let mut rel_types: HashMap<&str, usize> = HashMap::new();
@@ -257,7 +258,7 @@ impl DocGenerator {
         for (rel_type, count) in sorted_rel_types.iter().take(10) {
             content.push_str(&format!("- `{}`: {} occurrences\n", rel_type, count));
         }
-        content.push_str("\n");
+        content.push('\n');
 
         content.push_str("---\n\n## Testing Guidelines\n\n");
         content.push_str(
@@ -354,7 +355,7 @@ impl DocGenerator {
                 files_list.len() - 15
             ));
         } else {
-            content.push_str("\n");
+            content.push('\n');
         }
 
         content.push_str("---\n\n## Context Guidelines for AI\n\n");

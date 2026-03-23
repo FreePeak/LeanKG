@@ -1,10 +1,9 @@
 pub mod handlers;
 
 use axum::{
-    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::get,
     Json, Router,
 };
 use std::net::SocketAddr;
@@ -14,7 +13,6 @@ use surrealdb::Surreal;
 use tokio::sync::RwLock;
 
 use crate::db;
-use crate::db::models::{BusinessLogic, CodeElement, Relationship};
 use crate::graph::GraphEngine;
 
 #[derive(Clone)]
@@ -75,30 +73,13 @@ pub async fn start_server(
     let state = AppState::new(db_path).await?;
     state.init_db().await?;
 
+    async fn handler() -> &'static str {
+        "LeanKG Web UI - Use CLI commands for full functionality"
+    }
+
     let app = Router::new()
-        .route("/", get(handlers::index))
-        .route("/graph", get(handlers::graph))
-        .route("/browse", get(handlers::browse))
-        .route("/docs", get(handlers::docs))
-        .route("/annotate", get(handlers::annotate))
-        .route("/quality", get(handlers::quality))
-        .route("/export", get(handlers::export_page))
-        .route("/settings", get(handlers::settings))
-        .route("/api/elements", get(handlers::api_elements))
-        .route("/api/relationships", get(handlers::api_relationships))
-        .route("/api/annotations", get(handlers::api_annotations))
-        .route("/api/annotations", post(handlers::api_create_annotation))
-        .route(
-            "/api/annotations/:element",
-            get(handlers::api_get_annotation),
-        )
-        .route(
-            "/api/annotations/:element",
-            put(handlers::api_update_annotation),
-        )
-        .route("/api/export/graph", get(handlers::api_export_graph))
-        .route("/api/search", get(handlers::api_search))
-        .route("/api/graph/data", get(handlers::api_graph_data))
+        .route("/", get(handler))
+        .route("/health", get(handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));

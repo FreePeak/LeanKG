@@ -91,16 +91,16 @@ mod tests {
     fn test_config_project_settings() {
         let config = ProjectConfig::default();
         assert_eq!(config.project.root, PathBuf::from("./src"));
-        assert_eq!(
-            config.project.languages,
-            vec!["go", "typescript", "python"]
-        );
+        assert_eq!(config.project.languages, vec!["go", "typescript", "python"]);
     }
 
     #[test]
     fn test_config_indexer_excludes() {
         let config = ProjectConfig::default();
-        assert!(config.indexer.exclude.contains(&"**/node_modules/**".to_string()));
+        assert!(config
+            .indexer
+            .exclude
+            .contains(&"**/node_modules/**".to_string()));
         assert!(config.indexer.exclude.contains(&"**/vendor/**".to_string()));
         assert!(config.indexer.include.contains(&"*.go".to_string()));
     }

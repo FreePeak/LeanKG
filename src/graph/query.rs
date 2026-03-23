@@ -181,7 +181,7 @@ impl GraphEngine {
 
         let elements_json: Vec<_> = elements
             .iter()
-            .map(|e| serde_json::to_value(e))
+            .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()?;
 
         self.db
@@ -210,7 +210,7 @@ impl GraphEngine {
 
         let rels_json: Vec<_> = relationships
             .iter()
-            .map(|r| serde_json::to_value(r))
+            .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()?;
 
         self.db

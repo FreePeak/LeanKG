@@ -1,5 +1,6 @@
 use tree_sitter::Parser;
 
+#[derive(Default)]
 pub struct ParserManager {
     pub go_parser: Parser,
     pub ts_parser: Parser,

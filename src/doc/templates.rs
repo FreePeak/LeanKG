@@ -118,7 +118,7 @@ impl TemplateEngine {
             for entry in fs::read_dir(&self.templates_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "tmpl") {
+                if path.extension().is_some_and(|ext| ext == "tmpl") {
                     if let Some(stem) = path.file_stem() {
                         templates.push(stem.to_string_lossy().to_string());
                     }

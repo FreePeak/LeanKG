@@ -81,6 +81,10 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
     pub fn len(&self) -> usize {
         self.data.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 }
 
 #[derive(Clone)]
@@ -98,7 +102,7 @@ impl QueryCache {
     }
 
     pub async fn get_dependencies(&self, key: &str) -> Option<Vec<String>> {
-        self.dependencies.read().await.get(key)
+        self.dependencies.read().await.get(&key.to_string())
     }
 
     pub async fn set_dependencies(&self, key: String, value: Vec<String>) {
@@ -106,7 +110,7 @@ impl QueryCache {
     }
 
     pub async fn get_dependents(&self, key: &str) -> Option<Vec<String>> {
-        self.dependents.read().await.get(key)
+        self.dependents.read().await.get(&key.to_string())
     }
 
     pub async fn set_dependents(&self, key: String, value: Vec<String>) {
@@ -130,9 +134,9 @@ mod tests {
 
     #[test]
     fn test_timed_cache_basic() {
-        let mut cache = TimedCache::new(60, 10);
+        let mut cache: TimedCache<&str, &str> = TimedCache::new(60, 10);
         cache.insert("key1", "value1");
-        assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
+        assert_eq!(cache.get(&"key1"), Some("value1"));
     }
 
     #[test]

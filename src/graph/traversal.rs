@@ -19,7 +19,7 @@ impl<'a> ImpactAnalyzer<'a> {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut affected_elements = Vec::new();
-        
+
         queue.push_back((start_file.to_string(), 0));
         visited.insert(start_file.to_string());
 
@@ -29,12 +29,12 @@ impl<'a> ImpactAnalyzer<'a> {
             }
 
             let relationships = self.graph.get_relationships(&current).await?;
-            
+
             for rel in relationships {
                 if !visited.contains(&rel.target_qualified) {
                     visited.insert(rel.target_qualified.clone());
                     queue.push_back((rel.target_qualified.clone(), current_depth + 1));
-                    
+
                     if let Some(element) = self.graph.find_element(&rel.target_qualified).await? {
                         affected_elements.push(element);
                     }
@@ -46,7 +46,7 @@ impl<'a> ImpactAnalyzer<'a> {
                 if !visited.contains(&rel.source_qualified) {
                     visited.insert(rel.source_qualified.clone());
                     queue.push_back((rel.source_qualified.clone(), current_depth + 1));
-                    
+
                     if let Some(element) = self.graph.find_element(&rel.source_qualified).await? {
                         affected_elements.push(element);
                     }

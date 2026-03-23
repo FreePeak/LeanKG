@@ -88,7 +88,7 @@ impl MCPServer {
                     continue;
                 }
 
-                if let Ok(request) = serde_json::from_str::<MCPRequest>(&text) {
+                if let Ok(request) = serde_json::from_str::<MCPRequest>(text) {
                     let response = self.process_request(request, &client_id).await;
                     if let Ok(resp_text) = serde_json::to_string(&response) {
                         write.send(Message::Text(resp_text.into())).await?;

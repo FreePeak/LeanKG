@@ -1,8 +1,6 @@
 use crate::db::models::{CodeElement, Relationship};
-use crate::graph::traversal::ImpactResult;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 pub struct ToolHandler {
     graph_engine: GraphEngine,
@@ -415,7 +413,7 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
         return doc;
     }
 
-    doc += &format!("## Overview\n\n");
+    doc += "## Overview\n\n";
     doc += &format!("This file contains {} code elements.\n\n", elements.len());
 
     let functions: Vec<_> = elements

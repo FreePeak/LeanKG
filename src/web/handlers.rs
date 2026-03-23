@@ -129,37 +129,33 @@ fn base_html(title: &str, content: &str) -> String {
 }
 
 pub async fn index(State(state): State<AppState>) -> axum::response::Html<String> {
-    let elements_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_elements());
-    let relationships_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_relationships());
-    let annotations_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_annotations());
+    let mut element_count = 0usize;
+    let mut relationship_count = 0usize;
+    let mut annotation_count = 0usize;
+    let mut files_count = 0usize;
+    let mut functions_count = 0usize;
+    let mut classes_count = 0usize;
 
-    let (element_count, relationship_count, annotation_count) = (
-        elements_result.as_ref().map(|e| e.len()).unwrap_or(0),
-        relationships_result.as_ref().map(|r| r.len()).unwrap_or(0),
-        annotations_result.as_ref().map(|a| a.len()).unwrap_or(0),
-    );
-
-    let files_count = elements_result
-        .as_ref()
-        .map(|e| e.iter().filter(|x| x.element_type == "file").count())
-        .unwrap_or(0);
-    let functions_count = elements_result
-        .as_ref()
-        .map(|e| e.iter().filter(|x| x.element_type == "function").count())
-        .unwrap_or(0);
-    let classes_count = elements_result
-        .as_ref()
-        .map(|e| e.iter().filter(|x| x.element_type == "class").count())
-        .unwrap_or(0);
+    if let Ok(graph) = state.get_graph_engine().await {
+        if let Ok(elements) = graph.all_elements().await {
+            element_count = elements.len();
+            files_count = elements.iter().filter(|x| x.element_type == "file").count();
+            functions_count = elements
+                .iter()
+                .filter(|x| x.element_type == "function")
+                .count();
+            classes_count = elements
+                .iter()
+                .filter(|x| x.element_type == "class")
+                .count();
+        }
+        if let Ok(relns) = graph.all_relationships().await {
+            relationship_count = relns.len();
+        }
+        if let Ok(anns) = graph.all_annotations().await {
+            annotation_count = anns.len();
+        }
+    }
 
     let content = format!(
         r#"
@@ -268,11 +264,11 @@ pub async fn graph() -> axum::response::Html<String> {
 }
 
 pub async fn browse(State(state): State<AppState>) -> axum::response::Html<String> {
-    let elements_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_elements());
-    let elements = elements_result.unwrap_or_default();
+    let elements: Vec<_> = if let Ok(g) = state.get_graph_engine().await {
+        g.all_elements().await.unwrap_or_default()
+    } else {
+        vec![]
+    };
 
     let mut files: Vec<_> = elements
         .iter()
@@ -352,17 +348,16 @@ pub async fn docs() -> axum::response::Html<String> {
 }
 
 pub async fn annotate(State(state): State<AppState>) -> axum::response::Html<String> {
-    let elements_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_elements());
-    let annotations_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_annotations());
-
-    let elements = elements_result.unwrap_or_default();
-    let annotations = annotations_result.unwrap_or_default();
+    let elements: Vec<_> = if let Ok(g) = state.get_graph_engine().await {
+        g.all_elements().await.unwrap_or_default()
+    } else {
+        vec![]
+    };
+    let annotations: Vec<_> = if let Ok(g) = state.get_graph_engine().await {
+        g.all_annotations().await.unwrap_or_default()
+    } else {
+        vec![]
+    };
 
     let element_options: String = elements
         .iter()
@@ -498,10 +493,10 @@ pub async fn settings() -> axum::response::Html<String> {
 }
 
 pub async fn api_elements(State(state): State<AppState>) -> impl IntoResponse {
-    let result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_elements());
+    let result = match state.get_graph_engine().await {
+        Ok(g) => g.all_elements().await,
+        Err(e) => Err(e),
+    };
     match result {
         Ok(elements) => ApiResponse {
             success: true,
@@ -517,10 +512,10 @@ pub async fn api_elements(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 pub async fn api_relationships(State(state): State<AppState>) -> impl IntoResponse {
-    let result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_relationships());
+    let result = match state.get_graph_engine().await {
+        Ok(g) => g.all_relationships().await,
+        Err(e) => Err(e),
+    };
     match result {
         Ok(rels) => ApiResponse {
             success: true,
@@ -536,10 +531,10 @@ pub async fn api_relationships(State(state): State<AppState>) -> impl IntoRespon
 }
 
 pub async fn api_annotations(State(state): State<AppState>) -> impl IntoResponse {
-    let result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_annotations());
+    let result = match state.get_graph_engine().await {
+        Ok(g) => g.all_annotations().await,
+        Err(e) => Err(e),
+    };
     match result {
         Ok(anns) => ApiResponse {
             success: true,
@@ -594,10 +589,10 @@ pub async fn api_get_annotation(
     State(state): State<AppState>,
     Path(element): Path<String>,
 ) -> impl IntoResponse {
-    let result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.get_annotation(&element));
+    let result = match state.get_graph_engine().await {
+        Ok(g) => g.get_annotation(&element).await,
+        Err(e) => Err(e),
+    };
     match result {
         Ok(ann) => ApiResponse {
             success: true,
@@ -614,7 +609,7 @@ pub async fn api_get_annotation(
 
 pub async fn api_update_annotation(
     State(state): State<AppState>,
-    Path(element): Path<String>,
+    Path(_element): Path<String>,
     Json(req): Json<AnnotationRequest>,
 ) -> impl IntoResponse {
     let db = match state.get_db().await {
@@ -653,10 +648,10 @@ pub async fn api_search(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
 ) -> impl IntoResponse {
-    let elements_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_elements());
+    let elements_result = match state.get_graph_engine().await {
+        Ok(g) => g.all_elements().await,
+        Err(e) => Err(e),
+    };
     let elements = match elements_result {
         Ok(e) => e,
         Err(e) => {
@@ -691,14 +686,14 @@ pub async fn api_search(
 }
 
 pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse {
-    let elements_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_elements());
-    let relationships_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_relationships());
+    let elements_result = match state.get_graph_engine().await {
+        Ok(g) => g.all_elements().await,
+        Err(e) => Err(e),
+    };
+    let relationships_result = match state.get_graph_engine().await {
+        Ok(g) => g.all_relationships().await,
+        Err(e) => Err(e),
+    };
     match (elements_result, relationships_result) {
         (Ok(elements), Ok(relationships)) => {
             let nodes: Vec<GraphNode> = elements
@@ -733,14 +728,14 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoResponse {
-    let elements_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_elements());
-    let relationships_result = state
-        .get_graph_engine()
-        .await
-        .and_then(|g| g.all_relationships());
+    let elements_result = match state.get_graph_engine().await {
+        Ok(g) => g.all_elements().await,
+        Err(e) => Err(e),
+    };
+    let relationships_result = match state.get_graph_engine().await {
+        Ok(g) => g.all_relationships().await,
+        Err(e) => Err(e),
+    };
     match (elements_result, relationships_result) {
         (Ok(elements), Ok(relationships)) => {
             let nodes: Vec<GraphNode> = elements

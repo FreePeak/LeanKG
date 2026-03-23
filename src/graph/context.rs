@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_MAX_TOKENS: usize = 4000;
 const CHARS_PER_TOKEN: usize = 4;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ContextPriority {
     Contained = 1,
     Imported = 2,
     RecentlyChanged = 3,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextElement {
     pub element: CodeElement,
     pub priority: ContextPriority,
@@ -31,7 +31,7 @@ impl ContextResult {
     pub fn to_prompt(&self) -> String {
         let mut prompt = String::new();
         prompt.push_str("# Code Context\n\n");
-        
+
         for ctx_elem in &self.elements {
             let elem = &ctx_elem.element;
             prompt.push_str(&format!(
@@ -42,21 +42,21 @@ impl ContextResult {
                 elem.line_start,
                 elem.line_end
             ));
-            
+
             if let Some(parent) = &elem.parent_qualified {
                 prompt.push_str(&format!("Parent: {}\n", parent));
             }
-            
-            prompt.push_str("\n");
+
+            prompt.push('\n');
         }
-        
+
         if self.truncated {
             prompt.push_str(&format!(
                 "\n*Context truncated: {} tokens total (max: {})*\n",
                 self.total_tokens, self.max_tokens
             ));
         }
-        
+
         prompt
     }
 }
@@ -79,16 +79,13 @@ impl<'a> ContextProvider<'a> {
     }
 
     pub fn estimate_tokens(text: &str) -> usize {
-        (text.len() + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
+        text.len().div_ceil(CHARS_PER_TOKEN)
     }
 
     pub fn element_tokens(element: &CodeElement) -> usize {
         let base = format!(
             "{} {} {} {}",
-            element.element_type,
-            element.name,
-            element.qualified_name,
-            element.file_path
+            element.element_type, element.name, element.qualified_name, element.file_path
         );
         let metadata_len = serde_json::to_string(&element.metadata)
             .map(|s| s.len())
@@ -101,9 +98,9 @@ impl<'a> ContextProvider<'a> {
         file_path: &str,
     ) -> Result<ContextResult, Box<dyn std::error::Error>> {
         let file_element = self.graph.find_element(file_path).await?;
-        
+
         let mut context_elements = Vec::new();
-        
+
         if let Some(file) = file_element {
             let priority = self.determine_priority(&file);
             context_elements.push(ContextElement {
@@ -112,7 +109,7 @@ impl<'a> ContextProvider<'a> {
                 token_count: Self::element_tokens(&file),
             });
         }
-        
+
         let relationships = self.graph.get_relationships(file_path).await?;
         for rel in relationships {
             if let Some(element) = self.graph.find_element(&rel.target_qualified).await? {
@@ -129,7 +126,7 @@ impl<'a> ContextProvider<'a> {
                 });
             }
         }
-        
+
         let children = self.get_child_elements(file_path).await?;
         for child in children {
             let token_count = Self::element_tokens(&child);
@@ -139,16 +136,17 @@ impl<'a> ContextProvider<'a> {
                 token_count,
             });
         }
-        
+
         context_elements.sort_by(|a, b| {
-            b.priority.cmp(&a.priority)
+            b.priority
+                .cmp(&a.priority)
                 .then_with(|| b.token_count.cmp(&a.token_count))
         });
-        
+
         let mut total_tokens = 0;
         let mut selected_elements = Vec::new();
         let mut truncated = false;
-        
+
         for elem in context_elements {
             if total_tokens + elem.token_count <= self.max_tokens {
                 total_tokens += elem.token_count;
@@ -158,7 +156,7 @@ impl<'a> ContextProvider<'a> {
                 break;
             }
         }
-        
+
         Ok(ContextResult {
             elements: selected_elements,
             total_tokens,
@@ -167,22 +165,29 @@ impl<'a> ContextProvider<'a> {
         })
     }
 
-    async fn get_child_elements(&self, parent_qualified: &str) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+    async fn get_child_elements(
+        &self,
+        parent_qualified: &str,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
         let result = self.graph.get_children(parent_qualified).await?;
         Ok(result)
     }
 
     fn determine_priority(&self, element: &CodeElement) -> ContextPriority {
-        if let Some(changed) = element.metadata.get("recently_changed").and_then(|v| v.as_bool()) {
+        if let Some(changed) = element
+            .metadata
+            .get("recently_changed")
+            .and_then(|v| v.as_bool())
+        {
             if changed {
                 return ContextPriority::RecentlyChanged;
             }
         }
-        
+
         if element.metadata.get("tested_by").is_some() {
             return ContextPriority::RecentlyChanged;
         }
-        
+
         ContextPriority::Contained
     }
 }
@@ -204,8 +209,8 @@ mod tests {
 
     #[test]
     fn test_estimate_tokens() {
-        assert_eq!(ContextProvider::estimate_tokens("hello"), 1);
-        assert_eq!(ContextProvider::estimate_tokens("hello world"), 2);
+        assert_eq!(ContextProvider::estimate_tokens("hello"), 2);
+        assert_eq!(ContextProvider::estimate_tokens("hello world"), 3);
         assert_eq!(ContextProvider::estimate_tokens(""), 0);
         assert_eq!(ContextProvider::estimate_tokens("0123456789"), 3);
     }
@@ -230,7 +235,7 @@ mod tests {
             parent_qualified: None,
             metadata: serde_json::json!({}),
         };
-        
+
         let tokens = ContextProvider::element_tokens(&elem);
         assert!(tokens > 0, "Should calculate some tokens");
     }
@@ -243,7 +248,7 @@ mod tests {
             max_tokens: 4000,
             truncated: false,
         };
-        
+
         let prompt = result.to_prompt();
         assert!(prompt.contains("# Code Context"));
     }
@@ -261,20 +266,20 @@ mod tests {
             parent_qualified: None,
             metadata: serde_json::json!({}),
         };
-        
+
         let ctx_elem = ContextElement {
             element: elem,
             priority: ContextPriority::RecentlyChanged,
             token_count: 10,
         };
-        
+
         let result = ContextResult {
             elements: vec![ctx_elem],
             total_tokens: 10,
             max_tokens: 4000,
             truncated: false,
         };
-        
+
         let prompt = result.to_prompt();
         assert!(prompt.contains("function: test.rs::main"));
         assert!(prompt.contains("File: test.rs:1:5"));
@@ -294,20 +299,20 @@ mod tests {
             parent_qualified: None,
             metadata: serde_json::json!({}),
         };
-        
+
         let ctx_elem = ContextElement {
             element: elem,
             priority: ContextPriority::Imported,
             token_count: 100,
         };
-        
+
         let result = ContextResult {
             elements: vec![ctx_elem],
             total_tokens: 100,
             max_tokens: 50,
             truncated: true,
         };
-        
+
         let prompt = result.to_prompt();
         assert!(prompt.contains("Context truncated"));
         assert!(prompt.contains("100 tokens total"));
