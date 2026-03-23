@@ -1,0 +1,26 @@
+[package]
+name = "leankg"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+surrealdb = { version = "2", features = ["kv-rocksdb"] }
+tree-sitter = "0.24"
+tree-sitter-go = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
+clap = { version = "4", features = ["derive"] }
+notify = "7"
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+walkdir = "2"
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
