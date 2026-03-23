@@ -1,11 +1,20 @@
 # LeanKG PRD - Product Requirements Document
 
-**Version:** 1.2  
-**Date:** 2026-03-23  
-**Status:** Draft  
+**Version:** 1.3  
+**Date:** 2026-03-24  
+**Status:** In Progress - MVP Implementation  
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:** 
+- v1.3 - MVP Implementation: US-01 to US-08 implementation started
+  - US-01: Auto-indexing with TESTED_BY and incremental indexing
+  - US-02: Auto documentation with AGENTS.md and CLAUDE.md templates
+  - US-03: Business logic mapping with traceability queries
+  - US-04: MCP server with all required tools
+  - US-05: Full CLI interface with query and MCP server commands
+  - US-06: Resource optimization with parser pooling and query caching
+  - US-07: Web UI (stub implementation - handlers need completion)
+  - US-08: Multi-language support for Go, TypeScript, Python
 - v1.2 - Tech stack: Rust + SurrealDB
 - v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP
 
@@ -301,15 +310,15 @@ The following features are explicitly out of scope for MVP:
 
 ### 9.1 MVP Release Criteria
 
-- [ ] Code indexing works for Go, TypeScript, Python
-- [ ] Dependency graph builds correctly with TESTED_BY edges
-- [ ] CLI commands functional (init, index, query, generate, install, impact)
-- [ ] MCP server exposes query tools including get_impact_radius and get_review_context
-- [ ] Documentation generation produces valid markdown
-- [ ] Business logic annotations can be created and queried
-- [ ] Impact radius analysis works (blast radius within N hops)
-- [ ] Auto-install MCP config works for Claude Code/OpenCode
-- [ ] Web UI shows basic graph visualization
+- [x] Code indexing works for Go, TypeScript, Python
+- [x] Dependency graph builds correctly with TESTED_BY edges
+- [x] CLI commands functional (init, index, query, generate, install, impact)
+- [x] MCP server exposes query tools including get_impact_radius and get_review_context
+- [x] Documentation generation produces valid markdown
+- [x] Business logic annotations can be created and queried
+- [x] Impact radius analysis works (blast radius within N hops)
+- [x] Auto-install MCP config works for Claude Code/OpenCode
+- [ ] Web UI shows basic graph visualization (stub implementation)
 - [ ] Resource usage within targets
 - [ ] Documentation complete
 
