@@ -113,40 +113,28 @@ impl<'a> EntityExtractor<'a> {
         let node_type = node.kind();
 
         match node_type {
-            "function_declaration" | "function_definition" | "method_declaration" => {
-                if let Some(name) = self.get_node_name(node) {
-                    let qualified_name = format!("{}::{}", self.file_path, name);
-                    elements.push(CodeElement {
-                        qualified_name: qualified_name.clone(),
-                        element_type: "function".to_string(),
-                        name,
-                        file_path: self.file_path.to_string(),
-                        line_start: node.start_position().row as u32 + 1,
-                        line_end: node.end_position().row as u32 + 1,
-                        language: self.language.to_string(),
-                        parent_qualified: parent.map(String::from),
-                        metadata: serde_json::json!({}),
-                    });
-                }
+            "function_declaration"
+            | "function_definition"
+            | "function_item"
+            | "function_def"
+            | "method_declaration"
+            | "method_definition" => {
+                self.extract_function(node, parent, elements);
             }
-            "class_declaration" | "type_declaration" => {
-                if let Some(name) = self.get_node_name(node) {
-                    let qualified_name = format!("{}::{}", self.file_path, name);
-                    elements.push(CodeElement {
-                        qualified_name: qualified_name.clone(),
-                        element_type: "class".to_string(),
-                        name,
-                        file_path: self.file_path.to_string(),
-                        line_start: node.start_position().row as u32 + 1,
-                        line_end: node.end_position().row as u32 + 1,
-                        language: self.language.to_string(),
-                        parent_qualified: parent.map(String::from),
-                        metadata: serde_json::json!({}),
-                    });
-                }
+            "class_declaration" | "type_declaration" | "class_def" => {
+                self.extract_class(node, parent, elements);
             }
-            "import_declaration" | "import_specifier" => {
-                if let Some(source) = self.get_import_source(node) {
+            "type_spec" => {
+                self.extract_type_spec(node, parent, elements, relationships);
+            }
+            "interface_declaration" => {
+                self.extract_interface(node, parent, elements);
+            }
+            "import_declaration"
+            | "import_specifier"
+            | "import_statement"
+            | "import_from_statement" => {
+                if let Some(source) = self.get_import_source(node, node_type) {
                     relationships.push(Relationship {
                         id: None,
                         source_qualified: self.file_path.to_string(),
@@ -156,6 +144,9 @@ impl<'a> EntityExtractor<'a> {
                     });
                 }
             }
+            "decorator" => {
+                self.extract_decorator(node, parent, elements);
+            }
             _ => {}
         }
 
@@ -163,7 +154,16 @@ impl<'a> EntityExtractor<'a> {
             if let Some(child) = node.child(i) {
                 let current_parent = if matches!(
                     node_type,
-                    "function_declaration" | "function_definition" | "class_declaration"
+                    "function_declaration"
+                        | "function_definition"
+                        | "function_item"
+                        | "function_def"
+                        | "method_declaration"
+                        | "method_definition"
+                        | "class_declaration"
+                        | "type_declaration"
+                        | "class_def"
+                        | "type_spec"
                 ) {
                     self.get_node_name(node)
                 } else {
@@ -174,7 +174,183 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+    fn extract_function(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
+        if let Some(name) = self.get_node_name(node) {
+            let qualified_name = format!("{}::{}", self.file_path, name);
+            elements.push(CodeElement {
+                qualified_name: qualified_name.clone(),
+                element_type: "function".to_string(),
+                name,
+                file_path: self.file_path.to_string(),
+                line_start: node.start_position().row as u32 + 1,
+                line_end: node.end_position().row as u32 + 1,
+                language: self.language.to_string(),
+                parent_qualified: parent.map(String::from),
+                metadata: serde_json::json!({}),
+            });
+        }
+    }
+
+    fn extract_class(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
+        if let Some(name) = self.get_node_name(node) {
+            let qualified_name = format!("{}::{}", self.file_path, name);
+            elements.push(CodeElement {
+                qualified_name: qualified_name.clone(),
+                element_type: "class".to_string(),
+                name,
+                file_path: self.file_path.to_string(),
+                line_start: node.start_position().row as u32 + 1,
+                line_end: node.end_position().row as u32 + 1,
+                language: self.language.to_string(),
+                parent_qualified: parent.map(String::from),
+                metadata: serde_json::json!({}),
+            });
+        }
+    }
+
+    fn extract_type_spec(
+        &self,
+        node: Node,
+        parent: Option<&str>,
+        elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        if let Some(name) = self.get_node_name(node) {
+            let is_interface = self.check_if_interface(node);
+            let element_type = if is_interface { "interface" } else { "struct" };
+
+            let qualified_name = format!("{}::{}", self.file_path, name);
+            elements.push(CodeElement {
+                qualified_name: qualified_name.clone(),
+                element_type: element_type.to_string(),
+                name,
+                file_path: self.file_path.to_string(),
+                line_start: node.start_position().row as u32 + 1,
+                line_end: node.end_position().row as u32 + 1,
+                language: self.language.to_string(),
+                parent_qualified: parent.map(String::from),
+                metadata: serde_json::json!({}),
+            });
+
+            if !is_interface {
+                self.extract_go_implementations(node, qualified_name, relationships);
+            }
+        }
+    }
+
+    fn check_if_interface(&self, node: Node) -> bool {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "method_set" {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn extract_go_implementations(
+        &self,
+        node: Node,
+        struct_name: String,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "field_declaration_list" {
+                let mut field_cursor = child.walk();
+                for field in child.children(&mut field_cursor) {
+                    if field.kind() == "field_declaration" {
+                        if let Some(type_node) = field.child_by_field_name("type") {
+                            let type_str = std::str::from_utf8(
+                                self.source.get(type_node.byte_range()).unwrap_or(&[]),
+                            )
+                            .unwrap_or("");
+
+                            if !type_str.is_empty() && type_str != "struct" {
+                                relationships.push(Relationship {
+                                    id: None,
+                                    source_qualified: struct_name.clone(),
+                                    target_qualified: format!(
+                                        "{}::{}",
+                                        self.file_path
+                                            .rsplit('/')
+                                            .next()
+                                            .unwrap_or("")
+                                            .trim_end_matches(".go"),
+                                        type_str
+                                    ),
+                                    rel_type: "implements".to_string(),
+                                    metadata: serde_json::json!({}),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn extract_interface(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
+        if let Some(name) = self.get_node_name(node) {
+            let qualified_name = format!("{}::{}", self.file_path, name);
+            elements.push(CodeElement {
+                qualified_name: qualified_name.clone(),
+                element_type: "interface".to_string(),
+                name,
+                file_path: self.file_path.to_string(),
+                line_start: node.start_position().row as u32 + 1,
+                line_end: node.end_position().row as u32 + 1,
+                language: self.language.to_string(),
+                parent_qualified: parent.map(String::from),
+                metadata: serde_json::json!({}),
+            });
+        }
+    }
+
+    fn extract_decorator(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Some(bytes) = self.source.get(child.byte_range()) {
+                    if let Ok(name) = std::str::from_utf8(bytes) {
+                        let qualified_name = format!("{}::@{}", self.file_path, name);
+                        elements.push(CodeElement {
+                            qualified_name: qualified_name.clone(),
+                            element_type: "decorator".to_string(),
+                            name: name.to_string(),
+                            file_path: self.file_path.to_string(),
+                            line_start: node.start_position().row as u32 + 1,
+                            line_end: node.end_position().row as u32 + 1,
+                            language: self.language.to_string(),
+                            parent_qualified: parent.map(String::from),
+                            metadata: serde_json::json!({}),
+                        });
+                    }
+                }
+                break;
+            }
+        }
+    }
+
     fn get_node_name(&self, node: Node) -> Option<String> {
+        let node_type = node.kind();
+
+        if node_type == "type_spec" {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                return std::str::from_utf8(self.source.get(name_node.byte_range())?)
+                    .ok()
+                    .map(String::from);
+            }
+        }
+
+        if node_type == "import_from_statement" {
+            if let Some(module_node) = node.child_by_field_name("module_name") {
+                return std::str::from_utf8(self.source.get(module_node.byte_range())?)
+                    .ok()
+                    .map(String::from);
+            }
+        }
+
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "identifier" {
@@ -186,7 +362,26 @@ impl<'a> EntityExtractor<'a> {
         None
     }
 
-    fn get_import_source(&self, node: Node) -> Option<String> {
+    fn get_import_source(&self, node: Node, node_type: &str) -> Option<String> {
+        if node_type == "import_from_statement" {
+            if let Some(module_node) = node.child_by_field_name("module_name") {
+                return std::str::from_utf8(self.source.get(module_node.byte_range())?)
+                    .ok()
+                    .map(String::from);
+            }
+        }
+
+        if node_type == "import_statement" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "dotted_name" || child.kind() == "identifier" {
+                    return std::str::from_utf8(self.source.get(child.byte_range())?)
+                        .ok()
+                        .map(String::from);
+                }
+            }
+        }
+
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "import_specifier" {
@@ -195,6 +390,11 @@ impl<'a> EntityExtractor<'a> {
                         .ok()
                         .map(String::from);
                 }
+            }
+            if child.kind() == "string" {
+                return std::str::from_utf8(self.source.get(child.byte_range())?)
+                    .ok()
+                    .map(|s| s.trim_matches('"').to_string());
             }
         }
         None
@@ -216,6 +416,13 @@ mod tests {
     fn parse_python(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_python::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_typescript(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
         parser.set_language(&lang).ok()?;
         parser.parse(source, None)
     }
@@ -244,6 +451,36 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_go_struct() {
+        let source = b"package main\ntype Person struct { name string }";
+        if let Some(tree) = parse_go(source) {
+            let extractor = EntityExtractor::new(source, "pkg/person.go", "go");
+            let (elements, _) = extractor.extract(&tree);
+            let structs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "struct")
+                .collect();
+            assert!(!structs.is_empty());
+            assert_eq!(structs[0].name, "Person");
+        }
+    }
+
+    #[test]
+    fn test_extract_go_interface() {
+        let source = b"package main\ntype Reader interface { Read(p []byte) }";
+        if let Some(tree) = parse_go(source) {
+            let extractor = EntityExtractor::new(source, "pkg/io.go", "go");
+            let (elements, _) = extractor.extract(&tree);
+            let interfaces: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "interface")
+                .collect();
+            assert!(!interfaces.is_empty());
+            assert_eq!(interfaces[0].name, "Reader");
+        }
+    }
+
+    #[test]
     fn test_extract_python_function() {
         let source = b"def greet(name):\n    return f'Hello {name}'";
         if let Some(tree) = parse_python(source) {
@@ -255,6 +492,109 @@ mod tests {
                 .collect();
             assert!(!funcs.is_empty());
             assert_eq!(funcs[0].name, "greet");
+        }
+    }
+
+    #[test]
+    fn test_extract_python_class() {
+        let source = b"class MyClass:\n    def __init__(self):\n        pass";
+        if let Some(tree) = parse_python(source) {
+            let extractor = EntityExtractor::new(source, "main.py", "python");
+            let (elements, _) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(!classes.is_empty());
+            assert_eq!(classes[0].name, "MyClass");
+        }
+    }
+
+    #[test]
+    fn test_extract_python_decorator() {
+        let source = b"@pytest.fixture\ndef my_fixture():\n    pass";
+        if let Some(tree) = parse_python(source) {
+            let extractor = EntityExtractor::new(source, "conftest.py", "python");
+            let (elements, _) = extractor.extract(&tree);
+            let decorators: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "decorator")
+                .collect();
+            assert!(!decorators.is_empty());
+            assert_eq!(decorators[0].name, "pytest.fixture");
+        }
+    }
+
+    #[test]
+    fn test_extract_python_import() {
+        let source = b"import os\nfrom pathlib import Path";
+        if let Some(tree) = parse_python(source) {
+            let extractor = EntityExtractor::new(source, "main.py", "python");
+            let (_elements, relationships) = extractor.extract(&tree);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(!imports.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_extract_typescript_function() {
+        let source = b"function greet(name: string): string { return `Hello ${name}`; }";
+        if let Some(tree) = parse_typescript(source) {
+            let extractor = EntityExtractor::new(source, "main.ts", "typescript");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(!funcs.is_empty());
+            assert_eq!(funcs[0].name, "greet");
+        }
+    }
+
+    #[test]
+    fn test_extract_typescript_class() {
+        let source = b"class MyClass { private value: number; }";
+        if let Some(tree) = parse_typescript(source) {
+            let extractor = EntityExtractor::new(source, "main.ts", "typescript");
+            let (elements, _) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(!classes.is_empty());
+            assert_eq!(classes[0].name, "MyClass");
+        }
+    }
+
+    #[test]
+    fn test_extract_typescript_interface() {
+        let source = b"interface Person { name: string; age: number; }";
+        if let Some(tree) = parse_typescript(source) {
+            let extractor = EntityExtractor::new(source, "types.ts", "typescript");
+            let (elements, _) = extractor.extract(&tree);
+            let interfaces: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "interface")
+                .collect();
+            assert!(!interfaces.is_empty());
+            assert_eq!(interfaces[0].name, "Person");
+        }
+    }
+
+    #[test]
+    fn test_extract_typescript_method() {
+        let source = b"class MyClass { myMethod(): void { } }";
+        if let Some(tree) = parse_typescript(source) {
+            let extractor = EntityExtractor::new(source, "main.ts", "typescript");
+            let (elements, _) = extractor.extract(&tree);
+            let methods: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" && e.name == "myMethod")
+                .collect();
+            assert!(!methods.is_empty());
         }
     }
 
