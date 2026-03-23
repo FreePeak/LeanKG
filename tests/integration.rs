@@ -1,9 +1,9 @@
 // Integration tests requiring filesystem, async, or SurrealDB
 
 use leankg::db::schema::init_db;
+use leankg::doc::DocGenerator;
 use leankg::graph::{GraphEngine, ImpactAnalyzer};
 use leankg::indexer::{find_files, index_file, ParserManager};
-use leankg::doc::DocGenerator;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -97,8 +97,10 @@ async fn test_doc_generator_agents_md_empty() {
     let graph = GraphEngine::new(db);
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let content = doc_gen.generate_agents_md().await.unwrap();
-    assert!(content.contains("# Codebase Context"));
-    assert!(content.contains("## Files"));
+    assert!(content.contains("# Agent Guidelines for LeanKG"));
+    assert!(content.contains("## Project Overview"));
+    assert!(content.contains("## Build Commands"));
+    assert!(content.contains("## Code Structure Overview"));
 }
 
 #[tokio::test]
@@ -110,6 +112,40 @@ async fn test_doc_generator_claude_md_empty() {
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let content = doc_gen.generate_claude_md().await.unwrap();
     assert!(content.contains("# CLAUDE.md"));
+    assert!(content.contains("## Project Overview"));
+    assert!(content.contains("## Architecture Decisions"));
+    assert!(content.contains("## Context Statistics"));
+}
+
+#[tokio::test]
+async fn test_doc_sync_for_file() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg.db");
+    let db = init_db(db_path.as_path()).await.unwrap();
+    let graph = GraphEngine::new(db);
+
+    let go_file = tmp.path().join("main.go");
+    std::fs::write(
+        &go_file,
+        "package main\n\nfunc add(x int, y int) int { return x + y }",
+    )
+    .unwrap();
+
+    let mut parser = ParserManager::new();
+    if parser.init_parsers().is_err() {
+        return;
+    }
+    let _count = index_file(&graph, &mut parser, go_file.to_str().unwrap())
+        .await
+        .unwrap();
+
+    let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
+    let result = doc_gen
+        .sync_docs_for_file(go_file.to_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(result.file_path, go_file.to_str().unwrap());
+    assert!(result.elements_regenerated > 0);
 }
 
 #[tokio::test]
