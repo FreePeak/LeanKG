@@ -8,17 +8,15 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use surrealdb::engine::local::Db;
-use surrealdb::Surreal;
 use tokio::sync::RwLock;
 
-use crate::db;
+use crate::db::schema::{init_db, CozoDb};
 use crate::graph::GraphEngine;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db_path: std::path::PathBuf,
-    db: Arc<RwLock<Option<Surreal<Db>>>>,
+    db: Arc<RwLock<Option<CozoDb>>>,
 }
 
 impl AppState {
@@ -32,20 +30,26 @@ impl AppState {
 
     #[allow(dead_code)]
     pub async fn init_db(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let db = db::init_db(&self.db_path).await?;
+        let db = init_db(&self.db_path)?;
         let mut lock = self.db.write().await;
         *lock = Some(db);
         Ok(())
     }
 
-    pub async fn get_db(&self) -> Result<Surreal<Db>, Box<dyn std::error::Error + Send + Sync>> {
-        let lock = self.db.read().await;
-        lock.clone()
-            .ok_or_else(|| "Database not initialized".into())
+    #[allow(dead_code)]
+    pub fn get_db(&self) -> Result<CozoDb, Box<dyn std::error::Error + Send + Sync>> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let lock = self.db.read().await;
+            lock.clone()
+                .ok_or_else(|| "Database not initialized".into())
+        })
     }
 
     pub async fn get_graph_engine(&self) -> Result<GraphEngine, Box<dyn std::error::Error + Send + Sync>> {
-        let db = self.get_db().await?;
+        let lock = self.db.read().await;
+        let db = lock.clone()
+            .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> { "Database not initialized".into() })?;
         Ok(GraphEngine::new(db))
     }
 }

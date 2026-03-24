@@ -1,4 +1,4 @@
-use crate::db::init_db;
+use crate::db::schema::init_db;
 use crate::graph::GraphEngine;
 use crate::mcp::auth::AuthConfig;
 use crate::mcp::handler::ToolHandler;
@@ -209,7 +209,6 @@ impl MCPServer {
         arguments: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         let db = init_db(&self.db_path)
-            .await
             .map_err(|e| format!("Database error: {}", e))?;
         let graph_engine = GraphEngine::new(db);
         let handler = ToolHandler::new(graph_engine);

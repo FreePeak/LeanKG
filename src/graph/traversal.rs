@@ -11,7 +11,7 @@ impl<'a> ImpactAnalyzer<'a> {
         Self { graph }
     }
 
-    pub async fn calculate_impact_radius(
+    pub fn calculate_impact_radius(
         &self,
         start_file: &str,
         depth: u32,
@@ -28,26 +28,26 @@ impl<'a> ImpactAnalyzer<'a> {
                 continue;
             }
 
-            let relationships = self.graph.get_relationships(&current).await?;
+            let relationships = self.graph.get_relationships(&current)?;
 
             for rel in relationships {
                 if !visited.contains(&rel.target_qualified) {
                     visited.insert(rel.target_qualified.clone());
                     queue.push_back((rel.target_qualified.clone(), current_depth + 1));
 
-                    if let Some(element) = self.graph.find_element(&rel.target_qualified).await? {
+                    if let Some(element) = self.graph.find_element(&rel.target_qualified)? {
                         affected_elements.push(element);
                     }
                 }
             }
 
-            let dependents = self.graph.get_dependents(&current).await?;
+            let dependents = self.graph.get_dependents(&current)?;
             for rel in dependents {
                 if !visited.contains(&rel.source_qualified) {
                     visited.insert(rel.source_qualified.clone());
                     queue.push_back((rel.source_qualified.clone(), current_depth + 1));
 
-                    if let Some(element) = self.graph.find_element(&rel.source_qualified).await? {
+                    if let Some(element) = self.graph.find_element(&rel.source_qualified)? {
                         affected_elements.push(element);
                     }
                 }

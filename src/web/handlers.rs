@@ -6,6 +6,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::db;
+use crate::db::schema::CozoDb;
+
 use super::{ApiResponse, AppState};
 
 #[derive(Deserialize, Serialize)]
@@ -138,7 +141,7 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
     let mut classes_count = 0usize;
 
     if let Ok(graph) = state.get_graph_engine().await {
-        if let Ok(elements) = graph.all_elements().await {
+        if let Ok(elements) = graph.all_elements() {
             element_count = elements.len();
             files_count = elements.iter().filter(|x| x.element_type == "file").count();
             functions_count = elements
@@ -150,10 +153,10 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
                 .filter(|x| x.element_type == "class")
                 .count();
         }
-        if let Ok(relns) = graph.all_relationships().await {
+        if let Ok(relns) = graph.all_relationships() {
             relationship_count = relns.len();
         }
-        if let Ok(anns) = graph.all_annotations().await {
+        if let Ok(anns) = graph.all_annotations() {
             annotation_count = anns.len();
         }
     }
@@ -268,7 +271,7 @@ pub async fn graph() -> axum::response::Html<String> {
 #[allow(dead_code)]
 pub async fn browse(State(state): State<AppState>) -> axum::response::Html<String> {
     let elements: Vec<_> = if let Ok(g) = state.get_graph_engine().await {
-        g.all_elements().await.unwrap_or_default()
+        g.all_elements().unwrap_or_default()
     } else {
         vec![]
     };
@@ -354,11 +357,11 @@ pub async fn docs() -> axum::response::Html<String> {
 #[allow(dead_code)]
 pub async fn annotate(State(state): State<AppState>) -> axum::response::Html<String> {
     let elements: Vec<_> = match state.get_graph_engine().await {
-        Ok(g) => g.all_elements().await.unwrap_or_default(),
+        Ok(g) => g.all_elements().unwrap_or_default(),
         Err(_) => vec![],
     };
     let annotations: Vec<_> = match state.get_graph_engine().await {
-        Ok(g) => g.all_annotations().await.unwrap_or_default(),
+        Ok(g) => g.all_annotations().unwrap_or_default(),
         Err(_) => vec![],
     };
 
@@ -501,7 +504,7 @@ pub async fn settings() -> axum::response::Html<String> {
 #[allow(dead_code)]
 pub async fn api_elements(State(state): State<AppState>) -> impl IntoResponse {
     let result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_elements().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_elements().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match result {
@@ -521,7 +524,7 @@ pub async fn api_elements(State(state): State<AppState>) -> impl IntoResponse {
 #[allow(dead_code)]
 pub async fn api_relationships(State(state): State<AppState>) -> impl IntoResponse {
     let result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_relationships().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match result {
@@ -541,7 +544,7 @@ pub async fn api_relationships(State(state): State<AppState>) -> impl IntoRespon
 #[allow(dead_code)]
 pub async fn api_annotations(State(state): State<AppState>) -> impl IntoResponse {
     let result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_annotations().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_annotations().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match result {
@@ -563,7 +566,7 @@ pub async fn api_create_annotation(
     State(state): State<AppState>,
     Json(req): Json<AnnotationRequest>,
 ) -> impl IntoResponse {
-    let db = match state.get_db().await {
+    let db = match state.get_db() {
         Ok(db) => db,
         Err(e) => {
             return ApiResponse {
@@ -573,14 +576,13 @@ pub async fn api_create_annotation(
             }
         }
     };
-    let result = super::db::create_business_logic(
+    let result = db::create_business_logic(
         &db,
         &req.element_qualified,
         &req.description,
         req.user_story_id.as_deref(),
         req.feature_id.as_deref(),
-    )
-    .await;
+    );
     match result {
         Ok(bl) => ApiResponse {
             success: true,
@@ -601,7 +603,7 @@ pub async fn api_get_annotation(
     Path(element): Path<String>,
 ) -> impl IntoResponse {
     let result: Result<Option<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.get_annotation(&element).await.map_err(|e| e.to_string()),
+        Ok(g) => g.get_annotation(&element).map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match result {
@@ -624,7 +626,7 @@ pub async fn api_update_annotation(
     Path(_element): Path<String>,
     Json(req): Json<AnnotationRequest>,
 ) -> impl IntoResponse {
-    let db = match state.get_db().await {
+    let db = match state.get_db() {
         Ok(db) => db,
         Err(e) => {
             return ApiResponse {
@@ -634,14 +636,13 @@ pub async fn api_update_annotation(
             }
         }
     };
-    let result = super::db::update_business_logic(
+    let result = db::update_business_logic(
         &db,
         &req.element_qualified,
         &req.description,
         req.user_story_id.as_deref(),
         req.feature_id.as_deref(),
-    )
-    .await;
+    );
     match result {
         Ok(bl) => ApiResponse {
             success: true,
@@ -662,7 +663,7 @@ pub async fn api_search(
     Query(params): Query<SearchParams>,
 ) -> impl IntoResponse {
     let elements_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_elements().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_elements().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     let elements = match elements_result {
@@ -701,11 +702,11 @@ pub async fn api_search(
 #[allow(dead_code)]
 pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse {
     let elements_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_elements().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_elements().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     let relationships_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_relationships().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match (elements_result, relationships_result) {
@@ -744,11 +745,11 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
 #[allow(dead_code)]
 pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoResponse {
     let elements_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_elements().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_elements().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     let relationships_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => g.all_relationships().await.map_err(|e| e.to_string()),
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match (elements_result, relationships_result) {

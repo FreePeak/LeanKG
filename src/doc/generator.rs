@@ -36,11 +36,10 @@ impl DocGenerator {
         self
     }
 
-    pub async fn generate_for_element(&self, qualified_name: &str) -> Result<String, DocError> {
+    pub fn generate_for_element(&self, qualified_name: &str) -> Result<String, DocError> {
         let element = self
             .graph
             .find_element(qualified_name)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         let mut output = String::new();
@@ -68,7 +67,6 @@ impl DocGenerator {
         let relationships = self
             .graph
             .get_relationships(qualified_name)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
         if !relationships.is_empty() {
             output.push_str("## Relationships\n\n");
@@ -80,12 +78,12 @@ impl DocGenerator {
         Ok(output)
     }
 
-    pub async fn generate_for_element_with_annotation(
+    pub fn generate_for_element_with_annotation(
         &self,
         qualified_name: &str,
         annotation: &BusinessLogic,
     ) -> Result<String, DocError> {
-        let mut output = self.generate_for_element(qualified_name).await?;
+        let mut output = self.generate_for_element(qualified_name)?;
 
         output.push_str("\n## Business Logic\n\n");
         output.push_str(&format!("{}\n", annotation.description));
@@ -100,7 +98,7 @@ impl DocGenerator {
         Ok(output)
     }
 
-    pub async fn generate_for_element_with_template(
+    pub fn generate_for_element_with_template(
         &self,
         qualified_name: &str,
         template_name: &str,
@@ -108,12 +106,10 @@ impl DocGenerator {
         let element = self
             .graph
             .find_element(qualified_name)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
         let relationships = self
             .graph
             .get_relationships(qualified_name)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         let rel_strings: Vec<String> = relationships
@@ -137,11 +133,10 @@ impl DocGenerator {
         }
     }
 
-    pub async fn regenerate_for_file(&self, file_path: &str) -> Result<Vec<String>, DocError> {
+    pub fn regenerate_for_file(&self, file_path: &str) -> Result<Vec<String>, DocError> {
         let elements = self
             .graph
             .all_elements()
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
         let file_elements: Vec<&CodeElement> = elements
             .iter()
@@ -150,29 +145,27 @@ impl DocGenerator {
 
         let mut regenerated = Vec::new();
         for elem in file_elements {
-            let _ = self.generate_for_element(&elem.qualified_name).await?;
+            let _ = self.generate_for_element(&elem.qualified_name)?;
             regenerated.push(elem.qualified_name.clone());
         }
 
         Ok(regenerated)
     }
 
-    pub async fn generate_agents_md(&self) -> Result<String, DocError> {
+    pub fn generate_agents_md(&self) -> Result<String, DocError> {
         let elements = self
             .graph
             .all_elements()
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
         let relationships = self
             .graph
             .all_relationships()
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         let mut content = String::from("# Agent Guidelines for LeanKG\n\n");
         content.push_str("## Project Overview\n\n");
-        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in SurrealDB, and exposes functionality via CLI and MCP protocol.\n\n");
-        content.push_str("**Tech Stack**: Rust 1.70+, SurrealDB (embedded RocksDB), tree-sitter, Axum, Clap, Tokio\n\n");
+        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in CozoDB, and exposes functionality via CLI and MCP protocol.\n\n");
+        content.push_str("**Tech Stack**: Rust 1.70+, CozoDB (embedded relational-graph), tree-sitter, Axum, Clap, Tokio\n\n");
         content.push_str("---\n\n## Build Commands\n\n### Standard Build\n```bash\ncargo build                    # Debug build\ncargo build --release          # Release build\n```\n\n### Testing\n```bash\ncargo test                     # Run all tests\ncargo test <test_name>         # Run specific test (partial name matches)\ncargo test --package <pkg>     # Test specific package\ncargo test -- --nocapture      # Show println output during tests\n```\n\n### Code Quality\n```bash\ncargo fmt                      # Format code\ncargo fmt -- --check           # Check formatting without changes\ncargo clippy                   # Run linter\ncargo clippy -- -D warnings    # Treat warnings as errors\ncargo check                    # Type check without building\ncargo doc                      # Build documentation\n```\n\n### Codebase Indexing & Server\n```bash\ncargo run -- init              # Initialize LeanKG project\ncargo run -- index ./src       # Index codebase\ncargo run -- serve             # Start MCP server\ncargo run -- impact <file> --depth 3   # Calculate impact radius\ncargo run -- status            # Show index status\n```\n\n---\n\n## Code Structure Overview\n\n");
         content.push_str(&format!(
             "This codebase contains {} elements and {} relationships.\n\n",
@@ -206,7 +199,7 @@ impl DocGenerator {
 
         content.push_str("### Key Modules\n\n");
         if modules.is_empty() {
-            content.push_str("```\nsrc/\n├── cli/          # Clap CLI commands\n├── config/       # Project configuration\n├── db/           # SurrealDB layer (models, schema)\n├── doc/          # Documentation generator\n├── graph/        # Graph engine, query, traversal\n├── indexer/      # tree-sitter parsers, entity extraction\n├── mcp/          # MCP protocol implementation\n├── watcher/      # File system watcher\n├── web/          # Axum web server\n└── main.rs       # CLI entry point\n```\n\n");
+            content.push_str("```\nsrc/\n├── cli/          # Clap CLI commands\n├── config/       # Project configuration\n├── db/           # CozoDB layer (models, schema)\n├── doc/          # Documentation generator\n├── graph/        # Graph engine, query, traversal\n├── indexer/      # tree-sitter parsers, entity extraction\n├── mcp/          # MCP protocol implementation\n├── watcher/      # File system watcher\n├── web/          # Axum web server\n└── main.rs       # CLI entry point\n```\n\n");
         } else {
             for m in modules.iter().take(20) {
                 content.push_str(&format!("- `{}` ({})\n", m.qualified_name, m.file_path));
@@ -272,30 +265,27 @@ impl DocGenerator {
         Ok(content)
     }
 
-    pub async fn generate_claude_md(&self) -> Result<String, DocError> {
+    pub fn generate_claude_md(&self) -> Result<String, DocError> {
         let elements = self
             .graph
             .all_elements()
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
         let relationships = self
             .graph
             .all_relationships()
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
         let annotations = self
             .graph
             .all_annotations()
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         let mut content = String::from("# CLAUDE.md\n\n");
         content.push_str("## Project Overview\n\n");
-        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in SurrealDB, and exposes functionality via CLI and MCP protocol.\n\n");
+        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in CozoDB, and exposes functionality via CLI and MCP protocol.\n\n");
         content.push_str("---\n\n## Architecture Decisions\n\n");
         content.push_str("### Knowledge Graph Storage\n");
-        content.push_str("- **SurrealDB with RocksDB**: Provides embedded NoSQL database with ACID transactions\n");
-        content.push_str("- **Schema-full design**: Tables defined with explicit schemas for code_elements, relationships, and business_logic\n");
+        content.push_str("- **CozoDB with SQLite**: Provides embedded relational-graph database with Datalog queries\n");
+        content.push_str("- **Schema-full design**: Relations defined with explicit schemas for code_elements, relationships, and business_logic\n");
         content.push_str("- **Qualified naming**: Elements identified by `qualified_name` combining file path and element name\n\n");
 
         content.push_str("### Code Indexing\n");
@@ -391,24 +381,22 @@ impl DocGenerator {
         Ok(content)
     }
 
-    pub async fn sync_docs_for_file(&self, file_path: &str) -> Result<DocSyncResult, DocError> {
+    pub fn sync_docs_for_file(&self, file_path: &str) -> Result<DocSyncResult, DocError> {
         let elements = self
             .graph
             .get_elements_by_file(file_path)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         let mut regenerated = Vec::new();
         let mut relationships_updated = 0;
 
         for elem in &elements {
-            let _ = self.generate_for_element(&elem.qualified_name).await?;
+            let _ = self.generate_for_element(&elem.qualified_name)?;
             regenerated.push(elem.qualified_name.clone());
 
             let rels = self
                 .graph
                 .get_relationships(&elem.qualified_name)
-                .await
                 .map_err(|e| DocError::Database(e.to_string()))?;
             relationships_updated += rels.len();
         }
@@ -421,26 +409,23 @@ impl DocGenerator {
         })
     }
 
-    pub async fn get_doc_tracking_info(
+    pub fn get_doc_tracking_info(
         &self,
         element_qualified: &str,
     ) -> Result<Option<DocTrackingInfo>, DocError> {
         let element = self
             .graph
             .find_element(element_qualified)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         let relationships = self
             .graph
             .get_relationships(element_qualified)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         let annotation = self
             .graph
             .get_annotation(element_qualified)
-            .await
             .map_err(|e| DocError::Database(e.to_string()))?;
 
         if let Some(elem) = element {

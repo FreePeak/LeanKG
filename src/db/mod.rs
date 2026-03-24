@@ -6,124 +6,248 @@ pub use models::*;
 #[allow(unused_imports)]
 pub use schema::*;
 
-use surrealdb::engine::local::Db;
-use surrealdb::Surreal;
+use crate::db::schema::CozoDb;
 
-pub async fn create_business_logic(
-    db: &Surreal<Db>,
+pub fn create_business_logic(
+    db: &CozoDb,
     element_qualified: &str,
     description: &str,
     user_story_id: Option<&str>,
     feature_id: Option<&str>,
 ) -> Result<models::BusinessLogic, Box<dyn std::error::Error>> {
-    let bl = models::BusinessLogic {
+    let user_story_val = user_story_id
+        .map(|s| format!("\"{}\"", s))
+        .unwrap_or_else(|| "null".to_string());
+    let feature_val = feature_id
+        .map(|s| format!("\"{}\"", s))
+        .unwrap_or_else(|| "null".to_string());
+
+    let query = format!(
+        r#"
+        ?[element_qualified, description, user_story_id, feature_id] <- [
+            ["{}": String, "{}": String, {}: String, {}: String]
+        ] :put business_logic {{ element_qualified, description, user_story_id, feature_id }}
+        "#,
+        element_qualified, description, user_story_val, feature_val,
+    );
+
+    db.run_script(&query, std::collections::BTreeMap::new())?;
+
+    Ok(models::BusinessLogic {
         id: None,
         element_qualified: element_qualified.to_string(),
         description: description.to_string(),
         user_story_id: user_story_id.map(String::from),
         feature_id: feature_id.map(String::from),
-    };
-
-    let result: Option<models::BusinessLogic> = db
-        .query("CREATE business_logic CONTENT $bl RETURN *")
-        .bind(("bl", bl))
-        .await?
-        .take(0)?;
-
-    result.ok_or_else(|| "Failed to create business logic".into())
+    })
 }
 
-pub async fn get_business_logic(
-    db: &Surreal<Db>,
+pub fn get_business_logic(
+    db: &CozoDb,
     element_qualified: &str,
 ) -> Result<Option<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let name = element_qualified.to_string();
-    let result: Option<models::BusinessLogic> = db
-        .query("SELECT * FROM business_logic WHERE element_qualified = $name")
-        .bind(("name", name))
-        .await?
-        .take(0)?;
-    Ok(result)
+    let query = format!(
+        r#"
+        ?[element_qualified, description, user_story_id, feature_id] <- business_logic[element_qualified, description, user_story_id, feature_id]
+        where element_qualified = "{}"
+        "#,
+        element_qualified
+    );
+
+    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let rows = result.rows;
+
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let row = &rows[0];
+    let user_story_id = row[2].as_str().map(String::from);
+    let feature_id = row[3].as_str().map(String::from);
+
+    Ok(Some(models::BusinessLogic {
+        id: None,
+        element_qualified: row[0].as_str().unwrap_or("").to_string(),
+        description: row[1].as_str().unwrap_or("").to_string(),
+        user_story_id,
+        feature_id,
+    }))
 }
 
-pub async fn update_business_logic(
-    db: &Surreal<Db>,
+pub fn update_business_logic(
+    db: &CozoDb,
     element_qualified: &str,
     description: &str,
     user_story_id: Option<&str>,
     feature_id: Option<&str>,
 ) -> Result<Option<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let name = element_qualified.to_string();
-    let desc = description.to_string();
-    let story = user_story_id.map(String::from);
-    let feature = feature_id.map(String::from);
-    let result: Option<models::BusinessLogic> = db
-        .query("UPDATE business_logic SET description = $desc, user_story_id = $story, feature_id = $feature WHERE element_qualified = $name RETURN *")
-        .bind(("name", name))
-        .bind(("desc", desc))
-        .bind(("story", story))
-        .bind(("feature", feature))
-        .await?
-        .take(0)?;
-    Ok(result)
+    let user_story_val = user_story_id
+        .map(|s| format!("\"{}\"", s))
+        .unwrap_or_else(|| "null".to_string());
+    let feature_val = feature_id
+        .map(|s| format!("\"{}\"", s))
+        .unwrap_or_else(|| "null".to_string());
+
+    let query = format!(
+        r#"
+        ?[element_qualified, description, user_story_id, feature_id] <- [
+            ["{}": String, "{}": String, {}: String, {}: String]
+        ] :put business_logic {{ element_qualified, description, user_story_id, feature_id }}
+        "#,
+        element_qualified, description, user_story_val, feature_val,
+    );
+
+    db.run_script(&query, std::collections::BTreeMap::new())?;
+
+    Ok(Some(models::BusinessLogic {
+        id: None,
+        element_qualified: element_qualified.to_string(),
+        description: description.to_string(),
+        user_story_id: user_story_id.map(String::from),
+        feature_id: feature_id.map(String::from),
+    }))
 }
 
-pub async fn delete_business_logic(
-    db: &Surreal<Db>,
+pub fn delete_business_logic(
+    db: &CozoDb,
     element_qualified: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let name = element_qualified.to_string();
-    db.query("DELETE FROM business_logic WHERE element_qualified = $name")
-        .bind(("name", name))
-        .await?;
+    let query = format!(
+        r#"
+        :delete business_logic where element_qualified = "{}"
+        "#,
+        element_qualified
+    );
+
+    db.run_script(&query, std::collections::BTreeMap::new())?;
     Ok(())
 }
 
-pub async fn get_by_user_story(
-    db: &Surreal<Db>,
+pub fn get_by_user_story(
+    db: &CozoDb,
     user_story_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let story = user_story_id.to_string();
-    let result: Vec<models::BusinessLogic> = db
-        .query("SELECT * FROM business_logic WHERE user_story_id = $story")
-        .bind(("story", story))
-        .await?
-        .take(0)?;
-    Ok(result)
+    let query = format!(
+        r#"
+        ?[element_qualified, description, user_story_id, feature_id] <- business_logic[element_qualified, description, user_story_id, feature_id]
+        where user_story_id = "{}"
+        "#,
+        user_story_id
+    );
+
+    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let rows = result.rows;
+
+    let business_logic: Vec<models::BusinessLogic> = rows
+        .iter()
+        .map(|row| {
+            let user_story_id = row[2].as_str().map(String::from);
+            let feature_id = row[3].as_str().map(String::from);
+            models::BusinessLogic {
+                id: None,
+                element_qualified: row[0].as_str().unwrap_or("").to_string(),
+                description: row[1].as_str().unwrap_or("").to_string(),
+                user_story_id,
+                feature_id,
+            }
+        })
+        .collect();
+
+    Ok(business_logic)
 }
 
-pub async fn get_by_feature(
-    db: &Surreal<Db>,
+pub fn get_by_feature(
+    db: &CozoDb,
     feature_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let feature = feature_id.to_string();
-    let result: Vec<models::BusinessLogic> = db
-        .query("SELECT * FROM business_logic WHERE feature_id = $feature")
-        .bind(("feature", feature))
-        .await?
-        .take(0)?;
-    Ok(result)
+    let query = format!(
+        r#"
+        ?[element_qualified, description, user_story_id, feature_id] <- business_logic[element_qualified, description, user_story_id, feature_id]
+        where feature_id = "{}"
+        "#,
+        feature_id
+    );
+
+    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let rows = result.rows;
+
+    let business_logic: Vec<models::BusinessLogic> = rows
+        .iter()
+        .map(|row| {
+            let user_story_id = row[2].as_str().map(String::from);
+            let feature_id = row[3].as_str().map(String::from);
+            models::BusinessLogic {
+                id: None,
+                element_qualified: row[0].as_str().unwrap_or("").to_string(),
+                description: row[1].as_str().unwrap_or("").to_string(),
+                user_story_id,
+                feature_id,
+            }
+        })
+        .collect();
+
+    Ok(business_logic)
 }
 
-pub async fn search_business_logic(
-    db: &Surreal<Db>,
-    query: &str,
+pub fn search_business_logic(
+    db: &CozoDb,
+    query_str: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let q = format!("%{}%", query.to_lowercase());
-    let result: Vec<models::BusinessLogic> = db
-        .query("SELECT * FROM business_logic WHERE string::lowercase(description) LIKE $q")
-        .bind(("q", q))
-        .await?
-        .take(0)?;
-    Ok(result)
+    let like_pattern = format!("%{}%", query_str.to_lowercase());
+
+    let query = format!(
+        r#"
+        ?[element_qualified, description, user_story_id, feature_id] <- business_logic[element_qualified, description, user_story_id, feature_id]
+        where description =~ "{}"
+        "#,
+        like_pattern
+    );
+
+    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let rows = result.rows;
+
+    let business_logic: Vec<models::BusinessLogic> = rows
+        .iter()
+        .map(|row| {
+            let user_story_id = row[2].as_str().map(String::from);
+            let feature_id = row[3].as_str().map(String::from);
+            models::BusinessLogic {
+                id: None,
+                element_qualified: row[0].as_str().unwrap_or("").to_string(),
+                description: row[1].as_str().unwrap_or("").to_string(),
+                user_story_id,
+                feature_id,
+            }
+        })
+        .collect();
+
+    Ok(business_logic)
 }
 
-pub async fn all_business_logic(
-    db: &Surreal<Db>,
+pub fn all_business_logic(
+    db: &CozoDb,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let result: Vec<models::BusinessLogic> =
-        db.query("SELECT * FROM business_logic").await?.take(0)?;
-    Ok(result)
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] <- business_logic[element_qualified, description, user_story_id, feature_id]"#;
+
+    let result = db.run_script(query, std::collections::BTreeMap::new())?;
+    let rows = result.rows;
+
+    let business_logic: Vec<models::BusinessLogic> = rows
+        .iter()
+        .map(|row| {
+            let user_story_id = row[2].as_str().map(String::from);
+            let feature_id = row[3].as_str().map(String::from);
+            models::BusinessLogic {
+                id: None,
+                element_qualified: row[0].as_str().unwrap_or("").to_string(),
+                description: row[1].as_str().unwrap_or("").to_string(),
+                user_story_id,
+                feature_id,
+            }
+        })
+        .collect();
+
+    Ok(business_logic)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -154,11 +278,11 @@ pub struct UserStoryTraceability {
     pub count: usize,
 }
 
-pub async fn get_feature_traceability(
-    db: &Surreal<Db>,
+pub fn get_feature_traceability(
+    db: &CozoDb,
     feature_id: &str,
 ) -> Result<FeatureTraceability, Box<dyn std::error::Error>> {
-    let elements = get_by_feature(db, feature_id).await?;
+    let elements = get_by_feature(db, feature_id)?;
     let code_elements: Vec<FeatureTraceEntry> = elements
         .into_iter()
         .map(|bl| FeatureTraceEntry {
@@ -175,11 +299,11 @@ pub async fn get_feature_traceability(
     })
 }
 
-pub async fn get_user_story_traceability(
-    db: &Surreal<Db>,
+pub fn get_user_story_traceability(
+    db: &CozoDb,
     user_story_id: &str,
 ) -> Result<UserStoryTraceability, Box<dyn std::error::Error>> {
-    let elements = get_by_user_story(db, user_story_id).await?;
+    let elements = get_by_user_story(db, user_story_id)?;
     let code_elements: Vec<UserStoryTraceEntry> = elements
         .into_iter()
         .map(|bl| UserStoryTraceEntry {
@@ -196,10 +320,10 @@ pub async fn get_user_story_traceability(
     })
 }
 
-pub async fn all_feature_traceability(
-    db: &Surreal<Db>,
+pub fn all_feature_traceability(
+    db: &CozoDb,
 ) -> Result<Vec<FeatureTraceability>, Box<dyn std::error::Error>> {
-    let all = all_business_logic(db).await?;
+    let all = all_business_logic(db)?;
     let mut feature_map: std::collections::HashMap<String, Vec<FeatureTraceEntry>> =
         std::collections::HashMap::new();
 
@@ -228,10 +352,10 @@ pub async fn all_feature_traceability(
     Ok(traces)
 }
 
-pub async fn all_user_story_traceability(
-    db: &Surreal<Db>,
+pub fn all_user_story_traceability(
+    db: &CozoDb,
 ) -> Result<Vec<UserStoryTraceability>, Box<dyn std::error::Error>> {
-    let all = all_business_logic(db).await?;
+    let all = all_business_logic(db)?;
     let mut story_map: std::collections::HashMap<String, Vec<UserStoryTraceEntry>> =
         std::collections::HashMap::new();
 
@@ -260,9 +384,9 @@ pub async fn all_user_story_traceability(
     Ok(traces)
 }
 
-pub async fn find_by_business_domain(
-    db: &Surreal<Db>,
+pub fn find_by_business_domain(
+    db: &CozoDb,
     domain: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    search_business_logic(db, domain).await
+    search_business_logic(db, domain)
 }

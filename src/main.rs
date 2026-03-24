@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Impact { file, depth } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            let result = calculate_impact(&file, depth, &db_path).await?;
+            let result = calculate_impact(&file, depth, &db_path)?;
             println!("Impact radius for {} (depth={}):", file, depth);
             if result.affected_elements.is_empty() {
                 println!("  No affected elements found");
@@ -118,12 +118,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            generate_docs(&db_path).await?;
+            generate_docs(&db_path)?;
         }
         cli::CLICommand::Query { query, kind } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            run_query(&query, &kind, &db_path).await?;
+            run_query(&query, &kind, &db_path)?;
         }
         cli::CLICommand::Install => {
             install_mcp_config()?;
@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Status => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            show_status(&db_path).await?;
+            show_status(&db_path)?;
         }
         cli::CLICommand::Watch => {
             let project_path = find_project_root()?;
@@ -141,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Quality { min_lines, lang } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            find_oversized_functions(min_lines, lang.as_deref(), &db_path).await?;
+            find_oversized_functions(min_lines, lang.as_deref(), &db_path)?;
         }
         cli::CLICommand::Export { output: _ } => {
             println!("Export functionality ready for implementation");
@@ -160,23 +160,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 user_story.as_deref(),
                 feature.as_deref(),
                 &db_path,
-            )
-            .await?;
+            )?;
         }
         cli::CLICommand::Link { element, id, kind } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            link_element(&element, &id, &kind, &db_path).await?;
+            link_element(&element, &id, &kind, &db_path)?;
         }
         cli::CLICommand::SearchAnnotations { query } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            search_annotations(&query, &db_path).await?;
+            search_annotations(&query, &db_path)?;
         }
         cli::CLICommand::ShowAnnotations { element } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            show_annotations(&element, &db_path).await?;
+            show_annotations(&element, &db_path)?;
         }
         cli::CLICommand::Trace {
             feature,
@@ -185,12 +184,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            show_traceability(&db_path, feature.as_deref(), user_story.as_deref(), all).await?;
+            show_traceability(&db_path, feature.as_deref(), user_story.as_deref(), all)?;
         }
         cli::CLICommand::FindByDomain { domain } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            find_by_domain(&domain, &db_path).await?;
+            find_by_domain(&domain, &db_path)?;
         }
     }
 
@@ -247,14 +246,14 @@ async fn index_codebase(
     exclude_patterns: &[String],
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
 
     println!("Indexing codebase at {}...", path);
 
-    let mut files = indexer::find_files(path).await?;
+    let mut files = indexer::find_files_sync(path)?;
 
     if let Some(lang) = lang_filter {
         let allowed_langs: Vec<&str> = lang.split(',').map(|s| s.trim()).collect();
@@ -298,7 +297,7 @@ async fn index_codebase(
     let mut indexed = 0;
     let mut skipped = 0;
     for file_path in &files {
-        match indexer::index_file(&graph_engine, &mut parser_manager, file_path).await {
+        match indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path) {
             Ok(count) => {
                 indexed += 1;
                 if verbose {
@@ -328,14 +327,14 @@ async fn incremental_index_codebase(
     exclude_patterns: &[String],
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
 
     println!("Performing incremental indexing for {}...", path);
 
-    match indexer::incremental_index(&graph_engine, &mut parser_manager, path).await {
+    match indexer::incremental_index_sync(&graph_engine, &mut parser_manager, path).await {
         Ok(result) => {
             if result.changed_files.is_empty() && result.dependent_files.is_empty() {
                 println!("No changes detected since last index.");
@@ -369,25 +368,25 @@ async fn incremental_index_codebase(
     Ok(())
 }
 
-async fn calculate_impact(
+fn calculate_impact(
     file: &str,
     depth: u32,
     db_path: &std::path::Path,
 ) -> Result<graph::ImpactResult, Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let analyzer = graph::ImpactAnalyzer::new(&graph_engine);
 
-    let result = analyzer.calculate_impact_radius(file, depth).await?;
+    let result = analyzer.calculate_impact_radius(file, depth)?;
     Ok(result)
 }
 
-async fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let generator = doc::DocGenerator::new(graph_engine, std::path::PathBuf::from("./docs"));
 
-    let content = generator.generate_agents_md().await?;
+    let content = generator.generate_agents_md()?;
     println!("Generated documentation:\n{}", content);
 
     std::fs::create_dir_all("./docs")?;
@@ -413,19 +412,18 @@ fn install_mcp_config() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     if !db_path.exists() {
         println!("LeanKG not initialized. Run 'leankg init' first.");
         return Ok(());
     }
 
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
 
-    let elements = graph::GraphEngine::new(db.clone()).all_elements().await?;
+    let elements = graph::GraphEngine::new(db.clone()).all_elements()?;
     let relationships = graph::GraphEngine::new(db.clone())
-        .all_relationships()
-        .await?;
-    let annotations = db::all_business_logic(&db).await?;
+        .all_relationships()?;
+    let annotations = db::all_business_logic(&db)?;
 
     println!("LeanKG Status:");
     println!("  Database: {}", db_path.display());
@@ -450,22 +448,22 @@ async fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-async fn annotate_element(
+fn annotate_element(
     element: &str,
     description: &str,
     user_story: Option<&str>,
     feature: Option<&str>,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
 
-    let existing = db::get_business_logic(&db, element).await?;
+    let existing = db::get_business_logic(&db, element)?;
 
     if existing.is_some() {
-        db::update_business_logic(&db, element, description, user_story, feature).await?;
+        db::update_business_logic(&db, element, description, user_story, feature)?;
         println!("Updated annotation for '{}'", element);
     } else {
-        db::create_business_logic(&db, element, description, user_story, feature).await?;
+        db::create_business_logic(&db, element, description, user_story, feature)?;
         println!("Created annotation for '{}'", element);
     }
 
@@ -480,15 +478,15 @@ async fn annotate_element(
     Ok(())
 }
 
-async fn link_element(
+fn link_element(
     element: &str,
     id: &str,
     kind: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
 
-    let existing = db::get_business_logic(&db, element).await?;
+    let existing = db::get_business_logic(&db, element)?;
 
     match existing {
         Some(bl) => {
@@ -504,8 +502,7 @@ async fn link_element(
                     &new_desc,
                     Some(id),
                     bl.feature_id.as_deref(),
-                )
-                .await?;
+                )?;
             } else {
                 let new_desc = if bl.description.starts_with("Linked to") {
                     bl.description
@@ -518,16 +515,15 @@ async fn link_element(
                     &new_desc,
                     bl.user_story_id.as_deref(),
                     Some(id),
-                )
-                .await?;
+                )?;
             }
         }
         None => {
             let description = format!("Linked to {} {}", kind, id);
             if kind == "story" {
-                db::create_business_logic(&db, element, &description, Some(id), None).await?;
+                db::create_business_logic(&db, element, &description, Some(id), None)?;
             } else {
-                db::create_business_logic(&db, element, &description, None, Some(id)).await?;
+                db::create_business_logic(&db, element, &description, None, Some(id))?;
             }
         }
     }
@@ -537,13 +533,13 @@ async fn link_element(
     Ok(())
 }
 
-async fn search_annotations(
+fn search_annotations(
     query: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
 
-    let results = db::search_business_logic(&db, query).await?;
+    let results = db::search_business_logic(&db, query)?;
 
     if results.is_empty() {
         println!("No annotations found matching '{}'", query);
@@ -564,13 +560,13 @@ async fn search_annotations(
     Ok(())
 }
 
-async fn show_annotations(
+fn show_annotations(
     element: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
 
-    let result = db::get_business_logic(&db, element).await?;
+    let result = db::get_business_logic(&db, element)?;
 
     match result {
         Some(bl) => {
@@ -591,16 +587,16 @@ async fn show_annotations(
     Ok(())
 }
 
-async fn show_traceability(
+fn show_traceability(
     db_path: &std::path::Path,
     feature: Option<&str>,
     user_story: Option<&str>,
     all: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
 
     if all {
-        let all_bl = db::all_business_logic(&db).await?;
+        let all_bl = db::all_business_logic(&db)?;
         
         let mut feature_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
         let mut story_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
@@ -646,7 +642,7 @@ async fn show_traceability(
             }
         }
     } else if let Some(fid) = feature {
-        let elements = db::get_by_feature(&db, fid).await?;
+        let elements = db::get_by_feature(&db, fid)?;
         println!("Feature-to-Code Traceability for '{}':", fid);
         if elements.is_empty() {
             println!("  No code elements linked to this feature");
@@ -660,7 +656,7 @@ async fn show_traceability(
             }
         }
     } else if let Some(sid) = user_story {
-        let elements = db::get_by_user_story(&db, sid).await?;
+        let elements = db::get_by_user_story(&db, sid)?;
         println!("User Story-to-Code Traceability for '{}':", sid);
         if elements.is_empty() {
             println!("  No code elements linked to this user story");
@@ -680,13 +676,13 @@ async fn show_traceability(
     Ok(())
 }
 
-async fn find_by_domain(
+fn find_by_domain(
     domain: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
 
-    let results = db::search_business_logic(&db, domain).await?;
+    let results = db::search_business_logic(&db, domain)?;
 
     if results.is_empty() {
         println!("No code elements found matching domain '{}'", domain);
@@ -711,17 +707,17 @@ async fn find_by_domain(
     Ok(())
 }
 
-async fn run_query(
+fn run_query(
     query: &str,
     kind: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
 
     match kind {
         "name" => {
-            let results = graph_engine.search_by_name(query).await?;
+            let results = graph_engine.search_by_name(query)?;
             if results.is_empty() {
                 println!("No elements found with name matching '{}'", query);
             } else {
@@ -736,7 +732,7 @@ async fn run_query(
             }
         }
         "type" => {
-            let results = graph_engine.search_by_type(query).await?;
+            let results = graph_engine.search_by_type(query)?;
             if results.is_empty() {
                 println!("No elements found of type '{}'", query);
             } else {
@@ -750,7 +746,7 @@ async fn run_query(
             }
         }
         "rel" => {
-            let results = graph_engine.search_by_relation_type(query).await?;
+            let results = graph_engine.search_by_relation_type(query)?;
             if results.is_empty() {
                 println!("No relationships found with type '{}'", query);
             } else {
@@ -768,7 +764,7 @@ async fn run_query(
             }
         }
         "pattern" => {
-            let results = graph_engine.search_by_pattern(query).await?;
+            let results = graph_engine.search_by_pattern(query)?;
             if results.is_empty() {
                 println!("No elements found matching pattern '{}'", query);
             } else {
@@ -796,20 +792,19 @@ async fn run_query(
     Ok(())
 }
 
-async fn find_oversized_functions(
+fn find_oversized_functions(
     min_lines: u32,
     lang: Option<&str>,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::init_db(db_path).await?;
+    let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
 
     let results = if let Some(language) = lang {
         graph_engine
-            .find_oversized_functions_by_lang(min_lines, language)
-            .await?
+            .find_oversized_functions_by_lang(min_lines, language)?
     } else {
-        graph_engine.find_oversized_functions(min_lines).await?
+        graph_engine.find_oversized_functions(min_lines)?
     };
 
     if results.is_empty() {

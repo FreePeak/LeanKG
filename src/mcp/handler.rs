@@ -13,23 +13,23 @@ impl ToolHandler {
 
     pub async fn execute_tool(&self, tool_name: &str, arguments: &Value) -> Result<Value, String> {
         match tool_name {
-            "query_file" => self.query_file(arguments).await,
-            "get_dependencies" => self.get_dependencies(arguments).await,
-            "get_dependents" => self.get_dependents(arguments).await,
-            "get_impact_radius" => self.get_impact_radius(arguments).await,
-            "get_review_context" => self.get_review_context(arguments).await,
-            "get_context" => self.get_context(arguments).await,
-            "find_function" => self.find_function(arguments).await,
-            "get_call_graph" => self.get_call_graph(arguments).await,
-            "search_code" => self.search_code(arguments).await,
-            "generate_doc" => self.generate_doc(arguments).await,
-            "find_large_functions" => self.find_large_functions(arguments).await,
-            "get_tested_by" => self.get_tested_by(arguments).await,
+            "query_file" => self.query_file(arguments),
+            "get_dependencies" => self.get_dependencies(arguments),
+            "get_dependents" => self.get_dependents(arguments),
+            "get_impact_radius" => self.get_impact_radius(arguments),
+            "get_review_context" => self.get_review_context(arguments),
+            "get_context" => self.get_context(arguments),
+            "find_function" => self.find_function(arguments),
+            "get_call_graph" => self.get_call_graph(arguments),
+            "search_code" => self.search_code(arguments),
+            "generate_doc" => self.generate_doc(arguments),
+            "find_large_functions" => self.find_large_functions(arguments),
+            "get_tested_by" => self.get_tested_by(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
     }
 
-    async fn query_file(&self, args: &Value) -> Result<Value, String> {
+    fn query_file(&self, args: &Value) -> Result<Value, String> {
         let pattern = args["pattern"]
             .as_str()
             .ok_or("Missing 'pattern' parameter")?;
@@ -37,7 +37,6 @@ impl ToolHandler {
         let elements = self
             .graph_engine
             .all_elements()
-            .await
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements
@@ -58,13 +57,12 @@ impl ToolHandler {
         Ok(json!({ "files": matches }))
     }
 
-    async fn get_dependencies(&self, args: &Value) -> Result<Value, String> {
+    fn get_dependencies(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
         let relationships = self
             .graph_engine
             .get_relationships(file)
-            .await
             .map_err(|e| e.to_string())?;
 
         let deps: Vec<_> = relationships
@@ -80,13 +78,12 @@ impl ToolHandler {
         Ok(json!({ "dependencies": deps }))
     }
 
-    async fn get_dependents(&self, args: &Value) -> Result<Value, String> {
+    fn get_dependents(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
         let relationships = self
             .graph_engine
             .get_dependents(file)
-            .await
             .map_err(|e| e.to_string())?;
 
         let deps: Vec<_> = relationships
@@ -102,14 +99,13 @@ impl ToolHandler {
         Ok(json!({ "dependents": deps }))
     }
 
-    async fn get_impact_radius(&self, args: &Value) -> Result<Value, String> {
+    fn get_impact_radius(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
         let depth = args["depth"].as_u64().unwrap_or(3) as u32;
 
         let analyzer = ImpactAnalyzer::new(&self.graph_engine);
         let result = analyzer
             .calculate_impact_radius(file, depth)
-            .await
             .map_err(|e| e.to_string())?;
 
         Ok(json!({
@@ -125,7 +121,7 @@ impl ToolHandler {
         }))
     }
 
-    async fn get_review_context(&self, args: &Value) -> Result<Value, String> {
+    fn get_review_context(&self, args: &Value) -> Result<Value, String> {
         let files = args["files"]
             .as_array()
             .ok_or("Missing 'files' parameter")?;
@@ -135,7 +131,7 @@ impl ToolHandler {
 
         for file_val in files {
             if let Some(file_path) = file_val.as_str() {
-                if let Ok(elements) = self.graph_engine.all_elements().await {
+                if let Ok(elements) = self.graph_engine.all_elements() {
                     let file_elements: Vec<_> = elements
                         .into_iter()
                         .filter(|e| e.file_path.contains(file_path))
@@ -143,7 +139,7 @@ impl ToolHandler {
                     context_elements.extend(file_elements);
                 }
 
-                if let Ok(rels) = self.graph_engine.get_relationships(file_path).await {
+                if let Ok(rels) = self.graph_engine.get_relationships(file_path) {
                     context_relationships.extend(rels);
                 }
             }
@@ -168,7 +164,7 @@ impl ToolHandler {
         }))
     }
 
-    async fn get_context(&self, args: &Value) -> Result<Value, String> {
+    fn get_context(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
         let max_tokens = args["max_tokens"].as_u64().unwrap_or(4000) as usize;
@@ -176,7 +172,6 @@ impl ToolHandler {
         let result = self
             .graph_engine
             .get_context(file, max_tokens)
-            .await
             .map_err(|e| e.to_string())?;
 
         let elements_json: Vec<_> = result
@@ -212,13 +207,12 @@ impl ToolHandler {
         }))
     }
 
-    async fn find_function(&self, args: &Value) -> Result<Value, String> {
+    fn find_function(&self, args: &Value) -> Result<Value, String> {
         let name = args["name"].as_str().ok_or("Missing 'name' parameter")?;
 
         let elements = self
             .graph_engine
             .all_elements()
-            .await
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements
@@ -238,7 +232,7 @@ impl ToolHandler {
         Ok(json!({ "functions": matches }))
     }
 
-    async fn get_call_graph(&self, args: &Value) -> Result<Value, String> {
+    fn get_call_graph(&self, args: &Value) -> Result<Value, String> {
         let function = args["function"]
             .as_str()
             .ok_or("Missing 'function' parameter")?;
@@ -246,7 +240,6 @@ impl ToolHandler {
         let relationships = self
             .graph_engine
             .get_relationships(function)
-            .await
             .map_err(|e| e.to_string())?;
 
         let calls: Vec<_> = relationships
@@ -263,13 +256,12 @@ impl ToolHandler {
         Ok(json!({ "calls": calls }))
     }
 
-    async fn search_code(&self, args: &Value) -> Result<Value, String> {
+    fn search_code(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
 
         let elements = self
             .graph_engine
             .all_elements()
-            .await
             .map_err(|e| e.to_string())?;
 
         let query_lower = query.to_lowercase();
@@ -295,13 +287,12 @@ impl ToolHandler {
         Ok(json!({ "results": matches }))
     }
 
-    async fn generate_doc(&self, args: &Value) -> Result<Value, String> {
+    fn generate_doc(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
         let elements = self
             .graph_engine
             .all_elements()
-            .await
             .map_err(|e| e.to_string())?;
 
         let file_elements: Vec<CodeElement> = elements
@@ -314,13 +305,12 @@ impl ToolHandler {
         Ok(json!({ "documentation": doc }))
     }
 
-    async fn find_large_functions(&self, args: &Value) -> Result<Value, String> {
+    fn find_large_functions(&self, args: &Value) -> Result<Value, String> {
         let min_lines = args["min_lines"].as_u64().unwrap_or(50) as u32;
 
         let elements = self
             .graph_engine
             .all_elements()
-            .await
             .map_err(|e| e.to_string())?;
 
         let large_functions: Vec<_> = elements
@@ -344,13 +334,12 @@ impl ToolHandler {
         Ok(json!({ "large_functions": large_functions }))
     }
 
-    async fn get_tested_by(&self, args: &Value) -> Result<Value, String> {
+    fn get_tested_by(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
         let relationships = self
             .graph_engine
             .get_relationships(file)
-            .await
             .map_err(|e| e.to_string())?;
 
         let tests: Vec<_> = relationships
@@ -384,7 +373,7 @@ fn generate_review_prompt(elements: &[CodeElement], _relationships: &[Relationsh
     let files: std::collections::HashSet<_> =
         elements.iter().map(|e| e.file_path.clone()).collect();
     for file in files {
-        prompt += &format!("### {}\n", file);
+        prompt += &format!("### {}\n\n", file);
         let file_elements: Vec<_> = elements.iter().filter(|e| e.file_path == file).collect();
         for elem in file_elements {
             prompt += &format!(

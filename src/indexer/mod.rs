@@ -10,7 +10,7 @@ use crate::graph::GraphEngine;
 use std::collections::HashSet;
 use walkdir::WalkDir;
 
-pub async fn find_files(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
     let extensions = ["go", "ts", "js", "py"];
 
@@ -33,12 +33,12 @@ pub async fn find_files(root: &str) -> Result<Vec<String>, Box<dyn std::error::E
     Ok(files)
 }
 
-pub async fn index_file(
+pub fn index_file_sync(
     graph: &GraphEngine,
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    let content = tokio::fs::read(file_path).await?;
+    let content = std::fs::read(file_path)?;
     let source = content.as_slice();
 
     let language = if file_path.ends_with(".go") {
@@ -66,21 +66,21 @@ pub async fn index_file(
         return Ok(0);
     }
 
-    let _ = graph.insert_elements(&elements).await;
-    let _ = graph.insert_relationships(&relationships).await;
+    let _ = graph.insert_elements(&elements);
+    let _ = graph.insert_relationships(&relationships);
 
     Ok(elements.len())
 }
 
-pub async fn reindex_file(
+pub fn reindex_file_sync(
     graph: &GraphEngine,
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    graph.remove_elements_by_file(file_path).await?;
-    graph.remove_relationships_by_source(file_path).await?;
+    graph.remove_elements_by_file(file_path)?;
+    graph.remove_relationships_by_source(file_path)?;
 
-    index_file(graph, parser_manager, file_path).await
+    index_file_sync(graph, parser_manager, file_path)
 }
 
 pub struct IncrementalIndexResult {
@@ -90,7 +90,7 @@ pub struct IncrementalIndexResult {
     pub elements_indexed: usize,
 }
 
-pub async fn incremental_index(
+pub async fn incremental_index_sync(
     graph: &GraphEngine,
     parser_manager: &mut ParserManager,
     root_path: &str,
@@ -136,11 +136,11 @@ pub async fn incremental_index(
         .collect();
 
     for deleted_file in &deleted_files {
-        graph.remove_elements_by_file(deleted_file).await?;
-        graph.remove_relationships_by_source(deleted_file).await?;
+        graph.remove_elements_by_file(deleted_file)?;
+        graph.remove_relationships_by_source(deleted_file)?;
     }
 
-    let all_relationships = graph.all_relationships().await?;
+    let all_relationships = graph.all_relationships()?;
     let rel_tuples: Vec<(String, String)> = all_relationships
         .iter()
         .map(|r| (r.source_qualified.clone(), r.target_qualified.clone()))
@@ -187,7 +187,7 @@ pub async fn incremental_index(
 
     for file_path in &all_files_to_process {
         if std::path::Path::new(file_path).exists() {
-            match reindex_file(graph, parser_manager, file_path).await {
+            match reindex_file_sync(graph, parser_manager, file_path) {
                 Ok(count) => {
                     if count > 0 {
                         total_elements += count;
@@ -207,4 +207,31 @@ pub async fn incremental_index(
         total_files_processed: files_processed,
         elements_indexed: total_elements,
     })
+}
+
+#[allow(dead_code)]
+pub async fn index_file(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    Ok(index_file_sync(graph, parser_manager, file_path)?)
+}
+
+#[allow(dead_code)]
+pub async fn reindex_file(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    Ok(reindex_file_sync(graph, parser_manager, file_path)?)
+}
+
+#[allow(dead_code)]
+pub async fn incremental_index(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    root_path: &str,
+) -> Result<IncrementalIndexResult, Box<dyn std::error::Error>> {
+    incremental_index_sync(graph, parser_manager, root_path).await
 }

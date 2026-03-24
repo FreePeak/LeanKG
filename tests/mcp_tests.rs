@@ -208,7 +208,7 @@ mod handler_tests {
     async fn create_test_handler() -> (ToolHandler, tempfile::TempDir) {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("leankg.db");
-        let db = init_db(db_path.as_path()).await.unwrap();
+        let db = init_db(db_path.as_path()).unwrap();
         let graph = GraphEngine::new(db);
         (ToolHandler::new(graph), tmp)
     }

@@ -9,11 +9,11 @@ use tempfile::TempDir;
 async fn test_doc_generator_comprehensive_agents_md() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
-    let db = init_db(db_path.as_path()).await.unwrap();
+    let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
 
-    let content = doc_gen.generate_agents_md().await.unwrap();
+    let content = doc_gen.generate_agents_md().unwrap();
 
     assert!(content.contains("# Agent Guidelines for LeanKG"));
     assert!(content.contains("## Project Overview"));
@@ -30,11 +30,11 @@ async fn test_doc_generator_comprehensive_agents_md() {
 async fn test_doc_generator_comprehensive_claude_md() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
-    let db = init_db(db_path.as_path()).await.unwrap();
+    let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
 
-    let content = doc_gen.generate_claude_md().await.unwrap();
+    let content = doc_gen.generate_claude_md().unwrap();
 
     assert!(content.contains("# CLAUDE.md"));
     assert!(content.contains("## Project Overview"));
@@ -162,7 +162,7 @@ async fn test_template_engine_default_claude_template() {
 async fn test_doc_generator_with_elements() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
-    let db = init_db(db_path.as_path()).await.unwrap();
+    let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
 
     let element = CodeElement {
@@ -177,10 +177,10 @@ async fn test_doc_generator_with_elements() {
         metadata: serde_json::json!({}),
     };
 
-    graph.insert_elements(&[element]).await.unwrap();
+    graph.insert_elements(&[element]).unwrap();
 
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
-    let content = doc_gen.generate_agents_md().await.unwrap();
+    let content = doc_gen.generate_agents_md().unwrap();
 
     assert!(content.contains("# Agent Guidelines for LeanKG"));
     assert!(content.contains("This codebase contains 1 elements"));
@@ -193,7 +193,7 @@ async fn test_doc_generator_with_elements() {
 async fn test_doc_generator_regenerate_for_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
-    let db = init_db(db_path.as_path()).await.unwrap();
+    let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
 
     let element = CodeElement {
@@ -208,10 +208,10 @@ async fn test_doc_generator_regenerate_for_file() {
         metadata: serde_json::json!({}),
     };
 
-    graph.insert_elements(&[element]).await.unwrap();
+    graph.insert_elements(&[element]).unwrap();
 
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
-    let result = doc_gen.regenerate_for_file("src/main.rs").await.unwrap();
+    let result = doc_gen.regenerate_for_file("src/main.rs").unwrap();
 
     assert_eq!(result.len(), 1);
     assert_eq!(result[0], "src/main.rs::main");
@@ -221,7 +221,7 @@ async fn test_doc_generator_regenerate_for_file() {
 async fn test_doc_generator_tracking_info() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
-    let db = init_db(db_path.as_path()).await.unwrap();
+    let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
 
     let element = CodeElement {
@@ -236,12 +236,11 @@ async fn test_doc_generator_tracking_info() {
         metadata: serde_json::json!({}),
     };
 
-    graph.insert_elements(&[element]).await.unwrap();
+    graph.insert_elements(&[element]).unwrap();
 
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let tracking = doc_gen
         .get_doc_tracking_info("src/main.rs::main")
-        .await
         .unwrap();
 
     assert!(tracking.is_some());
@@ -253,13 +252,12 @@ async fn test_doc_generator_tracking_info() {
 async fn test_doc_generator_tracking_info_not_found() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
-    let db = init_db(db_path.as_path()).await.unwrap();
+    let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
 
     let tracking = doc_gen
         .get_doc_tracking_info("nonexistent::foo")
-        .await
         .unwrap();
     assert!(tracking.is_none());
 }

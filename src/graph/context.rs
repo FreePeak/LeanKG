@@ -93,11 +93,11 @@ impl<'a> ContextProvider<'a> {
         Self::estimate_tokens(&base) + metadata_len / CHARS_PER_TOKEN
     }
 
-    pub async fn get_context_for_file(
+    pub fn get_context_for_file(
         &self,
         file_path: &str,
     ) -> Result<ContextResult, Box<dyn std::error::Error>> {
-        let file_element = self.graph.find_element(file_path).await?;
+        let file_element = self.graph.find_element(file_path)?;
 
         let mut context_elements = Vec::new();
 
@@ -110,9 +110,9 @@ impl<'a> ContextProvider<'a> {
             });
         }
 
-        let relationships = self.graph.get_relationships(file_path).await?;
+        let relationships = self.graph.get_relationships(file_path)?;
         for rel in relationships {
-            if let Some(element) = self.graph.find_element(&rel.target_qualified).await? {
+            if let Some(element) = self.graph.find_element(&rel.target_qualified)? {
                 let priority = match rel.rel_type.as_str() {
                     "imports" => ContextPriority::Imported,
                     "contains" | "defines" => ContextPriority::Contained,
@@ -127,7 +127,7 @@ impl<'a> ContextProvider<'a> {
             }
         }
 
-        let children = self.get_child_elements(file_path).await?;
+        let children = self.get_child_elements(file_path)?;
         for child in children {
             let token_count = Self::element_tokens(&child);
             context_elements.push(ContextElement {
@@ -165,11 +165,11 @@ impl<'a> ContextProvider<'a> {
         })
     }
 
-    async fn get_child_elements(
+    fn get_child_elements(
         &self,
         parent_qualified: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let result = self.graph.get_children(parent_qualified).await?;
+        let result = self.graph.get_children(parent_qualified)?;
         Ok(result)
     }
 
@@ -193,13 +193,13 @@ impl<'a> ContextProvider<'a> {
 }
 
 impl GraphEngine {
-    pub async fn get_context(
+    pub fn get_context(
         &self,
         file_path: &str,
         max_tokens: usize,
     ) -> Result<ContextResult, Box<dyn std::error::Error>> {
         let provider = ContextProvider::with_max_tokens(self, max_tokens);
-        provider.get_context_for_file(file_path).await
+        provider.get_context_for_file(file_path)
     }
 }
 
