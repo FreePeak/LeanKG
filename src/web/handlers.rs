@@ -25,7 +25,7 @@ pub struct SearchParams {
     pub file_path: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct AnnotationRequest {
     pub element_qualified: String,
     pub description: String,
