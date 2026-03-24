@@ -43,6 +43,8 @@ pub enum CLICommand {
         #[arg(long, default_value = "8080")]
         web_port: u16,
     },
+    /// Start MCP server with stdio transport (for opencode integration)
+    McpStdio,
     /// Calculate impact radius
     Impact {
         /// File to analyze

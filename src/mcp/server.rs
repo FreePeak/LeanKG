@@ -8,6 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio_tungstenite::{
@@ -29,6 +30,14 @@ impl MCPServer {
         }
     }
 
+    pub fn db_path(&self) -> &std::path::PathBuf {
+        &self.db_path
+    }
+
+    pub async fn auth_config_read(&self) -> tokio::sync::RwLockReadGuard<'_, AuthConfig> {
+        self.auth_config.read().await
+    }
+
     pub async fn serve_websocket(
         self,
         addr: SocketAddr,
@@ -44,6 +53,31 @@ impl MCPServer {
                     tracing::error!("Connection error: {}", e);
                 }
             });
+        }
+
+        Ok(())
+    }
+
+    pub async fn serve_stdio(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let stdin = BufReader::new(tokio::io::stdin());
+        let mut lines = stdin.lines();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Ok(request) = serde_json::from_str::<MCPRequest>(&line) {
+                let response = self.process_request(request, "stdio").await;
+                if let Ok(resp_text) = serde_json::to_string(&response) {
+                    let mut out = tokio::io::stdout();
+                    use tokio::io::AsyncWriteExt;
+                    out.write_all(resp_text.as_bytes()).await?;
+                    out.write_all(b"\n").await?;
+                    out.flush().await?;
+                }
+            }
         }
 
         Ok(())
@@ -189,7 +223,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_server_creation() {
-        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
-        assert!(server.auth_config.try_read().is_ok());
+        let _server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_new_with_custom_path() {
+        let db_path = std::path::PathBuf::from("/custom/path/.leankg");
+        let server = MCPServer::new(db_path.clone());
+        assert!(!server.auth_config.try_read().is_err());
     }
 }

@@ -363,16 +363,16 @@ mod handler_tests {
 mod server_tests {
     use super::*;
 
-    #[test]
-    fn test_mcp_server_creation() {
+    #[tokio::test]
+    async fn test_mcp_server_creation() {
         let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
-        assert!(server.auth_config.try_read().is_some());
+        let _guard = server.auth_config_read().await;
     }
 
     #[test]
     fn test_mcp_server_with_custom_db_path() {
         let db_path = std::path::PathBuf::from("/custom/path/.leankg");
         let server = MCPServer::new(db_path.clone());
-        assert_eq!(server.db_path, db_path);
+        assert_eq!(server.db_path(), &db_path);
     }
 }

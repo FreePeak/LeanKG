@@ -14,26 +14,26 @@ async fn test_app_state_db_path() {
     assert_eq!(state.db_path.to_str(), Some("/tmp/test_db"));
 }
 
-#[tokio::test]
-async fn test_server_start_without_panic() {
-    let handle = tokio::spawn(async {
-        let result =
-            leankg::web::start_server(18081, std::path::PathBuf::from(".leankg_test")).await;
-        result
+#[test]
+fn test_server_start_without_panic() {
+    let handle = std::thread::spawn(|| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let _ = leankg::web::start_server(18081, std::path::PathBuf::from(".leankg_test")).await;
+        });
     });
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    handle.abort();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    drop(handle);
 }
 
 #[test]
 fn test_web_module_exports() {
     use leankg::web::{start_server, ApiResponse, AppState};
 
-    let _ = start_server;
-    let _ = AppState;
-    let _ = ApiResponse;
+    let _start_server = start_server;
+    let _app_state = std::any::type_name::<AppState>();
+    let _api_response = std::any::type_name::<ApiResponse<String>>();
 }
 
 #[test]

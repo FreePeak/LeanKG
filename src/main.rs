@@ -20,9 +20,11 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
-
     let args = Args::parse();
+
+    if !matches!(args.command, cli::CLICommand::McpStdio) {
+        tracing_subscriber::fmt::init();
+    }
 
     match args.command {
         cli::CLICommand::Init { path } => {
@@ -85,6 +87,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             mcp_handle.abort();
+        }
+        cli::CLICommand::McpStdio => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+
+            tokio::fs::create_dir_all(&db_path).await.ok();
+
+            let mcp_server = mcp::MCPServer::new(db_path);
+            if let Err(e) = mcp_server.serve_stdio().await {
+                eprintln!("MCP stdio server error: {}", e);
+            }
         }
         cli::CLICommand::Impact { file, depth } => {
             let project_path = find_project_root()?;

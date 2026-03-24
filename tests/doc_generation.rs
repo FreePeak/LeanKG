@@ -81,7 +81,7 @@ async fn test_doc_tracking_info_structure() {
     };
 
     let relationship = Relationship {
-        id: Some(1),
+        id: None,
         source_qualified: "src/main.rs::main".to_string(),
         target_qualified: "src/lib.rs::init".to_string(),
         rel_type: "imports".to_string(),
@@ -89,7 +89,7 @@ async fn test_doc_tracking_info_structure() {
     };
 
     let annotation = BusinessLogic {
-        id: Some(1),
+        id: None,
         element_qualified: "src/main.rs::main".to_string(),
         description: "Main entry point for the application".to_string(),
         user_story_id: Some("US-001".to_string()),

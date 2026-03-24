@@ -15,7 +15,8 @@ pub struct CodeElement {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relationship {
-    pub id: Option<i64>,
+    #[serde(skip)]
+    pub id: Option<String>,
     pub source_qualified: String,
     pub target_qualified: String,
     pub rel_type: String,
@@ -24,7 +25,8 @@ pub struct Relationship {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BusinessLogic {
-    pub id: Option<i64>,
+    #[serde(skip)]
+    pub id: Option<String>,
     pub element_qualified: String,
     pub description: String,
     pub user_story_id: Option<String>,
@@ -33,7 +35,8 @@ pub struct BusinessLogic {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
-    pub id: Option<i64>,
+    #[serde(skip)]
+    pub id: Option<String>,
     pub title: String,
     pub content: String,
     pub file_path: String,

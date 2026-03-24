@@ -1,12 +1,11 @@
-use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema;
-use leankg::graph::query::GraphEngine;
-use leankg::indexer::parser::ParserManager;
-use std::time::{Duration, Instant};
-use tempfile::TempDir;
-
 #[cfg(test)]
 mod performance_tests {
+    use leankg::db::models::{CodeElement, Relationship};
+    use leankg::db::schema;
+    use leankg::graph::query::GraphEngine;
+    use leankg::indexer::ParserManager;
+    use std::time::{Duration, Instant};
+    use tempfile::TempDir;
 
     fn create_test_elements(count: usize, file_path: &str) -> Vec<CodeElement> {
         (0..count)
