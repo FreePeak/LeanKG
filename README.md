@@ -51,7 +51,7 @@ graph TB
         end
         
         subgraph "Storage"
-            SurrealDB[(SurrealDB)]
+            CozoDB[(CozoDB)]
         end
         
         Web[Web UI]
@@ -64,8 +64,8 @@ graph TB
     CLI --> Indexer
     CLI --> Graph
     Watcher --> Indexer
-    Indexer --> SurrealDB
-    Graph --> SurrealDB
+    Indexer --> CozoDB
+    Graph --> CozoDB
     Graph --> Cache
     Web --> Graph
 ```
@@ -283,10 +283,12 @@ leankg install
 | Component | Technology |
 |-----------|------------|
 | Language | Rust |
-| Database | SurrealDB (embedded RocksDB backend) |
+| Database | CozoDB (embedded relational-graph, Datalog queries) |
 | Parsing | tree-sitter |
 | CLI | Clap |
 | Web Server | Axum |
+
+> **Note**: Transitioned storage engine from SurrealDB to embedded CozoDB to strictly minimize RAM usage and utilize Datalog for highly efficient graph traversals.
 
 ---
 
@@ -296,7 +298,7 @@ leankg install
 src/
   cli/       - CLI commands (Clap)
   config/    - Project configuration
-  db/        - SurrealDB persistence layer
+  db/        - CozoDB persistence layer
   doc/       - Documentation generator
   graph/     - Graph query engine
   indexer/   - Code parser (tree-sitter)
