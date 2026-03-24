@@ -118,7 +118,7 @@ graph TB
 | `leankg link <element> <id>` | Done | Link element to story/feature |
 | `leankg trace --feature <id>` | Done | Show feature-to-code traceability |
 | `leankg find-by-domain <domain>` | Done | Find code by business domain |
-| `leankg export` | Stub | Export graph as HTML (in progress) |
+| `leankg export` | Done | Export graph data as JSON |
 
 ### MCP Tools
 
@@ -141,11 +141,11 @@ graph TB
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **Graph Visualization** | Stub | Visualize code dependency graph |
-| **Browse Code Elements** | Stub | Browse and search code elements |
-| **Edit Annotations** | Stub | View and edit business logic annotations |
-| **Documentation Viewer** | Stub | Simple documentation viewer |
-| **Export HTML** | Stub | Export interactive graph as self-contained HTML |
+| **Graph Visualization** | Done | D3.js force-directed graph with zoom/pan/drag |
+| **Browse Code Elements** | Done | Browse and search code elements with filters |
+| **Edit Annotations** | Done | View and edit business logic annotations |
+| **Documentation Viewer** | Done | View generated documentation |
+| **Export JSON** | Done | Export graph data as JSON for external tools |
 
 ---
 
