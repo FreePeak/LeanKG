@@ -91,7 +91,7 @@ graph TB
 | Feature | Status | Description |
 |---------|--------|-------------|
 | **Annotations** | Done | Annotate code elements with business logic descriptions |
-| **Link to Features** | Done | Link code elements to user stories or features |
+| **Link to Features** | Done | Link code elements to features |
 | **Traceability** | Done | Show feature-to-code traceability |
 | **Find by Domain** | Done | Find code elements by business domain |
 
@@ -115,7 +115,7 @@ graph TB
 | `leankg quality --min-lines N` | Done | Find oversized functions by line count |
 | `leankg query <text> --kind name` | Done | Query the knowledge graph |
 | `leankg annotate <element> -d <desc>` | Done | Add business logic annotation |
-| `leankg link <element> <id>` | Done | Link element to story/feature |
+| `leankg link <element> <id>` | Done | Link element to feature |
 | `leankg search-annotations <query>` | Done | Search business logic annotations |
 | `leankg show-annotations <element>` | Done | Show annotations for a specific element |
 | `leankg trace --feature <id>` | Done | Show feature-to-code traceability |
@@ -138,24 +138,6 @@ graph TB
 | `generate_doc` | Done | Generate documentation for file |
 | `find_large_functions` | Done | Find oversized functions by line count |
 | `get_tested_by` | Done | Get test coverage for a function/file |
-
----
-
-## Verification Status (2026-03-25)
-
-All MCP tools, CLI commands, and core modules verified against PRD v1.3. **284 tests passing.**
-
-| PRD User Story | Status | Verified |
-|----------------|--------|----------|
-| **US-01**: Auto-indexing with TESTED_BY and incremental indexing | Done | Tests pass |
-| **US-02**: Auto documentation with AGENTS.md and CLAUDE.md | Done | Tests pass |
-| **US-03**: Business logic mapping with traceability | Done | Tests pass |
-| **US-04**: MCP server with all required tools (12 tools) | Done | Tests pass |
-| **US-05**: Full CLI interface (18 commands) | Done | Tests pass |
-| **US-06**: Resource optimization (parser pooling, query caching) | Done | Tests pass |
-| **US-08**: Multi-language support (Go, TypeScript, Python) | Done | Tests pass |
-
-> **Note**: Web UI (US-07) excluded from verification scope.
 
 ---
 
@@ -297,7 +279,7 @@ leankg install
 | `leankg quality` | Find oversized functions |
 | `leankg query <text>` | Query the knowledge graph |
 | `leankg annotate <element>` | Add business logic annotation |
-| `leankg link <element> <id>` | Link element to story/feature |
+| `leankg link <element> <id>` | Link element to feature |
 | `leankg search-annotations` | Search business logic annotations |
 | `leankg show-annotations <element>` | Show annotations for element |
 | `leankg trace` | Show feature-to-code traceability |
