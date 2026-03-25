@@ -11,46 +11,28 @@
 
 **Lightweight Knowledge Graph for AI-Assisted Development**
 
-LeanKG is a local-first knowledge graph that gives AI coding tools accurate codebase context. It indexes your code, builds dependency graphs, generates documentation, and exposes an MCP server so tools like Cursor, OpenCode, and Claude Code can query the knowledge graph directly. No cloud services, no external databases—everything runs on your machine with minimal resources.
+LeanKG is a local-first knowledge graph that gives AI coding tools accurate codebase context. It indexes your code, builds dependency graphs, generates documentation, and exposes an MCP server so tools like Cursor, OpenCode, and Claude Code can query the knowledge graph directly. No cloud services, no external databases -- everything runs on your machine with minimal resources.
 
 ---
 
-## How It Works
+## Token Savings Example (Benchmarked)
 
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant CLI as LeanKG CLI
-    participant Indexer as Code Indexer
-    participant DB as CozoDB
-    participant MCP as MCP Server
-    participant AI as AI Tool (Claude/Cursor)
+Real benchmark results from the [Go API Service example](examples/go-api-service/):
 
-    Dev->>CLI: leankg init
-    CLI->>DB: Initialize graph database
-    
-    Dev->>CLI: leankg index ./src
-    CLI->>Indexer: Parse source files
-    Indexer->>Indexer: Extract functions, imports, calls
-    Indexer->>DB: Store code elements & relationships
-    
-    Dev->>CLI: leankg serve
-    CLI->>MCP: Start MCP server
-    
-    AI->>MCP: "What's the impact of changing auth.rs?"
-    MCP->>DB: Query impact radius (N hops)
-    DB-->>MCP: Affected files list
-    MCP-->>AI: Targeted context (13 tokens vs 835)
-    
-    Dev->>CLI: leankg watch
-    CLI->>Index: Watch for file changes
-    Index->>DB: Incremental update
+| Scenario | Without LeanKG | With LeanKG | Savings |
+|----------|----------------|-------------|---------|
+| Impact Analysis | 835 tokens | 13 tokens | **98.4%** |
+| Full Feature Testing | 9,601 tokens | 42 tokens | **99.6%** |
+
+```bash
+# Run the benchmark yourself
+cd examples/go-api-service
+python3 benchmark.py
 ```
 
-**The Flow:**
-1. **Index** - LeanKG parses your codebase and builds a graph of code elements (functions, classes, modules) and their relationships (imports, calls, tests)
-2. **Query** - AI tools query the graph via MCP instead of scanning files
-3. **Optimize** - Get targeted context with ~99% token reduction
+**Before LeanKG**: AI must scan entire codebase to understand dependencies (~9,600 tokens)
+
+**After LeanKG**: LeanKG provides targeted subgraph with relationships pre-computed (~42 tokens)
 
 ---
 
@@ -64,33 +46,23 @@ AI coding tools waste tokens scanning entire codebases. LeanKG provides **target
 | **Impact analysis** | Manually trace dependencies | `get_impact_radius` returns affected files |
 | **Token count** | 9,600+ tokens for full scan | 13-42 tokens with graph |
 
-**LeanKG achieves 98-99% token reduction** (~100x) as measured on real benchmarks.
-
 ---
 
 ## Installation
 
-### Quick Install via npm (Recommended - No Rust Required)
+### Quick Install via npm (Recommended -- No Rust Required)
 
 ```bash
-# Install via npm (works on any machine with Node.js)
 npm install -g leankg
-
-# Verify installation
 leankg --version
 ```
 
-This is the easiest way to get started - no Rust toolchain required. The npm package downloads pre-built binaries for your platform.
-
-**Supported platforms:** macOS (x64, ARM64), Linux (x64, ARM64)
+The npm package downloads pre-built binaries for your platform. Supported: macOS (x64, ARM64), Linux (x64, ARM64).
 
 ### Install via Cargo
 
 ```bash
-# Requires Rust installed
 cargo install leankg
-
-# Verify installation
 leankg --version
 ```
 
@@ -100,8 +72,6 @@ leankg --version
 git clone https://github.com/your-org/LeanKG.git
 cd LeanKG
 cargo build --release
-
-# The binary will be at ./target/release/leankg
 ```
 
 ---
@@ -127,6 +97,44 @@ leankg status
 
 ---
 
+## How It Works
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant CLI as LeanKG CLI
+    participant Indexer as Code Indexer
+    participant DB as CozoDB
+    participant MCP as MCP Server
+    participant AI as AI Tool (Claude/Cursor)
+
+    Dev->>CLI: leankg init
+    CLI->>DB: Initialize graph database
+
+    Dev->>CLI: leankg index ./src
+    CLI->>Indexer: Parse source files
+    Indexer->>Indexer: Extract functions, imports, calls
+    Indexer->>DB: Store code elements & relationships
+
+    Dev->>CLI: leankg serve
+    CLI->>MCP: Start MCP server
+
+    AI->>MCP: "What's the impact of changing auth.rs?"
+    MCP->>DB: Query impact radius (N hops)
+    DB-->>MCP: Affected files list
+    MCP-->>AI: Targeted context (13 tokens vs 835)
+
+    Dev->>CLI: leankg watch
+    CLI->>Index: Watch for file changes
+    Index->>DB: Incremental update
+```
+
+1. **Index** -- LeanKG parses your codebase and builds a graph of code elements (functions, classes, modules) and their relationships (imports, calls, tests).
+2. **Query** -- AI tools query the graph via MCP instead of scanning files.
+3. **Optimize** -- Get targeted context with ~99% token reduction.
+
+---
+
 ## MCP Server Setup
 
 LeanKG exposes a Model Context Protocol (MCP) server that AI tools can connect to.
@@ -134,11 +142,10 @@ LeanKG exposes a Model Context Protocol (MCP) server that AI tools can connect t
 ### Option 1: Automated Setup (Recommended)
 
 ```bash
-# Install MCP configuration for your AI tool
 leankg install
 ```
 
-This command detects your AI tool (Claude Code, OpenCode, Cursor, etc.) and installs the appropriate MCP configuration.
+Detects your AI tool (Claude Code, OpenCode, Cursor, etc.) and installs the appropriate MCP configuration.
 
 ### Option 2: Manual Setup
 
@@ -199,37 +206,18 @@ leankg mcp-stdio
 
 ---
 
-## Features
+## Highlights
 
-### Core Features
-
-| Feature | Description |
-|---------|-------------|
-| **Code Indexing** | Parse and index Go, TypeScript, Python, and Rust codebases with tree-sitter |
-| **Dependency Graph** | Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges |
-| **Impact Radius** | Compute blast radius for any file to see downstream impact |
-| **Auto Documentation** | Generate markdown docs from code structure automatically |
-| **MCP Server** | Expose the graph via MCP protocol for AI tool integration |
-| **File Watching** | Watch for changes and incrementally update the index |
-| **CLI** | Single binary with init, index, serve, impact, and status commands |
-
-### Business Logic Mapping
-
-| Feature | Description |
-|---------|-------------|
-| **Annotations** | Annotate code elements with business logic descriptions |
-| **Link to Features** | Link code elements to features |
-| **Traceability** | Show feature-to-code traceability |
-| **Find by Domain** | Find code elements by business domain |
-
-### Documentation Mapping
-
-| Feature | Description |
-|---------|-------------|
-| **Docs Structure** | Index docs/ directory structure |
-| **Doc-to-Code Links** | Map documentation references to code elements |
-| **Doc Queries** | Query docs by file, file by doc, doc structure |
-| **Traceability** | Link requirements to code via documentation |
+- **Code Indexing** -- Parse and index Go, TypeScript, Python, and Rust codebases with tree-sitter.
+- **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges.
+- **Impact Radius** -- Compute blast radius for any file to see downstream impact.
+- **Auto Documentation** -- Generate markdown docs from code structure automatically.
+- **MCP Server** -- Expose the graph via MCP protocol for AI tool integration.
+- **File Watching** -- Watch for changes and incrementally update the index.
+- **CLI** -- Single binary with init, index, serve, impact, and status commands.
+- **Business Logic Mapping** -- Annotate code elements with business logic descriptions and link to features.
+- **Traceability** -- Show feature-to-code and requirement-to-code traceability chains.
+- **Documentation Mapping** -- Index docs/ directory, map doc references to code elements.
 
 ---
 
@@ -238,10 +226,10 @@ leankg mcp-stdio
 LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date.
 
 ```bash
-# Start file watcher - indexes changes automatically in background
+# Start file watcher -- indexes changes automatically in background
 leankg watch
 
-# Incremental indexing - only re-index changed files (git-based)
+# Incremental indexing -- only re-index changed files (git-based)
 leankg index --incremental
 
 # Filter by language
@@ -251,8 +239,6 @@ leankg index --lang go,ts,py,rs
 leankg index --exclude vendor,node_modules,dist
 ```
 
-**How Auto-Indexing Works:**
-
 ```mermaid
 graph LR
     subgraph "File Watcher"
@@ -261,47 +247,16 @@ graph LR
         Parse[Parser]
         DB[(CozoDB)]
     end
-    
+
     FS -->|change detected| Git
     Git -->|only changed files| Parse
     Parse -->|update relationships| DB
-    
-    style DB fill:#f9f,stroke:#333
 ```
 
-1. **Watch Mode**: `leankg watch` monitors your source directory for file changes
-2. **Git-Based Delta**: Uses `git diff` to detect only modified files
-3. **Incremental Update**: Re-parses only changed files and updates affected relationships
-4. **Background Sync**: Runs in background while you code
-
----
-
-## Roadmap (Next Phases)
-
-### Phase 2 - Pipeline Integration
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Pipeline Parsing** | Planned | Parse CI/CD config files (GitHub Actions, GitLab CI, Jenkins, Azure) |
-| **Pipeline Graph** | Planned | Build pipeline, stage, step nodes |
-| **Trigger Links** | Planned | Link source file changes to triggered pipelines |
-| **Pipeline Impact** | Planned | Include pipelines in blast radius analysis |
-| **Deployment Targets** | Planned | Track which stages deploy to which environments |
-
-**Supported CI/CD Platforms (Coming Soon):**
-- GitHub Actions (`.github/workflows/*.yml`)
-- GitLab CI (`.gitlab-ci.yml`)
-- Jenkins (`Jenkinsfile`)
-- Azure Pipelines (`azure-pipelines.yml`)
-
-### Future Features
-
-| Feature | Description |
-|---------|-------------|
-| **Semantic Search** | AI-powered code search using embeddings |
-| **Security Analysis** | Detect vulnerable dependencies and patterns |
-| **Cost Estimation** | Cloud resource cost tracking via pipeline data |
-| **Multi-Project** | Index and query across multiple repositories |
+1. **Watch Mode** -- `leankg watch` monitors your source directory for file changes.
+2. **Git-Based Delta** -- Uses `git diff` to detect only modified files.
+3. **Incremental Update** -- Re-parses only changed files and updates affected relationships.
+4. **Background Sync** -- Runs in background while you code.
 
 ---
 
@@ -320,17 +275,17 @@ graph TB
         CLI[CLI Interface]
         MCP[MCP Server]
         Watcher[File Watcher]
-        
+
         subgraph "Core"
             Indexer[tree-sitter Parser]
             Graph[Graph Engine]
             Cache[Query Cache]
         end
-        
+
         subgraph "Storage"
             CozoDB[(CozoDB)]
         end
-        
+
         Web[Web UI]
     end
 
@@ -414,45 +369,53 @@ graph TB
 
 | Tool | Integration | Status |
 |------|-------------|--------|
-| **Claude Code** | MCP | ✅ Supported |
-| **OpenCode** | MCP | ✅ Supported |
-| **Cursor** | MCP | ✅ Supported |
-| **Google Antigravity** | MCP | ✅ Supported |
-| **Windsurf** | MCP | ✅ Supported |
-| **Codex** | MCP | ✅ Supported |
+| **Claude Code** | MCP | Supported |
+| **OpenCode** | MCP | Supported |
+| **Cursor** | MCP | Supported |
+| **Google Antigravity** | MCP | Supported |
+| **Windsurf** | MCP | Supported |
+| **Codex** | MCP | Supported |
 
 ---
 
-## Token Savings Example (Benchmarked)
+## Roadmap
 
-Real benchmark results from the [Go API Service example](examples/go-api-service/):
+### Phase 2 -- Pipeline Integration
 
-| Scenario | Without LeanKG | With LeanKG | Savings |
-|----------|----------------|-------------|---------|
-| Impact Analysis | 835 tokens | 13 tokens | **98.4%** |
-| Full Feature Testing | 9,601 tokens | 42 tokens | **99.6%** |
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Pipeline Parsing** | Planned | Parse CI/CD config files (GitHub Actions, GitLab CI, Jenkins, Azure) |
+| **Pipeline Graph** | Planned | Build pipeline, stage, step nodes |
+| **Trigger Links** | Planned | Link source file changes to triggered pipelines |
+| **Pipeline Impact** | Planned | Include pipelines in blast radius analysis |
+| **Deployment Targets** | Planned | Track which stages deploy to which environments |
 
-```bash
-# Run the benchmark yourself
-cd examples/go-api-service
-python3 benchmark.py
-```
+**Supported CI/CD Platforms (Coming Soon):**
+- GitHub Actions (`.github/workflows/*.yml`)
+- GitLab CI (`.gitlab-ci.yml`)
+- Jenkins (`Jenkinsfile`)
+- Azure Pipelines (`azure-pipelines.yml`)
 
-**Before LeanKG**: AI must scan entire codebase to understand dependencies (~9,600 tokens)
+### Future Features
 
-**After LeanKG**: LeanKG provides targeted subgraph with relationships pre-computed (~42 tokens)
+| Feature | Description |
+|---------|-------------|
+| **Semantic Search** | AI-powered code search using embeddings |
+| **Security Analysis** | Detect vulnerable dependencies and patterns |
+| **Cost Estimation** | Cloud resource cost tracking via pipeline data |
+| **Multi-Project** | Index and query across multiple repositories |
 
 ---
 
 ## Requirements
 
-### For npm installation (Recommended)
-- **Node.js** 18+ (for npm installation)
-- **npm** 8+
+**For npm installation (recommended):**
+- Node.js 18+
+- npm 8+
 
-### For building from source
-- **Rust** 1.70+
-- **Platforms**: macOS, Linux
+**For building from source:**
+- Rust 1.70+
+- macOS or Linux
 
 ---
 
@@ -473,23 +436,23 @@ python3 benchmark.py
 
 ```
 src/
-  cli/       - CLI commands (Clap)
-  config/    - Project configuration
-  db/        - CozoDB persistence layer
-  doc/       - Documentation generator
-  graph/     - Graph query engine
-  indexer/   - Code parser (tree-sitter)
+  cli/         - CLI commands (Clap)
+  config/      - Project configuration
+  db/          - CozoDB persistence layer
+  doc/         - Documentation generator
+  graph/       - Graph query engine
+  indexer/     - Code parser (tree-sitter)
   doc_indexer/ - Documentation indexer
-  mcp/       - MCP protocol handler
-  watcher/   - File change watcher
-  web/       - Web server (Axum)
+  mcp/         - MCP protocol handler
+  watcher/     - File change watcher
+  web/         - Web server (Axum)
 
 docs/
-  planning/      - Planning documents
-  requirement/    - Requirements documents (PRD)
-  analysis/       - Analysis documents
-  design/         - Design documents (HLD)
-  business/       - Business logic documents
+  planning/    - Planning documents
+  requirement/ - Requirements documents (PRD)
+  analysis/    - Analysis documents
+  design/      - Design documents (HLD)
+  business/    - Business logic documents
 ```
 
 ---

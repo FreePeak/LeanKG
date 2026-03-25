@@ -29,10 +29,10 @@
     "x64",
     "arm64"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/your-org/LeanKG.git"
-  },
+   "repository": {
+     "type": "git",
+     "url": "https://github.com/FreePeak/LeanKG.git"
+   },
   "author": "LeanKG Team",
   "license": "MIT"
 }
