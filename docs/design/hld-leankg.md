@@ -181,6 +181,7 @@ graph TB
 | Traceability Analyzer | Trace requirements to code via documentation | Rust |
 | Code Quality | Detect large functions, code metrics | Rust |
 | CozoDB | Persistent storage (per-project) | CozoDB (embedded SQLite-backed) |
+| NPM Installer | Download and install pre-built binaries | Node.js (npm package) |
 
 **Interactions:**
 
@@ -992,6 +993,11 @@ documentation:
 - Additional MCP tools (US-13)
   - get_code_tree: retrieve codebase structure
   - find_related_docs: find docs related to code change
+- NPM-based installation (US-14)
+  - npm package that downloads pre-built binaries for supported platforms
+  - Auto-detects platform (macOS x64/ARM64, Linux x64/ARM64)
+  - postinstall script handles binary extraction and PATH setup
+  - Works without Rust toolchain on developer machine
 - Web UI improvements
 - Additional language support (Rust, Java, C#)
 - Incremental indexing optimization
