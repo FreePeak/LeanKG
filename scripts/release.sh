@@ -112,10 +112,9 @@ main() {
     log ""
     log "Release v$version published successfully!"
     log "CI/CD will now:"
-    log "  1. Publish to crates.io"
-    log "  2. Build WASM with wasm-pack"
-    log "  3. Publish to npm"
-    log "  4. Create GitHub Release"
+    log "  1. Build binaries for Linux, macOS, Windows"
+    log "  2. Create GitHub Release with binaries"
+    log "  3. Publish to crates.io"
 }
 
 main "$@"
