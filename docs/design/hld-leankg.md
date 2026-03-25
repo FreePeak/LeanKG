@@ -5,6 +5,10 @@
 **Dua tren:** PRD v1.5  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.5 - MCP Server Self-Initialization
+  - Added MCP tools mirroring CLI: mcp_init, mcp_index, mcp_install, mcp_status, mcp_impact
+  - Added auto-init behavior on MCP server startup
+  - MCP server auto-detects uninitialized projects and runs init + index
 - v1.4 - Phase 2 Features: Documentation-Structure Mapping, Enhanced Business Logic, Impact Fixes
   - Added Doc Indexer component for indexing docs/ directory
   - Added documentation node types (document, doc_section) to data model
@@ -819,6 +823,11 @@ erDiagram
 
 | Tool | Description |
 |------|-------------|
+| `mcp_init` | Initialize LeanKG project (creates .leankg/, leankg.yaml) |
+| `mcp_index` | Index codebase (path, incremental, lang, exclude options) |
+| `mcp_install` | Create .mcp.json for MCP client configuration |
+| `mcp_status` | Show index statistics and status |
+| `mcp_impact` | Calculate blast radius for a file |
 | `query_file` | Find file by name or pattern |
 | `get_dependencies` | Get file dependencies (direct imports) |
 | `get_dependents` | Get files depending on target |
@@ -843,6 +852,14 @@ erDiagram
 | `get_doc_content` | Get specific documentation content (Phase 2) |
 | `get_code_tree` | Get codebase structure (Phase 2) |
 | `find_related_docs` | Find documentation related to a code change (Phase 2) |
+
+**Auto-Initialization Behavior:**
+When the MCP server starts via `mcp-stdio` and detects no `.leankg/` or `leankg.yaml` exists in the working directory, it automatically:
+1. Runs init (creates .leankg/ and leankg.yaml)
+2. Runs index on the current directory (indexes source code)
+3. Serves normally
+
+This provides a "plug and play" experience where AI tools can use LeanKG immediately after connecting.
 
 ### 5.3 Web UI Routes
 

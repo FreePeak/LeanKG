@@ -7,6 +7,60 @@ impl ToolRegistry {
     pub fn list_tools() -> Vec<ToolDefinition> {
         vec![
             ToolDefinition {
+                name: "mcp_init".to_string(),
+                description: "Initialize LeanKG project (creates .leankg/ and leankg.yaml)"
+                    .to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path for LeanKG project (default: .leankg)"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "mcp_index".to_string(),
+                description: "Index codebase (mirrors CLI: leankg index)".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to index (default: current directory)"},
+                        "incremental": {"type": "boolean", "description": "Only index changed files (git-based)"},
+                        "lang": {"type": "string", "description": "Filter by language (e.g., go,ts,py,rs)"},
+                        "exclude": {"type": "string", "description": "Exclude patterns (comma-separated)"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "mcp_install".to_string(),
+                description: "Create .mcp.json for MCP client configuration".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "mcp_config_path": {"type": "string", "description": "Path for .mcp.json (default: .mcp.json)"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "mcp_status".to_string(),
+                description: "Show LeanKG index status".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            ToolDefinition {
+                name: "mcp_impact".to_string(),
+                description: "Calculate impact radius (blast radius) for a file".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "file": {"type": "string", "description": "File to analyze"},
+                        "depth": {"type": "integer", "description": "Depth of analysis (default: 3)"}
+                    },
+                    "required": ["file"]
+                }),
+            },
+            ToolDefinition {
                 name: "query_file".to_string(),
                 description: "Find file by name or pattern".to_string(),
                 input_schema: json!({

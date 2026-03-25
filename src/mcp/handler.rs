@@ -13,6 +13,11 @@ impl ToolHandler {
 
     pub async fn execute_tool(&self, tool_name: &str, arguments: &Value) -> Result<Value, String> {
         match tool_name {
+            "mcp_init" => self.mcp_init(arguments),
+            "mcp_index" => self.mcp_index(arguments).await,
+            "mcp_install" => self.mcp_install(arguments),
+            "mcp_status" => self.mcp_status(arguments),
+            "mcp_impact" => self.mcp_impact(arguments),
             "query_file" => self.query_file(arguments),
             "get_dependencies" => self.get_dependencies(arguments),
             "get_dependents" => self.get_dependents(arguments),
@@ -35,6 +40,166 @@ impl ToolHandler {
             "find_related_docs" => self.find_related_docs(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         }
+    }
+
+    fn mcp_init(&self, args: &Value) -> Result<Value, String> {
+        let path = args["path"].as_str().unwrap_or(".leankg");
+
+        std::fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))?;
+
+        let config = crate::config::ProjectConfig::default();
+        let config_yaml = serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)
+            .map_err(|e| format!("Failed to write config: {}", e))?;
+
+        Ok(json!({
+            "success": true,
+            "message": format!("Initialized LeanKG project at {}", path),
+            "path": path
+        }))
+    }
+
+    fn mcp_install(&self, args: &Value) -> Result<Value, String> {
+        let mcp_config_path = args["mcp_config_path"].as_str().unwrap_or(".mcp.json");
+
+        let exe_path = std::env::current_exe().map_err(|e| format!("Failed to get current exe path: {}", e))?;
+
+        let mcp_config = serde_json::json!({
+            "mcpServers": {
+                "leankg": {
+                    "command": exe_path.to_string_lossy().as_ref(),
+                    "args": ["mcp-stdio", "--watch"]
+                }
+            }
+        });
+
+        std::fs::write(mcp_config_path, serde_json::to_string_pretty(&mcp_config).unwrap())
+            .map_err(|e| format!("Failed to write .mcp.json: {}", e))?;
+
+        Ok(json!({
+            "success": true,
+            "message": format!("Created MCP config at {}", mcp_config_path),
+            "path": mcp_config_path
+        }))
+    }
+
+    async fn mcp_index(&self, args: &Value) -> Result<Value, String> {
+        let path = args["path"].as_str().unwrap_or(".");
+        let incremental = args["incremental"].as_bool().unwrap_or(false);
+        let lang = args["lang"].as_str();
+        let exclude = args["exclude"].as_str();
+
+        let db_path = std::path::PathBuf::from(".leankg");
+        tokio::fs::create_dir_all(&db_path).await.map_err(|e| format!("Failed to create .leankg: {}", e))?;
+
+        let exclude_patterns: Vec<String> = exclude
+            .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        let db = crate::db::schema::init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
+        let graph_engine = crate::graph::GraphEngine::new(db);
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        parser_manager.init_parsers().map_err(|e| format!("Parser init error: {}", e))?;
+
+        let files = crate::indexer::find_files_sync(path).map_err(|e| format!("Find files error: {}", e))?;
+
+        let mut indexed = 0;
+        let mut skipped = 0;
+
+        for file_path in &files {
+            if let Some(lang_filter) = lang {
+                let allowed_langs: Vec<&str> = lang_filter.split(',').map(|s| s.trim()).collect();
+                if let Some(ext) = std::path::Path::new(file_path).extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    let lang_map: std::collections::HashMap<&str, &str> = [
+                        ("go", "go"),
+                        ("rs", "rust"),
+                        ("ts", "typescript"),
+                        ("js", "javascript"),
+                        ("py", "python"),
+                    ].iter().cloned().collect();
+                    if let Some(lang_name) = lang_map.get(ext_str.as_str()) {
+                        if !allowed_langs.iter().any(|l| l.to_lowercase() == *lang_name) {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if !exclude_patterns.is_empty() && exclude_patterns.iter().any(|pat| file_path.contains(pat)) {
+                continue;
+            }
+
+            match crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path) {
+                Ok(_) => indexed += 1,
+                Err(_) => skipped += 1,
+            }
+        }
+
+        Ok(json!({
+            "success": true,
+            "message": format!("Indexed {} files, {} skipped", indexed, skipped),
+            "indexed": indexed,
+            "skipped": skipped,
+            "path": path
+        }))
+    }
+
+    fn mcp_status(&self, _args: &Value) -> Result<Value, String> {
+        let db_path = std::path::PathBuf::from(".leankg");
+
+        if !db_path.exists() {
+            return Ok(json!({
+                "initialized": false,
+                "message": "LeanKG not initialized. Run mcp_init first."
+            }));
+        }
+
+        let db = crate::db::schema::init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
+
+        let graph_engine = crate::graph::GraphEngine::new(db.clone());
+        let elements = graph_engine.all_elements().map_err(|e| e.to_string())?;
+        let relationships = graph_engine.all_relationships().map_err(|e| e.to_string())?;
+        let annotations = crate::db::all_business_logic(&db).map_err(|e| e.to_string())?;
+
+        let files = elements.iter().filter(|e| e.element_type == "file").count();
+        let functions = elements.iter().filter(|e| e.element_type == "function").count();
+        let classes = elements.iter().filter(|e| e.element_type == "class").count();
+
+        Ok(json!({
+            "initialized": true,
+            "database": ".leankg",
+            "elements": elements.len(),
+            "relationships": relationships.len(),
+            "files": files,
+            "functions": functions,
+            "classes": classes,
+            "annotations": annotations.len()
+        }))
+    }
+
+    fn mcp_impact(&self, args: &Value) -> Result<Value, String> {
+        let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
+        let depth = args["depth"].as_u64().unwrap_or(3) as u32;
+
+        let db_path = std::path::PathBuf::from(".leankg");
+        let db = crate::db::schema::init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
+        let graph_engine = crate::graph::GraphEngine::new(db);
+        let analyzer = crate::graph::ImpactAnalyzer::new(&graph_engine);
+
+        let result = analyzer.calculate_impact_radius(file, depth).map_err(|e| e.to_string())?;
+
+        Ok(json!({
+            "start_file": result.start_file,
+            "max_depth": result.max_depth,
+            "affected_count": result.affected_elements.len(),
+            "elements": result.affected_elements.iter().map(|e| json!({
+                "qualified_name": e.qualified_name,
+                "name": e.name,
+                "type": e.element_type,
+                "file": e.file_path
+            })).collect::<Vec<_>>()
+        }))
     }
 
     fn query_file(&self, args: &Value) -> Result<Value, String> {

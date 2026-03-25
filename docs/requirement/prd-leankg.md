@@ -6,6 +6,9 @@
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:** 
+- v1.6 - MCP Server Self-Initialization:
+  - US-15: MCP server tools for init/index/install mirroring CLI behavior
+  - US-16: Auto-initialization when MCP server starts without existing project
 - v1.5 - Phase 2 Features:
   - US-10: Documentation-structure mapping (map docs/ directory to codebase)
   - US-11: Enhanced business logic tagging with doc links
@@ -97,6 +100,8 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 | US-12 | As a developer, I want LeanKG to fix impact radius calculation so that it correctly handles qualified names and returns accurate blast radius | Must Have |
 | US-13 | As a developer, I want LeanKG to provide additional MCP tools for docs and pipeline queries so that AI tools have complete context | Should Have |
 | US-14 | As a developer, I want to install LeanKG via npm without requiring Rust on my machine so that I can get started quickly | Must Have |
+| US-15 | As a developer using an AI tool, I want the MCP server to expose init/index/install tools so that I can initialize and index the project via AI tool | Should Have |
+| US-16 | As a developer, I want the MCP server to auto-initialize when it starts without an existing project so that the AI tool can use LeanKG immediately after installation | Should Have |
 
 ---
 
@@ -299,6 +304,20 @@ Supported documentation structure:
 **FR-71:** Binary is installed to npm global bin directory for CLI access
 
 **FR-72:** npm postinstall script handles binary extraction and PATH setup
+
+#### 5.1.14 MCP Server Self-Initialization (Phase 2)
+
+**FR-73:** MCP server exposes tools mirroring CLI commands:
+- `mcp_init` -- Initialize LeanKG project (creates .leankg/, leankg.yaml)
+- `mcp_index` -- Index codebase with options (path, incremental, lang, exclude)
+- `mcp_install` -- Create .mcp.json for MCP client configuration
+- `mcp_status` -- Show index status
+- `mcp_impact` -- Calculate impact radius for a file
+
+**FR-74:** MCP server auto-initialization on startup:
+- When MCP server starts, check if .leankg/ or leankg.yaml exists in working directory
+- If not initialized, automatically run init + index the current directory
+- This provides "plug and play" experience for AI tools
 
 ### 5.2 Non-Functional Requirements
 

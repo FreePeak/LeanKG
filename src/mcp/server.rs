@@ -85,6 +85,8 @@ impl MCPServer {
     }
 
     pub async fn serve_stdio(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.auto_init_if_needed().await?;
+
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.db_path.clone();
             let watch_path = watch_path.clone();
@@ -98,6 +100,54 @@ impl MCPServer {
         let transport = stdio();
         let _running = serve_server(self.clone(), transport).await?;
         futures_util::future::pending().await
+    }
+
+    async fn auto_init_if_needed(&self) -> Result<(), String> {
+        let current_dir = std::env::current_dir().map_err(|e| format!("Failed to get current dir: {}", e))?;
+        let leankg_exists = current_dir.join(".leankg").exists() || current_dir.join("leankg.yaml").exists();
+
+        if leankg_exists {
+            tracing::info!("LeanKG project already initialized at {}", current_dir.display());
+            return Ok(());
+        }
+
+        tracing::info!("LeanKG not found, auto-initializing...");
+
+        std::fs::create_dir_all(".leankg").map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        let config = crate::config::ProjectConfig::default();
+        let config_yaml = serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(current_dir.join(".leankg/leankg.yaml"), config_yaml)
+            .map_err(|e| format!("Failed to write config: {}", e))?;
+
+        tracing::info!("Auto-init: Created .leankg/ and leankg.yaml");
+
+        let db_path = self.db_path.clone();
+        tokio::fs::create_dir_all(&db_path).await.map_err(|e| format!("Failed to create db path: {}", e))?;
+
+        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
+        let graph_engine = crate::graph::GraphEngine::new(db);
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        parser_manager.init_parsers().map_err(|e| format!("Parser init error: {}", e))?;
+
+        let files = crate::indexer::find_files_sync(".").map_err(|e| format!("Find files error: {}", e))?;
+        let mut indexed = 0;
+
+        for file_path in &files {
+            if crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path).is_ok() {
+                indexed += 1;
+            }
+        }
+
+        tracing::info!("Auto-init: Indexed {} files", indexed);
+
+        if let Ok(true) = std::path::Path::new("docs").try_exists() {
+            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(std::path::Path::new("docs"), &graph_engine) {
+                tracing::info!("Auto-init: Indexed {} documents", doc_result.documents.len());
+            }
+        }
+
+        tracing::info!("Auto-init complete");
+        Ok(())
     }
 
     async fn execute_tool(
