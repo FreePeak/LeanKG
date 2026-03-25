@@ -174,7 +174,7 @@
 src/
   cli/       # Commands: init, index, serve, impact, status - WORKING
   config/    # Config loading - WORKING
-  db/        # SurrealDB schema + models - WORKING
+  db/        # CozoDB schema + models - WORKING
   doc/       # Basic markdown generation - PARTIAL
   graph/     # Query engine + BFS - WORKING
   indexer/   # tree-sitter parsing - PARTIAL (no TESTED_BY)
