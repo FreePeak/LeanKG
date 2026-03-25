@@ -7,22 +7,31 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Release to crates.io and create GitHub release
-        uses: release-plz/[email protected]
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - name: Get latest tag
-        id: get_tag
+          fetch-depth: 0 # Fetches all history for tags
+
+      - name: Generate Tag Name
+        id: tag_name
         run: |
-          git fetch --tags
-          LATEST_TAG=$(git describe --tags --abbrev=0)
-          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          # Example: Use a timestamp or read from a version file
+          # Here we use the date and a short commit hash
+          TAG="v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ steps.tag_name.outputs.tag }} \
+            --title "Release ${{ steps.tag_name.outputs.tag }}" \
+            --generate-notes \
+            --target main
 
   build-binaries:
     needs: release
