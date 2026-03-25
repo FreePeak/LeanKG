@@ -206,15 +206,24 @@ leankg serve
 # - "Find all tests for handle_request"
 ```
 
-### Token Savings Example
+### Token Savings Example (Benchmarked)
 
-For a typical code review scenario:
+Real benchmark results from the [Go API Service example](examples/go-api-service/):
 
-| Metric | Without LeanKG | With LeanKG |
-|--------|----------------|-------------|
-| Files scanned | 50+ files | 5-10 files |
-| Token count | ~15,000 tokens | ~500 tokens |
-| **Reduction** | - | **~30x** |
+| Scenario | Without LeanKG | With LeanKG | Savings |
+|----------|----------------|-------------|---------|
+| Impact Analysis | 835 tokens | 13 tokens | **98.4%** |
+| Full Feature Testing | 9,601 tokens | 42 tokens | **99.6%** |
+
+```bash
+# Run the benchmark yourself
+cd examples/go-api-service
+python3 benchmark.py
+```
+
+**Before LeanKG**: AI must scan entire codebase to understand dependencies (~9,600 tokens)
+
+**After LeanKG**: LeanKG provides targeted subgraph with relationships pre-computed (~42 tokens)
 
 ---
 
