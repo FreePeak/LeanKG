@@ -64,6 +64,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Commit Cargo.lock
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Cargo.lock
+          git commit -m "chore: update Cargo.lock" || true
+
       - name: Publish to crates.io
         run: cargo publish
         env:
