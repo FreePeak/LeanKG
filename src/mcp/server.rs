@@ -3,6 +3,7 @@ use crate::graph::GraphEngine;
 use crate::mcp::auth::AuthConfig;
 use crate::mcp::handler::ToolHandler;
 use crate::mcp::tools::ToolRegistry;
+use crate::mcp::watcher::start_watcher;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
@@ -10,13 +11,15 @@ use rmcp::model::{
 };
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct MCPServer {
     auth_config: Arc<RwLock<AuthConfig>>,
-    db_path: std::path::PathBuf,
+    db_path: PathBuf,
     graph_engine: Arc<parking_lot::Mutex<Option<GraphEngine>>>,
+    watch_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -33,6 +36,7 @@ impl Clone for MCPServer {
             auth_config: self.auth_config.clone(),
             db_path: self.db_path.clone(),
             graph_engine: self.graph_engine.clone(),
+            watch_path: self.watch_path.clone(),
         }
     }
 }
@@ -43,6 +47,16 @@ impl MCPServer {
             auth_config: Arc::new(RwLock::new(AuthConfig::default())),
             db_path,
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
+            watch_path: None,
+        }
+    }
+
+    pub fn new_with_watch(db_path: std::path::PathBuf, watch_path: std::path::PathBuf) -> Self {
+        Self {
+            auth_config: Arc::new(RwLock::new(AuthConfig::default())),
+            db_path,
+            graph_engine: Arc::new(parking_lot::Mutex::new(None)),
+            watch_path: Some(watch_path),
         }
     }
 
@@ -71,6 +85,16 @@ impl MCPServer {
     }
 
     pub async fn serve_stdio(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref watch_path) = self.watch_path {
+            let db_path = self.db_path.clone();
+            let watch_path = watch_path.clone();
+            tokio::spawn(async move {
+                let (tx, rx) = tokio::sync::mpsc::channel(100);
+                start_watcher(db_path, watch_path, rx).await;
+                let _ = tx; // silence unused warning
+            });
+            tracing::info!("Auto-indexing enabled for {}", self.watch_path.as_ref().unwrap_or(&std::path::PathBuf::from("?")).display());
+        }
         let transport = stdio();
         let _running = serve_server(self.clone(), transport).await?;
         futures_util::future::pending().await

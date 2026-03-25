@@ -23,7 +23,7 @@ pub struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    if !matches!(args.command, cli::CLICommand::McpStdio) {
+    if !matches!(args.command, cli::CLICommand::McpStdio { watch: _ }) {
         tracing_subscriber::fmt::init();
     }
 
@@ -78,13 +78,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Web server error: {}", e);
             }
         }
-        cli::CLICommand::McpStdio => {
+        cli::CLICommand::McpStdio { watch } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
 
             tokio::fs::create_dir_all(&db_path).await.ok();
 
-            let mcp_server = mcp::MCPServer::new(db_path);
+            let mcp_server = if watch {
+                mcp::MCPServer::new_with_watch(db_path, project_path.clone())
+            } else {
+                mcp::MCPServer::new(db_path)
+            };
             if let Err(e) = mcp_server.serve_stdio().await {
                 eprintln!("MCP stdio server error: {}", e);
             }
@@ -418,7 +422,7 @@ fn install_mcp_config() -> Result<(), Box<dyn std::error::Error>> {
         "mcpServers": {
             "leankg": {
                 "command": exe_path.to_string_lossy().as_ref(),
-                "args": ["mcp-stdio"]
+                "args": ["mcp-stdio", "--watch"]
             }
         }
     });

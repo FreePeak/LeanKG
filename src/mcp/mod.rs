@@ -2,6 +2,7 @@ pub mod auth;
 pub mod handler;
 pub mod server;
 pub mod tools;
+pub mod watcher;
 
 #[allow(unused_imports)]
 pub use auth::*;

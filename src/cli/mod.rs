@@ -42,7 +42,11 @@ pub enum CLICommand {
         web_port: u16,
     },
     /// Start MCP server with stdio transport (for opencode integration)
-    McpStdio,
+    McpStdio {
+        /// Enable auto-indexing with file watcher
+        #[arg(long)]
+        watch: bool,
+    },
     /// Calculate impact radius
     Impact {
         /// File to analyze
