@@ -14,11 +14,11 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - name: Release to crates.io and create GitHub release
-        uses: astral-sh/release-plz@v0.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+       - name: Release to crates.io and create GitHub release
+         uses: release-plz/[email protected]
+         env:
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       - name: Get latest tag
         id: get_tag
         run: |
