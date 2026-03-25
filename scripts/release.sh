@@ -37,6 +37,11 @@ update_version() {
     sed -i '' "s/^version = \".*\"/version = \"$new_version\"/" "$CARGO_TOML"
 }
 
+build_release() {
+    log "Building release binaries..."
+    cargo build --release --quiet
+}
+
 commit_changes() {
     local version="$1"
     log "Committing changes..."
@@ -85,19 +90,21 @@ main() {
 
     if [ "$DRY_RUN" = true ]; then
         log "[DRY RUN] Would update $CARGO_TOML to version $version"
+        log "[DRY RUN] Would build release binaries"
         log "[DRY RUN] Would commit with message 'release v$version'"
         log "[DRY RUN] Would create tag v$version"
         log "[DRY RUN] Would push to origin"
         return
     fi
 
-    log "Building to update Cargo.lock..."
-    cargo build --quiet
+    update_version "$version"
+
+    log "Building release binaries to verify..."
+    build_release
 
     log "Updating Cargo.lock with new version..."
     cargo fetch --quiet
 
-    update_version "$version"
     commit_changes "$version"
     create_tag "$version"
     push_release "$version"
