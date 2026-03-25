@@ -137,7 +137,7 @@ Add to `~/.config/claude/settings.json`:
   "mcpServers": {
     "leankg": {
       "command": "leankg",
-      "args": ["mcp-stdio"]
+      "args": ["mcp-stdio", "--watch"]
     }
   }
 }
@@ -152,7 +152,7 @@ Add to `~/.cursor/mcp.json`:
   "mcpServers": {
     "leankg": {
       "command": "leankg",
-      "args": ["mcp-stdio"]
+      "args": ["mcp-stdio", "--watch"]
     }
   }
 }
@@ -167,7 +167,7 @@ Add to `~/.opencode/mcp.json`:
   "mcpServers": {
     "leankg": {
       "command": "leankg",
-      "args": ["mcp-stdio"]
+      "args": ["mcp-stdio", "--watch"]
     }
   }
 }
@@ -176,10 +176,10 @@ Add to `~/.opencode/mcp.json`:
 ### Starting the MCP Server
 
 ```bash
-# WebSocket mode (default)
-leankg serve --mcp-port 3000
+# Stdio mode with auto-indexing (for local AI tools)
+leankg mcp-stdio --watch
 
-# Stdio mode (for local AI tools)
+# Stdio mode without auto-indexing
 leankg mcp-stdio
 ```
 
