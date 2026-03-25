@@ -24,7 +24,7 @@ jobs:
             artifact: leanKG-macos-x64.tar.gz
           - runs-on: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: leanKG-windows-x64.zip
+            artifact: leanKG-windows-x64.tar.gz
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -40,15 +40,14 @@ jobs:
       - name: Package
         run: |
           mkdir -p release
+          EXT=""
           if [ "${{ matrix.runs-on }}" = "windows-latest" ]; then
-            cp target/${{ matrix.target }}/release/leankg.exe release/leanKG.exe
-            powershell -Command "Compress-Archive -Path release/leanKG.exe -DestinationPath release/${{ matrix.artifact }}"
-            rm release/leanKG.exe
-          else
-            cp target/${{ matrix.target }}/release/leankg release/leanKG
-            tar -czf release/${{ matrix.artifact }} -C release leanKG
-            rm release/leanKG
+            EXT=".exe"
           fi
+          cp target/${{ matrix.target }}/release/leankg$EXT release/leanKG
+          tar -czf release/${{ matrix.artifact }} -C release leanKG
+          rm release/leanKG
+        shell: bash
 
       - uses: softprops/action-gh-release@v2
         with:
