@@ -72,6 +72,6 @@ jobs:
           git commit -m "chore: update Cargo.lock" || true
 
       - name: Publish to crates.io
-        run: cargo publish
+        run: cargo publish --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
