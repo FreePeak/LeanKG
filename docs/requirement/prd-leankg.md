@@ -315,9 +315,12 @@ Supported documentation structure:
 - `mcp_impact` -- Calculate impact radius for a file
 
 **FR-74:** MCP server auto-initialization on startup:
-- When MCP server starts, check if .leankg/ or leankg.yaml exists in working directory
-- If not initialized, automatically run init + index the current directory
+- When MCP server starts, search upward from current directory for project root
+- Project root is identified by: `.leankg/` directory, `leankg.yaml` file, or `.git/` directory
+- If no project markers found, use current directory as project root
+- If not initialized, automatically run init + index in the project root
 - This provides "plug and play" experience for AI tools
+- Gracefully handles read-only filesystems (logs warning instead of crashing)
 
 ### 5.2 Non-Functional Requirements
 
