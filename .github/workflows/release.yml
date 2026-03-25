@@ -9,7 +9,55 @@ permissions:
   contents: write
 
 jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: leanKG-linux-x64.tar.gz
+          - runs-on: macos-latest
+            target: aarch64-apple-darwin
+            artifact: leanKG-macos-arm64.tar.gz
+          - runs-on: macos-latest
+            target: x86_64-apple-darwin
+            artifact: leanKG-macos-x64.tar.gz
+          - runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: leanKG-windows-x64.zip
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          mkdir -p release
+          if [ "${{ matrix.runs-on }}" = "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/leankg.exe release/leanKG.exe
+            powershell -Command "Compress-Archive -Path release/leanKG.exe -DestinationPath release/${{ matrix.artifact }}"
+            rm release/leanKG.exe
+          else
+            cp target/${{ matrix.target }}/release/leankg release/leanKG
+            tar -czf release/${{ matrix.artifact }} -C release leanKG
+            rm release/leanKG
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release/${{ matrix.artifact }}
+
   publish:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,18 +69,3 @@ jobs:
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Build binaries
-        run: |
-          cargo build --release
-          mkdir -p release
-          cp target/release/leankg release/leanKG-linux-x64
-          tar -czf release/leanKG-linux-x64.tar.gz -C release leanKG-linux-x64
-          rm release/leanKG-linux-x64
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            release/leanKG-linux-x64.tar.gz
