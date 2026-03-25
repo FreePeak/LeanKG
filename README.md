@@ -6,11 +6,51 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-6c757d)](README.md#requirements)
+[![crates.io](https://img.shields.io/badge/crates.io-latest-orange)](https://crates.io/crates/leankg)
+[![Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)](https://discord.gg/leankg)
 
 **Lightweight Knowledge Graph for AI-Assisted Development**
 
 LeanKG is a local-first knowledge graph that gives AI coding tools accurate codebase context. It indexes your code, builds dependency graphs, generates documentation, and exposes an MCP server so tools like Cursor, OpenCode, and Claude Code can query the knowledge graph directly. No cloud services, no external databases—everything runs on your machine with minimal resources.
+
+---
+
+## How It Works
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant CLI as LeanKG CLI
+    participant Indexer as Code Indexer
+    participant DB as CozoDB
+    participant MCP as MCP Server
+    participant AI as AI Tool (Claude/Cursor)
+
+    Dev->>CLI: leankg init
+    CLI->>DB: Initialize graph database
+    
+    Dev->>CLI: leankg index ./src
+    CLI->>Indexer: Parse source files
+    Indexer->>Indexer: Extract functions, imports, calls
+    Indexer->>DB: Store code elements & relationships
+    
+    Dev->>CLI: leankg serve
+    CLI->>MCP: Start MCP server
+    
+    AI->>MCP: "What's the impact of changing auth.rs?"
+    MCP->>DB: Query impact radius (N hops)
+    DB-->>MCP: Affected files list
+    MCP-->>AI: Targeted context (13 tokens vs 835)
+    
+    Dev->>CLI: leankg watch
+    CLI->>Index: Watch for file changes
+    Index->>DB: Incremental update
+```
+
+**The Flow:**
+1. **Index** - LeanKG parses your codebase and builds a graph of code elements (functions, classes, modules) and their relationships (imports, calls, tests)
+2. **Query** - AI tools query the graph via MCP instead of scanning files
+3. **Optimize** - Get targeted context with ~99% token reduction
 
 ---
 
@@ -25,6 +65,157 @@ AI coding tools waste tokens scanning entire codebases. LeanKG provides **target
 | **Token count** | 9,600+ tokens for full scan | 13-42 tokens with graph |
 
 **LeanKG achieves 98-99% token reduction** (~100x) as measured on real benchmarks.
+
+---
+
+## Installation
+
+### Quick Install (Recommended)
+
+```bash
+# Install via cargo
+cargo install leankg
+
+# Verify installation
+leankg --version
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/your-org/LeanKG.git
+cd LeanKG
+cargo build --release
+
+# The binary will be at ./target/release/leankg
+```
+
+---
+
+## Quick Start
+
+```bash
+# 1. Initialize LeanKG in your project
+leankg init
+
+# 2. Index your codebase
+leankg index ./src
+
+# 3. Start the MCP server (for AI tools)
+leankg serve
+
+# 4. Compute impact radius for a file
+leankg impact src/main.rs --depth 3
+
+# 5. Check index status
+leankg status
+```
+
+---
+
+## MCP Server Setup
+
+LeanKG exposes a Model Context Protocol (MCP) server that AI tools can connect to.
+
+### Option 1: Automated Setup (Recommended)
+
+```bash
+# Install MCP configuration for your AI tool
+leankg install
+```
+
+This command detects your AI tool (Claude Code, OpenCode, Cursor, etc.) and installs the appropriate MCP configuration.
+
+### Option 2: Manual Setup
+
+#### Claude Code / Claude Desktop
+
+Add to `~/.config/claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "leankg",
+      "args": ["mcp-stdio"]
+    }
+  }
+}
+```
+
+#### Cursor
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "leankg",
+      "args": ["mcp-stdio"]
+    }
+  }
+}
+```
+
+#### OpenCode
+
+Add to `~/.opencode/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "leankg",
+      "args": ["mcp-stdio"]
+    }
+  }
+}
+```
+
+### Starting the MCP Server
+
+```bash
+# WebSocket mode (default)
+leankg serve --mcp-port 3000
+
+# Stdio mode (for local AI tools)
+leankg mcp-stdio
+```
+
+---
+
+## Features
+
+### Core Features
+
+| Feature | Description |
+|---------|-------------|
+| **Code Indexing** | Parse and index Go, TypeScript, Python, and Rust codebases with tree-sitter |
+| **Dependency Graph** | Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges |
+| **Impact Radius** | Compute blast radius for any file to see downstream impact |
+| **Auto Documentation** | Generate markdown docs from code structure automatically |
+| **MCP Server** | Expose the graph via MCP protocol for AI tool integration |
+| **File Watching** | Watch for changes and incrementally update the index |
+| **CLI** | Single binary with init, index, serve, impact, and status commands |
+
+### Business Logic Mapping
+
+| Feature | Description |
+|---------|-------------|
+| **Annotations** | Annotate code elements with business logic descriptions |
+| **Link to Features** | Link code elements to features |
+| **Traceability** | Show feature-to-code traceability |
+| **Find by Domain** | Find code elements by business domain |
+
+### Documentation Mapping
+
+| Feature | Description |
+|---------|-------------|
+| **Docs Structure** | Index docs/ directory structure |
+| **Doc-to-Code Links** | Map documentation references to code elements |
+| **Doc Queries** | Query docs by file, file by doc, doc structure |
+| **Traceability** | Link requirements to code via documentation |
 
 ---
 
@@ -72,174 +263,81 @@ graph TB
 
 ---
 
-## Features
+## CLI Commands
 
-### Core Features
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Code Indexing** | Done | Parse and index Go, TypeScript, Python, and Rust codebases with tree-sitter |
-| **Dependency Graph** | Done | Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges |
-| **Impact Radius** | Done | Compute blast radius for any file to see downstream impact |
-| **Auto Documentation** | Done | Generate markdown docs from code structure automatically |
-| **MCP Server** | Done | Expose the graph via MCP protocol for AI tool integration |
-| **File Watching** | Done | Watch for changes and incrementally update the index |
-| **CLI** | Done | Single binary with init, index, serve, impact, and status commands |
-
-### Business Logic Mapping
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Annotations** | Done | Annotate code elements with business logic descriptions |
-| **Link to Features** | Done | Link code elements to features |
-| **Traceability** | Done | Show feature-to-code traceability |
-| **Find by Domain** | Done | Find code elements by business domain |
-
-### Documentation Mapping (Phase 2)
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Docs Structure** | Done | Index docs/ directory structure (planning, requirement, analysis, design, business, api, ops) |
-| **Doc-to-Code Links** | Done | Map documentation references to code elements |
-| **Doc Queries** | Done | Query docs by file, file by doc, doc structure |
-| **Traceability** | Done | Link requirements to code via documentation |
-
-### Impact Analysis Improvements (Phase 2)
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Qualified Names** | Done | Fixed CALLS relationships to use qualified names |
-| **Impact Cache** | Done | Cache impact radius calculations |
-| **Improved BFS** | Done | Better handling of partial name matches |
-
-### CLI Commands
-
-| Command | Status | Description |
-|---------|--------|-------------|
-| `leankg init` | Done | Initialize LeanKG in the current directory |
-| `leankg index [path]` | Done | Index source files at the given path |
-| `leankg index --incremental` | Done | Only index changed files (git-based) |
-| `leankg index --lang go,ts,py,rs` | Done | Filter by language |
-| `leankg index --exclude vendor,node_modules` | Done | Exclude patterns |
-| `leankg serve` | Done | Start the MCP server (WebSocket) |
-| `leankg serve --mcp-port 3000` | Done | Custom MCP server port |
-| `leankg mcp-stdio` | Done | Start MCP server with stdio transport |
-| `leankg impact <file> --depth N` | Done | Compute blast radius for a file |
-| `leankg status` | Done | Show index statistics and status |
-| `leankg generate` | Done | Generate documentation from the graph |
-| `leankg install` | Done | Auto-install MCP config for AI tools |
-| `leankg watch` | Done | Start file watcher for auto-indexing |
-| `leankg quality --min-lines N` | Done | Find oversized functions by line count |
-| `leankg query <text> --kind name` | Done | Query the knowledge graph |
-| `leankg annotate <element> -d <desc>` | Done | Add business logic annotation |
-| `leankg link <element> <id>` | Done | Link element to feature |
-| `leankg search-annotations <query>` | Done | Search business logic annotations |
-| `leankg show-annotations <element>` | Done | Show annotations for a specific element |
-| `leankg trace --feature <id>` | Done | Show feature-to-code traceability |
-| `leankg find-by-domain <domain>` | Done | Find code by business domain |
-| `leankg export` | Done | Export graph data as JSON |
-| `leankg docs --tree` | Done | Show documentation directory structure |
-| `leankg docs --for <file>` | Done | Show docs referencing a code file |
-| `leankg docs --link <doc> <element>` | Done | Link documentation to code element |
-| `leankg trace <element>` | Done | Show traceability chain for element |
-| `leankg trace --requirement <id>` | Done | Trace code for a requirement |
-
-### MCP Tools
-
-| Tool | Status | Description |
-|------|--------|-------------|
-| `query_file` | Done | Find file by name or pattern |
-| `get_dependencies` | Done | Get file dependencies (direct imports) |
-| `get_dependents` | Done | Get files depending on target |
-| `get_impact_radius` | Done | Get all files affected by change within N hops |
-| `get_review_context` | Done | Generate focused subgraph + structured review prompt |
-| `get_context` | Done | Get AI context for file (minimal, token-optimized) |
-| `find_function` | Done | Locate function definition |
-| `get_call_graph` | Done | Get function call chain (full depth) |
-| `search_code` | Done | Search code elements by name/type |
-| `generate_doc` | Done | Generate documentation for file |
-| `find_large_functions` | Done | Find oversized functions by line count |
-| `get_tested_by` | Done | Get test coverage for a function/file |
-| `get_doc_for_file` | Done | Get documentation files referencing a code element |
-| `get_files_for_doc` | Done | Get code elements referenced in a documentation file |
-| `get_doc_structure` | Done | Get documentation directory structure |
-| `get_traceability` | Done | Get full traceability chain for a code element |
-| `search_by_requirement` | Done | Find code elements related to a requirement |
-| `get_doc_tree` | Done | Get documentation tree structure |
-| `get_code_tree` | Done | Get codebase structure |
-| `find_related_docs` | Done | Find documentation related to a code change |
+| Command | Description |
+|---------|-------------|
+| `leankg init` | Initialize LeanKG in the current directory |
+| `leankg index [path]` | Index source files at the given path |
+| `leankg index --incremental` | Only index changed files (git-based) |
+| `leankg index --lang go,ts,py,rs` | Filter by language |
+| `leankg index --exclude vendor,node_modules` | Exclude patterns |
+| `leankg serve` | Start the MCP server (WebSocket) |
+| `leankg serve --mcp-port 3000` | Custom MCP server port |
+| `leankg mcp-stdio` | Start MCP server with stdio transport |
+| `leankg impact <file> --depth N` | Compute blast radius for a file |
+| `leankg status` | Show index statistics and status |
+| `leankg generate` | Generate documentation from the graph |
+| `leankg install` | Auto-install MCP config for AI tools |
+| `leankg watch` | Start file watcher for auto-indexing |
+| `leankg quality --min-lines N` | Find oversized functions by line count |
+| `leankg query <text> --kind name` | Query the knowledge graph |
+| `leankg annotate <element> -d <desc>` | Add business logic annotation |
+| `leankg link <element> <id>` | Link element to feature |
+| `leankg search-annotations <query>` | Search business logic annotations |
+| `leankg show-annotations <element>` | Show annotations for a specific element |
+| `leankg trace --feature <id>` | Show feature-to-code traceability |
+| `leankg find-by-domain <domain>` | Find code by business domain |
+| `leankg export` | Export graph data as JSON |
+| `leankg docs --tree` | Show documentation directory structure |
+| `leankg docs --for <file>` | Show docs referencing a code file |
+| `leankg docs --link <doc> <element>` | Link documentation to code element |
+| `leankg trace <element>` | Show traceability chain for element |
+| `leankg trace --requirement <id>` | Trace code for a requirement |
 
 ---
 
-## Verification Status (2026-03-25)
+## MCP Tools
 
-All MCP tools, CLI commands, and core modules verified against PRD v1.5. **284 tests passing.**
+| Tool | Description |
+|------|-------------|
+| `query_file` | Find file by name or pattern |
+| `get_dependencies` | Get file dependencies (direct imports) |
+| `get_dependents` | Get files depending on target |
+| `get_impact_radius` | Get all files affected by change within N hops |
+| `get_review_context` | Generate focused subgraph + structured review prompt |
+| `get_context` | Get AI context for file (minimal, token-optimized) |
+| `find_function` | Locate function definition |
+| `get_call_graph` | Get function call chain (full depth) |
+| `search_code` | Search code elements by name/type |
+| `generate_doc` | Generate documentation for file |
+| `find_large_functions` | Find oversized functions by line count |
+| `get_tested_by` | Get test coverage for a function/file |
+| `get_doc_for_file` | Get documentation files referencing a code element |
+| `get_files_for_doc` | Get code elements referenced in a documentation file |
+| `get_doc_structure` | Get documentation directory structure |
+| `get_traceability` | Get full traceability chain for a code element |
+| `search_by_requirement` | Find code elements related to a requirement |
+| `get_doc_tree` | Get documentation tree structure |
+| `get_code_tree` | Get codebase structure |
+| `find_related_docs` | Find documentation related to a code change |
 
-| PRD User Story | Status | Verified |
-|----------------|--------|----------|
-| **US-01**: Auto-indexing with TESTED_BY and incremental indexing | Done | Tests pass |
-| **US-02**: Auto documentation with AGENTS.md and CLAUDE.md | Done | Tests pass |
-| **US-03**: Business logic mapping with traceability | Done | Tests pass |
-| **US-04**: MCP server with all required tools (12 tools) | Done | Tests pass |
-| **US-05**: Full CLI interface (18 commands) | Done | Tests pass |
-| **US-06**: Resource optimization (parser pooling, query caching) | Done | Tests pass |
-| **US-08**: Multi-language support (Go, TypeScript, Python) | Done | Tests pass |
-| **US-09**: Pipeline information extraction | Done | Tests pass |
-| **US-10**: Documentation-structure mapping | In Progress | Implementation started |
-| **US-11**: Enhanced business logic tagging with doc links | In Progress | Implementation started |
-| **US-12**: Impact analysis improvements (qualified name fix) | In Progress | Implementation started |
-| **US-13**: Additional MCP tools for docs and pipeline queries | In Progress | Implementation started |
+---
 
-> **Note**: Web UI (US-07) excluded from verification scope.
-
-## How LeanKG Saves Tokens
-
-### Token Optimization Strategies
-
-1. **Blast Radius Analysis** - Instead of scanning the entire codebase, LeanKG computes the exact scope of impact. When you change a file, `get_impact_radius` tells you exactly which files are affected within N hops.
-
-2. **Structural Context** - Instead of full file contents, LeanKG provides structural summaries:
-   - Function signatures
-   - Import relationships
-   - Call graph paths
-   - TESTED_BY coverage
-
-3. **Targeted Queries** - AI tools can ask specific questions:
-   - "What depends on this file?"
-   - "Which tests cover this function?"
-   - "What's the call chain for this function?"
-
-### Supported AI Tools
+## Supported AI Tools
 
 | Tool | Integration | Status |
 |------|-------------|--------|
-| **Claude Code** | MCP | Supported via `leankg install` |
-| **OpenCode** | MCP | Supported via `leankg install` |
-| **Cursor** | MCP | Supported via `leankg install` |
-| **Google Antigravity** | MCP | Supported via `leankg install` |
-| **Windsurf** | MCP | Supported (MCP compatible) |
-| **Codex** | MCP | Supported (MCP compatible) |
+| **Claude Code** | MCP | ✅ Supported |
+| **OpenCode** | MCP | ✅ Supported |
+| **Cursor** | MCP | ✅ Supported |
+| **Google Antigravity** | MCP | ✅ Supported |
+| **Windsurf** | MCP | ✅ Supported |
+| **Codex** | MCP | ✅ Supported |
 
-### Integration Setup
+---
 
-```bash
-# 1. Initialize and index your project
-leankg init
-leankg index ./src
-
-# 2. Install MCP config for your AI tool
-leankg install
-
-# 3. Start the MCP server
-leankg serve
-
-# 4. In your AI tool, query LeanKG:
-# - "What's the impact radius of src/auth/login.rs?"
-# - "Show me the call graph for validate_user"
-# - "Find all tests for handle_request"
-```
-
-### Token Savings Example (Benchmarked)
+## Token Savings Example (Benchmarked)
 
 Real benchmark results from the [Go API Service example](examples/go-api-service/):
 
@@ -267,78 +365,6 @@ python3 benchmark.py
 
 ---
 
-## Installation
-
-### From Source
-
-```bash
-git clone https://github.com/YOUR_ORG/LeanKG.git
-cd LeanKG
-cargo build --release
-```
-
-The binary will be at `./target/release/leankg`. Add it to your PATH or use `cargo install --path .` for a global install.
-
-### Cargo Install (when published)
-
-```bash
-cargo install leankg
-```
-
----
-
-## Quick Start
-
-```bash
-# 1. Initialize LeanKG in your project
-leankg init
-
-# 2. Index your codebase
-leankg index ./src
-
-# 3. Start the MCP server (for AI tools)
-leankg serve
-
-# 4. Optional: compute impact radius for a file
-leankg impact src/main.rs --depth 3
-
-# 5. Optional: generate documentation
-leankg generate
-
-# 6. Check index status
-leankg status
-
-# 7. Install MCP config for AI tools
-leankg install
-```
-
----
-
-## CLI Reference
-
-| Command | Description |
-|---------|-------------|
-| `leankg init` | Initialize LeanKG in the current directory |
-| `leankg index [path]` | Index source files at the given path |
-| `leankg serve` | Start the MCP server (WebSocket) |
-| `leankg mcp-stdio` | Start MCP server with stdio transport |
-| `leankg impact <file> [--depth N]` | Compute blast radius for a file |
-| `leankg status` | Show index statistics and status |
-| `leankg generate` | Generate documentation from the graph |
-| `leankg install` | Auto-install MCP config for AI tools |
-| `leankg watch` | Start file watcher for auto-indexing |
-| `leankg quality` | Find oversized functions |
-| `leankg query <text>` | Query the knowledge graph |
-| `leankg annotate <element>` | Add business logic annotation |
-| `leankg link <element> <id>` | Link element to feature |
-| `leankg search-annotations` | Search business logic annotations |
-| `leankg show-annotations <element>` | Show annotations for element |
-| `leankg trace` | Show feature-to-code traceability |
-| `leankg find-by-domain` | Find code by business domain |
-| `leankg export` | Export graph data as JSON |
-
----
-
 ## Tech Stack
 
 | Component | Technology |
@@ -348,8 +374,6 @@ leankg install
 | Parsing | tree-sitter |
 | CLI | Clap |
 | Web Server | Axum |
-
-> **Note**: Transitioned storage engine from SurrealDB to embedded CozoDB to strictly minimize RAM usage and utilize Datalog for highly efficient graph traversals.
 
 ---
 
@@ -363,7 +387,7 @@ src/
   doc/       - Documentation generator
   graph/     - Graph query engine
   indexer/   - Code parser (tree-sitter)
-  doc_indexer/ - Documentation indexer (Phase 2)
+  doc_indexer/ - Documentation indexer
   mcp/       - MCP protocol handler
   watcher/   - File change watcher
   web/       - Web server (Axum)
