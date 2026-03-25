@@ -66,6 +66,37 @@ cargo install leankg
 leankg --version
 ```
 
+### One-Line Install (Shell Script)
+
+Install the LeanKG binary and configure MCP for your AI coding tool:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
+```
+
+**Supported targets:**
+
+| Target | AI Tool |
+|--------|---------|
+| `opencode` | OpenCode AI |
+| `cursor` | Cursor AI |
+| `claude` | Claude Code/Desktop |
+| `gemini` | Gemini CLI |
+| `antigravity` | Anti Gravity |
+
+**Examples:**
+
+```bash
+# Install for OpenCode
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- opencode
+
+# Install for Cursor
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
+
+# Install for Claude Code
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- claude
+```
+
 ### Build from Source
 
 ```bash
