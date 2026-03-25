@@ -233,8 +233,7 @@ fn test_cli_generate_with_template() {
 fn test_cli_serve_defaults() {
     let args = TestArgs::try_parse_from(["leankg", "serve"]).unwrap();
     match args.command {
-        CLICommand::Serve { mcp_port, web_port } => {
-            assert_eq!(mcp_port, 3000);
+        CLICommand::Serve { web_port } => {
             assert_eq!(web_port, 8080);
         }
         _ => panic!("expected Serve command"),
@@ -242,19 +241,10 @@ fn test_cli_serve_defaults() {
 }
 
 #[test]
-fn test_cli_serve_custom_ports() {
-    let args = TestArgs::try_parse_from([
-        "leankg",
-        "serve",
-        "--mcp-port",
-        "4000",
-        "--web-port",
-        "9000",
-    ])
-    .unwrap();
+fn test_cli_serve_custom_port() {
+    let args = TestArgs::try_parse_from(["leankg", "serve", "--web-port", "9000"]).unwrap();
     match args.command {
-        CLICommand::Serve { mcp_port, web_port } => {
-            assert_eq!(mcp_port, 4000);
+        CLICommand::Serve { web_port } => {
             assert_eq!(web_port, 9000);
         }
         _ => panic!("expected Serve command"),

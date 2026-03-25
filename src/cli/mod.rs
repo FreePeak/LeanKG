@@ -36,10 +36,8 @@ pub enum CLICommand {
         #[arg(long, short)]
         template: Option<String>,
     },
-    /// Start MCP server
+    /// Start web UI server
     Serve {
-        #[arg(long, default_value = "3000")]
-        mcp_port: u16,
         #[arg(long, default_value = "8080")]
         web_port: u16,
     },

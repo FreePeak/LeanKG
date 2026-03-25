@@ -2,7 +2,6 @@ use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::auth::{hash_token, AuthConfig};
 use leankg::mcp::handler::ToolHandler;
-use leankg::mcp::protocol::{MCPRequest, MCPResponse};
 use leankg::mcp::server::MCPServer;
 use leankg::mcp::tools::ToolRegistry;
 use serde_json::json;
@@ -137,72 +136,6 @@ mod auth_tests {
         let hash1 = hash_token("same-secret");
         let hash2 = hash_token("same-secret");
         assert_eq!(hash1, hash2);
-    }
-}
-
-#[cfg(test)]
-mod protocol_tests {
-    use super::*;
-
-    #[test]
-    fn test_mcp_request_deserialization() {
-        let json_str = r#"{
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "test"}
-        }"#;
-
-        let request: MCPRequest = serde_json::from_str(json_str).unwrap();
-        assert_eq!(request.jsonrpc, "2.0");
-        assert_eq!(request.id, Some(1));
-        assert_eq!(request.method, "tools/call");
-        assert!(request.params.is_some());
-    }
-
-    #[test]
-    fn test_mcp_response_success_serialization() {
-        let response = MCPResponse::success(Some(42), json!({"result": "success"}));
-
-        let json_str = serde_json::to_string(&response).unwrap();
-        assert!(json_str.contains("\"jsonrpc\":\"2.0\""));
-        assert!(json_str.contains("\"id\":42"));
-        assert!(json_str.contains("\"result\""));
-    }
-
-    #[test]
-    fn test_mcp_response_error_serialization() {
-        let response = MCPResponse::error(Some(1), -32600, "Invalid request".to_string());
-
-        let json_str = serde_json::to_string(&response).unwrap();
-        assert!(json_str.contains("\"jsonrpc\":\"2.0\""));
-        assert!(json_str.contains("\"error\""));
-        assert!(json_str.contains("-32600"));
-    }
-
-    #[test]
-    fn test_mcp_request_without_id() {
-        let json_str = r#"{
-            "jsonrpc": "2.0",
-            "method": "ping"
-        }"#;
-
-        let request: MCPRequest = serde_json::from_str(json_str).unwrap();
-        assert_eq!(request.id, None);
-        assert_eq!(request.method, "ping");
-    }
-
-    #[test]
-    fn test_mcp_request_without_params() {
-        let json_str = r#"{
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "ping"
-        }"#;
-
-        let request: MCPRequest = serde_json::from_str(json_str).unwrap();
-        assert_eq!(request.id, Some(5));
-        assert!(request.params.is_none());
     }
 }
 

@@ -9,6 +9,9 @@ build:
 build-release:
 	$(CARGO) build --release
 
+install-release: build-release
+	install -m 755 target/release/leankg $(HOME)/.local/bin/leankg
+
 test:
 	$(CARGO) test
 

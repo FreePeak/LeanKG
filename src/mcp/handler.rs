@@ -423,10 +423,14 @@ impl ToolHandler {
             .iter()
             .filter(|e| e.element_type == "document")
             .map(|e| {
-                let category = e.metadata.get("category")
+                let category = e
+                    .metadata
+                    .get("category")
                     .and_then(|v| v.as_str())
                     .unwrap_or("root");
-                let headings = e.metadata.get("headings")
+                let headings = e
+                    .metadata
+                    .get("headings")
                     .and_then(|v| v.as_array())
                     .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
                     .unwrap_or_default();
@@ -444,23 +448,29 @@ impl ToolHandler {
     }
 
     fn get_traceability(&self, args: &Value) -> Result<Value, String> {
-        let element = args["element"].as_str().ok_or("Missing 'element' parameter")?;
+        let element = args["element"]
+            .as_str()
+            .ok_or("Missing 'element' parameter")?;
 
         let report = self
             .graph_engine
             .get_traceability_report(element)
             .map_err(|e| e.to_string())?;
 
-        let entries: Vec<_> = report.entries
+        let entries: Vec<_> = report
+            .entries
             .iter()
             .map(|e| {
-                let doc_links: Vec<_> = e.doc_links
+                let doc_links: Vec<_> = e
+                    .doc_links
                     .iter()
-                    .map(|d| json!({
-                        "doc": d.doc_qualified,
-                        "title": d.doc_title,
-                        "context": d.context
-                    }))
+                    .map(|d| {
+                        json!({
+                            "doc": d.doc_qualified,
+                            "title": d.doc_title,
+                            "context": d.context
+                        })
+                    })
                     .collect();
                 json!({
                     "element": e.element_qualified,
@@ -476,7 +486,9 @@ impl ToolHandler {
     }
 
     fn search_by_requirement(&self, args: &Value) -> Result<Value, String> {
-        let requirement_id = args["requirement_id"].as_str().ok_or("Missing 'requirement_id' parameter")?;
+        let requirement_id = args["requirement_id"]
+            .as_str()
+            .ok_or("Missing 'requirement_id' parameter")?;
 
         let entries = self
             .graph_engine
@@ -486,12 +498,15 @@ impl ToolHandler {
         let results: Vec<_> = entries
             .iter()
             .map(|e| {
-                let doc_links: Vec<_> = e.doc_links
+                let doc_links: Vec<_> = e
+                    .doc_links
                     .iter()
-                    .map(|d| json!({
-                        "doc": d.doc_qualified,
-                        "title": d.doc_title
-                    }))
+                    .map(|d| {
+                        json!({
+                            "doc": d.doc_qualified,
+                            "title": d.doc_title
+                        })
+                    })
                     .collect();
                 json!({
                     "element": e.element_qualified,
@@ -512,13 +527,18 @@ impl ToolHandler {
 
         let mut tree = serde_json::Map::new();
 
-        for elem in elements.iter().filter(|e| e.element_type == "document" || e.element_type == "doc_section") {
+        for elem in elements
+            .iter()
+            .filter(|e| e.element_type == "document" || e.element_type == "doc_section")
+        {
             let parts: Vec<&str> = elem.qualified_name.split("::").collect();
             if parts.is_empty() {
                 continue;
             }
 
-            let category = elem.metadata.get("category")
+            let category = elem
+                .metadata
+                .get("category")
                 .and_then(|v| v.as_str())
                 .unwrap_or("root");
 
@@ -565,10 +585,13 @@ impl ToolHandler {
             let file_name = parts.last().unwrap_or(&"");
 
             if !tree.contains_key(*file_name) {
-                tree.insert(file_name.to_string(), json!({
-                    "file_path": elem.file_path,
-                    "elements": Vec::<Value>::new()
-                }));
+                tree.insert(
+                    file_name.to_string(),
+                    json!({
+                        "file_path": elem.file_path,
+                        "elements": Vec::<Value>::new()
+                    }),
+                );
             }
 
             if let Some(file_obj) = tree.get_mut(*file_name) {

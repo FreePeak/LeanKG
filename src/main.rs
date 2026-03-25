@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             }
         }
-        cli::CLICommand::Serve { mcp_port, web_port } => {
+        cli::CLICommand::Serve { web_port, .. } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
 
@@ -73,21 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("Starting LeanKG server...");
             println!("Web UI: http://127.0.0.1:{}", web_port);
-            println!("MCP WebSocket: ws://127.0.0.1:{}", mcp_port);
 
-            let mcp_server = mcp::MCPServer::new(db_path.clone());
-            let mcp_addr = std::net::SocketAddr::from(([127, 0, 0, 1], mcp_port));
-            let mcp_handle = tokio::spawn(async move {
-                if let Err(e) = mcp_server.serve_websocket(mcp_addr).await {
-                    eprintln!("MCP server error: {}", e);
-                }
-            });
-
-            if let Err(e) = web::start_server(web_port, db_path.clone()).await {
+            if let Err(e) = web::start_server(web_port, db_path).await {
                 eprintln!("Web server error: {}", e);
             }
-
-            mcp_handle.abort();
         }
         cli::CLICommand::McpStdio => {
             let project_path = find_project_root()?;
