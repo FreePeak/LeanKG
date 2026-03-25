@@ -51,5 +51,5 @@ async-trait = "0.1"
 tempfile = "3"
 
 [dependencies.getrandom]
-version = "0.1.5"
+version = "0.2"
 features = ["js"]
