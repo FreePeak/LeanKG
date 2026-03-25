@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 | `cursor` | Cursor AI | `~/.config/cursor/mcp.json` |
 | `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` |
 | `gemini` | Gemini CLI | `~/.config/gemini-cli/mcp.json` |
-| `antigravity` | Google Antigravity | `~/.config/antigravity/mcp.json` |
+| `antigravity` | Google Antigravity | `~/.gemini/antigravity/mcp_config.json` |
 
 **Examples:**
 
@@ -240,7 +240,7 @@ Add to `~/.config/gemini-cli/mcp.json`:
 
 #### Google Antigravity
 
-Add to `~/.config/antigravity/mcp.json`:
+Add to `~/.gemini/antigravity/mcp_config.json`:
 
 ```json
 {
