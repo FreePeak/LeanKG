@@ -34,7 +34,7 @@ get_current_version() {
 update_version() {
     local new_version="$1"
     log "Updating version in $CARGO_TOML: $(get_current_version) -> $new_version"
-    sed -i '' "s/^version = \".*\"/version = \"$new_version\"/" "$CARGO_TOML"
+    sed -i '' "/^\[package\]/,/^\[/ s/^version = \".*\"/version = \"$new_version\"/" "$CARGO_TOML"
 }
 
 build_release() {
