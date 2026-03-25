@@ -110,10 +110,14 @@ All 12 MCP tools are implemented and respond correctly:
 - **Fix:** Added tree-sitter-rust dependency and Rust parser support, added `use_declaration` and `call_expression` handling
 - **Impact:** Rust relationships now extracted (imports and calls). 262 relationships indexed
 
-### 3. Pre-existing Test Failures
-- Some extractor tests fail due to tree-sitter parser issues (Go interface, Python class/decorator)
-- These appear to be pre-existing issues with the tree-sitter language parsers
-- Not related to our changes
+### 3. Python/Go Parser Tests (FIXED)
+- **Issue:** test_extract_go_interface, test_extract_python_class, test_extract_python_decorator failed
+- **Root Cause:** Missing node type handling in extractor
+- **Fix:** 
+  - Added `class_definition` to Python class node types
+  - Added `interface_type` and `method_elem` detection for Go interfaces
+  - Added `attribute` and `decorated_definition` handling for Python decorators
+- **Impact:** All 70 tests now pass
 
 ---
 
@@ -146,8 +150,8 @@ Location: `/Users/linh.doan/.opencode/mcp.json`
 ## Test Summary
 
 - **Total Tests:** 70
-- **Passed:** 67
-- **Failed:** 3 (pre-existing tree-sitter parser issues with Go interface, Python class/decorator)
+- **Passed:** 70
+- **Failed:** 0
 
 ---
 

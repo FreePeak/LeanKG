@@ -121,8 +121,12 @@ impl<'a> EntityExtractor<'a> {
             | "method_definition" => {
                 self.extract_function(node, parent, elements);
             }
-            "class_declaration" | "type_declaration" | "class_def" | "struct_item" => {
+            "class_declaration" | "type_declaration" | "class_def" | "struct_item"
+            | "class_definition" => {
                 self.extract_class(node, parent, elements);
+            }
+            "decorated_definition" => {
+                self.extract_decorated_definition(node, parent, elements, relationships);
             }
             "type_spec" => {
                 self.extract_type_spec(node, parent, elements, relationships);
@@ -244,9 +248,15 @@ impl<'a> EntityExtractor<'a> {
     }
 
     fn check_if_interface(&self, node: Node) -> bool {
+        if node.kind() == "interface_type" {
+            return true;
+        }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "method_set" {
+            if child.kind() == "method_set" || child.kind() == "method_elem" {
+                return true;
+            }
+            if child.kind() == "interface_type" {
                 return true;
             }
         }
@@ -333,6 +343,46 @@ impl<'a> EntityExtractor<'a> {
                     }
                 }
                 break;
+            }
+            if child.kind() == "attribute" {
+                if let Some(bytes) = self.source.get(child.byte_range()) {
+                    if let Ok(name) = std::str::from_utf8(bytes) {
+                        let qualified_name = format!("{}::@{}", self.file_path, name);
+                        elements.push(CodeElement {
+                            qualified_name: qualified_name.clone(),
+                            element_type: "decorator".to_string(),
+                            name: name.to_string(),
+                            file_path: self.file_path.to_string(),
+                            line_start: node.start_position().row as u32 + 1,
+                            line_end: node.end_position().row as u32 + 1,
+                            language: self.language.to_string(),
+                            parent_qualified: parent.map(String::from),
+                            metadata: serde_json::json!({}),
+                        });
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    fn extract_decorated_definition(
+        &self,
+        node: Node,
+        parent: Option<&str>,
+        elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "decorator" => {
+                    self.extract_decorator(child, parent, elements);
+                }
+                "function_definition" | "function_declaration" => {
+                    self.extract_function(child, parent, elements);
+                }
+                _ => {}
             }
         }
     }
