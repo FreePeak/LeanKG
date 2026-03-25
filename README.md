@@ -78,7 +78,7 @@ graph TB
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **Code Indexing** | Done | Parse and index Go, TypeScript, and Python codebases with tree-sitter |
+| **Code Indexing** | Done | Parse and index Go, TypeScript, Python, and Rust codebases with tree-sitter |
 | **Dependency Graph** | Done | Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges |
 | **Impact Radius** | Done | Compute blast radius for any file to see downstream impact |
 | **Auto Documentation** | Done | Generate markdown docs from code structure automatically |
@@ -102,7 +102,7 @@ graph TB
 | `leankg init` | Done | Initialize LeanKG in the current directory |
 | `leankg index [path]` | Done | Index source files at the given path |
 | `leankg index --incremental` | Done | Only index changed files (git-based) |
-| `leankg index --lang go,ts,py` | Done | Filter by language |
+| `leankg index --lang go,ts,py,rs` | Done | Filter by language |
 | `leankg index --exclude vendor,node_modules` | Done | Exclude patterns |
 | `leankg serve` | Done | Start the MCP server and web UI |
 | `leankg serve --mcp-port 3000` | Done | Custom MCP server port |

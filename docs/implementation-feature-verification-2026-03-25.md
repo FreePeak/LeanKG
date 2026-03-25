@@ -17,7 +17,7 @@ This report documents the verification of LeanKG features against the PRD and HL
 | PRD Requirement | HLD Specification | Status | Evidence |
 |-----------------|-------------------|--------|----------|
 | **FR-01:** Parse source code files | tree-sitter parsers | PASS | 30 files indexed, 281 elements extracted |
-| **FR-02:** Build dependency graph | Graph Engine | PARTIAL | Elements indexed but relationships not extracted for Rust (only Go/TS/Python supported) |
+| **FR-02:** Build dependency graph | Graph Engine | PASS | Rust calls and imports now extracted. 262 relationships indexed |
 | **FR-03:** Multi-language support | Go, TS, Python | PASS | Added Rust support (tree-sitter-rust) |
 | **FR-04:** Incremental indexing | Git-based change detection | PASS | Incremental index command available |
 | **FR-05:** File watching | notify crate | STUB | Watch command shows "ready for implementation" |
@@ -94,15 +94,21 @@ All 12 MCP tools are implemented and respond correctly:
 
 ## Issues Found
 
-### 1. tree-sitter Version Mismatch
+### 1. MCP Timeout on OpenCode (FIXED)
+- **Issue:** MCP server operation timed out after 30000ms
+- **Root Cause:** `execute_tool` created new database connection and GraphEngine for every tool call
+- **Fix:** Cached GraphEngine in MCPServer struct to avoid repeated initialization
+- **Impact:** MCP tools now respond instantly
+
+### 2. tree-sitter Version Mismatch
 - **Issue:** tree-sitter 0.24 vs language parsers at 0.25 caused LanguageError
 - **Fix:** Updated tree-sitter to 0.25 in Cargo.toml
 - **Impact:** Resolved indexing errors
 
-### 2. Rust Support Missing
+### 2. Rust Support Missing (FIXED)
 - **Issue:** Extractor didn't support Rust node types
-- **Fix:** Added tree-sitter-rust dependency and Rust parser support
-- **Note:** Relationships (imports, calls) not extracted for Rust files - only function/class elements
+- **Fix:** Added tree-sitter-rust dependency and Rust parser support, added `use_declaration` and `call_expression` handling
+- **Impact:** Rust relationships now extracted (imports and calls). 262 relationships indexed
 
 ### 3. Pre-existing Test Failures
 - Some extractor tests fail due to tree-sitter parser issues (Go interface, Python class/decorator)
@@ -140,14 +146,14 @@ Location: `/Users/linh.doan/.opencode/mcp.json`
 ## Test Summary
 
 - **Total Tests:** 70
-- **Passed:** 66
-- **Failed:** 4 (pre-existing tree-sitter parser issues)
+- **Passed:** 67
+- **Failed:** 3 (pre-existing tree-sitter parser issues with Go interface, Python class/decorator)
 
 ---
 
 ## Recommendations
 
-1. **Rust Relationships:** Implement Rust-specific node type handling in extractor.rs for imports and calls
+1. **File-level Impact Analysis:** Currently impact works with function qualifiers (e.g., `./src/main.rs::main`). File-level impact (e.g., `./src/main.rs`) needs prefix matching support in CozoDB
 2. **Web UI:** Complete implementation of web handlers for FR-37 to FR-41
 3. **File Watcher:** Implement the watch command using notify crate
 4. **Export:** Implement HTML graph export
