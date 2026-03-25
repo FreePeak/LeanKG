@@ -322,12 +322,12 @@ configure_antigravity() {
             return
         fi
     else
-        echo '{"servers": {}}' > "$config_file"
+        echo '{"mcpServers": {}}' > "$config_file"
     fi
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.servers.leankg = {"command": "leanKG", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leanKG", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
     echo "Configured LeanKG for Anti Gravity at $config_file"
 }
