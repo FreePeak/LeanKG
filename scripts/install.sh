@@ -309,8 +309,8 @@ configure_gemini() {
 }
 
 configure_antigravity() {
-    local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/antigravity"
-    local config_file="$config_dir/mcp.json"
+    local config_dir="$HOME/.gemini/antigravity"
+    local config_file="$config_dir/mcp_config.json"
 
     mkdir -p "$config_dir"
 
