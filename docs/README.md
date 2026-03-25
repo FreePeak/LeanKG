@@ -14,6 +14,6 @@ Lightweight, local-first knowledge graph for AI-assisted development.
 
 ## Quick Links
 
-- **Tech Stack**: Rust + SurrealDB (embedded multi-model graph DB) + tree-sitter
+- **Tech Stack**: Rust + CozoDB (embedded SQLite-backed relational-graph) + tree-sitter
 - **Features**: Code indexing, impact radius analysis, auto documentation, MCP server
 - **Target**: AI coding tools (Cursor, OpenCode, Claude Code)

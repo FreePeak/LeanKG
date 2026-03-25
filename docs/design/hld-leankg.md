@@ -13,6 +13,7 @@
   - Added Pipeline Impact Analysis Flow (Section 3.6)
   - Added pipeline MCP tools and CLI commands
   - Updated C4 diagrams to include pipeline components
+- v1.2.1 - Migrated database from SurrealDB to CozoDB (embedded SQLite-backed relational-graph with Datalog queries)
 - v1.2 - Tech stack: Rust + SurrealDB
 - v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP, per-project DB
 
@@ -45,7 +46,7 @@ graph TB
     subgraph "User's Machine"
         subgraph "LeanKG System"
             KG[LeanKG Application]
-            DB[(SurrealDB<br/>Database)]
+            DB[(CozoDB<br/>Database)]
             KG --- DB
         end
         
@@ -106,7 +107,7 @@ graph TB
         Impact[Impact Analyzer<br/>Blast Radius]
         Qual[Code Quality<br/>Metrics]
         
-        DB[(SurrealDB<br/>Database)]
+        DB[(CozoDB<br/>Database)]
         
         CLI --> Indexer
         CLI --> PipeIdx
@@ -159,7 +160,7 @@ graph TB
 | File Watcher | Monitor file changes | notify (Rust) |
 | Impact Analyzer | Calculate blast radius / impact radius | Rust (BFS traversal) |
 | Code Quality | Detect large functions, code metrics | Rust |
-| SurrealDB | Persistent storage (per-project) | SurrealDB (embedded) |
+| CozoDB | Persistent storage (per-project) | CozoDB (embedded SQLite-backed) |
 
 **Interactions:**
 
@@ -284,7 +285,7 @@ graph TB
         Handler --> Install
     end
     
-    Builder -->|Writes| DB[(SurrealDB)]
+    Builder -->|Writes| DB[(CozoDB)]
     PipeBuilder -->|Writes| DB
     Query -.->|Reads| DB
     Sync -.->|Reads| DB
@@ -350,7 +351,7 @@ graph TB
                 end
                 
                 subgraph "Data Layer"
-                    DB[(SurrealDB<br/>.leankg/graph.db)]
+                    DB[(CozoDB<br/>.leankg/leankg.db)]
                     Cache[Query Cache<br/>In-memory]
                 end
                 
@@ -397,7 +398,7 @@ graph TB
 | Linux x64 | Linux x64 | < 100MB RAM, < 200MB disk |
 | Linux ARM64 | Linux ARM64 | < 100MB RAM, < 200MB disk |
 
-**Database Location:** Per-project at `.leankg/graph.db` (gitignored, portable with project)
+**Database Location:** Per-project at `.leankg/leankg.db` (gitignored, portable with project)
 
 **Processes:**
 
@@ -407,7 +408,7 @@ graph TB
 | HTTP Server | 8080 | Web UI server (optional) |
 | MCP Server | 3000 | MCP protocol endpoint |
 | File Watcher | - | Background notify process |
-| SurrealDB | - | Embedded in-process database |
+| CozoDB | - | Embedded SQLite-backed database |
 
 ---
 
@@ -423,7 +424,7 @@ sequenceDiagram
     participant Parse as Parser
     participant Extract as Entity Extractor
     participant Build as Graph Builder
-    participant DB as SurrealDB
+    participant DB as CozoDB
 
     Dev->>CLI: leankg index ./src
     CLI->>Parse: Parse directory
@@ -447,7 +448,7 @@ sequenceDiagram
     participant Query as Query Processor
     participant Search as Search Engine
     participant Relate as Relationship Engine
-    participant DB as SurrealDB
+    participant DB as CozoDB
 
     AI->>MCP: query_dependencies(file.ts)
     MCP->>Query: Process query
@@ -471,7 +472,7 @@ sequenceDiagram
     participant Doc as Doc Generator
     participant Template as Template Engine
     participant Render as Renderer
-    participant DB as SurrealDB
+    participant DB as CozoDB
 
     Dev->>CLI: leankg generate docs
     CLI->>Doc: Generate all
@@ -490,7 +491,7 @@ sequenceDiagram
     participant AI as AI Tool
     participant MCP as MCP Server
     participant BFS as BFS Traversal
-    participant DB as SurrealDB
+    participant DB as CozoDB
     participant Context as Review Context<br/>Generator
 
     AI->>MCP: get_impact_radius(file.ts, depth=3)
@@ -517,7 +518,7 @@ sequenceDiagram
     participant Parse as Pipeline Parser
     participant Extract as Pipeline Extractor
     participant Build as Pipeline Graph Builder
-    participant DB as SurrealDB
+    participant DB as CozoDB
 
     Dev->>CLI: leankg index ./
     CLI->>Detect: Scan for CI/CD config files
@@ -540,7 +541,7 @@ sequenceDiagram
     participant MCP as MCP Server
     participant BFS as BFS Traversal
     participant PipeImpact as Pipeline Impact Calculator
-    participant DB as SurrealDB
+    participant DB as CozoDB
 
     AI->>MCP: get_impact_radius(src/auth/login.rs, depth=3)
     MCP->>BFS: Calculate source code blast radius
@@ -844,16 +845,17 @@ documentation:
 
 ## 11. Dependencies
 
-### 11.1 Direct Dependencies (Rust + SurrealDB)
+### 11.1 Direct Dependencies (Rust + CozoDB)
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| surrealdb | latest | Embedded multi-model graph database |
-| tree-sitter | latest | Code parsing |
-| clap | latest | CLI framework |
-| notify | latest | File watching |
-| axum | latest | Web server |
-| mcp-protocol | latest | MCP server implementation |
+| cozo | 0.2 | Embedded SQLite-backed relational-graph database |
+| tree-sitter | 0.25 | Code parsing |
+| clap | 4 | CLI framework |
+| notify | 7 | File watching |
+| axum | 0.7 | Web server |
+| tokio | 1 | Async runtime |
+| serde | 1 | Serialization |
 
 ### 11.2 Build Dependencies
 
@@ -887,7 +889,7 @@ documentation:
 ### 12.2 References
 
 - C4 Model: https://c4model.com/
-- SurrealDB: https://github.com/surrealdb/surrealdb (Embedded multi-model graph database)
+- CozoDB: https://github.com/cozodb/cozo (Embedded relational-graph database with Datalog queries)
 - tree-sitter: https://tree-sitter.github.io/tree-sitter/
 - MCP Protocol: https://modelcontextprotocol.io/
 - code-review-graph: https://github.com/tirth8205/code-review-graph (inspiration for impact analysis)

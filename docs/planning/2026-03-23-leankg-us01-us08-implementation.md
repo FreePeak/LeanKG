@@ -2,11 +2,13 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+> **NOTE:** This plan was written before the SurrealDB-to-CozoDB migration (2026-03-25). The actual implementation uses CozoDB (embedded SQLite-backed relational-graph with Datalog queries) instead of SurrealDB.
+
 **Goal:** Implement all 8 high-priority user stories for LeanKG MVP
 
-**Architecture:** LeanKG is a Rust-based knowledge graph system using tree-sitter for parsing, SurrealDB for storage, with CLI and MCP interfaces. Core modules: indexer, graph, db, doc, mcp, cli, web.
+**Architecture:** LeanKG is a Rust-based knowledge graph system using tree-sitter for parsing, CozoDB for storage, with CLI and MCP interfaces. Core modules: indexer, graph, db, doc, mcp, cli, web.
 
-**Tech Stack:** Rust 1.70+, SurrealDB (embedded RocksDB), tree-sitter, Axum, Clap, Tokio
+**Tech Stack:** Rust 1.70+, CozoDB (embedded SQLite-backed), tree-sitter, Axum, Clap, Tokio
 
 ---
 
@@ -15,7 +17,7 @@
 ### Existing Codebase State:
 - **lib.rs/main.rs**: Basic application shell with CLI commands defined
 - **src/cli**: CLI commands (Init, Index, Query, Serve, Impact, Generate, etc.)
-- **src/db**: SurrealDB models and schema functions
+- **src/db**: CozoDB models and schema functions
 - **src/indexer**: ParserManager, EntityExtractor, GitAnalyzer for file indexing
 - **src/graph**: GraphEngine, ImpactAnalyzer, traversal, context modules
 - **src/doc**: DocGenerator and templates
@@ -152,7 +154,7 @@
 1. Review current resource usage patterns
 2. Implement parser pooling in ParserManager
 3. Add query result caching
-4. Optimize SurrealDB connection usage
+4. Optimize CozoDB connection usage
 5. Add memory benchmarks
 6. Verify NFR targets: cold start <2s, indexing >10K LOC/s, query <100ms
 
