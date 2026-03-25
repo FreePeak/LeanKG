@@ -1,10 +1,18 @@
 # LeanKG High Level Design
 
-**Phiên bản:** 1.2  
-**Ngày:** 2026-03-23  
-**Dựa trên:** PRD v1.1  
-**Trạng thái:** Bản nháp  
+**Phien ban:** 1.3  
+**Ngay:** 2026-03-25  
+**Dua tren:** PRD v1.4  
+**Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.3 - Phase 2: Pipeline Information Extraction
+  - Added Pipeline Parser component to Code Indexer
+  - Added pipeline node types (pipeline, pipeline_stage, pipeline_step) to data model
+  - Added pipeline relationship types (triggers, builds, depends_on)
+  - Added Pipeline Indexing Flow (Section 3.5)
+  - Added Pipeline Impact Analysis Flow (Section 3.6)
+  - Added pipeline MCP tools and CLI commands
+  - Updated C4 diagrams to include pipeline components
 - v1.2 - Tech stack: Rust + SurrealDB
 - v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP, per-project DB
 
@@ -91,6 +99,7 @@ graph TB
         Web[Web UI Server<br/>Axum + Leptos]
         
         Indexer[Code Indexer<br/>tree-sitter]
+        PipeIdx[Pipeline Indexer<br/>YAML/Groovy/Make]
         Graph[Graph Engine<br/>Query Processor]
         DocGen[Doc Generator]
         Watcher[File Watcher<br/>notify]
@@ -100,6 +109,7 @@ graph TB
         DB[(SurrealDB<br/>Database)]
         
         CLI --> Indexer
+        CLI --> PipeIdx
         CLI --> Graph
         CLI --> DocGen
         CLI --> Impact
@@ -114,15 +124,19 @@ graph TB
         Web --> Qual
         
         Indexer --> DB
+        PipeIdx --> DB
         Graph --> DB
         DocGen --> DB
         Impact --> DB
         Qual --> DB
         Watcher --> Indexer
+        Watcher --> PipeIdx
     end
     
     Codebase[Codebase<br/>Source Files]
+    PipeFiles[Pipeline Files<br/>CI/CD Configs]
     Indexer -.->|Parses| Codebase
+    PipeIdx -.->|Parses| PipeFiles
     
     Output[Generated<br/>Documentation]
     DocGen --> Output
@@ -139,6 +153,7 @@ graph TB
 | MCP Server | MCP protocol communication | Custom Rust implementation |
 | Web UI Server | HTTP server for UI | Axum + Leptos (Rust) |
 | Code Indexer | Parse source code with tree-sitter | tree-sitter (Rust) |
+| Pipeline Indexer | Parse CI/CD configuration files | YAML/Groovy/Makefile parsers (Rust) |
 | Graph Engine | Query and traverse knowledge graph | Rust |
 | Doc Generator | Generate markdown documentation | Rust templates |
 | File Watcher | Monitor file changes | notify (Rust) |
@@ -148,19 +163,22 @@ graph TB
 
 **Interactions:**
 
-1. **CLI → Indexer:** Developer chạy lệnh index
-2. **CLI → Graph:** Developer query knowledge graph
-3. **CLI → DocGen:** Developer generate documentation
-4. **CLI → Impact:** Developer calculate blast radius
-5. **CLI → Qual:** Developer check code quality metrics
-6. **MCP → Graph:** AI tools query code relationships
-7. **MCP → DocGen:** AI tools retrieve context
-8. **MCP → Impact:** AI tools calculate impact for changes
-9. **Web → Graph:** User browse graph trong browser
-10. **Web → Qual:** User view code quality metrics
-11. **Indexer → DB:** Store parsed code elements
-12. **Watcher → Indexer:** Trigger re-index khi files thay đổi
-13. **Web → HTML:** Generate self-contained HTML graph export
+1. **CLI -> Indexer:** Developer chay lenh index
+2. **CLI -> PipeIdx:** Developer chay lenh index (pipeline files auto-detected)
+3. **CLI -> Graph:** Developer query knowledge graph
+4. **CLI -> DocGen:** Developer generate documentation
+5. **CLI -> Impact:** Developer calculate blast radius (includes pipeline impact)
+6. **CLI -> Qual:** Developer check code quality metrics
+7. **MCP -> Graph:** AI tools query code relationships
+8. **MCP -> DocGen:** AI tools retrieve context
+9. **MCP -> Impact:** AI tools calculate impact for changes (includes pipeline impact)
+10. **Web -> Graph:** User browse graph trong browser
+11. **Web -> Qual:** User view code quality metrics
+12. **Indexer -> DB:** Store parsed code elements
+13. **PipeIdx -> DB:** Store parsed pipeline elements and relationships
+14. **Watcher -> Indexer:** Trigger re-index khi source files thay doi
+15. **Watcher -> PipeIdx:** Trigger re-index khi pipeline files thay doi
+16. **Web -> HTML:** Generate self-contained HTML graph export
 
 ### 2.3 Component Diagram (C4-3)
 
@@ -185,6 +203,31 @@ graph TB
         Extractor --> Builder
     end
     
+    subgraph "Pipeline Indexer"
+        PipeDetect[Pipeline Detector]
+        GHAParser[GitHub Actions Parser]
+        GLParser[GitLab CI Parser]
+        JenkinsParser[Jenkinsfile Parser]
+        MakeParser[Makefile Parser]
+        DockerParser[Dockerfile Parser]
+        PipeExtract[Pipeline Extractor]
+        PipeBuilder[Pipeline Graph Builder]
+        
+        PipeDetect --> GHAParser
+        PipeDetect --> GLParser
+        PipeDetect --> JenkinsParser
+        PipeDetect --> MakeParser
+        PipeDetect --> DockerParser
+        
+        GHAParser --> PipeExtract
+        GLParser --> PipeExtract
+        JenkinsParser --> PipeExtract
+        MakeParser --> PipeExtract
+        DockerParser --> PipeExtract
+        
+        PipeExtract --> PipeBuilder
+    end
+    
     subgraph "Graph Engine"
         Query[Query Processor]
         Search[Search Engine]
@@ -201,9 +244,11 @@ graph TB
         BFS[BFS Traversal]
         Radius[Radius Calculator]
         Context[Review Context<br/>Generator]
+        PipeImpact[Pipeline Impact<br/>Calculator]
         
         BFS --> Radius
         Radius --> Context
+        Radius --> PipeImpact
     end
     
     subgraph "Code Quality"
@@ -240,11 +285,13 @@ graph TB
     end
     
     Builder -->|Writes| DB[(SurrealDB)]
+    PipeBuilder -->|Writes| DB
     Query -.->|Reads| DB
     Sync -.->|Reads| DB
     Tools -.->|Queries| Graph
     BFS -.->|Reads| DB
     Context -.->|Reads| DB
+    PipeImpact -.->|Reads| DB
     Metrics -.->|Reads| DB
 ```
 
@@ -252,12 +299,20 @@ graph TB
 
 | Component | Responsibility |
 |-----------|----------------|
-| Parser Manager | Language detection và parser delegation |
+| Parser Manager | Language detection va parser delegation |
 | Go Parser | Parse Go source files |
 | TS/JS Parser | Parse TypeScript/JavaScript files |
 | Python Parser | Parse Python files |
 | Entity Extractor | Extract functions, classes, imports, TESTED_BY |
-| Graph Builder | Build relationships và store to DB |
+| Graph Builder | Build relationships va store to DB |
+| Pipeline Detector | Auto-detect CI/CD config files by path and naming convention |
+| GitHub Actions Parser | Parse `.github/workflows/*.yml` files |
+| GitLab CI Parser | Parse `.gitlab-ci.yml` files |
+| Jenkinsfile Parser | Parse Jenkinsfile (declarative/scripted) |
+| Makefile Parser | Parse Makefile targets and dependencies |
+| Dockerfile Parser | Parse Dockerfile and docker-compose.yml |
+| Pipeline Extractor | Extract pipeline stages, steps, triggers, artifacts from parsed AST |
+| Pipeline Graph Builder | Build pipeline nodes and relationships (triggers, builds, depends_on) |
 | Query Processor | Process user queries |
 | Search Engine | Search code elements |
 | Relationship Engine | Traverse graph relationships |
@@ -265,13 +320,14 @@ graph TB
 | BFS Traversal | Breadth-first search for blast radius |
 | Radius Calculator | Calculate impact radius in N hops |
 | Review Context Generator | Generate focused subgraph + prompt |
+| Pipeline Impact Calculator | Extend blast radius to include affected pipelines and deployment targets |
 | Metrics Collector | Collect code quality metrics |
 | Large Function Detector | Find oversized functions |
 | High Fan-out Detector | Find functions with many dependencies |
 | Template Engine | Load documentation templates |
 | Markdown Renderer | Render markdown output |
 | Formatter | Format documentation |
-| Doc Sync Manager | Sync docs với code changes |
+| Doc Sync Manager | Sync docs voi code changes |
 | MCP Protocol | Handle MCP protocol messages |
 | Request Handler | Route requests to appropriate tools |
 | Tool Registry | Register available MCP tools |
@@ -451,6 +507,55 @@ sequenceDiagram
     MCP-->>AI: Review context payload
 ```
 
+### 3.5 Pipeline Indexing Flow (Phase 2)
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant CLI as CLI
+    participant Detect as Pipeline Detector
+    participant Parse as Pipeline Parser
+    participant Extract as Pipeline Extractor
+    participant Build as Pipeline Graph Builder
+    participant DB as SurrealDB
+
+    Dev->>CLI: leankg index ./
+    CLI->>Detect: Scan for CI/CD config files
+    Note over Detect: Auto-detect by path:<br/>.github/workflows/*.yml<br/>.gitlab-ci.yml<br/>Jenkinsfile<br/>Makefile<br/>Dockerfile
+    Detect->>Parse: Parse detected files
+    Parse->>Extract: Extract pipeline structure
+    Note over Extract: Extract: pipelines,<br/>stages, steps,<br/>triggers, artifacts,<br/>environment targets
+    Extract->>Build: Build pipeline graph
+    Build->>DB: Store pipeline nodes
+    Build->>DB: Store triggers relationships<br/>(source paths -> pipelines)
+    Build->>DB: Store builds relationships<br/>(stages -> source modules)
+    Build->>DB: Store depends_on relationships<br/>(stage ordering)
+```
+
+### 3.6 Pipeline Impact Analysis Flow (Phase 2)
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Tool
+    participant MCP as MCP Server
+    participant BFS as BFS Traversal
+    participant PipeImpact as Pipeline Impact Calculator
+    participant DB as SurrealDB
+
+    AI->>MCP: get_impact_radius(src/auth/login.rs, depth=3)
+    MCP->>BFS: Calculate source code blast radius
+    BFS->>DB: Find reachable source nodes
+    DB-->>BFS: Affected source elements
+    MCP->>PipeImpact: Calculate pipeline blast radius
+    PipeImpact->>DB: Query triggers relationships<br/>for affected files
+    DB-->>PipeImpact: Matching pipelines
+    PipeImpact->>DB: Query pipeline stages<br/>and deployment targets
+    DB-->>PipeImpact: Affected stages + targets
+    PipeImpact-->>MCP: Combined impact result
+    Note over MCP: Response includes:<br/>- Affected source files<br/>- Triggered pipelines<br/>- Affected stages<br/>- Deployment targets
+    MCP-->>AI: Extended impact payload
+```
+
 ---
 
 ## 4. Data Model
@@ -523,14 +628,31 @@ erDiagram
 
 ### 4.2 Schema Description
 
-| Table | Mô tả |
+| Table | Mo ta |
 |-------|-------|
-| CODE_ELEMENTS | Lưu trữ tất cả code elements (files, functions, classes, imports, exports). PK = qualified_name (`file_path::parent::name`) |
-| RELATIONSHIPS | Quan hệ giữa các elements (imports, calls, implements, contains, tested_by) |
-| BUSINESS_LOGIC | Annotations mô tả business logic của từng element |
+| CODE_ELEMENTS | Luu tru tat ca code elements (files, functions, classes, imports, exports) va pipeline elements (pipelines, stages, steps). PK = qualified_name (`file_path::parent::name`) |
+| RELATIONSHIPS | Quan he giua cac elements: source code (imports, calls, implements, contains, tested_by) va pipeline (triggers, builds, depends_on) |
+| BUSINESS_LOGIC | Annotations mo ta business logic cua tung element |
 | DOCUMENTS | Generated documentation files |
-| USER_STORIES | User stories được map với code |
-| FEATURES | Features được map với code |
+| USER_STORIES | User stories duoc map voi code |
+| FEATURES | Features duoc map voi code |
+
+### 4.3 Pipeline-Specific Node Types (Phase 2)
+
+| Element Type | qualified_name Format | Description | Metadata Fields |
+|-------------|----------------------|-------------|-----------------|
+| `pipeline` | `file_path::pipeline_name` | A CI/CD workflow/pipeline definition | `{ci_platform, trigger_events, branches}` |
+| `pipeline_stage` | `file_path::pipeline_name::stage_name` | A stage/job within a pipeline | `{runner, environment, condition, timeout}` |
+| `pipeline_step` | `file_path::pipeline_name::stage_name::step_name` | An individual step within a stage | `{command, image, artifact_paths}` |
+
+### 4.4 Pipeline-Specific Relationship Types (Phase 2)
+
+| Relationship | Source | Target | Description | Metadata |
+|-------------|--------|--------|-------------|----------|
+| `triggers` | `file` (source path pattern) | `pipeline` | Source file changes trigger this pipeline | `{event_type, branch_filter, path_filter}` |
+| `builds` | `pipeline_stage` | `file` (source module) | Pipeline stage builds/tests this module | `{build_command, test_command}` |
+| `depends_on` | `pipeline_stage` | `pipeline_stage` | Stage execution ordering | `{condition, artifact_dependency}` |
+| `deploys_to` | `pipeline_stage` | (environment name in metadata) | Stage deploys to an environment | `{environment, strategy, region}` |
 
 ---
 
@@ -552,6 +674,8 @@ erDiagram
 | `leankg install` | Auto-generate MCP config for AI tools |
 | `leankg export` | Export graph as self-contained HTML |
 | `leankg quality` | Show code quality metrics (large functions) |
+| `leankg pipeline [file]` | Show pipelines affected by a file change (Phase 2) |
+| `leankg pipeline --list` | List all indexed pipelines and their stages (Phase 2) |
 
 ### 5.2 MCP Tools
 
@@ -569,6 +693,9 @@ erDiagram
 | `generate_doc` | Generate documentation for file |
 | `find_large_functions` | Find oversized functions by line count |
 | `get_tested_by` | Get test coverage for a function/file |
+| `get_pipeline_for_file` | Get pipelines triggered by changes to a file (Phase 2) |
+| `get_pipeline_stages` | List all stages/jobs in a pipeline with their steps (Phase 2) |
+| `get_deployment_targets` | Get environments/targets a file change can reach (Phase 2) |
 
 ### 5.3 Web UI Routes
 
@@ -641,6 +768,17 @@ indexer:
     - "*.ts"
     - "*.py"
 
+pipeline:
+  enabled: true
+  auto_detect: true
+  formats:
+    - github_actions
+    - gitlab_ci
+    - jenkinsfile
+    - makefile
+    - dockerfile
+  custom_paths: []
+
 mcp:
   enabled: true
   port: 3000
@@ -682,6 +820,14 @@ documentation:
 
 ### 10.1 Phase 2 Features
 
+- Pipeline information extraction (US-09)
+  - Pipeline Detector: auto-detect CI/CD config files by path convention
+  - Pipeline Parsers: GitHub Actions (YAML), GitLab CI (YAML), Jenkinsfile (Groovy), Makefile, Dockerfile
+  - Pipeline Graph Builder: create pipeline/stage/step nodes and triggers/builds/depends_on edges
+  - Pipeline Impact Calculator: extend blast radius to include pipeline and deployment targets
+  - Pipeline MCP tools: get_pipeline_for_file, get_pipeline_stages, get_deployment_targets
+  - Pipeline CLI commands: leankg pipeline
+  - Pipeline context in auto-generated docs
 - Web UI improvements
 - Business logic annotations
 - Additional language support (Rust, Java, C#)
@@ -732,6 +878,11 @@ documentation:
 | Impact radius | Same as blast radius - BFS traversal within N hops |
 | Qualified name | Natural node identifier: `file_path::parent::name` |
 | TESTED_BY | Relationship type: test file tests production code |
+| Pipeline | A CI/CD workflow definition parsed into the knowledge graph as a node |
+| Pipeline Stage | A named phase within a pipeline (build, test, deploy) stored as a graph node |
+| Pipeline Step | An individual action within a stage stored as a graph node |
+| Trigger | Relationship linking source file path patterns to pipeline definitions |
+| Pipeline Blast Radius | Extension of impact analysis to include affected pipelines and deployment targets |
 
 ### 12.2 References
 

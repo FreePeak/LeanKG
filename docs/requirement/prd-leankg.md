@@ -1,11 +1,15 @@
 # LeanKG PRD - Product Requirements Document
 
-**Version:** 1.3  
-**Date:** 2026-03-24  
-**Status:** In Progress - MVP Implementation  
+**Version:** 1.4  
+**Date:** 2026-03-25  
+**Status:** In Progress - MVP Implementation + Phase 2 Planning  
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:** 
+- v1.4 - Phase 2: Pipeline Information Extraction (US-09, FR-42 to FR-50)
+  - US-09: Pipeline information extraction from CI/CD configuration files
+  - FR-42 to FR-50: Pipeline parsing, graph integration, impact analysis, and MCP tools
+  - Updated roadmap Phase 2 with pipeline extraction milestones
 - v1.3 - MVP Implementation: US-01 to US-08 implementation started
   - US-01: Auto-indexing with TESTED_BY and incremental indexing
   - US-02: Auto documentation with AGENTS.md and CLAUDE.md templates
@@ -81,6 +85,7 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 | US-06 | As a developer, I want LeanKG to use minimal resources so that it doesn't slow down my machine | Must Have |
 | US-07 | As a developer, I want LeanKG to provide a lightweight UI so that I can explore the knowledge graph visually | Should Have |
 | US-08 | As a developer, I want LeanKG to support multiple languages so that it works with my tech stack | Must Have |
+| US-09 | As a developer, I want LeanKG to extract pipeline information from CI/CD configuration files so that AI tools understand how code flows from commit to deployment | Should Have |
 
 ---
 
@@ -184,6 +189,37 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 
 **FR-41:** Export interactive graph as self-contained HTML file
 
+#### 5.1.8 Pipeline Information Extraction (Phase 2)
+
+**FR-42:** Parse CI/CD configuration files and extract pipeline structure (stages, jobs, steps, triggers, artifacts)
+
+Supported formats:
+- GitHub Actions (`.github/workflows/*.yml`)
+- GitLab CI (`.gitlab-ci.yml`)
+- Jenkinsfile (declarative and scripted)
+- Makefile
+- Dockerfile and docker-compose.yml
+- Azure Pipelines (`azure-pipelines.yml`)
+
+**FR-43:** Build `pipeline` node type in the knowledge graph representing individual pipeline definitions (e.g., `build`, `test`, `deploy`)
+
+**FR-44:** Build `pipeline_stage` and `pipeline_step` node types representing stages/jobs and individual steps within a pipeline
+
+**FR-45:** Extract `triggers` relationships -- which source file changes or branch patterns trigger which pipelines
+
+**FR-46:** Extract `builds` relationships -- which pipeline stages build, test, or deploy which source code modules
+
+**FR-47:** Extract `depends_on` relationships between pipeline stages (job ordering, artifact dependencies)
+
+**FR-48:** Extend impact analysis to include pipeline blast radius -- when a source file changes, report which pipeline stages and deployment targets are affected
+
+**FR-49:** Provide MCP tools for pipeline queries:
+- `get_pipeline_for_file` -- which pipelines are triggered by changes to a file
+- `get_pipeline_stages` -- list all stages/jobs in a pipeline
+- `get_deployment_targets` -- which environments/targets a file change can reach
+
+**FR-50:** Include pipeline context in auto-generated documentation (AGENTS.md, CLAUDE.md) -- list available pipelines, their triggers, and deployment targets so AI tools understand the delivery workflow
+
 ### 5.2 Non-Functional Requirements
 
 #### 5.2.1 Performance
@@ -244,7 +280,7 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 ```
 CodeElement:
   - qualified_name: string (PK) - format: file_path::parent::name
-  - type: file | function | class | import | export
+  - type: file | function | class | import | export | pipeline | pipeline_stage | pipeline_step
   - name: string
   - file_path: string
   - line_start: int
@@ -257,7 +293,7 @@ Relationship:
   - id: integer (PK, auto-increment)
   - source_qualified: string (FK)
   - target_qualified: string (FK)
-  - type: imports | implements | calls | contains | exports | tested_by
+  - type: imports | implements | calls | contains | exports | tested_by | triggers | builds | depends_on
   - metadata: JSON
 
 BusinessLogic:
@@ -344,6 +380,12 @@ The following features are explicitly out of scope for MVP:
 - Documentation generation
 
 ### Phase 2: Enhanced Features (v0.2.0)
+- Pipeline information extraction (US-09, FR-42 to FR-50)
+  - CI/CD config parsing (GitHub Actions, GitLab CI, Jenkinsfile, Makefile, Dockerfile)
+  - Pipeline nodes and relationships in knowledge graph
+  - Pipeline-aware impact analysis (blast radius includes affected pipelines)
+  - MCP tools for pipeline queries
+  - Pipeline context in auto-generated documentation
 - Web UI improvements
 - Business logic annotations
 - More language support
@@ -371,6 +413,10 @@ The following features are explicitly out of scope for MVP:
 | Qualified Name | Natural node identifier: `file_path::parent::name` format |
 | Blast Radius | All files affected by a change within N hops of graph traversal |
 | Impact Radius | Same as blast radius - used to understand scope of modifications |
+| Pipeline | A CI/CD workflow definition (e.g., GitHub Actions workflow, Jenkinsfile) parsed into the knowledge graph |
+| Pipeline Stage | A named phase within a pipeline (e.g., build, test, deploy) |
+| Pipeline Step | An individual action within a stage (e.g., run tests, push image) |
+| Trigger | Relationship between source code paths/branches and pipeline execution |
 
 ### 11.2 References
 
