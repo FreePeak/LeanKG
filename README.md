@@ -22,9 +22,9 @@ AI coding tools waste tokens scanning entire codebases. LeanKG provides **target
 |----------|----------------|-------------|
 | **File review** | Full content of changed files + diff | Blast radius + structural summary |
 | **Impact analysis** | Manually trace dependencies | `get_impact_radius` returns affected files |
-| **Token count** | 10K+ tokens per review | 200-500 tokens with graph |
+| **Token count** | 9,600+ tokens for full scan | 13-42 tokens with graph |
 
-**LeanKG achieves ~10x token reduction** by giving AI tools exactly what they need—nothing more, nothing less.
+**LeanKG achieves 98-99% token reduction** (~100x) as measured on real benchmarks.
 
 ---
 
