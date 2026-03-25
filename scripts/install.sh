@@ -9,20 +9,23 @@ GITHUB_API="https://api.github.com/repos/$REPO/releases/latest"
 
 usage() {
     cat <<EOF
-LeanKG Installer
+LeanKG Installer/Updater
 
-Usage: curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- <target>
+Usage: curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- <command>
 
-Targets:
-  opencode      Configure LeanKG for OpenCode AI
-  cursor        Configure LeanKG for Cursor AI
-  claude        Configure LeanKG for Claude Code/Desktop
-  gemini        Configure LeanKG for Gemini CLI
-  antigravity   Configure LeanKG for Anti Gravity
+Commands:
+  opencode      Install and configure LeanKG for OpenCode AI
+  cursor        Install and configure LeanKG for Cursor AI
+  claude        Install and configure LeanKG for Claude Code/Desktop
+  gemini        Install and configure LeanKG for Gemini CLI
+  antigravity   Install and configure LeanKG for Anti Gravity
+  update        Update LeanKG to the latest version
+  version       Show installed and latest available version
 
 Examples:
   curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- opencode
-  curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- cursor
+  curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- update
+  curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- version
 EOF
 }
 
@@ -65,22 +68,76 @@ get_download_url() {
     echo "https://github.com/$REPO/releases/download/v${version}/${BINARY_NAME}-${platform}.tar.gz"
 }
 
-install_binary() {
-    local platform="$1"
-    local install_type="$2"
+get_installed_version() {
+    local binary_path="${INSTALL_DIR}/${BINARY_NAME}"
+    if [ -x "$binary_path" ]; then
+        "$binary_path" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+    else
+        echo "not installed"
+    fi
+}
 
-    echo "Installing LeanKG for ${platform}..."
+get_latest_version() {
+    curl -fsSL "$GITHUB_API" | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 | sed 's/v//'
+}
 
-    local version
-    version=$(curl -fsSL "$GITHUB_API" | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 | sed 's/v//')
+check_for_updates() {
+    local installed="$1"
+    local latest="$2"
 
-    if [ -z "$version" ]; then
-        echo "Failed to fetch latest version" >&2
-        exit 1
+    if [ "$installed" = "not installed" ]; then
+        echo "not installed"
+        return 1
     fi
 
+    if [ "$installed" != "$latest" ]; then
+        echo "update available: $installed -> $latest"
+        return 1
+    else
+        echo "up to date ($installed)"
+        return 0
+    fi
+}
+
+show_version() {
+    local installed latest
+    installed=$(get_installed_version)
+    latest=$(get_latest_version)
+
+    echo "LeanKG Version Check"
+    echo "-------------------"
+    echo "Installed: $installed"
+    echo "Latest:    $latest"
+
+    if [ "$installed" != "$latest" ] && [ "$installed" != "not installed" ]; then
+        echo ""
+        echo "A new version is available!"
+        echo "Run 'curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- update' to upgrade."
+    fi
+}
+
+update_binary() {
+    local platform="$1"
+    local installed latest
+
+    installed=$(get_installed_version)
+    latest=$(get_latest_version)
+
+    echo "Checking for updates..."
+    echo "Current: $installed"
+    echo "Latest:  $latest"
+
+    if [ "$installed" = "$latest" ]; then
+        echo ""
+        echo "You already have the latest version ($latest)."
+        return 0
+    fi
+
+    echo ""
+    echo "Updating LeanKG for ${platform}..."
+
     local url
-    url=$(get_download_url "$platform" "$version")
+    url=$(get_download_url "$platform" "$latest")
 
     echo "Downloading from $url..."
 
@@ -99,7 +156,47 @@ install_binary() {
     tar -xzf "$tar_path" -C "$INSTALL_DIR"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 
+    echo ""
+    echo "Updated to v$latest"
     echo "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
+}
+
+install_binary() {
+    local platform="$1"
+    local install_type="$2"
+
+    local installed latest
+    installed=$(get_installed_version)
+    latest=$(get_latest_version)
+
+    if [ "$installed" = "$latest" ]; then
+        echo "LeanKG v$latest is already installed."
+        return 0
+    fi
+
+    echo "Installing LeanKG for ${platform}..."
+
+    local url
+    url=$(get_download_url "$platform" "$latest")
+
+    echo "Downloading v$latest from $url..."
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local tar_path="$tmp_dir/binary.tar.gz"
+
+    cleanup() {
+        rm -rf "$tmp_dir"
+    }
+    trap cleanup EXIT
+
+    curl -fsSL -o "$tar_path" "$url"
+
+    mkdir -p "$INSTALL_DIR"
+    tar -xzf "$tar_path" -C "$INSTALL_DIR"
+    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+
+    echo "Installed v$latest to ${INSTALL_DIR}/${BINARY_NAME}"
 
     if [ "$install_type" = "full" ]; then
         echo "Adding ${INSTALL_DIR} to PATH..."
@@ -243,37 +340,47 @@ main() {
     platform=$(detect_platform)
 
     case "$target" in
+        update)
+            update_binary "$platform"
+            exit 0
+            ;;
+        version)
+            show_version
+            exit 0
+            ;;
         opencode|cursor|claude|gemini|antigravity)
             install_binary "$platform" "full"
             ;;
         *)
-            echo "Unknown target: $target" >&2
+            echo "Unknown command: $target" >&2
             usage
             exit 1
             ;;
     esac
 
-    case "$target" in
-        opencode)
-            configure_opencode
-            ;;
-        cursor)
-            configure_cursor
-            ;;
-        claude)
-            configure_claude
-            ;;
-        gemini)
-            configure_gemini
-            ;;
-        antigravity)
-            configure_antigravity
-            ;;
-    esac
+    if [ "$target" != "update" ]; then
+        case "$target" in
+            opencode)
+                configure_opencode
+                ;;
+            cursor)
+                configure_cursor
+                ;;
+            claude)
+                configure_claude
+                ;;
+            gemini)
+                configure_gemini
+                ;;
+            antigravity)
+                configure_antigravity
+                ;;
+        esac
+    fi
 
     echo ""
-    echo "Installation complete!"
     echo "Run 'leanKG --help' to get started."
+    echo "To update later: curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- update"
 }
 
 main "$@"
