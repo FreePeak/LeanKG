@@ -1,6 +1,6 @@
 # LeanKG Implementation Status
 
-**Date:** 2026-03-24 (Updated)
+**Date:** 2026-03-25 (Updated)
 **Status:** MVP Complete
 **Based on:** PRD v1.3 vs Implementation
 
@@ -13,6 +13,11 @@
 **~2 Partially Implemented or Stub** (5%)
 
 Progress this session:
+- Fixed CozoDB 0.2 parsing issues (schema creation conflict and regex operator syntax)
+- Schema initialization now properly checks for existing relations before creating
+- Replaced invalid `=~` operator with `regex_matches()` function calls
+
+Previous progress:
 - Fixed web handler type mismatches (Axum async error handling)
 - Fixed 3 ignored TypeScript parser tests (tree-sitter node type recognition)
 - Reduced clippy warnings from 54 to 25 (web handlers)
@@ -106,9 +111,9 @@ Progress this session:
 src/
 ├── cli/          # CLI commands (init, index, serve, impact, status) - WORKING
 ├── config/       # Project configuration loading - WORKING
-├── db/           # SurrealDB schema + models - WORKING
+├── db/           # CozoDB schema + models - WORKING
 │   ├── mod.rs    # init_db, CRUD functions
-│   ├── schema.rs # BUSINESS_LOGIC table, CRUD for annotations
+│   ├── schema.rs # Schema initialization with relation existence check
 │   └── models.rs # Data models
 ├── doc/          # Documentation generator - WORKING
 │   ├── generator.rs  # Markdown generation
@@ -157,8 +162,8 @@ src/
 ## 4. Build Status
 
 **Build:** Passing
-**Tests:** 66 passed, 3 ignored (TypeScript tests now fixed)
-**Clippy:** 25 warnings (down from 54)
+**Tests:** 209 passed, 1 pre-existing failure (MCP tool registry test unrelated to CozoDB)
+**Clippy:** 38 warnings
 
 ---
 
