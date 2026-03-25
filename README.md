@@ -219,6 +219,78 @@ leankg mcp-stdio
 
 ---
 
+## Auto-Indexing
+
+LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date.
+
+```bash
+# Start file watcher - indexes changes automatically in background
+leankg watch
+
+# Incremental indexing - only re-index changed files (git-based)
+leankg index --incremental
+
+# Filter by language
+leankg index --lang go,ts,py,rs
+
+# Exclude patterns
+leankg index --exclude vendor,node_modules,dist
+```
+
+**How Auto-Indexing Works:**
+
+```mermaid
+graph LR
+    subgraph "File Watcher"
+        FS[File System Events]
+        Git[Git Status]
+        Parse[Parser]
+        DB[(CozoDB)]
+    end
+    
+    FS -->|change detected| Git
+    Git -->|only changed files| Parse
+    Parse -->|update relationships| DB
+    
+    style DB fill:#f9f,stroke:#333
+```
+
+1. **Watch Mode**: `leankg watch` monitors your source directory for file changes
+2. **Git-Based Delta**: Uses `git diff` to detect only modified files
+3. **Incremental Update**: Re-parses only changed files and updates affected relationships
+4. **Background Sync**: Runs in background while you code
+
+---
+
+## Roadmap (Next Phases)
+
+### Phase 2 - Pipeline Integration
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Pipeline Parsing** | Planned | Parse CI/CD config files (GitHub Actions, GitLab CI, Jenkins, Azure) |
+| **Pipeline Graph** | Planned | Build pipeline, stage, step nodes |
+| **Trigger Links** | Planned | Link source file changes to triggered pipelines |
+| **Pipeline Impact** | Planned | Include pipelines in blast radius analysis |
+| **Deployment Targets** | Planned | Track which stages deploy to which environments |
+
+**Supported CI/CD Platforms (Coming Soon):**
+- GitHub Actions (`.github/workflows/*.yml`)
+- GitLab CI (`.gitlab-ci.yml`)
+- Jenkins (`Jenkinsfile`)
+- Azure Pipelines (`azure-pipelines.yml`)
+
+### Future Features
+
+| Feature | Description |
+|---------|-------------|
+| **Semantic Search** | AI-powered code search using embeddings |
+| **Security Analysis** | Detect vulnerable dependencies and patterns |
+| **Cost Estimation** | Cloud resource cost tracking via pipeline data |
+| **Multi-Project** | Index and query across multiple repositories |
+
+---
+
 ## Architecture
 
 ```mermaid
