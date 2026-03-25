@@ -1,10 +1,18 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.3  
+**Phien ban:** 1.4  
 **Ngay:** 2026-03-25  
-**Dua tren:** PRD v1.4  
+**Dua tren:** PRD v1.5  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.4 - Phase 2 Features: Documentation-Structure Mapping, Enhanced Business Logic, Impact Fixes
+  - Added Doc Indexer component for indexing docs/ directory
+  - Added documentation node types (document, doc_section) to data model
+  - Added documentation relationship types (references, documented_by)
+  - Added Doc Indexing Flow (Section 3.7)
+  - Added Traceability Flow (Section 3.8)
+  - Fixed Impact Analysis Flow with qualified name normalization
+  - Added new MCP tools for documentation and traceability queries
 - v1.3 - Phase 2: Pipeline Information Extraction
   - Added Pipeline Parser component to Code Indexer
   - Added pipeline node types (pipeline, pipeline_stage, pipeline_step) to data model
@@ -101,24 +109,29 @@ graph TB
         
         Indexer[Code Indexer<br/>tree-sitter]
         PipeIdx[Pipeline Indexer<br/>YAML/Groovy/Make]
+        DocIdx[Doc Indexer<br/>Markdown Parser]
         Graph[Graph Engine<br/>Query Processor]
         DocGen[Doc Generator]
         Watcher[File Watcher<br/>notify]
         Impact[Impact Analyzer<br/>Blast Radius]
+        Trace[Traceability<br/>Analyzer]
         Qual[Code Quality<br/>Metrics]
         
         DB[(CozoDB<br/>Database)]
         
         CLI --> Indexer
         CLI --> PipeIdx
+        CLI --> DocIdx
         CLI --> Graph
         CLI --> DocGen
         CLI --> Impact
+        CLI --> Trace
         CLI --> Qual
         
         MCP --> Graph
         MCP --> DocGen
         MCP --> Impact
+        MCP --> Trace
         
         Web --> Graph
         Web --> DocGen
@@ -126,18 +139,23 @@ graph TB
         
         Indexer --> DB
         PipeIdx --> DB
+        DocIdx --> DB
         Graph --> DB
         DocGen --> DB
         Impact --> DB
+        Trace --> DB
         Qual --> DB
         Watcher --> Indexer
         Watcher --> PipeIdx
+        Watcher --> DocIdx
     end
     
     Codebase[Codebase<br/>Source Files]
     PipeFiles[Pipeline Files<br/>CI/CD Configs]
+    DocFiles[Doc Files<br/>Markdown/ASCII]
     Indexer -.->|Parses| Codebase
     PipeIdx -.->|Parses| PipeFiles
+    DocIdx -.->|Parses| DocFiles
     
     Output[Generated<br/>Documentation]
     DocGen --> Output
@@ -155,10 +173,12 @@ graph TB
 | Web UI Server | HTTP server for UI | Axum + Leptos (Rust) |
 | Code Indexer | Parse source code with tree-sitter | tree-sitter (Rust) |
 | Pipeline Indexer | Parse CI/CD configuration files | YAML/Groovy/Makefile parsers (Rust) |
+| Doc Indexer | Parse documentation files and extract code references | Markdown parser (Rust) |
 | Graph Engine | Query and traverse knowledge graph | Rust |
 | Doc Generator | Generate markdown documentation | Rust templates |
 | File Watcher | Monitor file changes | notify (Rust) |
 | Impact Analyzer | Calculate blast radius / impact radius | Rust (BFS traversal) |
+| Traceability Analyzer | Trace requirements to code via documentation | Rust |
 | Code Quality | Detect large functions, code metrics | Rust |
 | CozoDB | Persistent storage (per-project) | CozoDB (embedded SQLite-backed) |
 
@@ -229,6 +249,19 @@ graph TB
         PipeExtract --> PipeBuilder
     end
     
+    subgraph "Doc Indexer"
+        DocDetect[Doc Directory Detector]
+        MarkdownParser[Markdown Parser]
+        CodeRefExtract[Code Reference<br/>Extractor]
+        DocBuilder[Doc Graph Builder]
+        TraceLink[Traceability<br/>Linker]
+        
+        DocDetect --> MarkdownParser
+        MarkdownParser --> CodeRefExtract
+        CodeRefExtract --> DocBuilder
+        DocBuilder --> TraceLink
+    end
+    
     subgraph "Graph Engine"
         Query[Query Processor]
         Search[Search Engine]
@@ -243,13 +276,17 @@ graph TB
     
     subgraph "Impact Analyzer"
         BFS[BFS Traversal]
+        QualNorm[Qualified Name<br/>Normalizer]
         Radius[Radius Calculator]
         Context[Review Context<br/>Generator]
         PipeImpact[Pipeline Impact<br/>Calculator]
+        ImpactCache[Impact Cache]
         
-        BFS --> Radius
+        BFS --> QualNorm
+        QualNorm --> Radius
         Radius --> Context
         Radius --> PipeImpact
+        Radius --> ImpactCache
     end
     
     subgraph "Code Quality"
@@ -314,14 +351,21 @@ graph TB
 | Dockerfile Parser | Parse Dockerfile and docker-compose.yml |
 | Pipeline Extractor | Extract pipeline stages, steps, triggers, artifacts from parsed AST |
 | Pipeline Graph Builder | Build pipeline nodes and relationships (triggers, builds, depends_on) |
+| Doc Directory Detector | Auto-detect docs/ subdirectories (planning, requirement, analysis, design, business, api, ops) |
+| Markdown Parser | Parse markdown files and extract structure |
+| Code Reference Extractor | Extract code element references from documentation |
+| Doc Graph Builder | Build document nodes and references/documents relationships |
+| Traceability Linker | Link business logic annotations to documentation |
 | Query Processor | Process user queries |
 | Search Engine | Search code elements |
 | Relationship Engine | Traverse graph relationships |
 | Query Cache | Cache frequent queries |
 | BFS Traversal | Breadth-first search for blast radius |
+| Qualified Name Normalizer | Normalize function names to qualified names for accurate matching |
 | Radius Calculator | Calculate impact radius in N hops |
 | Review Context Generator | Generate focused subgraph + prompt |
 | Pipeline Impact Calculator | Extend blast radius to include affected pipelines and deployment targets |
+| Impact Cache | Cache impact radius calculations |
 | Metrics Collector | Collect code quality metrics |
 | Large Function Detector | Find oversized functions |
 | High Fan-out Detector | Find functions with many dependencies |
@@ -557,6 +601,66 @@ sequenceDiagram
     MCP-->>AI: Extended impact payload
 ```
 
+### 3.7 Doc Indexing Flow (Phase 2)
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant CLI as CLI
+    participant Detect as Doc Directory Detector
+    participant Parse as Markdown Parser
+    participant Extract as Code Reference Extractor
+    participant Build as Doc Graph Builder
+    participant Trace as Traceability Linker
+    participant DB as CozoDB
+
+    Dev->>CLI: leankg index ./
+    CLI->>Detect: Scan for docs/ directory
+    Note over Detect: Auto-detect subdirs:<br/>planning, requirement<br/>analysis, design<br/>business, api, ops
+    Detect->>Parse: Parse markdown files
+    Parse->>Extract: Extract code references
+    Note over Extract: Extract links to:<br/>- Source files (e.g., src/...)<br/>- Qualified names<br/>- Document cross-references
+    Extract->>Build: Build document graph
+    Build->>DB: Store document nodes
+    Build->>DB: Store references relationships<br/>(doc -> code element)
+    Build->>DB: Store documented_by relationships<br/>(code element -> doc)
+    Build->>Trace: Link business logic<br/>to documentation
+    Trace->>DB: Store traceability links
+```
+
+### 3.8 Traceability Flow (Phase 2)
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Tool
+    participant MCP as MCP Server
+    participant Trace as Traceability Analyzer
+    participant DB as CozoDB
+
+    AI->>MCP: get_traceability(src/auth/login.rs)
+    MCP->>Trace: Find traceability chain
+    Trace->>DB: Query business_logic<br/>for element
+    DB-->>Trace: Business logic annotation
+    Trace->>DB: Query documents<br/>referencing this element
+    DB-->>Trace: Document files
+    Trace->>DB: Query user_stories<br/>linked to documents
+    DB-->>Trace: Related user stories
+    Trace-->>MCP: Traceability chain
+    Note over MCP: Response includes:<br/>- Business logic description<br/>- Document files<br/>- Related requirements
+    MCP-->>AI: Full traceability payload
+
+    AI->>MCP: search_by_requirement(US-01)
+    MCP->>Trace: Find code for requirement
+    Trace->>DB: Query user_stories<br/>for US-01
+    DB-->>Trace: US-01 details
+    Trace->>DB: Query business_logic<br/>linked to US-01
+    DB-->>Trace: Code elements
+    Trace->>DB: Query documents<br/>for these elements
+    DB-->>Trace: Related docs
+    Trace-->>MCP: Code-doc chain for US-01
+    MCP-->>AI: Requirement traceability
+```
+
 ---
 
 ## 4. Data Model
@@ -638,7 +742,24 @@ erDiagram
 | USER_STORIES | User stories duoc map voi code |
 | FEATURES | Features duoc map voi code |
 
-### 4.3 Pipeline-Specific Node Types (Phase 2)
+### 4.3 Documentation-Specific Node Types (Phase 2)
+
+| Element Type | qualified_name Format | Description | Metadata Fields |
+|-------------|----------------------|-------------|-----------------|
+| `document` | `docs/path/to/file.md` | A documentation file | `{title, category, headings[], line_count}` |
+| `doc_section` | `docs/path/to/file.md::section_name` | A section within a document | `{level, line_start, line_end}` |
+
+**Category mapping:**
+- `docs/planning/` -> category: "planning"
+- `docs/requirement/` -> category: "requirement"
+- `docs/analysis/` -> category: "analysis"
+- `docs/design/` -> category: "design"
+- `docs/business/` -> category: "business"
+- `docs/api/` -> category: "api"
+- `docs/ops/` -> category: "ops"
+- Custom directories -> category: from directory name
+
+### 4.4 Pipeline-Specific Node Types (Phase 2)
 
 | Element Type | qualified_name Format | Description | Metadata Fields |
 |-------------|----------------------|-------------|-----------------|
@@ -646,7 +767,17 @@ erDiagram
 | `pipeline_stage` | `file_path::pipeline_name::stage_name` | A stage/job within a pipeline | `{runner, environment, condition, timeout}` |
 | `pipeline_step` | `file_path::pipeline_name::stage_name::step_name` | An individual step within a stage | `{command, image, artifact_paths}` |
 
-### 4.4 Pipeline-Specific Relationship Types (Phase 2)
+### 4.4 Documentation-Specific Relationship Types (Phase 2)
+
+| Relationship | Source | Target | Description | Metadata |
+|-------------|--------|--------|-------------|----------|
+| `references` | `document` | `code_element` | Documentation references a code element | `{context, line_number}` |
+| `documented_by` | `code_element` | `document` | Code element is documented by this doc | `{context}` |
+| `contains` | `document` | `document` | Parent document contains child (heading hierarchy) | `{heading_level}` |
+| `linked_to_requirement` | `document` | `user_story` | Document linked to a requirement | `{requirement_id}` |
+| `implements` | `code_element` | `user_story` | Code element implements a requirement | `{user_story_id}` |
+
+### 4.5 Pipeline-Specific Relationship Types (Phase 2)
 
 | Relationship | Source | Target | Description | Metadata |
 |-------------|--------|--------|-------------|----------|
@@ -664,7 +795,7 @@ erDiagram
 | Command | Description |
 |---------|-------------|
 | `leankg init` | Initialize new LeanKG project in .leankg/ |
-| `leankg index [path]` | Index codebase |
+| `leankg index [path]` | Index codebase and documentation |
 | `leankg query <query>` | Query knowledge graph |
 | `leankg generate docs` | Generate documentation |
 | `leankg annotate` | Add business logic annotations |
@@ -677,6 +808,11 @@ erDiagram
 | `leankg quality` | Show code quality metrics (large functions) |
 | `leankg pipeline [file]` | Show pipelines affected by a file change (Phase 2) |
 | `leankg pipeline --list` | List all indexed pipelines and their stages (Phase 2) |
+| `leankg docs --tree` | Show documentation directory structure (Phase 2) |
+| `leankg docs --for <file>` | Show docs referencing a code file (Phase 2) |
+| `leankg docs --link <doc> <element>` | Link documentation to code element (Phase 2) |
+| `leankg trace <element>` | Show traceability chain for element (Phase 2) |
+| `leankg trace --requirement <id>` | Trace code for a requirement (Phase 2) |
 
 ### 5.2 MCP Tools
 
@@ -697,6 +833,15 @@ erDiagram
 | `get_pipeline_for_file` | Get pipelines triggered by changes to a file (Phase 2) |
 | `get_pipeline_stages` | List all stages/jobs in a pipeline with their steps (Phase 2) |
 | `get_deployment_targets` | Get environments/targets a file change can reach (Phase 2) |
+| `get_doc_for_file` | Get documentation files that reference a code element (Phase 2) |
+| `get_files_for_doc` | Get code elements referenced in a documentation file (Phase 2) |
+| `get_doc_structure` | Get documentation directory structure (Phase 2) |
+| `get_traceability` | Get full traceability chain for a code element (Phase 2) |
+| `search_by_requirement` | Find code elements related to a specific requirement (Phase 2) |
+| `get_doc_tree` | Get documentation tree structure with hierarchy (Phase 2) |
+| `get_doc_content` | Get specific documentation content (Phase 2) |
+| `get_code_tree` | Get codebase structure (Phase 2) |
+| `find_related_docs` | Find documentation related to a code change (Phase 2) |
 
 ### 5.3 Web UI Routes
 
@@ -829,8 +974,25 @@ documentation:
   - Pipeline MCP tools: get_pipeline_for_file, get_pipeline_stages, get_deployment_targets
   - Pipeline CLI commands: leankg pipeline
   - Pipeline context in auto-generated docs
+- Documentation-structure mapping (US-10)
+  - Doc Directory Detector: auto-detect docs/ subdirectories
+  - Markdown Parser: parse markdown and extract structure
+  - Code Reference Extractor: find code element references in docs
+  - Doc Graph Builder: create document nodes and references relationships
+  - Doc MCP tools: get_doc_for_file, get_files_for_doc, get_doc_structure, get_doc_tree, get_doc_content
+  - Doc CLI commands: leankg docs
+- Enhanced business logic tagging (US-11)
+  - Traceability Linker: link business logic annotations to documentation
+  - Traceability MCP tools: get_traceability, search_by_requirement, find_related_docs
+  - Traceability CLI commands: leankg trace
+- Impact analysis improvements (US-12)
+  - Qualified Name Normalizer: fix CALLS relationships to use qualified names
+  - Impact Cache: cache impact radius calculations
+  - Improved BFS traversal with partial name matching
+- Additional MCP tools (US-13)
+  - get_code_tree: retrieve codebase structure
+  - find_related_docs: find docs related to code change
 - Web UI improvements
-- Business logic annotations
 - Additional language support (Rust, Java, C#)
 - Incremental indexing optimization
 
@@ -871,7 +1033,7 @@ documentation:
 ### 12.1 Glossary
 
 | Term | Definition |
-|------|------------|
+|------|-------------|
 | Container | Executable process in C4 model |
 | Component | Internal module của container |
 | Code element | File, function, class, import trong codebase |
@@ -885,6 +1047,12 @@ documentation:
 | Pipeline Step | An individual action within a stage stored as a graph node |
 | Trigger | Relationship linking source file path patterns to pipeline definitions |
 | Pipeline Blast Radius | Extension of impact analysis to include affected pipelines and deployment targets |
+| Document | A documentation file (markdown, ascii doc) indexed into the knowledge graph |
+| Doc Section | A section/heading within a document |
+| Documentation Mapping | Linking documentation files to code elements they reference |
+| Code Reference | A link from documentation to a code element (file, function, etc.) |
+| Traceability | Chain linking requirements -> documentation -> code elements |
+| Qualified Name Normalizer | Component that converts bare function names to qualified names for accurate matching |
 
 ### 12.2 References
 

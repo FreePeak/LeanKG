@@ -1,11 +1,16 @@
 # LeanKG PRD - Product Requirements Document
 
-**Version:** 1.4  
+**Version:** 1.5  
 **Date:** 2026-03-25  
-**Status:** In Progress - MVP Implementation + Phase 2 Planning  
+**Status:** In Progress - Phase 2 Features Implementation  
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:** 
+- v1.5 - Phase 2 Features:
+  - US-10: Documentation-structure mapping (map docs/ directory to codebase)
+  - US-11: Enhanced business logic tagging with doc links
+  - US-12: Impact analysis improvements (fix qualified name mismatch)
+  - US-13: Additional MCP tools for docs and pipeline queries
 - v1.4 - Phase 2: Pipeline Information Extraction (US-09, FR-42 to FR-50)
   - US-09: Pipeline information extraction from CI/CD configuration files
   - FR-42 to FR-50: Pipeline parsing, graph integration, impact analysis, and MCP tools
@@ -87,6 +92,10 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 | US-07 | As a developer, I want LeanKG to provide a lightweight UI so that I can explore the knowledge graph visually | Should Have |
 | US-08 | As a developer, I want LeanKG to support multiple languages so that it works with my tech stack | Must Have |
 | US-09 | As a developer, I want LeanKG to extract pipeline information from CI/CD configuration files so that AI tools understand how code flows from commit to deployment | Should Have |
+| US-10 | As a developer, I want LeanKG to map documentation structure to codebase elements so that AI understands which docs relate to which code | Should Have |
+| US-11 | As a developer, I want LeanKG to enhance business logic tagging with doc links so that I can trace requirements to implementation | Should Have |
+| US-12 | As a developer, I want LeanKG to fix impact radius calculation so that it correctly handles qualified names and returns accurate blast radius | Must Have |
+| US-13 | As a developer, I want LeanKG to provide additional MCP tools for docs and pipeline queries so that AI tools have complete context | Should Have |
 
 ---
 
@@ -220,6 +229,65 @@ Supported formats:
 - `get_deployment_targets` -- which environments/targets a file change can reach
 
 **FR-50:** Include pipeline context in auto-generated documentation (AGENTS.md, CLAUDE.md) -- list available pipelines, their triggers, and deployment targets so AI tools understand the delivery workflow
+
+#### 5.1.9 Documentation-Structure Mapping (Phase 2)
+
+**FR-51:** Index documentation directory structure and parse markdown files
+
+Supported documentation structure:
+- `docs/planning/` - Planning documents (feature plans, roadmaps)
+- `docs/requirement/` - Requirements documents (PRDs, specifications)
+- `docs/analysis/` - Analysis documents (research, investigation)
+- `docs/design/` - Design documents (HLDs, technical designs)
+- `docs/business/` - Business logic documents
+- `docs/api/` - API documentation
+- `docs/ops/` - Operations guides (runbooks, deployment)
+- Custom directories as configured
+
+**FR-52:** Create `document` node type in the knowledge graph representing documentation files
+
+**FR-53:** Extract `references` relationships -- which code elements are referenced in documentation
+
+**FR-54:** Extract `documents` relationships -- which documentation files describe which code elements
+
+**FR-55:** Build hierarchical `contains` relationships for documentation directory structure
+
+**FR-56:** Provide MCP tools for documentation queries:
+- `get_doc_for_file` -- which documentation files reference a code element
+- `get_files_for_doc` -- which code elements are referenced in a documentation file
+- `get_doc_structure` -- return documentation directory structure
+
+#### 5.1.10 Enhanced Business Logic Tagging (Phase 2)
+
+**FR-57:** Extend business logic annotations to include documentation references
+
+**FR-58:** Support linking business logic annotations to specific documentation files
+
+**FR-59:** Generate traceability reports linking requirements to code to documentation
+
+**FR-60:** Provide MCP tools for traceability:
+- `get_traceability` -- get full traceability chain for a code element (requirement -> doc -> code)
+- `search_by_requirement` -- find code elements related to a specific requirement
+
+#### 5.1.11 Impact Analysis Improvements (Phase 2)
+
+**FR-61:** Fix qualified name mismatch in impact radius calculation (currently calls relationships store bare function names, not qualified names)
+
+**FR-62:** Normalize function names when building CALLS relationships to use qualified names
+
+**FR-63:** Improve BFS traversal to handle partial name matches
+
+**FR-64:** Add caching for impact radius calculations
+
+#### 5.1.12 Additional MCP Tools (Phase 2)
+
+**FR-65:** Add MCP tool `get_doc_tree` to retrieve documentation structure
+
+**FR-66:** Add MCP tool `get_doc_content` to retrieve specific documentation content
+
+**FR-67:** Add MCP tool `get_code_tree` to retrieve codebase structure
+
+**FR-68:** Add MCP tool `find_related_docs` to find documentation related to a code change
 
 ### 5.2 Non-Functional Requirements
 
@@ -385,8 +453,23 @@ The following features are explicitly out of scope for MVP:
   - Pipeline-aware impact analysis (blast radius includes affected pipelines)
   - MCP tools for pipeline queries
   - Pipeline context in auto-generated documentation
+- Documentation-structure mapping (US-10, FR-51 to FR-56)
+  - Index docs/ directory structure to knowledge graph
+  - Map documentation to code elements via references/documents relationships
+  - MCP tools for documentation queries
+- Enhanced business logic tagging (US-11, FR-57 to FR-60)
+  - Link business logic annotations to documentation
+  - Traceability reports (requirement -> doc -> code)
+  - MCP tools for traceability queries
+- Impact analysis improvements (US-12, FR-61 to FR-64)
+  - Fix qualified name mismatch in CALLS relationships
+  - Improve BFS traversal with partial name matching
+  - Add caching for impact radius
+- Additional MCP tools (US-13, FR-65 to FR-68)
+  - Documentation structure and content tools
+  - Codebase structure tools
+  - Related docs finder
 - Web UI improvements
-- Business logic annotations
 - More language support
 - Incremental indexing optimization
 
@@ -416,6 +499,9 @@ The following features are explicitly out of scope for MVP:
 | Pipeline Stage | A named phase within a pipeline (e.g., build, test, deploy) |
 | Pipeline Step | An individual action within a stage (e.g., run tests, push image) |
 | Trigger | Relationship between source code paths/branches and pipeline execution |
+| Documentation Mapping | Linking documentation files to code elements they reference |
+| Traceability | Chain linking requirements -> documentation -> code elements |
+| Blast Radius | All files affected by a change (also called impact radius) |
 
 ### 11.2 References
 
