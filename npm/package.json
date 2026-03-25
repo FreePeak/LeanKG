@@ -1,6 +1,6 @@
 {
   "name": "leankg",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lightweight Knowledge Graph for AI-Assisted Development - MCP Server and CLI",
   "keywords": [
     "knowledge-graph",
