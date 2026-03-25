@@ -70,10 +70,24 @@ AI coding tools waste tokens scanning entire codebases. LeanKG provides **target
 
 ## Installation
 
-### Quick Install (Recommended)
+### Quick Install via npm (Recommended - No Rust Required)
 
 ```bash
-# Install via cargo
+# Install via npm (works on any machine with Node.js)
+npm install -g leankg
+
+# Verify installation
+leankg --version
+```
+
+This is the easiest way to get started - no Rust toolchain required. The npm package downloads pre-built binaries for your platform.
+
+**Supported platforms:** macOS (x64, ARM64), Linux (x64, ARM64)
+
+### Install via Cargo
+
+```bash
+# Requires Rust installed
 cargo install leankg
 
 # Verify installation
@@ -432,7 +446,12 @@ python3 benchmark.py
 
 ## Requirements
 
-- **Rust** 1.70+ (for building from source)
+### For npm installation (Recommended)
+- **Node.js** 18+ (for npm installation)
+- **npm** 8+
+
+### For building from source
+- **Rust** 1.70+
 - **Platforms**: macOS, Linux
 
 ---
@@ -446,6 +465,7 @@ python3 benchmark.py
 | Parsing | tree-sitter |
 | CLI | Clap |
 | Web Server | Axum |
+| Installer | Node.js (npm package for binary distribution) |
 
 ---
 

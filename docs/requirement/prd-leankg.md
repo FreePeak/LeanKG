@@ -96,6 +96,7 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 | US-11 | As a developer, I want LeanKG to enhance business logic tagging with doc links so that I can trace requirements to implementation | Should Have |
 | US-12 | As a developer, I want LeanKG to fix impact radius calculation so that it correctly handles qualified names and returns accurate blast radius | Must Have |
 | US-13 | As a developer, I want LeanKG to provide additional MCP tools for docs and pipeline queries so that AI tools have complete context | Should Have |
+| US-14 | As a developer, I want to install LeanKG via npm without requiring Rust on my machine so that I can get started quickly | Must Have |
 
 ---
 
@@ -288,6 +289,16 @@ Supported documentation structure:
 **FR-67:** Add MCP tool `get_code_tree` to retrieve codebase structure
 
 **FR-68:** Add MCP tool `find_related_docs` to find documentation related to a code change
+
+#### 5.1.13 NPM-Based Installation (Phase 2)
+
+**FR-69:** Provide npm package (`leankg`) that downloads pre-built binaries for supported platforms (macOS x64, macOS ARM64, Linux x64, Linux ARM64)
+
+**FR-70:** npm package auto-detects user's platform and downloads the correct binary
+
+**FR-71:** Binary is installed to npm global bin directory for CLI access
+
+**FR-72:** npm postinstall script handles binary extraction and PATH setup
 
 ### 5.2 Non-Functional Requirements
 
