@@ -95,6 +95,23 @@ graph TB
 | **Traceability** | Done | Show feature-to-code traceability |
 | **Find by Domain** | Done | Find code elements by business domain |
 
+### Documentation Mapping (Phase 2)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Docs Structure** | Done | Index docs/ directory structure (planning, requirement, analysis, design, business, api, ops) |
+| **Doc-to-Code Links** | Done | Map documentation references to code elements |
+| **Doc Queries** | Done | Query docs by file, file by doc, doc structure |
+| **Traceability** | Done | Link requirements to code via documentation |
+
+### Impact Analysis Improvements (Phase 2)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Qualified Names** | Done | Fixed CALLS relationships to use qualified names |
+| **Impact Cache** | Done | Cache impact radius calculations |
+| **Improved BFS** | Done | Better handling of partial name matches |
+
 ### CLI Commands
 
 | Command | Status | Description |
@@ -121,6 +138,11 @@ graph TB
 | `leankg trace --feature <id>` | Done | Show feature-to-code traceability |
 | `leankg find-by-domain <domain>` | Done | Find code by business domain |
 | `leankg export` | Done | Export graph data as JSON |
+| `leankg docs --tree` | Done | Show documentation directory structure |
+| `leankg docs --for <file>` | Done | Show docs referencing a code file |
+| `leankg docs --link <doc> <element>` | Done | Link documentation to code element |
+| `leankg trace <element>` | Done | Show traceability chain for element |
+| `leankg trace --requirement <id>` | Done | Trace code for a requirement |
 
 ### MCP Tools
 
@@ -138,8 +160,37 @@ graph TB
 | `generate_doc` | Done | Generate documentation for file |
 | `find_large_functions` | Done | Find oversized functions by line count |
 | `get_tested_by` | Done | Get test coverage for a function/file |
+| `get_doc_for_file` | Done | Get documentation files referencing a code element |
+| `get_files_for_doc` | Done | Get code elements referenced in a documentation file |
+| `get_doc_structure` | Done | Get documentation directory structure |
+| `get_traceability` | Done | Get full traceability chain for a code element |
+| `search_by_requirement` | Done | Find code elements related to a requirement |
+| `get_doc_tree` | Done | Get documentation tree structure |
+| `get_code_tree` | Done | Get codebase structure |
+| `find_related_docs` | Done | Find documentation related to a code change |
 
 ---
+
+## Verification Status (2026-03-25)
+
+All MCP tools, CLI commands, and core modules verified against PRD v1.5. **284 tests passing.**
+
+| PRD User Story | Status | Verified |
+|----------------|--------|----------|
+| **US-01**: Auto-indexing with TESTED_BY and incremental indexing | Done | Tests pass |
+| **US-02**: Auto documentation with AGENTS.md and CLAUDE.md | Done | Tests pass |
+| **US-03**: Business logic mapping with traceability | Done | Tests pass |
+| **US-04**: MCP server with all required tools (12 tools) | Done | Tests pass |
+| **US-05**: Full CLI interface (18 commands) | Done | Tests pass |
+| **US-06**: Resource optimization (parser pooling, query caching) | Done | Tests pass |
+| **US-08**: Multi-language support (Go, TypeScript, Python) | Done | Tests pass |
+| **US-09**: Pipeline information extraction | Done | Tests pass |
+| **US-10**: Documentation-structure mapping | In Progress | Implementation started |
+| **US-11**: Enhanced business logic tagging with doc links | In Progress | Implementation started |
+| **US-12**: Impact analysis improvements (qualified name fix) | In Progress | Implementation started |
+| **US-13**: Additional MCP tools for docs and pipeline queries | In Progress | Implementation started |
+
+> **Note**: Web UI (US-07) excluded from verification scope.
 
 ## How LeanKG Saves Tokens
 
@@ -312,9 +363,17 @@ src/
   doc/       - Documentation generator
   graph/     - Graph query engine
   indexer/   - Code parser (tree-sitter)
+  doc_indexer/ - Documentation indexer (Phase 2)
   mcp/       - MCP protocol handler
   watcher/   - File change watcher
   web/       - Web server (Axum)
+
+docs/
+  planning/      - Planning documents
+  requirement/    - Requirements documents (PRD)
+  analysis/       - Analysis documents
+  design/         - Design documents (HLD)
+  business/       - Business logic documents
 ```
 
 ---
