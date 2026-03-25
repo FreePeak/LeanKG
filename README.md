@@ -401,6 +401,11 @@ graph TB
 
 | Tool | Description |
 |------|-------------|
+| `mcp_init` | Initialize LeanKG project (creates .leankg/, leankg.yaml) |
+| `mcp_index` | Index codebase (path, incremental, lang, exclude options) |
+| `mcp_install` | Create .mcp.json for MCP client configuration |
+| `mcp_status` | Show index statistics and status |
+| `mcp_impact` | Calculate blast radius for a file |
 | `query_file` | Find file by name or pattern |
 | `get_dependencies` | Get file dependencies (direct imports) |
 | `get_dependents` | Get files depending on target |
@@ -421,6 +426,8 @@ graph TB
 | `get_doc_tree` | Get documentation tree structure |
 | `get_code_tree` | Get codebase structure |
 | `find_related_docs` | Find documentation related to a code change |
+
+**Auto-Initialization:** When the MCP server starts without an existing LeanKG project, it automatically initializes and indexes the current directory. This provides a "plug and play" experience for AI tools.
 
 ---
 
