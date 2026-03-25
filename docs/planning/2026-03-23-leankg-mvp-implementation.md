@@ -2,11 +2,13 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build a lightweight, local-first knowledge graph for AI-assisted development with Rust + SurrealDB.
+> **NOTE:** This plan was written before the SurrealDB-to-CozoDB migration (2026-03-25). The actual implementation uses CozoDB (embedded SQLite-backed relational-graph with Datalog queries) instead of SurrealDB. See `docs/analysis/cozodb-parsing-fix-2026-03-25.md` for migration details.
 
-**Architecture:** LeanKG is a single-binary application that indexes codebases using tree-sitter, stores relationships in SurrealDB as an embedded graph, and exposes functionality via CLI and MCP protocol. The system follows a modular architecture with distinct components for parsing, graph operations, documentation, and impact analysis.
+**Goal:** Build a lightweight, local-first knowledge graph for AI-assisted development with Rust + CozoDB.
 
-**Tech Stack:** Rust, SurrealDB (embedded), tree-sitter, Clap, Axum, Leptos, notify
+**Architecture:** LeanKG is a single-binary application that indexes codebases using tree-sitter, stores relationships in CozoDB as an embedded relational-graph, and exposes functionality via CLI and MCP protocol. The system follows a modular architecture with distinct components for parsing, graph operations, documentation, and impact analysis.
+
+**Tech Stack:** Rust, CozoDB (embedded SQLite-backed), tree-sitter, Clap, Axum, notify
 
 ---
 
@@ -215,9 +217,11 @@ git commit -m "feat: add project configuration module"
 
 ---
 
-## Phase 2: SurrealDB Integration
+## Phase 2: Database Integration
 
-### Task 3: Create SurrealDB Database Layer
+> NOTE: Originally planned as SurrealDB, actually implemented with CozoDB (see `docs/analysis/cozodb-parsing-fix-2026-03-25.md`)
+
+### Task 3: Create Database Layer
 
 **Files:**
 - Create: `src/db/mod.rs`

@@ -123,7 +123,7 @@ Progress since initial analysis:
 src/
 ├── cli/          # CLI commands (init, index, serve, impact, status) - WORKING
 ├── config/       # Project configuration loading - WORKING
-├── db/           # SurrealDB schema + models - WORKING
+├── db/           # CozoDB schema + models - WORKING
 │   ├── mod.rs    # init_db, CRUD functions
 │   ├── schema.rs # BUSINESS_LOGIC table, CRUD for annotations
 │   └── models.rs # Data models
@@ -176,7 +176,7 @@ src/
 
 **Pre-existing Issues (not blocking for MVP):**
 - `Cargo.toml`: axum-core vs axum version mismatch
-- `src/db/mod.rs`: Lifetime issues with SurrealDB API
+- `src/db/mod.rs`: ~~Lifetime issues with SurrealDB API~~ RESOLVED by CozoDB migration (2026-03-25)
 - `src/indexer/git.rs`: Type mismatch error
 
 **All 6 high-priority implementations compile their own modules successfully.**

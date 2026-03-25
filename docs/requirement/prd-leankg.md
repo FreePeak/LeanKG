@@ -19,6 +19,7 @@
   - US-06: Resource optimization with parser pooling and query caching
   - US-07: Web UI (stub implementation - handlers need completion)
   - US-08: Multi-language support for Go, TypeScript, Python
+- v1.2.1 - Migrated database from SurrealDB to CozoDB (embedded SQLite-backed relational-graph with Datalog queries)
 - v1.2 - Tech stack: Rust + SurrealDB
 - v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP
 
@@ -256,22 +257,20 @@ Supported formats:
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Core Language | Rust | Single binary, excellent performance, memory safety |
-| Database | SurrealDB | Embedded graph DB, native traversal, no external process |
+| Database | CozoDB | Embedded SQLite-backed relational-graph, Datalog queries, no external process |
 | Code Parsing | tree-sitter | Efficient, multi-language support, mature Rust bindings |
 | MCP Server | Custom Rust | Standard MCP protocol, optimal performance |
 | CLI | Clap | Standard Rust CLI patterns |
-| Web UI | Leptos / Axum | Rust web framework, WASM-compatible |
+| Web UI | Axum | Rust web framework |
 | Embeddings | Optional (local Ollama or cloud API) | For semantic search (Phase 2) |
 
-**Why SurrealDB for Graph:**
-- Native graph data model (nodes/edges as first-class citizens)
-- Optimized for traversal queries (BFS, DFS, path finding)
-- 10-100x faster than recursive SQL queries for multi-hop traversal
-- Embedded, no external process required
-- Supports queries like "find all nodes within N hops"
-- Multi-model: graph + document + relational in one database
-- Real-time collaborative API built-in
-- Single binary deployment with excellent Rust performance
+**Why CozoDB for Graph:**
+- Relational-graph hybrid: Datalog queries combine graph traversal with relational joins
+- Embedded SQLite backend: lightweight, fast, no external process
+- Datalog query language: expressive recursive queries for graph operations
+- Lightweight: `cozo = "0.2"` with no heavy compile-time overhead (migrated from SurrealDB due to 6GB+ compile requirements)
+- Supports recursive rules for multi-hop traversal (impact radius, dependency chains)
+- Single binary deployment with embedded storage at `.leankg/leankg.db`
 
 ### 6.2 Data Model
 
@@ -420,8 +419,8 @@ The following features are explicitly out of scope for MVP:
 
 ### 11.2 References
 
-- SurrealDB: https://github.com/surrealdb/surrealdb (Embedded multi-model graph database)
+- CozoDB: https://github.com/cozodb/cozo (Embedded relational-graph database with Datalog queries)
 - tree-sitter: https://tree-sitter.github.io/tree-sitter/ (Code parsing)
 - MCP Protocol: https://modelcontextprotocol.io/ (AI tool integration)
 - code-review-graph: https://github.com/tirth8205/code-review-graph (Inspiration for impact analysis)
-- Comparison: Graphiti requires Neo4j; FalkorDB needs external process; SurrealDB is embedded with native graph traversal and multi-model support
+- Comparison: Graphiti requires Neo4j; FalkorDB needs external process; CozoDB is embedded with SQLite backend and Datalog queries
