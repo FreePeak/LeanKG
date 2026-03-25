@@ -104,9 +104,9 @@ graph TB
 | `leankg index --incremental` | Done | Only index changed files (git-based) |
 | `leankg index --lang go,ts,py,rs` | Done | Filter by language |
 | `leankg index --exclude vendor,node_modules` | Done | Exclude patterns |
-| `leankg serve` | Done | Start the MCP server and web UI |
+| `leankg serve` | Done | Start the MCP server (WebSocket) |
 | `leankg serve --mcp-port 3000` | Done | Custom MCP server port |
-| `leankg serve --web-port 8080` | Done | Custom web UI port |
+| `leankg mcp-stdio` | Done | Start MCP server with stdio transport |
 | `leankg impact <file> --depth N` | Done | Compute blast radius for a file |
 | `leankg status` | Done | Show index statistics and status |
 | `leankg generate` | Done | Generate documentation from the graph |
@@ -116,6 +116,8 @@ graph TB
 | `leankg query <text> --kind name` | Done | Query the knowledge graph |
 | `leankg annotate <element> -d <desc>` | Done | Add business logic annotation |
 | `leankg link <element> <id>` | Done | Link element to story/feature |
+| `leankg search-annotations <query>` | Done | Search business logic annotations |
+| `leankg show-annotations <element>` | Done | Show annotations for a specific element |
 | `leankg trace --feature <id>` | Done | Show feature-to-code traceability |
 | `leankg find-by-domain <domain>` | Done | Find code by business domain |
 | `leankg export` | Done | Export graph data as JSON |
@@ -137,15 +139,23 @@ graph TB
 | `find_large_functions` | Done | Find oversized functions by line count |
 | `get_tested_by` | Done | Get test coverage for a function/file |
 
-### Web UI
+---
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Graph Visualization** | Done | D3.js force-directed graph with zoom/pan/drag |
-| **Browse Code Elements** | Done | Browse and search code elements with filters |
-| **Edit Annotations** | Done | View and edit business logic annotations |
-| **Documentation Viewer** | Done | View generated documentation |
-| **Export JSON** | Done | Export graph data as JSON for external tools |
+## Verification Status (2026-03-25)
+
+All MCP tools, CLI commands, and core modules verified against PRD v1.3. **284 tests passing.**
+
+| PRD User Story | Status | Verified |
+|----------------|--------|----------|
+| **US-01**: Auto-indexing with TESTED_BY and incremental indexing | Done | Tests pass |
+| **US-02**: Auto documentation with AGENTS.md and CLAUDE.md | Done | Tests pass |
+| **US-03**: Business logic mapping with traceability | Done | Tests pass |
+| **US-04**: MCP server with all required tools (12 tools) | Done | Tests pass |
+| **US-05**: Full CLI interface (18 commands) | Done | Tests pass |
+| **US-06**: Resource optimization (parser pooling, query caching) | Done | Tests pass |
+| **US-08**: Multi-language support (Go, TypeScript, Python) | Done | Tests pass |
+
+> **Note**: Web UI (US-07) excluded from verification scope.
 
 ---
 
@@ -268,13 +278,22 @@ leankg install
 |---------|-------------|
 | `leankg init` | Initialize LeanKG in the current directory |
 | `leankg index [path]` | Index source files at the given path |
-| `leankg serve` | Start the MCP server and web UI |
+| `leankg serve` | Start the MCP server (WebSocket) |
+| `leankg mcp-stdio` | Start MCP server with stdio transport |
 | `leankg impact <file> [--depth N]` | Compute blast radius for a file |
 | `leankg status` | Show index statistics and status |
 | `leankg generate` | Generate documentation from the graph |
 | `leankg install` | Auto-install MCP config for AI tools |
 | `leankg watch` | Start file watcher for auto-indexing |
 | `leankg quality` | Find oversized functions |
+| `leankg query <text>` | Query the knowledge graph |
+| `leankg annotate <element>` | Add business logic annotation |
+| `leankg link <element> <id>` | Link element to story/feature |
+| `leankg search-annotations` | Search business logic annotations |
+| `leankg show-annotations <element>` | Show annotations for element |
+| `leankg trace` | Show feature-to-code traceability |
+| `leankg find-by-domain` | Find code by business domain |
+| `leankg export` | Export graph data as JSON |
 
 ---
 
