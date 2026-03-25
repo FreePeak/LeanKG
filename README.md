@@ -50,23 +50,7 @@ AI coding tools waste tokens scanning entire codebases. LeanKG provides **target
 
 ## Installation
 
-### Quick Install via npm (Recommended -- No Rust Required)
-
-```bash
-npm install -g leankg
-leankg --version
-```
-
-The npm package downloads pre-built binaries for your platform. Supported: macOS (x64, ARM64), Linux (x64, ARM64).
-
-### Install via Cargo
-
-```bash
-cargo install leankg
-leankg --version
-```
-
-### One-Line Install (Shell Script)
+### One-Line Install (Recommended)
 
 Install the LeanKG binary and configure MCP for your AI coding tool:
 
@@ -76,13 +60,13 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 
 **Supported targets:**
 
-| Target | AI Tool |
-|--------|---------|
-| `opencode` | OpenCode AI |
-| `cursor` | Cursor AI |
-| `claude` | Claude Code/Desktop |
-| `gemini` | Gemini CLI |
-| `antigravity` | Anti Gravity |
+| Target | AI Tool | Config Location |
+|--------|---------|-----------------|
+| `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` |
+| `cursor` | Cursor AI | `~/.config/cursor/mcp.json` |
+| `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` |
+| `gemini` | Gemini CLI | `~/.config/gemini-cli/mcp.json` |
+| `antigravity` | Google Antigravity | `~/.config/antigravity/mcp.json` |
 
 **Examples:**
 
@@ -95,6 +79,19 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 
 # Install for Claude Code
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- claude
+
+# Install for Gemini CLI
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- gemini
+
+# Install for Google Antigravity
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- antigravity
+```
+
+### Install via Cargo
+
+```bash
+cargo install leankg
+leankg --version
 ```
 
 ### Build from Source
@@ -170,15 +167,46 @@ sequenceDiagram
 
 LeanKG exposes a Model Context Protocol (MCP) server that AI tools can connect to.
 
-### Option 1: Automated Setup (Recommended)
+### Automated Setup (Recommended)
+
+Use the install script to install and configure MCP for your AI tool:
 
 ```bash
-leankg install
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
 ```
 
-Detects your AI tool (Claude Code, OpenCode, Cursor, etc.) and installs the appropriate MCP configuration.
+### Manual Setup
 
-### Option 2: Manual Setup
+#### OpenCode AI
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "leankg_dev": {
+      "type": "local",
+      "command": ["leanKG", "mcp-stdio", "--watch"],
+      "enabled": true
+    }
+  }
+}
+```
+
+#### Cursor AI
+
+Add to `~/.config/cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "leanKG",
+      "args": ["mcp-stdio", "--watch"]
+    }
+  }
+}
+```
 
 #### Claude Code / Claude Desktop
 
@@ -188,37 +216,37 @@ Add to `~/.config/claude/settings.json`:
 {
   "mcpServers": {
     "leankg": {
-      "command": "leankg",
+      "command": "leanKG",
       "args": ["mcp-stdio", "--watch"]
     }
   }
 }
 ```
 
-#### Cursor
+#### Gemini CLI
 
-Add to `~/.cursor/mcp.json`:
+Add to `~/.config/gemini-cli/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "leankg": {
-      "command": "leankg",
+      "command": "leanKG",
       "args": ["mcp-stdio", "--watch"]
     }
   }
 }
 ```
 
-#### OpenCode
+#### Google Antigravity
 
-Add to `~/.opencode/mcp.json`:
+Add to `~/.config/antigravity/mcp.json`:
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "leankg": {
-      "command": "leankg",
+      "command": "leanKG",
       "args": ["mcp-stdio", "--watch"]
     }
   }
@@ -229,10 +257,10 @@ Add to `~/.opencode/mcp.json`:
 
 ```bash
 # Stdio mode with auto-indexing (for local AI tools)
-leankg mcp-stdio --watch
+leanKG mcp-stdio --watch
 
 # Stdio mode without auto-indexing
-leankg mcp-stdio
+leanKG mcp-stdio
 ```
 
 ---
