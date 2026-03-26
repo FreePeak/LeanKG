@@ -52,21 +52,26 @@ AI coding tools waste tokens scanning entire codebases. LeanKG provides **target
 
 ### One-Line Install (Recommended)
 
-Install the LeanKG binary and configure MCP for your AI coding tool:
+Install the LeanKG binary, configure MCP, and add agent instructions for your AI coding tool:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
 ```
 
+This installs:
+1. LeanKG binary to `~/.local/bin`
+2. MCP configuration for your AI tool
+3. Agent instructions (LeanKG tool usage guidance) to the tool's config directory
+
 **Supported targets:**
 
-| Target | AI Tool | Config Location |
-|--------|---------|-----------------|
-| `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` |
-| `cursor` | Cursor AI | `~/.config/cursor/mcp.json` |
-| `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` |
-| `gemini` | Gemini CLI | `~/.config/gemini-cli/mcp.json` |
-| `antigravity` | Google Antigravity | `~/.gemini/antigravity/mcp_config.json` |
+| Target | AI Tool | MCP Config | Agent Instructions |
+|--------|---------|------------|-------------------|
+| `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md` |
+| `cursor` | Cursor AI | `~/.config/cursor/mcp.json` | `~/.config/cursor/AGENTS.md` |
+| `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` | `~/.config/claude/CLAUDE.md` |
+| `gemini` | Gemini CLI | `~/.config/gemini-cli/mcp.json` | `~/.config/gemini-cli/AGENTS.md` |
+| `antigravity` | Google Antigravity | `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/antigravity/AGENTS.md` |
 
 **Examples:**
 
@@ -267,7 +272,40 @@ leanKG mcp-stdio
 
 ## Agentic Instructions for AI Tools
 
-LeanKG can instruct AI coding agents to use it **first** before falling back to naive search. See [Agentic Instructions](docs/agentic-instructions.md) for setup and usage.
+LeanKG instructs AI coding agents to use LeanKG **first** for codebase queries.
+
+### Quick Rule to Add Manually
+
+Add this to your AI tool's instruction file:
+
+```markdown
+## MANDATORY: Use LeanKG First
+Before ANY codebase search/navigation, use LeanKG tools:
+1. `mcp_status` - check if ready
+2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+3. Only fallback to grep/read if LeanKG fails
+
+| Task | Use |
+|------|-----|
+| Where is X? | `search_code` or `find_function` |
+| What breaks if I change Y? | `get_impact_radius` |
+| What tests cover Y? | `get_tested_by` |
+| How does X work? | `get_context` |
+```
+
+### Instruction Files (Auto-installed)
+
+| Tool | File | Auto-install |
+|------|------|--------------|
+| Claude Code | `~/.config/claude/CLAUDE.md` | Yes |
+| OpenCode | `~/.config/opencode/AGENTS.md` | Yes |
+| Cursor | `~/.config/cursor/AGENTS.md` | Yes |
+| KiloCode | `~/.config/kilocode/AGENTS.md` | Yes |
+| Codex | `~/.config/codex/AGENTS.md` | Yes |
+| Gemini CLI | `~/.config/gemini-cli/AGENTS.md` | Yes |
+| Anti Gravity | `~/.gemini/antigravity/AGENTS.md` | Yes |
+
+See [Agentic Instructions](docs/agentic-instructions.md) for detailed setup.
 
 ---
 
@@ -380,14 +418,16 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 ## Supported AI Tools
 
-| Tool | Integration | Status |
-|------|-------------|--------|
-| **Claude Code** | MCP | Supported |
-| **OpenCode** | MCP | Supported |
-| **Cursor** | MCP | Supported |
-| **Google Antigravity** | MCP | Supported |
-| **Windsurf** | MCP | Supported |
-| **Codex** | MCP | Supported |
+| Tool | Integration | Agent Instructions |
+|------|-------------|-------------------|
+| **Claude Code** | MCP | Yes (`CLAUDE.md`) |
+| **OpenCode** | MCP | Yes (`AGENTS.md`) |
+| **Cursor** | MCP | Yes (`AGENTS.md`) |
+| **KiloCode** | MCP | Yes (`AGENTS.md`) |
+| **Codex** | MCP | Yes (`AGENTS.md`) |
+| **Google Antigravity** | MCP | Yes (`AGENTS.md`) |
+| **Windsurf** | MCP | Not yet |
+| **Gemini CLI** | MCP | Yes (`AGENTS.md`) |
 
 ---
 
