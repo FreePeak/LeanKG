@@ -237,7 +237,7 @@ configure_opencode() {
 }
 
 configure_cursor() {
-    local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/cursor"
+    local config_dir="$HOME/.cursor"
     local config_file="$config_dir/mcp.json"
 
     mkdir -p "$config_dir"
@@ -517,7 +517,7 @@ main() {
                 ;;
             cursor)
                 configure_cursor
-                install_agents_instructions "$HOME/.config/cursor/AGENTS.md"
+                install_agents_instructions "$HOME/.cursor/AGENTS.md"
                 ;;
             claude)
                 configure_claude

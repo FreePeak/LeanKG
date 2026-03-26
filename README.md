@@ -68,7 +68,7 @@ This installs:
 | Target | AI Tool | MCP Config | Agent Instructions |
 |--------|---------|------------|-------------------|
 | `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md` |
-| `cursor` | Cursor AI | `~/.config/cursor/mcp.json` | `~/.config/cursor/AGENTS.md` |
+| `cursor` | Cursor AI | `~/.cursor/mcp.json` | `~/.cursor/AGENTS.md` |
 | `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` | `~/.config/claude/CLAUDE.md` |
 | `gemini` | Gemini CLI / Google Antigravity | `~/.config/gemini-cli/mcp.json` / `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/GEMINI.md` |
 
@@ -199,7 +199,7 @@ Add to `~/.config/opencode/opencode.json`:
 
 #### Cursor AI
 
-Add to `~/.config/cursor/mcp.json`:
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -298,11 +298,11 @@ Before ANY codebase search/navigation, use LeanKG tools:
 |------|------|--------------|
 | Claude Code | `~/.config/claude/CLAUDE.md` | Yes |
 | OpenCode | `~/.config/opencode/AGENTS.md` | Yes |
-| Cursor | `~/.config/cursor/AGENTS.md` | Yes |
+| Cursor | `~/.cursor/AGENTS.md` | Yes |
 | KiloCode | `~/.config/kilocode/AGENTS.md` | Yes |
 | Codex | `~/.config/codex/AGENTS.md` | Yes |
-| Gemini CLI | `~/.config/gemini-cli/AGENTS.md` | Yes |
-| Anti Gravity | `~/.gemini/antigravity/AGENTS.md` | Yes |
+| Gemini CLI | `~/.gemini/GEMINI.md` | Yes |
+| Google Antigravity | `~/.gemini/GEMINI.md` | Yes |
 
 See [Agentic Instructions](docs/agentic-instructions.md) for detailed setup.
 
