@@ -462,7 +462,7 @@ EOF
 )
 
     if [ -f "$agents_file" ]; then
-        if grep -q "MANDATORY" "$agents_file" 2>/dev/null; then
+        if grep -q "LEANKG" "$agents_file" 2>/dev/null; then
             echo "LeanKG instructions already exist in $agents_file"
         else
             echo "$agents_content" >> "$agents_file"
