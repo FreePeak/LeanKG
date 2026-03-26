@@ -2,7 +2,7 @@
 set -e
 
 REPO="FreePeak/LeanKG"
-BINARY_NAME="leanKG"
+BINARY_NAME="leankg"
 INSTALL_DIR="$HOME/.local/bin"
 GITHUB_RAW="https://raw.githubusercontent.com/$REPO/main"
 GITHUB_API="https://api.github.com/repos/$REPO/releases/latest"
@@ -290,27 +290,31 @@ EOF
 }
 
 configure_gemini() {
-    local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gemini-cli"
-    local config_file="$config_dir/mcp.json"
-
-    mkdir -p "$config_dir"
-
-    if [ -f "$config_file" ]; then
-        local content
-        content=$(cat "$config_file")
-        if echo "$content" | grep -q "leankg"; then
-            echo "LeanKG already configured in Gemini CLI"
-            return
-        fi
+    if command -v gemini >/dev/null 2>&1; then
+        echo "Configuring LeanKG for Gemini CLI using 'gemini mcp add'..."
+        gemini mcp add leankg leankg mcp-stdio --watch --scope user || true
+        echo "Configured LeanKG for Gemini CLI"
     else
-        echo '{"mcpServers": {}}' > "$config_file"
-    fi
+        local config_file="$HOME/.gemini/settings.json"
+        mkdir -p "$HOME/.gemini"
 
-    local tmp_file
-    tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leankg", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
-    mv "$tmp_file" "$config_file"
-    echo "Configured LeanKG for Gemini CLI at $config_file"
+        if [ -f "$config_file" ]; then
+            local content
+            content=$(cat "$config_file")
+            if echo "$content" | grep -q "leankg"; then
+                echo "LeanKG already configured in Gemini CLI"
+                return
+            fi
+        else
+            echo "{}" > "$config_file"
+        fi
+
+        local tmp_file
+        tmp_file=$(mktemp)
+        cat "$config_file" | jq '.mcpServers.leankg = {"command": "leankg", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+        mv "$tmp_file" "$config_file"
+        echo "Configured LeanKG for Gemini CLI at $config_file"
+    fi
 }
 
 configure_antigravity() {
@@ -466,7 +470,7 @@ EOF
 )
 
     if [ -f "$agents_file" ]; then
-        if grep -q "LEANKG" "$agents_file" 2>/dev/null; then
+        if grep -qi "LEANKG" "$agents_file" 2>/dev/null; then
             echo "LeanKG instructions already exist in $agents_file"
         else
             echo "$agents_content" >> "$agents_file"
