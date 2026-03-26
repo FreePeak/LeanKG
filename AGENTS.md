@@ -76,7 +76,7 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 ### MANDATORY: Use LeanKG First
 
 Before ANY codebase search/navigation, use LeanKG tools:
-1. `mcp_status` - check if ready
+1. `mcp_status` - check if ready. If not initialized, you MUST run `mcp_init` passing the absolute path to the project's `.leankg` directory (e.g. `path: "/full/workspace/path/.leankg"`).
 2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
 3. Only fallback to grep/read if LeanKG fails
 

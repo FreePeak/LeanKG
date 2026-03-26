@@ -63,7 +63,7 @@ Use LeanKG tools **first** before performing any codebase search, navigation, or
 ```
 User asks about codebase →
   First check if LeanKG is initialized (mcp_status) →
-    If not, use mcp_init first →
+    If not, use mcp_init first (CRITICAL: pass the absolute path to the project's .leankg directory, e.g. path: "/full/path/to/project/.leankg") →
     Then use appropriate LeanKG tool →
       NEVER fall back to naive grep/search until LeanKG is exhausted
 ```
