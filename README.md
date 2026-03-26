@@ -413,6 +413,8 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 **Auto-Indexing:** When the MCP server starts with an existing LeanKG project, it checks if the index is stale (by comparing git HEAD commit time vs database file modification time). If stale, it automatically runs incremental indexing to ensure AI tools have up-to-date context.
 
+**Fallback:** If the MCP server reports "LeanKG not initialized", manually run `leankg init` in your project directory, then restart the AI tool.
+
 ---
 
 ## Supported AI Tools

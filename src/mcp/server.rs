@@ -78,6 +78,14 @@ impl MCPServer {
         let db_path = self.db_path.canonicalize()
             .or_else(|_| std::env::current_dir().map(|d| d.join(&self.db_path)))
             .map_err(|e| format!("Failed to resolve db path: {}", e))?;
+        
+        if !db_path.exists() {
+            return Err(format!(
+                "LeanKG not initialized in this directory. Run 'leankg init' first, or ensure a .leankg directory exists at: {}",
+                db_path.display()
+            ));
+        }
+        
         tracing::debug!("Initializing database at: {}", db_path.display());
         let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
         let ge = GraphEngine::new(db);
@@ -284,6 +292,8 @@ impl MCPServer {
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
+        let project_root = self.find_project_root()?;
+        tracing::info!("execute_tool called. project_root={}, db_path={}", project_root.display(), self.db_path.display());
         let graph_engine = self.get_graph_engine()?;
         let handler = ToolHandler::new(graph_engine, self.db_path.clone());
         let args_value = serde_json::Value::Object(arguments);
