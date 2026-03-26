@@ -4,7 +4,7 @@ CARGO = cargo
 WASM_PACK = wasm-pack
 
 build:
-	$(CARGO) build
+	$(CARGO) build --release
 
 build-release:
 	$(CARGO) build --release

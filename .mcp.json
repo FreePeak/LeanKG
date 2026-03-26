@@ -5,7 +5,7 @@
         "mcp-stdio",
         "--watch"
       ],
-      "command": "/Users/linh.doan/work/harvey/freepeak/LeanKG/target/release/leankg"
+      "command": "./target/release/leankg"
     }
   }
 }
