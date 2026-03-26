@@ -5,7 +5,10 @@
 **Status:** In Progress - Phase 2 Features Implementation  
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
-**Changelog:** 
+**Changelog:**
+- v1.7 - Auto-Indexing on MCP Server Start:
+  - US-17: MCP server auto-indexes when starting if index is stale
+  - US-18: Configurable auto-indexing behavior via leankg.yaml
 - v1.6 - MCP Server Self-Initialization:
   - US-15: MCP server tools for init/index/install mirroring CLI behavior
   - US-16: Auto-initialization when MCP server starts without existing project
@@ -102,6 +105,8 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 | US-14 | As a developer, I want to install LeanKG via npm without requiring Rust on my machine so that I can get started quickly | Must Have |
 | US-15 | As a developer using an AI tool, I want the MCP server to expose init/index/install tools so that I can initialize and index the project via AI tool | Should Have |
 | US-16 | As a developer, I want the MCP server to auto-initialize when it starts without an existing project so that the AI tool can use LeanKG immediately after installation | Should Have |
+| US-17 | As a developer, I want the MCP server to automatically re-index when starting if the index is stale so that AI tools always have up-to-date context | Should Have |
+| US-18 | As a developer, I want to configure auto-indexing behavior via leankg.yaml so that I can control when and how re-indexing happens | Should Have |
 
 ---
 
@@ -321,6 +326,19 @@ Supported documentation structure:
 - If not initialized, automatically run init + index in the project root
 - This provides "plug and play" experience for AI tools
 - Gracefully handles read-only filesystems (logs warning instead of crashing)
+
+**FR-75:** MCP server auto-indexing on startup:
+- When MCP server starts with an existing project, check if index is stale
+- Index staleness determined by comparing git HEAD commit time vs database file modification time
+- If index is stale (git has newer commits), automatically run incremental indexing
+- Incremental indexing only processes changed files, not full re-index
+- This ensures AI tools always have fresh context without manual re-indexing
+- Can be disabled via `mcp.auto_index_on_start: false` in leankg.yaml
+
+**FR-76:** Auto-indexing configuration options:
+- `mcp.auto_index_on_start`: Enable/disable auto-indexing on MCP server start (default: true)
+- `mcp.auto_index_threshold_minutes`: Minimum age of index before re-indexing is triggered (default: 5 minutes)
+- `mcp.index_on_first_call`: Enable lazy indexing on first tool call if not yet indexed (default: true)
 
 ### 5.2 Non-Functional Requirements
 

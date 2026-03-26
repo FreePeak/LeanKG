@@ -5,6 +5,10 @@
 **Dua tren:** PRD v1.5  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.6 - Auto-Indexing on MCP Server Start
+  - Added auto-indexing on startup when index is stale (git-based detection)
+  - Added configuration options for auto-indexing behavior
+  - Added index staleness detection (git HEAD vs DB file timestamp)
 - v1.5 - MCP Server Self-Initialization
   - Added MCP tools mirroring CLI: mcp_init, mcp_index, mcp_install, mcp_status, mcp_impact
   - Added auto-init behavior on MCP server startup
@@ -861,6 +865,13 @@ When the MCP server starts via `mcp-stdio` and detects no `.leankg/` or `leankg.
 
 This provides a "plug and play" experience where AI tools can use LeanKG immediately after connecting.
 
+**Auto-Indexing on Startup:**
+When the MCP server starts with an existing LeanKG project:
+1. Checks if index is stale by comparing git HEAD commit time vs database file modification time
+2. If git has newer commits than the database, runs incremental indexing automatically
+3. This ensures AI tools always have up-to-date context without manual re-indexing
+4. Staleness check can be configured via `mcp.auto_index_on_start` and `mcp.auto_index_threshold_minutes`
+
 ### 5.3 Web UI Routes
 
 | Route | Description |
@@ -947,6 +958,9 @@ mcp:
   enabled: true
   port: 3000
   auth_token: generated
+  auto_index_on_start: true
+  auto_index_threshold_minutes: 5
+  index_on_first_call: true
 
 web:
   enabled: true
