@@ -265,60 +265,9 @@ leanKG mcp-stdio
 
 ---
 
-## Making LeanKG the Default Search for AI Agents
+## Agentic Instructions for AI Tools
 
-LeanKG can instruct AI coding agents to use it **first** before falling back to naive search. This works similarly to the [Morph plugin for OpenCode](https://github.com/morphllm/opencode-morph-plugin).
-
-### How It Works
-
-1. LeanKG embeds an **instructions file** that tells AI agents when to use LeanKG tools
-2. The instructions are written to `instructions/leankg-tools.md` during `leankg install`
-3. OpenCode reads these instructions and follows them automatically
-
-### Setup
-
-```bash
-# 1. Install LeanKG with MCP config
-leankg install
-
-# 2. Copy instructions to OpenCode config directory
-mkdir -p ~/.config/opencode
-cp instructions/leankg-tools.md ~/.config/opencode/
-
-# 3. Verify OpenCode picks up the instructions
-opencode
-# You should see LeanKG tools listed first in available tools
-```
-
-### What the Instructions Do
-
-The instructions tell AI agents:
-
-| Task | Use LeanKG Instead Of |
-|------|----------------------|
-| Find "where is X?" | grep/ripgrep |
-| "What tests cover this?" | glob + content search |
-| "What would break if I change X?" | Manual dependency tracing |
-| "How does X work?" | Reading entire files |
-
-**Decision flow for AI agents:**
-```
-User asks about codebase →
-  First check LeanKG tools (mcp_status) →
-    If not initialized, run mcp_init first →
-    Use appropriate LeanKG tool →
-      NEVER fall back to naive search until LeanKG is exhausted
-```
-
-### Tools AI Agents Learn to Use First
-
-| Priority | Tool | Use Case |
-|----------|------|----------|
-| 1 | `search_code` | Find code by name/type |
-| 2 | `get_impact_radius` | Blast radius before changes |
-| 3 | `get_call_graph` | Understand function flow |
-| 4 | `get_tested_by` | Find related tests |
-| 5 | `get_dependencies` | Understand imports |
+LeanKG can instruct AI coding agents to use it **first** before falling back to naive search. See [Agentic Instructions](docs/agentic-instructions.md) for setup and usage.
 
 ---
 
@@ -339,40 +288,7 @@ User asks about codebase →
 
 ## Auto-Indexing
 
-LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date.
-
-```bash
-# Start file watcher -- indexes changes automatically in background
-leankg watch
-
-# Incremental indexing -- only re-index changed files (git-based)
-leankg index --incremental
-
-# Filter by language
-leankg index --lang go,ts,py,rs
-
-# Exclude patterns
-leankg index --exclude vendor,node_modules,dist
-```
-
-```mermaid
-graph LR
-    subgraph "File Watcher"
-        FS[File System Events]
-        Git[Git Status]
-        Parse[Parser]
-        DB[(CozoDB)]
-    end
-
-    FS -->|change detected| Git
-    Git -->|only changed files| Parse
-    Parse -->|update relationships| DB
-```
-
-1. **Watch Mode** -- `leankg watch` monitors your source directory for file changes.
-2. **Git-Based Delta** -- Uses `git diff` to detect only modified files.
-3. **Incremental Update** -- Re-parses only changed files and updates affected relationships.
-4. **Background Sync** -- Runs in background while you code.
+LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date. See [CLI Reference](docs/cli-reference.md#auto-indexing) for detailed commands.
 
 ---
 
@@ -422,35 +338,7 @@ graph TB
 
 ## CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `leankg init` | Initialize LeanKG in the current directory |
-| `leankg index [path]` | Index source files at the given path |
-| `leankg index --incremental` | Only index changed files (git-based) |
-| `leankg index --lang go,ts,py,rs` | Filter by language |
-| `leankg index --exclude vendor,node_modules` | Exclude patterns |
-| `leankg serve` | Start the MCP server (WebSocket) |
-| `leankg serve --mcp-port 3000` | Custom MCP server port |
-| `leankg mcp-stdio` | Start MCP server with stdio transport |
-| `leankg impact <file> --depth N` | Compute blast radius for a file |
-| `leankg status` | Show index statistics and status |
-| `leankg generate` | Generate documentation from the graph |
-| `leankg install` | Auto-install MCP config for AI tools |
-| `leankg watch` | Start file watcher for auto-indexing |
-| `leankg quality --min-lines N` | Find oversized functions by line count |
-| `leankg query <text> --kind name` | Query the knowledge graph |
-| `leankg annotate <element> -d <desc>` | Add business logic annotation |
-| `leankg link <element> <id>` | Link element to feature |
-| `leankg search-annotations <query>` | Search business logic annotations |
-| `leankg show-annotations <element>` | Show annotations for a specific element |
-| `leankg trace --feature <id>` | Show feature-to-code traceability |
-| `leankg find-by-domain <domain>` | Find code by business domain |
-| `leankg export` | Export graph data as JSON |
-| `leankg docs --tree` | Show documentation directory structure |
-| `leankg docs --for <file>` | Show docs referencing a code file |
-| `leankg docs --link <doc> <element>` | Link documentation to code element |
-| `leankg trace <element>` | Show traceability chain for element |
-| `leankg trace --requirement <id>` | Trace code for a requirement |
+For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 ---
 
