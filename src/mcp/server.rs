@@ -152,7 +152,7 @@ impl MCPServer {
 
         tracing::info!("Auto-init: Created .leankg/ and leankg.yaml at {}", project_root.display());
 
-        let db_path = self.get_db_path();
+        let db_path = project_root.join(".leankg");
         tokio::fs::create_dir_all(&db_path).await.map_err(|e| format!("Failed to create db path: {}", e))?;
 
         let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
@@ -176,6 +176,13 @@ impl MCPServer {
                 tracing::info!("Auto-init: Indexed {} documents", doc_result.documents.len());
             }
         }
+
+        {
+            let mut db_path_guard = parking_lot::RwLock::write(&self.db_path);
+            *db_path_guard = db_path.clone();
+        }
+        let mut ge_guard = self.graph_engine.lock();
+        *ge_guard = Some(graph_engine);
 
         tracing::info!("Auto-init complete");
         Ok(())
