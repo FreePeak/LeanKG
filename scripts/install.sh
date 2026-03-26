@@ -525,11 +525,11 @@ main() {
                 ;;
             gemini)
                 configure_gemini
-                install_agents_instructions "$HOME/.config/gemini-cli/AGENTS.md"
+                install_agents_instructions "$HOME/.gemini/GEMINI.md"
                 ;;
             antigravity)
                 configure_antigravity
-                install_agents_instructions "$HOME/.gemini/antigravity/AGENTS.md"
+                install_agents_instructions "$HOME/.gemini/GEMINI.md"
                 ;;
         esac
     fi
