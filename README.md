@@ -71,6 +71,7 @@ This installs:
 | `cursor` | Cursor AI | `~/.cursor/mcp.json` | `~/.cursor/AGENTS.md` |
 | `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` | `~/.config/claude/CLAUDE.md` |
 | `gemini` | Gemini CLI / Google Antigravity | `~/.config/gemini-cli/mcp.json` / `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/GEMINI.md` |
+| `kilo` | Kilo Code | `~/.config/kilo/kilo.json` | `~/.config/kilo/AGENTS.md` |
 
 **Examples:**
 
@@ -86,6 +87,9 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 
 # Install for Gemini CLI
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- gemini
+
+# Install for Kilo Code
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- kilo
 
 # Install for Google Antigravity
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- antigravity
@@ -260,6 +264,23 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
 }
 ```
 
+#### Kilo Code
+
+Add to `~/.config/kilo/kilo.json`:
+
+```json
+{
+  "$schema": "https://kilo.ai/config.json",
+  "mcp": {
+    "leankg": {
+      "type": "local",
+      "command": ["leankg", "mcp-stdio", "--watch"],
+      "enabled": true
+    }
+  }
+}
+```
+
 ### Starting the MCP Server
 
 ```bash
@@ -302,7 +323,7 @@ Before ANY codebase search/navigation, use LeanKG tools:
 | Claude Code | `~/.config/claude/CLAUDE.md` | Yes |
 | OpenCode | `~/.config/opencode/AGENTS.md` | Yes |
 | Cursor | `~/.cursor/AGENTS.md` | Yes |
-| KiloCode | `~/.config/kilocode/AGENTS.md` | Yes |
+| KiloCode | `~/.config/kilo/AGENTS.md` | Yes |
 | Codex | `~/.config/codex/AGENTS.md` | Yes |
 | Gemini CLI | `~/.gemini/GEMINI.md` | Yes |
 | Google Antigravity | `~/.gemini/GEMINI.md` | Yes |
