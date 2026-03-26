@@ -24,13 +24,14 @@ cargo run -- serve
 
 **When implementing features, follow:** `docs/workflow-opencode-agent.md`
 
-### Pattern: Update Docs → Implement → Test → Commit → Push
+### Pattern: Update Docs → Implement → Test → Commit → Push → Tag
 
 1. **Update docs first** - PRD (`docs/requirement/prd-leankg.md`) → HLD (`docs/design/hld-leankg.md`) → README
 2. **Implement** - Follow patterns in `docs/workflow-opencode-agent.md`
 3. **Build & test** - `cargo build && cargo test`
 4. **Commit** - `git commit -m "feat: description"` (one feature per commit)
 5. **Push** - `git pull --rebase && git push`
+6. **Tag** - `git tag -a v<version> -m "Release v<version>" && git push origin v<version>` (on version bumps)
 
 ## Key Commands
 
@@ -69,4 +70,22 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ---
 
-*Last updated: 2026-03-25*
+## LeanKG Tools Usage
+
+### MANDATORY: Use LeanKG First
+
+Before ANY codebase search/navigation, use LeanKG tools:
+1. `mcp_status` - check if ready
+2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+3. Only fallback to grep/read if LeanKG fails
+
+| Task | Use |
+|------|-----|
+| Where is X? | `search_code` or `find_function` |
+| What breaks if I change Y? | `get_impact_radius` |
+| What tests cover Y? | `get_tested_by` |
+| How does X work? | `get_context` |
+
+---
+
+*Last updated: 2026-03-26*
