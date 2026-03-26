@@ -1,78 +1,91 @@
-# LeanKG - Agent Collaboration Guide
+# LeanKG - AI Agent Context
 
-## For AI Agents Working on This Project
+## Project Overview
 
-Welcome! When you start a session in this repository, please:
+LeanKG is a lightweight knowledge graph for codebase understanding. It indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.
 
-1. **Read `CLAUDE.md`** for project context and workflow reference
-2. **Follow `docs/workflow-opencode-agent.md`** for implementing features
-3. **Always update docs before writing code** - PRD → HLD → README
-4. **Commit one feature at a time** with clear messages
+**Tech Stack:** Rust + CozoDB + tree-sitter + MCP
 
----
+## Quick Start
 
-## Feature Implementation Checklist
+```bash
+# Index a codebase
+cargo run -- init
+cargo run -- index ./src
 
-Before committing any code, ensure:
+# Calculate impact radius
+cargo run -- impact src/main.rs 3
 
-- [ ] Documentation updated (PRD, HLD, README)
-- [ ] Code compiles (`cargo build`)
-- [ ] Tests pass (`cargo test`)
-- [ ] New code follows existing patterns
-- [ ] Commit message uses `feat:` / `fix:` / `docs:` prefix
-- [ ] Pushed successfully before starting next task
-
----
-
-## Important Context
-
-### Data Model
-- **CodeElement** uses `qualified_name` format: `src/file.rs::FunctionName`
-- **Relationship** types: `imports`, `calls`, `tested_by`, `references`, `documented_by`
-- **BusinessLogic** links code to business requirements
-
-### Common Patterns
-
-**Adding a new MCP tool:**
-1. Define in `src/mcp/tools.rs` with ToolDefinition
-2. Add handler method in `src/mcp/handler.rs`
-3. Add match arm in `execute_tool()` method
-
-**Adding a new relationship type:**
-```rust
-relationships.push(Relationship {
-    id: None,
-    source_qualified: format!("{}::{}", self.file_path, parent_name),
-    target_qualified: target,
-    rel_type: "your_new_type".to_string(),
-    metadata: serde_json::json!({}),
-});
+# Start MCP server
+cargo run -- serve
 ```
 
-**Adding to GraphEngine (private field access):**
-```rust
-// GraphEngine.db is private, use getter:
-let db = graph.db();  // After adding pub fn db() method
+## Development Workflow
+
+**When implementing features, follow:** `docs/workflow-opencode-agent.md`
+
+### Pattern: Update Docs → Implement → Test → Commit → Push
+
+1. **Update docs first** - PRD (`docs/requirement/prd-leankg.md`) → HLD (`docs/design/hld-leankg.md`) → README
+2. **Implement** - Follow patterns in `docs/workflow-opencode-agent.md`
+3. **Build & test** - `cargo build && cargo test`
+4. **Commit** - `git commit -m "feat: description"` (one feature per commit)
+5. **Push** - `git pull --rebase && git push`
+
+## Key Commands
+
+```bash
+cargo build      # Build project
+cargo test       # Run tests
+cargo run -- <cmd>  # Run CLI commands
 ```
 
+## Important Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib.rs` | Module exports |
+| `src/db/models.rs` | Data models (CodeElement, Relationship, BusinessLogic) |
+| `src/graph/query.rs` | Graph query engine |
+| `src/mcp/tools.rs` | MCP tool definitions |
+| `src/mcp/handler.rs` | MCP tool handlers |
+| `src/indexer/extractor.rs` | Code parsing with tree-sitter |
+
+## Data Model
+
+- **CodeElement** - Files, functions, classes with `qualified_name` (e.g., `src/main.rs::main`)
+- **Relationship** - `imports`, `calls`, `tested_by`, `references`, `documented_by`
+- **BusinessLogic** - Annotations linking code to business requirements
+
+## MCP Tools
+
+Core tools: `query_file`, `get_dependencies`, `get_dependents`, `get_impact_radius`, `get_review_context`, `find_function`, `get_call_graph`, `search_code`, `generate_doc`, `find_large_functions`, `get_tested_by`
+
+Doc/Traceability tools: `get_doc_for_file`, `get_files_for_doc`, `get_doc_structure`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`, `find_related_docs`
+
+## Verification Status
+
+See `docs/implementation-feature-verification-2026-03-25.md` for test results.
+
 ---
 
-## Communication
+## LeanKG Tools Usage
 
-- **Commit messages** should be clear about WHY the change was made
-- **One commit per logical feature** - don't mix unrelated changes
-- **Push after each feature** - don't accumulate unpushed commits
+### MANDATORY: Use LeanKG First
+
+Before ANY codebase search/navigation, use LeanKG tools:
+1. `mcp_status` - check if ready
+2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+3. Only fallback to grep/read if LeanKG fails
+
+| Task | Use |
+|------|-----|
+| Where is X? | `search_code` or `find_function` |
+| What breaks if I change Y? | `get_impact_radius` |
+| What tests cover Y? | `get_tested_by` |
+| How does X work? | `get_context` |
 
 ---
 
-## File Change Summary (2026-03-25)
+*Last updated: 2026-03-26*
 
-Recent implementations:
-- **doc_indexer module** - Index docs/ directory structure
-- **Business logic + doc links** - Traceability models
-- **Impact radius fix** - Qualified names in calls relationships
-- **9 new MCP tools** - Doc and traceability queries
-
----
-
-*For detailed workflow, see `docs/workflow-opencode-agent.md`*
