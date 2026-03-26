@@ -365,7 +365,7 @@ configure_antigravity() {
     if [ -f "$config_file" ]; then
         local content
         content=$(cat "$config_file")
-        if echo "$content" | grep -q "leankg"; then
+        if echo "$content" | jq -e '(.mcpServers | type == "array") and (.mcpServers[] | select(.name == "leankg"))' > /dev/null 2>&1; then
             echo "LeanKG already configured in Anti Gravity"
             return
         fi
