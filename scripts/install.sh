@@ -231,7 +231,7 @@ configure_opencode() {
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcp.leankg_dev = {"type": "local", "command": ["leanKG", "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
+    cat "$config_file" | jq '.mcp.leankg_dev = {"type": "local", "command": ["leankg", "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
     echo "Configured LeanKG for OpenCode at $config_file"
 }
@@ -255,7 +255,7 @@ configure_cursor() {
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leanKG", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leankg", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
     echo "Configured LeanKG for Cursor at $config_file"
 }
@@ -283,7 +283,7 @@ EOF
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leanKG", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leankg", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
 
     echo "Configured LeanKG for Claude Code at $config_file"
@@ -308,7 +308,7 @@ configure_gemini() {
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leanKG", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leankg", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
     echo "Configured LeanKG for Gemini CLI at $config_file"
 }
@@ -327,12 +327,12 @@ configure_antigravity() {
             return
         fi
     else
-        echo '{"mcpServers": {}}' > "$config_file"
+        echo '{"mcpServers": []}' > "$config_file"
     fi
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leanKG", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" | jq --argjson srv '{"name": "leankg", "transport": "stdio", "command": "leankg", "args": ["mcp-stdio", "--watch"], "enabled": true}' '.mcpServers += [$srv]' > "$tmp_file"
     mv "$tmp_file" "$config_file"
     echo "Configured LeanKG for Anti Gravity at $config_file"
 }
@@ -535,7 +535,7 @@ main() {
     fi
 
     echo ""
-    echo "Run 'leanKG --help' to get started."
+    echo "Run 'leankg --help' to get started."
     echo "To update later: curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- update"
 }
 

@@ -190,7 +190,7 @@ Add to `~/.config/opencode/opencode.json`:
   "mcp": {
     "leankg_dev": {
       "type": "local",
-      "command": ["leanKG", "mcp-stdio", "--watch"],
+      "command": ["leankg", "mcp-stdio", "--watch"],
       "enabled": true
     }
   }
@@ -205,7 +205,7 @@ Add to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "leankg": {
-      "command": "leanKG",
+      "command": "leankg",
       "args": ["mcp-stdio", "--watch"]
     }
   }
@@ -220,7 +220,7 @@ Add to `~/.config/claude/settings.json`:
 {
   "mcpServers": {
     "leankg": {
-      "command": "leanKG",
+      "command": "leankg",
       "args": ["mcp-stdio", "--watch"]
     }
   }
@@ -235,7 +235,7 @@ Add to `~/.config/gemini-cli/mcp.json`:
 {
   "mcpServers": {
     "leankg": {
-      "command": "leanKG",
+      "command": "leankg",
       "args": ["mcp-stdio", "--watch"]
     }
   }
@@ -248,12 +248,15 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
 
 ```json
 {
-  "servers": {
-    "leankg": {
-      "command": "leanKG",
-      "args": ["mcp-stdio", "--watch"]
+  "mcpServers": [
+    {
+      "name": "leankg",
+      "transport": "stdio",
+      "command": "leankg",
+      "args": ["mcp-stdio", "--watch"],
+      "enabled": true
     }
-  }
+  ]
 }
 ```
 
@@ -261,10 +264,10 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
 
 ```bash
 # Stdio mode with auto-indexing (for local AI tools)
-leanKG mcp-stdio --watch
+leankg mcp-stdio --watch
 
 # Stdio mode without auto-indexing
-leanKG mcp-stdio
+leankg mcp-stdio
 ```
 
 ---
