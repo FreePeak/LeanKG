@@ -23,6 +23,7 @@ Commands:
   cursor        Install and configure LeanKG for Cursor AI
   claude        Install and configure LeanKG for Claude Code/Desktop
   gemini        Install and configure LeanKG for Gemini CLI
+  kilo          Install and configure LeanKG for Kilo Code
   antigravity   Install and configure LeanKG for Anti Gravity
   update        Update LeanKG to the latest version
   version       Show installed and latest available version
@@ -289,6 +290,43 @@ EOF
     echo "Configured LeanKG for Claude Code at $config_file"
 }
 
+configure_kilo() {
+    local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/kilo"
+    local config_file="$config_dir/kilo.json"
+
+    mkdir -p "$config_dir"
+
+    if [ -f "$config_file" ]; then
+        local content
+        content=$(cat "$config_file")
+        if echo "$content" | grep -q "leankg"; then
+            echo "LeanKG already configured in Kilo"
+            return
+        fi
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    if [ -f "$config_file" ]; then
+        cat "$config_file" | jq '.mcp.leankg = {"type": "local", "command": ["leankg", "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
+    else
+        cat > "$tmp_file" <<EOF
+{
+  "\$schema": "https://kilo.ai/config.json",
+  "mcp": {
+    "leankg": {
+      "type": "local",
+      "command": ["leankg", "mcp-stdio", "--watch"],
+      "enabled": true
+    }
+  }
+}
+EOF
+    fi
+    mv "$tmp_file" "$config_file"
+    echo "Configured LeanKG for Kilo at $config_file"
+}
+
 configure_gemini() {
     if command -v gemini >/dev/null 2>&1; then
         echo "Configuring LeanKG for Gemini CLI using 'gemini mcp add'..."
@@ -507,7 +545,7 @@ main() {
             show_version
             exit 0
             ;;
-        opencode|cursor|claude|gemini|antigravity)
+        opencode|cursor|claude|gemini|kilo|antigravity)
             install_binary "$platform" "full"
             ;;
         *)
@@ -534,6 +572,10 @@ main() {
             gemini)
                 configure_gemini
                 install_agents_instructions "$HOME/.gemini/GEMINI.md"
+                ;;
+            kilo)
+                configure_kilo
+                install_agents_instructions "$HOME/.config/kilo/AGENTS.md"
                 ;;
             antigravity)
                 configure_antigravity
