@@ -70,8 +70,7 @@ This installs:
 | `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md` |
 | `cursor` | Cursor AI | `~/.config/cursor/mcp.json` | `~/.config/cursor/AGENTS.md` |
 | `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` | `~/.config/claude/CLAUDE.md` |
-| `gemini` | Gemini CLI | `~/.config/gemini-cli/mcp.json` | `~/.gemini/GEMINI.md` |
-| `antigravity` | Google Antigravity | `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/GEMINI.md` |
+| `gemini` | Gemini CLI / Google Antigravity | `~/.config/gemini-cli/mcp.json` / `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/GEMINI.md` |
 
 **Examples:**
 
