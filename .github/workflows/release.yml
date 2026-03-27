@@ -15,16 +15,16 @@ jobs:
         include:
           - runs-on: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: leanKG-linux-x64.tar.gz
+            artifact: leankg-linux-x64.tar.gz
           - runs-on: macos-latest
             target: aarch64-apple-darwin
-            artifact: leanKG-macos-arm64.tar.gz
+            artifact: leankg-macos-arm64.tar.gz
           - runs-on: macos-latest
             target: x86_64-apple-darwin
-            artifact: leanKG-macos-x64.tar.gz
+            artifact: leankg-macos-x64.tar.gz
           - runs-on: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: leanKG-windows-x64.tar.gz
+            artifact: leankg-windows-x64.tar.gz
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
           if [ "${{ matrix.runs-on }}" = "windows-latest" ]; then
             EXT=".exe"
           fi
-          cp target/${{ matrix.target }}/release/leankg$EXT release/leanKG
+          cp target/${{ matrix.target }}/release/leankg$EXT release/leankg
 
           # Package plugins and configs
           mkdir -p release/plugins
@@ -52,7 +52,7 @@ jobs:
           cp -r .claude-plugin release/plugins/ 2>/dev/null || true
           mkdir -p release/plugins/.opencode/plugins
           cp .opencode/plugins/leankg.js release/plugins/.opencode/plugins/ 2>/dev/null || true
-          tar -czf release/${{ matrix.artifact }} -C release plugins leanKG
+          tar -czf release/${{ matrix.artifact }} -C release plugins leankg
         shell: bash
 
       - uses: softprops/action-gh-release@v2
