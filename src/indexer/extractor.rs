@@ -522,32 +522,87 @@ impl<'a> EntityExtractor<'a> {
     ) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "identifier" {
-                if let Some(bytes) = self.source.get(child.byte_range()) {
-                    if let Ok(name) = std::str::from_utf8(bytes) {
-                        if is_noise_call(name) {
-                            break;
+            let kind = child.kind();
+            if kind == "field_expression" || kind == "identifier" || kind == "scoped_identifier" {
+                let mut found_name = false;
+                let mut name_to_use: Option<String> = None;
+
+                // For scoped_identifier like `Arc::new`, we want the LAST identifier (the function name)
+                let mut last_identifier_name: Option<String> = None;
+                let mut first_identifier_name: Option<String> = None;
+
+                let mut field_cursor = child.walk();
+                for inner in child.children(&mut field_cursor) {
+                    let inner_kind = inner.kind();
+                    if inner_kind == "field_identifier" || inner_kind == "identifier" {
+                        if let Some(bytes) = self.source.get(inner.byte_range()) {
+                            if let Ok(name) = std::str::from_utf8(bytes) {
+                                if first_identifier_name.is_none() {
+                                    first_identifier_name = Some(name.to_string());
+                                }
+                                last_identifier_name = Some(name.to_string());
+                            }
                         }
-                        let parent_name = parent.unwrap_or("");
-                        let source = if parent_name.is_empty() {
-                            self.file_path.to_string()
-                        } else {
-                            format!("{}::{}", self.file_path, parent_name)
-                        };
-                        let target_qualified = format!("__unresolved__{}", name);
-                        relationships.push(Relationship {
-                            id: None,
-                            source_qualified: source,
-                            target_qualified: target_qualified.clone(),
-                            rel_type: "calls".to_string(),
-                            metadata: serde_json::json!({
-                                "bare_name": name,
-                                "callee_file_hint": self.file_path,
-                            }),
-                        });
                     }
                 }
-                break;
+
+                // For scoped_identifier like `Type::func()`, skip if first part is uppercase (it's a type, not module)
+                if kind == "scoped_identifier" {
+                    if let Some(first) = first_identifier_name {
+                        if first
+                            .chars()
+                            .next()
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
+                        {
+                            // Skip - first part is uppercase (likely a type constructor like Arc::new)
+                            continue;
+                        }
+                    }
+                }
+
+                // For scoped_identifier and field_expression, use the last identifier (function/method name)
+                if kind == "scoped_identifier" || kind == "field_expression" {
+                    if let Some(name) = last_identifier_name {
+                        if !is_noise_call(&name) {
+                            name_to_use = Some(name);
+                        }
+                    }
+                } else {
+                    // For simple identifier, use it directly
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(name) = std::str::from_utf8(bytes) {
+                            if !is_noise_call(name) {
+                                name_to_use = Some(name.to_string());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(name) = name_to_use {
+                    let parent_name = parent.unwrap_or("");
+                    let source = if parent_name.is_empty() {
+                        self.file_path.to_string()
+                    } else {
+                        format!("{}::{}", self.file_path, parent_name)
+                    };
+                    let target_qualified = format!("__unresolved__{}", name);
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: source,
+                        target_qualified: target_qualified.clone(),
+                        rel_type: "calls".to_string(),
+                        metadata: serde_json::json!({
+                            "bare_name": name,
+                            "callee_file_hint": self.file_path,
+                        }),
+                    });
+                    found_name = true;
+                }
+
+                if found_name {
+                    break;
+                }
             }
         }
     }

@@ -1030,18 +1030,12 @@ impl GraphEngine {
             let unresolved = row[1].as_str().unwrap_or("").to_string();
             let bare_name = unresolved.trim_start_matches("__unresolved__");
             let meta_str = row[2].as_str().unwrap_or("{}");
-            let meta: serde_json::Value = serde_json::from_str(meta_str).unwrap_or_default();
 
-            let callee_file_hint = meta
-                .get("callee_file_hint")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            let lookup_query = r#"?[qn] := *code_elements[qn, et, $bare, fp, _, _, _, _, _], et = "function", starts_with(fp, $hint) :limit 1"#;
+            let lookup_query = r#"?[qn] := *code_elements[qn, "function", $bare, fp, _, _, _, _, _] :limit 1"#;
             let mut params = std::collections::BTreeMap::new();
             params.insert("bare".to_string(), serde_json::Value::String(bare_name.to_string()));
-            params.insert("hint".to_string(), serde_json::Value::String(callee_file_hint.to_string()));
 
+            let mut did_resolve = false;
             if let Ok(res) = self.db.run_script(lookup_query, params) {
                 if let Some(target_row) = res.rows.first() {
                     if let Some(target_qn) = target_row[0].as_str() {
@@ -1053,18 +1047,22 @@ impl GraphEngine {
 
                         if self.db.run_script(put_query, put_params).is_ok() {
                             resolved += 1;
+                            did_resolve = true;
                         }
                     }
                 }
             }
 
-            let clean_query = format!(
-                r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", target_qualified = "{}" :rm relationships {{source_qualified, target_qualified, rel_type, metadata}}"#,
-                escape_datalog(&source),
-                escape_datalog(&unresolved),
-            );
-            if let Err(e) = self.db.run_script(&clean_query, Default::default()) {
-                eprintln!("DEBUG rm FAILED: {}", e);
+            // Only delete the unresolved relationship if we successfully resolved it
+            if did_resolve {
+                let clean_query = format!(
+                    r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", target_qualified = "{}" :rm relationships {{source_qualified, target_qualified, rel_type, metadata}}"#,
+                    escape_datalog(&source),
+                    escape_datalog(&unresolved),
+                );
+                if let Err(e) = self.db.run_script(&clean_query, Default::default()) {
+                    eprintln!("DEBUG rm FAILED: {}", e);
+                }
             }
         }
 
