@@ -378,6 +378,7 @@ graph TB
 | Search Engine | Search code elements |
 | Relationship Engine | Traverse graph relationships |
 | Query Cache | Cache frequent queries |
+| Call Edge Resolver | Resolve `__unresolved__` prefixed call targets to actual qualified names post-indexing |
 | BFS Traversal | Breadth-first search for blast radius |
 | Qualified Name Normalizer | Normalize function names to qualified names for accurate matching |
 | Radius Calculator | Calculate impact radius in N hops |
@@ -494,12 +495,27 @@ sequenceDiagram
     Extract->>Build: Build relationships
     Build->>DB: Store elements
     
+    Note over Extract,Build: Call Edge Resolution Pass
+    Build->>DB: resolve_call_edges() resolves __unresolved__ call targets
+    
     Note over Watch: File change detected
     Watch->>Parse: Re-parse changed file
     Parse->>Extract: Extract entities
     Extract->>Build: Update graph
     Build->>DB: Upsert elements
 ```
+
+#### Call Edge Resolution
+
+The `extract_call` function in the Entity Extractor creates call edges with `__unresolved__` prefixed target qualified names (e.g., `__unresolved__foo`) because it cannot know the full path at extraction time. After all files are indexed, `resolve_call_edges()` is called as a post-index resolution pass to resolve these placeholders:
+
+1. Query all relationships with `target_qualified` starting with `__unresolved__`
+2. Extract the bare callee name from the placeholder
+3. Look up the function by bare name in the same file (preferred) or any file
+4. Replace the unresolved placeholder with the actual qualified name
+5. Delete the unresolved relationship and insert the resolved one
+
+The resolution query uses the `callee_file_hint` stored in metadata to prefer functions in the same file first.
 
 ### 3.2 Query Flow
 
