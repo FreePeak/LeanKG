@@ -1,10 +1,15 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.4  
-**Ngay:** 2026-03-25  
-**Dua tren:** PRD v1.5  
+**Phien ban:** 1.5  
+**Ngay:** 2026-03-27  
+**Dua tren:** PRD v1.6  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.13 - Terraform and CI/CD YAML Indexing:
+  - Add Terraform extractor for .tf files (HCL parsing)
+  - Add CI/CD YAML extractor for GitHub Actions, GitLab CI, Azure Pipelines
+  - Add terraform and cicd element types
+  - Update ParserManager and indexer to handle new file types
 - v1.12 - P2 MCP Tool Improvements:
   - Add `required` arrays to all MCP tools for proper schema validation
   - Add `depth` param (default 2) and `max_results` param (default 30) to `get_call_graph`
@@ -840,6 +845,25 @@ erDiagram
 | `builds` | `pipeline_stage` | `file` (source module) | Pipeline stage builds/tests this module | `{build_command, test_command}` |
 | `depends_on` | `pipeline_stage` | `pipeline_stage` | Stage execution ordering | `{condition, artifact_dependency}` |
 | `deploys_to` | `pipeline_stage` | (environment name in metadata) | Stage deploys to an environment | `{environment, strategy, region}` |
+
+### 4.6 Terraform-Specific Node Types (v1.13)
+
+| Element Type | qualified_name Format | Description | Metadata Fields |
+|-------------|----------------------|-------------|-----------------|
+| `terraform` | `path/to/file.tf` | A Terraform configuration file | `{provider_count, resource_count}` |
+| `terraform_resource` | `path/to/file.tf::resource_type.name` | A Terraform resource block | `{resource_type, name}` |
+| `terraform_data` | `path/to/file.tf::data_type.name` | A Terraform data source | `{data_type, name}` |
+| `terraform_variable` | `path/to/file.tf::var.name` | A Terraform variable | `{name, type, default}` |
+| `terraform_output` | `path/to/file.tf::output.name` | A Terraform output | `{name, value}` |
+| `terraform_module` | `path/to/file.tf::module.name` | A Terraform module block | `{name, source}` |
+
+### 4.7 CI/CD YAML-Specific Node Types (v1.13)
+
+| Element Type | qualified_name Format | Description | Metadata Fields |
+|-------------|----------------------|-------------|-----------------|
+| `cicd` | `path/to/ci.yml` | A CI/CD pipeline YAML file | `{ci_platform, trigger_events}` |
+| `cicd_job` | `path/to/ci.yml::job_name` | A CI/CD job/stage | `{name, runner, stage}` |
+| `cicd_step` | `path/to/ci.yml::job_name::step_name` | A CI/CD step within a job | `{name, command, image}` |
 
 ---
 
