@@ -573,21 +573,15 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 ## Roadmap
 
-### Phase 2 -- Pipeline Integration
+### Phase 2 -- Data Extraction Pipeline
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **Pipeline Parsing** | Planned | Parse CI/CD config files (GitHub Actions, GitLab CI, Jenkins, Azure) |
-| **Pipeline Graph** | Planned | Build pipeline, stage, step nodes |
-| **Trigger Links** | Planned | Link source file changes to triggered pipelines |
-| **Pipeline Impact** | Planned | Include pipelines in blast radius analysis |
-| **Deployment Targets** | Planned | Track which stages deploy to which environments |
-
-**Supported CI/CD Platforms (Coming Soon):**
-- GitHub Actions (`.github/workflows/*.yml`)
-- GitLab CI (`.gitlab-ci.yml`)
-- Jenkins (`Jenkinsfile`)
-- Azure Pipelines (`azure-pipelines.yml`)
+| **Data Source Connectors** | Planned | Extract data from databases, APIs, files, and other sources |
+| **Schema Extraction** | Planned | Auto-detect schemas and data structures from source systems |
+| **Data Quality Validation** | Planned | Implement cleaning, validation, and normalization |
+| **Incremental Extraction** | Planned | Track changes and extract only delta updates |
+| **Pipeline Orchestration** | Planned | Multi-stage extraction workflows with dependency management |
 
 ### Future Features
 
