@@ -7,7 +7,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![crates.io](https://img.shields.io/badge/crates.io-latest-orange)](https://crates.io/crates/leankg)
-[![Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)](https://discord.gg/leankg)
 
 **Lightweight Knowledge Graph for AI-Assisted Development**
 
@@ -413,6 +412,62 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 - **Business Logic Mapping** -- Annotate code elements with business logic descriptions and link to features.
 - **Traceability** -- Show feature-to-code and requirement-to-code traceability chains.
 - **Documentation Mapping** -- Index docs/ directory, map doc references to code elements.
+
+---
+
+## Web UI
+
+Visualize and query your knowledge graph using CozoDB's web interface.
+
+### Prerequisites
+
+Install the standalone CozoDB server:
+
+```bash
+# Via Python (recommended)
+pip install pycozo
+
+# Or download from GitHub releases
+# https://github.com/cozodb/cozo/releases
+```
+
+### Open Web UI
+
+1. Start LeanKG MCP server first to ensure database is initialized:
+   ```bash
+   leankg serve
+   ```
+
+2. In a new terminal, launch CozoDB standalone server pointing to LeanKG's database:
+   ```bash
+   cozo server --storage sqlite ~/.local/share/leankg/leankg.db
+   ```
+
+3. Open `http://localhost:3200` in your browser
+
+### What You Can Do
+
+- **Browse relations** -- View all tables (elements, relationships, etc.)
+- **Run queries** -- Execute Datalog queries against your knowledge graph
+- **Visualize data** -- See code elements and their relationships
+- **Debug** -- Inspect raw data to verify indexing correctness
+
+### Example Queries
+
+Count all indexed code elements:
+```
+?[count()] := *code_elements[_]
+```
+
+Show all functions:
+```
+?[name, qualified_name] := *code_elements{element_type: "function", name, qualified_name}
+```
+
+Show import relationships:
+```
+?[source, target] := *relationships{type: "imports", source_qualified: source, target_qualified: target}
+```
 
 ---
 
