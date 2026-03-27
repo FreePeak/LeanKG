@@ -133,6 +133,49 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+    fn find_body_start_line(&self, node: Node) -> Option<u32> {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "block" || child.kind() == "statement_block" {
+                return Some(child.start_position().row as u32);
+            }
+        }
+        None
+    }
+
+    fn extract_function_signature(&self, node: Node) -> (String, u32) {
+        let start = node.start_position().row;
+        let body_start = self.find_body_start_line(node);
+        let end_row = body_start
+            .unwrap_or(node.end_position().row as u32)
+            .saturating_sub(1);
+
+        let mut signature_lines = Vec::new();
+        let mut current_row = start as u32;
+
+        let source_str = std::str::from_utf8(self.source).unwrap_or("");
+        for line in source_str.lines() {
+            if current_row > end_row {
+                break;
+            }
+            if current_row == start as u32 || signature_lines.is_empty() {
+                signature_lines.push(line.to_string());
+            } else if current_row <= end_row {
+                signature_lines.push(line.to_string());
+            }
+            current_row += 1;
+        }
+
+        let signature = signature_lines.join("\n");
+        let sig_end = if signature_lines.len() > 1 {
+            start as u32 + signature_lines.len() as u32 - 1
+        } else {
+            start as u32
+        };
+
+        (signature, sig_end)
+    }
+
     pub fn extract(&self, tree: &Tree) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut elements = Vec::new();
         let mut relationships = Vec::new();
@@ -237,6 +280,7 @@ impl<'a> EntityExtractor<'a> {
     fn extract_function(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
         if let Some(name) = self.get_node_name(node) {
             let qualified_name = format!("{}::{}", self.file_path, name);
+            let (signature, sig_end) = self.extract_function_signature(node);
             elements.push(CodeElement {
                 qualified_name: qualified_name.clone(),
                 element_type: "function".to_string(),
@@ -246,7 +290,10 @@ impl<'a> EntityExtractor<'a> {
                 line_end: node.end_position().row as u32 + 1,
                 language: self.language.to_string(),
                 parent_qualified: parent.map(String::from),
-                metadata: serde_json::json!({}),
+                metadata: serde_json::json!({
+                    "signature": signature,
+                    "signature_line_end": sig_end + 1,
+                }),
             });
         }
     }

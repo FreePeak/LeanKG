@@ -116,6 +116,7 @@ impl ToolHandler {
         match tool_name {
             "mcp_init" => self.mcp_init(arguments),
             "mcp_index" => self.mcp_index(arguments).await,
+            "mcp_index_docs" => self.mcp_index_docs(arguments),
             "mcp_install" => self.mcp_install(arguments),
             "mcp_status" => self.mcp_status(arguments),
             "mcp_impact" => self.mcp_impact(arguments),
@@ -264,6 +265,32 @@ impl ToolHandler {
             "skipped": skipped,
             "resolved": resolved,
             "path": path
+        }))
+    }
+
+    fn mcp_index_docs(&self, args: &Value) -> Result<Value, String> {
+        let docs_path = args["path"].as_str().unwrap_or("./docs");
+        let path = std::path::Path::new(docs_path);
+
+        if !path.exists() {
+            return Err(format!("Docs path does not exist: {}", docs_path));
+        }
+
+        let result = crate::doc_indexer::index_docs_directory(path, &self.graph_engine)
+            .map_err(|e| e.to_string())?;
+
+        Ok(json!({
+            "success": true,
+            "documents": result.documents.len(),
+            "sections": result.sections.len(),
+            "relationships": result.relationships.len(),
+            "path": docs_path,
+            "message": format!(
+                "Indexed {} documents, {} sections, {} relationships",
+                result.documents.len(),
+                result.sections.len(),
+                result.relationships.len()
+            )
         }))
     }
 
@@ -462,7 +489,7 @@ impl ToolHandler {
 
     fn get_context(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
-
+        let signature_only = args["signature_only"].as_bool().unwrap_or(true);
         let max_tokens = args["max_tokens"].as_u64().unwrap_or(4000) as usize;
 
         let result = self
@@ -480,16 +507,34 @@ impl ToolHandler {
                     crate::graph::ContextPriority::Imported => "imported",
                     crate::graph::ContextPriority::Contained => "contained",
                 };
-                json!({
-                    "qualified_name": elem.qualified_name,
-                    "name": elem.name,
-                    "type": elem.element_type,
-                    "file": elem.file_path,
-                    "line_start": elem.line_start,
-                    "line_end": elem.line_end,
-                    "priority": priority_str,
-                    "token_count": ctx_elem.token_count
-                })
+                
+                if signature_only {
+                    let signature = elem.metadata.get("signature")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    json!({
+                        "qualified_name": elem.qualified_name,
+                        "name": elem.name,
+                        "type": elem.element_type,
+                        "file": elem.file_path,
+                        "line": elem.line_start,
+                        "signature": signature,
+                        "priority": priority_str,
+                        "token_count": ctx_elem.token_count
+                    })
+                } else {
+                    json!({
+                        "qualified_name": elem.qualified_name,
+                        "name": elem.name,
+                        "type": elem.element_type,
+                        "file": elem.file_path,
+                        "line_start": elem.line_start,
+                        "line_end": elem.line_end,
+                        "priority": priority_str,
+                        "token_count": ctx_elem.token_count
+                    })
+                }
             })
             .collect();
 
@@ -499,6 +544,7 @@ impl ToolHandler {
             "total_tokens": result.total_tokens,
             "max_tokens": result.max_tokens,
             "truncated": result.truncated,
+            "signature_only": signature_only,
             "prompt": result.to_prompt()
         }))
     }
@@ -532,19 +578,21 @@ impl ToolHandler {
         let function = args["function"]
             .as_str()
             .ok_or("Missing 'function' parameter")?;
+        let depth = args["depth"].as_u64().unwrap_or(2) as u32;
+        let max_results = args["max_results"].as_u64().unwrap_or(30) as usize;
 
-        let relationships = self
+        let call_graph = self
             .graph_engine
-            .get_relationships(function)
+            .get_call_graph_bounded(function, depth, max_results)
             .map_err(|e| e.to_string())?;
 
-        let calls: Vec<_> = relationships
+        let calls: Vec<_> = call_graph
             .iter()
-            .filter(|r| r.rel_type == "calls" || r.rel_type == "imports")
-            .map(|r| {
+            .map(|(src, tgt, d)| {
                 json!({
-                    "target": r.target_qualified,
-                    "type": r.rel_type
+                    "source": src,
+                    "target": tgt,
+                    "depth": d
                 })
             })
             .collect();

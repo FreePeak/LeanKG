@@ -14,7 +14,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Path for LeanKG project (default: .leankg)"}
-                    }
+                    },
+                    "required": []
                 }),
             },
             ToolDefinition {
@@ -27,7 +28,21 @@ impl ToolRegistry {
                         "incremental": {"type": "boolean", "description": "Only index changed files (git-based)"},
                         "lang": {"type": "string", "description": "Filter by language (e.g., go,ts,py,rs)"},
                         "exclude": {"type": "string", "description": "Exclude patterns (comma-separated)"}
-                    }
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "mcp_index_docs".to_string(),
+                description: "Index documentation directory to create code-doc traceability edges. \
+                              Run after mcp_index to populate documented_by and references relationships."
+                    .to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to docs directory (default: ./docs)"}
+                    },
+                    "required": []
                 }),
             },
             ToolDefinition {
@@ -37,7 +52,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "mcp_config_path": {"type": "string", "description": "Path for .mcp.json (default: .mcp.json)"}
-                    }
+                    },
+                    "required": []
                 }),
             },
             ToolDefinition {
@@ -45,7 +61,8 @@ impl ToolRegistry {
                 description: "Show LeanKG index status".to_string(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": {}
+                    "properties": {},
+                    "required": []
                 }),
             },
             ToolDefinition {
@@ -66,8 +83,10 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string"}
-                    }
+                        "pattern": {"type": "string", "description": "File name or pattern to search"},
+                        "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module"], "description": "Optional filter by element type"}
+                    },
+                    "required": []
                 }),
             },
             ToolDefinition {
@@ -76,8 +95,9 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string"}
-                    }
+                        "file": {"type": "string", "description": "File to get dependencies for"}
+                    },
+                    "required": ["file"]
                 }),
             },
             ToolDefinition {
@@ -86,19 +106,21 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string"}
-                    }
+                        "file": {"type": "string", "description": "File to get dependents for"}
+                    },
+                    "required": ["file"]
                 }),
             },
             ToolDefinition {
                 name: "get_impact_radius".to_string(),
-                description: "Get all files affected by change within N hops".to_string(),
+                description: "Get all files affected by change within N hops. Keep depth<=2 for LLM context budgets. Depth 3 may return hundreds of nodes.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string"},
-                        "depth": {"type": "integer", "default": 3}
-                    }
+                        "file": {"type": "string", "description": "File to analyze"},
+                        "depth": {"type": "integer", "default": 3, "description": "Hop depth (default: 3). Keep <=2 for context budgets."}
+                    },
+                    "required": ["file"]
                 }),
             },
             ToolDefinition {
@@ -107,8 +129,9 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "files": {"type": "array", "items": {"type": "string"}}
-                    }
+                        "files": {"type": "array", "items": {"type": "string"}, "description": "Files to include in review context"}
+                    },
+                    "required": []
                 }),
             },
             ToolDefinition {
@@ -117,7 +140,9 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string"}
+                        "file": {"type": "string"},
+                        "signature_only": {"type": "boolean", "default": true, "description": "Return only signatures (default). Set false for full body metadata."},
+                        "max_tokens": {"type": "integer", "default": 4000, "description": "Token budget cap"}
                     }
                 }),
             },
@@ -133,11 +158,13 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_call_graph".to_string(),
-                description: "Get function call chain (full depth)".to_string(),
+                description: "Get function call chain with bounded depth and result limit".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "function": {"type": "string"}
+                        "function": {"type": "string"},
+                        "depth": {"type": "integer", "description": "Maximum call graph depth (default: 2, max: 3)", "default": 2},
+                        "max_results": {"type": "integer", "description": "Maximum number of results to return (default: 30)", "default": 30}
                     }
                 }),
             },
