@@ -93,7 +93,6 @@ fn base_html(title: &str, content: &str) -> String {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>LeanKG - {}</title>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #fafafa; }}
@@ -119,11 +118,7 @@ fn base_html(title: &str, content: &str) -> String {
         .badge-class {{ background: #f3e5f5; color: #7b1fa2; }}
         .badge-file {{ background: #e8f5e9; color: #2e7d32; }}
         .badge-module {{ background: #fff3e0; color: #e65100; }}
-        #graph-container {{ width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px; background: #fff; }}
-        .node {{ cursor: pointer; }}
-        .link {{ stroke: #999; stroke-opacity: 0.6; }}
-        .node circle {{ stroke: #fff; stroke-width: 2px; }}
-        .node text {{ font-size: 11px; pointer-events: none; }}
+        #graph-container {{ width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px; background: #fff; position: relative; }}
         .loading {{ text-align: center; padding: 40px; color: #666; }}
         .error {{ background: #ffebee; color: #c62828; padding: 15px; border-radius: 6px; margin-bottom: 15px; }}
         .success {{ background: #e8f5e9; color: #2e7d32; padding: 15px; border-radius: 6px; margin-bottom: 15px; }}
@@ -132,9 +127,9 @@ fn base_html(title: &str, content: &str) -> String {
     </style>
 </head>
 <body>
-{}
-<h1>{}</h1>
-{}
+    {}
+    <h1>{}</h1>
+    {}
 </body>
 </html>"#,
         title,
@@ -217,6 +212,8 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
 #[allow(dead_code)]
 pub async fn graph() -> axum::response::Html<String> {
     let content = r#"
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/sigma.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/plugins/sigma.parsers.json.min.js"></script>
         <div class="card">
             <h2>Code Dependency Graph</h2>
             <p style="color: #666; margin-bottom: 15px;">Interactive visualization of code elements and their relationships.</p>
@@ -233,146 +230,251 @@ pub async fn graph() -> axum::response::Html<String> {
                 <button onclick="zoomIn()">Zoom In</button>
                 <button onclick="zoomOut()">Zoom Out</button>
                 <button onclick="resetZoom()">Reset</button>
-                <button onclick="toggleLabels()">Toggle Labels</button>
+                <button onclick="startLayout()">Run Layout</button>
             </div>
         </div>
         <style>
             .filter-btn { background: #e0e0e0; color: #333; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
             .filter-btn:hover { background: #d0d0d0; }
             .filter-btn.active { background: #0066cc; color: #fff; }
+            #graph-container canvas { width: 100% !important; height: 100% !important; }
         </style>
         <script>
-            let svg, g, zoom, nodes, labelsVisible = true;
+            let sig = null;
             let graphDataCache = null;
-            let currentGraphData = null;
             let currentFilter = 'all';
-            const width = 1400, height = 600;
             const docTypes = ['document', 'doc_section'];
             const funcTypes = ['function', 'class', 'struct'];
+            
             function isTestElement(node) {
                 const qn = node.id.toLowerCase();
-                const fp = node.file_path.toLowerCase();
+                const fp = node.file_path ? node.file_path.toLowerCase() : '';
                 return qn.includes('test_') || qn.includes('_test.') || qn.endsWith('_test') 
                     || fp.includes('_test.') || fp.includes('/test/') || fp.includes('\\test\\')
                     || fp.includes('benchmark');
             }
+            
             function filterTestElements(data) {
                 const nodeIds = new Set();
                 data.nodes.forEach(n => { if (!isTestElement(n)) nodeIds.add(n.id); });
-                const filteredEdges = data.edges.filter(e => { const sid = getEdgeId(e.source), tid = getEdgeId(e.target); return nodeIds.has(sid) && nodeIds.has(tid); });
+                const filteredEdges = data.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
                 const filteredNodes = data.nodes.filter(n => nodeIds.has(n.id));
                 return { nodes: filteredNodes, edges: filteredEdges };
             }
-            function fitToFrame(currentData) {
-                if (!svg || !g || !currentData || currentData.nodes.length === 0) return;
-                const bounds = g.node().getBBox();
-                const fullWidth = width;
-                const fullHeight = height;
-                const bWidth = bounds.width;
-                const bHeight = bounds.height;
-                if (bWidth === 0 || bHeight === 0) return;
-                const midX = bounds.x + bWidth / 2;
-                const midY = bounds.y + bHeight / 2;
-                const scale = 0.85 / Math.max(bWidth / fullWidth, bHeight / fullHeight);
-                const transform = d3.zoomIdentity
-                    .translate(fullWidth / 2, fullHeight / 2)
-                    .scale(Math.min(scale, 2))
-                    .translate(-midX, -midY);
-                svg.transition().duration(750).call(zoom.transform, transform);
-            }
-            function getEdgeId(node) { return typeof node === 'string' ? node : node.id; }
+            
             async function loadGraph() {
                 try {
                     const response = await fetch('/api/graph/data');
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                    }
                     const data = await response.json();
                     if (data.success && data.data) { 
                         graphDataCache = filterTestElements(data.data); 
                         initGraph(graphDataCache); 
+                    } else {
+                        document.getElementById('graph-container').innerHTML = '<div class="error">No graph data available. Index your codebase first.</div>';
                     }
-                    else document.getElementById('graph-container').innerHTML = '<div class="error">No graph data available. Index your codebase first.</div>';
                 } catch (e) {
-                    document.getElementById('graph-container').innerHTML = '<div class="error">Failed to load graph: ' + e.message + '</div>';
+                    console.error('Graph load error:', e);
+                    document.getElementById('graph-container').innerHTML = '<div class="error">Failed to load graph: ' + (e.message || String(e)) + '</div>';
                 }
             }
+            
             function setFilter(filter) {
                 currentFilter = filter;
                 document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
                 document.querySelector('.filter-btn[data-filter="' + filter + '"]').classList.add('active');
                 if (graphDataCache) initGraph(graphDataCache);
             }
+            
             function getFilteredData(data) {
                 const filteredNodes = [];
                 const filteredEdges = [];
                 const nodeIds = new Set();
                 const edgeNodeIds = new Set();
+                
                 if (currentFilter === 'all') {
                     data.nodes.forEach(n => { filteredNodes.push(n); nodeIds.add(n.id); });
-                    data.edges.forEach(e => { const sid = getEdgeId(e.source), tid = getEdgeId(e.target); if (nodeIds.has(sid) && nodeIds.has(tid)) { filteredEdges.push(e); edgeNodeIds.add(sid); edgeNodeIds.add(tid); } });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) { filteredEdges.push(e); edgeNodeIds.add(e.source); edgeNodeIds.add(e.target); } });
                     const finalNodes = filteredNodes.filter(n => edgeNodeIds.has(n.id));
                     return { nodes: finalNodes, edges: filteredEdges };
                 } else if (currentFilter === 'document') {
                     data.nodes.forEach(n => { if (docTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
-                    data.edges.forEach(e => { const sid = getEdgeId(e.source), tid = getEdgeId(e.target); if (nodeIds.has(tid)) { filteredEdges.push(e); edgeNodeIds.add(sid); edgeNodeIds.add(tid); } });
+                    data.edges.forEach(e => { if (nodeIds.has(e.target)) { filteredEdges.push(e); edgeNodeIds.add(e.source); edgeNodeIds.add(e.target); } });
                     const relatedNodes = data.nodes.filter(n => edgeNodeIds.has(n.id));
                     return { nodes: relatedNodes, edges: filteredEdges };
                 } else if (currentFilter === 'function') {
                     data.nodes.forEach(n => { if (funcTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
-                    data.edges.forEach(e => { const sid = getEdgeId(e.source), tid = getEdgeId(e.target); if (nodeIds.has(sid) || nodeIds.has(tid)) { filteredEdges.push(e); edgeNodeIds.add(sid); edgeNodeIds.add(tid); } });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) || nodeIds.has(e.target)) { filteredEdges.push(e); edgeNodeIds.add(e.source); edgeNodeIds.add(e.target); } });
                     const relatedNodes = data.nodes.filter(n => edgeNodeIds.has(n.id));
                     return { nodes: relatedNodes, edges: filteredEdges };
                 }
                 return { nodes: filteredNodes, edges: filteredEdges };
             }
+            
             function applyLimitAndOrphan(data) {
                 if (data.nodes.length <= 500 && data.edges.length <= 1000) {
                     return data;
                 }
                 const nodeConnectCount = {};
-                data.edges.forEach(e => { const sid = getEdgeId(e.source), tid = getEdgeId(e.target); nodeConnectCount[sid] = (nodeConnectCount[sid] || 0) + 1; nodeConnectCount[tid] = (nodeConnectCount[tid] || 0) + 1; });
+                data.edges.forEach(e => { 
+                    nodeConnectCount[e.source] = (nodeConnectCount[e.source] || 0) + 1; 
+                    nodeConnectCount[e.target] = (nodeConnectCount[e.target] || 0) + 1; 
+                });
                 const sortedNodes = [...data.nodes].sort((a, b) => 
                     (nodeConnectCount[b.id] || 0) - (nodeConnectCount[a.id] || 0)
                 );
                 const topNodeIds = new Set(sortedNodes.slice(0, 500).map(n => n.id));
                 const filteredNodes = data.nodes.filter(n => topNodeIds.has(n.id));
-                const filteredEdges = data.edges.filter(e => { const sid = getEdgeId(e.source), tid = getEdgeId(e.target); return topNodeIds.has(sid) && topNodeIds.has(tid); }).slice(0, 1000);
+                const filteredEdges = data.edges.filter(e => topNodeIds.has(e.source) && topNodeIds.has(e.target)).slice(0, 1000);
                 return { nodes: filteredNodes, edges: filteredEdges };
             }
+            
             function initGraph(fullData) {
-                currentGraphData = fullData;
                 const filtered = getFilteredData(fullData);
                 const data = applyLimitAndOrphan(filtered);
                 const container = document.getElementById('graph-container');
                 container.innerHTML = '';
-                svg = d3.select('#graph-container').append('svg').attr('width', '100%').attr('height', height);
-                zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (e) => g.attr('transform', e.transform));
-                svg.call(zoom);
-                g = svg.append('g');
-                const simulation = d3.forceSimulation(data.nodes)
-                    .force('link', d3.forceLink(data.edges).id(d => d.id).distance(80))
-                    .force('charge', d3.forceManyBody().strength(-200))
-                    .force('center', d3.forceCenter(width / 2, height / 2))
-                    .force('collision', d3.forceCollide().radius(20));
-                const link = g.append('g').selectAll('line').data(data.edges).join('line').attr('class', 'link').attr('stroke-width', 1);
-                const node = g.append('g').selectAll('g').data(data.nodes).join('g').attr('class', 'node')
-                    .call(d3.drag().on('start', dragstarted).on('drag', dragged).on('end', dragended));
-                const colors = {'file': '#2e7d32', 'function': '#1565c0', 'class': '#7b1fa2', 'module': '#e65100', 'document': '#e65100', 'doc_section': '#ff9800', 'struct': '#1565c0'};
-                node.append('circle').attr('r', 10).attr('fill', d => colors[d.element_type] || '#666');
-                node.append('text').text(d => d.label).attr('x', 15).attr('y', 4).style('display', labelsVisible ? 'block' : 'none').style('font-size', '10px');
-                node.on('click', (e, d) => { alert('Element: ' + d.label + '\nType: ' + d.element_type + '\nFile: ' + d.file_path); });
-                simulation.on('tick', () => {
-                    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-                    node.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
+                
+                if (data.nodes.length === 0) {
+                    container.innerHTML = '<div class="error">No graph data available.</div>';
+                    return;
+                }
+                
+                if (sig) {
+                    sig.kill();
+                }
+                
+                const colors = {
+                    'file': '#2e7d32', 
+                    'function': '#1565c0', 
+                    'class': '#7b1fa2', 
+                    'module': '#e65100', 
+                    'document': '#e65100', 
+                    'doc_section': '#ff9800', 
+                    'struct': '#1565c0'
+                };
+                
+                const idCounts = {};
+                data.nodes.forEach(n => { idCounts[n.id] = (idCounts[n.id] || 0) + 1; });
+                
+                const nodeCounter = {};
+                const graphNodes = data.nodes.map((n, idx) => {
+                    if (!idCounts[n.id]) idCounts[n.id] = 0;
+                    if (idCounts[n.id] === 1) {
+                        return { id: n.id, originalId: n.id, idx };
+                    }
+                    if (!nodeCounter[n.id]) nodeCounter[n.id] = 0;
+                    nodeCounter[n.id]++;
+                    return { id: n.id + '_' + nodeCounter[n.id], originalId: n.id, idx };
                 });
-                simulation.on('end', () => fitToFrame(data));
-                nodes = node;
+                
+                const edgeCounter = {};
+                const edgeMap = new Map();
+                data.edges.forEach((e, edgeIdx) => {
+                    if (!edgeCounter[e.source]) edgeCounter[e.source] = 0;
+                    if (!edgeCounter[e.target]) edgeCounter[e.target] = 0;
+                    edgeCounter[e.source]++;
+                    edgeCounter[e.target]++;
+                    const key = e.source + '|' + e.target;
+                    if (!edgeMap.has(key)) edgeMap.set(key, []);
+                    edgeMap.get(key).push(edgeIdx);
+                });
+                
+                const graphEdges = [];
+                const usedEdgeInstances = {};
+                data.edges.forEach((e, edgeIdx) => {
+                    let srcNodeId, tgtNodeId;
+                    
+                    const srcCount = idCounts[e.source] || 0;
+                    const tgtCount = idCounts[e.target] || 0;
+                    
+                    if (srcCount <= 1) {
+                        srcNodeId = e.source;
+                    } else {
+                        const srcInstances = graphNodes.filter(n => n.originalId === e.source);
+                        const srcUsed = usedEdgeInstances[e.source] || 0;
+                        srcNodeId = srcInstances[Math.min(srcUsed, srcInstances.length - 1)]?.id || e.source;
+                    }
+                    
+                    if (tgtCount <= 1) {
+                        tgtNodeId = e.target;
+                    } else {
+                        const tgtInstances = graphNodes.filter(n => n.originalId === e.target);
+                        const tgtUsed = usedEdgeInstances[e.target + '_tgt'] || 0;
+                        tgtNodeId = tgtInstances[Math.min(tgtUsed, tgtInstances.length - 1)]?.id || e.target;
+                        usedEdgeInstances[e.target + '_tgt'] = (usedEdgeInstances[e.target + '_tgt'] || 0) + 1;
+                    }
+                    
+                    usedEdgeInstances[e.source] = (usedEdgeInstances[e.source] || 0) + 1;
+                    
+                    if (srcNodeId && tgtNodeId) {
+                        graphEdges.push({
+                            id: 'edge_' + edgeIdx,
+                            source: srcNodeId,
+                            target: tgtNodeId,
+                            size: 1
+                        });
+                    }
+                });
+                
+                const validNodeIds = new Set(graphNodes.map(n => n.id));
+                const finalEdges = graphEdges.filter(e => 
+                    validNodeIds.has(e.source) && validNodeIds.has(e.target)
+                );
+                
+                const graphData = {
+                    nodes: graphNodes.map(n => ({
+                        id: n.id,
+                        label: data.nodes[n.idx].label,
+                        x: Math.random() * 100,
+                        y: Math.random() * 100,
+                        size: 5,
+                        color: colors[data.nodes[n.idx].element_type] || '#666',
+                        type: data.nodes[n.idx].element_type
+                    })),
+                    edges: finalEdges
+                };
+                
+                sig = new sigma({
+                    graph: graphData,
+                    container: container,
+                    settings: {
+                        drawLabels: true,
+                        drawEdgeLabels: false,
+                        defaultNodeColor: '#666',
+                        defaultEdgeColor: '#999',
+                        font: 'Arial',
+                        labelSize: 10,
+                        labelColor: '#333333',
+                        labelHover: true,
+                        labelSizeRatio: 1.5
+                    }
+                });
+                
+                sig.refresh();
+                
+                sig.bind('clickNode', function(e) {
+                    const node = e.data.node;
+                    alert('Element: ' + node.label + '\nType: ' + node.type + '\nID: ' + node.id);
+                });
             }
-            function dragstarted(e) { if (!e.active) simulation.alphaTarget(0.3).restart(); e.subject.fx = e.subject.x; e.subject.fy = e.subject.y; }
-            function dragged(e) { e.subject.fx = e.x; e.subject.fy = e.y; }
-            function dragended(e) { if (!e.active) simulation.alphaTarget(0); e.subject.fx = null; e.subject.fy = null; }
-            function zoomIn() { svg.transition().call(zoom.scaleBy, 1.3); }
-            function zoomOut() { svg.transition().call(zoom.scaleBy, 0.7); }
-            function resetZoom() { svg.transition().call(zoom.transform, d3.zoomIdentity); }
-            function toggleLabels() { labelsVisible = !labelsVisible; if (nodes) nodes.select('text').style('display', labelsVisible ? 'block' : 'none'); }
+            
+            function startLayout() {
+                if (sig) {
+                    if (sigma.layouts && sigma.layouts.config) {
+                        sigma.layouts.startForceAtlas2({ worker: false, iterations: 100 });
+                    } else {
+                        alert('ForceAtlas2 layout not available. Using default positioning.');
+                    }
+                }
+            }
+            
+            function zoomIn() { if (sig && sig.camera) sigma.camera.goTo({ ratio: sigma.camera.ratio * 0.7 }); }
+            function zoomOut() { if (sig && sig.camera) sigma.camera.goTo({ ratio: sigma.camera.ratio * 1.3 }); }
+            function resetZoom() { if (sig && sig.camera) sigma.camera.goTo({ x: 0, y: 0, ratio: 1 }); }
+            
             loadGraph();
         </script>"#;
 
