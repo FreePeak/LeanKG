@@ -290,6 +290,139 @@ EOF
     echo "Configured LeanKG for Claude Code at $config_file"
 }
 
+setup_claude_hooks() {
+    local plugin_dir="$HOME/.claude/plugins/leankg"
+    
+    if [ -d "$plugin_dir/hooks" ]; then
+        echo "LeanKG hooks already configured for Claude Code"
+        return
+    fi
+    
+    mkdir -p "$plugin_dir/hooks"
+    
+    cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start",
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+    
+    cat > "$plugin_dir/hooks/run-hook.cmd" <<'CMDEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+leankg_bootstrap_content=$(cat "${PLUGIN_ROOT}/leankg-bootstrap.md" 2>&1 || echo "")
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+leankg_bootstrap_escaped=$(escape_for_json "$leankg_bootstrap_content")
+session_context="<LEANKG_BOOTSTRAP>\n${leankg_bootstrap_escaped}\n</LEANKG_BOOTSTRAP>"
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+fi
+exit 0
+CMDEOF
+
+    cat > "$plugin_dir/hooks/session-start" <<'HOOKEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+leankg_bootstrap_content=$(cat "${PLUGIN_ROOT}/leankg-bootstrap.md" 2>&1 || echo "")
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+leankg_bootstrap_escaped=$(escape_for_json "$leankg_bootstrap_content")
+session_context="<LEANKG_BOOTSTRAP>\n${leankg_bootstrap_escaped}\n</LEANKG_BOOTSTRAP>"
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+fi
+exit 0
+HOOKEOF
+
+    chmod +x "$plugin_dir/hooks/run-hook.cmd" "$plugin_dir/hooks/session-start"
+    
+    echo "Configured LeanKG hooks for Claude Code"
+}
+
+setup_cursor_hooks() {
+    local plugin_dir="$HOME/.cursor/plugins/leankg"
+    
+    if [ -d "$plugin_dir/hooks" ]; then
+        echo "LeanKG hooks already configured for Cursor"
+        return
+    fi
+    
+    mkdir -p "$plugin_dir/hooks"
+    
+    cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "./hooks/session-start"
+      }
+    ]
+  }
+}
+EOF
+
+    cat > "$plugin_dir/hooks/session-start" <<'HOOKEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+leankg_bootstrap_content=$(cat "${PLUGIN_ROOT}/leankg-bootstrap.md" 2>&1 || echo "")
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+leankg_bootstrap_escaped=$(escape_for_json "$leankg_bootstrap_content")
+session_context="<LEANKG_BOOTSTRAP>\n${leankg_bootstrap_escaped}\n</LEANKG_BOOTSTRAP>"
+printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+exit 0
+HOOKEOF
+
+    chmod +x "$plugin_dir/hooks/session-start"
+    
+    echo "Configured LeanKG hooks for Cursor"
+}
+
 configure_kilo() {
     local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/kilo"
     local config_file="$config_dir/kilo.json"
@@ -563,10 +696,12 @@ main() {
                 ;;
             cursor)
                 configure_cursor
+                setup_cursor_hooks
                 install_agents_instructions "$HOME/.cursor/AGENTS.md"
                 ;;
             claude)
                 configure_claude
+                setup_claude_hooks
                 install_claude_instructions
                 ;;
             gemini)
