@@ -1,6 +1,6 @@
 [package]
 name = "leankg"
-version = "0.5.8"
+version = "0.5.9"
 edition = "2021"
 description = "Lightweight Knowledge Graph for AI-Assisted Development"
 license = "MIT"
