@@ -157,9 +157,9 @@
             clearGraph();
             try {
                 // code_elements: qn(0), etype(1), name(2), file_path(3), line_start(4), line_end(5), lang(6), parent(7), metadata(8)
-                const elements = await runQuery('?[qn, name, etype] := *code_elements[qn, etype, name, _, _, _, _, _, _]');
+                const elements = await runQuery('?[qn, name, etype] := *code_elements[qn, etype, name, fp, ls, le, lang, parent, meta]');
                 // relationships: src(0), tgt(1), type(2), metadata(3)
-                const rels = await runQuery('?[src, tgt, type] := *relationships[src, tgt, type, _]');
+                const rels = await runQuery('?[src, tgt, type] := *relationships[src, tgt, type, md]');
 
                 const nodeIds = new Set();
                 elements.forEach(([qn, name, etype]) => {
@@ -187,7 +187,7 @@
             showLoading(true);
             clearGraph();
             try {
-                const funcs = await runQuery('?[qn, name] := *code_elements[qn, "function", name, _, _, _, _, _, _]');
+                const funcs = await runQuery('?[qn, name] := *code_elements[qn, "function", name, fp, ls, le, lang, parent, meta]');
                 funcs.forEach(([qn, name]) => {
                     if (qn) nodes.add({ id: qn, label: name || qn });
                 });
@@ -203,7 +203,7 @@
             showLoading(true);
             clearGraph();
             try {
-                const rels = await runQuery('?[src, tgt] := *relationships[src, tgt, "imports", _]');
+                const rels = await runQuery('?[src, tgt] := *relationships[src, tgt, "imports", md]');
                 const nodeIds = new Set();
                 rels.forEach(([src, tgt]) => {
                     if (src) { nodes.add({ id: src, label: src.split('::').pop() }); nodeIds.add(src); }
@@ -226,7 +226,7 @@
             showLoading(true);
             clearGraph();
             try {
-                const rels = await runQuery('?[src, tgt] := *relationships[src, tgt, "calls", _]');
+                const rels = await runQuery('?[src, tgt] := *relationships[src, tgt, "calls", md]');
                 const nodeIds = new Set();
                 rels.forEach(([src, tgt]) => {
                     if (src) { nodes.add({ id: src, label: src.split('::').pop() }); nodeIds.add(src); }
