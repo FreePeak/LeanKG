@@ -412,6 +412,56 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 - **Business Logic Mapping** -- Annotate code elements with business logic descriptions and link to features.
 - **Traceability** -- Show feature-to-code and requirement-to-code traceability chains.
 - **Documentation Mapping** -- Index docs/ directory, map doc references to code elements.
+- **Graph Viewer** -- Visualize knowledge graph using standalone web UI.
+
+---
+
+## Web UI
+
+LeanKG stores data in CozoDB. You can visualize and query your knowledge graph using the graph viewer.
+
+### Prerequisites
+
+Install CozoDB standalone server (v0.2 to match LeanKG's embedded version):
+
+```bash
+# Download from GitHub releases
+curl -LO https://github.com/cozodb/cozo/releases/download/v0.2.2/cozoserver-0.2.2-aarch64-apple-darwin.gz
+gunzip cozoserver-0.2.2-aarch64-apple-darwin.gz
+chmod +x cozoserver-0.2.2-aarch64-apple-darwin
+mv cozoserver-0.2.2-aarch64-apple-darwin ~/.local/bin/cozo-server
+```
+
+### Start CozoDB Server
+
+```bash
+# Start CozoDB pointing to your LeanKG database
+cozo-server -e sqlite -p .leankg/leankg.db
+```
+
+The server runs at `http://localhost:9070`
+
+### Start Graph Viewer
+
+```bash
+# In another terminal, start the viewer server
+cd tools/graph-viewer && python3 server.py
+```
+
+Open **http://localhost:8080** in your browser.
+
+### Usage
+
+1. Click **Load Full Graph** to visualize all code elements and relationships
+2. Use **Functions Only**, **Imports Only**, **Calls Only** to filter
+3. Enter custom Datalog queries in the input box
+4. Click **Fit** to reset the view
+
+### Troubleshooting
+
+**Empty graph**: Run `leankg index ./src` to populate the database first.
+
+**API errors**: Ensure CozoDB server is running on port 9070.
 
 ---
 
