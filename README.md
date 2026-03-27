@@ -304,6 +304,19 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 
 ---
 
+## Benchmark Results
+
+LeanKG achieves **25.6% token savings** (verified via Kilo CLI MCP testing):
+
+| Metric | Baseline | LeanKG |
+|--------|----------|--------|
+| Tokens per query | 29,903 | 22,261 |
+| Savings | - | 7,642 (25.6%) |
+
+See [ab_benchmark/README.md](ab_benchmark/README.md) for full methodology, test queries, and detailed results.
+
+---
+
 ## Web UI
 
 Start the web UI with `leankg web` or `leankg serve` and open [http://localhost:8080](http://localhost:8080).
