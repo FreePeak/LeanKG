@@ -1,0 +1,27 @@
+project:
+  name: my-project
+  root: ./src
+  languages:
+  - go
+  - typescript
+  - python
+indexer:
+  exclude:
+  - '**/node_modules/**'
+  - '**/vendor/**'
+  include:
+  - '*.go'
+  - '*.ts'
+  - '*.py'
+mcp:
+  enabled: true
+  port: 3000
+  auth_token: ''
+  auto_index_on_start: true
+  auto_index_threshold_minutes: 5
+  index_on_first_call: true
+documentation:
+  output: ./docs
+  templates:
+  - agents
+  - claude

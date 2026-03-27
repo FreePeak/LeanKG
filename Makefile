@@ -1,4 +1,4 @@
-.PHONY: build build-release build-wasm publish publish-wasm test clean lint fmt check release
+.PHONY: build build-release build-wasm publish publish-wasm test clean lint fmt check release web
 
 CARGO = cargo
 WASM_PACK = wasm-pack
@@ -35,6 +35,9 @@ publish-wasm: build-wasm
 
 release:
 	./scripts/release.sh $(VERSION)
+
+web:
+	$(CARGO) run -- web
 
 clean:
 	$(CARGO) clean
