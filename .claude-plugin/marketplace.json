@@ -1,0 +1,20 @@
+{
+  "name": "leankg-dev",
+  "description": "Development marketplace for LeanKG knowledge graph plugin",
+  "owner": {
+    "name": "FreePeak",
+    "email": "freepeak@example.com"
+  },
+  "plugins": [
+    {
+      "name": "leankg",
+      "description": "Lightweight knowledge graph for AI-assisted development. Impact analysis, code search, dependency tracking, and context generation.",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "FreePeak",
+        "email": "freepeak@example.com"
+      }
+    }
+  ]
+}
