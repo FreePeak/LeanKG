@@ -422,50 +422,45 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 
 ## Web UI
 
-LeanKG stores data in CozoDB. You can visualize and query your knowledge graph using the graph viewer.
+LeanKG includes a built-in web UI for visualizing and querying your knowledge graph.
 
-### Prerequisites
-
-Install CozoDB standalone server (v0.2 to match LeanKG's embedded version):
+### Start the Web UI
 
 ```bash
-# Download from GitHub releases
-curl -LO https://github.com/cozodb/cozo/releases/download/v0.2.2/cozoserver-0.2.2-aarch64-apple-darwin.gz
-gunzip cozoserver-0.2.2-aarch64-apple-darwin.gz
-chmod +x cozoserver-0.2.2-aarch64-apple-darwin
-mv cozoserver-0.2.2-aarch64-apple-darwin ~/.local/bin/cozo-server
-```
+# Start the web server (default port: 8080)
+leankg serve
 
-### Start CozoDB Server
-
-```bash
-# Start CozoDB pointing to your LeanKG database
-cozo-server -e sqlite -p .leankg/leankg.db
-```
-
-The server runs at `http://localhost:9070`
-
-### Start Graph Viewer
-
-```bash
-# In another terminal, start the viewer server
-cd tools/graph-viewer && python3 server.py
+# Or specify a custom port
+leankg serve --port 9000
 ```
 
 Open **http://localhost:8080** in your browser.
 
-### Usage
+### Features
 
-1. Click **Load Full Graph** to visualize all code elements and relationships
-2. Use **Functions Only**, **Imports Only**, **Calls Only** to filter
-3. Enter custom Datalog queries in the input box
-4. Click **Fit** to reset the view
+- **Graph Visualization** -- Interactive force-directed graph of code elements and relationships
+- **Code Browse** -- Navigate files, functions, and classes in your codebase
+- **Documentation** -- View and manage code documentation
+- **Annotations** -- Add business logic annotations to code elements
+- **Quality Metrics** -- View code quality metrics and oversized functions
+- **Export** -- Export graph data in various formats
+- **Settings** -- Configure LeanKG behavior
+- **Query API** -- Execute custom Datalog queries against the knowledge graph
+
+### Prerequisites
+
+Ensure you have indexed your codebase first:
+
+```bash
+leankg init
+leankg index ./src
+```
 
 ### Troubleshooting
 
 **Empty graph**: Run `leankg index ./src` to populate the database first.
 
-**API errors**: Ensure CozoDB server is running on port 9070.
+**Connection refused**: Ensure `leankg serve` is running on port 8080.
 
 ---
 
