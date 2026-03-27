@@ -1,0 +1,24 @@
+{
+  "name": "leankg",
+  "displayName": "LeanKG",
+  "description": "Lightweight knowledge graph for AI-assisted development. Impact analysis, code search, dependency tracking, and context generation.",
+  "version": "0.1.0",
+  "author": {
+    "name": "FreePeak",
+    "email": "freepeak@example.com"
+  },
+  "homepage": "https://github.com/FreePeak/LeanKG",
+  "repository": "https://github.com/FreePeak/LeanKG",
+  "license": "MIT",
+  "keywords": [
+    "knowledge-graph",
+    "code-analysis",
+    "impact-analysis",
+    "dependency-tracking",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json"
+}
