@@ -263,28 +263,6 @@ pub async fn graph() -> axum::response::Html<String> {
                 const filteredNodes = data.nodes.filter(n => nodeIds.has(n.id));
                 return { nodes: filteredNodes, edges: filteredEdges };
             }
-            function limitGraphData(data, maxNodes = 500, maxEdges = 1000) {
-                const connectedNodes = new Set();
-                data.edges.forEach(e => { connectedNodes.add(e.source); connectedNodes.add(e.target); });
-                const connectedOnly = data.nodes.filter(n => connectedNodes.has(n.id));
-                if (connectedOnly.length <= maxNodes && data.edges.length <= maxEdges) {
-                    return data;
-                }
-                const nodeConnectCount = {};
-                data.edges.forEach(e => {
-                    nodeConnectCount[e.source] = (nodeConnectCount[e.source] || 0) + 1;
-                    nodeConnectCount[e.target] = (nodeConnectCount[e.target] || 0) + 1;
-                });
-                const sortedNodes = [...connectedOnly].sort((a, b) => 
-                    (nodeConnectCount[b.id] || 0) - (nodeConnectCount[a.id] || 0)
-                );
-                const topNodeIds = new Set(sortedNodes.slice(0, maxNodes).map(n => n.id));
-                const filteredNodes = data.nodes.filter(n => topNodeIds.has(n.id));
-                const filteredEdges = data.edges.filter(e => 
-                    topNodeIds.has(e.source) && topNodeIds.has(e.target)
-                ).slice(0, maxEdges);
-                return { nodes: filteredNodes, edges: filteredEdges };
-            }
             function fitToFrame(currentData) {
                 if (!svg || !g || !currentData || currentData.nodes.length === 0) return;
                 const bounds = g.node().getBBox();
@@ -307,7 +285,7 @@ pub async fn graph() -> axum::response::Html<String> {
                     const response = await fetch('/api/graph/data');
                     const data = await response.json();
                     if (data.success && data.data) { 
-                        graphDataCache = limitGraphData(filterTestElements(data.data)); 
+                        graphDataCache = filterTestElements(data.data); 
                         initGraph(graphDataCache); 
                     }
                     else document.getElementById('graph-container').innerHTML = '<div class="error">No graph data available. Index your codebase first.</div>';
@@ -344,9 +322,29 @@ pub async fn graph() -> axum::response::Html<String> {
                 }
                 return { nodes: filteredNodes, edges: filteredEdges };
             }
+            function applyLimitAndOrphan(data) {
+                if (data.nodes.length <= 500 && data.edges.length <= 1000) {
+                    return data;
+                }
+                const nodeConnectCount = {};
+                data.edges.forEach(e => {
+                    nodeConnectCount[e.source] = (nodeConnectCount[e.source] || 0) + 1;
+                    nodeConnectCount[e.target] = (nodeConnectCount[e.target] || 0) + 1;
+                });
+                const sortedNodes = [...data.nodes].sort((a, b) => 
+                    (nodeConnectCount[b.id] || 0) - (nodeConnectCount[a.id] || 0)
+                );
+                const topNodeIds = new Set(sortedNodes.slice(0, 500).map(n => n.id));
+                const filteredNodes = data.nodes.filter(n => topNodeIds.has(n.id));
+                const filteredEdges = data.edges.filter(e => 
+                    topNodeIds.has(e.source) && topNodeIds.has(e.target)
+                ).slice(0, 1000);
+                return { nodes: filteredNodes, edges: filteredEdges };
+            }
             function initGraph(fullData) {
                 currentGraphData = fullData;
-                const data = getFilteredData(fullData);
+                const filtered = getFilteredData(fullData);
+                const data = applyLimitAndOrphan(filtered);
                 const container = document.getElementById('graph-container');
                 container.innerHTML = '';
                 svg = d3.select('#graph-container').append('svg').attr('width', '100%').attr('height', height);
