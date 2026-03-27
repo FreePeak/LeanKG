@@ -16,6 +16,9 @@ pub fn is_test_file(file_path: &str) -> bool {
         "go" => file_name.ends_with("_test.go"),
         "py" => file_name.starts_with("test_") || file_name.ends_with("_test.py"),
         "rb" => file_name.ends_with("_spec.rb"),
+        "rs" => {
+            file_name.ends_with("_test.rs") || path.components().any(|c| c.as_os_str() == "tests")
+        }
         "ts" | "js" => {
             file_name.ends_with(".test.ts")
                 || file_name.ends_with(".test.js")
@@ -110,6 +113,13 @@ pub fn get_tested_file_path(file_path: &str) -> Option<String> {
                 Some(file_name.replace(".test.", "."))
             } else if file_name.ends_with(".spec.ts") || file_name.ends_with(".spec.js") {
                 Some(file_name.replace(".spec.", "."))
+            } else {
+                None
+            }
+        }
+        "rs" => {
+            if file_name.ends_with("_test.rs") {
+                Some(file_name.trim_end_matches("_test.rs").to_string() + ".rs")
             } else {
                 None
             }
@@ -1016,6 +1026,29 @@ mod tests {
             Some("math.js".to_string())
         );
         assert_eq!(get_tested_file_path("math.ts"), None);
+    }
+
+    #[test]
+    fn test_get_tested_file_path_rust() {
+        assert_eq!(
+            get_tested_file_path("math_test.rs"),
+            Some("math.rs".to_string())
+        );
+        assert_eq!(
+            get_tested_file_path("pkg/math_test.rs"),
+            Some("pkg/math.rs".to_string())
+        );
+        assert_eq!(get_tested_file_path("math.rs"), None);
+    }
+
+    #[test]
+    fn test_is_test_file_rust() {
+        assert!(is_test_file("math_test.rs"));
+        assert!(is_test_file("pkg/math_test.rs"));
+        assert!(is_test_file("tests/integration_test.rs"));
+        assert!(is_test_file("src/tests/whatever_test.rs"));
+        assert!(!is_test_file("math.rs"));
+        assert!(!is_test_file("lib.rs"));
     }
 
     #[test]
