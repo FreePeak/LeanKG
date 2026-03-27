@@ -176,123 +176,7 @@ sequenceDiagram
 
 ## MCP Server Setup
 
-LeanKG exposes a Model Context Protocol (MCP) server that AI tools can connect to.
-
-### Automated Setup (Recommended)
-
-Use the install script to install and configure MCP for your AI tool:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
-```
-
-### Manual Setup
-
-#### OpenCode AI
-
-Add to `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "mcp": {
-    "leankg_dev": {
-      "type": "local",
-      "command": ["leankg", "mcp-stdio", "--watch"],
-      "enabled": true
-    }
-  }
-}
-```
-
-#### Cursor AI
-
-Add to `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "leankg": {
-      "command": "leankg",
-      "args": ["mcp-stdio", "--watch"]
-    }
-  }
-}
-```
-
-#### Claude Code / Claude Desktop
-
-Add to `~/.config/claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "leankg": {
-      "command": "leankg",
-      "args": ["mcp-stdio", "--watch"]
-    }
-  }
-}
-```
-
-#### Gemini CLI
-
-Add to `~/.config/gemini-cli/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "leankg": {
-      "command": "leankg",
-      "args": ["mcp-stdio", "--watch"]
-    }
-  }
-}
-```
-
-#### Google Antigravity
-
-Add to `~/.gemini/antigravity/mcp_config.json`:
-
-```json
-{
-  "mcpServers": [
-    {
-      "name": "leankg",
-      "transport": "stdio",
-      "command": "leankg",
-      "args": ["mcp-stdio", "--watch"],
-      "enabled": true
-    }
-  ]
-}
-```
-
-#### Kilo Code
-
-Add to `~/.config/kilo/kilo.json`:
-
-```json
-{
-  "$schema": "https://kilo.ai/config.json",
-  "mcp": {
-    "leankg": {
-      "type": "local",
-      "command": ["leankg", "mcp-stdio", "--watch"],
-      "enabled": true
-    }
-  }
-}
-```
-
-### Starting the MCP Server
-
-```bash
-# Stdio mode with auto-indexing (for local AI tools)
-leankg mcp-stdio --watch
-
-# Stdio mode without auto-indexing
-leankg mcp-stdio
-```
+See [MCP Setup](docs/mcp-setup.md) for detailed setup instructions for all supported AI tools.
 
 ---
 
@@ -422,92 +306,13 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 
 ## Web UI
 
-LeanKG includes a built-in web UI for visualizing and querying your knowledge graph.
-
-### Start the Web UI
-
-```bash
-# Start the web server (default port: 8080)
-leankg serve
-
-# Or specify a custom port
-leankg serve --port 9000
-```
-
-Open **http://localhost:8080** in your browser.
-
-### Features
-
-- **Graph Visualization** -- Interactive force-directed graph of code elements and relationships
-- **Code Browse** -- Navigate files, functions, and classes in your codebase
-- **Documentation** -- View and manage code documentation
-- **Annotations** -- Add business logic annotations to code elements
-- **Quality Metrics** -- View code quality metrics and oversized functions
-- **Export** -- Export graph data in various formats
-- **Settings** -- Configure LeanKG behavior
-- **Query API** -- Execute custom Datalog queries against the knowledge graph
-
-### Prerequisites
-
-Ensure you have indexed your codebase first:
-
-```bash
-leankg init
-leankg index ./src
-```
-
-### Troubleshooting
-
-**Empty graph**: Run `leankg index ./src` to populate the database first.
-
-**Connection refused**: Ensure `leankg serve` is running on port 8080.
+See [Web UI](docs/web-ui.md) for detailed documentation.
 
 ---
 
 ## Auto-Indexing
 
 LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date. See [CLI Reference](docs/cli-reference.md#auto-indexing) for detailed commands.
-
----
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph "AI Tools"
-        Claude[Claude Code]
-        Open[OpenCode]
-        Cursor[Cursor]
-        Antigravity[Google Antigravity]
-    end
-
-    subgraph "LeanKG"
-        CLI[CLI Interface]
-        MCP[MCP Server]
-        Watcher[File Watcher]
-
-        subgraph "Core"
-            Indexer[tree-sitter Parser]
-            Graph[Graph Engine]
-            Cache[Query Cache]
-        end
-
-        subgraph "Storage"
-            CozoDB[(CozoDB)]
-        end
-    end
-
-    Claude --> MCP
-    Open --> MCP
-    Cursor --> MCP
-    Antigravity --> MCP
-    CLI --> Indexer
-    CLI --> Graph
-    Watcher --> Indexer
-    Indexer --> CozoDB
-    Graph --> CozoDB
-    Graph --> Cache
-```
 
 ---
 
@@ -519,39 +324,7 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `mcp_init` | Initialize LeanKG project (creates .leankg/, leankg.yaml) |
-| `mcp_index` | Index codebase (path, incremental, lang, exclude options) |
-| `mcp_install` | Create .mcp.json for MCP client configuration |
-| `mcp_status` | Show index statistics and status |
-| `mcp_impact` | Calculate blast radius for a file |
-| `query_file` | Find file by name or pattern |
-| `get_dependencies` | Get file dependencies (direct imports) |
-| `get_dependents` | Get files depending on target |
-| `get_impact_radius` | Get all files affected by change within N hops |
-| `get_review_context` | Generate focused subgraph + structured review prompt |
-| `get_context` | Get AI context for file (minimal, token-optimized) |
-| `find_function` | Locate function definition |
-| `get_call_graph` | Get function call chain (full depth) |
-| `search_code` | Search code elements by name/type |
-| `generate_doc` | Generate documentation for file |
-| `find_large_functions` | Find oversized functions by line count |
-| `get_tested_by` | Get test coverage for a function/file |
-| `get_doc_for_file` | Get documentation files referencing a code element |
-| `get_files_for_doc` | Get code elements referenced in a documentation file |
-| `get_doc_structure` | Get documentation directory structure |
-| `get_traceability` | Get full traceability chain for a code element |
-| `search_by_requirement` | Find code elements related to a requirement |
-| `get_doc_tree` | Get documentation tree structure |
-| `get_code_tree` | Get codebase structure |
-| `find_related_docs` | Find documentation related to a code change |
-
-**Auto-Initialization:** When the MCP server starts without an existing LeanKG project, it automatically initializes and indexes the current directory. This provides a "plug and play" experience for AI tools.
-
-**Auto-Indexing:** When the MCP server starts with an existing LeanKG project, it checks if the index is stale (by comparing git HEAD commit time vs database file modification time). If stale, it automatically runs incremental indexing to ensure AI tools have up-to-date context.
-
-**Fallback:** If the MCP server reports "LeanKG not initialized", manually run `leankg init` in your project directory, then restart the AI tool.
+See [MCP Tools](docs/mcp-tools.md) for the complete list of available tools.
 
 ---
 
@@ -572,101 +345,20 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 ## Roadmap
 
-### Phase 2 -- Enhanced MCP Tools (GitNexus-Inspired)
-
-Based on analysis of GitNexus architecture, LeanKG is adopting **precomputed relational intelligence**: structure computed at index time, not at query time. This converts LeanKG from a raw-edge graph query engine into a high-confidence context engine.
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Confidence Scoring** | Planned | Add confidence scores (0.0-1.0) to relationships based on resolution quality. Impact analysis distinguishes "WILL BREAK" from "MAY BE AFFECTED" |
-| **Pre-Commit Change Detection** | Planned | New `detect_changes` tool shows affected symbols and risk level before committing |
-| **Multi-Repo Registry** | Planned | Global registry at `~/.leankg/registry.json` so one MCP config serves all projects |
-| **Community Detection** | Planned | Auto-detect functional clusters using graph algorithms (Leiden-inspired) |
-| **Cluster-Grouped Search** | Planned | `search_code` results include cluster membership for architectural context |
-| **Enhanced Context** | Planned | `get_context` returns cluster, dependents_count, dependencies_count in one call |
-
-### Phase 3 -- Intelligence Features
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Cluster-Level Skills** | Planned | Auto-generate SKILL.md per functional cluster for targeted AI agent context |
-| **MCP Resources** | Planned | Read-only URIs for repos, clusters, schema -- overview without tool calls |
-| **Wiki Generation** | Planned | LLM-powered documentation from graph structure |
-
-### Future Features
-
-| Feature | Description |
-|---------|-------------|
-| **Semantic Search** | AI-powered code search using embeddings |
-| **Security Analysis** | Detect vulnerable dependencies and patterns |
-| **Cost Estimation** | Cloud resource cost tracking via pipeline data |
+See [Roadmap](docs/roadmap.md) for detailed feature planning and implementation status.
 
 ---
 
 ## Requirements
 
-**For npm installation (recommended):**
-- Node.js 18+
-- npm 8+
-
-**For building from source:**
 - Rust 1.70+
 - macOS or Linux
 
 ---
 
-## Supported Languages
+## Tech Stack & Project Structure
 
-LeanKG supports indexing and analysis for the following languages:
-
-| Language | Extensions | Support Level |
-|----------|------------|---------------|
-| Go | `.go` | Full - functions, structs, interfaces, imports, calls |
-| TypeScript | `.ts`, `.tsx` | Full - functions, classes, imports, calls |
-| JavaScript | `.js`, `.jsx` | Full - functions, classes, imports, calls |
-| Python | `.py` | Full - functions, classes, imports, calls |
-| Rust | `.rs` | Full - functions, structs, traits, imports, calls |
-| Terraform | `.tf` | Full - resources, variables, outputs, modules |
-| YAML | `.yaml`, `.yml` | Full - CI/CD pipelines, configurations |
-| Markdown | `.md` | Full - documentation sections, code references |
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Language | Rust |
-| Database | CozoDB (embedded relational-graph, Datalog queries) |
-| Parsing | tree-sitter |
-| CLI | Clap |
-| Web Server | Axum |
-| Installer | Node.js (npm package for binary distribution) |
-
----
-
-## Project Structure
-
-```
-src/
-  cli/         - CLI commands (Clap)
-  config/      - Project configuration
-  db/          - CozoDB persistence layer
-  doc/         - Documentation generator
-  graph/       - Graph query engine
-  indexer/     - Code parser (tree-sitter)
-  doc_indexer/ - Documentation indexer
-  mcp/         - MCP protocol handler
-  watcher/     - File change watcher
-  web/         - Web server (Axum)
-
-docs/
-  planning/    - Planning documents
-  requirement/ - Requirements documents (PRD)
-  analysis/    - Analysis documents
-  design/      - Design documents (HLD)
-  business/    - Business logic documents
-```
+See [Tech Stack](docs/tech-stack.md) for architecture, tech stack details, supported languages, and project structure.
 
 ---
 
