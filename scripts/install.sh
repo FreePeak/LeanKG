@@ -216,13 +216,14 @@ install_binary() {
 configure_opencode() {
     local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
     local config_file="$config_dir/opencode.json"
+    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
 
     mkdir -p "$config_dir"
 
     if [ -f "$config_file" ]; then
         local content
         content=$(cat "$config_file")
-        if echo "$content" | grep -q "leankg"; then
+        if echo "$content" | grep -q '"leankg"'; then
             echo "LeanKG already configured in OpenCode"
             return
         fi
@@ -232,7 +233,7 @@ configure_opencode() {
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcp.leankg_dev = {"type": "local", "command": ["leankg", "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
+    cat "$config_file" | jq --arg leankg "$leankg_path" '.mcp.leankg = {"type": "local", "command": [$leankg_path, "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
     echo "Configured LeanKG for OpenCode at $config_file"
 }
@@ -240,7 +241,7 @@ configure_opencode() {
 configure_cursor() {
     local config_dir="$HOME/.cursor"
     local config_file="$config_dir/mcp.json"
-    local srv_json='{"command": "leankg", "args": ["mcp-stdio", "--watch"]}'
+    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
 
     mkdir -p "$config_dir"
 
@@ -253,10 +254,10 @@ configure_cursor() {
         fi
         local tmp_file
         tmp_file=$(mktemp)
-        cat "$config_file" | jq --argjson srv "$srv_json" '.mcpServers.leankg = $srv' > "$tmp_file"
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg_path, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
         mv "$tmp_file" "$config_file"
     else
-        echo "{\"mcpServers\": {\"leankg\": $srv_json}}" > "$config_file"
+        echo "{\"mcpServers\": {\"leankg\": {\"command\": \"$leankg_path\", \"args\": [\"mcp-stdio\", \"--watch\"]}}}" > "$config_file"
     fi
     echo "Configured LeanKG for Cursor at $config_file"
 }
@@ -264,6 +265,7 @@ configure_cursor() {
 configure_claude() {
     local config_dir="$HOME/.config/claude"
     local config_file="$config_dir/settings.json"
+    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
 
     mkdir -p "$config_dir"
 
@@ -284,7 +286,7 @@ EOF
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq '.mcpServers.leankg = {"command": "leankg", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg_path, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
 
     echo "Configured LeanKG for Claude Code at $config_file"
@@ -426,6 +428,7 @@ HOOKEOF
 configure_kilo() {
     local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/kilo"
     local config_file="$config_dir/kilo.json"
+    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
 
     mkdir -p "$config_dir"
 
@@ -441,7 +444,7 @@ configure_kilo() {
     local tmp_file
     tmp_file=$(mktemp)
     if [ -f "$config_file" ]; then
-        cat "$config_file" | jq '.mcp.leankg = {"type": "local", "command": ["leankg", "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcp.leankg = {"type": "local", "command": [$leankg_path, "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
     else
         cat > "$tmp_file" <<EOF
 {
@@ -449,7 +452,7 @@ configure_kilo() {
   "mcp": {
     "leankg": {
       "type": "local",
-      "command": ["leankg", "mcp-stdio", "--watch"],
+      "command": ["$leankg_path", "mcp-stdio", "--watch"],
       "enabled": true
     }
   }
@@ -461,9 +464,11 @@ EOF
 }
 
 configure_gemini() {
+    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    
     if command -v gemini >/dev/null 2>&1; then
         echo "Configuring LeanKG for Gemini CLI using 'gemini mcp add'..."
-        gemini mcp add leankg leankg mcp-stdio --watch --scope user || true
+        gemini mcp add leankg "$leankg_path" mcp-stdio --watch --scope user || true
         echo "Configured LeanKG for Gemini CLI"
     else
         local config_file="$HOME/.gemini/settings.json"
@@ -482,7 +487,7 @@ configure_gemini() {
 
         local tmp_file
         tmp_file=$(mktemp)
-        cat "$config_file" | jq '.mcpServers.leankg = {"command": "leankg", "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg_path, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
         mv "$tmp_file" "$config_file"
         echo "Configured LeanKG for Gemini CLI at $config_file"
     fi
@@ -491,7 +496,8 @@ configure_gemini() {
 configure_antigravity() {
     local config_dir="$HOME/.gemini/antigravity"
     local config_file="$config_dir/mcp_config.json"
-    local srv_json='{"name": "leankg", "transport": "stdio", "command": "leankg", "args": ["mcp-stdio", "--watch"], "enabled": true}'
+    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    local srv_json="{\"name\": \"leankg\", \"transport\": \"stdio\", \"command\": \"$leankg_path\", \"args\": [\"mcp-stdio\", \"--watch\"], \"enabled\": true}"
 
     mkdir -p "$config_dir"
 

@@ -47,6 +47,14 @@ jobs:
           cp target/${{ matrix.target }}/release/leankg$EXT release/leanKG
           tar -czf release/${{ matrix.artifact }} -C release leanKG
           rm release/leanKG
+
+          # Package plugins and configs
+          mkdir -p release/plugins
+          cp -r .cursor-plugin release/plugins/ 2>/dev/null || true
+          cp -r .claude-plugin release/plugins/ 2>/dev/null || true
+          mkdir -p release/plugins/.opencode/plugins
+          cp .opencode/plugins/leankg.js release/plugins/.opencode/plugins/ 2>/dev/null || true
+          tar -czf release/${{ matrix.artifact }} -C release plugins leanKG
         shell: bash
 
       - uses: softprops/action-gh-release@v2
