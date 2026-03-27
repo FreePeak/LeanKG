@@ -281,21 +281,24 @@ pub async fn graph() -> axum::response::Html<String> {
                 if (graphDataCache) initGraph(graphDataCache);
             }
             function getFilteredData(data) {
-                if (currentFilter === 'all') return filterOrphanedNodes(data);
                 const filteredNodes = [];
                 const filteredEdges = [];
                 const nodeIds = new Set();
-                if (currentFilter === 'document') {
+                if (currentFilter === 'all') {
+                    data.nodes.forEach(n => { filteredNodes.push(n); nodeIds.add(n.id); });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
+                } else if (currentFilter === 'document') {
                     data.nodes.forEach(n => { if (docTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
                     data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
                 } else if (currentFilter === 'function') {
                     data.nodes.forEach(n => { if (funcTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
                     data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
                 } else if (currentFilter === 'mapping') {
-                    data.edges.forEach(e => { if (mappingRels.includes(e.rel_type)) { filteredEdges.push(e); nodeIds.add(e.source); } });
+                    data.edges.forEach(e => { if (mappingRels.includes(e.rel_type)) { filteredEdges.push(e); nodeIds.add(e.source); nodeIds.add(e.target); } });
                     data.nodes.forEach(n => { if (nodeIds.has(n.id)) filteredNodes.push(n); });
                 }
-                return { nodes: filteredNodes, edges: filteredEdges };
+                const result = { nodes: filteredNodes, edges: filteredEdges };
+                return filterOrphanedNodes(result);
             }
             function filterOrphanedNodes(data) {
                 const connectedNodes = new Set();

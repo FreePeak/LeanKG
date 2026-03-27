@@ -1,11 +1,15 @@
 # LeanKG PRD - Product Requirements Document
 
-**Version:** 1.6  
+**Version:** 1.7  
 **Date:** 2026-03-27  
 **Status:** In Progress - Phase 2 Features Implementation  
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:**
+- v1.15 - Web UI Orphan Node Filtering Fix (COMPLETED):
+  - Fixed orphan nodes appearing in webui graph view
+  - `filterOrphanedNodes` now applies to ALL filter types (all, document, function, mapping), not just 'all'
+  - Fixed 'mapping' filter bug where `e.target` was not added to nodeIds, causing target nodes to be missing
 - v1.14 - Web UI Integration (COMPLETED):
   - REMOVED `tools/graph-viewer/` (Python HTTP server + HTML)
   - Wire up `src/web/mod.rs` with all routes (pages + `/api/*`)
