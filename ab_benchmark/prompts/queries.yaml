@@ -1,0 +1,99 @@
+name: "LeanKG A/B Testing Benchmark"
+description: "Compare token usage and context quality between LeanKG and baseline approaches"
+category: token_savings
+
+tasks:
+  - id: "ab-query-handler"
+    query: "Find the MCP handler implementation that processes tool requests"
+    expected_files:
+      - "src/mcp/handler.rs"
+    expected_concepts:
+      - "handler"
+      - "mcp"
+      - "tool"
+
+  - id: "ab-code-element"
+    query: "Where is the CodeElement struct defined and what fields does it have?"
+    expected_files:
+      - "src/db/models.rs"
+    expected_concepts:
+      - "CodeElement"
+      - "struct"
+      - "qualified_name"
+
+  - id: "ab-dependency-graph"
+    query: "How does LeanKG build the dependency graph? Find the query engine."
+    expected_files:
+      - "src/graph/query.rs"
+    expected_concepts:
+      - "query"
+      - "dependencies"
+      - "graph"
+
+  - id: "ab-indexing-flow"
+    query: "Explain the complete flow from file indexing to storing relationships in the database"
+    expected_files:
+      - "src/indexer/mod.rs"
+      - "src/indexer/extractor.rs"
+      - "src/db/models.rs"
+    expected_concepts:
+      - "index"
+      - "extract"
+      - "relationship"
+
+  - id: "ab-impact-analysis"
+    query: "If I modify the CodeElement struct, what other code would need updating?"
+    expected_files:
+      - "src/graph/"
+      - "src/indexer/"
+    expected_concepts:
+      - "CodeElement"
+      - "impact"
+      - "dependent"
+
+  - id: "ab-call-graph"
+    query: "Find all functions that call the query engine and show the call chain"
+    expected_files:
+      - "src/mcp/handler.rs"
+      - "src/graph/query.rs"
+    expected_concepts:
+      - "calls"
+      - "query"
+      - "graph"
+
+  - id: "ab-testreation"
+    query: "What tests exist for the extractor module and what do they cover?"
+    expected_files:
+      - "tests/"
+    expected_concepts:
+      - "test"
+      - "extractor"
+      - "assert"
+
+  - id: "ab-context-retrieval"
+    query: "How does LeanKG retrieve context for a file? Show me the context module."
+    expected_files:
+      - "src/graph/context.rs"
+    expected_concepts:
+      - "context"
+      - "retrieval"
+      - "file"
+
+  - id: "ab-mcp-tools"
+    query: "List all available MCP tools and their purposes"
+    expected_files:
+      - "src/mcp/tools.rs"
+    expected_concepts:
+      - "mcp"
+      - "tools"
+      - "handler"
+
+  - id: "ab-db-schema"
+    query: "What is the database schema for storing code elements and relationships?"
+    expected_files:
+      - "src/db/schema.rs"
+      - "src/db/models.rs"
+    expected_concepts:
+      - "schema"
+      - "relationship"
+      - "code_element"
