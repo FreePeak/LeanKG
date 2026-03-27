@@ -306,6 +306,14 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 
 ## Web UI
 
+Start the web UI with `leankg web` or `leankg serve` and open [http://localhost:8080](http://localhost:8080).
+
+### Graph Viewer
+
+![LeanKG Graph Visualization](docs/screenshots/graph.png)
+
+The graph viewer provides an interactive visualization of your codebase's dependency graph. Filter by element type, zoom, pan, and click nodes for details.
+
 See [Web UI](docs/web-ui.md) for detailed documentation.
 
 ---
