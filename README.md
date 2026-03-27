@@ -15,36 +15,24 @@ LeanKG is a local-first knowledge graph that gives AI coding tools accurate code
 
 ---
 
-## Token Savings Example (Benchmarked)
+## How LeanKG Helps
 
-Real benchmark results from the [Go API Service example](examples/go-api-service/):
+```mermaid
+graph LR
+    subgraph "Without LeanKG"
+        A1[AI Tool] -->|Scans entire codebase| B1[10000+ tokens]
+        B1 --> A1
+    end
 
-| Scenario | Without LeanKG | With LeanKG | Savings |
-|----------|----------------|-------------|---------|
-| Impact Analysis | 835 tokens | 13 tokens | **98.4%** |
-| Full Feature Testing | 9,601 tokens | 42 tokens | **99.6%** |
-
-```bash
-# Run the benchmark yourself
-cd examples/go-api-service
-python3 benchmark.py
+    subgraph "With LeanKG"
+        A2[AI Tool] -->|13-42 tokens| C[LeanKG Graph]
+        C -->|Targeted subgraph| A2
+    end
 ```
 
-**Before LeanKG**: AI must scan entire codebase to understand dependencies (~9,600 tokens)
+**Without LeanKG**: AI scans entire codebase, wasting tokens on irrelevant context.
 
-**After LeanKG**: LeanKG provides targeted subgraph with relationships pre-computed (~42 tokens)
-
----
-
-## Why LeanKG?
-
-AI coding tools waste tokens scanning entire codebases. LeanKG provides **targeted context** instead:
-
-| Scenario | Without LeanKG | With LeanKG |
-|----------|----------------|-------------|
-| **File review** | Full content of changed files + diff | Blast radius + structural summary |
-| **Impact analysis** | Manually trace dependencies | `get_impact_radius` returns affected files |
-| **Token count** | 9,600+ tokens for full scan | 13-42 tokens with graph |
+**With LeanKG**: AI queries the knowledge graph for targeted context only.
 
 ---
 
@@ -109,6 +97,18 @@ git clone https://github.com/your-org/LeanKG.git
 cd LeanKG
 cargo build --release
 ```
+
+---
+
+## Update
+
+To update LeanKG to the latest version, run the same install command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- update
+```
+
+This will replace the existing binary with the latest release while preserving your configuration.
 
 ---
 
