@@ -1056,12 +1056,12 @@ impl GraphEngine {
             // Only delete the unresolved relationship if we successfully resolved it
             if did_resolve {
                 let clean_query = format!(
-                    r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", target_qualified = "{}" :rm relationships {{source_qualified, target_qualified, rel_type, metadata}}"#,
+                    r#":delete relationships where source_qualified = "{}" and target_qualified = "{}""#,
                     escape_datalog(&source),
                     escape_datalog(&unresolved),
                 );
                 if let Err(e) = self.db.run_script(&clean_query, Default::default()) {
-                    eprintln!("DEBUG rm FAILED: {}", e);
+                    eprintln!("DEBUG delete FAILED: {}", e);
                 }
             }
         }
