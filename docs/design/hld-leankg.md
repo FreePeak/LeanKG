@@ -1,10 +1,14 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.5  
+**Phien ban:** 1.6  
 **Ngay:** 2026-03-27  
-**Dua tren:** PRD v1.6  
+**Dua tren:** PRD v1.7  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.14 - Web UI Orphan Node Filtering Fix:
+  - Fixed orphan nodes appearing in webui graph view
+  - `filterOrphanedNodes` now applies to ALL filter types (all, document, function, mapping), not just 'all'
+  - Fixed 'mapping' filter bug where `e.target` was not added to nodeIds
 - v1.13 - Terraform and CI/CD YAML Indexing:
   - Add Terraform extractor for .tf files (HCL parsing)
   - Add CI/CD YAML extractor for GitHub Actions, GitLab CI, Azure Pipelines
