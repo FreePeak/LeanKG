@@ -6,6 +6,15 @@
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:**
+- v1.14 - Web UI Integration (COMPLETED):
+  - REMOVED `tools/graph-viewer/` (Python HTTP server + HTML)
+  - Wire up `src/web/mod.rs` with all routes (pages + `/api/*`)
+  - Added `axum = "0.7"` dependency for web framework
+  - Updated `Serve` command to call `web::start_server`
+  - Added new `Web` CLI command for starting the embedded web server
+  - All web UI pages now served directly from LeanKG binary (no external server)
+  - API routes grouped under `/api/` prefix
+  - **Clarify**: CozoDB runs EMBEDDED in LeanKG via `new_cozo_sqlite()` - no separate server process needed
 - v1.13 - Terraform and CI/CD YAML Indexing:
   - Add Terraform (.tf) file indexing with HCL extraction
   - Add CI/CD YAML (.yml, .yaml) file indexing for GitHub Actions, GitLab CI, Azure Pipelines
@@ -452,11 +461,25 @@ Supported CI/CD formats:
 
 **Why CozoDB for Graph:**
 - Relational-graph hybrid: Datalog queries combine graph traversal with relational joins
-- Embedded SQLite backend: lightweight, fast, no external process
+- Embedded SQLite backend: lightweight, fast, **no external process required**
 - Datalog query language: expressive recursive queries for graph operations
 - Lightweight: `cozo = "0.2"` with no heavy compile-time overhead (migrated from SurrealDB due to 6GB+ compile requirements)
 - Supports recursive rules for multi-hop traversal (impact radius, dependency chains)
-- Single binary deployment with embedded storage at `.leankg/leankg.db`
+- **Single binary deployment** with embedded storage at `.leankg/leankg.db`
+- **No server needed** - LeanKG is fully self-contained; all operations (index, query, impact) run directly against `.leankg/` directory
+
+### 6.2 Architecture: Embedded vs Server Mode
+
+LeanKG uses **embedded CozoDB** (via `cozo::new_cozo_sqlite()`). This means:
+
+| Aspect | LeanKG (Embedded) | GitNexus (Server) |
+|--------|-------------------|-------------------|
+| Database process | Runs in LeanKG binary | Runs separately |
+| Startup time | Instant (no server boot) | Requires server startup |
+| External dependencies | None | Requires CozoDB server process |
+| Web UI | Embedded in LeanKG | Served via separate process |
+
+LeanKG's embedded approach matches GitNexus's combined delivery model where the tool is self-contained.
 
 ### 6.2 Data Model
 
@@ -588,6 +611,9 @@ The following features are explicitly out of scope for MVP:
   - Codebase structure tools
   - Related docs finder
 - Web UI improvements
+  - Remove `tools/graph-viewer/` (Python-based)
+  - Complete Rust web handlers to serve graph viewer from within LeanKG binary
+  - No external server dependency for web UI
 - More language support
 - Incremental indexing optimization
 
