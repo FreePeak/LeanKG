@@ -5,10 +5,31 @@
 **Dua tren:** PRD v1.5  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.12 - P2 MCP Tool Improvements:
+  - Add `required` arrays to all MCP tools for proper schema validation
+  - Add `depth` param (default 2) and `max_results` param (default 30) to `get_call_graph`
+  - Add `file` optional param to `find_function` for scoping
+  - Lower default `limit` for `search_code` from 100 to 20, add `max: 50` cap
+  - Add `element_type` filter enum to `search_code` and `query_file`
+  - Add warning to `get_impact_radius` description about depth explosion risk
+- v1.11 - Depth-limited get_call_graph_bounded
+  - Add `get_call_graph_bounded` to prevent neighbor explosion
+  - Unroll recursion manually for depth <= 3 with `:limit` clause to cap results
+  - Add `depth` and `max_results` parameters to `get_call_graph` MCP tool
+- v1.10 - P2 Token Efficiency - signature_only Mode
+  - Add `signature_only` mode to `get_context` tool: returns only function signatures (default) instead of full body metadata
+  - Add `max_tokens` parameter to cap context size (default: 4000)
+  - Update `extract_function` to capture signature in metadata for token-efficient context retrieval
+  - Add `find_body_start_line` helper to identify function body start position
 - v1.9 - P1 AST Extraction Fixes
   - Fix `is_noise_call` filter: add missing noise calls, change single-char filter from `== 1` to `>= 2`
   - Fix Go `implements` detection: only emit for embedded (anonymous) fields, skip named fields
   - Add `resolve_call_edges` post-index resolution pass to resolve `__unresolved__` prefixed call targets to actual qualified names
+- v1.8 - P0 Documentation Indexing Fixes
+  - Add `mcp_index_docs` MCP tool to index documentation directory and populate documented_by/references relationships
+  - Fix doc regex to match any filename with known source extension (not just `src/`, `lib/`, `./` prefixed)
+  - Fix code-block skipping to properly skip content inside triple backtick blocks
+  - Fix `parse_doc_file` to extract and store headings in document metadata
 - v1.8 - Query Push-down Optimization
   - Add `search_by_name_typed` and `find_elements_by_name_exact` pushed-down predicate queries to GraphEngine
   - Add `run_element_query` helper to deduplicate CodeElement row mapping
@@ -854,6 +875,7 @@ erDiagram
 |------|-------------|
 | `mcp_init` | Initialize LeanKG project (creates .leankg/, leankg.yaml) |
 | `mcp_index` | Index codebase (path, incremental, lang, exclude options) |
+| `mcp_index_docs` | Index documentation directory to create code-doc traceability edges |
 | `mcp_install` | Create .mcp.json for MCP client configuration |
 | `mcp_status` | Show index statistics and status |
 | `mcp_impact` | Calculate blast radius for a file |
@@ -863,7 +885,7 @@ erDiagram
 | `get_impact_radius` | Get all files affected by change within N hops |
 | `get_review_context` | Generate focused subgraph + structured review prompt |
 | `find_function` | Locate function definition |
-| `get_call_graph` | Get function call chain (full depth) |
+| `get_call_graph` | Get function call chain with bounded depth and result limit |
 | `search_code` | Search code elements by name/type |
 | `get_context` | Get AI context for file (minimal, token-optimized) |
 | `generate_doc` | Generate documentation for file |
