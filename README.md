@@ -415,62 +415,6 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 
 ---
 
-## Web UI
-
-Visualize and query your knowledge graph using CozoDB's web interface.
-
-### Prerequisites
-
-Install the standalone CozoDB server:
-
-```bash
-# Via Python (recommended)
-pip install pycozo
-
-# Or download from GitHub releases
-# https://github.com/cozodb/cozo/releases
-```
-
-### Open Web UI
-
-1. Start LeanKG MCP server first to ensure database is initialized:
-   ```bash
-   leankg serve
-   ```
-
-2. In a new terminal, launch CozoDB standalone server pointing to LeanKG's database:
-   ```bash
-   cozo server --storage sqlite ~/.local/share/leankg/leankg.db
-   ```
-
-3. Open `http://localhost:3200` in your browser
-
-### What You Can Do
-
-- **Browse relations** -- View all tables (elements, relationships, etc.)
-- **Run queries** -- Execute Datalog queries against your knowledge graph
-- **Visualize data** -- See code elements and their relationships
-- **Debug** -- Inspect raw data to verify indexing correctness
-
-### Example Queries
-
-Count all indexed code elements:
-```
-?[count()] := *code_elements[_]
-```
-
-Show all functions:
-```
-?[name, qualified_name] := *code_elements{element_type: "function", name, qualified_name}
-```
-
-Show import relationships:
-```
-?[source, target] := *relationships{type: "imports", source_qualified: source, target_qualified: target}
-```
-
----
-
 ## Auto-Indexing
 
 LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date. See [CLI Reference](docs/cli-reference.md#auto-indexing) for detailed commands.
@@ -502,8 +446,6 @@ graph TB
         subgraph "Storage"
             CozoDB[(CozoDB)]
         end
-
-        Web[Web UI]
     end
 
     Claude --> MCP
@@ -516,7 +458,6 @@ graph TB
     Indexer --> CozoDB
     Graph --> CozoDB
     Graph --> Cache
-    Web --> Graph
 ```
 
 ---
