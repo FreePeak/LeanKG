@@ -1,11 +1,17 @@
 # LeanKG PRD - Product Requirements Document
 
-**Version:** 1.5  
-**Date:** 2026-03-25  
+**Version:** 1.6  
+**Date:** 2026-03-27  
 **Status:** In Progress - Phase 2 Features Implementation  
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:**
+- v1.13 - Terraform and CI/CD YAML Indexing:
+  - Add Terraform (.tf) file indexing with HCL extraction
+  - Add CI/CD YAML (.yml, .yaml) file indexing for GitHub Actions, GitLab CI, Azure Pipelines
+  - Extract resource/data/variable/output blocks from Terraform
+  - Extract pipeline/stage/step structure from CI/CD YAML
+  - Add `terraform` and `cicd` element types to data model
 - v1.12 - P2 MCP Tool Improvements:
   - Add `required` arrays to all MCP tools for proper schema validation
   - Add `depth` param (default 2) and `max_results` param (default 30) to `get_call_graph`
@@ -137,6 +143,8 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 | US-16 | As a developer, I want the MCP server to auto-initialize when it starts without an existing project so that the AI tool can use LeanKG immediately after installation | Should Have |
 | US-17 | As a developer, I want the MCP server to automatically re-index when starting if the index is stale so that AI tools always have up-to-date context | Should Have |
 | US-18 | As a developer, I want to configure auto-indexing behavior via leankg.yaml so that I can control when and how re-indexing happens | Should Have |
+| US-19 | As a developer, I want LeanKG to index Terraform files so that AI tools understand infrastructure-as-code | Should Have |
+| US-20 | As a developer, I want LeanKG to index CI/CD YAML files so that AI tools understand deployment pipelines | Should Have |
 
 ---
 
@@ -369,6 +377,35 @@ Supported documentation structure:
 - `mcp.auto_index_on_start`: Enable/disable auto-indexing on MCP server start (default: true)
 - `mcp.auto_index_threshold_minutes`: Minimum age of index before re-indexing is triggered (default: 5 minutes)
 - `mcp.index_on_first_call`: Enable lazy indexing on first tool call if not yet indexed (default: true)
+
+#### 5.1.15 Terraform Infrastructure Indexing (Phase 2)
+
+**FR-77:** Parse Terraform HCL files and extract infrastructure structure
+
+Supported Terraform constructs:
+- `resource` blocks (resource type and name)
+- `data` blocks (data source type and name)
+- `variable` blocks (variable name)
+- `output` blocks (output name)
+- `provider` blocks (provider name)
+- `module` blocks (module name and source)
+
+**FR-78:** Create `terraform` node type in the knowledge graph representing Terraform files
+
+**FR-79:** Extract infrastructure relationships -- which Terraform resources depend on which other resources
+
+#### 5.1.16 CI/CD YAML Indexing (Phase 2)
+
+**FR-80:** Parse CI/CD YAML files (GitHub Actions, GitLab CI, Azure Pipelines) and extract pipeline structure
+
+Supported CI/CD formats:
+- GitHub Actions (`.github/workflows/*.yml`, `.github/workflows/*.yaml`)
+- GitLab CI (`.gitlab-ci.yml`, `.gitlab-ci.yaml`)
+- Azure Pipelines (`azure-pipelines.yml`, `azure-pipelines.yaml`)
+
+**FR-81:** Create `cicd` node type in the knowledge graph representing CI/CD pipeline files
+
+**FR-82:** Extract pipeline elements (jobs, stages, steps) from CI/CD YAML files
 
 ### 5.2 Non-Functional Requirements
 
