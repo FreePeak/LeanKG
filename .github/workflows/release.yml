@@ -45,8 +45,6 @@ jobs:
             EXT=".exe"
           fi
           cp target/${{ matrix.target }}/release/leankg$EXT release/leanKG
-          tar -czf release/${{ matrix.artifact }} -C release leanKG
-          rm release/leanKG
 
           # Package plugins and configs
           mkdir -p release/plugins
