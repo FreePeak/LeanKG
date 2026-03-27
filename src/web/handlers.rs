@@ -281,7 +281,7 @@ pub async fn graph() -> axum::response::Html<String> {
                 if (graphDataCache) initGraph(graphDataCache);
             }
             function getFilteredData(data) {
-                if (currentFilter === 'all') return data;
+                if (currentFilter === 'all') return filterOrphanedNodes(data);
                 const filteredNodes = [];
                 const filteredEdges = [];
                 const nodeIds = new Set();
@@ -292,11 +292,16 @@ pub async fn graph() -> axum::response::Html<String> {
                     data.nodes.forEach(n => { if (funcTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
                     data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
                 } else if (currentFilter === 'mapping') {
-                    data.edges.forEach(e => { if (mappingRels.includes(e.rel_type)) { nodeIds.add(e.source); nodeIds.add(e.target); } });
+                    data.edges.forEach(e => { if (mappingRels.includes(e.rel_type)) { filteredEdges.push(e); nodeIds.add(e.source); } });
                     data.nodes.forEach(n => { if (nodeIds.has(n.id)) filteredNodes.push(n); });
-                    data.edges.forEach(e => { if (mappingRels.includes(e.rel_type)) filteredEdges.push(e); });
                 }
                 return { nodes: filteredNodes, edges: filteredEdges };
+            }
+            function filterOrphanedNodes(data) {
+                const connectedNodes = new Set();
+                data.edges.forEach(e => { connectedNodes.add(e.source); connectedNodes.add(e.target); });
+                const filteredNodes = data.nodes.filter(n => connectedNodes.has(n.id));
+                return { nodes: filteredNodes, edges: data.edges };
             }
             function initGraph(fullData) {
                 const data = getFilteredData(fullData);
@@ -778,10 +783,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
     };
 
     let relationships_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => {
-            let _ = g.resolve_call_edges();
-            g.all_relationships().map_err(|e| e.to_string())
-        }
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match (elements_result, relationships_result) {
@@ -826,10 +828,7 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
         Err(e) => Err(e.to_string()),
     };
     let relationships_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
-        Ok(g) => {
-            let _ = g.resolve_call_edges();
-            g.all_relationships().map_err(|e| e.to_string())
-        }
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     match (elements_result, relationships_result) {
