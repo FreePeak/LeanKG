@@ -123,10 +123,14 @@ leankg index ./src
 # 3. Start the MCP server (for AI tools)
 leankg serve
 
-# 4. Compute impact radius for a file
+# 4. Start the Web UI (for visualization)
+# Open http://localhost:8080 in your browser
+leankg web
+
+# 5. Compute impact radius for a file
 leankg impact src/main.rs --depth 3
 
-# 5. Check index status
+# 6. Check index status
 leankg status
 ```
 
