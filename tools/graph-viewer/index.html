@@ -163,7 +163,7 @@
 
                 const nodeIds = new Set();
                 elements.forEach(([qn, name, etype]) => {
-                    if (qn) {
+                    if (qn && !qn.includes('test_') && !qn.includes('_test.')) {
                         nodes.add({ id: qn, label: name || qn, title: `${etype}\n${qn}` });
                         nodeIds.add(qn);
                     }
@@ -189,7 +189,9 @@
             try {
                 const funcs = await runQuery('?[qn, name] := *code_elements[qn, "function", name, fp, ls, le, lang, parent, meta]');
                 funcs.forEach(([qn, name]) => {
-                    if (qn) nodes.add({ id: qn, label: name || qn });
+                    if (qn && !qn.includes('test_') && !qn.includes('_test.')) {
+                        nodes.add({ id: qn, label: name || qn });
+                    }
                 });
                 updateInfo();
                 network.fit();
@@ -206,8 +208,12 @@
                 const rels = await runQuery('?[src, tgt] := *relationships[src, tgt, "imports", md]');
                 const nodeIds = new Set();
                 rels.forEach(([src, tgt]) => {
-                    if (src) { nodes.add({ id: src, label: src.split('::').pop() }); nodeIds.add(src); }
-                    if (tgt) { nodes.add({ id: tgt, label: tgt.split('::').pop() }); nodeIds.add(tgt); }
+                    if (src && !src.includes('test_') && !src.includes('_test.')) {
+                        nodes.add({ id: src, label: src.split('::').pop() }); nodeIds.add(src);
+                    }
+                    if (tgt && !tgt.includes('test_') && !tgt.includes('_test.')) {
+                        nodes.add({ id: tgt, label: tgt.split('::').pop() }); nodeIds.add(tgt);
+                    }
                 });
                 rels.forEach(([src, tgt]) => {
                     if (src && tgt && nodeIds.has(src) && nodeIds.has(tgt)) {
@@ -229,8 +235,12 @@
                 const rels = await runQuery('?[src, tgt] := *relationships[src, tgt, "calls", md]');
                 const nodeIds = new Set();
                 rels.forEach(([src, tgt]) => {
-                    if (src) { nodes.add({ id: src, label: src.split('::').pop() }); nodeIds.add(src); }
-                    if (tgt) { nodes.add({ id: tgt, label: tgt.split('::').pop() }); nodeIds.add(tgt); }
+                    if (src && !src.includes('test_') && !src.includes('_test.')) {
+                        nodes.add({ id: src, label: src.split('::').pop() }); nodeIds.add(src);
+                    }
+                    if (tgt && !tgt.includes('test_') && !tgt.includes('_test.')) {
+                        nodes.add({ id: tgt, label: tgt.split('::').pop() }); nodeIds.add(tgt);
+                    }
                 });
                 rels.forEach(([src, tgt]) => {
                     if (src && tgt && nodeIds.has(src) && nodeIds.has(tgt)) {
@@ -271,7 +281,7 @@
         }
 
         initGraph();
-        loadFullGraph();
+        loadFunctions();
     </script>
 </body>
 </html>
