@@ -28,10 +28,10 @@ The plugin automatically injects LeanKG knowledge graph tools into your agent co
 
 ```
 # Check if LeanKG is ready
-leankg_mcp_status
+mcp_status
 
 # Initialize for your project
-leankg_mcp_init({ path: "/path/to/your/project/.leankg" })
+mcp_init({ path: "/path/to/your/project/.leankg" })
 
 # Ask questions like:
 # "What breaks if I change auth.rs?"
