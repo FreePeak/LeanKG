@@ -577,15 +577,26 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 ## Roadmap
 
-### Phase 2 -- Data Extraction Pipeline
+### Phase 2 -- Enhanced MCP Tools (GitNexus-Inspired)
+
+Based on analysis of GitNexus architecture, LeanKG is adopting **precomputed relational intelligence**: structure computed at index time, not at query time. This converts LeanKG from a raw-edge graph query engine into a high-confidence context engine.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **Data Source Connectors** | Planned | Extract data from databases, APIs, files, and other sources |
-| **Schema Extraction** | Planned | Auto-detect schemas and data structures from source systems |
-| **Data Quality Validation** | Planned | Implement cleaning, validation, and normalization |
-| **Incremental Extraction** | Planned | Track changes and extract only delta updates |
-| **Pipeline Orchestration** | Planned | Multi-stage extraction workflows with dependency management |
+| **Confidence Scoring** | Planned | Add confidence scores (0.0-1.0) to relationships based on resolution quality. Impact analysis distinguishes "WILL BREAK" from "MAY BE AFFECTED" |
+| **Pre-Commit Change Detection** | Planned | New `detect_changes` tool shows affected symbols and risk level before committing |
+| **Multi-Repo Registry** | Planned | Global registry at `~/.leankg/registry.json` so one MCP config serves all projects |
+| **Community Detection** | Planned | Auto-detect functional clusters using graph algorithms (Leiden-inspired) |
+| **Cluster-Grouped Search** | Planned | `search_code` results include cluster membership for architectural context |
+| **Enhanced Context** | Planned | `get_context` returns cluster, dependents_count, dependencies_count in one call |
+
+### Phase 3 -- Intelligence Features
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Cluster-Level Skills** | Planned | Auto-generate SKILL.md per functional cluster for targeted AI agent context |
+| **MCP Resources** | Planned | Read-only URIs for repos, clusters, schema -- overview without tool calls |
+| **Wiki Generation** | Planned | LLM-powered documentation from graph structure |
 
 ### Future Features
 
@@ -594,7 +605,6 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 | **Semantic Search** | AI-powered code search using embeddings |
 | **Security Analysis** | Detect vulnerable dependencies and patterns |
 | **Cost Estimation** | Cloud resource cost tracking via pipeline data |
-| **Multi-Project** | Index and query across multiple repositories |
 
 ---
 
