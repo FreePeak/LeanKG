@@ -1,10 +1,14 @@
 pub mod extractor;
 pub mod git;
 pub mod parser;
+pub mod terraform;
+pub mod cicd;
 
 pub use extractor::*;
 pub use git::*;
 pub use parser::*;
+pub use terraform::*;
+pub use cicd::*;
 
 use crate::graph::GraphEngine;
 use std::collections::HashSet;
@@ -12,7 +16,7 @@ use walkdir::WalkDir;
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
-    let extensions = ["go", "ts", "js", "py", "rs"];
+    let extensions = ["go", "ts", "js", "py", "rs", "tf", "yml", "yaml"];
 
     for entry in WalkDir::new(root)
         .follow_links(true)
@@ -20,8 +24,9 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if path.is_file()
-            && path.extension().is_some_and(|ext| extensions.contains(&ext.to_str().unwrap_or("")))
+            && (extensions.contains(&ext) || is_cicd_yaml_file(path))
             && !path.to_string_lossy().contains("node_modules")
             && !path.to_string_lossy().contains("vendor")
             && !path.to_string_lossy().contains(".git")
@@ -33,6 +38,14 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     Ok(files)
 }
 
+fn is_cicd_yaml_file(path: &std::path::Path) -> bool {
+    let path_str = path.to_string_lossy();
+    path_str.contains(".github/workflows")
+        || path_str.contains(".gitlab-ci")
+        || path_str.contains("azure-pipelines")
+        || path_str.ends_with(".yml") || path_str.ends_with(".yaml")
+}
+
 pub fn index_file_sync(
     graph: &GraphEngine,
     parser_manager: &mut ParserManager,
@@ -40,6 +53,28 @@ pub fn index_file_sync(
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let content = std::fs::read(file_path)?;
     let source = content.as_slice();
+
+    if file_path.ends_with(".tf") {
+        let extractor = TerraformExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements(&elements);
+        let _ = graph.insert_relationships(&relationships);
+        return Ok(elements.len());
+    }
+
+    if is_cicd_yaml_file(std::path::Path::new(file_path)) && (file_path.ends_with(".yml") || file_path.ends_with(".yaml")) {
+        let extractor = CicdYamlExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements(&elements);
+        let _ = graph.insert_relationships(&relationships);
+        return Ok(elements.len());
+    }
 
     let language = if file_path.ends_with(".go") {
         "go"
