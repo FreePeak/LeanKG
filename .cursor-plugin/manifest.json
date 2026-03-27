@@ -1,6 +1,6 @@
 {
   "name": "leankg",
   "description": "Lightweight knowledge graph for AI-assisted development. Impact analysis, code search, dependency tracking, and context generation.",
-  "version": "0.1.0",
+  "version": "0.5.5",
   "contextFileName": "GEMINI.md"
 }
