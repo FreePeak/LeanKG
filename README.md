@@ -610,6 +610,23 @@ For the complete CLI reference, see [CLI Reference](docs/cli-reference.md).
 
 ---
 
+## Supported Languages
+
+LeanKG supports indexing and analysis for the following languages:
+
+| Language | Extensions | Support Level |
+|----------|------------|---------------|
+| Go | `.go` | Full - functions, structs, interfaces, imports, calls |
+| TypeScript | `.ts`, `.tsx` | Full - functions, classes, imports, calls |
+| JavaScript | `.js`, `.jsx` | Full - functions, classes, imports, calls |
+| Python | `.py` | Full - functions, classes, imports, calls |
+| Rust | `.rs` | Full - functions, structs, traits, imports, calls |
+| Terraform | `.tf` | Full - resources, variables, outputs, modules |
+| YAML | `.yaml`, `.yml` | Full - CI/CD pipelines, configurations |
+| Markdown | `.md` | Full - documentation sections, code references |
+
+---
+
 ## Tech Stack
 
 | Component | Technology |
