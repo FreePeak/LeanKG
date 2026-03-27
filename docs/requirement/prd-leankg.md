@@ -6,6 +6,15 @@
 **Author:** Product Owner  
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
 **Changelog:**
+- v1.9 - P1 AST Extraction Fixes:
+  - Fix `is_noise_call` filter: add missing noise calls (drop, take, skip, next, filter, fold, Some, None, Ok, Err, async, await, new, with_capacity, with_len), change single-char filter from `== 1` to `>= 2`
+  - Fix Go `implements` detection: only emit for embedded (anonymous) fields, skip named fields
+  - Add `resolve_call_edges` post-index resolution pass to resolve `__unresolved__` prefixed call targets to actual qualified names
+- v1.8 - Query Push-down Optimization + P0 Security + Correctness Fixes:
+  - Add `search_by_name_typed` and `find_elements_by_name_exact` pushed-down predicate queries
+  - Add `run_element_query` helper to deduplicate row mapping logic
+  - Update MCP handlers to use pushed-down queries instead of fetching all elements and filtering in Rust
+  - Add `escape_datalog` helper to prevent Datalog injection attacks
 - v1.7 - Auto-Indexing on MCP Server Start:
   - US-17: MCP server auto-indexes when starting if index is stale
   - US-18: Configurable auto-indexing behavior via leankg.yaml
