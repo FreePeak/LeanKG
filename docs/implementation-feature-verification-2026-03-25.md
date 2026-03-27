@@ -1,14 +1,26 @@
 # LeanKG Feature Verification Report
 
-**Date:** 2026-03-25  
+**Date:** 2026-03-28  
 **Status:** Feature Testing Complete  
-**LeanKG Version:** 0.1.0
+**LeanKG Version:** 0.5.9
 
 ---
 
 ## Executive Summary
 
-This report documents the verification of LeanKG features against the PRD and HLD specifications. All major features have been tested and are functional.
+This report documents the verification of LeanKG features against the PRD and HLD specifications. Core functionality is operational with some known issues documented below.
+
+---
+
+## Current Database Status
+
+```
+Elements: 971
+Relationships: 2279
+Files: 0 (element type mismatch in queries)
+Functions: 401
+Classes: 69
+```
 
 ---
 
@@ -16,12 +28,12 @@ This report documents the verification of LeanKG features against the PRD and HL
 
 | PRD Requirement | HLD Specification | Status | Evidence |
 |-----------------|-------------------|--------|----------|
-| **FR-01:** Parse source code files | tree-sitter parsers | PASS | 30 files indexed, 281 elements extracted |
-| **FR-02:** Build dependency graph | Graph Engine | PASS | Rust calls and imports now extracted. 262 relationships indexed |
-| **FR-03:** Multi-language support | Go, TS, Python | PASS | Added Rust support (tree-sitter-rust) |
+| **FR-01:** Parse source code files | tree-sitter parsers | PASS | 37 files indexed, 971 elements extracted |
+| **FR-02:** Build dependency graph | Graph Engine | PARTIAL | 2279 relationships, but call edge resolution has issues |
+| **FR-03:** Multi-language support | Go, TS, Python, Rust | PASS | Rust support via tree-sitter-rust |
 | **FR-04:** Incremental indexing | Git-based change detection | PASS | Incremental index command available |
 | **FR-05:** File watching | notify crate | STUB | Watch command shows "ready for implementation" |
-| **FR-06:** TESTED_BY relationships | Entity extractor | PASS | Tested_by logic implemented for Go, TS, Python test files |
+| **FR-06:** TESTED_BY relationships | Entity extractor | PASS | Tested_by logic implemented |
 | **FR-07:** Track dependent files | find_dependents function | PASS | Logic implemented |
 | **FR-08:** Generate markdown docs | DocGenerator | PASS | AGENTS.md generated successfully |
 | **FR-10:** Generate AGENTS.md/CLAUDE.md | Template engine | PASS | Templates available |
@@ -31,39 +43,18 @@ This report documents the verification of LeanKG features against the PRD and HL
 | **FR-16:** Business logic queries | search-annotations | PASS | `leankg search-annotations` works |
 | **FR-17:** Provide targeted context | ContextProvider | PASS | get_context implemented |
 | **FR-21:** Generate review context | get_review_context | PASS | MCP tool available |
-| **FR-22:** Impact radius analysis | ImpactAnalyzer | PASS | `leankg impact` works (shows 0 due to no relationships) |
+| **FR-22:** Impact radius analysis | ImpactAnalyzer | PARTIAL | `leankg impact` works but returns 0 affected |
 | **FR-23:** MCP server | MCP protocol | PASS | mcp-stdio works |
 | **FR-25:** Context retrieval | MCP tools | PASS | 12 tools registered |
 | **FR-27:** Auto-install MCP config | install command | PASS | Creates .mcp.json |
 | **FR-28:** CLI init | init command | PASS | `leankg init` works |
 | **FR-29:** CLI index | index command | PASS | `leankg index` works |
-| **FR-30:** CLI query | query command | PASS | `leankg query` works |
+| **FR-30:** CLI query | query command | PARTIAL | Type/rel queries work, name query returns empty |
 | **FR-31:** CLI generate | generate command | PASS | `leankg generate` works |
 | **FR-33:** Start/stop MCP | serve command | PASS | `leankg serve` works |
-| **FR-34:** Calculate impact | impact command | PASS | `leankg impact` works |
+| **FR-34:** Calculate impact | impact command | PARTIAL | Works but no affected elements found |
 | **FR-35:** Auto-install MCP | install command | PASS | `leankg install` works |
-| **FR-36:** Find oversized functions | quality command | PASS | `leankg quality` works |
-
----
-
-## MCP Server Tools Verification
-
-All 12 MCP tools are implemented and respond correctly:
-
-| Tool | Status | Test Result |
-|------|--------|-------------|
-| query_file | PASS | Tool registered |
-| get_dependencies | PASS | Tool registered |
-| get_dependents | PASS | Tool registered |
-| get_impact_radius | PASS | Tool registered |
-| get_review_context | PASS | Tool registered |
-| get_context | PASS | Tool registered |
-| find_function | PASS | Tool registered |
-| get_call_graph | PASS | Tool registered |
-| search_code | PASS | Tool registered |
-| generate_doc | PASS | Tool registered |
-| find_large_functions | PASS | Tool registered |
-| get_tested_by | PASS | Tool registered |
+| **FR-36:** Find oversized functions | quality command | PASS | Finds 38 oversized functions |
 
 ---
 
@@ -72,99 +63,78 @@ All 12 MCP tools are implemented and respond correctly:
 | Command | Status | Test Result |
 |---------|--------|-------------|
 | init | PASS | Creates .leankg directory |
-| index | PASS | Indexes 30 Rust files |
-| query | PASS | Query by name/type/rel/pattern works |
+| index | PASS | Indexes 37 Rust files |
+| query --kind type | PASS | Returns 401 functions, 69 classes |
+| query --kind rel | PASS | Returns 1325 "calls" relationships |
+| query --kind name | FAIL | Returns no elements despite matching names existing |
 | generate | PASS | Generates AGENTS.md |
 | serve | PASS | Starts MCP and Web servers |
 | mcp-stdio | PASS | MCP stdio transport works |
-| impact | PASS | Returns impact radius |
+| impact | PARTIAL | Returns 0 affected elements |
 | install | PASS | Creates .mcp.json |
-| status | PASS | Shows element count |
+| status | PASS | Shows element/relationship counts |
 | watch | STUB | "ready for implementation" |
-| quality | PASS | Finds 64 oversized functions |
+| quality | PASS | Finds 38 oversized functions |
 | export | STUB | "ready for implementation" |
-| annotate | PASS | Creates annotation |
-| link | PASS | Links element to story/feature |
-| search-annotations | PASS | Searches annotations |
-| show-annotations | PASS | Shows annotations |
-| trace | PASS | Shows traceability |
-| find-by-domain | PASS | Finds by domain |
+| annotate | NOT TESTED | Not tested in this session |
+| link | NOT TESTED | Not tested in this session |
+| search-annotations | NOT TESTED | Not tested in this session |
+| show-annotations | NOT TESTED | Not tested in this session |
+| trace | NOT TESTED | Not tested in this session |
+| find-by-domain | NOT TESTED | Not tested in this session |
 
 ---
 
 ## Issues Found
 
-### 1. MCP Timeout on OpenCode (FIXED)
-- **Issue:** MCP server operation timed out after 30000ms
-- **Root Cause:** `execute_tool` created new database connection and GraphEngine for every tool call
-- **Fix:** Cached GraphEngine in MCPServer struct to avoid repeated initialization
-- **Impact:** MCP tools now respond instantly
+### 1. main.rs Function Ordering (FIXED)
+- **Issue:** Compilation error due to functions defined after being called
+- **Root Cause:** `register_repo`, `unregister_repo`, `list_repos`, `status_repo`, `setup_global` defined at lines 899+ but called at lines 197+
+- **Fix:** Moved functions to be defined before their call sites
+- **Impact:** Code now compiles successfully
 
-### 2. tree-sitter Version Mismatch
-- **Issue:** tree-sitter 0.24 vs language parsers at 0.25 caused LanguageError
-- **Fix:** Updated tree-sitter to 0.25 in Cargo.toml
-- **Impact:** Resolved indexing errors
+### 2. CodeElement Schema Mismatch (FIXED)
+- **Issue:** Compilation error - missing `cluster_id` and `cluster_label` fields
+- **Root Cause:** CodeElement struct had extra fields not in database schema or initialization code
+- **Fix:** Removed unused `cluster_id` and `cluster_label` fields from CodeElement struct
+- **Impact:** Code now compiles successfully
 
-### 2. Rust Support Missing (FIXED)
-- **Issue:** Extractor didn't support Rust node types
-- **Fix:** Added tree-sitter-rust dependency and Rust parser support, added `use_declaration` and `call_expression` handling
-- **Impact:** Rust relationships now extracted (imports and calls). 262 relationships indexed
+### 3. Call Edge Resolution Failure
+- **Issue:** Warning "Failed to resolve call edges: Arity mismatch for rule application relationships"
+- **Root Cause:** Database schema expects 4 fields but code provides 5 (includes confidence)
+- **Impact:** Call relationships show `__unresolved__` prefix in target names
 
-### 3. Python/Go Parser Tests (FIXED)
-- **Issue:** test_extract_go_interface, test_extract_python_class, test_extract_python_decorator failed
-- **Root Cause:** Missing node type handling in extractor
-- **Fix:** 
-  - Added `class_definition` to Python class node types
-  - Added `interface_type` and `method_elem` detection for Go interfaces
-  - Added `attribute` and `decorated_definition` handling for Python decorators
-- **Impact:** All 70 tests now pass
+### 4. search_by_name Returns Empty Results
+- **Issue:** `query --kind name` returns no elements even for common names
+- **Root Cause:** CozoDB `regex_matches(lowercase(...))` function behavior or query format issue
+- **Impact:** Name-based queries don't work, but type and relation queries do
 
----
-
-## OpenCode MCP Integration
-
-LeanKG MCP server has been installed to OpenCode via:
-
-```json
-{
-  "mcpServers": {
-    "leankg": {
-      "command": "leankg",
-      "args": ["mcp-stdio"]
-    }
-  }
-}
-```
-
-Location: `/Users/linh.doan/.opencode/mcp.json`
-
----
-
-## Build Requirements Fixed
-
-1. Updated `tree-sitter` from 0.24 to 0.25 to match language parsers
-2. Added `tree-sitter-rust = "0.24"` for Rust support
+### 5. Impact Radius Returns 0 Affected
+- **Issue:** `leankg impact ./src/main.rs --depth 2` returns no affected elements
+- **Root Cause:** Likely due to relationship target format issue (`__unresolved__` prefix)
+- **Impact:** Impact analysis cannot find downstream dependencies
 
 ---
 
 ## Test Summary
 
-- **Total Tests:** 70
-- **Passed:** 70
+- **Total Tests:** 81
+- **Passed:** 81
 - **Failed:** 0
 
 ---
 
 ## Recommendations
 
-1. **File-level Impact Analysis:** Currently impact works with function qualifiers (e.g., `./src/main.rs::main`). File-level impact (e.g., `./src/main.rs`) needs prefix matching support in CozoDB
-2. **Web UI:** Complete implementation of web handlers for FR-37 to FR-41
-3. **File Watcher:** Implement the watch command using notify crate
-4. **Export:** Implement HTML graph export
-5. **Documentation:** Update PRD with Rust as supported language (was Go, TS, Python only)
+1. **Fix search_by_name Query:** Investigate CozoDB regex_matches behavior or rewrite using LIKE
+2. **Fix Call Edge Resolution:** Ensure relationship insert matches database schema (4 or 5 fields)
+3. **File-level Impact Analysis:** Currently impact works with function qualifiers. File-level impact needs prefix matching
+4. **Web UI:** Complete implementation of web handlers for FR-37 to FR-41
+5. **File Watcher:** Implement the watch command using notify crate
+6. **Export:** Implement HTML graph export
 
 ---
 
 ## Sign-off
 
-Feature verification complete. LeanKG core functionality is operational and ready for use.
+LeanKG core functionality is operational. Known issues are documented above. Impact radius and name-based queries need fixes.
