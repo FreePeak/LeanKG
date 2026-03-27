@@ -5,6 +5,15 @@
 **Dua tren:** PRD v1.5  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.9 - P1 AST Extraction Fixes
+  - Fix `is_noise_call` filter: add missing noise calls, change single-char filter from `== 1` to `>= 2`
+  - Fix Go `implements` detection: only emit for embedded (anonymous) fields, skip named fields
+  - Add `resolve_call_edges` post-index resolution pass to resolve `__unresolved__` prefixed call targets to actual qualified names
+- v1.8 - Query Push-down Optimization
+  - Add `search_by_name_typed` and `find_elements_by_name_exact` pushed-down predicate queries to GraphEngine
+  - Add `run_element_query` helper to deduplicate CodeElement row mapping
+  - Update MCP handlers to use pushed-down queries instead of fetching all elements and filtering in Rust
+  - Query optimization reduces data transfer between CozoDB and application by filtering at database level
 - v1.6 - Auto-Indexing on MCP Server Start
   - Added auto-indexing on startup when index is stale (git-based detection)
   - Added configuration options for auto-indexing behavior
@@ -889,7 +898,21 @@ When the MCP server starts with an existing LeanKG project:
 
 ## 6. Security Considerations
 
-### 6.1 Local Security
+### 6.1 Datalog String Escaping
+
+All user-provided strings in Datalog queries MUST be escaped using the `escape_datalog` helper function:
+
+```rust
+/// Escape a string value for safe inline Datalog string literals.
+/// CozoDB does not yet support parameterized queries, so we must escape manually.
+fn escape_datalog(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+```
+
+This prevents Datalog injection attacks where malicious string values could break out of string literals and modify query structure.
+
+### 6.2 Local Security
 
 | Concern | Mitigation |
 |---------|------------|
