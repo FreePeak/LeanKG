@@ -330,6 +330,75 @@ Before ANY codebase search/navigation, use LeanKG tools:
 
 See [Agentic Instructions](docs/agentic-instructions.md) for detailed setup.
 
+### OpenCode Plugin (Auto-Trigger)
+
+LeanKG includes an OpenCode plugin that **automatically injects LeanKG context into every prompt**. Add to your `opencode.json`:
+
+```json
+{
+  "plugins": ["leankg@git+https://github.com/FreePeak/LeanKG.git"]
+}
+```
+
+This makes LeanKG tools **always available** without manual activation. See [`.opencode/INSTALL.md`](.opencode/INSTALL.md) for details.
+
+### Claude Code Plugin (Auto-Trigger)
+
+LeanKG is available via the official Claude plugin marketplace:
+
+```
+/plugin install leankg@claude-plugins-official
+```
+
+Or register the marketplace:
+
+```
+/plugin marketplace add FreePeak/leankg-marketplace
+/plugin install leankg@leankg-marketplace
+```
+
+See [`.claude-plugin/INSTALL.md`](.claude-plugin/INSTALL.md) for details.
+
+### Cursor Plugin (Auto-Trigger)
+
+LeanKG is available via the Cursor plugin marketplace:
+
+```
+/add-plugin leankg
+```
+
+See [`.cursor-plugin/INSTALL.md`](.cursor-plugin/INSTALL.md) for details.
+
+### Gemini CLI / Google Antigravity (Auto-Trigger)
+
+Install via gemini extensions:
+
+```
+gemini extensions install https://github.com/FreePeak/LeanKG
+```
+
+See [`GEMINI.md`](GEMINI.md) for context file details.
+
+### Codex (Fetch Instructions)
+
+Tell Codex:
+
+```
+Fetch and follow instructions from https://raw.githubusercontent.com/FreePeak/LeanKG/refs/heads/main/.codex/INSTALL.md
+```
+
+See [`.codex/INSTALL.md`](.codex/INSTALL.md) for details.
+
+### Kilo Code (Fetch Instructions)
+
+Tell Kilo Code:
+
+```
+Fetch and follow instructions from https://raw.githubusercontent.com/FreePeak/LeanKG/refs/heads/main/.kilo/INSTALL.md
+```
+
+See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
+
 ---
 
 ## Highlights
