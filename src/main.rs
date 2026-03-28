@@ -508,14 +508,15 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
     println!("  Elements: {}", elements.len());
     println!("  Relationships: {}", relationships.len());
 
-    let files = elements.iter().filter(|e| e.element_type == "file").count();
+    let unique_files: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+    let files = unique_files.len();
     let functions = elements
         .iter()
         .filter(|e| e.element_type == "function")
         .count();
     let classes = elements
         .iter()
-        .filter(|e| e.element_type == "class")
+        .filter(|e| e.element_type == "class" || e.element_type == "struct")
         .count();
 
     println!("  Files: {}", files);
