@@ -543,57 +543,92 @@ impl<'a> EntityExtractor<'a> {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             let kind = child.kind();
-            if kind == "field_expression" || kind == "identifier" || kind == "scoped_identifier" {
+            if kind == "field_expression"
+                || kind == "identifier"
+                || kind == "scoped_identifier"
+                || kind == "selector_expression"
+                || kind == "type_identifier"
+            {
                 let mut found_name = false;
                 let mut name_to_use: Option<String> = None;
 
-                // For scoped_identifier like `Arc::new`, we want the LAST identifier (the function name)
                 let mut last_identifier_name: Option<String> = None;
                 let mut first_identifier_name: Option<String> = None;
+                let mut is_method_call = false;
 
-                let mut field_cursor = child.walk();
-                for inner in child.children(&mut field_cursor) {
-                    let inner_kind = inner.kind();
-                    if inner_kind == "field_identifier" || inner_kind == "identifier" {
-                        if let Some(bytes) = self.source.get(inner.byte_range()) {
-                            if let Ok(name) = std::str::from_utf8(bytes) {
-                                if first_identifier_name.is_none() {
-                                    first_identifier_name = Some(name.to_string());
+                // Handle selector_expression specially (Go: fmt.Println)
+                if kind == "selector_expression" {
+                    is_method_call = true;
+                    let mut field_cursor = child.walk();
+                    for inner in child.children(&mut field_cursor) {
+                        let inner_kind = inner.kind();
+                        if inner_kind == "field_identifier" {
+                            if let Some(bytes) = self.source.get(inner.byte_range()) {
+                                if let Ok(name) = std::str::from_utf8(bytes) {
+                                    last_identifier_name = Some(name.to_string());
                                 }
-                                last_identifier_name = Some(name.to_string());
+                            }
+                        } else if inner_kind == "identifier" || inner_kind == "type_identifier" {
+                            if let Some(bytes) = self.source.get(inner.byte_range()) {
+                                if let Ok(name) = std::str::from_utf8(bytes) {
+                                    if first_identifier_name.is_none() {
+                                        first_identifier_name = Some(name.to_string());
+                                    }
+                                }
                             }
                         }
                     }
-                }
-
-                // For scoped_identifier like `Type::func()`, skip if first part is uppercase (it's a type, not module)
-                if kind == "scoped_identifier" {
-                    if let Some(first) = first_identifier_name {
-                        if first
-                            .chars()
-                            .next()
-                            .map(|c| c.is_uppercase())
-                            .unwrap_or(false)
-                        {
-                            // Skip - first part is uppercase (likely a type constructor like Arc::new)
-                            continue;
-                        }
-                    }
-                }
-
-                // For scoped_identifier and field_expression, use the last identifier (function/method name)
-                if kind == "scoped_identifier" || kind == "field_expression" {
                     if let Some(name) = last_identifier_name {
                         if !is_noise_call(&name) {
                             name_to_use = Some(name);
                         }
                     }
                 } else {
-                    // For simple identifier, use it directly
-                    if let Some(bytes) = self.source.get(child.byte_range()) {
-                        if let Ok(name) = std::str::from_utf8(bytes) {
-                            if !is_noise_call(name) {
-                                name_to_use = Some(name.to_string());
+                    // For scoped_identifier like `Arc::new`, we want the LAST identifier (the function name)
+                    let mut field_cursor = child.walk();
+                    for inner in child.children(&mut field_cursor) {
+                        let inner_kind = inner.kind();
+                        if inner_kind == "field_identifier" || inner_kind == "identifier" {
+                            if let Some(bytes) = self.source.get(inner.byte_range()) {
+                                if let Ok(name) = std::str::from_utf8(bytes) {
+                                    if first_identifier_name.is_none() {
+                                        first_identifier_name = Some(name.to_string());
+                                    }
+                                    last_identifier_name = Some(name.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    // For scoped_identifier like `Type::func()`, skip if first part is uppercase (it's a type, not module)
+                    if kind == "scoped_identifier" {
+                        if let Some(first) = first_identifier_name {
+                            if first
+                                .chars()
+                                .next()
+                                .map(|c| c.is_uppercase())
+                                .unwrap_or(false)
+                            {
+                                // Skip - first part is uppercase (likely a type constructor like Arc::new)
+                                continue;
+                            }
+                        }
+                    }
+
+                    // For scoped_identifier, field_expression, and identifier, use the last identifier (function/method name)
+                    if kind == "scoped_identifier" || kind == "field_expression" {
+                        if let Some(name) = last_identifier_name {
+                            if !is_noise_call(&name) {
+                                name_to_use = Some(name);
+                            }
+                        }
+                    } else if kind == "identifier" || kind == "type_identifier" {
+                        // For simple identifier, use it directly
+                        if let Some(bytes) = self.source.get(child.byte_range()) {
+                            if let Ok(name) = std::str::from_utf8(bytes) {
+                                if !is_noise_call(name) {
+                                    name_to_use = Some(name.to_string());
+                                }
                             }
                         }
                     }
@@ -612,10 +647,11 @@ impl<'a> EntityExtractor<'a> {
                         source_qualified: source,
                         target_qualified: target_qualified.clone(),
                         rel_type: "calls".to_string(),
-                        confidence: 0.3,
+                        confidence: 0.5,
                         metadata: serde_json::json!({
                             "bare_name": name,
                             "callee_file_hint": self.file_path,
+                            "is_method_call": is_method_call,
                         }),
                     });
                     found_name = true;

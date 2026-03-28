@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum TemplateError {
     #[error("Template not found: {0}")]
@@ -17,6 +18,7 @@ pub struct TemplateEngine {
     templates_dir: PathBuf,
 }
 
+#[allow(dead_code)]
 impl TemplateEngine {
     pub fn new(templates_dir: PathBuf) -> Self {
         Self { templates_dir }

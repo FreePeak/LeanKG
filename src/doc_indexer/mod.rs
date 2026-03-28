@@ -14,12 +14,12 @@ pub struct DocIndexResult {
 }
 
 pub struct DocIndexer {
-    db: CozoDb,
+    _db: CozoDb,
 }
 
 impl DocIndexer {
     pub fn new(db: CozoDb) -> Self {
-        Self { db }
+        Self { _db: db }
     }
 
     pub fn index_docs(
@@ -301,6 +301,7 @@ impl DocIndexer {
         refs
     }
 
+    #[allow(dead_code)]
     pub fn get_doc_structure(
         &self,
         docs_path: &Path,
@@ -355,6 +356,7 @@ impl DocIndexer {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DocTreeNode {
     pub name: String,
@@ -363,6 +365,7 @@ pub struct DocTreeNode {
 }
 
 impl DocTreeNode {
+    #[allow(dead_code)]
     pub fn new(name: String, node_type: String) -> Self {
         Self {
             name,

@@ -40,6 +40,17 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = db.run_script(create_relationships, Default::default()) {
             eprintln!("Failed to create relationships: {:?}", e);
         }
+    } else {
+        let create_rel_type_index =
+            r#":create relationships::rel_type_index {ref: (rel_type), compressed: true}"#;
+        if let Err(e) = db.run_script(create_rel_type_index, Default::default()) {
+            tracing::debug!("rel_type index may already exist: {:?}", e);
+        }
+
+        let create_target_index = r#":create relationships::target_qualified_index {ref: (target_qualified), compressed: true}"#;
+        if let Err(e) = db.run_script(create_target_index, Default::default()) {
+            tracing::debug!("target_qualified index may already exist: {:?}", e);
+        }
     }
 
     if !existing_relations.contains("business_logic") {

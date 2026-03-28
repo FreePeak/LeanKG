@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RelationshipType {
     Imports,
@@ -31,6 +32,7 @@ impl RelationshipType {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "imports" => Some(RelationshipType::Imports),
@@ -75,6 +77,7 @@ pub struct CodeElement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relationship {
     #[serde(skip)]
+    #[allow(dead_code)]
     pub id: Option<String>,
     pub source_qualified: String,
     pub target_qualified: String,
@@ -98,6 +101,7 @@ impl Relationship {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BusinessLogic {
     #[serde(skip)]
+    #[allow(dead_code)]
     pub id: Option<String>,
     pub element_qualified: String,
     pub description: String,
@@ -105,6 +109,7 @@ pub struct BusinessLogic {
     pub feature_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BusinessLogicWithDoc {
     pub business_logic: BusinessLogic,
@@ -134,6 +139,7 @@ pub struct TraceabilityReport {
     pub count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     #[serde(skip)]

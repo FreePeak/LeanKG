@@ -97,6 +97,7 @@ pub fn update_business_logic(
     }))
 }
 
+#[allow(dead_code)]
 pub fn delete_business_logic(
     db: &CozoDb,
     element_qualified: &str,
@@ -228,6 +229,7 @@ pub fn all_business_logic(
     Ok(business_logic)
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FeatureTraceEntry {
     pub element_qualified: String,
@@ -235,6 +237,7 @@ pub struct FeatureTraceEntry {
     pub user_story_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FeatureTraceability {
     pub feature_id: String,
@@ -242,6 +245,7 @@ pub struct FeatureTraceability {
     pub count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UserStoryTraceEntry {
     pub element_qualified: String,
@@ -249,6 +253,7 @@ pub struct UserStoryTraceEntry {
     pub feature_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UserStoryTraceability {
     pub user_story_id: String,
@@ -256,6 +261,7 @@ pub struct UserStoryTraceability {
     pub count: usize,
 }
 
+#[allow(dead_code)]
 pub fn get_feature_traceability(
     db: &CozoDb,
     feature_id: &str,
@@ -277,6 +283,7 @@ pub fn get_feature_traceability(
     })
 }
 
+#[allow(dead_code)]
 pub fn get_user_story_traceability(
     db: &CozoDb,
     user_story_id: &str,
@@ -298,6 +305,7 @@ pub fn get_user_story_traceability(
     })
 }
 
+#[allow(dead_code)]
 pub fn all_feature_traceability(
     db: &CozoDb,
 ) -> Result<Vec<FeatureTraceability>, Box<dyn std::error::Error>> {
@@ -330,6 +338,7 @@ pub fn all_feature_traceability(
     Ok(traces)
 }
 
+#[allow(dead_code)]
 pub fn all_user_story_traceability(
     db: &CozoDb,
 ) -> Result<Vec<UserStoryTraceability>, Box<dyn std::error::Error>> {
@@ -362,6 +371,7 @@ pub fn all_user_story_traceability(
     Ok(traces)
 }
 
+#[allow(dead_code)]
 pub fn find_by_business_domain(
     db: &CozoDb,
     domain: &str,
@@ -369,6 +379,7 @@ pub fn find_by_business_domain(
     search_business_logic(db, domain)
 }
 
+#[allow(dead_code)]
 pub fn get_documented_by(
     db: &CozoDb,
     element_qualified: &str,
@@ -410,6 +421,7 @@ pub fn get_documented_by(
     Ok(doc_links)
 }
 
+#[allow(dead_code)]
 pub fn get_traceability_report(
     db: &CozoDb,
     element_qualified: &str,
@@ -435,6 +447,7 @@ pub fn get_traceability_report(
     })
 }
 
+#[allow(dead_code)]
 pub fn get_code_for_requirement(
     db: &CozoDb,
     requirement_id: &str,

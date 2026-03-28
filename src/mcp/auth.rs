@@ -20,10 +20,12 @@ impl AuthConfig {
         self
     }
 
+    #[allow(dead_code)]
     pub fn add_token(&mut self, token: String, client_id: String) {
         self.tokens.insert(token, client_id);
     }
 
+    #[allow(dead_code)]
     pub fn validate_token(&self, token: &str) -> Option<&String> {
         self.tokens.get(token)
     }
@@ -48,6 +50,7 @@ fn generate_token(secret: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+#[allow(dead_code)]
 pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());

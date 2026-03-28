@@ -58,10 +58,12 @@ impl FileWatcher {
         })
     }
 
+    #[allow(dead_code)]
     pub fn watch_path(&self) -> &Path {
         &self.watch_path
     }
 
+    #[allow(dead_code)]
     pub fn try_recv_event(&self) -> Option<Event> {
         self.rx.try_recv().ok().and_then(|r| r.ok())
     }

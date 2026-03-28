@@ -1141,6 +1141,7 @@ dependencies = [
  "notify",
  "parking_lot",
  "pulldown-cmark",
+ "rayon",
  "regex",
  "rmcp",
  "schemars 0.8.22",

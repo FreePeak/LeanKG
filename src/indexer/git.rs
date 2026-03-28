@@ -12,6 +12,7 @@ pub struct GitChangedFiles {
 pub struct GitAnalyzer;
 
 impl GitAnalyzer {
+    #[allow(dead_code)]
     pub fn get_changed_files(since: &str) -> Result<GitChangedFiles, Box<dyn std::error::Error>> {
         let output = Command::new("git")
             .args(["diff", "--name-status", &format!("{}...HEAD", since)])

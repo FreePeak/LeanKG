@@ -343,41 +343,8 @@ async fn index_codebase(
 
     println!("Found {} files to index", files.len());
 
-    let mut indexed = 0;
-    let mut skipped = 0;
-    for file_path in &files {
-        match indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path) {
-            Ok(count) => {
-                indexed += 1;
-                if verbose {
-                    println!("  Indexed {} ({} elements)", file_path, count);
-                }
-            }
-            Err(e) => {
-                skipped += 1;
-                if verbose {
-                    println!("  Warning: Failed to index {}: {}", file_path, e);
-                }
-            }
-        }
-    }
-
-    println!("Indexed {} files", indexed);
-    if skipped > 0 {
-        println!("Skipped {} files (errors)", skipped);
-    }
-
-    println!("Resolving call edges...");
-    match graph_engine.resolve_call_edges() {
-        Ok(count) => {
-            if count > 0 {
-                println!("  Resolved {} call edges", count);
-            }
-        }
-        Err(e) => {
-            eprintln!("Warning: Failed to resolve call edges: {}", e);
-        }
-    }
+    let total_elements = indexer::index_files_parallel(&graph_engine, &files, verbose)?;
+    println!("Indexed {} files ({} elements)", files.len(), total_elements);
 
     let docs_path = std::path::Path::new("docs");
     if docs_path.exists() {

@@ -84,6 +84,7 @@ impl Registry {
         self.repos.iter().collect()
     }
 
+    #[allow(dead_code)]
     pub fn update_last_indexed(
         &mut self,
         name: &str,
@@ -119,7 +120,7 @@ mod tests {
     #[test]
     fn test_registry_register_and_unregister() {
         let temp_dir = TempDir::new().unwrap();
-        let registry_path = temp_dir.path().join("registry.json");
+        let _registry_path = temp_dir.path().join("registry.json");
 
         std::env::set_var("HOME", temp_dir.path());
 

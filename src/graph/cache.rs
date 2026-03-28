@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub struct CacheEntry<T> {
+    #[allow(dead_code)]
     pub value: T,
     pub created_at: Instant,
 }
@@ -26,6 +27,7 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, key: &K) -> Option<V> {
         self.data.get(key).and_then(|entry| {
             if entry.created_at.elapsed() < self.ttl {
@@ -59,6 +61,7 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
         );
     }
 
+    #[allow(dead_code)]
     pub fn invalidate(&mut self, key: &K) {
         self.data.remove(key);
     }
@@ -75,14 +78,17 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
             .retain(|_, entry| entry.created_at.elapsed() < self.ttl);
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.data.clear();
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -102,6 +108,7 @@ impl QueryCache {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn get_dependencies(&self, key: &str) -> Option<Vec<String>> {
         self.dependencies.read().await.get(&key.to_string())
     }
@@ -110,6 +117,7 @@ impl QueryCache {
         self.dependencies.write().await.insert(key, value);
     }
 
+    #[allow(dead_code)]
     pub async fn get_dependents(&self, key: &str) -> Option<Vec<String>> {
         self.dependents.read().await.get(&key.to_string())
     }
@@ -123,6 +131,7 @@ impl QueryCache {
         self.dependents.write().await.invalidate_prefix(file_path);
     }
 
+    #[allow(dead_code)]
     pub async fn clear(&self) {
         self.dependencies.write().await.clear();
         self.dependents.write().await.clear();

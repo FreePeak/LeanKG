@@ -10,8 +10,11 @@ pub use git::*;
 pub use parser::*;
 pub use terraform::*;
 
+use crate::db::models::{CodeElement, Relationship};
 use crate::graph::GraphEngine;
+use rayon::prelude::*;
 use std::collections::HashSet;
+use std::sync::Arc;
 use walkdir::WalkDir;
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -45,6 +48,160 @@ fn is_cicd_yaml_file(path: &std::path::Path) -> bool {
         || path_str.contains("azure-pipelines")
         || path_str.ends_with(".yml")
         || path_str.ends_with(".yaml")
+}
+
+struct ParsedFile {
+    elements: Vec<CodeElement>,
+    relationships: Vec<Relationship>,
+    element_count: usize,
+}
+
+fn get_language(file_path: &str) -> Option<&'static str> {
+    if file_path.ends_with(".go") {
+        Some("go")
+    } else if file_path.ends_with(".ts") || file_path.ends_with(".js") {
+        Some("typescript")
+    } else if file_path.ends_with(".py") {
+        Some("python")
+    } else if file_path.ends_with(".rs") {
+        Some("rust")
+    } else {
+        None
+    }
+}
+
+fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>> {
+    let content = std::fs::read(file_path)?;
+    let source = content.as_slice();
+
+    if file_path.ends_with(".tf") {
+        let extractor = crate::indexer::TerraformExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+    }
+
+    if is_cicd_yaml_file(std::path::Path::new(file_path)) && (file_path.ends_with(".yml") || file_path.ends_with(".yaml")) {
+        let extractor = crate::indexer::CicdYamlExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+    }
+
+    let language = match get_language(file_path) {
+        Some(l) => l,
+        None => return Ok(ParsedFile { element_count: 0, elements: vec![], relationships: vec![] }),
+    };
+
+    thread_local! {
+        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None]);
+    }
+
+    let parser_idx = match language {
+        "go" => 0,
+        "typescript" => 1,
+        "python" => 2,
+        "rust" => 3,
+        _ => return Ok(ParsedFile { element_count: 0, elements: vec![], relationships: vec![] }),
+    };
+
+    let tree = PARSERS.with(|parsers| {
+        let mut parsers = parsers.borrow_mut();
+        let parser = parsers[parser_idx].get_or_insert_with(|| {
+            let mut p = tree_sitter::Parser::new();
+            let lang: tree_sitter::Language = match language {
+                "go" => tree_sitter_go::LANGUAGE.into(),
+                "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                "python" => tree_sitter_python::LANGUAGE.into(),
+                "rust" => tree_sitter_rust::LANGUAGE.into(),
+                _ => return p,
+            };
+            let _ = p.set_language(&lang);
+            p
+        });
+        parser.parse(source, None).ok_or("parse failed")
+    })?;
+
+    let extractor = crate::indexer::EntityExtractor::new(source, file_path, language);
+    let (elements, relationships) = extractor.extract(&tree);
+    Ok(ParsedFile { element_count: elements.len(), elements, relationships })
+}
+
+pub fn index_files_parallel(
+    graph: &GraphEngine,
+    files: &[String],
+    verbose: bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    if files.is_empty() {
+        return Ok(0);
+    }
+
+    let total_count = files.len();
+    let progress = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    eprintln!("Parsing {} files in parallel...", total_count);
+
+    let results: Vec<Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>>> = files
+        .par_iter()
+        .map(|file_path| {
+            let count = progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count % 1000 == 0 {
+                eprint!("\r  Parsed {}/{} files", count, total_count);
+            }
+            extract_elements_for_file(file_path)
+        })
+        .collect();
+
+    eprintln!("\r  Parsed {}/{} files", total_count, total_count);
+
+    let mut all_elements = Vec::new();
+    let mut all_relationships = Vec::new();
+    let mut total = 0;
+
+    for result in results {
+        match result {
+            Ok(parsed) => {
+                total += parsed.element_count;
+                all_elements.extend(parsed.elements);
+                all_relationships.extend(parsed.relationships);
+            }
+            Err(e) => {
+                tracing::debug!("Failed to parse file: {}", e);
+            }
+        }
+    }
+
+    eprintln!("Inserting {} elements and {} relationships...", all_elements.len(), all_relationships.len());
+
+    if !all_elements.is_empty() {
+        let total_elements = all_elements.len();
+        const ELEM_BATCH_SIZE: usize = 5000;
+        for (i, chunk) in all_elements.chunks(ELEM_BATCH_SIZE).enumerate() {
+            graph.insert_elements(chunk)?;
+            if verbose {
+                let progress = ((i + 1) * ELEM_BATCH_SIZE).min(total_elements);
+                eprint!("\r  Inserted {}/{} elements", progress, total_elements);
+            }
+        }
+        if verbose {
+            eprintln!("\r  Inserted {}/{} elements", total_elements, total_elements);
+        }
+    }
+    
+    if !all_relationships.is_empty() {
+        let total_rels = all_relationships.len();
+        const REL_BATCH_SIZE: usize = 5000;
+        for (i, chunk) in all_relationships.chunks(REL_BATCH_SIZE).enumerate() {
+            graph.insert_relationships(chunk)?;
+            if verbose {
+                let progress = ((i + 1) * REL_BATCH_SIZE).min(total_rels);
+                eprint!("\r  Inserted {}/{} relationships", progress, total_rels);
+            }
+        }
+        if verbose {
+            eprintln!("\r  Inserted {}/{} relationships", total_rels, total_rels);
+        }
+    }
+
+    Ok(total)
 }
 
 pub fn index_file_sync(

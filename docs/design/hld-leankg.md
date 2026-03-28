@@ -1,10 +1,15 @@
 # LeanKG High Level Design
 
 **Phien ban:** 1.6  
-**Ngay:** 2026-03-27  
+**Ngay:** 2026-03-28  
 **Dua tren:** PRD v1.7  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.15 - Performance Optimizations:
+  - Add parallel file parsing using rayon for multi-core indexing
+  - Batch relationship inserts (1000 rows/batch) instead of individual inserts
+  - Optimize resolve_call_edges: filter at DB level, only process unresolved edges
+  - Thread-local parser reuse to avoid re-creating tree-sitter parsers
 - v1.14 - Web UI Orphan Node Filtering Fix:
   - Fixed orphan nodes appearing in webui graph view
   - `filterOrphanedNodes` now applies to ALL filter types (all, document, function, mapping), not just 'all'

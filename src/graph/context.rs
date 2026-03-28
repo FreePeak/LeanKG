@@ -3,6 +3,7 @@ use crate::db::models::CodeElement;
 use crate::graph::GraphEngine;
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 const DEFAULT_MAX_TOKENS: usize = 4000;
 const CHARS_PER_TOKEN: usize = 4;
 
@@ -68,6 +69,7 @@ pub struct ContextProvider<'a> {
 }
 
 impl<'a> ContextProvider<'a> {
+    #[allow(dead_code)]
     pub fn new(graph: &'a GraphEngine) -> Self {
         Self {
             graph,
@@ -156,7 +158,7 @@ impl<'a> ContextProvider<'a> {
         })
     }
 
-    fn get_child_elements(
+    fn _get_child_elements(
         &self,
         parent_qualified: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
