@@ -99,6 +99,24 @@ cargo build --release
 
 ---
 
+## Try Without Install
+
+**Use GitHub Codespaces** to try LeanKG in your browser - no installation required!
+
+1. Go to **github.com/FreePeak/LeanKG**
+2. Click **"Code" → "Create Codespace"**
+3. LeanKG auto-installs when the codespace starts
+4. In the terminal:
+   ```bash
+   leankg index ./src
+   leankg web
+   ```
+5. Click **"Open in Browser"** on port 8080
+
+**Free tier:** 60 hours/month (3 months), then 15 hours/month
+
+---
+
 ## Update
 
 To update LeanKG to the latest version, run the same install command:
