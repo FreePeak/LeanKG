@@ -32,6 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match args.command {
+        cli::CLICommand::Version => {
+            println!("leankg {}", env!("CARGO_PKG_VERSION"));
+        }
         cli::CLICommand::Init { path } => {
             init_project(&path)?;
         }

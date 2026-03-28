@@ -2,6 +2,8 @@ use clap::Subcommand;
 
 #[derive(Subcommand, Debug)]
 pub enum CLICommand {
+    /// Show LeanKG version
+    Version,
     /// Initialize a new LeanKG project
     Init {
         #[arg(long, default_value = ".leankg")]

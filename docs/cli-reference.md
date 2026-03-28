@@ -6,6 +6,7 @@ Complete reference for all LeanKG CLI commands.
 
 | Command | Description |
 |---------|-------------|
+| `leankg version` | Show LeanKG version |
 | `leankg init` | Initialize LeanKG in the current directory |
 | `leankg index [path]` | Index source files at the given path |
 | `leankg index --incremental` | Only index changed files (git-based) |
