@@ -167,7 +167,19 @@ src/
 
 ---
 
-## 5. Remaining Work
+## 5. Known Bugs
+
+See `bug-tracking-2026-03-28.md` for full details.
+
+| Bug ID | Title | Severity | Status |
+|--------|-------|----------|--------|
+| BUG-001 | Files count always shows 0 in mcp_status | Low | FIXED |
+| BUG-002 | Classes count always shows 0 in mcp_status | Low | FIXED |
+| BUG-003 | index_on_first_call config not implemented | Medium | FIXED |
+
+---
+
+## 6. Remaining Work
 
 ### MVP Release Criteria Status
 
