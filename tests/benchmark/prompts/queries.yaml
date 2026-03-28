@@ -1,0 +1,78 @@
+name: "LeanKG Benchmark Queries"
+version: "1.0"
+description: "Test queries for validating LeanKG MCP tool correctness"
+
+categories:
+  - name: "navigation"
+    description: "File and function finding tasks"
+    queries:
+      - id: "nav-find-handler"
+        query: "Find the MCP handler implementation"
+        expected:
+          files: ["src/mcp/handler.rs"]
+          concepts: ["handler", "mcp", "tool"]
+          leankg_tool: "find_function"
+
+      - id: "nav-code-element"
+        query: "Where is CodeElement struct defined?"
+        expected:
+          files: ["src/db/models.rs"]
+          concepts: ["CodeElement", "struct"]
+          leankg_tool: "find_function"
+
+      - id: "nav-query-engine"
+        query: "Find the graph query engine"
+        expected:
+          files: ["src/graph/query.rs"]
+          concepts: ["GraphEngine", "query"]
+          leankg_tool: "search_code"
+
+  - name: "impact"
+    description: "Impact radius analysis tasks"
+    queries:
+      - id: "impact-models-change"
+        query: "What breaks if I modify src/db/models.rs?"
+        expected:
+          files: ["src/graph/", "src/indexer/"]
+          concepts: ["CodeElement", "Relationship"]
+          leankg_tool: "get_impact_radius"
+          min_depth: 2
+
+      - id: "impact-handler-change"
+        query: "What is affected if I change src/mcp/handler.rs?"
+        expected:
+          files: ["src/mcp/tools.rs"]
+          concepts: ["handler", "mcp"]
+          leankg_tool: "get_impact_radius"
+
+  - name: "context"
+    description: "Context retrieval tasks"
+    queries:
+      - id: "ctx-get-dependencies"
+        query: "What does src/mcp/handler.rs import?"
+        expected:
+          concepts: ["imports", "dependencies"]
+          leankg_tool: "get_dependencies"
+
+      - id: "ctx-get-context"
+        query: "Show me the context module"
+        expected:
+          files: ["src/graph/context.rs"]
+          concepts: ["ContextProvider", "context"]
+          leankg_tool: "get_context"
+
+  - name: "documentation"
+    description: "Documentation and traceability tasks"
+    queries:
+      - id: "doc-traceability"
+        query: "Trace the CodeElement struct to requirements"
+        expected:
+          concepts: ["traceability", "CodeElement"]
+          leankg_tool: "get_traceability"
+
+      - id: "doc-test-coverage"
+        query: "What tests cover the extractor module?"
+        expected:
+          files: ["src/indexer/extractor.rs"]
+          concepts: ["test", "extractor"]
+          leankg_tool: "get_tested_by"
