@@ -513,19 +513,20 @@ pub async fn graph() -> axum::response::Html<String> {
                 const graph = new Graph();
                 graphData.nodes.forEach(n => {
                     graph.addNode(n.id, {
-                        label: n.label,
+                        label: n.label || n.id.split('::').pop() || n.id,
                         x: n.x,
                         y: n.y,
                         size: n.size,
                         color: n.color,
-                        type: n.type
+                        elementType: n.elementType
                     });
                 });
                 graphData.edges.forEach(e => {
                     if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
                         graph.addEdge(e.source, e.target, {
-                            size: e.size || 0.5,
-                            color: 'rgba(100,100,100,0.3)'
+                            size: e.size || 1,
+                            color: 'rgba(100,100,100,0.6)',
+                            relType: e.rel_type
                         });
                     }
                 });
@@ -535,19 +536,19 @@ pub async fn graph() -> axum::response::Html<String> {
                 }
                 
                 sig = new Sigma(graph, container, {
-                    renderLabels: false,
+                    renderLabels: true,
                     labelFont: 'Arial',
-                    labelSize: 12,
+                    labelSize: 14,
                     labelColor: '#333333',
-                    labelRenderedSizeThreshold: 12,
+                    labelRenderedSizeThreshold: 6,
                     defaultNodeColor: '#666',
-                    defaultEdgeColor: 'rgba(150,150,150,0.5)',
+                    defaultEdgeColor: 'rgba(150,150,150,0.8)',
                     defaultNodeType: 'circle',
                     defaultEdgeType: 'arrow',
                     minCameraRatio: 0.01,
                     maxCameraRatio: 100,
-                    hideEdgesOnMove: true,
-                    hideLabelsOnMove: true,
+                    hideEdgesOnMove: false,
+                    hideLabelsOnMove: false,
                     enableEdgeClickEvents: false,
                     enableNodeClickEvents: true,
                 });
@@ -566,7 +567,8 @@ pub async fn graph() -> axum::response::Html<String> {
                     connectedEdges.slice(0, 5).forEach(eid => {
                         const [src, tgt] = graph.extremities(eid);
                         const other = src === node ? tgt : src;
-                        const otherLabel = graph.getNodeAttributes(other, 'label') || other;
+                        const otherAttrs = graph.getNodeAttributes(other);
+                        const otherLabel = typeof otherAttrs.label === 'string' ? otherAttrs.label : other;
                         edgeInfo += '\n- ' + (src === node ? '-> ' : '<- ') + otherLabel;
                     });
                     alert('Element: ' + attrs.label + '\nType: ' + attrs.elementType + '\nConnections:' + (edgeInfo || '\n(none)') + '\n\nID: ' + node);
@@ -1339,7 +1341,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
             let node_ids: std::collections::HashSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
             let edges: Vec<GraphEdge> = relationships
                 .iter()
-                .filter(|r| node_ids.contains(&r.source_qualified))
+                .filter(|r| node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified))
                 .map(|r| GraphEdge {
                     source: r.source_qualified.clone(),
                     target: r.target_qualified.clone(),
@@ -1384,7 +1386,7 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
             let node_ids: std::collections::HashSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
             let edges: Vec<GraphEdge> = relationships
                 .iter()
-                .filter(|r| node_ids.contains(&r.source_qualified))
+                .filter(|r| node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified))
                 .map(|r| GraphEdge {
                     source: r.source_qualified.clone(),
                     target: r.target_qualified.clone(),
