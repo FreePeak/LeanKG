@@ -162,4 +162,36 @@ pub enum CLICommand {
         #[arg(long, default_value = "5")]
         min_hub_edges: usize,
     },
+    /// Start the REST API server
+    ApiServe {
+        /// Port to listen on (default: 8081)
+        #[arg(long, default_value = "8081")]
+        port: u16,
+        /// Require API key authentication
+        #[arg(long)]
+        auth: bool,
+    },
+    /// Manage API keys for REST API access
+    ApiKey {
+        #[command(subcommand)]
+        command: ApiKeyCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ApiKeyCommand {
+    /// Create a new API key
+    Create {
+        /// Name for the API key
+        #[arg(long)]
+        name: String,
+    },
+    /// List all API keys
+    List,
+    /// Revoke an API key
+    Revoke {
+        /// ID of the API key to revoke
+        #[arg(long)]
+        id: String,
+    },
 }

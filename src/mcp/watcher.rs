@@ -5,10 +5,7 @@ use crate::watcher::{FileChange, FileChangeKind};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
-pub async fn handle_file_change(
-    db_path: &PathBuf,
-    change: FileChange,
-) {
+pub async fn handle_file_change(db_path: &PathBuf, change: FileChange) {
     let db = match init_db(db_path) {
         Ok(db) => db,
         Err(e) => {
@@ -21,9 +18,7 @@ pub async fn handle_file_change(
     let _ = parser.init_parsers();
 
     let path_str = change.path.to_string_lossy();
-    if path_str.contains("node_modules")
-        || path_str.contains("vendor")
-        || path_str.contains(".git")
+    if path_str.contains("node_modules") || path_str.contains("vendor") || path_str.contains(".git")
     {
         return;
     }
@@ -49,17 +44,17 @@ pub async fn handle_file_change(
     }
 }
 
-pub async fn start_watcher(
-    db_path: PathBuf,
-    watch_path: PathBuf,
-    _rx: mpsc::Receiver<FileChange>,
-) {
+pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Receiver<FileChange>) {
     use crate::watcher::FileWatcher;
 
     let watcher = match FileWatcher::new(&watch_path) {
         Ok(w) => w,
         Err(e) => {
-            tracing::error!("Failed to create watcher for {}: {}", watch_path.display(), e);
+            tracing::error!(
+                "Failed to create watcher for {}: {}",
+                watch_path.display(),
+                e
+            );
             return;
         }
     };

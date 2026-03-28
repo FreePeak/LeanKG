@@ -1,14 +1,14 @@
+pub mod cicd;
 pub mod extractor;
 pub mod git;
 pub mod parser;
 pub mod terraform;
-pub mod cicd;
 
+pub use cicd::*;
 pub use extractor::*;
 pub use git::*;
 pub use parser::*;
 pub use terraform::*;
-pub use cicd::*;
 
 use crate::graph::GraphEngine;
 use std::collections::HashSet;
@@ -43,7 +43,8 @@ fn is_cicd_yaml_file(path: &std::path::Path) -> bool {
     path_str.contains(".github/workflows")
         || path_str.contains(".gitlab-ci")
         || path_str.contains("azure-pipelines")
-        || path_str.ends_with(".yml") || path_str.ends_with(".yaml")
+        || path_str.ends_with(".yml")
+        || path_str.ends_with(".yaml")
 }
 
 pub fn index_file_sync(
@@ -65,7 +66,9 @@ pub fn index_file_sync(
         return Ok(elements.len());
     }
 
-    if is_cicd_yaml_file(std::path::Path::new(file_path)) && (file_path.ends_with(".yml") || file_path.ends_with(".yaml")) {
+    if is_cicd_yaml_file(std::path::Path::new(file_path))
+        && (file_path.ends_with(".yml") || file_path.ends_with(".yaml"))
+    {
         let extractor = CicdYamlExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         if elements.is_empty() && relationships.is_empty() {
@@ -271,4 +274,61 @@ pub async fn incremental_index(
     root_path: &str,
 ) -> Result<IncrementalIndexResult, Box<dyn std::error::Error>> {
     incremental_index_sync(graph, parser_manager, root_path).await
+}
+
+pub struct IndexWithProgressResult {
+    pub total_files: usize,
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+}
+
+pub async fn index_with_progress<F>(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    path: &str,
+    progress_callback: F,
+) -> Result<IndexWithProgressResult, Box<dyn std::error::Error + Send + Sync + 'static>>
+where
+    F: Fn(usize, &str) + Send + Sync,
+{
+    let files = match find_files_sync(path) {
+        Ok(f) => f,
+        Err(e) => {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )) as Box<dyn std::error::Error + Send + Sync>)
+        }
+    };
+    let total_files = files.len();
+    let mut indexed_files = 0;
+    let mut skipped_files = 0;
+
+    for (idx, file_path) in files.iter().enumerate() {
+        progress_callback(idx, file_path);
+
+        match index_file_sync(graph, parser_manager, file_path) {
+            Ok(count) => {
+                if count > 0 {
+                    indexed_files += 1;
+                } else {
+                    skipped_files += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to index {}: {}", file_path, e);
+                skipped_files += 1;
+            }
+        }
+    }
+
+    if let Err(e) = graph.resolve_call_edges() {
+        tracing::warn!("Failed to resolve call edges: {}", e);
+    }
+
+    Ok(IndexWithProgressResult {
+        total_files,
+        indexed_files,
+        skipped_files,
+    })
 }
