@@ -207,9 +207,12 @@ git pull origin main
 # Bump version in Cargo.toml
 # Edit version from X.Y.Z to X.Y.Z+1
 
-# Commit version bump
+# Run cargo build to update Cargo.lock (required to sync Cargo.lock with new version)
+cargo build
+
+# Commit version bump (both Cargo.toml and updated Cargo.lock)
 git add -A
-git commit -m "release: Bump version to X.Y.Z"
+git commit -m "release: vX.Y.Z"
 
 # Push
 git push origin main
