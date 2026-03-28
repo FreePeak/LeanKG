@@ -1256,12 +1256,22 @@ impl GraphEngine {
     }
 
     pub fn resolve_call_edges(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[source_qualified, target_qualified, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], rel_type = "calls", target_qualified =~ "__unresolved__.*""#;
-        debug!("Running resolve_call_edges query (filtered at DB level)");
-        let result = self
-            .db
-            .run_script(query, std::collections::BTreeMap::new())?;
-        let total_unresolved = result.rows.len();
+        let query = r#"?[source_qualified, target_qualified, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], rel_type = "calls""#;
+        debug!("Running resolve_call_edges query to find all call relationships");
+        
+        let result = self.db.run_script(query, std::collections::BTreeMap::new())?;
+        
+        let unresolved_rows: Vec<_> = result.rows.iter()
+            .filter(|row| {
+                if let Some(tq) = row[1].as_str() {
+                    tq.starts_with("__unresolved__")
+                } else {
+                    false
+                }
+            })
+            .collect();
+        
+        let total_unresolved = unresolved_rows.len();
         debug!(
             "Found {} unresolved call edges to resolve",
             total_unresolved
@@ -1275,7 +1285,7 @@ impl GraphEngine {
         let batch_size = 100;
         let mut last_progress = 0;
 
-        for (idx, row) in result.rows.iter().enumerate() {
+        for (idx, row) in unresolved_rows.iter().enumerate() {
             let source = row[0].as_str().unwrap_or("").to_string();
             let target_qualified = row[1].as_str().unwrap_or("");
             let meta_str = row[2].as_str().unwrap_or("{}");
