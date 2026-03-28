@@ -5,16 +5,13 @@ use crate::mcp::auth::AuthConfig;
 use crate::mcp::handler::ToolHandler;
 use crate::mcp::tools::ToolRegistry;
 use crate::mcp::watcher::start_watcher;
+use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
-use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ListToolsResult,
-    Tool,
-};
+use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
 use std::path::PathBuf;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tokio::sync::RwLock as TokioRwLock;
 
 pub struct MCPServer {
@@ -65,7 +62,7 @@ impl MCPServer {
     pub fn db_path(&self) -> std::sync::Arc<parking_lot::RwLock<std::path::PathBuf>> {
         self.db_path.clone()
     }
-    
+
     fn get_db_path(&self) -> std::path::PathBuf {
         self.db_path.read().clone()
     }
@@ -82,17 +79,18 @@ impl MCPServer {
             }
         }
         let db_path = self.get_db_path();
-        let db_path = db_path.canonicalize()
+        let db_path = db_path
+            .canonicalize()
             .or_else(|_| std::env::current_dir().map(|d| d.join(&db_path)))
             .map_err(|e| format!("Failed to resolve db path: {}", e))?;
-        
+
         if !db_path.exists() {
             return Err(format!(
                 "LeanKG not initialized in this directory. Run 'leankg init' first, or ensure a .leankg directory exists at: {}",
                 db_path.display()
             ));
         }
-        
+
         tracing::debug!("Initializing database at: {}", db_path.display());
         let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
         let ge = GraphEngine::new(db);
@@ -105,7 +103,10 @@ impl MCPServer {
 
     pub async fn serve_stdio(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Err(e) = self.auto_init_if_needed().await {
-            tracing::warn!("Auto-init skipped: {}. Server will operate in uninitialized state.", e);
+            tracing::warn!(
+                "Auto-init skipped: {}. Server will operate in uninitialized state.",
+                e
+            );
         }
 
         if let Some(ref watch_path) = self.watch_path {
@@ -116,7 +117,13 @@ impl MCPServer {
                 start_watcher(db_path, watch_path, rx).await;
                 let _ = tx; // silence unused warning
             });
-            tracing::info!("Auto-indexing enabled for {}", self.watch_path.as_ref().unwrap_or(&std::path::PathBuf::from("?")).display());
+            tracing::info!(
+                "Auto-indexing enabled for {}",
+                self.watch_path
+                    .as_ref()
+                    .unwrap_or(&std::path::PathBuf::from("?"))
+                    .display()
+            );
         }
         let transport = stdio();
         let _running = serve_server(self.clone(), transport).await?;
@@ -125,11 +132,15 @@ impl MCPServer {
 
     async fn auto_init_if_needed(&self) -> Result<(), String> {
         let project_root = self.find_project_root()?;
-        
-        let leankg_exists = project_root.join(".leankg").exists() || project_root.join("leankg.yaml").exists();
+
+        let leankg_exists =
+            project_root.join(".leankg").exists() || project_root.join("leankg.yaml").exists();
 
         if leankg_exists {
-            tracing::info!("LeanKG project already initialized at {}", project_root.display());
+            tracing::info!(
+                "LeanKG project already initialized at {}",
+                project_root.display()
+            );
             return self.auto_index_if_needed().await;
         }
 
@@ -145,28 +156,40 @@ impl MCPServer {
         }
         std::fs::remove_file(test_file).ok();
 
-        std::fs::create_dir_all(project_root.join(".leankg")).map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        std::fs::create_dir_all(project_root.join(".leankg"))
+            .map_err(|e| format!("Failed to create .leankg: {}", e))?;
         let config = crate::config::ProjectConfig::default();
-        let config_yaml = serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
+        let config_yaml = serde_yaml::to_string(&config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
         std::fs::write(project_root.join(".leankg/leankg.yaml"), config_yaml)
             .map_err(|e| format!("Failed to write config: {}", e))?;
 
-        tracing::info!("Auto-init: Created .leankg/ and leankg.yaml at {}", project_root.display());
+        tracing::info!(
+            "Auto-init: Created .leankg/ and leankg.yaml at {}",
+            project_root.display()
+        );
 
         let db_path = project_root.join(".leankg");
-        tokio::fs::create_dir_all(&db_path).await.map_err(|e| format!("Failed to create db path: {}", e))?;
+        tokio::fs::create_dir_all(&db_path)
+            .await
+            .map_err(|e| format!("Failed to create db path: {}", e))?;
 
         let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
         let graph_engine = crate::graph::GraphEngine::new(db);
         let mut parser_manager = crate::indexer::ParserManager::new();
-        parser_manager.init_parsers().map_err(|e| format!("Parser init error: {}", e))?;
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
 
         let root_str = project_root.to_string_lossy().to_string();
-        let files = crate::indexer::find_files_sync(&root_str).map_err(|e| format!("Find files error: {}", e))?;
+        let files = crate::indexer::find_files_sync(&root_str)
+            .map_err(|e| format!("Find files error: {}", e))?;
         let mut indexed = 0;
 
         for file_path in &files {
-            if crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path).is_ok() {
+            if crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path)
+                .is_ok()
+            {
                 indexed += 1;
             }
         }
@@ -178,8 +201,14 @@ impl MCPServer {
         }
 
         if let Ok(true) = std::path::Path::new("docs").try_exists() {
-            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(std::path::Path::new("docs"), &graph_engine) {
-                tracing::info!("Auto-init: Indexed {} documents", doc_result.documents.len());
+            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(
+                std::path::Path::new("docs"),
+                &graph_engine,
+            ) {
+                tracing::info!(
+                    "Auto-init: Indexed {} documents",
+                    doc_result.documents.len()
+                );
             }
         }
 
@@ -197,7 +226,7 @@ impl MCPServer {
     async fn auto_index_if_needed(&self) -> Result<(), String> {
         let project_root = self.find_project_root()?;
         let config_path = project_root.join(".leankg/leankg.yaml");
-        
+
         let config = if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)
                 .map_err(|e| format!("Failed to read config: {}", e))?;
@@ -214,7 +243,7 @@ impl MCPServer {
 
         let db_path = self.get_db_path();
         let db_file = db_path.join("leankg.db");
-        
+
         if !db_file.exists() {
             tracing::info!("Database file does not exist, skipping auto-index");
             return Ok(());
@@ -243,26 +272,39 @@ impl MCPServer {
             .unwrap_or(0);
 
         let threshold_seconds = (config.mcp.auto_index_threshold_minutes * 60) as i64;
-        
+
         if last_commit_time <= db_modified + threshold_seconds {
-            tracing::info!("Index is fresh (last commit: {}, db modified: {}), skipping auto-index", 
-                last_commit_time, db_modified);
+            tracing::info!(
+                "Index is fresh (last commit: {}, db modified: {}), skipping auto-index",
+                last_commit_time,
+                db_modified
+            );
             return Ok(());
         }
 
-        tracing::info!("Index may be stale (last commit: {}, db modified: {}), running incremental index...", 
-            last_commit_time, db_modified);
+        tracing::info!(
+            "Index may be stale (last commit: {}, db modified: {}), running incremental index...",
+            last_commit_time,
+            db_modified
+        );
 
         let db = init_db(&self.get_db_path()).map_err(|e| format!("Database error: {}", e))?;
         let graph_engine = crate::graph::GraphEngine::new(db);
         let mut parser_manager = crate::indexer::ParserManager::new();
-        parser_manager.init_parsers().map_err(|e| format!("Parser init error: {}", e))?;
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
 
         let root_str = project_root.to_string_lossy().to_string();
-        match crate::indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &root_str).await {
+        match crate::indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &root_str)
+            .await
+        {
             Ok(result) => {
-                tracing::info!("Auto-index: Processed {} files ({} elements)", 
-                    result.total_files_processed, result.elements_indexed);
+                tracing::info!(
+                    "Auto-index: Processed {} files ({} elements)",
+                    result.total_files_processed,
+                    result.elements_indexed
+                );
             }
             Err(e) => {
                 tracing::warn!("Auto-index failed: {}, falling back to full index", e);
@@ -270,7 +312,13 @@ impl MCPServer {
                     .map_err(|fe| format!("Find files error: {}", fe))?;
                 let mut indexed = 0;
                 for file_path in &files {
-                    if crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path).is_ok() {
+                    if crate::indexer::index_file_sync(
+                        &graph_engine,
+                        &mut parser_manager,
+                        file_path,
+                    )
+                    .is_ok()
+                    {
                         indexed += 1;
                     }
                 }
@@ -283,8 +331,14 @@ impl MCPServer {
         }
 
         if let Ok(true) = project_root.join("docs").try_exists() {
-            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(project_root.join("docs").as_path(), &graph_engine) {
-                tracing::info!("Auto-index: Indexed {} documents", doc_result.documents.len());
+            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(
+                project_root.join("docs").as_path(),
+                &graph_engine,
+            ) {
+                tracing::info!(
+                    "Auto-index: Indexed {} documents",
+                    doc_result.documents.len()
+                );
             }
         }
 
@@ -299,38 +353,51 @@ impl MCPServer {
     }
 
     fn find_project_root(&self) -> Result<std::path::PathBuf, String> {
-        let current_dir = std::env::current_dir().map_err(|e| format!("Failed to get current dir: {}", e))?;
-        
+        let current_dir =
+            std::env::current_dir().map_err(|e| format!("Failed to get current dir: {}", e))?;
+
         if current_dir.join(".leankg").exists() || current_dir.join("leankg.yaml").exists() {
-            tracing::debug!("Found .leankg/leankg.yaml at current dir: {}", current_dir.display());
+            tracing::debug!(
+                "Found .leankg/leankg.yaml at current dir: {}",
+                current_dir.display()
+            );
             return Ok(current_dir);
         }
-        
+
         if current_dir.join(".git").exists() {
             tracing::debug!("Found .git at current dir: {}", current_dir.display());
             return Ok(current_dir);
         }
-        
+
         for dir in current_dir.ancestors() {
             if dir.join(".git").exists() {
                 tracing::debug!("Found git repo at {}, this is project root", dir.display());
                 if dir.join(".leankg").exists() || dir.join("leankg.yaml").exists() {
-                    tracing::debug!("Found .leankg/leankg.yaml in project root: {}", dir.display());
+                    tracing::debug!(
+                        "Found .leankg/leankg.yaml in project root: {}",
+                        dir.display()
+                    );
                     return Ok(dir.to_path_buf());
                 }
-                tracing::debug!("No .leankg in project root {}, will need auto-init", dir.display());
+                tracing::debug!(
+                    "No .leankg in project root {}, will need auto-init",
+                    dir.display()
+                );
                 return Ok(dir.to_path_buf());
             }
         }
-        
+
         for dir in current_dir.ancestors() {
             if dir.join(".leankg").exists() || dir.join("leankg.yaml").exists() {
                 tracing::debug!("Found project at {} (parent without .git)", dir.display());
                 return Ok(dir.to_path_buf());
             }
         }
-        
-        tracing::debug!("No project markers found, using current dir: {}", current_dir.display());
+
+        tracing::debug!(
+            "No project markers found, using current dir: {}",
+            current_dir.display()
+        );
         Ok(current_dir)
     }
 
@@ -340,8 +407,12 @@ impl MCPServer {
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
         let project_root = self.find_project_root()?;
-        tracing::info!("execute_tool called. project_root={}, db_path={}", project_root.display(), self.get_db_path().display());
-        
+        tracing::info!(
+            "execute_tool called. project_root={}, db_path={}",
+            project_root.display(),
+            self.get_db_path().display()
+        );
+
         if tool_name == "mcp_init" {
             if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
                 let new_db_path = std::path::PathBuf::from(path);
@@ -356,7 +427,7 @@ impl MCPServer {
                 tracing::info!("Updated db_path to {}", new_db_path.display());
             }
         }
-        
+
         let graph_engine = self.get_graph_engine()?;
         let handler = ToolHandler::new(graph_engine, self.get_db_path());
         let args_value = serde_json::Value::Object(arguments);

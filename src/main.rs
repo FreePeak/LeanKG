@@ -211,7 +211,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Setup {} => {
             setup_global()?;
         }
-        cli::CLICommand::DetectClusters { path, min_hub_edges: _ } => {
+        cli::CLICommand::DetectClusters {
+            path,
+            min_hub_edges: _,
+        } => {
             let project_path = if let Some(p) = path {
                 std::path::PathBuf::from(p)
             } else {
@@ -226,19 +229,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::fs::create_dir_all(&db_path).await.ok();
             api::start_api_server(port, db_path, auth).await?;
         }
-        cli::CLICommand::ApiKey { command } => {
-            match command {
-                cli::ApiKeyCommand::Create { name } => {
-                    api_key_create(&name)?;
-                }
-                cli::ApiKeyCommand::List => {
-                    api_key_list()?;
-                }
-                cli::ApiKeyCommand::Revoke { id } => {
-                    api_key_revoke(&id)?;
-                }
+        cli::CLICommand::ApiKey { command } => match command {
+            cli::ApiKeyCommand::Create { name } => {
+                api_key_create(&name)?;
             }
-        }
+            cli::ApiKeyCommand::List => {
+                api_key_list()?;
+            }
+            cli::ApiKeyCommand::Revoke { id } => {
+                api_key_revoke(&id)?;
+            }
+        },
     }
 
     Ok(())
@@ -493,9 +494,9 @@ fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Er
 }
 
 fn install_mcp_config() -> Result<(), Box<dyn std::error::Error>> {
-    let exe_path = std::env::current_exe()
-        .map_err(|e| format!("Failed to get current exe path: {}", e))?;
-    
+    let exe_path =
+        std::env::current_exe().map_err(|e| format!("Failed to get current exe path: {}", e))?;
+
     let mcp_config = serde_json::json!({
         "mcpServers": {
             "leankg": {
@@ -520,8 +521,7 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
     let db = db::schema::init_db(db_path)?;
 
     let elements = graph::GraphEngine::new(db.clone()).all_elements()?;
-    let relationships = graph::GraphEngine::new(db.clone())
-        .all_relationships()?;
+    let relationships = graph::GraphEngine::new(db.clone()).all_relationships()?;
     let annotations = db::all_business_logic(&db)?;
 
     println!("LeanKG Status:");
@@ -529,7 +529,8 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
     println!("  Elements: {}", elements.len());
     println!("  Relationships: {}", relationships.len());
 
-    let unique_files: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+    let unique_files: std::collections::HashSet<_> =
+        elements.iter().map(|e| e.file_path.clone()).collect();
     let files = unique_files.len();
     let functions = elements
         .iter()
@@ -697,10 +698,12 @@ fn show_traceability(
 
     if all {
         let all_bl = db::all_business_logic(&db)?;
-        
-        let mut feature_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
-        let mut story_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
-        
+
+        let mut feature_map: std::collections::HashMap<String, Vec<_>> =
+            std::collections::HashMap::new();
+        let mut story_map: std::collections::HashMap<String, Vec<_>> =
+            std::collections::HashMap::new();
+
         for bl in &all_bl {
             if let Some(ref fid) = bl.feature_id {
                 feature_map.entry(fid.clone()).or_default().push(bl);
@@ -901,8 +904,7 @@ fn find_oversized_functions(
     let graph_engine = graph::GraphEngine::new(db);
 
     let results = if let Some(language) = lang {
-        graph_engine
-            .find_oversized_functions_by_lang(min_lines, language)?
+        graph_engine.find_oversized_functions_by_lang(min_lines, language)?
     } else {
         graph_engine.find_oversized_functions(min_lines)?
     };
@@ -931,20 +933,24 @@ fn register_repo(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = registry::Registry::load()?;
     let current_dir = std::env::current_dir()?;
     let path = current_dir.to_string_lossy().to_string();
-    
+
     registry.register(name.to_string(), path)?;
-    println!("Registered repository '{}' at {}", name, current_dir.display());
+    println!(
+        "Registered repository '{}' at {}",
+        name,
+        current_dir.display()
+    );
     Ok(())
 }
 
 fn unregister_repo(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = registry::Registry::load()?;
-    
+
     if registry.get_repo(name).is_none() {
         println!("Repository '{}' not found in registry", name);
         return Ok(());
     }
-    
+
     registry.unregister(name)?;
     println!("Unregistered repository '{}'", name);
     Ok(())
@@ -953,29 +959,32 @@ fn unregister_repo(name: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn list_repos() -> Result<(), Box<dyn std::error::Error>> {
     let registry = registry::Registry::load()?;
     let repos = registry.list_repos();
-    
+
     if repos.is_empty() {
         println!("No repositories registered. Run 'leankg register <name>' to add one.");
         return Ok(());
     }
-    
+
     println!("Registered repositories:");
     for (name, entry) in repos {
-        println!("  - {}: {} (indexed: {:?})", name, entry.path, entry.last_indexed);
+        println!(
+            "  - {}: {} (indexed: {:?})",
+            name, entry.path, entry.last_indexed
+        );
     }
     Ok(())
 }
 
 fn status_repo(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let registry = registry::Registry::load()?;
-    
+
     match registry.get_repo(name) {
         Some(entry) => {
             println!("Repository: {}", name);
             println!("  Path: {}", entry.path);
             println!("  Last indexed: {:?}", entry.last_indexed);
             println!("  Element count: {:?}", entry.element_count);
-            
+
             let db_path = std::path::Path::new(&entry.path).join(".leankg");
             if db_path.exists() {
                 if let Ok(db) = db::schema::init_db(&db_path) {
@@ -1001,23 +1010,27 @@ fn status_repo(name: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn setup_global() -> Result<(), Box<dyn std::error::Error>> {
     let registry = registry::Registry::load()?;
     let repos = registry.list_repos();
-    
+
     if repos.is_empty() {
         println!("No repositories registered. Run 'leankg register <name>' to add one.");
         return Ok(());
     }
-    
-    println!("Setting up MCP configuration for {} repository(ies)...", repos.len());
-    
+
+    println!(
+        "Setting up MCP configuration for {} repository(ies)...",
+        repos.len()
+    );
+
     let exe_path = std::env::current_exe()?;
-    let config_dir = std::path::Path::new(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
-        .join(".config")
-        .join("mcp");
-    
+    let config_dir =
+        std::path::Path::new(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+            .join(".config")
+            .join("mcp");
+
     std::fs::create_dir_all(&config_dir)?;
-    
+
     let mut mcp_servers: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    
+
     for (name, entry) in &repos {
         let server_name = format!("leankg-{}", name);
         mcp_servers.insert(
@@ -1030,16 +1043,16 @@ fn setup_global() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("  Configured MCP for '{}' at {}", name, entry.path);
     }
-    
+
     let mcp_config = serde_json::json!({
         "mcpServers": mcp_servers
     });
-    
+
     let config_path = config_dir.join("leankg-global.json");
     std::fs::write(&config_path, serde_json::to_string_pretty(&mcp_config)?)?;
     println!("\nGlobal MCP config written to: {}", config_path.display());
     println!("You can now use 'opencode --mcp-config ~/.config/mcp/leankg-global.json' to access all repositories.");
-    
+
     Ok(())
 }
 
@@ -1095,26 +1108,26 @@ fn detect_clusters(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
 fn api_key_create(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let store = db::keys::ApiKeyStore::new()?;
     let (key, api_key) = store.create_key(name)?;
-    
+
     println!("API key created successfully!");
     println!("  ID:   {}", api_key.id);
     println!("  Name: {}", api_key.name);
     println!("  Created: {}", api_key.created_at);
     println!("\nIMPORTANT: Save this API key - it will not be shown again:");
     println!("  {}", key);
-    
+
     Ok(())
 }
 
 fn api_key_list() -> Result<(), Box<dyn std::error::Error>> {
     let store = db::keys::ApiKeyStore::new()?;
     let keys = store.list_keys()?;
-    
+
     if keys.is_empty() {
         println!("No API keys found. Create one with 'leankg api-key create --name <name>'");
         return Ok(());
     }
-    
+
     println!("API Keys:");
     for key in keys {
         println!("  ID:        {}", key.id);
@@ -1125,24 +1138,27 @@ fn api_key_list() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!();
     }
-    
+
     Ok(())
 }
 
 fn api_key_revoke(id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let store = db::keys::ApiKeyStore::new()?;
     let revoked = store.revoke_key(id)?;
-    
+
     if revoked {
         println!("API key '{}' revoked successfully.", id);
     } else {
         println!("API key '{}' not found or already revoked.", id);
     }
-    
+
     Ok(())
 }
 
-async fn start_api_server_async(port: u16, require_auth: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn start_api_server_async(
+    port: u16,
+    require_auth: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let project_path = find_project_root()?;
     let db_path = project_path.join(".leankg");
     api::start_api_server(port, db_path, require_auth).await
