@@ -312,9 +312,10 @@ impl ToolHandler {
         let relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
         let annotations = crate::db::all_business_logic(db).map_err(|e| e.to_string())?;
 
-        let files = elements.iter().filter(|e| e.element_type == "file").count();
+        let unique_files: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+        let files = unique_files.len();
         let functions = elements.iter().filter(|e| e.element_type == "function").count();
-        let classes = elements.iter().filter(|e| e.element_type == "class").count();
+        let classes = elements.iter().filter(|e| e.element_type == "class" || e.element_type == "struct").count();
 
         Ok(json!({
             "initialized": true,

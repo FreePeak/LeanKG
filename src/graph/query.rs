@@ -3,6 +3,7 @@ use crate::db::schema::CozoDb;
 use crate::graph::cache::QueryCache;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 fn escape_datalog(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -1124,12 +1125,12 @@ impl GraphEngine {
 
     pub fn resolve_call_edges(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata]"#;
-        eprintln!("DEBUG: Running query: {}", query);
+        debug!("Running resolve_call_edges query");
         let result = self.db.run_script(query, std::collections::BTreeMap::new())?;
-        eprintln!("DEBUG: Query returned {} rows", result.rows.len());
+        debug!("Query returned {} rows", result.rows.len());
         let mut resolved = 0;
 
-        for (i, row) in result.rows.iter().enumerate() {
+        for row in result.rows.iter() {
             let source = row[0].as_str().unwrap_or("").to_string();
             let target_qualified = row[1].as_str().unwrap_or("").to_string();
             let rel_type = row[2].as_str().unwrap_or("");
@@ -1138,7 +1139,7 @@ impl GraphEngine {
                 continue;
             }
             
-            eprintln!("DEBUG: Processing unresolved call: {} -> {}", source, target_qualified);
+            debug!("Processing unresolved call: {} -> {}", source, target_qualified);
             
             let meta_str = row[4].as_str().unwrap_or("{}");
             let bare_name = target_qualified.trim_start_matches("__unresolved__");
@@ -1162,7 +1163,7 @@ impl GraphEngine {
             }
         }
         
-        eprintln!("DEBUG: Resolved {} call edges", resolved);
+        debug!("Resolved {} call edges", resolved);
 
         Ok(resolved)
     }

@@ -1375,7 +1375,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
     };
     match (elements_result, relationships_result) {
         (Ok(elements), Ok(relationships)) => {
-            let nodes: Vec<GraphNode> = elements
+            let mut nodes: Vec<GraphNode> = elements
                 .iter()
                 .map(|e| GraphNode {
                     id: e.qualified_name.clone(),
@@ -1384,16 +1384,55 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                     file_path: e.file_path.clone(),
                 })
                 .collect();
+            
+            let mut file_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+            for element in &elements {
+                file_map.entry(element.file_path.clone())
+                    .or_default()
+                    .push(element.qualified_name.clone());
+            }
+            
+            for (file_path, element_ids) in &file_map {
+                let file_node = GraphNode {
+                    id: format!("file::{}", file_path),
+                    label: file_path.split('/').last().unwrap_or(file_path).to_string(),
+                    element_type: "file".to_string(),
+                    file_path: file_path.clone(),
+                };
+                nodes.push(file_node);
+            }
+            
             let node_ids: std::collections::HashSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
-            let edges: Vec<GraphEdge> = relationships
+            let mut existing_edges: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+            let mut edges: Vec<GraphEdge> = relationships
                 .iter()
                 .filter(|r| node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified))
-                .map(|r| GraphEdge {
-                    source: r.source_qualified.clone(),
-                    target: r.target_qualified.clone(),
-                    rel_type: r.rel_type.clone(),
+                .filter(|r| !r.rel_type.starts_with("contains"))
+                .map(|r| {
+                    existing_edges.insert((r.source_qualified.clone(), r.target_qualified.clone()));
+                    GraphEdge {
+                        source: r.source_qualified.clone(),
+                        target: r.target_qualified.clone(),
+                        rel_type: r.rel_type.clone(),
+                    }
                 })
                 .collect();
+            
+            for (file_path, element_ids) in &file_map {
+                let file_node_id = format!("file::{}", file_path);
+                for element_id in element_ids {
+                    let edge_key = (file_node_id.clone(), element_id.clone());
+                    if !existing_edges.contains(&edge_key) {
+                        existing_edges.insert(edge_key);
+                        edges.push(GraphEdge {
+                            source: file_node_id.clone(),
+                            target: element_id.clone(),
+                            rel_type: "contains".to_string(),
+                        });
+                    }
+                }
+            }
+            
             ApiResponse {
                 success: true,
                 data: Some(GraphData { nodes, edges, filtered: None }),
