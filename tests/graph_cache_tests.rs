@@ -84,7 +84,10 @@ mod timed_cache_tests {
 
         assert!(cache.get(&"src/main.rs".to_string()).is_none());
         assert!(cache.get(&"src/lib.rs".to_string()).is_none());
-        assert_eq!(cache.get(&"tests/main.rs".to_string()), Some("content3".to_string()));
+        assert_eq!(
+            cache.get(&"tests/main.rs".to_string()),
+            Some("content3".to_string())
+        );
     }
 
     #[test]
@@ -205,11 +208,17 @@ mod query_cache_tests {
     async fn test_set_and_get_dependencies() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("file1.rs".to_string(), vec!["file2.rs".to_string(), "file3.rs".to_string()])
+            .set_dependencies(
+                "file1.rs".to_string(),
+                vec!["file2.rs".to_string(), "file3.rs".to_string()],
+            )
             .await;
 
         let result = cache.get_dependencies("file1.rs").await;
-        assert_eq!(result, Some(vec!["file2.rs".to_string(), "file3.rs".to_string()]));
+        assert_eq!(
+            result,
+            Some(vec!["file2.rs".to_string(), "file3.rs".to_string()])
+        );
     }
 
     #[tokio::test]
@@ -285,10 +294,16 @@ mod query_cache_tests {
     async fn test_invalidate_file_with_nested_path() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("src/handlers/mod.rs".to_string(), vec!["lib.rs".to_string()])
+            .set_dependencies(
+                "src/handlers/mod.rs".to_string(),
+                vec!["lib.rs".to_string()],
+            )
             .await;
         cache
-            .set_dependents("src/handlers/mod.rs".to_string(), vec!["main.rs".to_string()])
+            .set_dependents(
+                "src/handlers/mod.rs".to_string(),
+                vec!["main.rs".to_string()],
+            )
             .await;
 
         cache.invalidate_file("src/handlers/mod.rs").await;
@@ -355,8 +370,14 @@ mod query_cache_tests {
             .set_dependencies("c.rs".to_string(), vec!["d.rs".to_string()])
             .await;
 
-        assert_eq!(cache.get_dependencies("a.rs").await, Some(vec!["b.rs".to_string()]));
-        assert_eq!(cache.get_dependencies("c.rs").await, Some(vec!["d.rs".to_string()]));
+        assert_eq!(
+            cache.get_dependencies("a.rs").await,
+            Some(vec!["b.rs".to_string()])
+        );
+        assert_eq!(
+            cache.get_dependencies("c.rs").await,
+            Some(vec!["d.rs".to_string()])
+        );
     }
 
     #[tokio::test]
@@ -369,8 +390,14 @@ mod query_cache_tests {
             .set_dependents("d.rs".to_string(), vec!["c.rs".to_string()])
             .await;
 
-        assert_eq!(cache.get_dependents("b.rs").await, Some(vec!["a.rs".to_string()]));
-        assert_eq!(cache.get_dependents("d.rs").await, Some(vec!["c.rs".to_string()]));
+        assert_eq!(
+            cache.get_dependents("b.rs").await,
+            Some(vec!["a.rs".to_string()])
+        );
+        assert_eq!(
+            cache.get_dependents("d.rs").await,
+            Some(vec!["c.rs".to_string()])
+        );
     }
 
     #[tokio::test]
@@ -427,9 +454,7 @@ mod query_cache_tests {
             .await;
 
         let cache_clone = cache.clone();
-        let handle = tokio::spawn(async move {
-            cache_clone.get_dependencies("file.rs").await
-        });
+        let handle = tokio::spawn(async move { cache_clone.get_dependencies("file.rs").await });
 
         let result = handle.await.unwrap();
         assert_eq!(result, Some(vec!["dep.rs".to_string()]));

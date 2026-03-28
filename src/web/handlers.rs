@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 
 use crate::db;
 
@@ -67,8 +68,12 @@ pub struct GraphEdge {
 fn is_test_element(element: &crate::db::models::CodeElement) -> bool {
     let qn = &element.qualified_name;
     let fp = &element.file_path;
-    qn.contains("test_") || qn.contains("_test.") || qn.ends_with("_test") 
-        || fp.contains("_test.") || fp.contains("/test/") || fp.contains("\\test\\")
+    qn.contains("test_")
+        || qn.contains("_test.")
+        || qn.ends_with("_test")
+        || fp.contains("_test.")
+        || fp.contains("/test/")
+        || fp.contains("\\test\\")
 }
 
 fn build_nav_html() -> String {
@@ -148,11 +153,14 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
     let mut files_count = 0usize;
     let mut functions_count = 0usize;
     let mut classes_count = 0usize;
+    let mut has_project = false;
 
     if let Ok(graph) = state.get_graph_engine().await {
         if let Ok(elements) = graph.all_elements() {
+            has_project = !elements.is_empty();
             element_count = elements.len();
-            let unique_files: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+            let unique_files: std::collections::HashSet<_> =
+                elements.iter().map(|e| e.file_path.clone()).collect();
             files_count = unique_files.len();
             functions_count = elements
                 .iter()
@@ -171,6 +179,10 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
         }
     }
 
+    if !has_project {
+        return project_selector(State(state)).await;
+    }
+
     let content = format!(
         r#"
         <div class="stats">
@@ -184,11 +196,13 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
             <div class="stat-box"><div class="value">{}</div><div class="label">Classes</div></div>
         </div>
         <div class="card">
-            <h2>Getting Started</h2>
-            <p style="color: #666; margin-bottom: 10px;">Use the CLI to index your codebase:</p>
-            <code style="display: block; background: #f5f5f5; padding: 15px; border-radius: 6px; margin-bottom: 15px;">leankg init && leankg index ./src</code>
-            <p style="color: #666;">Then start the server with:</p>
-            <code style="display: block; background: #f5f5f5; padding: 15px; border-radius: 6px;">leankg serve</code>
+            <h2>Current Project</h2>
+            <p style="color: #666; margin-bottom: 10px;">
+                <code>{}</code>
+            </p>
+            <p style="color: #666; margin-bottom: 15px;">
+                <a href="/project" style="color: #0066cc;">Switch Project</a>
+            </p>
         </div>
         <div class="card">
             <h2>Quick Actions</h2>
@@ -204,7 +218,8 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
         annotation_count,
         files_count,
         functions_count,
-        classes_count
+        classes_count,
+        state.current_project_path.read().await.display()
     );
 
     axum::response::Html(base_html("Dashboard", &content))
@@ -1112,11 +1127,15 @@ pub async fn browse(State(state): State<AppState>) -> axum::response::Html<Strin
         .filter(|e| e.element_type == "class")
         .collect();
 
-    let mut file_paths: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
-    let mut files: Vec<_> = file_paths.drain().map(|fp| {
-        let count = elements.iter().filter(|e| e.file_path == fp).count();
-        (fp, count)
-    }).collect();
+    let mut file_paths: std::collections::HashSet<_> =
+        elements.iter().map(|e| e.file_path.clone()).collect();
+    let mut files: Vec<_> = file_paths
+        .drain()
+        .map(|fp| {
+            let count = elements.iter().filter(|e| e.file_path == fp).count();
+            (fp, count)
+        })
+        .collect();
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     functions.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
@@ -1550,14 +1569,16 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                     file_path: e.file_path.clone(),
                 })
                 .collect();
-            
-            let mut file_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+
+            let mut file_map: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
             for element in &elements {
-                file_map.entry(element.file_path.clone())
+                file_map
+                    .entry(element.file_path.clone())
                     .or_default()
                     .push(element.qualified_name.clone());
             }
-            
+
             for (file_path, _element_ids) in &file_map {
                 let file_node = GraphNode {
                     id: format!("file::{}", file_path),
@@ -1567,12 +1588,16 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                 };
                 nodes.push(file_node);
             }
-            
-            let node_ids: std::collections::HashSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
-            let mut existing_edges: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
+            let node_ids: std::collections::HashSet<_> =
+                nodes.iter().map(|n| n.id.clone()).collect();
+            let mut existing_edges: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
             let mut edges: Vec<GraphEdge> = relationships
                 .iter()
-                .filter(|r| node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified))
+                .filter(|r| {
+                    node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified)
+                })
                 .filter(|r| !r.rel_type.starts_with("contains"))
                 .map(|r| {
                     existing_edges.insert((r.source_qualified.clone(), r.target_qualified.clone()));
@@ -1583,7 +1608,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                     }
                 })
                 .collect();
-            
+
             for (file_path, element_ids) in &file_map {
                 let file_node_id = format!("file::{}", file_path);
                 for element_id in element_ids {
@@ -1598,10 +1623,14 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                     }
                 }
             }
-            
+
             ApiResponse {
                 success: true,
-                data: Some(GraphData { nodes, edges, filtered: None }),
+                data: Some(GraphData {
+                    nodes,
+                    edges,
+                    filtered: None,
+                }),
                 error: None,
             }
         }
@@ -1634,10 +1663,13 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                     file_path: e.file_path.clone(),
                 })
                 .collect();
-            let node_ids: std::collections::HashSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
+            let node_ids: std::collections::HashSet<_> =
+                nodes.iter().map(|n| n.id.clone()).collect();
             let edges: Vec<GraphEdge> = relationships
                 .iter()
-                .filter(|r| node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified))
+                .filter(|r| {
+                    node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified)
+                })
                 .map(|r| GraphEdge {
                     source: r.source_qualified.clone(),
                     target: r.target_qualified.clone(),
@@ -1646,7 +1678,11 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                 .collect();
             ApiResponse {
                 success: true,
-                data: Some(GraphData { nodes, edges, filtered: None }),
+                data: Some(GraphData {
+                    nodes,
+                    edges,
+                    filtered: None,
+                }),
                 error: None,
             }
         }
@@ -1667,8 +1703,8 @@ pub async fn api_query(
 
 #[derive(Deserialize)]
 pub struct PathSwitchRequest {
-    #[allow(dead_code)]
-    pub path: String,
+    pub path: Option<String>,
+    pub github_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1677,17 +1713,202 @@ pub struct PathSwitchResponse {
     pub has_database: bool,
     pub needs_indexing: bool,
     pub is_github: bool,
+    pub project_path: String,
 }
 
 #[allow(dead_code)]
 pub async fn api_switch_path(
-    State(_state): State<AppState>,
-    Json(_req): Json<PathSwitchRequest>,
+    State(state): State<AppState>,
+    Json(req): Json<PathSwitchRequest>,
 ) -> impl IntoResponse {
+    let project_path: String;
+
+    if let Some(ref github_url) = req.github_url {
+        let url = github_url.trim();
+
+        if !url.contains("github.com") {
+            return ApiResponse::<PathSwitchResponse> {
+                success: false,
+                data: None,
+                error: Some("Only GitHub URLs are supported".to_string()),
+            };
+        }
+
+        let repo_name = url
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .last()
+            .unwrap_or("repo")
+            .replace(".git", "");
+
+        let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let clone_base = home_dir.join(".leankg").join("clones");
+
+        if let Err(e) = std::fs::create_dir_all(&clone_base) {
+            return ApiResponse::<PathSwitchResponse> {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to create clones directory: {}", e)),
+            };
+        }
+
+        let clone_path = clone_base.join(&repo_name);
+
+        if !clone_path.exists() {
+            let output = Command::new("git")
+                .args(["clone", url, clone_path.to_str().unwrap_or(&repo_name)])
+                .output();
+
+            match output {
+                Ok(output) if !output.status.success() => {
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    return ApiResponse::<PathSwitchResponse> {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Git clone failed: {}", err)),
+                    };
+                }
+                Err(e) => {
+                    return ApiResponse::<PathSwitchResponse> {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Failed to execute git: {}", e)),
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        project_path = clone_path.to_string_lossy().to_string();
+    } else if let Some(ref path) = req.path {
+        project_path = path.trim().to_string();
+    } else {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some("Either path or github_url must be provided".to_string()),
+        };
+    }
+
+    let path_obj = std::path::Path::new(&project_path);
+
+    if !path_obj.exists() {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some("Directory not found. Please check the path and try again.".to_string()),
+        };
+    }
+
+    if !path_obj.is_dir() {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some("Path is not a directory".to_string()),
+        };
+    }
+
+    let absolute_path = path_obj.to_string_lossy().to_string();
+    let db_path = path_obj.join(".leankg");
+
+    if let Err(e) = std::fs::create_dir_all(&db_path) {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to create .leankg directory: {}", e)),
+        };
+    }
+
+    let has_database = db_path.exists();
+
+    let new_state = state.clone();
+    let absolute_path_clone = absolute_path.clone();
+    let project_path_for_response = absolute_path.clone();
+    let path_obj_clone = path_obj.to_path_buf();
+
+    let indexing_state = new_state.indexing_state.clone();
+    let rt = tokio::runtime::Handle::current();
+
+    std::thread::spawn(move || {
+        let _enter = rt.enter();
+
+        let init_err = {
+            let result = rt.block_on(new_state.switch_project(path_obj_clone.clone()));
+            result.err().map(|e| e.to_string())
+        };
+        if let Some(err_msg) = init_err {
+            tracing::error!("Failed to switch project: {}", err_msg);
+            rt.block_on(new_state.set_indexing_error(err_msg));
+            return;
+        }
+
+        let files = crate::indexer::find_files_sync(&absolute_path_clone);
+        let files = match files {
+            Ok(f) => f,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!("Failed to find files: {}", err_msg);
+                rt.block_on(new_state.set_indexing_error(err_msg));
+                return;
+            }
+        };
+
+        rt.block_on(new_state.set_indexing_started(files.len()));
+
+        let graph = match rt.block_on(new_state.get_graph_engine()) {
+            Ok(g) => g,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!("Failed to get graph engine: {}", err_msg);
+                rt.block_on(new_state.set_indexing_error(err_msg));
+                return;
+            }
+        };
+
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        if let Err(e) = parser_manager.init_parsers() {
+            let err_msg = e.to_string();
+            tracing::error!("Failed to init parsers: {}", err_msg);
+            rt.block_on(new_state.set_indexing_error(err_msg));
+            return;
+        }
+
+        let total = files.len();
+
+        for (idx, file_path) in files.iter().enumerate() {
+            {
+                let mut state_guard = rt.block_on(indexing_state.write());
+                state_guard.indexed_files = idx + 1;
+                state_guard.current_file = file_path.clone();
+                if total > 0 {
+                    state_guard.progress_percent = ((idx + 1) * 100) / total;
+                }
+            }
+
+            if let Err(e) = crate::indexer::index_file_sync(&graph, &mut parser_manager, file_path)
+            {
+                tracing::warn!("Failed to index {}: {}", file_path, e);
+            }
+        }
+
+        if let Err(e) = graph.resolve_call_edges() {
+            tracing::warn!("Failed to resolve call edges: {}", e);
+        }
+
+        rt.block_on(new_state.set_indexing_complete());
+        tracing::info!("Indexing complete for {}", absolute_path_clone);
+    });
+
     ApiResponse::<PathSwitchResponse> {
-        success: false,
-        data: None,
-        error: Some("Not implemented".to_string()),
+        success: true,
+        data: Some(PathSwitchResponse {
+            is_directory: true,
+            has_database,
+            needs_indexing: true,
+            is_github: req.github_url.is_some(),
+            project_path: project_path_for_response,
+        }),
+        error: None,
     }
 }
 
@@ -1701,23 +1922,24 @@ pub struct IndexStatusResponse {
 }
 
 #[allow(dead_code)]
-pub async fn api_index_status(State(_state): State<AppState>) -> impl IntoResponse {
+pub async fn api_index_status(State(state): State<AppState>) -> impl IntoResponse {
+    let indexing_state = state.indexing_state.read().await;
+
     ApiResponse {
         success: true,
         data: Some(IndexStatusResponse {
-            is_indexing: false,
-            progress_percent: 0,
-            current_file: String::new(),
-            total_files: 0,
-            indexed_files: 0,
+            is_indexing: indexing_state.is_indexing,
+            progress_percent: indexing_state.progress_percent,
+            current_file: indexing_state.current_file.clone(),
+            total_files: indexing_state.total_files,
+            indexed_files: indexing_state.indexed_files,
         }),
-        error: None,
+        error: indexing_state.error.clone(),
     }
 }
 
 #[derive(Deserialize)]
 pub struct GitHubCloneRequest {
-    #[allow(dead_code)]
     pub url: String,
 }
 
@@ -1727,14 +1949,260 @@ pub struct GitHubCloneResponse {
     pub is_indexing: bool,
 }
 
+pub async fn project_selector(State(state): State<AppState>) -> axum::response::Html<String> {
+    let indexing_state = state.indexing_state.read().await;
+
+    let progress_html = if indexing_state.is_indexing {
+        format!(
+            r#"
+            <div class="card" id="progress-card">
+                <h2>Indexing in Progress</h2>
+                <div style="margin: 20px 0;">
+                    <div style="background: #e0e0e0; border-radius: 8px; height: 24px; overflow: hidden;">
+                        <div id="progress-bar" style="background: #0066cc; height: 100%; width: {}%; transition: width 0.3s;"></div>
+                    </div>
+                    <p style="margin-top: 10px; color: #666;">
+                        Indexing: {} of {} files
+                    </p>
+                    <p style="color: #888; font-size: 14px;">
+                        Current: <code id="current-file">{}</code>
+                    </p>
+                </div>
+            </div>
+            <script>
+                async function pollStatus() {{
+                    try {{
+                        const res = await fetch('/api/index/status');
+                        const data = await res.json();
+                        if (data.success && data.data) {{
+                            const progressBar = document.getElementById('progress-bar');
+                            const currentFile = document.getElementById('current-file');
+                            if (progressBar) progressBar.style.width = data.data.progress_percent + '%';
+                            if (currentFile) currentFile.textContent = data.data.current_file || 'Processing...';
+                            
+                            if (!data.data.is_indexing) {{
+                                if (data.data.error) {{
+                                    document.getElementById('progress-card').innerHTML = 
+                                        '<div class="error"><p>Indexing failed: ' + data.data.error + '</p><button onclick="location.reload()">Try Again</button></div>';
+                                }} else {{
+                                    window.location.href = '/';
+                                }}
+                            }} else {{
+                                setTimeout(pollStatus, 2000);
+                            }}
+                        }}
+                    }} catch (e) {{
+                        console.error('Poll error:', e);
+                        setTimeout(pollStatus, 5000);
+                    }}
+                }}
+                pollStatus();
+            </script>"#,
+            indexing_state.progress_percent,
+            indexing_state.indexed_files,
+            indexing_state.total_files,
+            indexing_state.current_file
+        )
+    } else {
+        String::new()
+    };
+
+    let error_html = if let Some(ref error) = indexing_state.error {
+        format!(r#"<div class="error"><p>{}</p></div>"#, error)
+    } else {
+        String::new()
+    };
+
+    let content = format!(
+        r#"
+        <div class="card">
+            <h2>Welcome to LeanKG</h2>
+            <p style="color: #666; margin-bottom: 20px;">
+                Enter a local path or GitHub URL to start analyzing a codebase.
+            </p>
+            <form id="project-form" onsubmit="handleSubmit(event)">
+                <div class="form-group">
+                    <label for="path-input">Project Path or GitHub URL</label>
+                    <input 
+                        type="text" 
+                        id="path-input" 
+                        name="path" 
+                        placeholder="e.g., /Users/name/project or https://github.com/user/repo"
+                        required
+                        style="font-size: 16px; padding: 12px;"
+                    >
+                </div>
+                <button type="submit" id="submit-btn" style="font-size: 16px; padding: 12px 24px;">
+                    Load Project
+                </button>
+            </form>
+            <div id="message" style="margin-top: 15px;"></div>
+        </div>
+        {}
+        {}
+        <div class="card">
+            <h3>Quick Examples</h3>
+            <p style="color: #666; margin-bottom: 10px;">Try with a public GitHub repository:</p>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button onclick="document.getElementById('path-input').value='https://github.com/FreePeak/LeanKG'" style="background: #666;">
+                    LeanKG
+                </button>
+                <button onclick="document.getElementById('path-input').value='https://github.com/tokio-rs/tokio'" style="background: #666;">
+                    Tokio
+                </button>
+                <button onclick="document.getElementById('path-input').value='https://github.com/serde-rs/serde'" style="background: #666;">
+                    Serde
+                </button>
+            </div>
+        </div>
+        <style>
+            #project-form {{
+                margin-bottom: 20px;
+            }}
+            #message {{
+                margin-top: 15px;
+            }}
+            #message .error {{
+                background: #ffebee;
+                color: #c62828;
+                padding: 15px;
+                border-radius: 6px;
+            }}
+            #message .success {{
+                background: #e8f5e9;
+                color: #2e7d32;
+                padding: 15px;
+                border-radius: 6px;
+            }}
+        </style>
+        <script>
+            async function handleSubmit(e) {{
+                e.preventDefault();
+                const input = document.getElementById('path-input');
+                const btn = document.getElementById('submit-btn');
+                const message = document.getElementById('message');
+                const value = input.value.trim();
+                
+                if (!value) return;
+                
+                btn.disabled = true;
+                btn.textContent = 'Loading...';
+                message.innerHTML = '';
+                
+                try {{
+                    let body;
+                    if (value.startsWith('http://') || value.startsWith('https://')) {{
+                        if (!value.includes('github.com')) {{
+                            message.innerHTML = '<div class="error">Only GitHub URLs are supported currently.</div>';
+                            btn.disabled = false;
+                            btn.textContent = 'Load Project';
+                            return;
+                        }}
+                        body = JSON.stringify({{ github_url: value }});
+                    }} else {{
+                        body = JSON.stringify({{ path: value }});
+                    }}
+                    
+                    const response = await fetch('/api/project/switch', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: body
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        message.innerHTML = '<div class="success">Project loaded! Starting indexing...</div>';
+                        setTimeout(() => {{ window.location.href = '/'; }}, 500);
+                    }} else {{
+                        message.innerHTML = '<div class="error">' + (data.error || 'Failed to load project') + '</div>';
+                        btn.disabled = false;
+                        btn.textContent = 'Load Project';
+                    }}
+                }} catch (err) {{
+                    message.innerHTML = '<div class="error">Error: ' + err.message + '</div>';
+                    btn.disabled = false;
+                    btn.textContent = 'Load Project';
+                }}
+            }}
+        </script>"#,
+        progress_html, error_html
+    );
+
+    axum::response::Html(base_html("Welcome", &content))
+}
+
 #[allow(dead_code)]
 pub async fn api_github_clone(
     State(_state): State<AppState>,
-    Json(_req): Json<GitHubCloneRequest>,
+    Json(req): Json<GitHubCloneRequest>,
 ) -> impl IntoResponse {
-    ApiResponse::<GitHubCloneResponse> {
-        success: false,
-        data: None,
-        error: Some("Not implemented".to_string()),
+    let url = req.url.trim();
+
+    if !url.contains("github.com") {
+        return ApiResponse::<GitHubCloneResponse> {
+            success: false,
+            data: None,
+            error: Some("Only GitHub URLs are supported".to_string()),
+        };
+    }
+
+    let repo_name = url
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .last()
+        .unwrap_or("repo")
+        .replace(".git", "");
+
+    let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let clone_base = home_dir.join(".leankg").join("clones");
+
+    if let Err(e) = std::fs::create_dir_all(&clone_base) {
+        return ApiResponse::<GitHubCloneResponse> {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to create clones directory: {}", e)),
+        };
+    }
+
+    let clone_path = clone_base.join(&repo_name);
+
+    if clone_path.exists() {
+        return ApiResponse::<GitHubCloneResponse> {
+            success: true,
+            data: Some(GitHubCloneResponse {
+                clone_path: clone_path.to_string_lossy().to_string(),
+                is_indexing: false,
+            }),
+            error: None,
+        };
+    }
+
+    let output = Command::new("git")
+        .args(["clone", url, clone_path.to_str().unwrap_or(&repo_name)])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => ApiResponse::<GitHubCloneResponse> {
+            success: true,
+            data: Some(GitHubCloneResponse {
+                clone_path: clone_path.to_string_lossy().to_string(),
+                is_indexing: true,
+            }),
+            error: None,
+        },
+        Ok(output) => {
+            let err = String::from_utf8_lossy(&output.stderr);
+            ApiResponse::<GitHubCloneResponse> {
+                success: false,
+                data: None,
+                error: Some(format!("Git clone failed: {}", err)),
+            }
+        }
+        Err(e) => ApiResponse::<GitHubCloneResponse> {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to execute git: {}", e)),
+        },
     }
 }

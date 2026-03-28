@@ -37,7 +37,8 @@ pub async fn api_status(
     if let Ok(graph) = state.get_graph_engine().await {
         if let Ok(elements) = graph.all_elements() {
             element_count = elements.len();
-            let unique_files: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+            let unique_files: std::collections::HashSet<_> =
+                elements.iter().map(|e| e.file_path.clone()).collect();
             files_count = unique_files.len();
             functions_count = elements
                 .iter()
@@ -106,7 +107,9 @@ pub async fn api_search(
         Err(_) => return Err("Failed to get graph engine"),
     };
 
-    let search_results = graph.search_by_name(&query.q).map_err(|_| "Search failed")?;
+    let search_results = graph
+        .search_by_name(&query.q)
+        .map_err(|_| "Search failed")?;
 
     let elements: Vec<SearchElement> = search_results
         .into_iter()

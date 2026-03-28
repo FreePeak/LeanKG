@@ -80,9 +80,7 @@ async fn test_impact_analyzer_empty_graph() {
     let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
     let analyzer = ImpactAnalyzer::new(&graph);
-    let result = analyzer
-        .calculate_impact_radius("src/main.go", 3)
-        .unwrap();
+    let result = analyzer.calculate_impact_radius("src/main.go", 3).unwrap();
     assert_eq!(result.start_file, "src/main.go");
     assert_eq!(result.max_depth, 3);
     assert!(result.affected_elements.is_empty());
@@ -134,8 +132,7 @@ async fn test_doc_sync_for_file() {
     if parser.init_parsers().is_err() {
         return;
     }
-    let _count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap())
-        .unwrap();
+    let _count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap()).unwrap();
 
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let result = doc_gen
@@ -163,7 +160,6 @@ async fn test_index_file_go() {
     if parser.init_parsers().is_err() {
         return;
     }
-    let count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap())
-        .unwrap();
+    let count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap()).unwrap();
     assert!(count > 0);
 }

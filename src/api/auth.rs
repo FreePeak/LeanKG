@@ -7,8 +7,8 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::db::keys::ApiKeyStore;
 use crate::api::ApiState;
+use crate::db::keys::ApiKeyStore;
 
 pub async fn auth_middleware(
     State(_state): State<ApiState>,
@@ -35,11 +35,17 @@ pub async fn auth_middleware(
     let store = ApiKeyStore::new().map_err(|e| e.to_string()).unwrap();
     match store.validate_key(&token) {
         Ok(Some(_key_id)) => {
-            request.extensions_mut().insert(AuthContext { key_id: _key_id });
+            request
+                .extensions_mut()
+                .insert(AuthContext { key_id: _key_id });
             next.run(request).await
         }
         Ok(None) => (StatusCode::UNAUTHORIZED, "Invalid API key").into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Auth error: {}", e)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Auth error: {}", e),
+        )
+            .into_response(),
     }
 }
 

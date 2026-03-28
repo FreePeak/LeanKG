@@ -244,9 +244,7 @@ async fn test_doc_generator_tracking_info() {
     graph.insert_elements(&[element]).unwrap();
 
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
-    let tracking = doc_gen
-        .get_doc_tracking_info("src/main.rs::main")
-        .unwrap();
+    let tracking = doc_gen.get_doc_tracking_info("src/main.rs::main").unwrap();
 
     assert!(tracking.is_some());
     let info = tracking.unwrap();
@@ -261,8 +259,6 @@ async fn test_doc_generator_tracking_info_not_found() {
     let graph = GraphEngine::new(db);
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
 
-    let tracking = doc_gen
-        .get_doc_tracking_info("nonexistent::foo")
-        .unwrap();
+    let tracking = doc_gen.get_doc_tracking_info("nonexistent::foo").unwrap();
     assert!(tracking.is_none());
 }

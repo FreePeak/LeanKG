@@ -109,7 +109,10 @@ pub struct ToolHandler {
 
 impl ToolHandler {
     pub fn new(graph_engine: GraphEngine, db_path: std::path::PathBuf) -> Self {
-        Self { graph_engine, db_path }
+        Self {
+            graph_engine,
+            db_path,
+        }
     }
 
     pub async fn execute_tool(&self, tool_name: &str, arguments: &Value) -> Result<Value, String> {
@@ -154,7 +157,8 @@ impl ToolHandler {
         std::fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))?;
 
         let config = crate::config::ProjectConfig::default();
-        let config_yaml = serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
+        let config_yaml = serde_yaml::to_string(&config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
         std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)
             .map_err(|e| format!("Failed to write config: {}", e))?;
 
@@ -168,7 +172,8 @@ impl ToolHandler {
     fn mcp_install(&self, args: &Value) -> Result<Value, String> {
         let mcp_config_path = args["mcp_config_path"].as_str().unwrap_or(".mcp.json");
 
-        let exe_path = std::env::current_exe().map_err(|e| format!("Failed to get current exe path: {}", e))?;
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get current exe path: {}", e))?;
 
         let mcp_config = serde_json::json!({
             "mcpServers": {
@@ -179,8 +184,11 @@ impl ToolHandler {
             }
         });
 
-        std::fs::write(mcp_config_path, serde_json::to_string_pretty(&mcp_config).unwrap())
-            .map_err(|e| format!("Failed to write .mcp.json: {}", e))?;
+        std::fs::write(
+            mcp_config_path,
+            serde_json::to_string_pretty(&mcp_config).unwrap(),
+        )
+        .map_err(|e| format!("Failed to write .mcp.json: {}", e))?;
 
         let instructions_dir = "instructions";
         let instructions_path = format!("{}/leankg-tools.md", instructions_dir);
@@ -196,8 +204,11 @@ impl ToolHandler {
             "instructions": [instructions_path]
         });
 
-        std::fs::write(opencode_config_path, serde_json::to_string_pretty(&opencode_config).unwrap())
-            .map_err(|e| format!("Failed to write opencode.json: {}", e))?;
+        std::fs::write(
+            opencode_config_path,
+            serde_json::to_string_pretty(&opencode_config).unwrap(),
+        )
+        .map_err(|e| format!("Failed to write opencode.json: {}", e))?;
 
         Ok(json!({
             "success": true,
@@ -215,16 +226,21 @@ impl ToolHandler {
         let exclude = args["exclude"].as_str();
 
         let db_path = self.db_path.clone();
-        tokio::fs::create_dir_all(&db_path).await.map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        tokio::fs::create_dir_all(&db_path)
+            .await
+            .map_err(|e| format!("Failed to create .leankg: {}", e))?;
 
         let exclude_patterns: Vec<String> = exclude
             .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
             .unwrap_or_default();
 
         let mut parser_manager = crate::indexer::ParserManager::new();
-        parser_manager.init_parsers().map_err(|e| format!("Parser init error: {}", e))?;
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
 
-        let files = crate::indexer::find_files_sync(path).map_err(|e| format!("Find files error: {}", e))?;
+        let files = crate::indexer::find_files_sync(path)
+            .map_err(|e| format!("Find files error: {}", e))?;
 
         let mut indexed = 0;
         let mut skipped = 0;
@@ -240,7 +256,10 @@ impl ToolHandler {
                         ("ts", "typescript"),
                         ("js", "javascript"),
                         ("py", "python"),
-                    ].iter().cloned().collect();
+                    ]
+                    .iter()
+                    .cloned()
+                    .collect();
                     if let Some(lang_name) = lang_map.get(ext_str.as_str()) {
                         if !allowed_langs.iter().any(|l| l.to_lowercase() == *lang_name) {
                             continue;
@@ -249,11 +268,17 @@ impl ToolHandler {
                 }
             }
 
-            if !exclude_patterns.is_empty() && exclude_patterns.iter().any(|pat| file_path.contains(pat)) {
+            if !exclude_patterns.is_empty()
+                && exclude_patterns.iter().any(|pat| file_path.contains(pat))
+            {
                 continue;
             }
 
-            match crate::indexer::index_file_sync(&self.graph_engine, &mut parser_manager, file_path) {
+            match crate::indexer::index_file_sync(
+                &self.graph_engine,
+                &mut parser_manager,
+                file_path,
+            ) {
                 Ok(_) => indexed += 1,
                 Err(_) => skipped += 1,
             }
@@ -308,14 +333,27 @@ impl ToolHandler {
         }
 
         let db = self.graph_engine.db();
-        let elements = self.graph_engine.all_elements().map_err(|e| e.to_string())?;
-        let relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
+        let elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let relationships = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
         let annotations = crate::db::all_business_logic(db).map_err(|e| e.to_string())?;
 
-        let unique_files: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+        let unique_files: std::collections::HashSet<_> =
+            elements.iter().map(|e| e.file_path.clone()).collect();
         let files = unique_files.len();
-        let functions = elements.iter().filter(|e| e.element_type == "function").count();
-        let classes = elements.iter().filter(|e| e.element_type == "class" || e.element_type == "struct").count();
+        let functions = elements
+            .iter()
+            .filter(|e| e.element_type == "function")
+            .count();
+        let classes = elements
+            .iter()
+            .filter(|e| e.element_type == "class" || e.element_type == "struct")
+            .count();
 
         Ok(json!({
             "initialized": true,
@@ -341,7 +379,9 @@ impl ToolHandler {
 
         let analyzer = crate::graph::ImpactAnalyzer::new(&self.graph_engine);
 
-        let result = analyzer.calculate_impact_radius(file, depth).map_err(|e| e.to_string())?;
+        let result = analyzer
+            .calculate_impact_radius(file, depth)
+            .map_err(|e| e.to_string())?;
 
         Ok(json!({
             "start_file": result.start_file,
@@ -361,8 +401,9 @@ impl ToolHandler {
         let min_confidence = args["min_confidence"].as_f64().unwrap_or(0.0);
 
         let changed_files = match scope {
-            "staged" => crate::indexer::GitAnalyzer::get_staged_files()
-                .unwrap_or_else(|_| Vec::new()),
+            "staged" => {
+                crate::indexer::GitAnalyzer::get_staged_files().unwrap_or_else(|_| Vec::new())
+            }
             "unstaged" => {
                 let changed = crate::indexer::GitAnalyzer::get_changed_files_since_last_commit()
                     .unwrap_or_else(|_| crate::indexer::GitChangedFiles {
@@ -387,7 +428,7 @@ impl ToolHandler {
                 files.extend(changed.deleted);
                 files.extend(
                     crate::indexer::GitAnalyzer::get_untracked_files()
-                        .unwrap_or_else(|_| Vec::new())
+                        .unwrap_or_else(|_| Vec::new()),
                 );
                 files
             }
@@ -399,8 +440,14 @@ impl ToolHandler {
         let mut max_dependents_at_depth1 = 0;
         let mut has_public_api_change = false;
 
-        let all_elements = self.graph_engine.all_elements().map_err(|e| e.to_string())?;
-        let all_relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
+        let all_elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let all_relationships = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
 
         for file in &changed_files {
             let file_elements: Vec<_> = all_elements
@@ -425,31 +472,50 @@ impl ToolHandler {
                 max_dependents_at_depth1 = max_dependents_at_depth1.max(depth1_count);
 
                 if depth1_count >= 10 {
-                    risk_reasons.push(format!("{} has {} direct callers (>=10)", elem.name, depth1_count));
+                    risk_reasons.push(format!(
+                        "{} has {} direct callers (>=10)",
+                        elem.name, depth1_count
+                    ));
                 } else if depth1_count >= 5 {
-                    risk_reasons.push(format!("{} has {} direct callers (>=5)", elem.name, depth1_count));
+                    risk_reasons.push(format!(
+                        "{} has {} direct callers (>=5)",
+                        elem.name, depth1_count
+                    ));
                 }
 
-                if elem.element_type == "function" && (elem.name.starts_with("pub_") || elem.name.starts_with("export_") || elem.name == "main") {
+                if elem.element_type == "function"
+                    && (elem.name.starts_with("pub_")
+                        || elem.name.starts_with("export_")
+                        || elem.name == "main")
+                {
                     has_public_api_change = true;
                     risk_reasons.push(format!("Public API change detected: {}", elem.name));
                 }
             }
         }
 
-        let min_confidence_filter = if min_confidence > 0.0 { min_confidence } else { 0.0 };
+        let min_confidence_filter = if min_confidence > 0.0 {
+            min_confidence
+        } else {
+            0.0
+        };
 
         for file in &changed_files {
-            let dependents = crate::indexer::find_dependents(file, &all_relationships
-                .iter()
-                .map(|r| (r.source_qualified.clone(), r.target_qualified.clone()))
-                .collect::<Vec<_>>());
+            let dependents = crate::indexer::find_dependents(
+                file,
+                &all_relationships
+                    .iter()
+                    .map(|r| (r.source_qualified.clone(), r.target_qualified.clone()))
+                    .collect::<Vec<_>>(),
+            );
 
             for dep_file in dependents {
                 if let Ok(Some(elem)) = self.graph_engine.find_element(&dep_file) {
                     let rels: Vec<_> = all_relationships
                         .iter()
-                        .filter(|r| r.target_qualified == elem.qualified_name && r.rel_type == "calls")
+                        .filter(|r| {
+                            r.target_qualified == elem.qualified_name && r.rel_type == "calls"
+                        })
                         .filter(|r| r.confidence >= min_confidence_filter)
                         .collect();
 
@@ -466,7 +532,9 @@ impl ToolHandler {
             }
         }
 
-        let risk_level = if max_dependents_at_depth1 >= 10 || (has_public_api_change && max_dependents_at_depth1 >= 5) {
+        let risk_level = if max_dependents_at_depth1 >= 10
+            || (has_public_api_change && max_dependents_at_depth1 >= 5)
+        {
             "critical"
         } else if max_dependents_at_depth1 >= 5 || has_public_api_change {
             "high"
@@ -495,9 +563,7 @@ impl ToolHandler {
             .as_str()
             .ok_or("Missing 'pattern' parameter")?;
 
-        let element_type_filter = args["element_type"]
-            .as_str()
-            .map(String::from);
+        let element_type_filter = args["element_type"].as_str().map(String::from);
 
         let elements = self
             .graph_engine
@@ -507,8 +573,10 @@ impl ToolHandler {
         let matches: Vec<_> = elements
             .iter()
             .filter(|e| {
-                let pattern_match = e.file_path.contains(pattern) || e.qualified_name.contains(pattern);
-                let type_match = element_type_filter.as_ref()
+                let pattern_match =
+                    e.file_path.contains(pattern) || e.qualified_name.contains(pattern);
+                let type_match = element_type_filter
+                    .as_ref()
                     .map(|et| &e.element_type == et)
                     .unwrap_or(true);
                 pattern_match && type_match
@@ -665,9 +733,11 @@ impl ToolHandler {
                     crate::graph::ContextPriority::Imported => "imported",
                     crate::graph::ContextPriority::Contained => "contained",
                 };
-                
+
                 if signature_only {
-                    let signature = elem.metadata.get("signature")
+                    let signature = elem
+                        .metadata
+                        .get("signature")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
@@ -700,7 +770,10 @@ impl ToolHandler {
             })
             .collect();
 
-        let file_element = self.graph_engine.find_element(file).map_err(|e| e.to_string())?;
+        let file_element = self
+            .graph_engine
+            .find_element(file)
+            .map_err(|e| e.to_string())?;
         let cluster_info = file_element.as_ref().map(|elem| {
             json!({
                 "id": elem.cluster_id,
@@ -708,13 +781,25 @@ impl ToolHandler {
             })
         });
 
-        let dependents_count = file_element.as_ref().map(|elem| {
-            self.graph_engine.get_dependents(elem.qualified_name.as_str()).map(|d| d.len()).unwrap_or(0)
-        }).unwrap_or(0);
-        
-        let dependencies_count = file_element.as_ref().map(|elem| {
-            self.graph_engine.get_dependencies(elem.qualified_name.as_str()).map(|d| d.len()).unwrap_or(0)
-        }).unwrap_or(0);
+        let dependents_count = file_element
+            .as_ref()
+            .map(|elem| {
+                self.graph_engine
+                    .get_dependents(elem.qualified_name.as_str())
+                    .map(|d| d.len())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
+        let dependencies_count = file_element
+            .as_ref()
+            .map(|elem| {
+                self.graph_engine
+                    .get_dependencies(elem.qualified_name.as_str())
+                    .map(|d| d.len())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
 
         Ok(json!({
             "file": file,
@@ -1156,14 +1241,14 @@ impl ToolHandler {
     }
 
     fn get_clusters(&self, _args: &Value) -> Result<Value, String> {
-        use crate::graph::clustering::{Cluster, CommunityDetector, get_cluster_stats};
-        
+        use crate::graph::clustering::{get_cluster_stats, Cluster, CommunityDetector};
+
         let detector = CommunityDetector::new(self.graph_engine.db());
         let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
-        
+
         let cluster_list: Vec<Cluster> = clusters.values().cloned().collect();
         let stats = get_cluster_stats(&clusters);
-        
+
         Ok(json!({
             "clusters": cluster_list,
             "stats": {
@@ -1176,13 +1261,13 @@ impl ToolHandler {
 
     fn get_cluster_context(&self, args: &Value) -> Result<Value, String> {
         use crate::graph::clustering::CommunityDetector;
-        
+
         let cluster_id = args["cluster_id"].as_str();
         let cluster_label = args["cluster_label"].as_str();
-        
+
         let detector = CommunityDetector::new(self.graph_engine.db());
         let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
-        
+
         let target_cluster = if let Some(cid) = cluster_id {
             clusters.get(cid).cloned()
         } else if let Some(label) = cluster_label {
@@ -1190,23 +1275,31 @@ impl ToolHandler {
         } else {
             None
         };
-        
+
         match target_cluster {
             Some(cluster) => {
-                let elements = self.graph_engine.all_elements().map_err(|e| e.to_string())?;
-                let relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
-                
+                let elements = self
+                    .graph_engine
+                    .all_elements()
+                    .map_err(|e| e.to_string())?;
+                let relationships = self
+                    .graph_engine
+                    .all_relationships()
+                    .map_err(|e| e.to_string())?;
+
                 let cluster_elements: Vec<_> = elements
                     .iter()
                     .filter(|e| cluster.members.contains(&e.qualified_name))
-                    .map(|e| json!({
-                        "qualified_name": e.qualified_name,
-                        "element_type": e.element_type,
-                        "name": e.name,
-                        "file_path": e.file_path
-                    }))
+                    .map(|e| {
+                        json!({
+                            "qualified_name": e.qualified_name,
+                            "element_type": e.element_type,
+                            "name": e.name,
+                            "file_path": e.file_path
+                        })
+                    })
                     .collect();
-                
+
                 let member_set: std::collections::HashSet<_> = cluster.members.iter().collect();
                 let inter_cluster: Vec<_> = relationships
                     .iter()
@@ -1215,22 +1308,25 @@ impl ToolHandler {
                         let tgt_in_cluster = member_set.contains(&r.target_qualified);
                         src_in_cluster != tgt_in_cluster
                     })
-                    .map(|r| json!({
-                        "source": r.source_qualified,
-                        "target": r.target_qualified,
-                        "type": r.rel_type
-                    }))
+                    .map(|r| {
+                        json!({
+                            "source": r.source_qualified,
+                            "target": r.target_qualified,
+                            "type": r.rel_type
+                        })
+                    })
                     .collect();
-                
+
                 let entry_points: Vec<_> = cluster_elements
                     .iter()
                     .filter(|e| {
                         relationships.iter().any(|r| {
-                            r.target_qualified == e["qualified_name"] && !member_set.contains(&r.source_qualified)
+                            r.target_qualified == e["qualified_name"]
+                                && !member_set.contains(&r.source_qualified)
                         })
                     })
                     .collect();
-                
+
                 Ok(json!({
                     "cluster_id": cluster.id,
                     "cluster_label": cluster.label,
@@ -1241,7 +1337,7 @@ impl ToolHandler {
                     "inter_cluster_dependencies": inter_cluster
                 }))
             }
-            None => Err("Cluster not found".to_string())
+            None => Err("Cluster not found".to_string()),
         }
     }
 }
