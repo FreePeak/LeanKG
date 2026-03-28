@@ -2,16 +2,18 @@
 
 ## Overview
 
-This document defines the workflow pattern for OpenCode AI agent to implement features in LeanKG. Each feature implementation follows a structured process: **Update Docs → Implement → Test → Commit → Push**.
+This document defines the workflow pattern for OpenCode AI agent to implement features in LeanKG. Each feature implementation follows a structured process: **Update Docs → Implement → Test → Commit → Create PR → Review & Merge → Release**.
 
-## Core Principle: One Feature Per Commit
+## Core Principle: One Feature Per Branch
 
 Every distinct feature or fix should be:
 1. Documented before implementation
-2. Implemented in isolation
+2. Implemented in isolation on a dedicated branch
 3. Tested
 4. Committed with a clear message
-5. Pushed before starting the next feature
+5. Pushed and PR created via gh
+6. Reviewed and merged via gh
+7. Released as a new version after merge
 
 ---
 
@@ -143,18 +145,78 @@ Detailed explanation of what was done.
 - `docs:` Documentation only
 - `chore:` Build/tooling changes
 
-### Step 5: Push
+### Step 5: Create Branch and Push
 
 ```bash
-# Always pull first to handle remote changes
-git pull origin master --rebase
+# Create a new branch for this feature
+git checkout -b feature/<ticket-id>-short-description
 
-# If conflicts, resolve them:
-# 1. Edit conflicted files
-# 2. git add <file>
-# 3. GIT_EDITOR="cat" git rebase --continue
+# Push the branch to origin
+git push -u origin feature/<ticket-id>-short-description
+```
 
-git push origin master
+### Step 6: Create Pull Request via gh
+
+```bash
+# Create PR to main branch
+gh pr create --title "feat: Short description" --body "$(cat <<'EOF'
+## Summary
+- Brief description of what changed
+- Key changes made
+
+## Test Plan
+- [ ] cargo build passes
+- [ ] cargo test passes
+- [ ] Manual verification steps (if applicable)
+
+## Checklist
+- [ ] Documentation updated (PRD, HLD, README)
+- [ ] Code follows existing patterns
+- [ ] No debug/placeholder code left in
+EOF
+)"
+```
+
+### Step 7: Review and Merge via gh
+
+After PR is created:
+
+```bash
+# View PR details
+gh pr view
+
+# Check PR diff
+gh pr diff
+
+# Merge the PR (squash merge)
+gh pr merge --squash --delete-branch
+
+# Alternative: Merge with merge commit
+# gh pr merge --admin --delete-branch
+```
+
+### Step 8: Release New Version
+
+After merge:
+
+```bash
+# Pull latest main
+git checkout main
+git pull origin main
+
+# Bump version in Cargo.toml
+# Edit version from X.Y.Z to X.Y.Z+1
+
+# Commit version bump
+git add -A
+git commit -m "release: Bump version to X.Y.Z"
+
+# Push
+git push origin main
+
+# Create and push tag
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 ---
@@ -260,7 +322,7 @@ GIT_EDITOR="cat" git rebase --continue
 
 ## Quality Checklist
 
-Before committing, verify:
+Before creating PR, verify:
 
 - [ ] Documentation updated (PRD, HLD, README)
 - [ ] Code compiles without errors
@@ -268,8 +330,17 @@ Before committing, verify:
 - [ ] New code follows existing patterns
 - [ ] No debug/placeholder code left in
 - [ ] Commit message is clear
-- [ ] Pulled latest remote changes
-- [ ] Pushed successfully
+- [ ] Branch name follows convention (feature/<ticket>-description)
+- [ ] PR created with clear title and description
+
+Before merging, verify:
+- [ ] PR title follows conventional commits (feat:, fix:, etc.)
+- [ ] Review completed (self-review or code review)
+- [ ] All checks pass
+
+After merging, verify:
+- [ ] Version bumped in Cargo.toml
+- [ ] Tag created and pushed
 
 ---
 
@@ -300,9 +371,25 @@ git commit -m "feat: Add new feature
 - Implemented Y functionality
 - Added Z relationship type"
 
-# 6. Push
-git pull origin master --rebase
-git push origin master
+# 6. Create branch and push
+git checkout -b feature/US-XX-new-feature
+git push -u origin feature/US-XX-new-feature
+
+# 7. Create PR
+gh pr create --title "feat: Add new feature" --body "..."
+
+# 8. Review and merge
+gh pr merge --squash --delete-branch
+
+# 9. Release
+git checkout main
+git pull origin main
+# Edit Cargo.toml version
+git add -A
+git commit -m "release: Bump version to X.Y.Z"
+git push origin main
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 ---
@@ -330,6 +417,17 @@ git stash
 
 # Pop stash
 git stash pop
+
+# GitHub CLI (gh) Commands
+gh pr create --title "feat: Description" --body "..."
+gh pr view
+gh pr diff
+gh pr merge --squash --delete-branch
+gh pr checkout <branch>   # Checkout PR branch locally
+gh pr merge --admin       # Merge with merge commit
+gh pr merge --rebase      # Merge with rebase
+gh release list
+gh release create vX.Y.Z --notes "Release notes"
 ```
 
 ---
