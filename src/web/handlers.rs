@@ -1498,3 +1498,75 @@ pub async fn api_query(
 ) -> Result<axum::extract::Json<QueryResponse>, (StatusCode, &'static str)> {
     Ok(axum::extract::Json(QueryResponse { result: vec![] }))
 }
+
+#[derive(Deserialize)]
+pub struct PathSwitchRequest {
+    pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct PathSwitchResponse {
+    pub is_directory: bool,
+    pub has_database: bool,
+    pub needs_indexing: bool,
+    pub is_github: bool,
+}
+
+#[allow(dead_code)]
+pub async fn api_switch_path(
+    State(_state): State<AppState>,
+    Json(_req): Json<PathSwitchRequest>,
+) -> impl IntoResponse {
+    ApiResponse::<PathSwitchResponse> {
+        success: false,
+        data: None,
+        error: Some("Not implemented".to_string()),
+    }
+}
+
+#[derive(Serialize)]
+pub struct IndexStatusResponse {
+    pub is_indexing: bool,
+    pub progress_percent: usize,
+    pub current_file: String,
+    pub total_files: usize,
+    pub indexed_files: usize,
+}
+
+#[allow(dead_code)]
+pub async fn api_index_status(State(_state): State<AppState>) -> impl IntoResponse {
+    ApiResponse {
+        success: true,
+        data: Some(IndexStatusResponse {
+            is_indexing: false,
+            progress_percent: 0,
+            current_file: String::new(),
+            total_files: 0,
+            indexed_files: 0,
+        }),
+        error: None,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GitHubCloneRequest {
+    pub url: String,
+}
+
+#[derive(Serialize)]
+pub struct GitHubCloneResponse {
+    pub clone_path: String,
+    pub is_indexing: bool,
+}
+
+#[allow(dead_code)]
+pub async fn api_github_clone(
+    State(_state): State<AppState>,
+    Json(_req): Json<GitHubCloneRequest>,
+) -> impl IntoResponse {
+    ApiResponse::<GitHubCloneResponse> {
+        success: false,
+        data: None,
+        error: Some("Not implemented".to_string()),
+    }
+}

@@ -16,13 +16,15 @@ use crate::graph::GraphEngine;
 #[derive(Clone)]
 pub struct AppState {
     pub db_path: std::path::PathBuf,
+    pub current_project_path: std::path::PathBuf,
     db: Arc<RwLock<Option<CozoDb>>>,
 }
 
 impl AppState {
-    pub async fn new(db_path: std::path::PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(db_path: std::path::PathBuf, current_project_path: std::path::PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             db_path,
+            current_project_path,
             db: Arc::new(RwLock::new(None)),
         })
     }
@@ -73,7 +75,7 @@ pub async fn start_server(
     port: u16,
     db_path: std::path::PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let state = AppState::new(db_path).await?;
+    let state = AppState::new(db_path.clone(), db_path).await?;
     state.init_db().await?;
 
     let app = Router::new()
@@ -96,6 +98,9 @@ pub async fn start_server(
         .route("/api/graph/data", get(handlers::api_graph_data))
         .route("/api/export/graph", get(handlers::api_export_graph))
         .route("/api/query", post(handlers::api_query))
+        .route("/api/path/switch", post(handlers::api_switch_path))
+        .route("/api/index/status", get(handlers::api_index_status))
+        .route("/api/github/clone", post(handlers::api_github_clone))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
