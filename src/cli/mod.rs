@@ -39,9 +39,17 @@ pub enum CLICommand {
         template: Option<String>,
     },
     /// Start web UI server (deprecated - use 'web' command instead)
-    Serve,
+    Serve {
+        /// Port to listen on (default: from PORT env var or 8080)
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// Start the embedded web UI server
-    Web,
+    Web {
+        /// Port to listen on (default: from PORT env var or 8080)
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// Start MCP server with stdio transport (for opencode integration)
     McpStdio {
         /// Enable auto-indexing with file watcher

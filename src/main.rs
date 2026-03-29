@@ -73,17 +73,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             }
         }
-        cli::CLICommand::Serve => {
+        cli::CLICommand::Serve { port } => {
+            let port = port.unwrap_or_else(|| {
+                std::env::var("PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(8080)
+            });
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await.ok();
-            web::start_server(8080, db_path).await?;
+            web::start_server(port, db_path).await?;
         }
-        cli::CLICommand::Web => {
+        cli::CLICommand::Web { port } => {
+            let port = port.unwrap_or_else(|| {
+                std::env::var("PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(8080)
+            });
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await.ok();
-            web::start_server(8080, db_path).await?;
+            web::start_server(port, db_path).await?;
         }
         cli::CLICommand::McpStdio { watch } => {
             let project_path = find_project_root()?;

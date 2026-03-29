@@ -1,0 +1,46 @@
+# flyctl launch added from .gitignore
+**/target
+**/.worktrees
+**/.leankg
+**/.worktrees
+
+# flyctl launch added from .kilo/.gitignore
+.kilo/**/node_modules
+.kilo/**/package.json
+.kilo/**/bun.lock
+.kilo/**/.gitignore
+
+# flyctl launch added from .opencode/.gitignore
+.opencode/**/node_modules
+.opencode/**/package.json
+.opencode/**/bun.lock
+.opencode/**/.gitignore
+
+# flyctl launch added from .ruff_cache/.gitignore
+# Automatically created by ruff.
+.ruff_cache/**/*
+
+# flyctl launch added from .worktrees/graph-tooltip/.gitignore
+.worktrees/graph-tooltip/**/target
+.worktrees/graph-tooltip/**/.worktrees
+.worktrees/graph-tooltip/**/.leankg
+.worktrees/graph-tooltip/**/.worktrees
+
+# flyctl launch added from .worktrees/optimize-resolve-call-edges/.gitignore
+.worktrees/optimize-resolve-call-edges/**/target
+.worktrees/optimize-resolve-call-edges/**/.worktrees
+.worktrees/optimize-resolve-call-edges/**/.leankg
+.worktrees/optimize-resolve-call-edges/**/.worktrees
+
+# flyctl launch added from .worktrees/optimize-resolve-call-edges/.opencode/.gitignore
+.worktrees/optimize-resolve-call-edges/.opencode/**/node_modules
+.worktrees/optimize-resolve-call-edges/.opencode/**/package.json
+.worktrees/optimize-resolve-call-edges/.opencode/**/bun.lock
+.worktrees/optimize-resolve-call-edges/.opencode/**/.gitignore
+
+# flyctl launch added from .worktrees/web-project-init/.gitignore
+.worktrees/web-project-init/**/target
+.worktrees/web-project-init/**/.worktrees
+.worktrees/web-project-init/**/.leankg
+.worktrees/web-project-init/**/.worktrees
+fly.toml
