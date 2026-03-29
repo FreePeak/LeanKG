@@ -4,7 +4,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 
-RUN apt-get update && apt-get install -y clang && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y clang git && rm -rf /var/lib/apt/lists/*
 
 RUN cargo build --release && strip target/release/leankg
 
