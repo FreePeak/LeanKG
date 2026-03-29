@@ -1,0 +1,21 @@
+# fly.toml app configuration file generated for leankg on 2026-03-29T11:12:50+07:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'leankg'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  PORT = '8080'
+
+[http_service]
+  internal_port = 8080
+
+[[vm]]
+  memory = '256mb'
+  cpus = 1
+  memory_mb = 256
