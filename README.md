@@ -117,6 +117,12 @@ cargo build --release
 
 ---
 
+## Live Demo
+
+Try LeanKG without installing - visit the live demo at **https://leankg.fly.dev/**
+
+---
+
 ## Update
 
 To update LeanKG to the latest version, run the same install command:
