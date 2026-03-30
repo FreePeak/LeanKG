@@ -15,6 +15,9 @@
 - Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
 - Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
 
+### v1.16 (IN PROGRESS)
+- AB Testing & Validation: OpenCode token parsing, context correctness validation, data store tests, summary report
+
 ### v1.15 (COMPLETED)
 - Web UI Orphan Node Filtering Fix: Fixed orphan nodes appearing in webui graph view; `filterOrphanedNodes` now applies to ALL filter types; Fixed 'mapping' filter bug where `e.target` was not added to nodeIds
 
@@ -129,6 +132,15 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | US-GN-08 | MCP Resources for overview context | Could Have | PENDING |
 | US-GN-09 | Repository wiki generation | Won't Have | PENDING |
 
+### 3.4 AB Testing Stories (US-AB-01 to US-AB-04)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-AB-01 | OpenCode token parsing for benchmark comparison | Must Have | IN PROGRESS |
+| US-AB-02 | Context correctness validation (precision/recall/F1) | Must Have | PENDING |
+| US-AB-03 | CozoDB data store correctness tests | Must Have | PENDING |
+| US-AB-04 | Token savings summary report with overall verdict | Should Have | PENDING |
+
 ---
 
 ## 4. Implementation Status Summary
@@ -203,6 +215,14 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - [x] **FR-GN-13 to FR-GN-17**: Community Detection and Cluster-Grouped Search
 - [x] **FR-GN-18 to FR-GN-19**: Enhanced 360-Degree Context Tool
 - [x] **FR-GN-20 to FR-GN-21**: MCP Resources (PARTIAL)
+
+### 5.3 AB Testing & Validation
+
+- [ ] **FR-AB-01**: OpenCode token parsing for benchmark comparison
+- [ ] **FR-AB-02**: Context correctness validation (precision/recall/F1 per task)
+- [ ] **FR-AB-03**: CozoDB data store correctness tests (indexed elements, relationships, no duplicates)
+- [ ] **FR-AB-04**: Prompt YAML format with `expected_files` field for ground truth
+- [ ] **FR-AB-05**: Token savings summary report with overall verdict
 
 ---
 
@@ -325,6 +345,12 @@ Document:
 - [PENDING] Multi-repo registry
 - [PENDING] MCP Resources
 - [PENDING] Cluster-level SKILL.md
+
+### Phase 3.5: AB Testing & Validation (v0.3.1) - IN PROGRESS
+- [IN PROGRESS] OpenCode token parsing for benchmark
+- [PENDING] Context correctness validation (precision/recall/F1)
+- [PENDING] CozoDB data store correctness tests
+- [PENDING] Token savings summary report
 
 ### Phase 4: Advanced (v0.4.0) - FUTURE
 - Vector embeddings
