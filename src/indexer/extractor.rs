@@ -32,50 +32,43 @@ pub fn is_test_file(file_path: &str) -> bool {
 pub fn is_noise_call(name: &str) -> bool {
     matches!(
         name,
-        "println"
-            | "print"
-            | "eprintln"
-            | "format"
-            | "vec"
-            | "assert"
-            | "assert_eq"
-            | "assert_ne"
-            | "panic"
-            | "unwrap"
-            | "expect"
-            | "clone"
-            | "to_string"
-            | "into"
-            | "from"
-            | "len"
-            | "is_empty"
-            | "ok"
-            | "err"
-            | "map"
-            | "and_then"
-            | "or_else"
-            | "collect"
-            | "iter"
-            | "push"
-            | "pop"
-            | "insert"
-            | "get"
-            | "contains"
-            | "drop"
-            | "take"
-            | "skip"
-            | "next"
-            | "filter"
-            | "fold"
-            | "Some"
-            | "None"
-            | "Ok"
-            | "Err"
-            | "async"
-            | "await"
-            | "new"
-            | "with_capacity"
-            | "with_len"
+        // ── Rust stdlib / common patterns ──
+        "println" | "print" | "eprintln" | "format" | "vec"
+            | "assert" | "assert_eq" | "assert_ne" | "panic"
+            | "unwrap" | "expect" | "clone" | "to_string"
+            | "into" | "from" | "len" | "is_empty"
+            | "ok" | "err" | "map" | "and_then" | "or_else"
+            | "collect" | "iter" | "push" | "pop" | "insert"
+            | "get" | "contains" | "drop" | "take" | "skip"
+            | "next" | "filter" | "fold" | "Some" | "None"
+            | "Ok" | "Err" | "async" | "await" | "new"
+            | "with_capacity" | "with_len"
+            // ── JavaScript / TypeScript ──
+            | "log" | "warn" | "error" | "info" | "debug"         // console methods
+            | "keys" | "values" | "entries" | "assign" | "freeze" // Object methods
+            | "isArray"                                            // Array methods
+            | "stringify"                                          // JSON.stringify
+            | "toString" | "valueOf" | "hasOwnProperty"
+            | "addEventListener" | "removeEventListener"
+            | "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval"
+            | "require"
+            | "preventDefault" | "stopPropagation"
+            // ── Python builtins ──
+            | "range" | "enumerate" | "zip" | "sorted" | "reversed"
+            | "isinstance" | "issubclass" | "type" | "super"
+            | "str" | "int" | "float" | "bool" | "list" | "dict" | "set" | "tuple"
+            | "append" | "extend" | "remove" | "join" | "split" | "strip"
+            | "startswith" | "endswith" | "replace" | "lower" | "upper"
+            // ── Go stdlib / logging ──
+            | "Println" | "Printf" | "Sprintf" | "Errorf" | "Fprintf"
+            | "Fatal" | "Fatalf" | "Log" | "Logf"
+            | "Info" | "Infof" | "Infow" | "Infoln"
+            | "Debug" | "Debugf" | "Debugw" | "Debugln"
+            | "Warn" | "Warnf" | "Warnw" | "Warnln"
+            | "Error" | "Errorw" | "Errorln"
+            | "DPanic" | "DPanicf" | "DPanicw"
+            | "With" | "WithField" | "WithFields" | "WithError"
+            | "make" | "cap" | "close"
     ) || name.len() < 2
 }
 
@@ -1127,6 +1120,137 @@ mod tests {
                 .filter(|r| r.rel_type == "tested_by")
                 .collect();
             assert!(tested_by.is_empty());
+        }
+    }
+
+    // ── Noise call filter tests per language ──
+
+    #[test]
+    fn test_is_noise_call_rust() {
+        assert!(is_noise_call("println"));
+        assert!(is_noise_call("unwrap"));
+        assert!(is_noise_call("clone"));
+        assert!(is_noise_call("new"));
+        assert!(!is_noise_call("calculate_total"));
+        assert!(!is_noise_call("validate_input"));
+    }
+
+    #[test]
+    fn test_is_noise_call_javascript() {
+        assert!(is_noise_call("log"));
+        assert!(is_noise_call("warn"));
+        assert!(is_noise_call("stringify"));
+        assert!(is_noise_call("addEventListener"));
+        assert!(is_noise_call("require"));
+        assert!(is_noise_call("setTimeout"));
+        assert!(!is_noise_call("fetchUserData"));
+        assert!(!is_noise_call("renderComponent"));
+    }
+
+    #[test]
+    fn test_is_noise_call_python() {
+        assert!(is_noise_call("range"));
+        assert!(is_noise_call("enumerate"));
+        assert!(is_noise_call("isinstance"));
+        assert!(is_noise_call("append"));
+        assert!(is_noise_call("join"));
+        assert!(!is_noise_call("process_payment"));
+        assert!(!is_noise_call("authenticate_user"));
+    }
+
+    #[test]
+    fn test_is_noise_call_go() {
+        // Standard logging
+        assert!(is_noise_call("Println"));
+        assert!(is_noise_call("Printf"));
+        assert!(is_noise_call("Fatal"));
+        assert!(is_noise_call("make"));
+        // Structured logging (zap/logrus style)
+        assert!(is_noise_call("Info"));
+        assert!(is_noise_call("Infof"));
+        assert!(is_noise_call("Infow"));
+        assert!(is_noise_call("Debug"));
+        assert!(is_noise_call("Debugf"));
+        assert!(is_noise_call("Warn"));
+        assert!(is_noise_call("Warnf"));
+        assert!(is_noise_call("Error"));
+        assert!(is_noise_call("Errorf"));
+        assert!(is_noise_call("DPanic"));
+        assert!(is_noise_call("With"));
+        assert!(is_noise_call("WithField"));
+        assert!(is_noise_call("WithFields"));
+        assert!(is_noise_call("WithError"));
+        // Legitimate Go functions should NOT be filtered
+        assert!(!is_noise_call("HandleRequest"));
+        assert!(!is_noise_call("ValidateToken"));
+        assert!(!is_noise_call("GetUser"));
+        assert!(!is_noise_call("CreateOrder"));
+    }
+
+    #[test]
+    fn test_is_noise_call_conservative_no_false_positives() {
+        // These names could be legitimate functions — should NOT be filtered
+        assert!(!is_noise_call("parse"));
+        assert!(!is_noise_call("resolve"));
+        assert!(!is_noise_call("String"));
+    }
+
+    #[test]
+    fn test_is_noise_call_short_names() {
+        assert!(is_noise_call("a"));
+        assert!(is_noise_call("x"));
+        assert!(is_noise_call(""));
+    }
+
+    #[test]
+    fn test_noise_calls_filtered_from_go_extraction() {
+        let source =
+            b"package main\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"hello\")\n\tprocessData()\n}";
+        if let Some(tree) = parse_go(source) {
+            let extractor = EntityExtractor::new(source, "main.go", "go");
+            let (_, relationships) = extractor.extract(&tree);
+            let calls: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "calls")
+                .collect();
+            let call_names: Vec<&str> = calls
+                .iter()
+                .map(|r| {
+                    r.metadata
+                        .get("bare_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                })
+                .collect();
+            assert!(
+                call_names.contains(&"processData"),
+                "processData should be extracted"
+            );
+            assert!(
+                !call_names.contains(&"Println"),
+                "Println should be filtered as noise"
+            );
+        }
+    }
+
+    #[test]
+    fn test_noise_calls_filtered_python_builtins() {
+        // Python call extraction uses tree-sitter `call` node (not `call_expression`),
+        // so we verify noise filtering works at the is_noise_call level.
+        let python_noise = vec![
+            "print", "range", "enumerate", "isinstance", "append", "join",
+            "split", "strip", "lower", "upper", "sorted", "reversed",
+        ];
+        for name in &python_noise {
+            assert!(is_noise_call(name), "'{}' should be filtered as noise", name);
+        }
+
+        let python_legit = vec![
+            "process_data", "authenticate_user", "validate_input",
+            "calculate_total", "fetch_records",
+        ];
+        for name in &python_legit {
+            assert!(!is_noise_call(name), "'{}' should NOT be filtered", name);
         }
     }
 }
