@@ -146,18 +146,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             show_status(&db_path)?;
         }
-        cli::CLICommand::Watch => {
+        cli::CLICommand::Watch { path: _ } => {
             let project_path = find_project_root()?;
-            println!("Starting file watcher for {}...", project_path.display());
-            println!("Watch functionality ready for implementation");
+            let db_path = project_path.join(".leankg");
+
+            if !db_path.exists() {
+                eprintln!("LeanKG not initialized. Run 'leankg init' and 'leankg index' first.");
+                std::process::exit(1);
+            }
+
+            println!("╔═══════════════════════════════════════╗");
+            println!("║  LeanKG File Watcher                  ║");
+            println!("╚═══════════════════════════════════════╝");
+            println!("  Watching: {}", project_path.display());
+            println!("  DB:       {}", db_path.display());
+            println!("  Press Ctrl+C to stop.\n");
+
+            let (tx, rx) = tokio::sync::mpsc::channel(100);
+            mcp::watcher::start_watcher(db_path, project_path, rx).await;
+            drop(tx);
         }
         cli::CLICommand::Quality { min_lines, lang } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
             find_oversized_functions(min_lines, lang.as_deref(), &db_path)?;
         }
-        cli::CLICommand::Export { output: _ } => {
-            println!("Export functionality ready for implementation");
+        cli::CLICommand::Export {
+            output,
+            format,
+            file,
+            depth,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            export_graph(&output, &format, file.as_deref(), depth, &db_path)?;
         }
         cli::CLICommand::Annotate {
             element,
@@ -1145,4 +1167,181 @@ async fn start_api_server_async(
     let project_path = find_project_root()?;
     let db_path = project_path.join(".leankg");
     api::start_api_server(port, db_path, require_auth).await
+}
+
+fn export_graph(
+    output: &str,
+    format: &str,
+    file_scope: Option<&str>,
+    depth: u32,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !db_path.exists() {
+        return Err("LeanKG not initialized. Run 'leankg init' and 'leankg index' first.".into());
+    }
+
+    let db = db::schema::init_db(db_path)?;
+    let engine = graph::GraphEngine::new(db);
+
+    let (elements, relationships) = if let Some(file) = file_scope {
+        // Scoped export: BFS traversal from file
+        let mut visited_files = std::collections::HashSet::new();
+        let mut queue = vec![(file.to_string(), 0u32)];
+        let mut scoped_rels = Vec::new();
+
+        while let Some((current, d)) = queue.pop() {
+            if d >= depth || !visited_files.insert(current.clone()) {
+                continue;
+            }
+            if let Ok(rels) = engine.get_relationships(&current) {
+                for rel in &rels {
+                    queue.push((rel.target_qualified.clone(), d + 1));
+                }
+                scoped_rels.extend(rels);
+            }
+        }
+
+        let scoped_elements: Vec<_> = engine
+            .all_elements()?
+            .into_iter()
+            .filter(|e| visited_files.contains(&e.file_path))
+            .collect();
+        (scoped_elements, scoped_rels)
+    } else {
+        (engine.all_elements()?, engine.all_relationships()?)
+    };
+
+    let content = match format {
+        "json" => export_json(&elements, &relationships)?,
+        "dot" => export_dot(&elements, &relationships),
+        "mermaid" => export_mermaid(&relationships),
+        _ => {
+            return Err(
+                format!("Unknown format '{}'. Supported: json, dot, mermaid", format).into(),
+            )
+        }
+    };
+
+    std::fs::write(output, &content)?;
+    println!(
+        "Exported {} nodes and {} edges to {} (format: {})",
+        elements.len(),
+        relationships.len(),
+        output,
+        format
+    );
+    Ok(())
+}
+
+fn export_json(
+    elements: &[db::models::CodeElement],
+    relationships: &[db::models::Relationship],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let export = serde_json::json!({
+        "metadata": {
+            "generator": "leankg",
+            "version": env!("CARGO_PKG_VERSION"),
+            "exported_at_unix": timestamp,
+            "node_count": elements.len(),
+            "edge_count": relationships.len(),
+        },
+        "nodes": elements.iter().map(|e| serde_json::json!({
+            "id": e.qualified_name,
+            "type": e.element_type,
+            "name": e.name,
+            "file": e.file_path,
+            "lines": [e.line_start, e.line_end],
+            "language": e.language,
+        })).collect::<Vec<_>>(),
+        "edges": relationships.iter().map(|r| serde_json::json!({
+            "source": r.source_qualified,
+            "target": r.target_qualified,
+            "type": r.rel_type,
+            "confidence": r.confidence,
+        })).collect::<Vec<_>>(),
+    });
+    Ok(serde_json::to_string_pretty(&export)?)
+}
+
+fn export_dot(
+    elements: &[db::models::CodeElement],
+    relationships: &[db::models::Relationship],
+) -> String {
+    let sanitize_id = |s: &str| -> String {
+        s.replace("::", "__")
+            .replace('/', "_")
+            .replace('.', "_")
+            .replace('-', "_")
+            .replace(' ', "_")
+    };
+
+    let mut dot = String::from("digraph LeanKG {\n  rankdir=LR;\n  node [shape=box, style=rounded, fontname=\"Helvetica\"];\n  edge [fontname=\"Helvetica\", fontsize=10];\n\n");
+
+    // Group nodes by file into subgraphs
+    let mut files: std::collections::HashMap<&str, Vec<&db::models::CodeElement>> =
+        std::collections::HashMap::new();
+    for e in elements {
+        files.entry(&e.file_path).or_default().push(e);
+    }
+
+    let mut sorted_files: Vec<_> = files.into_iter().collect();
+    sorted_files.sort_by_key(|(k, _)| *k);
+
+    for (file, elems) in &sorted_files {
+        dot.push_str(&format!(
+            "  subgraph cluster_{} {{\n    label=\"{}\";\n    style=dashed;\n    color=gray;\n",
+            sanitize_id(file),
+            file
+        ));
+        for e in elems {
+            dot.push_str(&format!(
+                "    {} [label=\"{} ({})\"];\n",
+                sanitize_id(&e.qualified_name),
+                e.name,
+                e.element_type
+            ));
+        }
+        dot.push_str("  }\n\n");
+    }
+
+    for r in relationships {
+        dot.push_str(&format!(
+            "  {} -> {} [label=\"{}\"];\n",
+            sanitize_id(&r.source_qualified),
+            sanitize_id(&r.target_qualified),
+            r.rel_type
+        ));
+    }
+    dot.push_str("}\n");
+    dot
+}
+
+fn export_mermaid(relationships: &[db::models::Relationship]) -> String {
+    let sanitize_id = |s: &str| -> String {
+        s.replace("::", "__")
+            .replace('/', "_")
+            .replace('.', "_")
+            .replace('-', "_")
+            .replace(' ', "_")
+    };
+
+    let mut mermaid = String::from("graph LR\n");
+    for r in relationships {
+        let source_short = r.source_qualified.split("::").last().unwrap_or(&r.source_qualified);
+        let target_short = r.target_qualified.split("::").last().unwrap_or(&r.target_qualified);
+        mermaid.push_str(&format!(
+            "    {}[\"{}\"] -->|{}| {}[\"{}\"]\n",
+            sanitize_id(&r.source_qualified),
+            source_short,
+            r.rel_type,
+            sanitize_id(&r.target_qualified),
+            target_short,
+        ));
+    }
+    mermaid
 }

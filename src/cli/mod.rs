@@ -68,8 +68,12 @@ pub enum CLICommand {
     Install,
     /// Show index status
     Status,
-    /// Start file watcher
-    Watch,
+    /// Start file watcher for incremental re-indexing
+    Watch {
+        /// Path to watch (default: project root)
+        #[arg(long)]
+        path: Option<String>,
+    },
     /// Find oversized functions
     Quality {
         /// Minimum line count (default: 50)
@@ -79,10 +83,20 @@ pub enum CLICommand {
         #[arg(long)]
         lang: Option<String>,
     },
-    /// Export graph as HTML
+    /// Export knowledge graph
     Export {
-        #[arg(long, default_value = "graph.html")]
+        /// Output file path
+        #[arg(long, default_value = "graph.json")]
         output: String,
+        /// Export format: json, dot, or mermaid
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Scope export to a specific file's subgraph
+        #[arg(long)]
+        file: Option<String>,
+        /// Max depth for subgraph traversal (used with --file)
+        #[arg(long, default_value = "3")]
+        depth: u32,
     },
     /// Annotate code element with business logic description
     Annotate {
