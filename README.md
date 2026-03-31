@@ -119,7 +119,7 @@ cargo build --release
 
 ## Live Demo
 
-Try LeanKG without installing - visit the live demo at **https://leankg.fly.dev/**
+Try LeanKG without installing - visit the live demo at **https://leankg.onrender.com**
 
 ---
 
