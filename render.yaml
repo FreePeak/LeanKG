@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: leankg
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: iad
+    plan: free
+    port: 8080
+    envVars:
+      - key: PORT
+        value: 8080
