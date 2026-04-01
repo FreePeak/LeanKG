@@ -3,6 +3,11 @@ use std::error::Error;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedContext {
+    pub files_referenced: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkResult {
     pub total_tokens: u32,
     pub input_tokens: u32,
@@ -10,6 +15,8 @@ pub struct BenchmarkResult {
     pub token_percent: f32,
     pub build_time_seconds: f32,
     pub success: bool,
+    #[serde(default)]
+    pub context: Option<ParsedContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +24,8 @@ pub struct PromptTask {
     pub id: String,
     pub prompt: String,
     pub expected: Vec<String>,
+    #[serde(default)]
+    pub expected_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,8 +7,15 @@ tasks:
     expected:
       - "src/graph/"
       - "src/indexer/"
+    expected_files:
+      - "src/graph/query.rs"
+      - "src/graph/context.rs"
+      - "src/indexer/extractor.rs"
 
   - id: "impact-db-change"
     prompt: "What happens to dependents if I modify src/db/models.rs?"
     expected:
       - "db/models.rs"
+    expected_files:
+      - "src/db/mod.rs"
+      - "src/graph/query.rs"

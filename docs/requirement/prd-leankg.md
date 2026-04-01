@@ -15,8 +15,11 @@
 - Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
 - Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
 
-### v1.16 (IN PROGRESS)
+### v1.16 (COMPLETED)
 - AB Testing & Validation: OpenCode token parsing, context correctness validation, data store tests, summary report
+
+### v1.17 (IN PROGRESS)
+- AB Testing Context Correctness: File path regex validation, enhanced quality metrics output
 
 ### v1.15 (COMPLETED)
 - Web UI Orphan Node Filtering Fix: Fixed orphan nodes appearing in webui graph view; `filterOrphanedNodes` now applies to ALL filter types; Fixed 'mapping' filter bug where `e.target` was not added to nodeIds
@@ -218,11 +221,17 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 ### 5.3 AB Testing & Validation
 
-- [ ] **FR-AB-01**: OpenCode token parsing for benchmark comparison
-- [ ] **FR-AB-02**: Context correctness validation (precision/recall/F1 per task)
-- [ ] **FR-AB-03**: CozoDB data store correctness tests (indexed elements, relationships, no duplicates)
-- [ ] **FR-AB-04**: Prompt YAML format with `expected_files` field for ground truth
-- [ ] **FR-AB-05**: Token savings summary report with overall verdict
+- [x] **FR-AB-01**: OpenCode token parsing for benchmark comparison
+- [x] **FR-AB-02**: Context correctness validation (precision/recall/F1 per task)
+- [x] **FR-AB-03**: CozoDB data store correctness tests (indexed elements, relationships, no duplicates)
+- [x] **FR-AB-04**: Prompt YAML format with `expected_files` field for ground truth
+- [x] **FR-AB-05**: Token savings summary report with overall verdict
+
+**Benchmark Results (2026-03-31):**
+- LeanKG saves tokens in 3/4 navigation tasks (up to -1,733 tokens)
+- find-codeelement achieves F1=1.00 (EXCELLENT) on both LeanKG and baseline
+- LeanKG provides better context quality (F1 > 0) vs baseline (F1 = 0 on 2 tasks)
+- 50 unit tests passing
 
 ---
 

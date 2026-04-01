@@ -7,18 +7,27 @@ tasks:
     expected:
       - "src/mcp/handler.rs"
       - "src/mcp/server.rs"
+    expected_files:
+      - "src/mcp/handler.rs"
+      - "src/mcp/server.rs"
 
   - id: "find-codeelement"
     prompt: "Find where CodeElement struct is defined"
     expected:
+      - "src/db/models.rs"
+    expected_files:
       - "src/db/models.rs"
 
   - id: "find-extractor"
     prompt: "How does LeanKG extract code elements? Find the extractor module."
     expected:
       - "src/indexer/extractor.rs"
+    expected_files:
+      - "src/indexer/extractor.rs"
 
   - id: "find-query-engine"
     prompt: "Find the graph query engine that handles get_dependencies"
     expected:
+      - "src/graph/query.rs"
+    expected_files:
       - "src/graph/query.rs"

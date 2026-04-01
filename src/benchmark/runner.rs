@@ -1,5 +1,7 @@
 #![allow(dead_code)]
+use crate::benchmark::context_parser::ContextParser;
 use crate::benchmark::data::BenchmarkResult;
+use crate::benchmark::data::ParsedContext;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
@@ -61,7 +63,11 @@ impl BenchmarkRunner {
         match self.cli {
             CliTool::Kilo => {
                 self.switch_mcp_config(true);
-                let result = self.run_kilo(prompt);
+                let (mut result, stdout) = self.run_kilo_with_output(prompt);
+                let files = ContextParser::parse_file_paths(&stdout);
+                result.context = Some(ParsedContext {
+                    files_referenced: files,
+                });
                 result
             }
             CliTool::OpenCode => self.run_opencode(prompt),
@@ -73,7 +79,11 @@ impl BenchmarkRunner {
         match self.cli {
             CliTool::Kilo => {
                 self.switch_mcp_config(false);
-                let result = self.run_kilo(prompt);
+                let (mut result, stdout) = self.run_kilo_with_output(prompt);
+                let files = ContextParser::parse_file_paths(&stdout);
+                result.context = Some(ParsedContext {
+                    files_referenced: files,
+                });
                 result
             }
             CliTool::OpenCode => self.run_opencode(prompt),
@@ -101,7 +111,7 @@ impl BenchmarkRunner {
             .output();
     }
 
-    fn run_kilo(&self, prompt: &str) -> BenchmarkResult {
+    fn run_kilo_with_output(&self, prompt: &str) -> (BenchmarkResult, String) {
         let child = Command::new("kilo")
             .arg("run")
             .arg("--format")
@@ -116,20 +126,30 @@ impl BenchmarkRunner {
         let output = match child.wait_with_output_timeout(Duration::from_secs(120)) {
             Ok(result) => result,
             Err(_) => {
-                return BenchmarkResult {
-                    total_tokens: 0,
-                    input_tokens: 0,
-                    cached_tokens: 0,
-                    token_percent: 0.0,
-                    build_time_seconds: 120.0,
-                    success: false,
-                };
+                return (
+                    BenchmarkResult {
+                        total_tokens: 0,
+                        input_tokens: 0,
+                        cached_tokens: 0,
+                        token_percent: 0.0,
+                        build_time_seconds: 120.0,
+                        success: false,
+                        context: None,
+                    },
+                    String::new(),
+                );
             }
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let result = self.parse_kilo_output(&stdout);
 
-        self.parse_kilo_output(&stdout)
+        (result, stdout)
+    }
+
+    fn run_kilo(&self, prompt: &str) -> BenchmarkResult {
+        let (result, _) = self.run_kilo_with_output(prompt);
+        result
     }
 
     fn parse_kilo_output(&self, stdout: &str) -> BenchmarkResult {
@@ -162,6 +182,7 @@ impl BenchmarkRunner {
             token_percent: 0.0,
             build_time_seconds: 0.0,
             success: total_tokens > 0,
+            context: None,
         }
     }
 
@@ -183,6 +204,8 @@ impl BenchmarkRunner {
     fn run_opencode(&self, prompt: &str) -> BenchmarkResult {
         let output = Command::new("opencode")
             .arg("run")
+            .arg("--format")
+            .arg("json")
             .arg(prompt)
             .output()
             .expect("Failed to execute opencode");
@@ -190,7 +213,7 @@ impl BenchmarkRunner {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        self.parse_opencode_output(&stdout, &stderr)
+        self.parse_opencode_output(&stdout, &stderr, prompt)
     }
 
     fn parse_gemini_output(&self, stdout: &str) -> BenchmarkResult {
@@ -223,6 +246,7 @@ impl BenchmarkRunner {
                                 token_percent: 0.0,
                                 build_time_seconds: 0.0,
                                 success: true,
+                                context: None,
                             };
                         }
                     }
@@ -237,17 +261,69 @@ impl BenchmarkRunner {
             token_percent: 0.0,
             build_time_seconds: 0.0,
             success: false,
+            context: None,
         }
     }
 
-    fn parse_opencode_output(&self, _stdout: &str, _stderr: &str) -> BenchmarkResult {
+    fn parse_opencode_output(&self, stdout: &str, stderr: &str, prompt: &str) -> BenchmarkResult {
+        let mut total_tokens = 0u32;
+        let mut input_tokens = 0u32;
+        let mut cached_tokens = 0u32;
+
+        for line in stdout.lines() {
+            if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(tokens_obj) = event.get("tokens") {
+                    total_tokens = tokens_obj
+                        .get("total")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    input_tokens = tokens_obj
+                        .get("input")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    cached_tokens = tokens_obj
+                        .get("cached")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    break;
+                }
+                if let Some(tokens_obj) = event.get("usage") {
+                    total_tokens = tokens_obj
+                        .get("total")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    input_tokens = tokens_obj
+                        .get("input")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    cached_tokens = tokens_obj
+                        .get("cache_read")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    break;
+                }
+            }
+        }
+
+        if total_tokens == 0 {
+            let prompt_chars = prompt.len() as u32;
+            input_tokens = (prompt_chars / 4).max(1);
+            let output_chars = stdout.len() as u32;
+            let output_tokens = output_chars / 4;
+            total_tokens = input_tokens.saturating_add(output_tokens);
+            cached_tokens = 0;
+        }
+
+        let has_content = !stdout.is_empty() || !stderr.is_empty();
+
         BenchmarkResult {
-            total_tokens: 0,
-            input_tokens: 0,
-            cached_tokens: 0,
+            total_tokens,
+            input_tokens,
+            cached_tokens,
             token_percent: 0.0,
             build_time_seconds: 0.0,
-            success: false,
+            success: has_content && total_tokens > 0,
+            context: None,
         }
     }
 
@@ -279,13 +355,32 @@ impl BenchmarkRunner {
         std::fs::write(&json_path, serde_json::to_string_pretty(&comparison)?)?;
 
         let md_path = self.output_dir.join(format!("{}-comparison.md", name));
-        let md = format!(
-            "# Benchmark Comparison: {}\n\n## With LeanKG\n- Total Tokens: {}\n- Input: {}\n- Cached: {}\n\n## Without LeanKG\n- Total Tokens: {}\n- Input: {}\n- Cached: {}\n\n## Overhead\n- Token Delta: {}\n",
+        let mut md = format!(
+            "# Benchmark Comparison: {}\n\n## With LeanKG\n- Total Tokens: {}\n- Input: {}\n- Cached: {}\n",
             name,
-            with_leankg.total_tokens, with_leankg.input_tokens, with_leankg.cached_tokens,
-            without_leankg.total_tokens, without_leankg.input_tokens, without_leankg.cached_tokens,
-            overhead.token_delta
+            with_leankg.total_tokens, with_leankg.input_tokens, with_leankg.cached_tokens
         );
+
+        if let Some(ctx) = &with_leankg.context {
+            md.push_str("- Files Referenced: ");
+            md.push_str(&format!("{:?}\n", ctx.files_referenced));
+        }
+
+        md.push_str(&format!(
+            "\n## Without LeanKG\n- Total Tokens: {}\n- Input: {}\n- Cached: {}\n",
+            without_leankg.total_tokens, without_leankg.input_tokens, without_leankg.cached_tokens
+        ));
+
+        if let Some(ctx) = &without_leankg.context {
+            md.push_str("- Files Referenced: ");
+            md.push_str(&format!("{:?}\n", ctx.files_referenced));
+        }
+
+        md.push_str(&format!(
+            "\n## Overhead\n- Token Delta: {}\n",
+            overhead.token_delta
+        ));
+
         std::fs::write(&md_path, md)?;
 
         Ok(())

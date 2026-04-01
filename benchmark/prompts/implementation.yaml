@@ -7,10 +7,15 @@ tasks:
     expected:
       - "src/mcp/tools.rs"
       - "mcp_hello"
+    expected_files:
+      - "src/mcp/tools.rs"
 
   - id: "impl-search-enhance"
     prompt: "Add an 'element_type' filter parameter to the search_code tool to filter by type (e.g., 'function', 'struct')"
     expected:
+      - "src/mcp/tools.rs"
+      - "src/mcp/handler.rs"
+    expected_files:
       - "src/mcp/tools.rs"
       - "src/mcp/handler.rs"
 
@@ -19,3 +24,6 @@ tasks:
     expected:
       - "src/db/models.rs"
       - "src/graph/"
+    expected_files:
+      - "src/db/models.rs"
+      - "src/graph/query.rs"
