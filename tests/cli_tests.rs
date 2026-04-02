@@ -233,7 +233,7 @@ fn test_cli_generate_with_template() {
 fn test_cli_serve() {
     let args = TestArgs::try_parse_from(["leankg", "serve"]).unwrap();
     match args.command {
-        CLICommand::Serve => {}
+        CLICommand::Serve { .. } => {}
         _ => panic!("expected Serve command"),
     }
 }
@@ -566,7 +566,7 @@ fn test_cli_status() {
 fn test_cli_watch() {
     let args = TestArgs::try_parse_from(["leankg", "watch"]).unwrap();
     match args.command {
-        CLICommand::Watch => {}
+        CLICommand::Watch { .. } => {}
         _ => panic!("expected Watch command"),
     }
 }
@@ -575,7 +575,7 @@ fn test_cli_watch() {
 fn test_cli_export_defaults() {
     let args = TestArgs::try_parse_from(["leankg", "export"]).unwrap();
     match args.command {
-        CLICommand::Export { output } => {
+        CLICommand::Export { output, .. } => {
             assert_eq!(output, "graph.html");
         }
         _ => panic!("expected Export command"),
@@ -586,7 +586,7 @@ fn test_cli_export_defaults() {
 fn test_cli_export_custom_output() {
     let args = TestArgs::try_parse_from(["leankg", "export", "--output", "custom.html"]).unwrap();
     match args.command {
-        CLICommand::Export { output } => {
+        CLICommand::Export { output, .. } => {
             assert_eq!(output, "custom.html");
         }
         _ => panic!("expected Export command"),

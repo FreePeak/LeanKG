@@ -173,6 +173,19 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "get_callers".to_string(),
+                description: "Find all functions/methods that call a given function. \
+                              Returns the caller name, file path, and line number.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "function": {"type": "string", "description": "Function name to find callers for"},
+                        "file": {"type": "string", "description": "Optional file to scope the search"}
+                    },
+                    "required": ["function"]
+                }),
+            },
+            ToolDefinition {
                 name: "get_call_graph".to_string(),
                 description: "Get bounded function call chain. Use depth=1 for direct callees, depth=2 for two hops. Avoid depth>3 to prevent neighbor explosion.".to_string(),
                 input_schema: json!({

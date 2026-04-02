@@ -1072,6 +1072,31 @@ impl GraphEngine {
         self.run_element_query(&query)
     }
 
+    pub fn get_callers(
+        &self,
+        function_name: &str,
+        file_scope: Option<&str>,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let safe_name = escape_datalog(function_name);
+        
+        let file_filter = match file_scope {
+            Some(f) => format!(r#", regex_matches(file_path, ".*{}.*")"#, escape_datalog(f)),
+            None => String::new(),
+        };
+
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+               *relationships[qualified_name, target_qualified, "calls", _, _],
+               regex_matches(target_qualified, ".*{function_name}.*"),
+               *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]{file_filter}
+               :limit 50"#,
+            function_name = safe_name,
+            file_filter = file_filter
+        );
+        self.run_element_query(&query)
+    }
+
+
     pub fn get_call_graph_bounded(
         &self,
         source_qualified: &str,

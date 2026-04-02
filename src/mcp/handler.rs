@@ -28,6 +28,7 @@ Use LeanKG tools **first** before performing any codebase search, navigation, or
 | Get direct imports of a file | `get_dependencies` |
 | Get files that import/use a file | `get_dependents` |
 | Get function call chain (full depth) | `get_call_graph` |
+| Get direct callers (who calls this) | `get_callers` |
 | Calculate what breaks if file changes | `get_impact_radius` |
 
 ### Review & Context
@@ -131,6 +132,7 @@ impl ToolHandler {
             "get_review_context" => self.get_review_context(arguments),
             "get_context" => self.get_context(arguments),
             "find_function" => self.find_function(arguments),
+            "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
             "generate_doc" => self.generate_doc(arguments),
@@ -838,6 +840,33 @@ impl ToolHandler {
             .collect();
 
         Ok(json!({ "functions": matches }))
+    }
+
+    fn get_callers(&self, args: &Value) -> Result<Value, String> {
+        let function = args["function"]
+            .as_str()
+            .ok_or("Missing 'function' parameter")?;
+        let file_scope = args["file"].as_str();
+
+        let callers = self
+            .graph_engine
+            .get_callers(function, file_scope)
+            .map_err(|e| e.to_string())?;
+
+        let matches: Vec<_> = callers
+            .iter()
+            .map(|e| {
+                json!({
+                    "name": e.name,
+                    "qualified_name": e.qualified_name,
+                    "file": e.file_path,
+                    "line_start": e.line_start,
+                    "line_end": e.line_end,
+                })
+            })
+            .collect();
+
+        Ok(json!({ "callers": matches }))
     }
 
     fn get_call_graph(&self, args: &Value) -> Result<Value, String> {
