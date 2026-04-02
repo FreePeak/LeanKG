@@ -266,7 +266,7 @@ configure_cursor() {
         fi
         local tmp_file
         tmp_file=$(mktemp)
-        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg_path, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
         mv "$tmp_file" "$config_file"
     else
         echo "{\"mcpServers\": {\"leankg\": {\"command\": \"$leankg_path\", \"args\": [\"mcp-stdio\", \"--watch\"]}}}" > "$config_file"
@@ -298,7 +298,7 @@ EOF
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg_path, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
     mv "$tmp_file" "$config_file"
 
     echo "Configured LeanKG for Claude Code at $config_file"
@@ -499,7 +499,7 @@ configure_gemini() {
 
         local tmp_file
         tmp_file=$(mktemp)
-        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg_path, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
         mv "$tmp_file" "$config_file"
         echo "Configured LeanKG for Gemini CLI at $config_file"
     fi
