@@ -1,4 +1,0 @@
-error: failed to parse lock file at: /Users/lap11252/knowledge-graph-projects/LeanKG/Cargo.lock
-
-Caused by:
-  lock file version `4` was found, but this version of Cargo does not understand this lock file, perhaps Cargo needs to be updated?
