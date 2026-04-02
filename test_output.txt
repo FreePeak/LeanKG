@@ -1,7 +1,0 @@
-ok: 112 pass, 0 fail, 0 skip
-ok: 112 pass, 0 fail, 0 skip
-ok: 14 pass, 0 fail, 0 skip
-FAILED: 36 pass, 1 fail, 0 skip
-[lean-ctx: 4445→55 tok, -99%]
-(0.43s)
-[lean-ctx: 687→6 tok, -99%]

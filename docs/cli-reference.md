@@ -10,7 +10,7 @@ Complete reference for all LeanKG CLI commands.
 | `leankg init` | Initialize LeanKG in the current directory |
 | `leankg index [path]` | Index source files at the given path |
 | `leankg index --incremental` | Only index changed files (git-based) |
-| `leankg index --lang go,ts,py,rs` | Filter by language |
+| `leankg index --lang go,ts,py,rs,java,kotlin` | Filter by language |
 | `leankg index --exclude vendor,node_modules` | Exclude patterns |
 | `leankg serve` | Start the MCP server (WebSocket) |
 | `leankg serve --mcp-port 3000` | Custom MCP server port |
@@ -64,7 +64,7 @@ leankg watch
 leankg index --incremental
 
 # Filter by language
-leankg index --lang go,ts,py,rs
+leankg index --lang go,ts,py,rs,java,kotlin
 
 # Exclude patterns
 leankg index --exclude vendor,node_modules,dist

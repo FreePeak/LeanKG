@@ -67,6 +67,8 @@ fn get_language(file_path: &str) -> Option<&'static str> {
         Some("rust")
     } else if file_path.ends_with(".java") {
         Some("java")
+    } else if file_path.ends_with(".kt") || file_path.ends_with(".kts") {
+        Some("kotlin")
     } else {
         None
     }
@@ -94,7 +96,7 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
     };
 
     thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None]);
+        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None]);
     }
 
     let parser_idx = match language {
@@ -103,6 +105,7 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
         "python" => 2,
         "rust" => 3,
         "java" => 4,
+        "kotlin" => 5,
         _ => return Ok(ParsedFile { element_count: 0, elements: vec![], relationships: vec![] }),
     };
 
@@ -116,6 +119,7 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
                 "python" => tree_sitter_python::LANGUAGE.into(),
                 "rust" => tree_sitter_rust::LANGUAGE.into(),
                 "java" => tree_sitter_java::LANGUAGE.into(),
+                "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
                 _ => return p,
             };
             let _ = p.set_language(&lang);
@@ -250,6 +254,8 @@ pub fn index_file_sync(
         "rust"
     } else if file_path.ends_with(".java") {
         "java"
+    } else if file_path.ends_with(".kt") || file_path.ends_with(".kts") {
+        "kotlin"
     } else {
         return Ok(0);
     };

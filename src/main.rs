@@ -354,6 +354,8 @@ async fn index_codebase(
                     ("js", "javascript"),
                     ("py", "python"),
                     ("java", "java"),
+                    ("kt", "kotlin"),
+                    ("kts", "kotlin"),
                 ]
                 .iter()
                 .cloned()

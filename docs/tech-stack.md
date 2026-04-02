@@ -43,6 +43,7 @@ LeanKG supports indexing and analysis for the following languages:
 | Python | `.py` | Full - functions, classes, imports, calls |
 | Rust | `.rs` | Full - functions, structs, traits, imports, calls |
 | Java | `.java` | Full - classes, interfaces, methods, constructors, enums, imports, calls |
+| Kotlin | `.kt`, `.kts` | Full - classes, objects, companion objects, functions, constructors, imports, calls |
 | Terraform | `.tf` | Full - resources, variables, outputs, modules |
 | YAML | `.yaml`, `.yml` | Full - CI/CD pipelines, configurations |
 | Markdown | `.md` | Full - documentation sections, code references |

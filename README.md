@@ -208,7 +208,7 @@ graph TB
 ```mermaid
 graph LR
     subgraph "1. Index Phase"
-        A["Source Code<br/>*.rs, *.ts, *.py, *.go, *.java"] --> B["tree-sitter Parser"]
+        A["Source Code<br/>*.rs, *.ts, *.py, *.go, *.java, *.kt"] --> B["tree-sitter Parser"]
         B --> C["Code Elements<br/>functions, classes"]
         B --> D["Relationships<br/>imports, calls"]
         C --> E[("CozoDB")]
@@ -361,7 +361,7 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 
 ## Highlights
 
-- **Code Indexing** -- Parse and index Go, TypeScript, Python, Rust, and Java codebases with tree-sitter.
+- **Code Indexing** -- Parse and index Go, TypeScript, Python, Rust, Java, and Kotlin codebases with tree-sitter.
 - **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges.
 - **Impact Radius** -- Compute blast radius for any file to see downstream impact.
 - **Auto Documentation** -- Generate markdown docs from code structure automatically.

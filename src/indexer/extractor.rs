@@ -30,6 +30,12 @@ pub fn is_test_file(file_path: &str) -> bool {
                 || file_name.ends_with("Tests.java")
                 || path.components().any(|c| c.as_os_str() == "test")
         }
+        "kt" | "kts" => {
+            file_name.ends_with("Test.kt")
+                || file_name.ends_with("Tests.kt")
+                || file_name.ends_with("Test.kts")
+                || path.components().any(|c| c.as_os_str() == "test")
+        }
         _ => false,
     }
 }
@@ -81,6 +87,14 @@ pub fn is_noise_call(name: &str) -> bool {
             | "entrySet" | "keySet" | "put" | "putAll" | "size" | "stream"
             | "of" | "ofNullable" | "isPresent" | "ifPresent" | "orElse" | "orElseGet"
             | "getClass" | "notify" | "notifyAll" | "wait"
+            // ── Kotlin stdlib / common patterns ──
+            | "let" | "run" | "apply" | "also"
+            | "listOf" | "setOf" | "mapOf" | "mutableListOf" | "mutableSetOf" | "mutableMapOf"
+            | "arrayOf" | "emptyList" | "emptySet" | "emptyMap"
+            | "requireNotNull" | "checkNotNull"
+            | "TODO" | "lazy"
+            // Android logger mappings
+            | "v" | "d" | "i" | "w" | "e" | "wtf"
     ) || name.len() < 2
 }
 
@@ -134,6 +148,17 @@ pub fn get_tested_file_path(file_path: &str) -> Option<String> {
                 Some(file_name.trim_end_matches("Test.java").to_string() + ".java")
             } else if file_name.ends_with("Tests.java") {
                 Some(file_name.trim_end_matches("Tests.java").to_string() + ".java")
+            } else {
+                None
+            }
+        }
+        "kt" | "kts" => {
+            if file_name.ends_with("Test.kt") {
+                Some(file_name.trim_end_matches("Test.kt").to_string() + ".kt")
+            } else if file_name.ends_with("Tests.kt") {
+                Some(file_name.trim_end_matches("Tests.kt").to_string() + ".kt")
+            } else if file_name.ends_with("Test.kts") {
+                Some(file_name.trim_end_matches("Test.kts").to_string() + ".kts")
             } else {
                 None
             }
@@ -228,7 +253,7 @@ impl<'a> EntityExtractor<'a> {
         elements: &mut Vec<CodeElement>,
         relationships: &mut Vec<Relationship>,
     ) {
-        let node_type = node.kind();
+        let node_type = node.kind(); 
 
         match node_type {
             "function_declaration"
@@ -237,11 +262,13 @@ impl<'a> EntityExtractor<'a> {
             | "function_def"
             | "method_declaration"
             | "method_definition"
-            | "constructor_declaration" => {
+            | "constructor_declaration"
+            | "secondary_constructor" => {
                 self.extract_function(node, parent, elements);
             }
             "class_declaration" | "type_declaration" | "class_def" | "struct_item"
-            | "class_definition" | "enum_declaration" | "record_declaration" => {
+            | "class_definition" | "enum_declaration" | "record_declaration"
+            | "object_declaration" | "companion_object" => {
                 self.extract_class(node, parent, elements);
             }
             "decorated_definition" => {
@@ -250,7 +277,7 @@ impl<'a> EntityExtractor<'a> {
             "type_spec" => {
                 self.extract_type_spec(node, parent, elements, relationships);
             }
-            "interface_declaration" => {
+            "interface_declaration" | "protocol_declaration" => {
                 self.extract_interface(node, parent, elements);
             }
             "import_declaration"
@@ -297,6 +324,10 @@ impl<'a> EntityExtractor<'a> {
                         | "enum_declaration"
                         | "record_declaration"
                         | "constructor_declaration"
+                        | "secondary_constructor"
+                        | "object_declaration"
+                        | "companion_object"
+                        | "interface_declaration"
                 ) {
                     self.get_node_name(node)
                 } else {
@@ -308,8 +339,8 @@ impl<'a> EntityExtractor<'a> {
     }
 
     fn extract_function(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
-        // For Java constructor_declaration, the name comes from the class (first identifier)
-        let name = if node.kind() == "constructor_declaration" {
+        // For Java constructor_declaration or Kotlin secondary_constructor, the name comes from the class (first identifier)
+        let name = if node.kind() == "constructor_declaration" || node.kind() == "secondary_constructor" {
             self.get_node_name(node).or_else(|| {
                 // Fallback: use parent name if available
                 parent.map(String::from)
@@ -338,7 +369,7 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn extract_class(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
+    fn extract_class(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) { 
         if let Some(name) = self.get_node_name(node) {
             let qualified_name = format!("{}::{}", self.file_path, name);
             elements.push(CodeElement {
@@ -692,7 +723,7 @@ impl<'a> EntityExtractor<'a> {
     }
 
     fn get_node_name(&self, node: Node) -> Option<String> {
-        let node_type = node.kind();
+        let node_type = node.kind(); 
 
         if node_type == "type_spec" {
             if let Some(name_node) = node.child_by_field_name("name") {
@@ -716,10 +747,13 @@ impl<'a> EntityExtractor<'a> {
             node_type,
             "method_declaration"
                 | "constructor_declaration"
+                | "secondary_constructor"
                 | "class_declaration"
                 | "interface_declaration"
                 | "enum_declaration"
                 | "record_declaration"
+                | "object_declaration"
+                | "companion_object"
         ) {
             if let Some(name_node) = node.child_by_field_name("name") {
                 return std::str::from_utf8(self.source.get(name_node.byte_range())?)
@@ -874,6 +908,13 @@ mod tests {
     fn parse_java(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_java::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_kotlin(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_kotlin_ng::LANGUAGE.into();
         parser.set_language(&lang).ok()?;
         parser.parse(source, None)
     }
@@ -1504,6 +1545,19 @@ mod tests {
     }
 
     #[test]
+    fn test_is_noise_call_kotlin() {
+        assert!(is_noise_call("let"));
+        assert!(is_noise_call("run"));
+        assert!(is_noise_call("listOf"));
+        assert!(is_noise_call("emptyMap"));
+        assert!(is_noise_call("checkNotNull"));
+        assert!(is_noise_call("println"));
+        // Legitimate Kotlin functions should NOT be filtered
+        assert!(!is_noise_call("processOrder"));
+        assert!(!is_noise_call("loadUserData"));
+    }
+
+    #[test]
     fn test_noise_calls_filtered_from_java_extraction() {
         let source = b"public class Main { void run() { processData(); toString(); } }";
         if let Some(tree) = parse_java(source) {
@@ -1548,6 +1602,77 @@ mod tests {
             assert_eq!(tested_by.len(), 1);
             assert_eq!(tested_by[0].source_qualified, "service/UserService.java");
             assert_eq!(tested_by[0].target_qualified, "service/UserServiceTest.java");
+        }
+    }
+
+    #[test]
+    fn test_extract_kotlin_class() {
+        let source = br#"
+class UserService {
+    fun getUser() {}
+}
+
+object DatabaseManager {}
+
+class Container {
+    companion object {}
+}
+"#;
+        if let Some(tree) = parse_kotlin(source) {
+            let extractor = EntityExtractor::new(source, "UserService.kt", "kotlin");
+            let (elements, _) = extractor.extract(&tree);
+
+            let class_elements: Vec<_> = elements.iter().filter(|e| e.element_type == "class").collect();
+            assert_eq!(class_elements.len(), 3); // UserService, DatabaseManager, Container
+
+            assert!(class_elements.iter().any(|e| e.name == "UserService"));
+            assert!(class_elements.iter().any(|e| e.name == "DatabaseManager"));
+            assert!(class_elements.iter().any(|e| e.name == "Container"));
+        }
+    }
+
+    #[test]
+    fn test_extract_kotlin_function() {
+        let source = br#"
+fun calculateInterest() {}
+
+class Account(val id: String) {
+    constructor() : this("")
+
+    fun checkBalance() {}
+}
+"#;
+        if let Some(tree) = parse_kotlin(source) {
+            let extractor = EntityExtractor::new(source, "Account.kt", "kotlin");
+            let (elements, _) = extractor.extract(&tree);
+
+            let func_elements: Vec<_> = elements.iter().filter(|e| e.element_type == "function").collect();
+            assert_eq!(func_elements.len(), 3);
+
+            assert!(func_elements.iter().any(|e| e.name == "calculateInterest"));
+            assert!(func_elements.iter().any(|e| e.name == "checkBalance"));
+            assert!(func_elements.iter().any(|e| e.name == "Account"));
+        }
+    }
+
+    #[test]
+    fn test_extract_kotlin_creates_tested_by_relationship() {
+        let source = br#"
+class UserServiceTest {
+    fun testCreate() {}
+}
+"#;
+        if let Some(tree) = parse_kotlin(source) {
+            let extractor = EntityExtractor::new(source, "service/UserServiceTest.kt", "kotlin");
+            let (_, relationships) = extractor.extract(&tree);
+
+            let tested_by: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "tested_by")
+                .collect();
+            assert_eq!(tested_by.len(), 1);
+            assert_eq!(tested_by[0].source_qualified, "service/UserService.kt");
+            assert_eq!(tested_by[0].target_qualified, "service/UserServiceTest.kt");
         }
     }
 }
