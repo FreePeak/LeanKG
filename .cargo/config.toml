@@ -1,0 +1,13 @@
+# LeanKG Build Configuration
+# Only build release profile by default to save disk space
+
+[build]
+target = "aarch64-apple-darwin"
+
+[profile.dev]
+opt-level = 0
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
