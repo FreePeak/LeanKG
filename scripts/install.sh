@@ -275,11 +275,10 @@ configure_cursor() {
 }
 
 configure_claude() {
-    local config_dir="$HOME/.config/claude"
-    local config_file="$config_dir/settings.json"
+    local config_file="$HOME/.claude/mcp_settings.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
 
-    mkdir -p "$config_dir"
+    mkdir -p "$(dirname "$config_file")"
 
     # Check if file exists and has content
     local has_content=false
