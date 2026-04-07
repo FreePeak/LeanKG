@@ -21,6 +21,9 @@
 ### v1.17 (IN PROGRESS)
 - AB Testing Context Correctness: File path regex validation, enhanced quality metrics output
 
+### v1.18 (PENDING)
+- RTK Integration: 54% token reduction via RTK compression on dev commands; LeanKGCompressor for internal command compression; cargo test output compression; git diff compression
+
 ### v1.15 (COMPLETED)
 - Web UI Orphan Node Filtering Fix: Fixed orphan nodes appearing in webui graph view; `filterOrphanedNodes` now applies to ALL filter types; Fixed 'mapping' filter bug where `e.target` was not added to nodeIds
 
@@ -139,10 +142,19 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 | ID | User Story | Priority | Status |
 |----|------------|----------|--------|
-| US-AB-01 | OpenCode token parsing for benchmark comparison | Must Have | IN PROGRESS |
+| US-AB-01 | OpenCode token parsing for benchmark comparison | Must Have | DONE |
 | US-AB-02 | Context correctness validation (precision/recall/F1) | Must Have | PENDING |
 | US-AB-03 | CozoDB data store correctness tests | Must Have | PENDING |
 | US-AB-04 | Token savings summary report with overall verdict | Should Have | PENDING |
+
+### 3.5 RTK Integration Stories (US-RTK-01 to US-RTK-04)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-RTK-01 | LeanKG CLI commands integrate with RTK for compressed output | Must Have | IN PROGRESS |
+| US-RTK-02 | LeanKG internal command compression via LeanKGCompressor | Must Have | IN PROGRESS |
+| US-RTK-03 | Cargo test output compression (failures only mode) | Must Have | IN PROGRESS |
+| US-RTK-04 | Git diff compression for indexer pipeline | Should Have | PENDING |
 
 ---
 
@@ -226,6 +238,35 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - [x] **FR-AB-03**: CozoDB data store correctness tests (indexed elements, relationships, no duplicates)
 - [x] **FR-AB-04**: Prompt YAML format with `expected_files` field for ground truth
 - [x] **FR-AB-05**: Token savings summary report with overall verdict
+
+### 5.4 RTK Integration
+
+- [x] **FR-RTK-01**: LeanKGCompressor struct with compress_indexer_output(cmd, output) method
+- [x] **FR-RTK-02**: CommandCategory::LeanKG added with patterns for leankg, cargo, git commands
+- [x] **FR-RTK-03**: CargoTestCompressor with failures-only mode achieving 85%+ savings
+- [x] **FR-RTK-04**: GitDiffCompressor with stats extraction achieving 70%+ savings
+- [x] **FR-RTK-05**: ShellCompressor extended with leankg-specific patterns
+- [ ] **FR-RTK-06**: Integration with CLI indexer pipeline to compress git/cargo outputs
+- [ ] **FR-RTK-07**: RTK gain command shows compression statistics
+
+### 5.5 RTK Integration Phase 2 (COMPLETED)
+
+- [x] **FR-RTK-08**: Add `--compress` flag to CLI for compressed output
+- [x] **FR-RTK-09**: LeanKGCompressor integration in CLI commands that run shell commands
+- [x] **FR-RTK-10**: Compressed output for `leankg status` showing git diff stats
+
+### 5.6 RTK Integration Phase 3 (In Progress)
+
+- [ ] **FR-RTK-11**: ResponseCompressor struct for MCP JSON response compression
+- [ ] **FR-RTK-12**: Compress `get_impact_radius` responses (summary + top N)
+- [ ] **FR-RTK-13**: Compress `get_call_graph` responses (bounded depth)
+- [ ] **FR-RTK-14**: Compress `search_code` responses (limit to top N)
+- [ ] **FR-RTK-15**: Add `compress_response` parameter to MCP tools
+
+**A/B Test Results (2026-04-06):**
+- RTK achieves 54% token reduction on common dev commands
+- Biggest wins: cargo test --no-run (84%), ls src/graph/ (75%), cargo test (74%)
+- Test methodology: Parallel subagent execution with/without RTK
 
 **Benchmark Results (2026-03-31):**
 - LeanKG saves tokens in 3/4 navigation tasks (up to -1,733 tokens)
@@ -424,6 +465,9 @@ The following features are explicitly out of scope:
 | Noise Call | Stdlib/trivial function excluded from graph |
 | Signature-Only Mode | Context output with only function signature line |
 | Datalog Injection | Security issue from unescaped user strings in queries |
+| RTK (Rust Token Killer) | CLI proxy that reduces LLM token consumption by 60-90% |
+| LeanKGCompressor | Internal compression module for LeanKG CLI commands |
+| Command Compression | Reducing CLI output tokens via regex patterns, grouping, truncation |
 
 ---
 
