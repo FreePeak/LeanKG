@@ -151,10 +151,13 @@ leankg serve
 # Open http://localhost:8080 in your browser
 leankg web
 
-# 5. Compute impact radius for a file
+# 5. Run commands with RTK-style compression
+leankg run "cargo test"
+
+# 6. Compute impact radius for a file
 leankg impact src/main.rs --depth 3
 
-# 6. Check index status
+# 7. Check index status
 leankg status
 ```
 
@@ -368,6 +371,8 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 - **MCP Server** -- Expose the graph via MCP protocol for AI tool integration.
 - **File Watching** -- Watch for changes and incrementally update the index.
 - **CLI** -- Single binary with init, index, serve, impact, and status commands.
+- **RTK Compression** -- RTK-style compression for CLI output and MCP responses (`leankg run`, `compress_response`).
+- **Orchestrator** -- Intelligent query routing with cache-graph-compress flow.
 - **Business Logic Mapping** -- Annotate code elements with business logic descriptions and link to features.
 - **Traceability** -- Show feature-to-code and requirement-to-code traceability chains.
 - **Documentation Mapping** -- Index docs/ directory, map doc references to code elements.
