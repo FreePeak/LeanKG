@@ -2,6 +2,7 @@
 use crate::db::models::CodeElement;
 use crate::graph::GraphEngine;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[allow(dead_code)]
 const DEFAULT_MAX_TOKENS: usize = 4000;
@@ -101,9 +102,13 @@ impl<'a> ContextProvider<'a> {
         file_path: &str,
     ) -> Result<ContextResult, Box<dyn std::error::Error>> {
         let mut context_elements = Vec::new();
+        let mut seen_qualified: HashSet<String> = HashSet::new();
 
         let file_elements = self.graph.get_elements_by_file(file_path)?;
         for elem in file_elements {
+            if !seen_qualified.insert(elem.qualified_name.clone()) {
+                continue;
+            }
             let priority = self.determine_priority(&elem);
             let token_count = Self::element_tokens(&elem);
             context_elements.push(ContextElement {
@@ -116,6 +121,9 @@ impl<'a> ContextProvider<'a> {
         let relationships = self.graph.get_relationships(file_path)?;
         for rel in relationships {
             if let Some(element) = self.graph.find_element(&rel.target_qualified)? {
+                if !seen_qualified.insert(element.qualified_name.clone()) {
+                    continue;
+                }
                 let priority = match rel.rel_type.as_str() {
                     "imports" => ContextPriority::Imported,
                     "contains" | "defines" => ContextPriority::Contained,

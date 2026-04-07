@@ -27,7 +27,8 @@ impl<'a> ImpactAnalyzer<'a> {
     ) -> Result<ImpactResult, Box<dyn std::error::Error>> {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
-        let mut affected_with_confidence = Vec::new();
+        let mut affected_with_confidence: Vec<AffectedElementWithConfidence> = Vec::new();
+        let mut seen_qualified: HashSet<String> = HashSet::new();
 
         queue.push_back((start_file.to_string(), 0));
         visited.insert(start_file.to_string());
@@ -43,16 +44,18 @@ impl<'a> ImpactAnalyzer<'a> {
                 if rel.confidence < min_confidence {
                     continue;
                 }
-                if !visited.contains(&rel.target_qualified) {
-                    visited.insert(rel.target_qualified.clone());
-                    queue.push_back((rel.target_qualified.clone(), current_depth + 1));
-
-                    if let Ok(Some(element)) = self.graph.find_element(&rel.target_qualified) {
-                        let severity = rel.severity(current_depth + 1);
+                let target = &rel.target_qualified;
+                if !visited.contains(target) {
+                    visited.insert(target.clone());
+                    queue.push_back((target.clone(), current_depth + 1));
+                }
+                if seen_qualified.insert(target.clone()) {
+                    if let Ok(Some(element)) = self.graph.find_element(target) {
+                        let severity = rel.severity(current_depth + 1).to_string();
                         affected_with_confidence.push(AffectedElementWithConfidence {
                             element,
                             confidence: rel.confidence,
-                            severity: severity.to_string(),
+                            severity,
                             depth: current_depth + 1,
                         });
                     }
@@ -64,16 +67,18 @@ impl<'a> ImpactAnalyzer<'a> {
                 if rel.confidence < min_confidence {
                     continue;
                 }
-                if !visited.contains(&rel.source_qualified) {
-                    visited.insert(rel.source_qualified.clone());
-                    queue.push_back((rel.source_qualified.clone(), current_depth + 1));
-
-                    if let Ok(Some(element)) = self.graph.find_element(&rel.source_qualified) {
-                        let severity = rel.severity(current_depth + 1);
+                let source = &rel.source_qualified;
+                if !visited.contains(source) {
+                    visited.insert(source.clone());
+                    queue.push_back((source.clone(), current_depth + 1));
+                }
+                if seen_qualified.insert(source.clone()) {
+                    if let Ok(Some(element)) = self.graph.find_element(source) {
+                        let severity = rel.severity(current_depth + 1).to_string();
                         affected_with_confidence.push(AffectedElementWithConfidence {
                             element,
                             confidence: rel.confidence,
-                            severity: severity.to_string(),
+                            severity,
                             depth: current_depth + 1,
                         });
                     }
