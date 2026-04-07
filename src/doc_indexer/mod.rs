@@ -402,19 +402,22 @@ pub fn index_docs_directory(
     docs_path: &Path,
     graph: &GraphEngine,
 ) -> Result<DocIndexResult, Box<dyn std::error::Error>> {
-    let indexer = DocIndexer::new(graph.db().clone());
-    let result = indexer.index_docs(docs_path)?;
+    let result = {
+        let db = graph.db();
+        let indexer = DocIndexer::new(db.clone());
+        indexer.index_docs(docs_path)?
+    };
 
-    for doc in &result.documents {
-        graph.insert_element(doc)?;
+    if !result.documents.is_empty() {
+        graph.insert_elements(&result.documents)?;
     }
 
-    for section in &result.sections {
-        graph.insert_element(section)?;
+    if !result.sections.is_empty() {
+        graph.insert_elements(&result.sections)?;
     }
 
-    for rel in &result.relationships {
-        graph.insert_relationship(rel)?;
+    if !result.relationships.is_empty() {
+        graph.insert_relationships(&result.relationships)?;
     }
 
     Ok(result)
