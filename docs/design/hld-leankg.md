@@ -5,6 +5,15 @@
 **Dua tren:** PRD v1.7  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.18 - RTK Integration:
+  - Add LeanKGCompressor for internal command compression
+  - Add CargoTestCompressor with failures-only mode (85%+ savings)
+  - Add GitDiffCompressor with stats extraction (70%+ savings)
+  - Extend ShellCompressor with leankg-specific patterns
+  - RTK A/B test: 54% token reduction on common dev commands
+- v1.17 - AB Testing Context Correctness:
+  - File path regex validation for improved correctness
+  - Enhanced quality metrics output
 - v1.15 - Performance Optimizations:
   - Add parallel file parsing using rayon for multi-core indexing
   - Batch relationship inserts (1000 rows/batch) instead of individual inserts
@@ -168,9 +177,10 @@ graph TB
         Impact[Impact Analyzer<br/>Blast Radius]
         Trace[Traceability<br/>Analyzer]
         Qual[Code Quality<br/>Metrics]
-        
+        Compress[Compress<br/>RTK-style]
+
         DB[(CozoDB<br/>Database)]
-        
+
         CLI --> Indexer
         CLI --> PipeIdx
         CLI --> DocIdx
@@ -179,6 +189,10 @@ graph TB
         CLI --> Impact
         CLI --> Trace
         CLI --> Qual
+        CLI --> Compress
+
+        Indexer --> Compress
+        Compress --> DB
         
         MCP --> Graph
         MCP --> DocGen
@@ -232,6 +246,7 @@ graph TB
 | Impact Analyzer | Calculate blast radius / impact radius | Rust (BFS traversal) |
 | Traceability Analyzer | Trace requirements to code via documentation | Rust |
 | Code Quality | Detect large functions, code metrics | Rust |
+| Compress | Token compression for CLI output, RTK-style filtering | Rust |
 | CozoDB | Persistent storage (per-project) | CozoDB (embedded SQLite-backed) |
 | NPM Installer | Download and install pre-built binaries | Node.js (npm package) |
 
