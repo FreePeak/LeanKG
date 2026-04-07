@@ -281,14 +281,20 @@ configure_claude() {
 
     mkdir -p "$config_dir"
 
-    if [ -f "$config_file" ]; then
+    # Check if file exists and has content
+    local has_content=false
+    if [ -f "$config_file" ] && [ -s "$config_file" ]; then
         local content
         content=$(cat "$config_file")
         if echo "$content" | grep -q "leankg"; then
             echo "LeanKG already configured in Claude Code"
             return
         fi
-    else
+        has_content=true
+    fi
+
+    # Initialize or ensure valid JSON structure
+    if [ "$has_content" = false ]; then
         cat > "$config_file" <<EOF
 {
   "mcpServers": {}
