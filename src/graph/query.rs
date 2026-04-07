@@ -514,32 +514,28 @@ impl GraphEngine {
             return Ok(());
         }
 
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- [[ $qn, $et, $nm, $fp, $ls, $le, $lg, $pq, $cid, $cl, $md ]] :put code_elements { qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata }"#;
+        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- $batch_data :put code_elements { qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata }"#;
 
-        for element in elements {
-            let metadata_str = serde_json::to_string(&element.metadata)?;
+        let batch_data: Vec<serde_json::Value> = elements.iter().map(|element| {
+            let metadata_str = serde_json::to_string(&element.metadata).unwrap_or_else(|_| "{}".to_string());
+            serde_json::json!([
+                element.qualified_name.clone(),
+                element.element_type.clone(),
+                element.name.clone(),
+                element.file_path.clone(),
+                element.line_start as i64,
+                element.line_end as i64,
+                element.language.clone(),
+                element.parent_qualified.clone(),
+                element.cluster_id.clone(),
+                element.cluster_label.clone(),
+                metadata_str
+            ])
+        }).collect();
+
+        for chunk in batch_data.chunks(1000) {
             let mut params = std::collections::BTreeMap::new();
-            params.insert("qn".to_string(), serde_json::Value::String(element.qualified_name.clone()));
-            params.insert("et".to_string(), serde_json::Value::String(element.element_type.clone()));
-            params.insert("nm".to_string(), serde_json::Value::String(element.name.clone()));
-            params.insert("fp".to_string(), serde_json::Value::String(element.file_path.clone()));
-            params.insert("ls".to_string(), serde_json::Value::Number(element.line_start.into()));
-            params.insert("le".to_string(), serde_json::Value::Number(element.line_end.into()));
-            params.insert("lg".to_string(), serde_json::Value::String(element.language.clone()));
-            match &element.parent_qualified {
-                Some(pq) => params.insert("pq".to_string(), serde_json::Value::String(pq.clone())),
-                None => params.insert("pq".to_string(), serde_json::Value::Null),
-            };
-            match &element.cluster_id {
-                Some(cid) => params.insert("cid".to_string(), serde_json::Value::String(cid.clone())),
-                None => params.insert("cid".to_string(), serde_json::Value::Null),
-            };
-            match &element.cluster_label {
-                Some(cl) => params.insert("cl".to_string(), serde_json::Value::String(cl.clone())),
-                None => params.insert("cl".to_string(), serde_json::Value::Null),
-            };
-            params.insert("md".to_string(), serde_json::Value::String(metadata_str));
-
+            params.insert("batch_data".to_string(), serde_json::Value::Array(chunk.to_vec()));
             self.db.run_script(query, params)?;
         }
 
@@ -653,17 +649,22 @@ impl GraphEngine {
             return Ok(());
         }
 
-        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] <- [[ $sq, $tq, $rt, $cn, $md ]] :put relationships { source_qualified, target_qualified, rel_type, confidence, metadata }"#;
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] <- $batch_data :put relationships { source_qualified, target_qualified, rel_type, confidence, metadata }"#;
 
-        for rel in relationships {
-            let metadata_str = serde_json::to_string(&rel.metadata)?;
+        let batch_data: Vec<serde_json::Value> = relationships.iter().map(|rel| {
+            let metadata_str = serde_json::to_string(&rel.metadata).unwrap_or_else(|_| "{}".to_string());
+            serde_json::json!([
+                rel.source_qualified.clone(),
+                rel.target_qualified.clone(),
+                rel.rel_type.clone(),
+                rel.confidence,
+                metadata_str
+            ])
+        }).collect();
+
+        for chunk in batch_data.chunks(1000) {
             let mut params = std::collections::BTreeMap::new();
-            params.insert("sq".to_string(), serde_json::Value::String(rel.source_qualified.clone()));
-            params.insert("tq".to_string(), serde_json::Value::String(rel.target_qualified.clone()));
-            params.insert("rt".to_string(), serde_json::Value::String(rel.rel_type.clone()));
-            params.insert("cn".to_string(), serde_json::json!(rel.confidence));
-            params.insert("md".to_string(), serde_json::Value::String(metadata_str));
-
+            params.insert("batch_data".to_string(), serde_json::Value::Array(chunk.to_vec()));
             self.db.run_script(query, params)?;
         }
 
@@ -674,12 +675,11 @@ impl GraphEngine {
         &self,
         file_path: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let query = format!(
-            r#":delete code_elements where file_path = "{}""#,
-            file_path
-        );
+        let query = r#":delete code_elements where file_path = $fp"#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("fp".to_string(), serde_json::Value::String(file_path.to_string()));
         
-        self.db.run_script(&query, std::collections::BTreeMap::new())?;
+        self.db.run_script(query, params)?;
 
         let cache = self.cache.clone();
         let file_path_str = file_path.to_string();
@@ -697,12 +697,11 @@ impl GraphEngine {
         &self,
         source: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let query = format!(
-            r#":delete relationships where source_qualified = "{}""#,
-            source
-        );
+        let query = r#":delete relationships where source_qualified = $sq"#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("sq".to_string(), serde_json::Value::String(source.to_string()));
         
-        self.db.run_script(&query, std::collections::BTreeMap::new())?;
+        self.db.run_script(query, params)?;
 
         let cache = self.cache.clone();
         let source_str = source.to_string();

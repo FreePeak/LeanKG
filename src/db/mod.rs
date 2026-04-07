@@ -15,19 +15,30 @@ pub fn create_business_logic(
     user_story_id: Option<&str>,
     feature_id: Option<&str>,
 ) -> Result<models::BusinessLogic, Box<dyn std::error::Error>> {
-    let user_story_val = user_story_id
-        .map(|s| format!("\"{}\"", s))
-        .unwrap_or_else(|| "null".to_string());
-    let feature_val = feature_id
-        .map(|s| format!("\"{}\"", s))
-        .unwrap_or_else(|| "null".to_string());
-
-    let query = format!(
-        r#"?[element_qualified, description, user_story_id, feature_id] <- [[ "{0}", "{1}", {2}, {3} ]] :put business_logic {{ element_qualified, description, user_story_id, feature_id }}"#,
-        element_qualified, description, user_story_val, feature_val,
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] <- [[ $eq, $desc, $us, $feat ]] :put business_logic { element_qualified, description, user_story_id, feature_id }"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "eq".to_string(),
+        serde_json::Value::String(element_qualified.to_string()),
+    );
+    params.insert(
+        "desc".to_string(),
+        serde_json::Value::String(description.to_string()),
+    );
+    params.insert(
+        "us".to_string(),
+        user_story_id
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "feat".to_string(),
+        feature_id
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .unwrap_or(serde_json::Value::Null),
     );
 
-    db.run_script(&query, std::collections::BTreeMap::new())?;
+    db.run_script(query, params)?;
 
     Ok(models::BusinessLogic {
         id: None,
@@ -42,12 +53,14 @@ pub fn get_business_logic(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<Option<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let query = format!(
-        r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], element_qualified = "{}""#,
-        element_qualified
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], element_qualified = $eq"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "eq".to_string(),
+        serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     if rows.is_empty() {
@@ -74,19 +87,30 @@ pub fn update_business_logic(
     user_story_id: Option<&str>,
     feature_id: Option<&str>,
 ) -> Result<Option<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let user_story_val = user_story_id
-        .map(|s| format!("\"{}\"", s))
-        .unwrap_or_else(|| "null".to_string());
-    let feature_val = feature_id
-        .map(|s| format!("\"{}\"", s))
-        .unwrap_or_else(|| "null".to_string());
-
-    let query = format!(
-        r#"?[element_qualified, description, user_story_id, feature_id] <- [[ "{0}", "{1}", {2}, {3} ]] :put business_logic {{ element_qualified, description, user_story_id, feature_id }}"#,
-        element_qualified, description, user_story_val, feature_val,
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] <- [[ $eq, $desc, $us, $feat ]] :put business_logic { element_qualified, description, user_story_id, feature_id }"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "eq".to_string(),
+        serde_json::Value::String(element_qualified.to_string()),
+    );
+    params.insert(
+        "desc".to_string(),
+        serde_json::Value::String(description.to_string()),
+    );
+    params.insert(
+        "us".to_string(),
+        user_story_id
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "feat".to_string(),
+        feature_id
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .unwrap_or(serde_json::Value::Null),
     );
 
-    db.run_script(&query, std::collections::BTreeMap::new())?;
+    db.run_script(query, params)?;
 
     Ok(Some(models::BusinessLogic {
         id: None,
@@ -102,12 +126,14 @@ pub fn delete_business_logic(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let query = format!(
-        r#":delete business_logic where element_qualified = "{}""#,
-        element_qualified
+    let query = r#":delete business_logic where element_qualified = $eq"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "eq".to_string(),
+        serde_json::Value::String(element_qualified.to_string()),
     );
 
-    db.run_script(&query, std::collections::BTreeMap::new())?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
@@ -115,12 +141,14 @@ pub fn get_by_user_story(
     db: &CozoDb,
     user_story_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let query = format!(
-        r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = "{}""#,
-        user_story_id
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = $us"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "us".to_string(),
+        serde_json::Value::String(user_story_id.to_string()),
     );
 
-    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
@@ -145,12 +173,14 @@ pub fn get_by_feature(
     db: &CozoDb,
     feature_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let query = format!(
-        r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], feature_id = "{}""#,
-        feature_id
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], feature_id = $feat"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "feat".to_string(),
+        serde_json::Value::String(feature_id.to_string()),
     );
 
-    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
@@ -175,11 +205,10 @@ pub fn search_business_logic(
     db: &CozoDb,
     query_str: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
-    let like_pattern = format!("%{}%", query_str.to_lowercase());
-
+    let regex_pattern = format!(".*{}.*", query_str.to_lowercase());
     let query = format!(
         r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], regex_matches(lowercase(description), "{}")"#,
-        like_pattern
+        regex_pattern
     );
 
     let result = db.run_script(&query, std::collections::BTreeMap::new())?;
@@ -384,12 +413,14 @@ pub fn get_documented_by(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
-    let query = format!(
-        r#"?[target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", rel_type = "documented_by""#,
-        element_qualified
+    let query = r#"?[target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = $sq, rel_type = "documented_by""#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "sq".to_string(),
+        serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let doc_links: Vec<models::DocLink> = rows
@@ -452,12 +483,14 @@ pub fn get_code_for_requirement(
     db: &CozoDb,
     requirement_id: &str,
 ) -> Result<Vec<models::TraceabilityEntry>, Box<dyn std::error::Error>> {
-    let query = format!(
-        r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = "{}""#,
-        requirement_id
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = $us"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "us".to_string(),
+        serde_json::Value::String(requirement_id.to_string()),
     );
 
-    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let mut entries = Vec::new();
