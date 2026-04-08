@@ -5,6 +5,11 @@
 **Dua tren:** PRD v1.7  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.19 - Auto-Index on DB Write:
+  - Add WriteTracker with atomic dirty flag for external CozoDB writes
+  - Add TrackingDb wrapper to intercept :put/:delete operations
+  - Lazy reindex on MCP tool call when dirty flag is set
+  - Config option `auto_index_on_db_write: true` (default true)
 - v1.18 - RTK Integration:
   - Add LeanKGCompressor for internal command compression
   - Add CargoTestCompressor with failures-only mode (85%+ savings)
@@ -967,6 +972,24 @@ When the MCP server starts with an existing LeanKG project:
 3. This ensures AI tools always have up-to-date context without manual re-indexing
 4. Staleness check can be configured via `mcp.auto_index_on_start` and `mcp.auto_index_threshold_minutes`
 
+**Auto-Indexing on DB Write:**
+When external agents write directly to CozoDB (via SQL insert/update/delete), LeanKG automatically detects and triggers reindexing:
+
+1. **Write Tracker** - In-memory `Arc<AtomicBool>` dirty flag + `Arc<RwLock<Instant>>` last_write_time
+2. **TrackingDb Wrapper** - Wraps `CozoDb` to intercept `:put` and `:delete` operations
+3. **Lazy Reindex** - On any MCP tool call, checks dirty flag; if set, triggers incremental reindex before execution
+4. **Config Option** - `mcp.auto_index_on_db_write: true` (default: true)
+
+**Flow:**
+```
+External Agent writes to CozoDB → TrackingDb sets dirty flag → MCP tool call → detects dirty → triggers incremental reindex → clears dirty flag
+```
+
+**Why not file polling or DB triggers:**
+- File polling: wastes CPU, ~5s latency from polling interval
+- DB triggers: CozoSQLite doesn't support triggers reliably
+- Write Tracker: zero-latency detection at write time, deferred reindex only when needed
+
 ### 5.3 Web UI Routes
 
 | Route | Description |
@@ -984,7 +1007,21 @@ When the MCP server starts with an existing LeanKG project:
 
 ## 6. Security Considerations
 
-### 6.1 Datalog String Escaping
+### 6.1 Write Tracking Architecture
+
+| Component | Responsibility |
+|----------|----------------|
+| `WriteTracker` | `Arc<AtomicBool>` dirty flag + `Arc<RwLock<Instant>>` last_write_time |
+| `TrackingDb` | Wraps `CozoDb`, intercepts `:put`/`:delete` → sets dirty flag |
+| `MCPServer` | On tool call, checks dirty flag → triggers reindex if needed |
+
+**Key design principles:**
+- Non-blocking writes: dirty flag is atomic, no locks during write operations
+- Lazy reindex: reindex only when MCP tool actually called (not on every write)
+- Zero overhead during reads: dirty flag only affects write operations
+- Configurable: can disable via `auto_index_on_db_write: false`
+
+### 6.2 Datalog String Escaping
 
 All user-provided strings in Datalog queries MUST be escaped using the `escape_datalog` helper function:
 
@@ -1069,6 +1106,7 @@ mcp:
   auth_token: generated
   auto_index_on_start: true
   auto_index_threshold_minutes: 5
+  auto_index_on_db_write: true
   index_on_first_call: true
 
 web:
