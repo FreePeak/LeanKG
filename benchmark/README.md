@@ -2,6 +2,18 @@
 
 Compare token usage AND context correctness between LeanKG-assisted and baseline approaches.
 
+## Latest Results (2026-04-08)
+
+| Category | Tests | LeanKG F1 Wins | Token Overhead |
+|----------|-------|----------------|----------------|
+| Navigation | 3 | 1 | +22,661 |
+| Implementation | 1 | 0 | +209 |
+| Impact | 3 | 1 | +18,178 |
+
+**Total:** 7 tests, LeanKG wins F1 on 2 tests, +41,048 token overhead
+
+See [docs/analysis/ab-testing-results-2026-04-08.md](../docs/analysis/ab-testing-results-2026-04-08.md) for full analysis.
+
 ## Usage
 
 ```bash
@@ -18,7 +30,7 @@ cargo run -- benchmark --cli gemini
 cargo run -- benchmark --cli kilo --category navigation
 cargo run -- benchmark --cli kilo --category implementation
 cargo run -- benchmark --cli kilo --category impact
-cargo run -- benchmark -- cli kilo --category debugging
+cargo run -- benchmark --cli kilo --category debugging
 ```
 
 ## What Gets Measured
@@ -40,16 +52,14 @@ cargo run -- benchmark -- cli kilo --category debugging
 === Category: Code Navigation Tasks ===
 
 Running: find-codeelement
-  With LeanKG:    17,363 tokens (input: 438, cached: 17,216)
-  Without LeanKG:  18,933 tokens (input: 723, cached: 17,920)
-  Overhead: -1,570 tokens
+  With LeanKG:    16,696 tokens (input: 14,282, cached: 2,336)
+  Without LeanKG:  16,689 tokens (input: 14,282, cached: 2,336)
+  Overhead: +7 tokens
   
-  LeanKG Quality: Precision=1.00 | Recall=1.00 | F1=1.00 | EXCELLENT
-    Correct Files: ["src/db/models.rs"]
-    Incorrect (false positives): []
-    Missing (false negatives): []
+  LeanKG Quality: Precision=0.00 | Recall=0.00 | F1=0.00 | POOR
+    Missing (false negatives): ["src/db/models.rs"]
   
-  Without LeanKG Quality: Precision=1.00 | Recall=1.00 | F1=1.00 | EXCELLENT
+  Without LeanKG Quality: Precision=0.00 | Recall=0.00 | F1=0.00 | POOR
 ```
 
 ## Results
@@ -91,3 +101,10 @@ tasks:
 
 - **OpenCode/Gemini**: Token parsing works, but context quality shows `(not available)` because these tools don't expose stdout for parsing
 - **Kilo**: Provides full context output with quality metrics
+- **Timeout**: Complex queries (impact, debugging) may timeout after 45-60 seconds
+
+## Known Issues
+
+1. **Token overhead** - LeanKG currently uses more tokens than baseline (pending deduplication fix)
+2. **False positives** - Context parser returns too many files in some cases
+3. **Kilo timeouts** - Complex queries timeout; use OpenCode for faster token-only metrics
