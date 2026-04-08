@@ -32,50 +32,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package
-        run: |
-          mkdir -p release
-          EXT=""
-          if [ "${{ matrix.runs-on }}" = "windows-latest" ]; then
-            EXT=".exe"
-          fi
-          cp target/${{ matrix.target }}/release/leankg$EXT release/leankg
-
-          # Package plugins and configs
-          mkdir -p release/plugins
-          cp -r .cursor-plugin release/plugins/ 2>/dev/null || true
-          cp -r .claude-plugin release/plugins/ 2>/dev/null || true
-          mkdir -p release/plugins/.opencode/plugins
-          cp .opencode/plugins/leankg.js release/plugins/.opencode/plugins/ 2>/dev/null || true
-          tar -czf release/${{ matrix.artifact }} -C release plugins leankg
-        shell: bash
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          files: release/${{ matrix.artifact }}
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Commit Cargo.lock
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add Cargo.lock
-          git commit -m "chore: update Cargo.lock" || true
+          targets: x86_64-unknown-linux-gnu
 
       - name: Publish to crates.io
         run: cargo publish --allow-dirty
