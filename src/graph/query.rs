@@ -128,7 +128,7 @@ impl GraphEngine {
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
         let escaped_path = escape_datalog(file_path);
         let query = format!(
-            r#"?[target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", rel_type = "imports""#,
+            r#"?[target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified = "{}", rel_type = "imports""#,
             escaped_path
         );
 
@@ -1163,7 +1163,7 @@ impl GraphEngine {
     }
 
     pub fn resolve_call_edges(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[source_qualified, target_qualified, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], rel_type = "calls""#;
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], rel_type = "calls""#;
         debug!("Running resolve_call_edges query (filtered at DB level)");
         let result = self.db.run_script(query, std::collections::BTreeMap::new())?;
         
