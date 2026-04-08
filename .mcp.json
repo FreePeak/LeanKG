@@ -5,7 +5,7 @@
         "mcp-stdio",
         "--watch"
       ],
-      "command": "/Users/linh.doan/work/harvey/freepeak/LeanKG/target/release/leankg"
+      "command": "/Users/linh.doan/work/harvey/freepeak/LeanKG/target/aarch64-apple-darwin/release/leankg"
     }
   }
 }
