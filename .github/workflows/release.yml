@@ -59,6 +59,7 @@ jobs:
           fi
           cp target/${{ matrix.target }}/release/leankg$EXT release/leankg
           tar -czf release/${{ matrix.artifact }} -C release leankg
+        shell: bash
 
       - uses: softprops/action-gh-release@v2
         with:
