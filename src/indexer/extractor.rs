@@ -36,6 +36,15 @@ pub fn is_test_file(file_path: &str) -> bool {
                 || file_name.ends_with("Test.kts")
                 || path.components().any(|c| c.as_os_str() == "test")
         }
+        "cpp" | "cc" | "cxx" => {
+            file_name.ends_with("_test.cpp") || file_name.starts_with("test_") || file_name.ends_with("Test.cpp")
+        }
+        "cs" => {
+            file_name.ends_with("Test.cs") || file_name.ends_with("Tests.cs")
+        }
+        "php" => {
+            file_name.ends_with("Test.php") || file_name.ends_with("Tests.php")
+        }
         _ => false,
     }
 }
@@ -95,6 +104,9 @@ pub fn is_noise_call(name: &str) -> bool {
             | "TODO" | "lazy"
             // Android logger mappings
             | "v" | "d" | "i" | "w" | "e" | "wtf"
+            // C++ / C# / PHP standard lib concepts
+            | "Console.WriteLine" | "Console.Write"
+            | "std::cout" | "printf" | "echo" | "print_r" | "var_dump"
     ) || name.len() < 2
 }
 
@@ -159,6 +171,35 @@ pub fn get_tested_file_path(file_path: &str) -> Option<String> {
                 Some(file_name.trim_end_matches("Tests.kt").to_string() + ".kt")
             } else if file_name.ends_with("Test.kts") {
                 Some(file_name.trim_end_matches("Test.kts").to_string() + ".kts")
+            } else {
+                None
+            }
+        }
+        "cpp" | "cc" | "cxx" => {
+            if file_name.ends_with("_test.cpp") {
+                Some(file_name.trim_end_matches("_test.cpp").to_string() + ".cpp")
+            } else if file_name.ends_with("Test.cpp") {
+                Some(file_name.trim_end_matches("Test.cpp").to_string() + ".cpp")
+            } else if file_name.starts_with("test_") {
+                Some(file_name.strip_prefix("test_").unwrap().to_string())
+            } else {
+                None
+            }
+        }
+        "cs" => {
+            if file_name.ends_with("Test.cs") {
+                Some(file_name.trim_end_matches("Test.cs").to_string() + ".cs")
+            } else if file_name.ends_with("Tests.cs") {
+                Some(file_name.trim_end_matches("Tests.cs").to_string() + ".cs")
+            } else {
+                None
+            }
+        }
+        "php" => {
+            if file_name.ends_with("Test.php") {
+                Some(file_name.trim_end_matches("Test.php").to_string() + ".php")
+            } else if file_name.ends_with("Tests.php") {
+                Some(file_name.trim_end_matches("Tests.php").to_string() + ".php")
             } else {
                 None
             }
@@ -268,7 +309,8 @@ impl<'a> EntityExtractor<'a> {
             }
             "class_declaration" | "type_declaration" | "class_def" | "struct_item"
             | "class_definition" | "enum_declaration" | "record_declaration"
-            | "object_declaration" | "companion_object" => {
+            | "object_declaration" | "companion_object" | "struct_specifier"
+            | "namespace_definition" => {
                 self.extract_class(node, parent, elements);
             }
             "decorated_definition" => {
@@ -327,6 +369,8 @@ impl<'a> EntityExtractor<'a> {
                         | "secondary_constructor"
                         | "object_declaration"
                         | "companion_object"
+                        | "struct_specifier"
+                        | "namespace_definition"
                         | "interface_declaration"
                 ) {
                     self.get_node_name(node)
@@ -754,6 +798,8 @@ impl<'a> EntityExtractor<'a> {
                 | "record_declaration"
                 | "object_declaration"
                 | "companion_object"
+                | "struct_specifier"
+                | "namespace_definition"
         ) {
             if let Some(name_node) = node.child_by_field_name("name") {
                 return std::str::from_utf8(self.source.get(name_node.byte_range())?)

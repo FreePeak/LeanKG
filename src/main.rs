@@ -394,6 +394,15 @@ async fn index_codebase(
                     ("java", "java"),
                     ("kt", "kotlin"),
                     ("kts", "kotlin"),
+                    ("cpp", "cpp"),
+                    ("cxx", "cpp"),
+                    ("cc", "cpp"),
+                    ("hpp", "cpp"),
+                    ("h", "cpp"),
+                    ("c", "cpp"),
+                    ("cs", "csharp"),
+                    ("rb", "ruby"),
+                    ("php", "php"),
                 ]
                 .iter()
                 .cloned()

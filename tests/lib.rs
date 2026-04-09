@@ -108,8 +108,8 @@ mod parser_tests {
                 "Should return None for 'cobol'"
             );
             assert!(
-                pm.get_parser_for_language("c").is_none(),
-                "Should return None for 'c'"
+                pm.get_parser_for_language("haskell").is_none(),
+                "Should return None for 'haskell'"
             );
             assert!(
                 pm.get_parser_for_language("").is_none(),

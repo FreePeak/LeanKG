@@ -19,7 +19,7 @@ use walkdir::WalkDir;
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
-    let extensions = ["go", "ts", "js", "py", "rs", "java", "tf", "yml", "yaml"];
+    let extensions = ["go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "cpp", "cc", "cxx", "hpp", "h", "cs", "rb", "php"];
 
     for entry in WalkDir::new(root)
         .follow_links(true)
@@ -69,6 +69,14 @@ fn get_language(file_path: &str) -> Option<&'static str> {
         Some("java")
     } else if file_path.ends_with(".kt") || file_path.ends_with(".kts") {
         Some("kotlin")
+    } else if file_path.ends_with(".cpp") || file_path.ends_with(".cxx") || file_path.ends_with(".cc") || file_path.ends_with(".hpp") || file_path.ends_with(".h") || file_path.ends_with(".c") {
+        Some("cpp")
+    } else if file_path.ends_with(".cs") {
+        Some("csharp")
+    } else if file_path.ends_with(".rb") {
+        Some("ruby")
+    } else if file_path.ends_with(".php") {
+        Some("php")
     } else {
         None
     }
@@ -96,7 +104,7 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
     };
 
     thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None]);
+        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None, None, None, None]);
     }
 
     let parser_idx = match language {
@@ -106,6 +114,10 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
         "rust" => 3,
         "java" => 4,
         "kotlin" => 5,
+        "cpp" => 6,
+        "csharp" => 7,
+        "ruby" => 8,
+        "php" => 9,
         _ => return Ok(ParsedFile { element_count: 0, elements: vec![], relationships: vec![] }),
     };
 
@@ -120,6 +132,10 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
                 "rust" => tree_sitter_rust::LANGUAGE.into(),
                 "java" => tree_sitter_java::LANGUAGE.into(),
                 "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
+                "cpp" => tree_sitter_cpp::LANGUAGE.into(),
+                "csharp" => tree_sitter_c_sharp::LANGUAGE.into(),
+                "ruby" => tree_sitter_ruby::LANGUAGE.into(),
+                "php" => tree_sitter_php::LANGUAGE_PHP.into(),
                 _ => return p,
             };
             let _ = p.set_language(&lang);
@@ -256,6 +272,14 @@ pub fn index_file_sync(
         "java"
     } else if file_path.ends_with(".kt") || file_path.ends_with(".kts") {
         "kotlin"
+    } else if file_path.ends_with(".cpp") || file_path.ends_with(".cxx") || file_path.ends_with(".cc") || file_path.ends_with(".hpp") || file_path.ends_with(".h") || file_path.ends_with(".c") {
+        "cpp"
+    } else if file_path.ends_with(".cs") {
+        "csharp"
+    } else if file_path.ends_with(".rb") {
+        "ruby"
+    } else if file_path.ends_with(".php") {
+        "php"
     } else {
         return Ok(0);
     };

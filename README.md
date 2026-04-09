@@ -373,7 +373,7 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 
 - **Token Concise** -- Returns 13-42 tokens per query vs 10,000+ tokens for full codebase scan. AI tools get exactly what they need.
 - **Token Saving** -- Up to 98% token reduction for impact analysis queries. Index once, query efficiently forever.
-- **Code Indexing** -- Parse and index Go, TypeScript, Python, Rust, Java, and Kotlin codebases with tree-sitter.
+- **Code Indexing** -- Parse and index Go, TypeScript, Python, Rust, Java, Kotlin, C++, C#, Ruby, and PHP codebases with tree-sitter.
 - **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges.
 - **Impact Radius** -- Compute blast radius for any file to see downstream impact.
 - **Auto-Indexing** -- Watch mode automatically updates the index when files change.
