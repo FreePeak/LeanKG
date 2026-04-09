@@ -19,7 +19,7 @@ use walkdir::WalkDir;
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
-    let extensions = ["go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "cpp", "cc", "cxx", "hpp", "h", "cs", "rb", "php"];
+    let extensions = ["go", "ts", "tsx", "js", "jsx", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "cpp", "cc", "cxx", "hpp", "h", "cs", "rb", "php"];
 
     for entry in WalkDir::new(root)
         .follow_links(true)
@@ -33,6 +33,8 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
             && !path.to_string_lossy().contains("node_modules")
             && !path.to_string_lossy().contains("vendor")
             && !path.to_string_lossy().contains(".git")
+            && !path.to_string_lossy().contains(".next")
+            && !path.to_string_lossy().contains("dist")
         {
             files.push(path.to_string_lossy().to_string());
         }
@@ -59,7 +61,7 @@ struct ParsedFile {
 fn get_language(file_path: &str) -> Option<&'static str> {
     if file_path.ends_with(".go") {
         Some("go")
-    } else if file_path.ends_with(".ts") || file_path.ends_with(".js") {
+    } else if file_path.ends_with(".ts") || file_path.ends_with(".tsx") || file_path.ends_with(".js") || file_path.ends_with(".jsx") {
         Some("typescript")
     } else if file_path.ends_with(".py") {
         Some("python")

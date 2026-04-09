@@ -9,6 +9,10 @@ fn escape_datalog(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn escape_regex_for_cozo(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('.', "\\.").replace('*', "\\*").replace('+', "\\+")
+}
+
 fn normalize_path(path: &str) -> String {
     path.strip_prefix("./").unwrap_or(path).to_string()
 }
@@ -812,7 +816,7 @@ impl GraphEngine {
         &self,
         name: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let pattern = format!("(?i){}", name);
+        let pattern = format!("(?i).*{}.*", escape_regex_for_cozo(name));
         
         let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(name, $pat)"#;
         let mut params = std::collections::BTreeMap::new();
