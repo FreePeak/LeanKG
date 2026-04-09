@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod clustering;
 pub mod context;
+pub mod persistent_cache;
 pub mod query;
 pub mod traversal;
 

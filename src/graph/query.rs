@@ -6,17 +6,11 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 fn escape_datalog(s: &str) -> String {
-    // First escape backslashes, then escape all regex metacharacters
-    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-    let meta_chars = ['.', '*', '+', '?', '[', ']', '(', ')', '{', '}', '^', '$', '|'];
-    let mut result = String::with_capacity(escaped.len() * 2);
-    for c in escaped.chars() {
-        if meta_chars.contains(&c) {
-            result.push('\\');
-        }
-        result.push(c);
-    }
-    result
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn normalize_path(path: &str) -> String {
+    path.strip_prefix("./").unwrap_or(path).to_string()
 }
 
 #[derive(Clone)]
@@ -126,10 +120,11 @@ impl GraphEngine {
         &self,
         file_path: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let escaped_path = escape_datalog(file_path);
+        let normalized = normalize_path(file_path);
+        let escaped_normalized = escape_datalog(&normalized);
         let query = format!(
-            r#"?[target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified = "{}", rel_type = "imports""#,
-            escaped_path
+            r#"?[target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = "{}" or source_qualified = "./{}"), rel_type = "imports""#,
+            escaped_normalized, escaped_normalized
         );
 
         let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
@@ -167,10 +162,11 @@ impl GraphEngine {
         &self,
         source: &str,
     ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
-        let escaped = escape_datalog(source);
+        let normalized = normalize_path(source);
+        let escaped_normalized = escape_datalog(&normalized);
         let query = format!(
-            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified = "{}""#,
-            escaped
+            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = "{}" or source_qualified = "./{}")"#,
+            escaped_normalized, escaped_normalized
         );
 
         let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
@@ -198,10 +194,11 @@ impl GraphEngine {
         &self,
         target: &str,
     ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
-        let escaped = escape_datalog(target);
+        let normalized = normalize_path(target);
+        let escaped_normalized = escape_datalog(&normalized);
         let query = format!(
-            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], target_qualified = "{}""#,
-            escaped
+            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (target_qualified = "{}" or target_qualified = "./{}")"#,
+            escaped_normalized, escaped_normalized
         );
 
         let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
@@ -417,10 +414,11 @@ impl GraphEngine {
     }
 
     pub fn get_documented_by(&self, element_qualified: &str) -> Result<Vec<DocLink>, Box<dyn std::error::Error>> {
-        let escaped = escape_datalog(element_qualified);
+        let normalized = normalize_path(element_qualified);
+        let escaped_normalized = escape_datalog(&normalized);
         let query = format!(
-            r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", rel_type = "documented_by""#,
-            escaped
+            r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], (source_qualified = "{}" or source_qualified = "./{}"), rel_type = "documented_by""#,
+            escaped_normalized, escaped_normalized
         );
 
         let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
@@ -1123,32 +1121,33 @@ impl GraphEngine {
         max_depth: u32,
         max_results: usize,
     ) -> Result<Vec<(String, String, u32)>, Box<dyn std::error::Error>> {
-        let safe_src = escape_datalog(source_qualified);
+        let normalized = normalize_path(source_qualified);
+        let safe_src = escape_datalog(&normalized);
         let query = match max_depth {
             1 => format!(
                 r#"?[src, tgt, depth] :=
-                   *relationships["{src}", tgt, "calls", _],
-                   src = "{src}", depth = 1
+                   *relationships[src, tgt, "calls", _, _],
+                   (src = "{}" or src = "./{}"), depth = 1
                    :limit {limit}"#,
-                src = safe_src, limit = max_results,
+                safe_src, safe_src, limit = max_results,
             ),
             2 => format!(
-                r#"hop1[src, tgt] := *relationships[src, tgt, "calls", _], src = "{src}"
-                   hop2[src2, tgt2] := hop1[_, src2], *relationships[src2, tgt2, "calls", _]
+                r#"hop1[src, tgt] := *relationships[src, tgt, "calls", _, _], (src = "{}" or src = "./{}")
+                   hop2[src2, tgt2] := hop1[_, src2], *relationships[src2, tgt2, "calls", _, _]
                    ?[src, tgt, depth] := hop1[src, tgt], depth = 1
                    ?[src, tgt, depth] := hop2[src, tgt], depth = 2
                    :limit {limit}"#,
-                src = safe_src, limit = max_results,
+                safe_src, safe_src, limit = max_results,
             ),
             _ => format!(
-                r#"hop1[src, tgt] := *relationships[src, tgt, "calls", _], src = "{src}"
-                   hop2[s2, t2] := hop1[_, s2], *relationships[s2, t2, "calls", _]
-                   hop3[s3, t3] := hop2[_, s3], *relationships[s3, t3, "calls", _]
+                r#"hop1[src, tgt] := *relationships[src, tgt, "calls", _, _], (src = "{}" or src = "./{}")
+                   hop2[s2, t2] := hop1[_, s2], *relationships[s2, t2, "calls", _, _]
+                   hop3[s3, t3] := hop2[_, s3], *relationships[s3, t3, "calls", _, _]
                    ?[src, tgt, depth] := hop1[src, tgt], depth = 1
                    ?[src, tgt, depth] := hop2[src, tgt], depth = 2
                    ?[src, tgt, depth] := hop3[src, tgt], depth = 3
                    :limit {limit}"#,
-                src = safe_src, limit = max_results,
+                safe_src, safe_src, limit = max_results,
             ),
         };
 
