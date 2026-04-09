@@ -107,11 +107,28 @@ impl MCPServer {
     }
 
     pub async fn serve_stdio(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Err(e) = self.auto_init_if_needed().await {
-            tracing::warn!(
-                "Auto-init skipped: {}. Server will operate in uninitialized state.",
-                e
-            );
+        // Retry auto-init up to once if it fails (handles case where .leankg exists but db doesn't)
+        match self.auto_init_if_needed().await {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    "Initial auto-init failed: {}. Attempting recovery...",
+                    e
+                );
+                // Try one more time with fresh state
+                let project_root = self.find_project_root().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let leankg_path = project_root.join(".leankg");
+                if leankg_path.is_dir() {
+                    if let Err(retry_err) = self.run_full_init(project_root, leankg_path).await {
+                        tracing::error!(
+                            "Recovery failed: {}. Server may not function correctly.",
+                            retry_err
+                        );
+                    }
+                } else {
+                    tracing::warn!("Server will operate in uninitialized state.");
+                }
+            }
         }
 
         if let Some(ref watch_path) = self.watch_path {
@@ -144,6 +161,15 @@ impl MCPServer {
 
         if leankg_dir_exists || leankg_yaml_exists {
             if leankg_dir_exists {
+                // Check if database actually exists - if not, we need to initialize
+                let db_file = leankg_path.join("leankg.db");
+                if !db_file.exists() {
+                    tracing::info!(
+                        "LeanKG .leankg directory exists but database not created, running full initialization for {}",
+                        project_root.display()
+                    );
+                    return self.run_full_init(project_root, leankg_path).await;
+                }
                 tracing::info!(
                     "LeanKG project already initialized at {}",
                     project_root.display()
@@ -237,6 +263,72 @@ impl MCPServer {
         Ok(())
     }
 
+    async fn run_full_init(&self, project_root: std::path::PathBuf, leankg_path: std::path::PathBuf) -> Result<(), String> {
+        // Ensure .leankg/leankg.yaml exists (will use defaults if not)
+        let config_path = project_root.join(".leankg/leankg.yaml");
+        if !config_path.exists() {
+            let config = crate::config::ProjectConfig::default();
+            let config_yaml = serde_yaml::to_string(&config)
+                .map_err(|e| format!("Failed to serialize config: {}", e))?;
+            std::fs::write(&config_path, config_yaml)
+                .map_err(|e| format!("Failed to write config: {}", e))?;
+        }
+
+        let db_path = leankg_path.clone();
+        tokio::fs::create_dir_all(&db_path)
+            .await
+            .map_err(|e| format!("Failed to create db path: {}", e))?;
+
+        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
+        let graph_engine = crate::graph::GraphEngine::new(db);
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
+
+        let root_str = project_root.to_string_lossy().to_string();
+        let files = crate::indexer::find_files_sync(&root_str)
+            .map_err(|e| format!("Find files error: {}", e))?;
+        let mut indexed = 0;
+
+        for file_path in &files {
+            if crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path)
+                .is_ok()
+            {
+                indexed += 1;
+            }
+        }
+
+        tracing::info!("Run-full-init: Indexed {} files", indexed);
+
+        if let Err(e) = graph_engine.resolve_call_edges() {
+            tracing::warn!("Run-full-init: Failed to resolve call edges: {}", e);
+        }
+
+        if let Ok(true) = project_root.join("docs").try_exists() {
+            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(
+                project_root.join("docs").as_path(),
+                &graph_engine,
+            ) {
+                tracing::info!(
+                    "Run-full-init: Indexed {} documents",
+                    doc_result.documents.len()
+                );
+            }
+        }
+
+        // Store the initialized graph engine and db path in server state
+        {
+            let mut db_path_guard = parking_lot::RwLock::write(&self.db_path);
+            *db_path_guard = db_path.clone();
+        }
+        let mut ge_guard = self.graph_engine.lock();
+        *ge_guard = Some(graph_engine);
+
+        tracing::info!("Run-full-init complete");
+        Ok(())
+    }
+
     async fn auto_index_if_needed(&self) -> Result<(), String> {
         let project_root = self.find_project_root()?;
         let config_path = project_root.join(".leankg/leankg.yaml");
@@ -258,9 +350,10 @@ impl MCPServer {
         let db_path = self.get_db_path();
         let db_file = db_path.join("leankg.db");
 
+        // If database doesn't exist, trigger full initialization (not just index)
         if !db_file.exists() {
-            tracing::info!("Database file does not exist, skipping auto-index");
-            return Ok(());
+            tracing::info!("Database file does not exist, triggering full initialization");
+            return Err("Database not initialized, need full init".to_string());
         }
 
         if !crate::indexer::GitAnalyzer::is_git_repo() {
