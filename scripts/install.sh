@@ -676,143 +676,87 @@ install_leankg_skill() {
     local skill_content=$(cat <<'EOF'
 ---
 name: using-leankg
-description: Use when user asks about codebase navigation, searching, finding code, impact analysis, or dependencies - LeanKG is the default grep replacement
+description: Use for ANY code search, navigation, or finding code logic - "where is X", "find logic Y", "how does Z work", impact analysis, dependencies. LeanKG is MANDATORY first.
 ---
 
 <EXTREMELY_IMPORTANT>
-If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.
+STRICT ENFORCEMENT: You MUST use LeanKG tools FIRST before ANY other method.
 
-IF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE.
+1. ALWAYS invoke `mcp_status` first to check LeanKG readiness
+2. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
+3. Use LeanKG tools for ALL searches
+4. ONLY fall back to RTK or grep if LeanKG returns EMPTY results
 
-This is not negotiable. This is not optional. You cannot rationalize your way out of this.
+**NO EXCEPTIONS. NO RATIONALIZATION. Use LeanKG first.**
 </EXTREMELY_IMPORTANT>
 
-## Codebase Search Flow: LeanKG -> RTK -> Grep
-
-**MANDATORY SEARCH HIERARCHY:**
+## MANDATORY Search Flow: LeanKG -> RTK -> Grep
 
 ```
-User asks "Where is X?" or searches for code
+When user asks "where is X", "find logic Y", "how does Z work", etc:
            |
            v
-1. LEANKG (Knowledge Graph) - Try first
-           |
-           +-- Has results --> Return results (token-optimized)
-           |
-           v (EMPTY)
-2. RTK (Retrieval Toolkit) - Try second
-           |
-           +-- Has results --> Return results
-           |
-           v (EMPTY)
-3. GREP (Fallback) - Last resort
+1. mcp_status (ALWAYS check first)
            |
            v
-Return grep results
+2. search_code("X") or find_function("X") or query_file("X")
+           |
+           +-- Results returned --> Use get_context(file) to read content
+           |
+           v (EMPTY)
+3. rtk grep "X" --path .
+           |
+           v (EMPTY)
+4. grep -rn "X" --include="*.rs"
 ```
 
-## Step 1: LeanKG (Knowledge Graph)
+## LeanKG MCP Tools (Use in this order)
 
-**Always try LeanKG MCP tools FIRST for all codebase searches.**
+| Step | Tool | When to Use |
+|------|------|-------------|
+| 1 | `mcp_status` | ALWAYS check first |
+| 2 | `search_code("X")` | Find code by name/type |
+| 3 | `find_function("X")` | Locate function definitions |
+| 4 | `query_file("*X*")` | Find files by name |
+| 5 | `get_impact_radius(file)` | Blast radius for changes |
+| 6 | `get_context(file)` | READ file content (token-optimized) |
+| 7 | `get_dependencies(file)` | Get imports |
+| 8 | `get_tested_by(file)` | Find tests |
 
-### Check Status
-```javascript
-mcp_status  // Check if LeanKG is ready
-```
+## Critical: After search_code returns file paths
 
-### If NOT Ready
-```javascript
-mcp_init    // Initialize LeanKG with project .leankg path
-mcp_index   // Force re-index if needed
-```
+**IMPORTANT:** When `search_code` returns results with file paths:
+1. Use `get_context(file_path)` to READ the actual file content
+2. Do NOT just report the file paths - show the code
 
-### LeanKG Tools
-
-| Tool | Purpose |
-|------|---------|
-| `search_code` | Search code elements by name/type |
-| `find_function` | Locate function definitions |
-| `query_file` | Find files by name/pattern |
-| `get_impact_radius` | Calculate blast radius (N hops) |
-| `get_dependencies` | Get direct imports |
-| `get_dependents` | Get files depending on target |
-| `get_tested_by` | Get test coverage for file |
-| `get_context` | Get AI-optimized context (token-optimized) |
-| `get_call_graph` | Get function call chains |
-| `find_large_functions` | Find oversized functions |
-| `get_clusters` | Get functional clusters |
-| `get_review_context` | Focused subgraph for reviews |
-| `detect_changes` | Pre-commit risk analysis |
-
-### Tool Mapping
-
-| Instead of | Use LeanKG |
-|------------|------------|
-| `grep -rn "X" --include="*.rs"` | `search_code("X")` or `find_function("X")` |
-| `find . -name "*X*"` | `query_file("*X*")` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| `grep -rn "X" tests/` | `get_tested_by(file)` |
-| Reading entire files | `get_context(file)` (~99% token savings) |
-
-## Step 2: RTK (Retrieval Toolkit)
-
-**If LeanKG returns EMPTY results, try RTK CLI.**
+## RTK Fallback (Only if LeanKG EMPTY)
 
 ```bash
-# RTK grep - compact grep output with context
 rtk grep "search term" --path .
-
-# RTK file search
 rtk file "pattern" --path .
-
-# RTK search with language filter
-rtk grep "search term" --include "*.rs" --path .
 ```
 
-## Step 3: Grep (Last Resort)
-
-**If RTK returns EMPTY, fall back to grep.**
+## Grep Fallback (LAST RESORT, only if RTK EMPTY too)
 
 ```bash
-# Rust
 grep -rn "X" --include="*.rs"
-
-# Go
-grep -rn "X" --include="*.go"
-
-# TypeScript
-grep -rn "X" --include="*.ts" --include="*.tsx"
-
-# Python
-grep -rn "X" --include="*.py"
 ```
 
-## Auto-Init Behavior
+## Common Triggers for LeanKG
 
-LeanKG automatically initializes on first use:
-- If `.leankg` does not exist, it creates one automatically
-- If index is stale (>5 min since last git commit), it re-indexes automatically
-- Set `auto_index_on_start: false` in `leankg.yaml` to disable
-
-## Token Optimization
-
-**Use compressed modes for large files:**
-
-| File Size | Mode | Command |
-|-----------|------|---------|
-| <100 lines | `full` | `leankg_ctx_read(file, mode: "full")` |
-| 100-500 lines | `adaptive` | `leankg_ctx_read(file, mode: "adaptive")` |
-| >500 lines | `signatures` | `leankg_ctx_read(file, mode: "signatures")` |
-
-**Context Retrieval Strategy:**
-1. First pass: `signatures` mode to understand structure
-2. Second pass: `adaptive` mode for specific files
-3. Third pass: `full` mode only when reading specific functions
+| User says... | LeanKG tool |
+|--------------|-------------|
+| "where is X" | `search_code("X")` or `find_function("X")` |
+| "find the logic" | `search_code("logic_name")` |
+| "how does X work" | `get_context(file)` after search_code |
+| "what calls X" | `get_call_graph("X")` |
+| "what breaks if I change X" | `get_impact_radius("X")` |
+| "find all files named X" | `query_file("X")` |
 EOF
 )
 
     if [ -f "$leankg_skill_dir/SKILL.md" ]; then
-        if grep -q "Codebase Search Flow: LeanKG" "$leankg_skill_dir/SKILL.md" 2>/dev/null; then
+        if grep -q "STRICT ENFORCEMENT" "$leankg_skill_dir/SKILL.md" 2>/dev/null; then
             echo "LeanKG skill already installed at $leankg_skill_dir"
             return
         fi
