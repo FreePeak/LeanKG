@@ -13,4 +13,5 @@ pub mod indexer;
 pub mod mcp;
 pub mod orchestrator;
 pub mod registry;
+pub mod runtime;
 pub mod watcher;

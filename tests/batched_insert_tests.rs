@@ -421,6 +421,38 @@ mod graph_batched_insert_tests {
         });
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_insert_elements_invalidates_cache_for_all_files() {
+        use leankg::graph::cache::QueryCache;
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = init_db(db_path.as_path()).unwrap();
+        
+        let cache = QueryCache::new(60, 100);
+        cache.set_dependencies("file1.rs".to_string(), vec!["dep1".to_string()]).await;
+        cache.set_dependencies("file2.rs".to_string(), vec!["dep2".to_string()]).await;
+        cache.set_dependencies("file3.rs".to_string(), vec!["dep3".to_string()]).await;
+        
+        let graph = GraphEngine::with_cache(db, cache.clone());
+        
+        let elements = vec![
+            create_code_element("func1", "file1.rs", 1),
+            create_code_element("func2", "file2.rs", 10),
+            create_code_element("func3", "file3.rs", 20),
+        ];
+        
+        // When inserting batched elements for 3 distinct files...
+        assert!(graph.insert_elements(&elements).is_ok());
+        
+        // We spawned invalidations asynchronously via global `OnceLock` runtime. Wait for propagation.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        
+        // Assert ALL 3 unique files' caches were strictly invalidated!
+        assert!(cache.get_dependencies("file1.rs").await.is_none(), "file1.rs cache wasn't invalidated");
+        assert!(cache.get_dependencies("file2.rs").await.is_none(), "file2.rs cache wasn't invalidated");
+        assert!(cache.get_dependencies("file3.rs").await.is_none(), "file3.rs cache wasn't invalidated");
+    }
+
     #[test]
     fn test_insert_elements_with_metadata() {
         with_test_db(|_db, graph, _tmp| {
@@ -497,6 +529,102 @@ mod graph_batched_insert_tests {
                 "tags": ["important", "core"]
             });
             assert!(graph.insert_relationships(&[rel]).is_ok());
+        });
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_insert_relationships_invalidates_cache_for_all_sources() {
+        use leankg::graph::cache::QueryCache;
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = init_db(db_path.as_path()).unwrap();
+        
+        let cache = QueryCache::new(60, 100);
+        cache.set_dependents("src/caller1.rs".to_string(), vec!["dep1".to_string()]).await;
+        cache.set_dependents("src/caller2.rs".to_string(), vec!["dep2".to_string()]).await;
+        cache.set_dependents("src/caller3.rs".to_string(), vec!["dep3".to_string()]).await;
+        
+        let graph = GraphEngine::with_cache(db, cache.clone());
+        
+        let rels = vec![
+            create_relationship("src/caller1.rs", "src/target.rs"),
+            create_relationship("src/caller2.rs", "src/target.rs"),
+            create_relationship("src/caller3.rs", "src/target.rs"),
+        ];
+        
+        // Assert we successfully pushed to graph
+        assert!(graph.insert_relationships(&rels).is_ok());
+        
+        // Wait for asynchronous global invalidation to hit
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        
+        // Assert caches are cleared iteratively across all batch sources!
+        assert!(cache.get_dependents("src/caller1.rs").await.is_none(), "src/caller1.rs cache wasn't invalidated");
+        assert!(cache.get_dependents("src/caller2.rs").await.is_none(), "src/caller2.rs cache wasn't invalidated");
+        assert!(cache.get_dependents("src/caller3.rs").await.is_none(), "src/caller3.rs cache wasn't invalidated");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_remove_elements_by_file_clears_cache() {
+        use leankg::graph::cache::QueryCache;
+        let tmp = TempDir::new().unwrap();
+        let db = init_db(tmp.path().join("test.db").as_path()).unwrap();
+        
+        let cache = QueryCache::new(60, 100);
+        cache.set_dependencies("src/victim.rs".to_string(), vec!["dep1".to_string()]).await;
+        cache.set_dependencies("src/bystander.rs".to_string(), vec!["dep2".to_string()]).await;
+        
+        let graph = GraphEngine::with_cache(db, cache.clone());
+        graph.insert_elements(&[create_code_element("func", "src/victim.rs", 1)]).unwrap();
+        
+        // Ensure cache is initially populated
+        assert!(cache.get_dependencies("src/victim.rs").await.is_some());
+        
+        // Remove file
+        if let Err(e) = graph.remove_elements_by_file("src/victim.rs") {
+            panic!("remove_elements_by_file failed: {:?}", e);
+        }
+        
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        
+        // Victim is wiped from DB and memory
+        assert!(cache.get_dependencies("src/victim.rs").await.is_none()); 
+        // Bystander remains
+        assert!(cache.get_dependencies("src/bystander.rs").await.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_remove_relationships_by_source_clears_cache() {
+        use leankg::graph::cache::QueryCache;
+        let tmp = TempDir::new().unwrap();
+        let db = init_db(tmp.path().join("test.db").as_path()).unwrap();
+        
+        let cache = QueryCache::new(60, 100);
+        cache.set_dependents("src/victim.rs".to_string(), vec!["dep1".to_string()]).await;
+        
+        let graph = GraphEngine::with_cache(db, cache.clone());
+        graph.insert_relationships(&[create_relationship("src/victim.rs", "src/dest.rs")]).unwrap();
+        
+        assert!(cache.get_dependents("src/victim.rs").await.is_some());
+        if let Err(e) = graph.remove_relationships_by_source("src/victim.rs") {
+            panic!("remove_relationships_by_source failed: {:?}", e);
+        }
+        
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(cache.get_dependents("src/victim.rs").await.is_none()); 
+    }
+
+    #[test]
+    fn test_find_element_parameterized_injection() {
+        with_test_db(|_db, graph, _tmp| {
+            let malicious_name = "func_name\"; DROP TABLE code_elements; --";
+            let element = create_code_element(malicious_name, "src/lib.rs", 1);
+            graph.insert_elements(&[element]).unwrap();
+
+            // Looking up the malicious string directly confirms strict parameterized binding handles the query safely
+            let retrieved = graph.find_element(&format!("src/lib.rs::{}", malicious_name)).unwrap();
+            assert!(retrieved.is_some());
+            assert_eq!(retrieved.unwrap().name, malicious_name);
         });
     }
 }

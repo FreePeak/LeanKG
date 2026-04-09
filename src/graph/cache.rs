@@ -3,8 +3,8 @@ use crate::graph::persistent_cache::PersistentCache;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
+use parking_lot::RwLock;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub struct CacheEntry<T> {
@@ -121,13 +121,13 @@ impl QueryCache {
 
     #[allow(dead_code)]
     pub async fn get_dependencies(&self, key: &str) -> Option<Vec<String>> {
-        if let Some(v) = self.dependencies.read().await.get(&key.to_string()) {
+        if let Some(v) = self.dependencies.read().get(&key.to_string()) {
             return Some(v);
         }
         if let Some(ref p) = self.persistent {
             let key_full = format!("deps:{}", key);
             if let Some(v) = p.get::<Vec<String>>(&key_full).await {
-                self.dependencies.write().await.insert(key.to_string(), v.clone());
+                self.dependencies.write().insert(key.to_string(), v.clone());
                 return Some(v);
             }
         }
@@ -135,7 +135,7 @@ impl QueryCache {
     }
 
     pub async fn set_dependencies(&self, key: String, value: Vec<String>) {
-        self.dependencies.write().await.insert(key.clone(), value.clone());
+        self.dependencies.write().insert(key.clone(), value.clone());
         if let Some(ref p) = self.persistent {
             let key_full = format!("deps:{}", key);
             p.insert::<String, Vec<String>>(key_full, value).await;
@@ -144,13 +144,13 @@ impl QueryCache {
 
     #[allow(dead_code)]
     pub async fn get_dependents(&self, key: &str) -> Option<Vec<String>> {
-        if let Some(v) = self.dependents.read().await.get(&key.to_string()) {
+        if let Some(v) = self.dependents.read().get(&key.to_string()) {
             return Some(v);
         }
         if let Some(ref p) = self.persistent {
             let key_full = format!("deps:{}", key);
             if let Some(v) = p.get::<Vec<String>>(&key_full).await {
-                self.dependents.write().await.insert(key.to_string(), v.clone());
+                self.dependents.write().insert(key.to_string(), v.clone());
                 return Some(v);
             }
         }
@@ -158,7 +158,7 @@ impl QueryCache {
     }
 
     pub async fn set_dependents(&self, key: String, value: Vec<String>) {
-        self.dependents.write().await.insert(key.clone(), value.clone());
+        self.dependents.write().insert(key.clone(), value.clone());
         if let Some(ref p) = self.persistent {
             let key_full = format!("deps:{}", key);
             p.insert::<String, Vec<String>>(key_full, value).await;
@@ -166,17 +166,17 @@ impl QueryCache {
     }
 
     pub async fn invalidate_file(&self, file_path: &str) {
-        self.dependencies.write().await.invalidate_prefix(file_path);
-        self.dependents.write().await.invalidate_prefix(file_path);
+        self.dependencies.write().invalidate_prefix(file_path);
+        self.dependents.write().invalidate_prefix(file_path);
         if let Some(ref p) = self.persistent {
             p.invalidate_prefix(&format!("deps:{}", file_path)).await;
         }
     }
 
     #[allow(dead_code)]
-    pub async fn clear(&self) {
-        self.dependencies.write().await.clear();
-        self.dependents.write().await.clear();
+    pub fn clear(&self) {
+        self.dependencies.write().clear();
+        self.dependents.write().clear();
     }
 }
 
@@ -210,24 +210,25 @@ mod tests {
         assert!(cache.get(&"key3").is_some());
     }
 
-    #[tokio::test]
-    async fn test_query_cache_dependencies() {
+    #[test]
+    fn test_query_cache_dependencies() {
         let cache = QueryCache::new(60, 100);
-        cache
-            .set_dependencies("file1.rs".to_string(), vec!["file2.rs".to_string()])
-            .await;
-        let result = cache.get_dependencies("file1.rs").await;
-        assert_eq!(result, Some(vec!["file2.rs".to_string()]));
+        
+        crate::runtime::run_blocking(async {
+            cache.set_dependencies("file1.rs".to_string(), vec!["file2.rs".to_string()]).await;
+            let result = cache.get_dependencies("file1.rs").await;
+            assert_eq!(result, Some(vec!["file2.rs".to_string()]));
+        });
     }
 
-    #[tokio::test]
-    async fn test_query_cache_invalidate() {
+    #[test]
+    fn test_query_cache_invalidate() {
         let cache = QueryCache::new(60, 100);
-        cache
-            .set_dependencies("src/file1.rs".to_string(), vec!["file2.rs".to_string()])
-            .await;
-        cache.invalidate_file("src/file1.rs").await;
-        let result = cache.get_dependencies("src/file1.rs").await;
-        assert_eq!(result, None);
+        crate::runtime::run_blocking(async {
+            cache.set_dependencies("src/file1.rs".to_string(), vec!["file2.rs".to_string()]).await;
+            cache.invalidate_file("src/file1.rs").await;
+            let result = cache.get_dependencies("src/file1.rs").await;
+            assert_eq!(result, None);
+        });
     }
 }

@@ -453,7 +453,7 @@ pub struct IndexWithProgressResult {
 
 pub async fn index_with_progress<F>(
     graph: &GraphEngine,
-    parser_manager: &mut ParserManager,
+    _parser_manager: &mut ParserManager,
     path: &str,
     progress_callback: F,
 ) -> Result<IndexWithProgressResult, Box<dyn std::error::Error + Send + Sync + 'static>>
@@ -470,16 +470,30 @@ where
         }
     };
     let total_files = files.len();
+    let progress = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let results: Vec<(String, Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>>)> = files
+        .par_iter()
+        .map(|file_path| {
+            let count = progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            progress_callback(count, file_path);
+            let parsed = extract_elements_for_file(file_path);
+            (file_path.clone(), parsed)
+        })
+        .collect();
+
     let mut indexed_files = 0;
     let mut skipped_files = 0;
+    let mut all_elements = Vec::new();
+    let mut all_relationships = Vec::new();
 
-    for (idx, file_path) in files.iter().enumerate() {
-        progress_callback(idx, file_path);
-
-        match index_file_sync(graph, parser_manager, file_path) {
-            Ok(count) => {
-                if count > 0 {
+    for (file_path, result) in results {
+        match result {
+            Ok(parsed) => {
+                if parsed.element_count > 0 || !parsed.elements.is_empty() || !parsed.relationships.is_empty() {
                     indexed_files += 1;
+                    all_elements.extend(parsed.elements);
+                    all_relationships.extend(parsed.relationships);
                 } else {
                     skipped_files += 1;
                 }
@@ -488,6 +502,18 @@ where
                 tracing::warn!("Failed to index {}: {}", file_path, e);
                 skipped_files += 1;
             }
+        }
+    }
+
+    if !all_elements.is_empty() {
+        if let Err(e) = graph.insert_elements(&all_elements) {
+            tracing::warn!("Failed to batch insert elements: {}", e);
+        }
+    }
+    
+    if !all_relationships.is_empty() {
+        if let Err(e) = graph.insert_relationships(&all_relationships) {
+            tracing::warn!("Failed to batch insert relationships: {}", e);
         }
     }
 

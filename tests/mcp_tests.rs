@@ -181,7 +181,7 @@ mod handler_tests {
         (ToolHandler::new(graph, db_path), tmp)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_query_file_empty() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -194,7 +194,7 @@ mod handler_tests {
         assert!(value.get("files").is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_query_file_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -204,7 +204,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("pattern"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_dependencies_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -214,7 +214,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_dependents_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -224,7 +224,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_impact_radius_missing_params() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -233,7 +233,7 @@ mod handler_tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_review_context_missing_params() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -243,7 +243,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("files"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_find_function_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -253,7 +253,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("name"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_call_graph_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -263,7 +263,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("function"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_search_code_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -273,7 +273,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("query"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_unknown_tool() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -283,7 +283,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("Unknown tool"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_context_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -293,7 +293,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_generate_doc_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -303,7 +303,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_find_large_functions_default() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -316,7 +316,7 @@ mod handler_tests {
         assert!(value.get("large_functions").is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_tested_by_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -331,7 +331,7 @@ mod handler_tests {
 mod server_tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mcp_server_creation() {
         let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
         let _guard = server.auth_config_read().await;

@@ -5,7 +5,7 @@ use leankg::graph::GraphEngine;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_comprehensive_agents_md() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -26,7 +26,7 @@ async fn test_doc_generator_comprehensive_agents_md() {
     assert!(content.contains("This codebase contains 0 elements"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_comprehensive_claude_md() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -48,7 +48,7 @@ async fn test_doc_generator_comprehensive_claude_md() {
     assert!(content.contains("## Context Guidelines for AI"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_sync_result_structure() {
     let result = DocSyncResult {
         file_path: "src/main.rs".to_string(),
@@ -66,7 +66,7 @@ async fn test_doc_sync_result_structure() {
     assert_eq!(result.regenerated_elements.len(), 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_tracking_info_structure() {
     let element = CodeElement {
         qualified_name: "src/main.rs::main".to_string(),
@@ -111,7 +111,7 @@ async fn test_doc_tracking_info_structure() {
     assert_eq!(tracking_info.generated_from.len(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_template_engine_render_template() {
     use std::collections::HashMap;
 
@@ -124,7 +124,7 @@ async fn test_template_engine_render_template() {
     assert_eq!(result, "Hello Alice, you are a developer.");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_template_engine_render_template_missing_var() {
     use std::collections::HashMap;
 
@@ -136,7 +136,7 @@ async fn test_template_engine_render_template_missing_var() {
     assert_eq!(result, "Hello Bob, your email is {{email}}.");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_template_engine_default_agents_template() {
     let template = TemplateEngine::get_default_agents_template();
     assert!(template.contains("# Agent Guidelines for {{project_name}}"));
@@ -147,7 +147,7 @@ async fn test_template_engine_default_agents_template() {
     assert!(template.contains("## Code Structure Overview"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_template_engine_default_claude_template() {
     let template = TemplateEngine::get_default_claude_template();
     assert!(template.contains("# CLAUDE.md"));
@@ -160,7 +160,7 @@ async fn test_template_engine_default_claude_template() {
     assert!(template.contains("{{relationship_count}}"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_with_elements() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -192,7 +192,7 @@ async fn test_doc_generator_with_elements() {
     assert!(content.contains("src/main.rs::main"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_regenerate_for_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -221,7 +221,7 @@ async fn test_doc_generator_regenerate_for_file() {
     assert_eq!(result[0], "src/main.rs::main");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_tracking_info() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -251,7 +251,7 @@ async fn test_doc_generator_tracking_info() {
     assert_eq!(info.element.qualified_name, "src/main.rs::main");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_tracking_info_not_found() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");

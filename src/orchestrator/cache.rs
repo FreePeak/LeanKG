@@ -89,8 +89,7 @@ impl OrchestratorCache {
         );
         if let Some(ref p) = self.persistent {
             let key_full = format!("orch:{}", key);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(p.insert::<String, CachedContent>(key_full, value_clone));
+            crate::runtime::run_blocking(p.insert::<String, CachedContent>(key_full, value_clone));
         }
     }
 
@@ -98,16 +97,14 @@ impl OrchestratorCache {
         self.data.remove(key);
         if let Some(ref p) = self.persistent {
             let key_full = format!("orch:{}", key);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(p.invalidate(&key_full));
+            crate::runtime::run_blocking(p.invalidate(&key_full));
         }
     }
 
     pub fn invalidate_prefix(&mut self, prefix: &str) {
         self.data.retain(|k, _| !k.starts_with(prefix));
         if let Some(ref p) = self.persistent {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(p.invalidate_prefix(&format!("orch:{}", prefix)));
+            crate::runtime::run_blocking(p.invalidate_prefix(&format!("orch:{}", prefix)));
         }
     }
 

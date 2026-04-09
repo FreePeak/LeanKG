@@ -135,8 +135,7 @@ impl AppState {
     }
 
     pub fn get_db(&self) -> Result<CozoDb, Box<dyn std::error::Error + Send + Sync>> {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        crate::runtime::run_blocking(async {
             let lock = self.db.read().await;
             lock.clone()
                 .ok_or_else(|| "Database not initialized".into())

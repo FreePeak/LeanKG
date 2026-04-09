@@ -12,6 +12,7 @@ mod indexer;
 mod mcp;
 mod orchestrator;
 mod registry;
+mod runtime;
 mod watcher;
 mod web;
 

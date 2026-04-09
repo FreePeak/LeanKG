@@ -7,7 +7,7 @@ use leankg::indexer::{find_files_sync, index_file_sync, ParserManager};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_empty_dir() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path().to_str().unwrap();
@@ -15,7 +15,7 @@ async fn test_find_files_empty_dir() {
     assert!(files.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_discovers_go_files() {
     let tmp = TempDir::new().unwrap();
     let go_file = tmp.path().join("main.go");
@@ -25,7 +25,7 @@ async fn test_find_files_discovers_go_files() {
     assert!(files.iter().any(|f| f.ends_with("main.go")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_excludes_node_modules() {
     let tmp = TempDir::new().unwrap();
     let node_dir = tmp.path().join("node_modules").join("pkg");
@@ -35,7 +35,7 @@ async fn test_find_files_excludes_node_modules() {
     assert!(!files.iter().any(|f| f.contains("node_modules")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_in_nested_dirs() {
     let tmp = TempDir::new().unwrap();
     let nested = tmp.path().join("a").join("b").join("c");
@@ -45,7 +45,7 @@ async fn test_find_files_in_nested_dirs() {
     assert!(files.iter().any(|f| f.ends_with("lib.py")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_init_db_creates_schema() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -53,7 +53,7 @@ async fn test_init_db_creates_schema() {
     assert!(db_path.exists() || std::path::Path::new(db_path.parent().unwrap()).exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_graph_engine_all_elements_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -63,7 +63,7 @@ async fn test_graph_engine_all_elements_empty() {
     assert!(elements.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_graph_engine_find_element_missing() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -73,7 +73,7 @@ async fn test_graph_engine_find_element_missing() {
     assert!(result.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_impact_analyzer_empty_graph() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -86,7 +86,7 @@ async fn test_impact_analyzer_empty_graph() {
     assert!(result.affected_elements.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_agents_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -100,7 +100,7 @@ async fn test_doc_generator_agents_md_empty() {
     assert!(content.contains("## Code Structure Overview"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_claude_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -114,7 +114,7 @@ async fn test_doc_generator_claude_md_empty() {
     assert!(content.contains("## Context Statistics"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_sync_for_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -142,7 +142,7 @@ async fn test_doc_sync_for_file() {
     assert!(result.elements_regenerated > 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_index_file_go() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -164,7 +164,7 @@ async fn test_index_file_go() {
     assert!(count > 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_discovers_java_files() {
     let tmp = TempDir::new().unwrap();
     let java_dir = tmp.path().join("com").join("example");
@@ -179,7 +179,7 @@ async fn test_find_files_discovers_java_files() {
     assert!(files.iter().any(|f| f.ends_with("Main.java")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_index_file_java() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -209,7 +209,7 @@ async fn test_index_file_java() {
     assert_eq!(java_classes[0].name, "UserService");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_get_relationships_with_real_db() {
     // Use the real .leankg database from current dir
     let db_path = std::path::Path::new(".leankg");
@@ -250,7 +250,7 @@ async fn test_get_relationships_with_real_db() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_get_dependencies_with_real_db() {
     let db_path = std::path::Path::new(".leankg");
     if !db_path.exists() {
@@ -287,7 +287,7 @@ async fn test_get_dependencies_with_real_db() {
     println!("Confirmed: path normalization works - found {} import relationships", result.rows.len());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_get_call_graph_with_real_db() {
     let db_path = std::path::Path::new(".leankg");
     if !db_path.exists() {
@@ -313,7 +313,7 @@ async fn test_get_call_graph_with_real_db() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_persistent_cache_hit_after_insert() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg_cache_test.db");
@@ -352,7 +352,7 @@ async fn test_persistent_cache_hit_after_insert() {
     assert_eq!(deps_first.len(), deps_second.len(), "Cache hit should return same count");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_persistent_cache_hit_on_second_call() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg_cache_survive_test.db");
