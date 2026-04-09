@@ -233,6 +233,9 @@ pub enum CLICommand {
         /// Run cleanup to remove old metrics
         #[arg(long)]
         cleanup: bool,
+        /// Seed test metrics data
+        #[arg(long)]
+        seed: bool,
     },
 }
 

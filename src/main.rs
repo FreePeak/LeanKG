@@ -294,9 +294,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             reset,
             retention,
             cleanup,
+            seed,
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
+            
+            if seed {
+                seed_test_metrics(&db_path)?;
+                return Ok(());
+            }
+            
             show_metrics(
                 &db_path,
                 since.as_deref(),
@@ -1273,6 +1280,52 @@ fn show_metrics(
         println!("\nSession: Showing current session metrics not yet implemented");
     }
 
+    Ok(())
+}
+
+fn seed_test_metrics(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    
+    let test_metrics = vec![
+        ("seed1", "search_code", now - 100, 150i32, 45i32, 12i32, 25i32, 12000i32, 5000i32, 11955i32, 99.6f64, true),
+        ("seed2", "get_context", now - 90, 200i32, 35i32, 8i32, 18i32, 8000i32, 3200i32, 7965i32, 99.6f64, true),
+        ("seed3", "find_function", now - 80, 80i32, 28i32, 5i32, 12i32, 6000i32, 2400i32, 5972i32, 99.5f64, true),
+        ("seed4", "search_code", now - 70, 120i32, 52i32, 15i32, 30i32, 14000i32, 5800i32, 13948i32, 99.6f64, true),
+        ("seed5", "get_impact_radius", now - 60, 300i32, 180i32, 25i32, 45i32, 25000i32, 10000i32, 24820i32, 99.3f64, true),
+    ];
+    
+    for (id, tool, ts, inp, out, elem, ms, base, lines, saved, pct, success) in &test_metrics {
+        let metric = db::models::ContextMetric {
+            tool_name: tool.to_string(),
+            timestamp: *ts,
+            project_path: "/test".to_string(),
+            input_tokens: *inp,
+            output_tokens: *out,
+            output_elements: *elem,
+            execution_time_ms: *ms,
+            baseline_tokens: *base,
+            baseline_lines_scanned: *lines,
+            tokens_saved: *saved,
+            savings_percent: *pct,
+            correct_elements: Some(*elem),
+            total_expected: Some(*elem + 2),
+            f1_score: Some(0.85),
+            query_pattern: Some("name".to_string()),
+            query_file: Some("src/*.rs".to_string()),
+            query_depth: Some(2),
+            success: *success,
+            is_deleted: false,
+        };
+        db::record_metric(&db, &metric)?;
+        println!("Seeded metric: {} ({})", id, tool);
+    }
+    
+    println!("Seeded {} test metrics", test_metrics.len());
     Ok(())
 }
 

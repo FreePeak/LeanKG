@@ -153,7 +153,6 @@ pub struct Document {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextMetric {
-    pub id: String,
     pub tool_name: String,
     pub timestamp: i64,
     pub project_path: String,
@@ -172,6 +171,8 @@ pub struct ContextMetric {
     pub query_file: Option<String>,
     pub query_depth: Option<i32>,
     pub success: bool,
+    #[serde(default)]
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

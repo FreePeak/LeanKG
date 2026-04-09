@@ -207,7 +207,6 @@ impl ToolHandler {
         };
 
         let metric = ContextMetric {
-            id: uuid::Uuid::new_v4().to_string(),
             tool_name: tool_name.to_string(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -229,6 +228,7 @@ impl ToolHandler {
             query_file: arguments["file"].as_str().map(String::from),
             query_depth: arguments["depth"].as_i64().map(|d| d as i32),
             success,
+            is_deleted: false,
         };
 
         if let Err(e) = record_metric(self.graph_engine.db(), &metric) {

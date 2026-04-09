@@ -518,13 +518,9 @@ pub fn record_metric(
     db: &CozoDb,
     metric: &models::ContextMetric,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let query = r#"?[] <- [[ $id, $tool, $ts, $path, $in_tok, $out_tok, $out_elem, $exec_ms, $base_tok, $base_lines, $saved, $sav_pct, $correct, $total, $f1, $qpat, $qfile, $qdepth, $success ]] :put context_metrics { id, tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success }"#;
+    let query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] <- [[ $tool, $ts, $path, $in_tok, $out_tok, $out_elem, $exec_ms, $base_tok, $base_lines, $saved, $sav_pct, $correct, $total, $f1, $qpat, $qfile, $qdepth, $success, false ]] :put context_metrics { tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted }"#;
 
     let mut params = std::collections::BTreeMap::new();
-    params.insert(
-        "id".to_string(),
-        serde_json::Value::String(metric.id.clone()),
-    );
     params.insert(
         "tool".to_string(),
         serde_json::Value::String(metric.tool_name.clone()),
@@ -646,31 +642,17 @@ pub fn get_metrics_summary(
         serde_json::Value::Number(cutoff_timestamp.into()),
     );
 
-    let tool_filter_clause = if let Some(tool) = tool_filter {
+    let query = if tool_filter.is_some() {
         params.insert(
             "tool".to_string(),
-            serde_json::Value::String(tool.to_string()),
+            serde_json::Value::String(tool_filter.unwrap().to_string()),
         );
-        ", tool_name = $tool"
+        r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted], timestamp >= $cutoff, tool_name = $tool, is_deleted = false"#
     } else {
-        ""
+        r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted], timestamp >= $cutoff, is_deleted = false"#
     };
 
-    let query_base = if tool_filter.is_some() {
-        r#"?[calls, saved, avg_pct] := 
-            *context_metrics[timestamp >= $cutoff, tool_name = $tool],
-            calls := count(),
-            saved := sum(tokens_saved),
-            avg_pct := avg(savings_percent)"#
-    } else {
-        r#"?[calls, saved, avg_pct] := 
-            *context_metrics[timestamp >= $cutoff],
-            calls := count(),
-            saved := sum(tokens_saved),
-            avg_pct := avg(savings_percent)"#
-    };
-
-    let result = db.run_script(query_base, params.clone())?;
+    let result = db.run_script(query, params.clone())?;
 
     let mut summary = models::MetricsSummary {
         total_invocations: 0,
@@ -681,35 +663,38 @@ pub fn get_metrics_summary(
         by_day: Vec::new(),
     };
 
-    if let Some(row) = result.rows.first() {
-        summary.total_invocations = row[0].as_i64().unwrap_or(0);
-        summary.total_tokens_saved = row[1].as_i64().unwrap_or(0);
-        summary.average_savings_percent = row[2].as_f64().unwrap_or(0.0);
+    let mut sum_savings_percent = 0.0;
+    let mut by_tool_map: std::collections::HashMap<String, (i64, i64, f64)> =
+        std::collections::HashMap::new();
+
+    for row in &result.rows {
+        summary.total_invocations += 1;
+        let saved = row[9].as_i64().unwrap_or(0);
+        summary.total_tokens_saved += saved;
+        let pct = row[10].as_f64().unwrap_or(0.0);
+        sum_savings_percent += pct;
+
+        let tool_name = row[0].as_str().unwrap_or("unknown").to_string();
+        let entry = by_tool_map.entry(tool_name.clone()).or_insert((0, 0, 0.0));
+        entry.0 += 1;
+        entry.1 += saved;
+        entry.2 += pct;
     }
 
-    let by_tool_query = if tool_filter.is_some() {
-        r#"?[tool_name, calls, total_saved, avg_pct] :=
-            *context_metrics[timestamp >= $cutoff, tool_name = $tool],
-            tool_name = $tool,
-            calls := count(),
-            total_saved := sum(tokens_saved),
-            avg_pct := avg(savings_percent)"#
-    } else {
-        r#"?[tool_name, calls, total_saved, avg_pct] :=
-            *context_metrics[timestamp >= $cutoff],
-            tool_name = $tool,
-            calls := count(),
-            total_saved := sum(tokens_saved),
-            avg_pct := avg(savings_percent)"#
-    };
+    if summary.total_invocations > 0 {
+        summary.average_savings_percent = sum_savings_percent / summary.total_invocations as f64;
+    }
 
-    let by_tool_result = db.run_script(by_tool_query, params)?;
-    for row in by_tool_result.rows {
+    for (tool_name, (calls, total_saved, sum_pct)) in by_tool_map {
         summary.by_tool.push(models::ToolMetrics {
-            tool_name: row[0].as_str().unwrap_or("").to_string(),
-            calls: row[1].as_i64().unwrap_or(0),
-            total_saved: row[2].as_i64().unwrap_or(0),
-            avg_savings_percent: row[3].as_f64().unwrap_or(0.0),
+            tool_name,
+            calls,
+            total_saved,
+            avg_savings_percent: if calls > 0 {
+                sum_pct / calls as f64
+            } else {
+                0.0
+            },
         });
     }
 
@@ -726,10 +711,7 @@ pub fn cleanup_old_metrics(
         .as_secs() as i64
         - (retention_days as i64 * 24 * 60 * 60);
 
-    let query = r#"
-        ::count_before_delete
-        ?[count] := *context_metrics[timestamp < $cutoff], count := count()
-    "#;
+    let count_query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted], timestamp < $cutoff"#;
 
     let mut params = std::collections::BTreeMap::new();
     params.insert(
@@ -737,33 +719,35 @@ pub fn cleanup_old_metrics(
         serde_json::Value::Number(cutoff_timestamp.into()),
     );
 
-    let count_result = db.run_script(query, params.clone())?;
-    let deleted_count = count_result
-        .rows
-        .first()
-        .and_then(|r| r[0].as_i64())
-        .unwrap_or(0);
+    let count_result = db.run_script(count_query, params)?;
+    let deleted_count = count_result.rows.len() as i64;
 
-    let delete_query = r#"::remove .context_metrics where timestamp < $cutoff"#;
-    db.run_script(delete_query, params)?;
+    if deleted_count > 0 {
+        let mut delete_params = std::collections::BTreeMap::new();
+        delete_params.insert(
+            "cutoff".to_string(),
+            serde_json::Value::Number(cutoff_timestamp.into()),
+        );
+        let delete_query = r#":delete context_metrics where timestamp < $cutoff"#;
+        if let Err(e) = db.run_script(delete_query, delete_params) {
+            eprintln!("Warning: cleanup delete failed: {}", e);
+        }
+    }
 
     Ok(deleted_count)
 }
 
 pub fn reset_metrics(db: &CozoDb) -> Result<i64, Box<dyn std::error::Error>> {
-    let query = r#"
-        ::count_before_delete
-        ?[count] := *context_metrics[], count := count()
-    "#;
-    let count_result = db.run_script(query, Default::default())?;
-    let deleted_count = count_result
-        .rows
-        .first()
-        .and_then(|r| r[0].as_i64())
-        .unwrap_or(0);
+    let count_query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted]"#;
 
-    let delete_all = r#"::remove .context_metrics"#;
-    db.run_script(delete_all, Default::default())?;
-
+    let count_result = db.run_script(count_query, Default::default())?;
+    let deleted_count = count_result.rows.len() as i64;
+    if deleted_count > 0 {
+        let delete_query =
+            r#":delete context_metrics where tool_name != "NON_EXISTENT_TOOL_NAME_123456789""#;
+        if let Err(e) = db.run_script(delete_query, Default::default()) {
+            eprintln!("Warning: reset delete failed: {}", e);
+        }
+    }
     Ok(deleted_count)
 }

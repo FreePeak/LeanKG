@@ -64,7 +64,7 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if !existing_relations.contains("context_metrics") {
-        let create_context_metrics = r#":create context_metrics {id: String, tool_name: String, timestamp: Int, project_path: String, input_tokens: Int, output_tokens: Int, output_elements: Int, execution_time_ms: Int, baseline_tokens: Int, baseline_lines_scanned: Int, tokens_saved: Int, savings_percent: Float, correct_elements: Int?, total_expected: Int?, f1_score: Float?, query_pattern: String?, query_file: String?, query_depth: Int?, success: Bool}"#;
+        let create_context_metrics = r#":create context_metrics {tool_name: String, timestamp: Int, project_path: String, input_tokens: Int, output_tokens: Int, output_elements: Int, execution_time_ms: Int, baseline_tokens: Int, baseline_lines_scanned: Int, tokens_saved: Int, savings_percent: Float, correct_elements: Int?, total_expected: Int?, f1_score: Float?, query_pattern: String?, query_file: String?, query_depth: Int?, success: Bool, is_deleted: Bool}"#;
         if let Err(e) = db.run_script(create_context_metrics, Default::default()) {
             eprintln!("Failed to create context_metrics: {:?}", e);
         }
