@@ -254,16 +254,32 @@ configure_cursor() {
     local config_dir="$HOME/.cursor"
     local config_file="$config_dir/mcp.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    local needs_update=false
 
     mkdir -p "$config_dir"
 
     if [ -f "$config_file" ]; then
-        local content
-        content=$(cat "$config_file")
-        if echo "$content" | grep -q "leankg"; then
-            echo "LeanKG already configured in Cursor"
+        local current_path
+        current_path=$(jq -r '.mcpServers.leankg.command // empty' "$config_file" 2>/dev/null)
+        local current_args
+        current_args=$(jq -r '.mcpServers.leankg.args // [] | join(" ")' "$config_file" 2>/dev/null)
+        
+        if [ -n "$current_path" ]; then
+            if [ "$current_path" != "$leankg_path" ]; then
+                echo "Updating LeanKG binary path for Cursor: $current_path -> $leankg_path"
+                needs_update=true
+            fi
+            if ! echo "$current_args" | grep -q "\-\-watch"; then
+                echo "Adding --watch flag to LeanKG for Cursor"
+                needs_update=true
+            fi
+        fi
+        
+        if [ "$needs_update" = false ]; then
+            echo "LeanKG already properly configured in Cursor"
             return
         fi
+        
         local tmp_file
         tmp_file=$(mktemp)
         cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
@@ -277,35 +293,46 @@ configure_cursor() {
 configure_claude() {
     local config_file="$HOME/.claude/mcp_settings.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    local needs_update=false
 
     mkdir -p "$(dirname "$config_file")"
 
-    # Check if file exists and has content
-    local has_content=false
     if [ -f "$config_file" ] && [ -s "$config_file" ]; then
-        local content
-        content=$(cat "$config_file")
-        if echo "$content" | grep -q "leankg"; then
-            echo "LeanKG already configured in Claude Code"
+        local current_path
+        current_path=$(jq -r '.mcpServers.leankg.command // empty' "$config_file" 2>/dev/null)
+        local current_args
+        current_args=$(jq -r '.mcpServers.leankg.args // [] | join(" ")' "$config_file" 2>/dev/null)
+        
+        if [ -n "$current_path" ]; then
+            if [ "$current_path" != "$leankg_path" ]; then
+                echo "Updating LeanKG binary path for Claude Code: $current_path -> $leankg_path"
+                needs_update=true
+            fi
+            if ! echo "$current_args" | grep -q "\-\-watch"; then
+                echo "Adding --watch flag to LeanKG for Claude Code"
+                needs_update=true
+            fi
+        fi
+        
+        if [ "$needs_update" = false ]; then
+            echo "LeanKG already properly configured in Claude Code"
             return
         fi
-        has_content=true
-    fi
-
-    # Initialize or ensure valid JSON structure
-    if [ "$has_content" = false ]; then
-        cat > "$config_file" <<EOF
-{
-  "mcpServers": {}
-}
-EOF
     fi
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+    cat "$config_file" 2>/dev/null | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file" || cat > "$tmp_file" <<EOF
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "$leankg_path",
+      "args": ["mcp-stdio", "--watch"]
+    }
+  }
+}
+EOF
     mv "$tmp_file" "$config_file"
-
     echo "Configured LeanKG for Claude Code at $config_file"
 }
 
@@ -443,15 +470,12 @@ BOOTSTRAPEOF
 
 setup_cursor_hooks() {
     local plugin_dir="$HOME/.cursor/plugins/leankg"
+    local hooks_installed=false
     
-    if [ -d "$plugin_dir/hooks" ]; then
-        echo "LeanKG hooks already configured for Cursor"
-        return
-    fi
-    
-    mkdir -p "$plugin_dir/hooks"
-    
-    cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
+    if [ ! -d "$plugin_dir/hooks" ]; then
+        mkdir -p "$plugin_dir/hooks"
+        
+        cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
 {
   "version": 1,
   "hooks": {
@@ -464,7 +488,7 @@ setup_cursor_hooks() {
 }
 EOF
 
-    cat > "$plugin_dir/hooks/session-start" <<'HOOKEOF'
+        cat > "$plugin_dir/hooks/session-start" <<'HOOKEOF'
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -485,30 +509,98 @@ printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
 exit 0
 HOOKEOF
 
-    chmod +x "$plugin_dir/hooks/session-start"
+        chmod +x "$plugin_dir/hooks/session-start"
+        hooks_installed=true
+    fi
     
-    echo "Configured LeanKG hooks for Cursor"
+    if [ ! -f "$plugin_dir/leankg-bootstrap.md" ]; then
+        cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
+# LeanKG Bootstrap
+
+LeanKG is a lightweight knowledge graph for codebase understanding.
+
+**Auto-Activated Tools:**
+- `mcp_status` - Check if LeanKG is initialized
+- `mcp_init` - Initialize LeanKG for a project
+- `mcp_index` - Index codebase
+- `search_code` - Search code elements by name/type
+- `find_function` - Locate function definitions
+- `get_impact_radius` - Calculate blast radius of changes
+- `get_dependencies` - Get direct imports of a file
+- `get_dependents` - Get files depending on target
+- `get_context` - Get AI-optimized context for a file
+- `get_tested_by` - Get test coverage info
+- `query_file` - Find files by name/pattern
+- `get_call_graph` - Get function call chains
+- `find_large_functions` - Find oversized functions
+- `get_doc_for_file` - Get documentation for a file
+- `get_traceability` - Get full traceability chain
+- `get_code_tree` - Get codebase structure
+- `get_clusters` - Get functional clusters
+- `detect_changes` - Pre-commit risk analysis
+
+**MANDATORY WORKFLOW: LeanKG First, Grep Fallback**
+
+Before ANY codebase search/navigation, you MUST:
+
+1. Check if LeanKG is available via `mcp_status`
+2. If LeanKG is not initialized, run `mcp_init` first
+3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
+
+| Instead of | Use LeanKG |
+|------------|------------|
+| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
+| glob + content search for tests | `get_tested_by` |
+| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
+| Reading entire files | `get_context` (token-optimized) |
+BOOTSTRAPEOF
+        echo "Created leankg-bootstrap.md for Cursor"
+    fi
+    
+    if [ "$hooks_installed" = true ]; then
+        echo "Configured LeanKG hooks for Cursor"
+    else
+        echo "LeanKG hooks already configured for Cursor"
+    fi
 }
 
 configure_kilo() {
     local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/kilo"
     local config_file="$config_dir/kilo.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    local needs_update=false
 
     mkdir -p "$config_dir"
 
     if [ -f "$config_file" ]; then
-        local content
-        content=$(cat "$config_file")
-        if echo "$content" | grep -q "leankg"; then
-            echo "LeanKG already configured in Kilo"
+        local current_path
+        current_path=$(jq -r '.mcp.leankg.command[0] // empty' "$config_file" 2>/dev/null)
+        local current_args
+        current_args=$(jq -r '.mcp.leankg.command[1,2,3] // [] | join(" ")' "$config_file" 2>/dev/null)
+        
+        if [ -n "$current_path" ]; then
+            if [ "$current_path" != "$leankg_path" ]; then
+                echo "Updating LeanKG binary path for Kilo: $current_path -> $leankg_path"
+                needs_update=true
+            fi
+            if ! echo "$current_args" | grep -q "\-\-watch"; then
+                echo "Adding --watch flag to LeanKG for Kilo"
+                needs_update=true
+            fi
+        fi
+        
+        if [ "$needs_update" = false ]; then
+            echo "LeanKG already properly configured in Kilo"
             return
         fi
+    else
+        needs_update=true
     fi
 
     local tmp_file
     tmp_file=$(mktemp)
-    if [ -f "$config_file" ]; then
+    if [ -f "$config_file" ] && [ "$needs_update" = true ]; then
         cat "$config_file" | jq --arg leankg "$leankg_path" '.mcp.leankg = {"type": "local", "command": [$leankg_path, "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
     else
         cat > "$tmp_file" <<EOF
