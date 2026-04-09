@@ -73,3 +73,11 @@ When the MCP server starts with an existing LeanKG project, it checks if the ind
 ## Fallback
 
 If the MCP server reports "LeanKG not initialized", manually run `leankg init` in your project directory, then restart the AI tool.
+
+## Path Normalization
+
+LeanKG automatically handles path formats with or without `./` prefix. For example, these are equivalent:
+- `src/main.rs`
+- `./src/main.rs`
+
+This applies to all query tools: `get_dependencies`, `get_dependents`, `get_impact_radius`, `get_call_graph`, etc.
