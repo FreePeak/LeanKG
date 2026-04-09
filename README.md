@@ -52,12 +52,12 @@ This installs:
 
 **Supported targets:**
 
-| Target | AI Tool | MCP Config | Agent Instructions |
-|--------|---------|------------|-------------------|
+| Target | AI Tool | Global Install | Agent Instructions |
+|--------|---------|--------------|-------------------|
 | `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md` |
-| `cursor` | Cursor AI | `~/.cursor/mcp.json` | `~/.cursor/AGENTS.md` |
+| `cursor` | Cursor AI | None (per-project MCP) | `~/.cursor/AGENTS.md` |
 | `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` | `~/.config/claude/CLAUDE.md` |
-| `gemini` | Gemini CLI / Google Antigravity | `~/.config/gemini-cli/mcp.json` / `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/GEMINI.md` |
+| `gemini` | Gemini CLI / Google Antigravity | `~/.config/gemini-cli/mcp.json` | `~/.gemini/GEMINI.md` |
 | `kilo` | Kilo Code | `~/.config/kilo/kilo.json` | `~/.config/kilo/AGENTS.md` |
 
 **Examples:**
@@ -66,7 +66,7 @@ This installs:
 # Install for OpenCode
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- opencode
 
-# Install for Cursor
+# Install for Cursor (binary only - see per-project setup below)
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
 
 # Install for Claude Code
@@ -82,6 +82,28 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- antigravity
 ```
 
+### Per-Project MCP Setup (Cursor)
+
+LeanKG uses **per-project MCP configuration** for Cursor. This allows LeanKG to automatically detect and index the project you're working on.
+
+**In each project directory, run:**
+```bash
+leankg install    # Creates .cursor/mcp.json in the project
+```
+
+This creates `.cursor/mcp.json` which Cursor automatically detects when you open that project.
+
+**Example workflow:**
+```bash
+# First time: install LeanKG binary globally
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
+
+# Then in each project you want to use LeanKG with:
+cd /path/to/project
+leankg install    # Creates .cursor/mcp.json
+# Restart Cursor or click refresh in MCP settings
+```
+
 ### Install via Cargo
 
 ```bash
@@ -92,7 +114,7 @@ leankg --version
 ### Build from Source
 
 ```bash
-git clone https://github.com/your-org/LeanKG.git
+git clone https://github.com/FreePeak/LeanKG.git
 cd LeanKG
 cargo build --release
 ```
