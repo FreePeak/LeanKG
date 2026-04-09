@@ -12,6 +12,8 @@ pub use clustering::*;
 #[allow(unused_imports)]
 pub use context::{ContextElement, ContextPriority, ContextProvider, ContextResult};
 #[allow(unused_imports)]
+pub use persistent_cache::*;
+#[allow(unused_imports)]
 pub use query::*;
 #[allow(unused_imports)]
 pub use traversal::*;

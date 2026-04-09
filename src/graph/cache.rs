@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use crate::graph::persistent_cache::PersistentCache;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -98,6 +99,7 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
 pub struct QueryCache {
     dependencies: Arc<RwLock<TimedCache<String, Vec<String>>>>,
     dependents: Arc<RwLock<TimedCache<String, Vec<String>>>>,
+    persistent: Option<Arc<PersistentCache>>,
 }
 
 impl QueryCache {
@@ -105,30 +107,70 @@ impl QueryCache {
         Self {
             dependencies: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
             dependents: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
+            persistent: None,
+        }
+    }
+
+    pub fn with_persistence(db: Arc<crate::db::schema::CozoDb>, ttl_secs: u64, max_entries: usize) -> Self {
+        Self {
+            dependencies: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
+            dependents: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
+            persistent: Some(Arc::new(PersistentCache::new(db, ttl_secs))),
         }
     }
 
     #[allow(dead_code)]
     pub async fn get_dependencies(&self, key: &str) -> Option<Vec<String>> {
-        self.dependencies.read().await.get(&key.to_string())
+        if let Some(v) = self.dependencies.read().await.get(&key.to_string()) {
+            return Some(v);
+        }
+        if let Some(ref p) = self.persistent {
+            let key_full = format!("deps:{}", key);
+            if let Some(v) = p.get::<Vec<String>>(&key_full).await {
+                self.dependencies.write().await.insert(key.to_string(), v.clone());
+                return Some(v);
+            }
+        }
+        None
     }
 
     pub async fn set_dependencies(&self, key: String, value: Vec<String>) {
-        self.dependencies.write().await.insert(key, value);
+        self.dependencies.write().await.insert(key.clone(), value.clone());
+        if let Some(ref p) = self.persistent {
+            let key_full = format!("deps:{}", key);
+            p.insert::<String, Vec<String>>(key_full, value).await;
+        }
     }
 
     #[allow(dead_code)]
     pub async fn get_dependents(&self, key: &str) -> Option<Vec<String>> {
-        self.dependents.read().await.get(&key.to_string())
+        if let Some(v) = self.dependents.read().await.get(&key.to_string()) {
+            return Some(v);
+        }
+        if let Some(ref p) = self.persistent {
+            let key_full = format!("deps:{}", key);
+            if let Some(v) = p.get::<Vec<String>>(&key_full).await {
+                self.dependents.write().await.insert(key.to_string(), v.clone());
+                return Some(v);
+            }
+        }
+        None
     }
 
     pub async fn set_dependents(&self, key: String, value: Vec<String>) {
-        self.dependents.write().await.insert(key, value);
+        self.dependents.write().await.insert(key.clone(), value.clone());
+        if let Some(ref p) = self.persistent {
+            let key_full = format!("deps:{}", key);
+            p.insert::<String, Vec<String>>(key_full, value).await;
+        }
     }
 
     pub async fn invalidate_file(&self, file_path: &str) {
         self.dependencies.write().await.invalidate_prefix(file_path);
         self.dependents.write().await.invalidate_prefix(file_path);
+        if let Some(ref p) = self.persistent {
+            p.invalidate_prefix(&format!("deps:{}", file_path)).await;
+        }
     }
 
     #[allow(dead_code)]

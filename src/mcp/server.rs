@@ -98,7 +98,7 @@ impl MCPServer {
 
         tracing::debug!("Initializing database at: {}", db_path.display());
         let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
-        let ge = GraphEngine::new(db);
+        let ge = GraphEngine::with_persistence(db);
         {
             let mut guard = self.graph_engine.lock();
             *guard = Some(ge.clone());

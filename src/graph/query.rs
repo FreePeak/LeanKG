@@ -35,6 +35,15 @@ impl GraphEngine {
         }
     }
 
+    pub fn with_persistence(db: CozoDb) -> Self {
+        let db_arc = Arc::new(db);
+        let cache = QueryCache::with_persistence(db_arc.clone(), 300, 1000);
+        Self {
+            db: (*db_arc).clone(),
+            cache: Arc::new(RwLock::new(cache)),
+        }
+    }
+
     pub fn db(&self) -> &CozoDb {
         &self.db
     }

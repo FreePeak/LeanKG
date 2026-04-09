@@ -38,6 +38,20 @@ impl QueryOrchestrator {
         }
     }
 
+    pub fn with_persistence(graph_engine: GraphEngine) -> Self {
+        let db_arc = Arc::new(graph_engine.db().clone());
+        let persistent_cache = Arc::new(crate::graph::PersistentCache::new(db_arc.clone(), 300));
+        Self {
+            graph_engine,
+            cache: Arc::new(Mutex::new(OrchestratorCache::with_persistence(
+                300,
+                1000,
+                persistent_cache,
+            ))),
+            intent_parser: IntentParser::new(),
+        }
+    }
+
     pub fn orchestrate(
         &self,
         intent_str: &str,

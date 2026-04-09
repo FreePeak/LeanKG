@@ -120,7 +120,7 @@ impl ToolHandler {
         Self {
             graph_engine: graph_engine.clone(),
             db_path,
-            orchestrator: QueryOrchestrator::new(graph_engine),
+            orchestrator: QueryOrchestrator::with_persistence(graph_engine),
         }
     }
 
