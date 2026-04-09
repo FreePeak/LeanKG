@@ -251,43 +251,22 @@ configure_opencode() {
 }
 
 configure_cursor() {
-    local config_dir="$HOME/.cursor"
-    local config_file="$config_dir/mcp.json"
+    # For Cursor, LeanKG uses per-project MCP configuration
+    # Binary + rules are installed globally, but MCP config is per-project
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
-    local needs_update=false
 
-    mkdir -p "$config_dir"
-
-    if [ -f "$config_file" ]; then
-        local current_path
-        current_path=$(jq -r '.mcpServers.leankg.command // empty' "$config_file" 2>/dev/null)
-        local current_args
-        current_args=$(jq -r '.mcpServers.leankg.args // [] | join(" ")' "$config_file" 2>/dev/null)
-        
-        if [ -n "$current_path" ]; then
-            if [ "$current_path" != "$leankg_path" ]; then
-                echo "Updating LeanKG binary path for Cursor: $current_path -> $leankg_path"
-                needs_update=true
-            fi
-            if ! echo "$current_args" | grep -q "\-\-watch"; then
-                echo "Adding --watch flag to LeanKG for Cursor"
-                needs_update=true
-            fi
-        fi
-        
-        if [ "$needs_update" = false ]; then
-            echo "LeanKG already properly configured in Cursor"
-            return
-        fi
-        
-        local tmp_file
-        tmp_file=$(mktemp)
-        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
-        mv "$tmp_file" "$config_file"
-    else
-        echo "{\"mcpServers\": {\"leankg\": {\"command\": \"$leankg_path\", \"args\": [\"mcp-stdio\", \"--watch\"]}}}" > "$config_file"
-    fi
-    echo "Configured LeanKG for Cursor at $config_file"
+    echo "Installed LeanKG binary to ${INSTALL_DIR}"
+    echo ""
+    echo "For Cursor MCP server, you need per-project setup."
+    echo "In each project directory you want to use LeanKG with:"
+    echo ""
+    echo "  cd /path/to/project"
+    echo "  leankg install"
+    echo ""
+    echo "This creates .cursor/mcp.json in that project."
+    echo "Cursor will auto-detect it when you open that project."
+    echo ""
+    echo "For other projects, just run 'leankg install' in each one."
 }
 
 configure_claude() {

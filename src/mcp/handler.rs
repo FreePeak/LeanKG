@@ -1615,6 +1615,286 @@ impl ToolHandler {
             None => Err("Cluster not found".to_string()),
         }
     }
+
+    fn generate_graph_report(&self, args: &Value) -> Result<Value, String> {
+        use crate::graph::clustering::CommunityDetector;
+
+        let include_sections: Vec<String> = args["include_sections"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        let all_sections = include_sections.is_empty();
+
+        let mut report = serde_json::Map::new();
+
+        if all_sections || include_sections.iter().any(|s| s == "god_nodes") {
+            let elements = self.graph_engine.all_elements().map_err(|e| e.to_string())?;
+            let relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
+            let god_nodes = self.compute_god_nodes(&elements, &relationships);
+            report.insert("god_nodes".to_string(), json!(god_nodes));
+        }
+
+        if all_sections || include_sections.iter().any(|s| s == "surprising_connections") {
+            let relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
+            let surprising = self.find_surprising_connections(&relationships);
+            report.insert("surprising_connections".to_string(), json!(surprising));
+        }
+
+        if all_sections || include_sections.iter().any(|s| s == "clusters") {
+            let detector = CommunityDetector::new(self.graph_engine.db());
+            let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
+            let cluster_list: Vec<_> = clusters.values().cloned().collect();
+            report.insert("clusters".to_string(), json!(cluster_list));
+        }
+
+        if all_sections || include_sections.iter().any(|s| s == "metrics") {
+            let elements = self.graph_engine.all_elements().map_err(|e| e.to_string())?;
+            let relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
+            let metrics = self.compute_graph_metrics(&elements, &relationships);
+            report.insert("metrics".to_string(), json!(metrics));
+        }
+
+        if all_sections || include_sections.iter().any(|s| s == "dependencies") {
+            let elements = self.graph_engine.all_elements().map_err(|e| e.to_string())?;
+            let deps = self.compute_dependency_metrics(&elements);
+            report.insert("dependencies".to_string(), json!(deps));
+        }
+
+        Ok(json!({
+            "report": report,
+            "sections_included": if all_sections { "all".to_string() } else { include_sections.join(", ") }
+        }))
+    }
+
+    fn compute_god_nodes(&self, elements: &[CodeElement], relationships: &[Relationship]) -> Vec<serde_json::Value> {
+        let mut call_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for rel in relationships {
+            if rel.rel_type == "calls" {
+                *call_counts.entry(rel.target_qualified.clone()).or_insert(0) += 1;
+            }
+        }
+        let mut god_nodes: Vec<_> = call_counts.into_iter()
+            .map(|(name, count)| {
+                let elem = elements.iter().find(|e| e.qualified_name == name);
+                json!({
+                    "qualified_name": name,
+                    "call_count": count,
+                    "type": elem.map(|e| e.element_type.clone()).unwrap_or_default(),
+                    "file": elem.map(|e| e.file_path.clone()).unwrap_or_default()
+                })
+            })
+            .filter(|n| n["call_count"].as_u64().unwrap_or(0) >= 5)
+            .collect();
+        god_nodes.sort_by(|a, b| {
+            b["call_count"].as_u64().unwrap_or(0).cmp(&a["call_count"].as_u64().unwrap_or(0))
+        });
+        god_nodes.truncate(20);
+        god_nodes
+    }
+
+    fn find_surprising_connections(&self, relationships: &[Relationship]) -> Vec<serde_json::Value> {
+        let mut surprising = Vec::new();
+        for rel in relationships {
+            let src_parts: Vec<&str> = rel.source_qualified.split("::").collect();
+            let tgt_parts: Vec<&str> = rel.target_qualified.split("::").collect();
+            if src_parts.len() >= 2 && tgt_parts.len() >= 2 {
+                let src_module = src_parts[0];
+                let tgt_module = tgt_parts[0];
+                if src_module != tgt_module && !rel.source_qualified.contains("test") && !rel.target_qualified.contains("test") {
+                    surprising.push(json!({
+                        "source": rel.source_qualified,
+                        "target": rel.target_qualified,
+                        "type": rel.rel_type,
+                        "cross_module": true,
+                        "confidence": rel.confidence
+                    }));
+                }
+            }
+        }
+        surprising.truncate(50);
+        surprising
+    }
+
+    fn compute_graph_metrics(&self, elements: &[CodeElement], relationships: &[Relationship]) -> serde_json::Value {
+        let total_elements = elements.len();
+        let total_relationships = relationships.len();
+        let functions = elements.iter().filter(|e| e.element_type == "function").count();
+        let structs_count = elements.iter().filter(|e| e.element_type == "struct" || e.element_type == "class").count();
+        let imports = relationships.iter().filter(|r| r.rel_type == "imports").count();
+        let calls = relationships.iter().filter(|r| r.rel_type == "calls").count();
+        let avg_dependencies = if !elements.is_empty() {
+            relationships.len() as f64 / elements.len() as f64
+        } else {
+            0.0
+        };
+        json!({
+            "total_elements": total_elements,
+            "total_relationships": total_relationships,
+            "functions": functions,
+            "structs_classes": structs_count,
+            "imports": imports,
+            "calls": calls,
+            "avg_dependencies_per_element": avg_dependencies
+        })
+    }
+
+    fn compute_dependency_metrics(&self, elements: &[CodeElement]) -> serde_json::Value {
+        let mut dep_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for elem in elements {
+            let deps = self.graph_engine.get_dependencies(&elem.qualified_name).unwrap_or_default();
+            dep_counts.insert(elem.qualified_name.clone(), deps.len());
+        }
+        let mut sorted: Vec<_> = dep_counts.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_deps: Vec<_> = sorted.into_iter().take(20).map(|(name, count)| {
+            json!({"element": name, "dependency_count": count})
+        }).collect();
+        json!({"top_dependents": top_deps})
+    }
+
+    fn export_graph_handler(&self, args: &Value) -> Result<Value, String> {
+        let format = args["format"].as_str().ok_or("Missing 'format' parameter")?;
+        let output_path = args["output_path"].as_str().ok_or("Missing 'output_path' parameter")?;
+
+        let elements = self.graph_engine.all_elements().map_err(|e| e.to_string())?;
+        let relationships = self.graph_engine.all_relationships().map_err(|e| e.to_string())?;
+
+        let content = match format {
+            "json" => self.export_json_format(&elements, &relationships)?,
+            "html" => self.export_html_format(&elements, &relationships)?,
+            "svg" => self.export_svg_format(&elements, &relationships)?,
+            "graphml" => self.export_graphml_format(&elements, &relationships)?,
+            "neo4j" => self.export_neo4j_format(&elements, &relationships)?,
+            _ => return Err(format!("Unsupported format '{}'. Supported: json, html, svg, graphml, neo4j", format)),
+        };
+
+        std::fs::write(output_path, &content).map_err(|e| format!("Failed to write file: {}", e))?;
+
+        Ok(json!({
+            "success": true,
+            "path": output_path,
+            "format": format,
+            "nodes": elements.len(),
+            "edges": relationships.len()
+        }))
+    }
+
+    fn export_json_format(&self, elements: &[CodeElement], relationships: &[Relationship]) -> Result<String, String> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let export = serde_json::json!({
+            "metadata": {
+                "generator": "leankg",
+                "version": env!("CARGO_PKG_VERSION"),
+                "exported_at_unix": timestamp,
+                "node_count": elements.len(),
+                "edge_count": relationships.len(),
+            },
+            "nodes": elements.iter().map(|e| serde_json::json!({
+                "id": e.qualified_name,
+                "type": e.element_type,
+                "name": e.name,
+                "file": e.file_path,
+                "lines": [e.line_start, e.line_end],
+                "language": e.language,
+            })).collect::<Vec<_>>(),
+            "edges": relationships.iter().map(|r| serde_json::json!({
+                "source": r.source_qualified,
+                "target": r.target_qualified,
+                "type": r.rel_type,
+                "confidence": r.confidence,
+            })).collect::<Vec<_>>(),
+        });
+        serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
+    }
+
+    fn export_html_format(&self, elements: &[CodeElement], relationships: &[Relationship]) -> Result<String, String> {
+        let nodes_json = serde_json::to_string(elements).map_err(|e| e.to_string())?;
+        let edges_json = serde_json::to_string(relationships).map_err(|e| e.to_string())?;
+        Ok(format!(r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>LeanKG Graph Export</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-network.min.js"></script>
+    <style>body{{margin:0;padding:0;}}#network{{width:100vw;height:100vh;}}</style>
+</head>
+<body>
+<div id="network"></div>
+<script>
+var nodes = new vis.DataSet([]);
+var edges = new vis.DataSet([]);
+var graphData = {{"nodes": {}, "edges": {}}};
+fetch('data:application/json;base64,' + btoa(unescape(encodeURIComponent(JSON.stringify(graphData)))))
+  .then(r => r.json())
+  .then(data => {{
+    data.nodes.forEach(n => nodes.add({{id: n.id, label: n.name, title: n.type}}));
+    data.edges.forEach(e => edges.add({{from: e.source, to: e.target, label: e.type}}));
+    var container = document.getElementById('network');
+    var options = {{}};
+    var network = new vis.Network(container, {{nodes: nodes, edges: edges}}, options);
+  }});
+</script>
+</body>
+</html>"#, nodes_json, edges_json))
+    }
+
+    fn export_svg_format(&self, elements: &[CodeElement], relationships: &[Relationship]) -> Result<String, String> {
+        let mut svg = String::from(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600"><style>node{{fill:#4a90e2;}}edge{{stroke:#999;stroke-width:1;}}</style>"#);
+        svg += &format!("<text x='10' y='20'>LeanKG Export: {} nodes, {} edges</text>", elements.len(), relationships.len());
+        let mut y = 50;
+        for elem in elements.iter().take(30) {
+            svg += &format!(r#"<rect x="10" y="{}" width="150" height="20" class="node" rx="3"/><text x="15" y="{}">{}</text>"#, y, y + 15, elem.name);
+            y += 25;
+        }
+        svg.push_str("</svg>");
+        Ok(svg)
+    }
+
+    fn export_graphml_format(&self, elements: &[CodeElement], relationships: &[Relationship]) -> Result<String, String> {
+        let mut graphml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?><graphml xmlns="http://graphml.graphdrawing.org/xmlns"><key id="label" for="node" attr.name="label" attr.type="string"/><key id="type" for="node" attr.name="type" attr.type="string"/><key id="file" for="node" attr.name="file" attr.type="string"/><key id="edgetype" for="edge" attr.name="type" attr.type="string"/><graph id="G" edgedefault="directed">"#);
+        for elem in elements {
+            let escaped_name = elem.name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+            let escaped_file = elem.file_path.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+            graphml += &format!(r#"<node id="{}"><data key="label">{}</data><data key="type">{}</data><data key="file">{}</data></node>"#, elem.qualified_name, escaped_name, elem.element_type, escaped_file);
+        }
+        for rel in relationships {
+            graphml += &format!(r#"<edge source="{}" target="{}"><data key="edgetype">{}</data></edge>"#, rel.source_qualified, rel.target_qualified, rel.rel_type);
+        }
+        graphml.push_str("</graph></graphml>");
+        Ok(graphml)
+    }
+
+    fn export_neo4j_format(&self, elements: &[CodeElement], relationships: &[Relationship]) -> Result<String, String> {
+        let mut cypher = String::from("// Neo4j Cypher import for LeanKG\n");
+        for elem in elements {
+            let labels = match elem.element_type.as_str() {
+                "function" => ":Function",
+                "struct" | "class" => ":Struct",
+                "module" => ":Module",
+                "file" => ":File",
+                _ => ":Element"
+            };
+            cypher += &format!(
+                "CREATE (n{} {{name: '{}', file: '{}', line: {}}});\n",
+                labels,
+                elem.name.replace("'", "\\'"),
+                elem.file_path.replace("'", "\\'"),
+                elem.line_start
+            );
+        }
+        for rel in relationships {
+            cypher += &format!(
+                "MATCH (a {{name: '{}'}}), (b {{name: '{}'}}) CREATE (a)-[:{}]->(b);\n",
+                rel.source_qualified.replace("'", "\\'"),
+                rel.target_qualified.replace("'", "\\'"),
+                rel.rel_type.to_uppercase()
+            );
+        }
+        Ok(cypher)
+    }
 }
 
 fn generate_review_prompt(elements: &[CodeElement], _relationships: &[Relationship]) -> String {

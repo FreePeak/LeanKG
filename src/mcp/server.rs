@@ -9,7 +9,7 @@ use crate::mcp::watcher::start_watcher;
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
-use rmcp::service::{serve_server, RoleServer};
+use rmcp::service::{serve_directly, RoleServer};
 use rmcp::transport::stdio;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,6 +21,8 @@ pub struct MCPServer {
     graph_engine: Arc<parking_lot::Mutex<Option<GraphEngine>>>,
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
+    /// Explicit project path from --project-path CLI flag (overrides auto-detection)
+    explicit_project_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -39,6 +41,7 @@ impl Clone for MCPServer {
             graph_engine: self.graph_engine.clone(),
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
+            explicit_project_path: self.explicit_project_path.clone(),
         }
     }
 }
@@ -51,6 +54,7 @@ impl MCPServer {
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
+            explicit_project_path: None,
         }
     }
 
@@ -59,8 +63,21 @@ impl MCPServer {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
             db_path: Arc::new(RwLock::new(db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
-            watch_path: Some(watch_path),
+            watch_path: Some(watch_path.clone()),
             write_tracker: Arc::new(WriteTracker::new()),
+            explicit_project_path: Some(watch_path),
+        }
+    }
+
+    /// Create with explicit project path (from --project-path CLI flag)
+    pub fn new_with_project_path(db_path: std::path::PathBuf, project_path: std::path::PathBuf) -> Self {
+        Self {
+            auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
+            db_path: Arc::new(RwLock::new(db_path)),
+            graph_engine: Arc::new(parking_lot::Mutex::new(None)),
+            watch_path: None,
+            write_tracker: Arc::new(WriteTracker::new()),
+            explicit_project_path: Some(project_path),
         }
     }
 
@@ -148,7 +165,10 @@ impl MCPServer {
             );
         }
         let transport = stdio();
-        let _running = serve_server(self.clone(), transport).await?;
+        // Use serve_directly to skip MCP initialization handshake requirements.
+        // This allows LeanKG to accept requests without requiring the client to send
+        // 'notifications/initialized' after the initialize response.
+        let _running = serve_directly(self.clone(), transport, None);
         futures_util::future::pending().await
     }
 
@@ -498,6 +518,19 @@ impl MCPServer {
     }
 
     fn find_project_root(&self) -> Result<std::path::PathBuf, String> {
+        // 1. Check CURSOR_PROJECT_DIR env var (auto-injected by Cursor when launching MCP server)
+        if let Ok(cursor_project) = std::env::var("CURSOR_PROJECT_DIR") {
+            let path = std::path::PathBuf::from(&cursor_project);
+            tracing::debug!("Using CURSOR_PROJECT_DIR: {}", cursor_project);
+            return Ok(path);
+        }
+
+        // 2. Use explicit project path if provided via --project-path CLI flag
+        if let Some(ref explicit) = self.explicit_project_path {
+            tracing::debug!("Using explicit project path: {}", explicit.display());
+            return Ok(explicit.clone());
+        }
+
         let current_dir =
             std::env::current_dir().map_err(|e| format!("Failed to get current dir: {}", e))?;
 

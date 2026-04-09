@@ -57,6 +57,9 @@ pub enum CLICommand {
         /// Enable auto-indexing with file watcher
         #[arg(long)]
         watch: bool,
+        /// Explicit project path (overrides auto-detection via cwd)
+        #[arg(long)]
+        project_path: Option<String>,
     },
     /// Calculate impact radius
     Impact {
@@ -205,10 +208,18 @@ pub enum CLICommand {
         #[arg(long)]
         auth: bool,
     },
-    /// Manage API keys for REST API access
     ApiKey {
         #[command(subcommand)]
         command: ApiKeyCommand,
+    },
+    Hooks {
+        #[command(subcommand)]
+        command: HooksCommand,
+    },
+    Wiki {
+        /// Output directory for wiki (default: ./wiki)
+        #[arg(long, default_value = "./wiki")]
+        output: String,
     },
     /// Show context metrics (token savings, usage stats)
     Metrics {
@@ -254,5 +265,21 @@ pub enum ApiKeyCommand {
         /// ID of the API key to revoke
         #[arg(long)]
         id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HooksCommand {
+    /// Install LeanKG git hooks (pre-commit, post-commit, post-checkout)
+    Install,
+    /// Uninstall LeanKG git hooks
+    Uninstall,
+    /// Check status of LeanKG git hooks
+    Status,
+    /// Watch git events and sync index automatically
+    Watch {
+        /// Path to watch (default: project root)
+        #[arg(long)]
+        path: Option<String>,
     },
 }

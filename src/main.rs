@@ -8,6 +8,7 @@ mod db;
 mod doc;
 mod doc_indexer;
 mod graph;
+mod hooks;
 mod indexer;
 mod mcp;
 mod orchestrator;
@@ -34,7 +35,7 @@ pub struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    if !matches!(args.command, cli::CLICommand::McpStdio { watch: _ }) {
+    if !matches!(args.command, cli::CLICommand::McpStdio { watch: _, .. }) {
         tracing_subscriber::fmt::init();
     }
 
@@ -103,13 +104,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::fs::create_dir_all(&db_path).await.ok();
             web::start_server(port, db_path).await?;
         }
-        cli::CLICommand::McpStdio { watch } => {
-            let project_path = find_project_root()?;
+        cli::CLICommand::McpStdio { watch, project_path } => {
+            let explicit_project_path = project_path.map(|p| std::path::PathBuf::from(p));
+            let project_path = explicit_project_path.clone().unwrap_or_else(|| find_project_root().unwrap_or_else(|_| std::path::PathBuf::from(".")));
             let db_path = project_path.join(".leankg");
 
             tokio::fs::create_dir_all(&db_path).await.ok();
 
-            let mcp_server = if watch {
+            let mcp_server = if let Some(ref pp) = explicit_project_path {
+                mcp::MCPServer::new_with_project_path(db_path, pp.clone())
+            } else if watch {
                 mcp::MCPServer::new_with_watch(db_path, project_path.clone())
             } else {
                 mcp::MCPServer::new(db_path)
@@ -315,6 +319,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 retention,
                 cleanup,
             )?;
+        }
+        cli::CLICommand::Wiki { output } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            generate_wiki(&output, &db_path)?;
+        }
+        cli::CLICommand::Hooks { command } => {
+            let project_path = find_project_root()?;
+            match command {
+                cli::HooksCommand::Install => {
+                    install_hooks(&project_path)?;
+                }
+                cli::HooksCommand::Uninstall => {
+                    uninstall_hooks(&project_path)?;
+                }
+                cli::HooksCommand::Status => {
+                    check_hooks_status(&project_path)?;
+                }
+                cli::HooksCommand::Watch { path } => {
+                    let watch_path = if let Some(p) = path {
+                        std::path::PathBuf::from(p)
+                    } else {
+                        project_path.clone()
+                    };
+                    let db_path = project_path.join(".leankg");
+                    watch_git_events(&watch_path, &db_path).await?;
+                }
+            }
         }
     }
 
@@ -552,17 +584,23 @@ fn install_mcp_config() -> Result<(), Box<dyn std::error::Error>> {
     let exe_path =
         std::env::current_exe().map_err(|e| format!("Failed to get current exe path: {}", e))?;
 
+    // Create .cursor/mcp.json for per-project Cursor MCP configuration
     let mcp_config = serde_json::json!({
         "mcpServers": {
             "leankg": {
                 "command": exe_path.to_string_lossy().as_ref(),
-                "args": ["mcp-stdio", "--watch"]
+                "args": ["mcp-stdio"]
             }
         }
     });
 
-    std::fs::write(".mcp.json", serde_json::to_string_pretty(&mcp_config)?)?;
-    println!("Installed MCP config to .mcp.json");
+    let cursor_dir = std::path::Path::new(".cursor");
+    std::fs::create_dir_all(cursor_dir)?;
+
+    let mcp_path = cursor_dir.join("mcp.json");
+    std::fs::write(&mcp_path, serde_json::to_string_pretty(&mcp_config)?)?;
+    println!("Installed MCP config to .cursor/mcp.json");
+    println!("Restart Cursor to activate LeanKG MCP server for this project.");
 
     Ok(())
 }
@@ -1394,9 +1432,25 @@ fn export_graph(
         "json" => export_json(&elements, &relationships)?,
         "dot" => export_dot(&elements, &relationships),
         "mermaid" => export_mermaid(&relationships),
+        "html" => {
+            let exporter = graph::export::HtmlExporter::new();
+            exporter.generate_html(&elements, &relationships)
+        }
+        "svg" => {
+            let exporter = graph::export::SvgExporter::new();
+            exporter.generate_svg(&elements, &relationships)
+        }
+        "graphml" => {
+            let exporter = graph::export::GraphMlExporter::new();
+            exporter.generate_graphml(&elements, &relationships)
+        }
+        "neo4j" => {
+            let exporter = graph::export::Neo4jExporter::new();
+            exporter.generate_cypher(&elements, &relationships)
+        }
         _ => {
             return Err(
-                format!("Unknown format '{}'. Supported: json, dot, mermaid", format).into(),
+                format!("Unknown format '{}'. Supported: json, dot, mermaid, html, svg, graphml, neo4j", format).into(),
             )
         }
     };
@@ -1547,4 +1601,211 @@ fn run_shell_command(command: &[String], compress: bool) -> Result<(), Box<dyn s
     }
 
     Ok(())
+}
+
+fn generate_wiki(output_path: &str, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !db_path.exists() {
+        return Err("LeanKG not initialized. Run 'leankg init' and 'leankg index' first.".into());
+    }
+
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let output = std::path::PathBuf::from(output_path);
+
+    println!("Generating wiki to {}...", output_path);
+
+    let generator = doc::WikiGenerator::new(&graph_engine, output);
+    let stats = generator.generate()?;
+
+    println!("Wiki generated successfully!");
+    println!("  Pages: {}", stats.pages_generated);
+    println!("  Elements documented: {}", stats.elements_documented);
+    println!("  Mermaid diagrams: {}", stats.mermaid_diagrams);
+
+    Ok(())
+}
+
+fn install_hooks(project_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !project_path.join(".git").exists() {
+        return Err("Not a git repository. Run 'leankg hooks install' from a git repository.".into());
+    }
+
+    let hooks = hooks::GitHooks::new(project_path.to_path_buf());
+    
+    println!("Installing LeanKG git hooks...");
+    
+    match hooks.install_pre_commit() {
+        Ok(_) => {}
+        Err(hooks::HookError::AlreadyInstalled(msg)) => {
+            println!("  Pre-commit: {}", msg);
+        }
+        Err(e) => {
+            eprintln!("  Pre-commit error: {}", e);
+        }
+    }
+    
+    match hooks.install_post_commit() {
+        Ok(_) => {}
+        Err(hooks::HookError::AlreadyInstalled(msg)) => {
+            println!("  Post-commit: {}", msg);
+        }
+        Err(e) => {
+            eprintln!("  Post-commit error: {}", e);
+        }
+    }
+    
+    match hooks.install_post_checkout() {
+        Ok(_) => {}
+        Err(hooks::HookError::AlreadyInstalled(msg)) => {
+            println!("  Post-checkout: {}", msg);
+        }
+        Err(e) => {
+            eprintln!("  Post-checkout error: {}", e);
+        }
+    }
+    
+    println!("\nLeanKG hooks installed successfully!");
+    println!("Hooks will:");
+    println!("  - Run leankg detect-changes on pre-commit");
+    println!("  - Run leankg index --incremental on post-commit");
+    println!("  - Run leankg index --incremental on post-checkout");
+    
+    Ok(())
+}
+
+fn uninstall_hooks(project_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !project_path.join(".git").exists() {
+        return Err("Not a git repository. Run 'leankg hooks uninstall' from a git repository.".into());
+    }
+
+    let hooks = hooks::GitHooks::new(project_path.to_path_buf());
+    hooks.uninstall_hooks()?;
+    
+    println!("LeanKG hooks uninstalled successfully!");
+    
+    Ok(())
+}
+
+fn check_hooks_status(project_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !project_path.join(".git").exists() {
+        return Err("Not a git repository. Run 'leankg hooks status' from a git repository.".into());
+    }
+
+    let hooks = hooks::GitHooks::new(project_path.to_path_buf());
+    let status = hooks.check_hooks_status()?;
+    
+    println!("LeanKG Git Hooks Status:");
+    println!();
+    println!("  Pre-commit:    {}", if status.pre_commit_installed { "Installed" } else { "Not installed" });
+    println!("  Post-commit:   {}", if status.post_commit_installed { "Installed" } else { "Not installed" });
+    println!("  Post-checkout: {}", if status.post_checkout_installed { "Installed" } else { "Not installed" });
+    println!();
+    
+    if status.pre_commit_backup_exists || status.post_commit_backup_exists || status.post_checkout_backup_exists {
+        println!("  Backups exist for restored hooks:");
+        if status.pre_commit_backup_exists { println!("    - pre-commit.leankg.backup"); }
+        if status.post_commit_backup_exists { println!("    - post-commit.leankg.backup"); }
+        if status.post_checkout_backup_exists { println!("    - post-checkout.leankg.backup"); }
+    }
+    
+    Ok(())
+}
+
+async fn watch_git_events(project_path: &std::path::Path, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !db_path.exists() {
+        eprintln!("LeanKG not initialized. Run 'leankg init' and 'leankg index' first.");
+        return Ok(());
+    }
+
+    let watcher = hooks::GitWatcher::new(
+        project_path.to_path_buf(),
+        db_path.to_path_buf(),
+    );
+
+    let status = watcher.check_index_status()?;
+    
+    println!("LeanKG Git Watcher");
+    println!("==================");
+    println!("  Project: {}", project_path.display());
+    println!("  DB:     {}", db_path.display());
+    println!("  Current commit: {}", &status.current_commit[..8]);
+    println!("  Last indexed:   {}", status.last_indexed_commit.as_ref().map(|c| &c[..8]).unwrap_or("never"));
+    println!("  Index status:   {}", if status.is_stale { "STALE - needs sync" } else { "Up to date" });
+    
+    if status.is_stale && !status.affected_files.is_empty() {
+        println!("\n  Changed files since last index:");
+        for file in status.affected_files.iter().take(10) {
+            println!("    - {}", file.display());
+        }
+        if status.affected_files.len() > 10 {
+            println!("    ... and {} more", status.affected_files.len() - 10);
+        }
+    }
+    
+    println!("\n  Press Ctrl+C to stop watching.");
+    println!("  Watching for git branch changes...\n");
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(10);
+    
+    let project_path_clone = project_path.to_path_buf();
+    let tx_clone = tx.clone();
+    
+    std::thread::spawn(move || {
+        loop {
+            let output = std::process::Command::new("git")
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .current_dir(&project_path_clone)
+                .output();
+            
+            if let Ok(output) = output {
+                if output.status.success() {
+                    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let _ = tx_clone.blocking_send(branch);
+                }
+            }
+            
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    });
+
+    let mut last_branch = String::new();
+    loop {
+        tokio::select! {
+            biased;
+            
+            _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+                let new_watcher = hooks::GitWatcher::new(
+                    project_path.to_path_buf(),
+                    db_path.to_path_buf(),
+                );
+                if let Ok(status) = new_watcher.check_index_status() {
+                    if status.is_stale {
+                        println!("\n[LeanKG] Index is stale, syncing...");
+                        if let Err(e) = new_watcher.run_incremental_index() {
+                            eprintln!("  Sync failed: {}", e);
+                        } else {
+                            println!("  Sync complete!");
+                        }
+                    }
+                }
+            }
+            
+            branch = rx.recv() => {
+                if let Some(branch) = branch {
+                    if branch != last_branch {
+                        println!("\n[LeanKG] Branch changed: {}", branch);
+                        last_branch = branch.clone();
+                        
+                        let sync_watcher = hooks::GitWatcher::new(
+                            project_path.to_path_buf(),
+                            db_path.to_path_buf(),
+                        );
+                        if let Err(e) = sync_watcher.sync_on_branch_change(&branch) {
+                            eprintln!("  Sync failed: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
