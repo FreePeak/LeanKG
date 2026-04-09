@@ -218,9 +218,9 @@ graph TB
 ```mermaid
 graph LR
     subgraph "1. Index Phase"
-        A["Source Code<br/>*.rs, *.ts, *.py, *.go, *.java, *.kt"] --> B["tree-sitter Parser"]
-        B --> C["Code Elements<br/>functions, classes"]
-        B --> D["Relationships<br/>imports, calls"]
+        A["Source Code<br/>*.rs, *.ts, *.py, *.go, *.java, *.kt, *.tf, *.yml"] --> B["tree-sitter Parser"]
+        B --> C["Code Elements<br/>functions, classes, modules"]
+        B --> D["Relationships<br/>imports, calls, tested_by"]
         C --> E[("CozoDB")]
         D --> E
     end
@@ -245,11 +245,15 @@ graph LR
 
 | Type | Direction | Description |
 |------|----------|-------------|
-| `calls` | A → B | Function A calls function B |
+| `calls` | A → B | Function A calls function B (confidence 0.5-1.0) |
 | `imports` | A → B | Module A imports module B |
 | `contains` | doc → section | Document contains section |
 | `tested_by` | A → B | Code A is tested by test B |
+| `tests` | test → B | Test file tests code B |
 | `documented_by` | A → B | Code A is documented by doc B |
+| `references` | doc → code | Doc references code element |
+| `defines` | A → B | Element A defines element B |
+| `implements` | struct → interface | Struct implements interface |
 
 **Key Insight:** The graph stores the FULL dependency graph at indexing time. When you query, LeanKG traverses N hops from your target to find all affected elements - no file scanning needed.
 
@@ -273,15 +277,17 @@ Add this to your AI tool's instruction file:
 ## MANDATORY: Use LeanKG First
 Before ANY codebase search/navigation, use LeanKG tools:
 1. `mcp_status` - check if ready
-2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`, `get_review_context`
 3. Only fallback to grep/read if LeanKG fails
 
 | Task | Use |
 |------|-----|
 | Where is X? | `search_code` or `find_function` |
-| What breaks if I change Y? | `get_impact_radius` |
+| What breaks if I change Y? | `get_impact_radius` or `detect_changes` |
 | What tests cover Y? | `get_tested_by` |
-| How does X work? | `get_context` |
+| How does X work? | `get_context`, `get_review_context` |
+| Read file efficiently? | `ctx_read` (with adaptive/full/map/signatures modes) |
+| Intelligent routing? | `orchestrate` (cache-graph-compress flow) |
 ```
 
 ### Instruction Files (Auto-installed)
@@ -374,20 +380,28 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 - **Token Concise** -- Returns 13-42 tokens per query vs 10,000+ tokens for full codebase scan. AI tools get exactly what they need.
 - **Token Saving** -- Up to 98% token reduction for impact analysis queries. Index once, query efficiently forever.
 - **Code Indexing** -- Parse and index Go, TypeScript, Python, Rust, Java, Kotlin, C++, C#, Ruby, and PHP codebases with tree-sitter.
-- **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges.
-- **Impact Radius** -- Compute blast radius for any file to see downstream impact.
+- **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, `TESTED_BY`, and `REFERENCES` edges.
+- **Impact Radius** -- Compute blast radius for any file to see downstream impact with severity classification (WILL BREAK, LIKELY AFFECTED, MAY BE AFFECTED).
+- **Cluster Detection** -- Community detection to identify code clusters and their relationships.
+- **Business Logic Mapping** -- Annotate code elements with business logic, link to user stories and features, trace requirements to code.
 - **Auto-Indexing** -- Watch mode automatically updates the index when files change.
-- **Context Metrics** -- Track token savings and usage statistics per tool call.
+- **Context Metrics** -- Track token savings, F1 scores, and usage statistics per tool call with full query metadata.
 - **Auto Documentation** -- Generate markdown docs from code structure automatically.
-- **MCP Server** -- Expose the graph via MCP protocol for AI tool integration.
+- **MCP Server** -- Expose the graph via MCP protocol for AI tool integration (stdio transport).
 - **File Watching** -- Watch for changes and incrementally update the index.
-- **CLI** -- Single binary with init, index, serve, impact, status, watch, and metrics commands.
-- **RTK Compression** -- RTK-style compression for CLI output and MCP responses (`leankg run`, `compress_response`).
-- **Orchestrator** -- Intelligent query routing with cache-graph-compress flow.
-- **Business Logic Mapping** -- Annotate code elements with business logic descriptions and link to features.
-- **Traceability** -- Show feature-to-code and requirement-to-code traceability chains.
-- **Documentation Mapping** -- Index docs/ directory, map doc references to code elements.
-- **Graph Viewer** -- Visualize knowledge graph using standalone web UI.
+- **CLI** -- Single binary with 30+ commands for indexing, querying, annotating, benchmarking, and serving.
+- **RTK Compression** -- RTK-style compression for CLI output and MCP responses (`leankg run`, compress_response on all graph tools).
+- **Orchestrator** -- Intelligent query routing with cache-graph-compress flow and adaptive compression modes.
+- **Traceability** -- Show feature-to-code and requirement-to-code traceability chains via `trace` command.
+- **Documentation Mapping** -- Index docs/ directory, map doc references to code elements, generate `get_doc_for_file` chains.
+- **Graph Viewer** -- Visualize knowledge graph using standalone web UI with sigma.js.
+- **REST API** -- Start a REST API server with authentication (`leankg api-serve --port 8080 --auth`).
+- **Global Registry** -- Manage multiple repositories from a single global registry (`leankg register`, `leankg list`).
+- **Benchmark** -- Compare LeanKG context quality against OpenCode, Gemini, and Kilo CLI tools.
+- **Compression Modes** -- File reading with adaptive modes: `adaptive`, `full`, `map`, `signatures`, `diff`, `aggressive`, `entropy`, `lines`.
+- **Change Detection** -- Pre-commit risk analysis with severity levels (critical/high/medium/low) via `detect_changes` tool.
+- **Multi-Language** -- Also supports Terraform (`.tf`), CI/CD YAML (GitHub workflows, GitLab CI, Azure Pipelines), and Markdown docs.
+- **Test Detection** -- Auto-detects test files across all languages and creates `tested_by` relationships.
 
 ---
 
@@ -548,11 +562,27 @@ See [Roadmap](docs/roadmap.md) for detailed feature planning and implementation 
 - Rust 1.70+
 - macOS or Linux
 
----
+## Supported Languages
+
+| Language | Extensions | Parser |
+|----------|------------|--------|
+| Go | `.go` | tree-sitter-go |
+| TypeScript | `.ts`, `.tsx`, `.js`, `.jsx` | tree-sitter-typescript |
+| Python | `.py` | tree-sitter-python |
+| Rust | `.rs` | tree-sitter-rust |
+| Java | `.java` | tree-sitter-java |
+| Kotlin | `.kt`, `.kts` | tree-sitter-kotlin-ng |
+| C++ | `.cpp`, `.cxx`, `.cc`, `.hpp`, `.h`, `.c` | tree-sitter-cpp |
+| C# | `.cs` | tree-sitter-c-sharp |
+| Ruby | `.rb` | tree-sitter-ruby |
+| PHP | `.php` | tree-sitter-php |
+| Terraform | `.tf` | Custom extractor |
+| CI/CD YAML | `.yml`, `.yaml` | Custom extractor (GitHub, GitLab, Azure) |
+| Markdown | `.md` | doc indexer |
 
 ## Tech Stack & Project Structure
 
-See [Tech Stack](docs/tech-stack.md) for architecture, tech stack details, supported languages, and project structure.
+See [Tech Stack](docs/tech-stack.md) for architecture, tech stack details, and project structure.
 
 ---
 
