@@ -87,6 +87,31 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if !existing_relations.contains("query_cache") {
+        let create_query_cache = r#":create query_cache {cache_key: String, value_json: String, created_at: Int, ttl_seconds: Int, tool_name: String, project_path: String, metadata: String}"#;
+        if let Err(e) = db.run_script(create_query_cache, Default::default()) {
+            eprintln!("Failed to create query_cache: {:?}", e);
+        }
+
+        let create_cache_key_index =
+            r#":create query_cache::cache_key_index {ref: (cache_key), compressed: true}"#;
+        if let Err(e) = db.run_script(create_cache_key_index, Default::default()) {
+            tracing::debug!("cache_key index may already exist: {:?}", e);
+        }
+
+        let create_tool_index =
+            r#":create query_cache::tool_name_index {ref: (tool_name), compressed: true}"#;
+        if let Err(e) = db.run_script(create_tool_index, Default::default()) {
+            tracing::debug!("tool_name index may already exist: {:?}", e);
+        }
+
+        let create_project_path_index =
+            r#":create query_cache::project_path_index {ref: (project_path), compressed: true}"#;
+        if let Err(e) = db.run_script(create_project_path_index, Default::default()) {
+            tracing::debug!("project_path index may already exist: {:?}", e);
+        }
+    }
+
     Ok(())
 }
 
