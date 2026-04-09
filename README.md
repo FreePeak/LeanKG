@@ -159,6 +159,13 @@ leankg impact src/main.rs --depth 3
 
 # 7. Check index status
 leankg status
+
+# 8. Watch for changes and auto-index
+leankg watch ./src
+
+# 9. View context metrics (token savings)
+leankg metrics
+leankg metrics --seed  # Seed test data
 ```
 
 ---
@@ -369,10 +376,12 @@ See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
 - **Code Indexing** -- Parse and index Go, TypeScript, Python, Rust, Java, and Kotlin codebases with tree-sitter.
 - **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, and `TESTED_BY` edges.
 - **Impact Radius** -- Compute blast radius for any file to see downstream impact.
+- **Auto-Indexing** -- Watch mode automatically updates the index when files change.
+- **Context Metrics** -- Track token savings and usage statistics per tool call.
 - **Auto Documentation** -- Generate markdown docs from code structure automatically.
 - **MCP Server** -- Expose the graph via MCP protocol for AI tool integration.
 - **File Watching** -- Watch for changes and incrementally update the index.
-- **CLI** -- Single binary with init, index, serve, impact, and status commands.
+- **CLI** -- Single binary with init, index, serve, impact, status, watch, and metrics commands.
 - **RTK Compression** -- RTK-style compression for CLI output and MCP responses (`leankg run`, `compress_response`).
 - **Orchestrator** -- Intelligent query routing with cache-graph-compress flow.
 - **Business Logic Mapping** -- Annotate code elements with business logic descriptions and link to features.
@@ -428,7 +437,76 @@ See [Web UI](docs/web-ui.md) for detailed documentation.
 
 ## Auto-Indexing
 
-LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date. See [CLI Reference](docs/cli-reference.md#auto-indexing) for detailed commands.
+LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date. When you modify, create, or delete files, LeanKG incrementally updates the index.
+
+```bash
+# Watch mode - auto-index on file changes
+leankg watch ./src
+
+# Or use the serve command with auto-index enabled
+leankg serve --watch ./src
+```
+
+See [CLI Reference](docs/cli-reference.md#auto-indexing) for detailed commands.
+
+---
+
+## Context Metrics
+
+Track token savings and usage statistics to understand how LeanKG improves your AI tool's context efficiency.
+
+```bash
+# View metrics summary
+leankg metrics
+
+# View with JSON output
+leankg metrics --json
+
+# Filter by time period
+leankg metrics --since 7d
+
+# Filter by tool name
+leankg metrics --tool search_code
+
+# Seed test data for demo
+leankg metrics --seed
+
+# Reset all metrics
+leankg metrics --reset
+
+# Cleanup old metrics (retention: 30 days default)
+leankg metrics --cleanup --retention 60
+```
+
+### Metrics Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | String | LeanKG tool name (search_code, get_context, etc.) |
+| `timestamp` | Int | Unix timestamp of the call |
+| `input_tokens` | Int | Tokens in the query |
+| `output_tokens` | Int | Tokens returned |
+| `tokens_saved` | Int | Tokens saved vs baseline grep scan |
+| `savings_percent` | Float | Percentage savings |
+| `baseline_tokens` | Int | Tokens a grep scan would use |
+| `execution_time_ms` | Int | Tool execution time |
+| `success` | Bool | Whether the tool succeeded |
+
+### Example Output
+
+```
+=== LeanKG Context Metrics ===
+
+Total Savings: 64,660 tokens across 5 calls
+Average Savings: 99.5%
+Retention: 30 days
+
+By Tool:
+  search_code: 2 calls, avg 100% saved, 25,903 tokens saved
+  get_impact_radius: 1 calls, avg 99% saved, 24,820 tokens saved
+  get_context: 1 calls, avg 100% saved, 7,965 tokens saved
+  find_function: 1 calls, avg 100% saved, 5,972 tokens saved
+```
 
 ---
 
