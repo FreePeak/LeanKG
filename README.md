@@ -55,7 +55,7 @@ This installs:
 | Target | AI Tool | Global Install | Agent Instructions |
 |--------|---------|--------------|-------------------|
 | `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md` |
-| `cursor` | Cursor AI | None (per-project MCP) | `~/.cursor/AGENTS.md` |
+| `cursor` | Cursor AI | `~/.cursor/mcp.json` (global) | `~/.cursor/AGENTS.md` |
 | `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` | `~/.config/claude/CLAUDE.md` |
 | `gemini` | Gemini CLI / Google Antigravity | `~/.config/gemini-cli/mcp.json` | `~/.gemini/GEMINI.md` |
 | `kilo` | Kilo Code | `~/.config/kilo/kilo.json` | `~/.config/kilo/AGENTS.md` |
@@ -81,6 +81,18 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 # Install for Google Antigravity
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- antigravity
 ```
+
+### Cursor Installation Details
+
+LeanKG for Cursor includes:
+- **Global MCP server** - `~/.cursor/mcp.json` adds LeanKG to all projects
+- **Plugin** - `~/.cursor/plugins/leankg/` with:
+  - `skills/using-leankg/SKILL.md` - Mandatory LeanKG-first skill
+  - `rules/leankg-rule.mdc` - Auto-trigger rule for code search
+  - `agents/leankg-agents.md` - Agent instructions
+  - `commands/leankg-commands.md` - Command reference
+  - `hooks/session-start` - Session bootstrap hook
+- **User skill preservation** - Other skills in `~/.cursor/skills/` are NOT removed
 
 ### Per-Project MCP Setup (Cursor)
 
