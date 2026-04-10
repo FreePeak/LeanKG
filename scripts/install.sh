@@ -210,6 +210,10 @@ install_binary() {
             echo "Add this to your shell profile if needed:"
             echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
         fi
+
+        if [ -d ".cursor-plugin" ]; then
+            cp -r ".cursor-plugin" "${INSTALL_DIR}/.cursor-plugin"
+        fi
     fi
 }
 
@@ -251,22 +255,38 @@ configure_opencode() {
 }
 
 configure_cursor() {
-    # For Cursor, LeanKG uses per-project MCP configuration
-    # Binary + rules are installed globally, but MCP config is per-project
+    local config_file="$HOME/.cursor/mcp.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    mkdir -p "$HOME/.cursor"
 
-    echo "Installed LeanKG binary to ${INSTALL_DIR}"
+    if [ -f "$config_file" ] && [ -s "$config_file" ]; then
+        if jq -e '.mcpServers.leankg' "$config_file" > /dev/null 2>&1; then
+            echo "LeanKG MCP already configured in Cursor global mcp.json"
+            return 0
+        fi
+
+        local tmp_file
+        tmp_file=$(mktemp)
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file" && mv "$tmp_file" "$config_file"
+        echo "Added LeanKG to Cursor global mcp.json at $config_file"
+    else
+        cat > "$config_file" <<EOF
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "$leankg_path",
+      "args": ["mcp-stdio", "--watch"]
+    }
+  }
+}
+EOF
+        echo "Created Cursor global mcp.json with LeanKG at $config_file"
+    fi
+
     echo ""
-    echo "For Cursor MCP server, you need per-project setup."
-    echo "In each project directory you want to use LeanKG with:"
-    echo ""
-    echo "  cd /path/to/project"
-    echo "  leankg install"
-    echo ""
-    echo "This creates .cursor/mcp.json in that project."
-    echo "Cursor will auto-detect it when you open that project."
-    echo ""
-    echo "For other projects, just run 'leankg install' in each one."
+    echo "LeanKG MCP server configured globally for Cursor."
+    echo "LeanKG will be available in all Cursor projects."
+    echo "Run 'leankg install' in individual projects to enable per-project features."
 }
 
 configure_claude() {
@@ -660,6 +680,70 @@ BOOTSTRAPEOF
     else
         echo "LeanKG hooks already configured for Cursor"
     fi
+}
+
+install_cursor_plugin() {
+    local plugin_dest_dir="$HOME/.cursor/plugins/leankg"
+    local github_raw="https://raw.githubusercontent.com/FreePeak/LeanKG/main"
+
+    echo "Installing/Updating LeanKG plugin to Cursor plugins directory..."
+
+    mkdir -p "$plugin_dest_dir"
+    mkdir -p "$plugin_dest_dir/skills/using-leankg"
+    mkdir -p "$plugin_dest_dir/rules"
+    mkdir -p "$plugin_dest_dir/agents"
+    mkdir -p "$plugin_dest_dir/commands"
+    mkdir -p "$plugin_dest_dir/hooks"
+
+    if [ -d ".cursor-plugin" ]; then
+        echo "Installing from local .cursor-plugin directory..."
+
+        cp -f ".cursor-plugin/plugin.json" "$plugin_dest_dir/plugin.json"
+        cp -f ".cursor-plugin/manifest.json" "$plugin_dest_dir/manifest.json"
+        cp -f ".cursor-plugin/INSTALL.md" "$plugin_dest_dir/INSTALL.md"
+        cp -f ".cursor-plugin/leankg-bootstrap.md" "$plugin_dest_dir/leankg-bootstrap.md"
+
+        cp -f ".cursor-plugin/skills/using-leankg/SKILL.md" "$plugin_dest_dir/skills/using-leankg/SKILL.md"
+
+        cp -f ".cursor-plugin/rules/leankg-rule.mdc" "$plugin_dest_dir/rules/leankg-rule.mdc"
+
+        cp -f ".cursor-plugin/agents/leankg-agents.md" "$plugin_dest_dir/agents/leankg-agents.md"
+
+        cp -f ".cursor-plugin/commands/leankg-commands.md" "$plugin_dest_dir/commands/leankg-commands.md"
+
+        cp -f ".cursor-plugin/hooks/hooks.json" "$plugin_dest_dir/hooks/hooks.json"
+        cp -f ".cursor-plugin/hooks/session-start" "$plugin_dest_dir/hooks/session-start"
+        chmod +x "$plugin_dest_dir/hooks/session-start"
+    else
+        echo "Downloading LeanKG plugin from GitHub..."
+
+        curl -fsSL "$github_raw/.cursor-plugin/plugin.json" -o "$plugin_dest_dir/plugin.json" 2>/dev/null || true
+        curl -fsSL "$github_raw/.cursor-plugin/manifest.json" -o "$plugin_dest_dir/manifest.json" 2>/dev/null || true
+        curl -fsSL "$github_raw/.cursor-plugin/INSTALL.md" -o "$plugin_dest_dir/INSTALL.md" 2>/dev/null || true
+        curl -fsSL "$github_raw/.cursor-plugin/leankg-bootstrap.md" -o "$plugin_dest_dir/leankg-bootstrap.md" 2>/dev/null || true
+
+        curl -fsSL "$github_raw/.cursor-plugin/skills/using-leankg/SKILL.md" -o "$plugin_dest_dir/skills/using-leankg/SKILL.md" 2>/dev/null || true
+
+        curl -fsSL "$github_raw/.cursor-plugin/rules/leankg-rule.mdc" -o "$plugin_dest_dir/rules/leankg-rule.mdc" 2>/dev/null || true
+
+        curl -fsSL "$github_raw/.cursor-plugin/agents/leankg-agents.md" -o "$plugin_dest_dir/agents/leankg-agents.md" 2>/dev/null || true
+
+        curl -fsSL "$github_raw/.cursor-plugin/commands/leankg-commands.md" -o "$plugin_dest_dir/commands/leankg-commands.md" 2>/dev/null || true
+
+        curl -fsSL "$github_raw/.cursor-plugin/hooks/hooks.json" -o "$plugin_dest_dir/hooks/hooks.json" 2>/dev/null || true
+        curl -fsSL "$github_raw/.cursor-plugin/hooks/session-start" -o "$plugin_dest_dir/hooks/session-start" 2>/dev/null || true
+        chmod +x "$plugin_dest_dir/hooks/session-start" 2>/dev/null || true
+    fi
+
+    echo ""
+    echo "LeanKG plugin files updated:"
+    echo "  - Plugin config: $([ -f "$plugin_dest_dir/plugin.json" ] && echo 'OK' || echo 'MISSING')"
+    echo "  - Skill: $([ -f "$plugin_dest_dir/skills/using-leankg/SKILL.md" ] && echo 'OK' || echo 'MISSING')"
+    echo "  - Rule: $([ -f "$plugin_dest_dir/rules/leankg-rule.mdc" ] && echo 'OK' || echo 'MISSING')"
+    echo "  - Agents: $([ -f "$plugin_dest_dir/agents/leankg-agents.md" ] && echo 'OK' || echo 'MISSING')"
+    echo "  - Hooks: $([ -f "$plugin_dest_dir/hooks/session-start" ] && echo 'OK' || echo 'MISSING')"
+
+    return 0
 }
 
 configure_kilo() {
@@ -1137,6 +1221,7 @@ main() {
                 setup_cursor_hooks
                 install_leankg_skill "$HOME/.cursor/skills" "cursor"
                 install_agents_instructions "$HOME/.cursor/AGENTS.md"
+                install_cursor_plugin
                 ;;
             claude)
                 configure_claude
