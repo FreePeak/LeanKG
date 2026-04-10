@@ -21,35 +21,54 @@ cargo clippy -- -D warnings  # Lint (warnings as errors)
 ## CLI Commands
 
 ```bash
-cargo run -- init              # Initialize .leankg in current dir
-cargo run -- index ./src      # Index a codebase
-cargo run -- serve            # Start MCP server (stdio transport)
-cargo run -- impact <file> <depth>  # Calculate blast radius
-cargo run -- status           # Show index status
-leankg mcp-stdio --watch     # MCP mode for AI tool integration
+cargo run -- init [--path <path>]     # Initialize .leankg in current dir
+cargo run -- index ./src [--incremental] [--lang <lang>] [--exclude <patterns>]
+cargo run -- mcp-stdio [--watch]     # Start MCP server with stdio transport
+cargo run -- web [--port <port>]     # Start embedded web UI server
+cargo run -- impact <file> [--depth <depth>]  # Calculate blast radius
+cargo run -- status                  # Show index status
+cargo run -- watch [--path <path>]   # Start file watcher for auto-indexing
+cargo run -- export [--format <json|dot|mermaid|html|svg|graphml|neo4j>] # Export graph
+cargo run -- annotate <element> --description <desc>  # Business logic annotation
+cargo run -- trace [--feature <id>]  # Traceability chain
+cargo run -- detect-clusters         # Community detection
+cargo run -- benchmark [--category <cat>] [--cli <opencode|gemini|kilo>]
+cargo run -- api-serve [--port <port>] [--auth]  # REST API server
+cargo run -- metrics [--since <period>] [--json]  # Context metrics
+cargo run -- wiki [--output <dir>]  # Generate wiki
+cargo run -- hooks install           # Install git hooks
 ```
 
 ## Module Map
 
 ```
 src/
-├── cli/       # Clap commands (init, index, serve, impact, status)
-├── config/    # ProjectConfig, IndexerConfig, DocConfig
-├── db/        # CozoDB models + schema init
-├── doc/       # DocGenerator, template rendering
-├── graph/     # GraphEngine, ImpactAnalyzer, query cache
-├── indexer/   # tree-sitter extractors (EntityExtractor)
-├── mcp/       # MCP tools + handler (tools.rs, handler.rs)
-├── watcher/  # notify-based file watcher
-└── web/       # Axum REST API for graph visualization
+├── main.rs              # CLI entry point (all commands)
+├── lib.rs               # Library exports
+├── cli/                 # Clap commands enum
+├── config/              # ProjectConfig, IndexerConfig, DocConfig, McpConfig
+├── db/                  # CozoDB models, schema, operations
+├── doc/                 # DocGenerator, template rendering, wiki generation
+├── doc_indexer/         # Documentation indexing
+├── graph/               # GraphEngine, queries, context, traversal, clustering, cache
+├── indexer/             # tree-sitter parsers, extractors, git analysis
+├── mcp/                 # MCP tools (tools.rs), handler (handler.rs), server
+├── orchestrator/        # Query orchestration with caching
+├── compress/            # RTK-style compression, read modes
+├── web/                 # Axum REST API
+├── api/                 # HTTP handlers, auth
+├── watcher/             # notify-based file watcher
+├── hooks/               # Git hooks (pre-commit, post-commit, etc.)
+├── benchmark/           # Benchmark runner
+└── registry.rs         # Global repository registry
 ```
 
-**Key files:** `src/lib.rs` (exports), `src/db/models.rs` (CodeElement, Relationship, BusinessLogic), `src/mcp/tools.rs` (tool defs), `src/mcp/handler.rs` (tool exec)
+**Key files:** `src/lib.rs` (exports), `src/db/models.rs` (CodeElement, Relationship, BusinessLogic), `src/mcp/tools.rs` (36 tool defs), `src/mcp/handler.rs` (tool execution)`
 
 ## Data Model
 
 - **qualified_name** format: `path/to/file.rs::function_name` (e.g., `src/main.rs::main`)
-- **Relationship** types: `imports`, `calls`, `tested_by`, `references`, `documented_by`
+- **Relationship** types: `imports`, `calls`, `tested_by`, `references`, `documented_by`, `contains`, `defines`, `implementations`, `implementations`
 
 ## Workflow (Feature Per Branch)
 
