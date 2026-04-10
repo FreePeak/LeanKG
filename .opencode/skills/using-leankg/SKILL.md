@@ -25,6 +25,8 @@ User asks "Where is X?" or searches for code
           v
 1. mcp_status - check if LeanKG is ready
           |
+          +-- MCP UNAVAILABLE --> Use CLI fallback (see below)
+          |
           +-- NOT READY --> mcp_init with project .leankg path
           |
           v (READY)
@@ -91,6 +93,27 @@ grep -rn "X" --include="*.ts" --include="*.tsx"
 
 # Python
 grep -rn "X" --include="*.py"
+```
+
+## MCP Server Unavailable - CLI Fallback
+
+If LeanKG MCP tools fail (connection refused, not available), fall back to CLI:
+
+```bash
+# Check status
+cargo run -- status
+
+# Index codebase
+cargo run -- index ./src
+
+# Query by name
+cargo run -- query "function_name" --kind name
+
+# Query by pattern
+cargo run -- query "*.rs" --kind pattern
+
+# Get impact radius
+cargo run -- impact src/main.rs 3
 ```
 
 ## Auto-Init Behavior

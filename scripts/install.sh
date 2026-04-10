@@ -430,6 +430,13 @@ Before ANY codebase search/navigation, you MUST:
 3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
 4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 
+**MCP Server Unavailable - CLI Fallback:**
+If LeanKG MCP tools fail, use CLI commands:
+- `cargo run -- status` - Check status
+- `cargo run -- index ./src` - Index codebase
+- `cargo run -- query "name" --kind name` - Query by name
+- `cargo run -- impact src/main.rs 3` - Get impact radius
+
 | Instead of | Use LeanKG |
 |------------|------------|
 | grep/ripgrep for "where is X?" | `search_code` or `find_function` |
@@ -438,6 +445,58 @@ Before ANY codebase search/navigation, you MUST:
 | Reading entire files | `get_context` (token-optimized) |
 BOOTSTRAPEOF
         echo "Created leankg-bootstrap.md for Claude Code"
+    else
+        if ! grep -q "CLI Fallback" "$plugin_dir/leankg-bootstrap.md" 2>/dev/null; then
+            cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
+# LeanKG Bootstrap
+
+LeanKG is a lightweight knowledge graph for codebase understanding.
+
+**Auto-Activated Tools:**
+- `mcp_status` - Check if LeanKG is initialized
+- `mcp_init` - Initialize LeanKG for a project
+- `mcp_index` - Index codebase
+- `search_code` - Search code elements by name/type
+- `find_function` - Locate function definitions
+- `get_impact_radius` - Calculate blast radius of changes
+- `get_dependencies` - Get direct imports of a file
+- `get_dependents` - Get files depending on target
+- `get_context` - Get AI-optimized context for a file
+- `get_tested_by` - Get test coverage info
+- `query_file` - Find files by name/pattern
+- `get_call_graph` - Get function call chains
+- `find_large_functions` - Find oversized functions
+- `get_doc_for_file` - Get documentation for a file
+- `get_traceability` - Get full traceability chain
+- `get_code_tree` - Get codebase structure
+- `get_clusters` - Get functional clusters
+- `detect_changes` - Pre-commit risk analysis
+
+**MANDATORY WORKFLOW: LeanKG First, Grep Fallback**
+
+Before ANY codebase search/navigation, you MUST:
+
+1. Check if LeanKG is available via `mcp_status`
+2. If LeanKG is not initialized, run `mcp_init` first
+3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
+
+**MCP Server Unavailable - CLI Fallback:**
+If LeanKG MCP tools fail, use CLI commands:
+- `cargo run -- status` - Check status
+- `cargo run -- index ./src` - Index codebase
+- `cargo run -- query "name" --kind name` - Query by name
+- `cargo run -- impact src/main.rs 3` - Get impact radius
+
+| Instead of | Use LeanKG |
+|------------|------------|
+| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
+| glob + content search for tests | `get_tested_by` |
+| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
+| Reading entire files | `get_context` (token-optimized) |
+BOOTSTRAPEOF
+            echo "Updated leankg-bootstrap.md for Claude Code (added CLI fallback)"
+        fi
     fi
     
     if [ "$hooks_installed" = true ]; then
@@ -527,6 +586,13 @@ Before ANY codebase search/navigation, you MUST:
 3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
 4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 
+**MCP Server Unavailable - CLI Fallback:**
+If LeanKG MCP tools fail, use CLI commands:
+- `cargo run -- status` - Check status
+- `cargo run -- index ./src` - Index codebase
+- `cargo run -- query "name" --kind name` - Query by name
+- `cargo run -- impact src/main.rs 3` - Get impact radius
+
 | Instead of | Use LeanKG |
 |------------|------------|
 | grep/ripgrep for "where is X?" | `search_code` or `find_function` |
@@ -535,6 +601,58 @@ Before ANY codebase search/navigation, you MUST:
 | Reading entire files | `get_context` (token-optimized) |
 BOOTSTRAPEOF
         echo "Created leankg-bootstrap.md for Cursor"
+    else
+        if ! grep -q "CLI Fallback" "$plugin_dir/leankg-bootstrap.md" 2>/dev/null; then
+            cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
+# LeanKG Bootstrap
+
+LeanKG is a lightweight knowledge graph for codebase understanding.
+
+**Auto-Activated Tools:**
+- `mcp_status` - Check if LeanKG is initialized
+- `mcp_init` - Initialize LeanKG for a project
+- `mcp_index` - Index codebase
+- `search_code` - Search code elements by name/type
+- `find_function` - Locate function definitions
+- `get_impact_radius` - Calculate blast radius of changes
+- `get_dependencies` - Get direct imports of a file
+- `get_dependents` - Get files depending on target
+- `get_context` - Get AI-optimized context for a file
+- `get_tested_by` - Get test coverage info
+- `query_file` - Find files by name/pattern
+- `get_call_graph` - Get function call chains
+- `find_large_functions` - Find oversized functions
+- `get_doc_for_file` - Get documentation for a file
+- `get_traceability` - Get full traceability chain
+- `get_code_tree` - Get codebase structure
+- `get_clusters` - Get functional clusters
+- `detect_changes` - Pre-commit risk analysis
+
+**MANDATORY WORKFLOW: LeanKG First, Grep Fallback**
+
+Before ANY codebase search/navigation, you MUST:
+
+1. Check if LeanKG is available via `mcp_status`
+2. If LeanKG is not initialized, run `mcp_init` first
+3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
+
+**MCP Server Unavailable - CLI Fallback:**
+If LeanKG MCP tools fail, use CLI commands:
+- `cargo run -- status` - Check status
+- `cargo run -- index ./src` - Index codebase
+- `cargo run -- query "name" --kind name` - Query by name
+- `cargo run -- impact src/main.rs 3` - Get impact radius
+
+| Instead of | Use LeanKG |
+|------------|------------|
+| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
+| glob + content search for tests | `get_tested_by` |
+| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
+| Reading entire files | `get_context` (token-optimized) |
+BOOTSTRAPEOF
+            echo "Updated leankg-bootstrap.md for Cursor (added CLI fallback)"
+        fi
     fi
     
     if [ "$hooks_installed" = true ]; then
@@ -662,12 +780,7 @@ install_claude_instructions() {
     local claude_md="$HOME/.config/claude/CLAUDE.md"
     mkdir -p "$(dirname "$claude_md")"
     
-    if [ -f "$claude_md" ]; then
-        if grep -q "MANDATORY" "$claude_md" 2>/dev/null; then
-            echo "LeanKG instructions already exist in Claude Code CLAUDE.md"
-        else
-            echo "" >> "$claude_md"
-            curl -fsSL "$CLAUDE_TEMPLATE_URL" >> "$claude_md" 2>/dev/null || cat >> "$claude_md" <<'EOF'
+    local leankg_content=$(cat <<'EOF'
 
 # LeanKG
 
@@ -678,6 +791,13 @@ Before ANY codebase search/navigation, use LeanKG tools:
 2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
 3. Only fallback to grep/read if LeanKG fails
 
+**MCP Server Unavailable - CLI Fallback:**
+If LeanKG MCP tools fail, use CLI commands:
+- `cargo run -- status` - Check status
+- `cargo run -- index ./src` - Index codebase
+- `cargo run -- query "name" --kind name` - Query by name
+- `cargo run -- impact src/main.rs 3` - Get impact radius
+
 | Task | Use |
 |------|-----|
 | Where is X? | `search_code` or `find_function` |
@@ -685,6 +805,25 @@ Before ANY codebase search/navigation, use LeanKG tools:
 | What tests cover Y? | `get_tested_by` |
 | How does X work? | `get_context` |
 EOF
+)
+    
+    if [ -f "$claude_md" ]; then
+        if grep -q "MANDATORY" "$claude_md" 2>/dev/null; then
+            if grep -q "CLI Fallback" "$claude_md" 2>/dev/null; then
+                echo "LeanKG instructions already up to date in Claude Code CLAUDE.md"
+            else
+                if grep -qi "leankg" "$claude_md" 2>/dev/null; then
+                    sed -i.bak "/# LeanKG/,/How does X work?/c\\
+$leankg_content" "$claude_md"
+                    echo "Updated LeanKG instructions in Claude Code CLAUDE.md (added CLI fallback)"
+                else
+                    echo "$leankg_content" >> "$claude_md"
+                    echo "Added LeanKG instructions to Claude Code CLAUDE.md"
+                fi
+            fi
+        else
+            echo "" >> "$claude_md"
+            curl -fsSL "$CLAUDE_TEMPLATE_URL" >> "$claude_md" 2>/dev/null || echo "$leankg_content" >> "$claude_md"
             echo "Added LeanKG instructions to Claude Code CLAUDE.md"
         fi
     else
@@ -697,6 +836,13 @@ Before ANY codebase search/navigation, use LeanKG tools:
 1. `mcp_status` - check if ready
 2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
 3. Only fallback to grep/read if LeanKG fails
+
+**MCP Server Unavailable - CLI Fallback:**
+If LeanKG MCP tools fail, use CLI commands:
+- `cargo run -- status` - Check status
+- `cargo run -- index ./src` - Index codebase
+- `cargo run -- query "name" --kind name` - Query by name
+- `cargo run -- impact src/main.rs 3` - Get impact radius
 
 | Task | Use |
 |------|-----|
@@ -754,14 +900,15 @@ description: Use for ANY code search, navigation, or finding code logic - "where
 STRICT ENFORCEMENT: You MUST use LeanKG tools FIRST before ANY other method.
 
 1. ALWAYS invoke `mcp_status` first to check LeanKG readiness
-2. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
-3. Use LeanKG tools for ALL searches
-4. ONLY fall back to RTK or grep if LeanKG returns EMPTY results
+2. If MCP UNAVAILABLE, fall back to CLI: `cargo run -- query "name" --kind name`
+3. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
+4. Use LeanKG tools for ALL searches
+5. ONLY fall back to RTK or grep if LeanKG returns EMPTY results
 
 **NO EXCEPTIONS. NO RATIONALIZATION. Use LeanKG first.**
 </EXTREMELY_IMPORTANT>
 
-## MANDATORY Search Flow: LeanKG -> RTK -> Grep
+## MANDATORY Search Flow: LeanKG -> CLI Fallback -> RTK -> Grep
 
 ```
 When user asks "where is X", "find logic Y", "how does Z work", etc:
@@ -769,16 +916,42 @@ When user asks "where is X", "find logic Y", "how does Z work", etc:
            v
 1. mcp_status (ALWAYS check first)
            |
+           +-- MCP UNAVAILABLE --> CLI fallback (see below)
+           |
            v
 2. search_code("X") or find_function("X") or query_file("X")
            |
            +-- Results returned --> Use get_context(file) to read content
            |
            v (EMPTY)
-3. rtk grep "X" --path .
+3. CLI fallback: cargo run -- query "X" --kind name
            |
            v (EMPTY)
-4. grep -rn "X" --include="*.rs"
+4. rtk grep "X" --path .
+           |
+           v (EMPTY)
+5. grep -rn "X" --include="*.rs"
+```
+
+## MCP Server Unavailable - CLI Fallback
+
+If LeanKG MCP tools fail (connection refused, not available), use CLI:
+
+```bash
+# Check status
+cargo run -- status
+
+# Index codebase
+cargo run -- index ./src
+
+# Query by name
+cargo run -- query "function_name" --kind name
+
+# Query by pattern
+cargo run -- query "*.rs" --kind pattern
+
+# Get impact radius
+cargo run -- impact src/main.rs 3
 ```
 
 ## LeanKG MCP Tools (Use in this order)
@@ -826,15 +999,8 @@ grep -rn "X" --include="*.rs"
 EOF
 )
 
-    if [ -f "$leankg_skill_dir/SKILL.md" ]; then
-        if grep -q "STRICT ENFORCEMENT" "$leankg_skill_dir/SKILL.md" 2>/dev/null; then
-            echo "LeanKG skill already installed at $leankg_skill_dir"
-            return
-        fi
-    fi
-    
     echo "$skill_content" > "$leankg_skill_dir/SKILL.md"
-    echo "Installed LeanKG skill to $leankg_skill_dir for $agent_name"
+    echo "Installed/Updated LeanKG skill to $leankg_skill_dir for $agent_name"
 }
 
 install_agents_instructions() {
