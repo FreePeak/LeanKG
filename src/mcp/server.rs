@@ -47,6 +47,19 @@ impl Clone for MCPServer {
 }
 
 impl MCPServer {
+    fn normalize_db_path_for_init(path: &std::path::Path) -> std::path::PathBuf {
+        let is_db_dir = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == ".leankg")
+            .unwrap_or(false);
+        if is_db_dir {
+            path.to_path_buf()
+        } else {
+            path.join(".leankg")
+        }
+    }
+
     pub fn new(db_path: std::path::PathBuf) -> Self {
         Self {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
@@ -593,7 +606,7 @@ impl MCPServer {
 
         if tool_name == "mcp_init" {
             if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
-                let new_db_path = std::path::PathBuf::from(path);
+                let new_db_path = Self::normalize_db_path_for_init(std::path::Path::new(path));
                 {
                     let mut guard = self.graph_engine.lock();
                     *guard = None;
@@ -626,6 +639,24 @@ impl MCPServer {
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::MCPServer;
+    use std::path::Path;
+
+    #[test]
+    fn normalize_db_path_for_project_path_appends_leankg() {
+        let normalized = MCPServer::normalize_db_path_for_init(Path::new("/tmp/project-root"));
+        assert_eq!(normalized, std::path::PathBuf::from("/tmp/project-root/.leankg"));
+    }
+
+    #[test]
+    fn normalize_db_path_for_db_path_keeps_value() {
+        let normalized = MCPServer::normalize_db_path_for_init(Path::new("/tmp/project-root/.leankg"));
+        assert_eq!(normalized, std::path::PathBuf::from("/tmp/project-root/.leankg"));
     }
 }
 

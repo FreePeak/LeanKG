@@ -182,6 +182,8 @@ impl ToolHandler {
             "mcp_hello" => self.mcp_hello(arguments),
             "get_clusters" => self.get_clusters(arguments),
             "get_cluster_context" => self.get_cluster_context(arguments),
+            "generate_graph_report" => self.generate_graph_report(arguments),
+            "export_graph" => self.export_graph_handler(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
@@ -398,20 +400,36 @@ impl ToolHandler {
     }
 
     fn mcp_init(&self, args: &Value) -> Result<Value, String> {
-        let path = args["path"].as_str().unwrap_or(".leankg");
+        let requested_path = std::path::PathBuf::from(args["path"].as_str().unwrap_or(".leankg"));
+        let is_db_dir = requested_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == ".leankg")
+            .unwrap_or(false);
 
-        std::fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))?;
+        let (project_path, db_path) = if is_db_dir {
+            let project = requested_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            (project, requested_path.clone())
+        } else {
+            (requested_path.clone(), requested_path.join(".leankg"))
+        };
+
+        std::fs::create_dir_all(&db_path)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
 
         let config = crate::config::ProjectConfig::default();
         let config_yaml = serde_yaml::to_string(&config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)
+        std::fs::write(project_path.join("leankg.yaml"), config_yaml)
             .map_err(|e| format!("Failed to write config: {}", e))?;
 
         Ok(json!({
             "success": true,
-            "message": format!("Initialized LeanKG project at {}", path),
-            "path": path
+            "message": format!("Initialized LeanKG project at {}", db_path.display()),
+            "path": db_path
         }))
     }
 

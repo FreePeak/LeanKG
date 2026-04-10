@@ -82,6 +82,10 @@ mod tool_registry_tests {
             let has_min_confidence = props.get("min_confidence").is_some();
             let has_cluster_id = props.get("cluster_id").is_some();
             let has_cluster_label = props.get("cluster_label").is_some();
+            let has_include_sections = props.get("include_sections").is_some();
+            let has_format = props.get("format").is_some();
+            let has_output_path = props.get("output_path").is_some();
+            let has_intent = props.get("intent").is_some();
 
             assert!(
                 is_empty
@@ -104,11 +108,23 @@ mod tool_registry_tests {
                     || has_scope
                     || has_min_confidence
                     || has_cluster_id
-                    || has_cluster_label,
+                    || has_cluster_label
+                    || has_include_sections
+                    || has_format
+                    || has_output_path
+                    || has_intent,
                 "Tool {} should have at least one parameter or empty properties",
                 tool.name
             );
         }
+    }
+
+    #[test]
+    fn test_list_tools_includes_graph_report_and_export() {
+        let tools = ToolRegistry::list_tools();
+        let tool_names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(tool_names.contains(&"generate_graph_report"));
+        assert!(tool_names.contains(&"export_graph"));
     }
 }
 
@@ -324,6 +340,24 @@ mod handler_tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("file"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_handler_generate_graph_report_is_registered() {
+        let (handler, _tmp) = create_test_handler().await;
+        let result = handler.execute_tool("generate_graph_report", &json!({})).await;
+        match result {
+            Ok(_) => {}
+            Err(message) => assert!(!message.contains("Unknown tool")),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_handler_export_graph_is_registered() {
+        let (handler, _tmp) = create_test_handler().await;
+        let result = handler.execute_tool("export_graph", &json!({})).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("format"));
     }
 }
 
