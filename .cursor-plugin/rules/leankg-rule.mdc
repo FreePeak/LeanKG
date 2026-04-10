@@ -1,0 +1,47 @@
+---
+description: Enforces LeanKG as the mandatory first-resort for codebase search and navigation. Auto-triggers for code search queries.
+alwaysApply: true
+globs:
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/*.js"
+  - "**/*.jsx"
+  - "**/*.rs"
+  - "**/*.go"
+  - "**/*.py"
+  - "**/*.java"
+  - "**/*.cpp"
+  - "**/*.c"
+  - "**/*.h"
+priority: 10
+---
+
+# LeanKG Mandatory Rule
+
+## Code Search/Navigation Triggers
+
+When user asks about codebase, these patterns **MUST** invoke LeanKG first:
+
+| Pattern | Action |
+|---------|--------|
+| "where is X" | `mcp_status` then `search_code("X")` |
+| "find logic Y" | `mcp_status` then `search_code("Y")` |
+| "how does Z work" | `mcp_status` then `find_function("Z")` then `get_context` |
+| "what calls X" | `get_call_graph("X")` |
+| "what breaks if I change X" | `get_impact_radius("X")` |
+| "find all files named X" | `query_file("X")` |
+| "what depends on X" | `get_dependents("X")` |
+| "what does X import" | `get_dependencies("X")` |
+| "what tests cover X" | `get_tested_by("X")` |
+
+## Enforcement
+
+1. **ALWAYS** call `mcp_status` first to check LeanKG readiness
+2. **ONLY** fall back to grep/ripgrep if LeanKG returns EMPTY results
+3. **NEVER** use grep as primary search method
+
+## Fallback Chain
+
+```
+LeanKG MCP tools -> CLI (leankg query) -> RTK -> grep/ripgrep
+```
