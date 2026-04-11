@@ -43,32 +43,33 @@ cargo run -- hooks install           # Install git hooks
 
 ```
 src/
-├── main.rs              # CLI entry point (all commands)
+├── main.rs              # CLI entry point (28+ commands)
 ├── lib.rs               # Library exports
-├── cli/                 # Clap commands enum
+├── cli/                 # Clap commands enum + ShellRunner
 ├── config/              # ProjectConfig, IndexerConfig, DocConfig, McpConfig
-├── db/                  # CozoDB models, schema, operations
+├── db/                  # CozoDB models, schema, operations, API key store
 ├── doc/                 # DocGenerator, template rendering, wiki generation
-├── doc_indexer/         # Documentation indexing
-├── graph/               # GraphEngine, queries, context, traversal, clustering, cache
-├── indexer/             # tree-sitter parsers, extractors, git analysis
-├── mcp/                 # MCP tools (tools.rs), handler (handler.rs), server
-├── orchestrator/        # Query orchestration with caching
-├── compress/            # RTK-style compression, read modes
-├── web/                 # Axum REST API
-├── api/                 # HTTP handlers, auth
-├── watcher/             # notify-based file watcher
-├── hooks/               # Git hooks (pre-commit, post-commit, etc.)
-├── benchmark/           # Benchmark runner
-└── registry.rs         # Global repository registry
+├── doc_indexer/         # Documentation indexing (docs/ -> documented_by edges)
+├── graph/               # GraphEngine, queries, context, traversal, clustering, cache, export
+├── indexer/             # tree-sitter parsers (13), extractors, git analysis, Terraform, CI/CD
+├── mcp/                 # MCP tools (35), handler, server (rmcp), auth, write tracker
+├── orchestrator/        # Query orchestration with intent parsing and persistent cache
+├── compress/            # RTK-style compression: 8 read modes, response/shell/cargo/git, entropy
+├── web/                 # Axum web UI (20+ routes, embedded HTML/CSS/JS)
+├── api/                 # REST API handlers, auth middleware
+├── watcher/             # notify-based file watcher for auto-indexing
+├── hooks/               # Git hooks (pre-commit, post-commit, post-checkout, GitWatcher)
+├── benchmark/           # Benchmark runner (LeanKG vs OpenCode/Gemini/Kilo)
+├── registry.rs          # Global repository registry (multi-repo management)
+└── runtime.rs           # Tokio runtime utilities
 ```
 
-**Key files:** `src/lib.rs` (exports), `src/db/models.rs` (CodeElement, Relationship, BusinessLogic), `src/mcp/tools.rs` (36 tool defs), `src/mcp/handler.rs` (tool execution)`
+**Key files:** `src/lib.rs` (exports), `src/db/models.rs` (CodeElement, Relationship, BusinessLogic, ContextMetric), `src/mcp/tools.rs` (35 tool defs), `src/mcp/handler.rs` (tool execution)
 
 ## Data Model
 
 - **qualified_name** format: `path/to/file.rs::function_name` (e.g., `src/main.rs::main`)
-- **Relationship** types: `imports`, `calls`, `tested_by`, `references`, `documented_by`, `contains`, `defines`, `implementations`, `implementations`
+- **Relationship** types (10): `imports`, `calls`, `references`, `documented_by`, `tested_by`, `tests`, `contains`, `defines`, `implements`, `implementations`
 
 ## Workflow (Feature Per Branch)
 
@@ -89,13 +90,17 @@ Use LeanKG tools BEFORE grep/read when navigating code:
 | Task | Use |
 |------|-----|
 | Where is X? | `search_code`, `find_function` |
-| What breaks if I change Y? | `get_impact_radius` |
+| What breaks if I change Y? | `get_impact_radius`, `detect_changes` |
 | What tests cover Y? | `get_tested_by` |
-| How does X work? | `get_context`, `get_review_context` |
+| How does X work? | `get_context`, `get_review_context`, `orchestrate` |
 | Dependencies | `get_dependencies`, `get_dependents` |
-| Call graph | `get_call_graph` |
+| Call graph | `get_call_graph`, `get_callers` |
+| Read file efficiently | `ctx_read` (8 compression modes) |
+| Smart routing | `orchestrate` (cache-graph-compress) |
 
 Doc/Traceability: `get_doc_for_file`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`
+
+Clustering: `get_clusters`, `get_cluster_context`, `generate_graph_report`
 
 ## Testing Notes
 

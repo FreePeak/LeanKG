@@ -57,7 +57,7 @@ This installs:
 | `opencode` | OpenCode AI | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md` |
 | `cursor` | Cursor AI | `~/.cursor/mcp.json` (global) | `~/.cursor/AGENTS.md` |
 | `claude` | Claude Code/Desktop | `~/.config/claude/settings.json` | `~/.config/claude/CLAUDE.md` |
-| `gemini` | Gemini CLI / Google Antigravity | `~/.config/gemini-cli/mcp.json` | `~/.gemini/GEMINI.md` |
+| `gemini` | Gemini CLI | `~/.config/gemini-cli/mcp.json` | `~/.gemini/GEMINI.md` |
 | `kilo` | Kilo Code | `~/.config/kilo/kilo.json` | `~/.config/kilo/AGENTS.md` |
 
 **Examples:**
@@ -78,8 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 # Install for Kilo Code
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- kilo
 
-# Install for Google Antigravity
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- antigravity
+
 ```
 
 ### Cursor Installation Details
@@ -288,6 +287,7 @@ graph LR
 | `references` | doc → code | Doc references code element |
 | `defines` | A → B | Element A defines element B |
 | `implements` | struct → interface | Struct implements interface |
+| `implementations` | interface → struct | Interface implementations |
 
 **Key Insight:** The graph stores the FULL dependency graph at indexing time. When you query, LeanKG traverses N hops from your target to find all affected elements - no file scanning needed.
 
@@ -334,7 +334,6 @@ Before ANY codebase search/navigation, use LeanKG tools:
 | KiloCode | `~/.config/kilo/AGENTS.md` | Yes |
 | Codex | `~/.config/codex/AGENTS.md` | Yes |
 | Gemini CLI | `~/.gemini/GEMINI.md` | Yes |
-| Google Antigravity | `~/.gemini/GEMINI.md` | Yes |
 
 See [Agentic Instructions](docs/agentic-instructions.md) for detailed setup.
 
@@ -377,7 +376,7 @@ LeanKG is available via the Cursor plugin marketplace:
 
 See [`.cursor-plugin/INSTALL.md`](.cursor-plugin/INSTALL.md) for details.
 
-### Gemini CLI / Google Antigravity (Auto-Trigger)
+### Gemini CLI (Auto-Trigger)
 
 Install via gemini extensions:
 
@@ -593,8 +592,6 @@ See [MCP Tools](docs/mcp-tools.md) for the complete list of available tools.
 | **Cursor** | MCP | Yes (`AGENTS.md`) |
 | **KiloCode** | MCP | Yes (`AGENTS.md`) |
 | **Codex** | MCP | Yes (`AGENTS.md`) |
-| **Google Antigravity** | MCP | Yes (`AGENTS.md`) |
-| **Windsurf** | MCP | Not yet |
 | **Gemini CLI** | MCP | Yes (`AGENTS.md`) |
 
 ---
@@ -624,6 +621,8 @@ See [Roadmap](docs/roadmap.md) for detailed feature planning and implementation 
 | C# | `.cs` | tree-sitter-c-sharp |
 | Ruby | `.rb` | tree-sitter-ruby |
 | PHP | `.php` | tree-sitter-php |
+| Dart | `.dart` | tree-sitter-dart (parser only) |
+| Swift | `.swift` | tree-sitter-swift (parser only) |
 | Terraform | `.tf` | Custom extractor |
 | CI/CD YAML | `.yml`, `.yaml` | Custom extractor (GitHub, GitLab, Azure) |
 | Markdown | `.md` | doc indexer |

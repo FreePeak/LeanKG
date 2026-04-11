@@ -1,0 +1,592 @@
+# LeanKG PRD - Consolidated Tracking Document
+
+**Version:** 3.0-consolidated
+**Date:** 2026-04-11
+**Status:** Active Development
+**Author:** Product Owner
+**Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
+**Codebase Version:** 0.11.1
+
+---
+
+## Changelog
+
+### v3.0-consolidated - Full codebase audit
+- Deep dive codebase analysis: 35 MCP tools verified (0 stubs), 28+ CLI commands, 10 language extractors
+- Updated language support: 10 fully extracted (Go, TS/JS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) + 3 parser-only (Dart, Swift, XML)
+- Updated all user story statuses based on actual implementation
+- Added missing feature sections: Git Hooks, Context Metrics, REST API, Wiki Generation, Global Registry, Graph Export, Orchestrator
+- Unified RTK Compression status: ResponseCompressor (FR-RTK-11..15) now marked DONE
+- Fixed US-GN-03 (Global Registry) status: DONE (was PENDING)
+- Fixed AB Testing stories: US-AB-02..04 marked DONE
+- Removed outdated references to non-existent features
+- Added new user stories for recently implemented features
+
+### v2.0-consolidated - Merged from 3 source PRDs
+- Source 1: `prd-leankg.md` (v1.7, 2026-03-27)
+- Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
+- Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
+
+---
+
+## 1. Executive Summary
+
+LeanKG is a lightweight, local-first knowledge graph solution designed for developers who use AI-assisted coding tools. The primary purpose is to provide AI models with accurate, concise codebase context without scanning unnecessary code, avoiding context window dilution, and ensuring documentation stays up-to-date with business logic mapping.
+
+Unlike heavy frameworks like Graphiti that require external databases (Neo4j) and cloud infrastructure, LeanKG runs entirely locally on macOS and Linux with minimal resource consumption. It automatically generates and maintains documentation while mapping business logic to the existing codebase.
+
+**Key Metrics (v0.11.1):**
+- 35 MCP tools (all fully implemented)
+- 28+ CLI commands
+- 10 languages with full extraction + 3 parser-only
+- 8 compression/read modes
+- Smart orchestrator with persistent cache
+- Git hooks (pre-commit, post-commit, post-checkout)
+- REST API server with auth
+- Context metrics tracking
+- Global multi-repo registry
+
+---
+
+## 2. Problem Statement
+
+### 2.1 Current Pain Points
+
+| Pain Point | Description |
+|------------|-------------|
+| **Context Window Dilution** | AI tools scan entire codebases, including irrelevant files, wasting context window tokens |
+| **Outdated Documentation** | Manual docs quickly become stale; AI receives wrong context |
+| **Business Logic Disconnect** | No clear mapping between business requirements and code implementation |
+| **Token Waste** | Redundant code scanning generates unnecessary token costs |
+| **Poor Code Generation** | AI lacks accurate context, producing incorrect or suboptimal code |
+| **Feature Transfer Difficulty** | Onboarding new developers requires extensive code exploration |
+| **Impact radius lacks confidence grades** | `get_impact_radius` returns all edges at equal weight; LLM cannot distinguish "WILL BREAK" from "MIGHT BE AFFECTED" |
+| **No pre-commit risk signal** | No tool exists to assess change risk before commit |
+| **Flat search results** | `search_code` returns symbol matches with no grouping by functional area |
+
+---
+
+## 3. User Stories
+
+### 3.1 Core MVP Stories (US-01 to US-18)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-01 | Auto-index codebase so AI tools have accurate context | Must Have | DONE |
+| US-02 | Generate and update documentation automatically | Must Have | DONE |
+| US-03 | Map business logic to code for AI understanding | Must Have | DONE |
+| US-04 | Expose MCP server for AI tool integration | Must Have | DONE |
+| US-05 | Full CLI interface with query and MCP server commands | Must Have | DONE |
+| US-06 | Minimal resource usage | Must Have | DONE |
+| US-07 | Lightweight Web UI for graph visualization | Should Have | DONE |
+| US-08 | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | Must Have | DONE |
+| US-09 | Pipeline information extraction from CI/CD configs | Should Have | DONE |
+| US-10 | Documentation-structure mapping | Should Have | DONE |
+| US-11 | Enhanced business logic tagging with doc links | Should Have | DONE |
+| US-12 | Fix impact radius calculation for qualified names | Must Have | DONE |
+| US-13 | Additional MCP tools for docs and pipeline queries | Should Have | DONE |
+| US-14 | npm-based installation without Rust | Must Have | PENDING |
+| US-15 | MCP server expose init/index/install tools | Should Have | DONE |
+| US-16 | MCP server auto-initialize on startup | Should Have | DONE |
+| US-17 | MCP server auto-re-index when starting if stale | Should Have | DONE |
+| US-18 | Configurable auto-indexing via leankg.yaml | Should Have | DONE |
+
+### 3.2 v2.0 Enhancement Stories (US-19 to US-27)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-19 | Cross-file call edge resolution | Must Have | DONE |
+| US-20 | Go `implements` edge extraction fix | Must Have | DONE |
+| US-21 | Push-down Datalog queries + injection safety | Must Have | DONE |
+| US-22 | Token-efficient `signature_only` context mode | Must Have | DONE |
+| US-23 | Bounded depth call graph traversal | Should Have | DONE |
+| US-24 | Fix `get_doc_for_file` query direction bug | Must Have | DONE |
+| US-25 | Add `mcp_index_docs` MCP tool | Must Have | DONE |
+| US-26 | Fix doc-code reference extraction | Should Have | DONE |
+| US-27 | MCP tool definition quality improvements | Should Have | DONE |
+
+### 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-GN-01 | Impact analysis with confidence scores and severity classifications | Must Have | DONE |
+| US-GN-02 | Pre-commit `detect_changes` tool | Must Have | DONE |
+| US-GN-03 | Multi-repo global registry | Should Have | DONE |
+| US-GN-04 | Cluster-grouped search results | Should Have | DONE |
+| US-GN-05 | Auto-detect functional clusters | Should Have | DONE |
+| US-GN-06 | 360-degree context view in single tool call | Should Have | DONE |
+| US-GN-07 | Cluster-level SKILL.md generation | Could Have | PENDING |
+| US-GN-08 | MCP Resources for overview context | Could Have | PENDING |
+| US-GN-09 | Repository wiki generation | Could Have | DONE |
+
+### 3.4 AB Testing Stories (US-AB-01 to US-AB-05)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-AB-01 | OpenCode token parsing for benchmark comparison | Must Have | DONE |
+| US-AB-02 | Context correctness validation (precision/recall/F1) | Must Have | DONE |
+| US-AB-03 | CozoDB data store correctness tests | Must Have | DONE |
+| US-AB-04 | Token savings summary report with overall verdict | Should Have | DONE |
+| US-AB-05 | Prompt YAML format with `expected_files` field for ground truth | Should Have | DONE |
+
+### 3.5 RTK Compression Stories (US-RTK-01 to US-RTK-15)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-RTK-01 | LeanKGCompressor for internal command compression | Must Have | DONE |
+| US-RTK-02 | CargoTestCompressor with failures-only mode (85%+ savings) | Must Have | DONE |
+| US-RTK-03 | GitDiffCompressor with stats extraction (70%+ savings) | Must Have | DONE |
+| US-RTK-04 | ShellCompressor extended with leankg-specific patterns | Should Have | DONE |
+| US-RTK-05 | 8 read modes: adaptive, full, map, signatures, diff, aggressive, entropy, lines | Must Have | DONE |
+| US-RTK-06 | Entropy analysis (Shannon, Jaccard, Kolmogorov) | Should Have | DONE |
+| US-RTK-07 | ResponseCompressor for MCP JSON responses | Must Have | DONE |
+| US-RTK-08 | Compress impact_radius, call_graph, search_code responses | Must Have | DONE |
+| US-RTK-09 | `compress_response` parameter on graph tools | Should Have | DONE |
+| US-RTK-10 | `--compress` CLI flag for shell command output | Should Have | DONE |
+
+### 3.6 Infrastructure Stories (US-INF-01 to US-INF-10)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-INF-01 | Git pre-commit hook with critical file blocking | Must Have | DONE |
+| US-INF-02 | Git post-commit hook with auto-incremental reindex | Should Have | DONE |
+| US-INF-03 | Git post-checkout hook with branch-switch reindex | Should Have | DONE |
+| US-INF-04 | GitWatcher for continuous index freshness | Should Have | DONE |
+| US-INF-05 | Context metrics tracking with schema (18 fields) | Should Have | DONE |
+| US-INF-06 | REST API server with health/status/search endpoints | Should Have | DONE |
+| US-INF-07 | API key management with Argon2 hashing | Should Have | DONE |
+| US-INF-08 | Wiki generation from code structure | Could Have | DONE |
+| US-INF-09 | Graph export to HTML, SVG, GraphML, Neo4j formats | Should Have | DONE |
+| US-INF-10 | Smart orchestrator with intent parsing and persistent cache | Should Have | DONE |
+
+### 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-LANG-01 | Dart parser (tree-sitter-dart) | Should Have | PARTIAL (parser only, no extraction) |
+| US-LANG-02 | Swift parser (tree-sitter-swift) | Should Have | PARTIAL (parser only, no extraction) |
+| US-LANG-03 | XML parser (tree-sitter-xml) | Could Have | PARTIAL (parser only, no extraction) |
+
+---
+
+## 4. Implementation Status Summary
+
+### 4.1 Completed Features
+
+| Feature | Implementation Detail |
+|---------|-----------------------|
+| Core indexing | 10 languages fully extracted: Go, TS/JS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP |
+| Dependency graph | Imports, Calls, References, TestedBy, Tests, Contains, Defines, Implements, Implementations edges |
+| CLI interface | 28+ commands including init, index, query, generate, web, mcp-stdio, impact, export, annotate, trace, benchmark, register, api-serve, hooks, wiki, metrics, run |
+| MCP server | 35 tools via stdio transport using rmcp crate |
+| Documentation generation | AGENTS.md, CLAUDE.md generation with template engine |
+| Business logic annotations | Create, update, delete, search, traceability |
+| Impact radius analysis | BFS traversal with confidence scores, severity classification |
+| Auto-install MCP config | .mcp.json generation for Cursor, OpenCode, Claude, Gemini, Kilo, Codex |
+| Web UI | 20+ routes: dashboard, graph viewer, code browser, docs, annotate, quality, export, settings |
+| Terraform indexing | .tf file parsing with resource, data, variable, output, module extraction |
+| CI/CD YAML indexing | GitHub Actions, GitLab CI, Azure Pipelines |
+| Pipeline impact analysis | Blast radius extended to pipelines and deployment targets |
+| Documentation mapping | docs/ directory indexing, documented_by/references edges |
+| Traceability | Requirements -> documentation -> code chain |
+| Confidence scoring | 0.0-1.0 confidence + WILL_BREAK/LIKELY_AFFECTED/MAY_BE_AFFECTED severity |
+| Change detection | Pre-commit risk analysis with critical/high/medium/low classification |
+| Cluster detection | Community detection with Leiden algorithm, cluster-grouped search |
+| 360-degree context | get_review_context + orchestrate with cache-graph-compress flow |
+| RTK compression | 8 read modes, 3 specialized compressors, entropy analysis, response compression |
+| Orchestrator | Intent parsing (7 query types), persistent cache, adaptive compression |
+| Git hooks | pre-commit (critical file blocking), post-commit (auto-reindex), post-checkout (branch switch) |
+| Context metrics | 18-field schema with tool_name, tokens, savings, F1 score |
+| REST API | Health, status, search endpoints with CORS and auth middleware |
+| Global registry | Multi-repo management: register, unregister, list, status-repo, setup |
+| Wiki generation | Markdown wiki from code structure |
+| Graph export | JSON, DOT/Mermaid, HTML (interactive), SVG, GraphML, Neo4j |
+| API keys | Argon2-hashed key store with create, list, revoke |
+| Shell runner | `leankg run` with optional RTK compression |
+
+### 4.2 Pending Features
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| npm-based installation (US-14) | Must Have | Binary distribution via npm |
+| Cluster-level SKILL.md generation (US-GN-07) | Could Have | Depends on stable cluster detection |
+| MCP Resources (US-GN-08) | Could Have | MCP resource endpoints |
+| Dart entity extraction (US-LANG-01) | Should Have | Parser exists, needs extractor |
+| Swift entity extraction (US-LANG-02) | Should Have | Parser exists, needs extractor |
+| XML entity extraction (US-LANG-03) | Could Have | Parser exists, needs extractor |
+| REST API completion | Should Have | Auth wiring, mutation endpoints |
+
+---
+
+## 5. Functional Requirements
+
+### 5.1 Core Features (DONE)
+
+- [x] **FR-01 to FR-07**: Code Indexing and Dependency Graph
+- [x] **FR-08 to FR-12**: Auto Documentation Generation
+- [x] **FR-13 to FR-16**: Business Logic to Code Mapping
+- [x] **FR-17 to FR-22**: Context Provisioning
+- [x] **FR-23 to FR-27**: MCP Server Interface
+- [x] **FR-28 to FR-36**: CLI Interface
+- [x] **FR-37 to FR-41**: Lightweight Web UI
+- [x] **FR-42 to FR-50**: Pipeline Information Extraction
+- [x] **FR-51 to FR-56**: Documentation-Structure Mapping
+- [x] **FR-57 to FR-60**: Enhanced Business Logic Tagging
+- [x] **FR-61 to FR-64**: Impact Analysis Improvements
+- [x] **FR-65 to FR-68**: Additional MCP Tools
+- [x] **FR-73 to FR-76**: MCP Server Self-Initialization
+- [x] **FR-77 to FR-79**: Terraform Infrastructure Indexing
+- [x] **FR-80 to FR-82**: CI/CD YAML Indexing
+
+### 5.2 GitNexus Enhancements (DONE)
+
+- [x] **FR-GN-01 to FR-GN-04**: Confidence Scoring on Relationships
+- [x] **FR-GN-05 to FR-GN-07**: Pre-Commit Change Detection Tool
+- [x] **FR-GN-08 to FR-GN-12**: Multi-Repo Global Registry
+- [x] **FR-GN-13 to FR-GN-17**: Community Detection and Cluster-Grouped Search
+- [x] **FR-GN-18 to FR-GN-19**: Enhanced 360-Degree Context Tool
+
+### 5.3 AB Testing & Validation (DONE)
+
+- [x] **FR-AB-01**: OpenCode token parsing for benchmark comparison
+- [x] **FR-AB-02**: Context correctness validation (precision/recall/F1 per task)
+- [x] **FR-AB-03**: CozoDB data store correctness tests
+- [x] **FR-AB-04**: Prompt YAML format with `expected_files` field
+- [x] **FR-AB-05**: Token savings summary report with overall verdict
+
+### 5.4 RTK Compression (DONE)
+
+- [x] **FR-RTK-01**: LeanKGCompressor struct for CLI command compression
+- [x] **FR-RTK-02**: CargoTestCompressor with failures-only mode (85%+ savings)
+- [x] **FR-RTK-03**: GitDiffCompressor with stats extraction (70%+ savings)
+- [x] **FR-RTK-04**: ShellCompressor with leankg-specific patterns
+- [x] **FR-RTK-05**: 8 read modes via FileReader (adaptive, full, map, signatures, diff, aggressive, entropy, lines)
+- [x] **FR-RTK-06**: EntropyAnalyzer (Shannon, Jaccard, Kolmogorov, repetitive patterns)
+- [x] **FR-RTK-07**: ResponseCompressor for MCP JSON responses
+- [x] **FR-RTK-08**: Compressed responses for impact_radius, call_graph, search_code, dependencies, dependents, context
+- [x] **FR-RTK-09**: `compress_response` parameter on get_impact_radius and other graph tools
+- [x] **FR-RTK-10**: `--compress` CLI flag on `leankg run` command
+
+### 5.5 Infrastructure Features (DONE)
+
+- [x] **FR-INF-01**: Git pre-commit hook with critical file blocking
+- [x] **FR-INF-02**: Git post-commit hook triggers `leankg index --incremental`
+- [x] **FR-INF-03**: Git post-checkout hook triggers reindex on branch switch
+- [x] **FR-INF-04**: GitWatcher for continuous index freshness via commit hash markers
+- [x] **FR-INF-05**: Context metrics tracking (18-field CozoDB schema)
+- [x] **FR-INF-06**: REST API server (Axum) with /health, /api/v1/status, /api/v1/search
+- [x] **FR-INF-07**: API key management (Argon2 hash, create/list/revoke)
+- [x] **FR-INF-08**: Wiki generation from code structure
+- [x] **FR-INF-09**: Graph export (HTML interactive, SVG, GraphML, Neo4j, JSON, DOT/Mermaid)
+- [x] **FR-INF-10**: Orchestrator with intent parsing (7 types) and persistent cache
+
+### 5.6 Multi-Language Support
+
+| Language | Extensions | Extractor Status | Parser |
+|----------|-----------|-----------------|--------|
+| Go | `.go` | DONE | tree-sitter-go |
+| TypeScript/JavaScript | `.ts`, `.tsx`, `.js`, `.jsx` | DONE | tree-sitter-typescript |
+| Python | `.py` | DONE | tree-sitter-python |
+| Rust | `.rs` | DONE | tree-sitter-rust |
+| Java | `.java` | DONE | tree-sitter-java |
+| Kotlin | `.kt`, `.kts` | DONE | tree-sitter-kotlin-ng |
+| C/C++ | `.cpp`, `.cxx`, `.cc`, `.hpp`, `.h`, `.c` | DONE | tree-sitter-cpp |
+| C# | `.cs` | DONE | tree-sitter-c-sharp |
+| Ruby | `.rb` | DONE | tree-sitter-ruby |
+| PHP | `.php` | DONE | tree-sitter-php |
+| Dart | `.dart` | PARTIAL (parser only) | tree-sitter-dart |
+| Swift | `.swift` | PARTIAL (parser only) | tree-sitter-swift |
+| XML | `.xml` | PARTIAL (parser only) | tree-sitter-xml |
+| Terraform | `.tf` | DONE (regex) | Custom extractor |
+| CI/CD YAML | `.yml`, `.yaml` | DONE (custom) | GitHub Actions, GitLab CI, Azure Pipelines |
+| Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
+
+---
+
+## 6. Technical Architecture
+
+### 6.1 Technology Stack
+
+| Component | Technology | Version |
+|-----------|------------|---------|
+| Core Language | Rust | 1.70+ (edition 2021) |
+| Database | CozoDB (embedded SQLite-backed) | 0.2 |
+| Code Parsing | tree-sitter | 0.25 |
+| MCP Server | rmcp (Rust MCP library) | 1.2 |
+| CLI Framework | Clap | 4 |
+| Web UI | Axum | 0.7 |
+| Async Runtime | Tokio | 1 |
+| File Watching | notify | 7 |
+| Parallel Processing | rayon | 1.10 |
+| Markdown Parsing | pulldown-cmark | 0.12 |
+| Auth (API keys) | Argon2 | 0.5 |
+| CORS | tower-http | 0.6 |
+
+### 6.2 Data Model
+
+```
+CodeElement:
+  - qualified_name: string (PK) - format: "path/to/file.rs::function_name"
+  - element_type: string - file | function | class | import | export | pipeline | pipeline_stage | pipeline_step | terraform | cicd | document | doc_section
+  - name: string
+  - file_path: string
+  - line_start: int
+  - line_end: int
+  - language: string
+  - parent_qualified: string? (nullable)
+  - cluster_id: string? (nullable)
+  - cluster_label: string? (nullable)
+  - metadata: JSON (includes signature, headings, ci_platform, etc.)
+
+Relationship:
+  - source_qualified: string (FK)
+  - target_qualified: string (FK)
+  - rel_type: string - imports | calls | references | documented_by | tested_by | tests | contains | defines | implements | implementations
+  - confidence: float (0.0-1.0)
+  - metadata: JSON
+  Indexes: rel_type_index, target_qualified_index
+
+BusinessLogic:
+  - element_qualified: string (PK, FK)
+  - description: string
+  - user_story_id: string? (nullable)
+  - feature_id: string? (nullable)
+
+ContextMetric:
+  - tool_name: string (indexed)
+  - timestamp: int (indexed)
+  - project_path: string (indexed)
+  - input_tokens: int
+  - output_tokens: int
+  - output_elements: int
+  - execution_time_ms: int
+  - baseline_tokens: int
+  - baseline_lines_scanned: int
+  - tokens_saved: int
+  - savings_percent: float
+  - (+ optional fields: correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted)
+
+QueryCache:
+  - cache_key: string (unique)
+  - value_json: string
+  - created_at: int
+  - ttl_seconds: int
+  - tool_name: string
+  - project_path: string
+  - metadata: JSON
+
+ApiKey:
+  - id: string (UUID)
+  - name: string
+  - key_hash: string (Argon2)
+  - created_at: int
+  - last_used_at: int?
+  - revoked_at: int?
+```
+
+### 6.3 Module Map
+
+```
+src/
+├── main.rs              # CLI entry point (28+ commands)
+├── lib.rs               # Library exports
+├── cli/                 # Clap command enum + ShellRunner
+├── config/              # ProjectConfig, IndexerConfig, DocConfig, McpConfig
+├── db/                  # CozoDB models, schema, operations, API key store
+├── doc/                 # DocGenerator, template rendering, wiki generation
+├── doc_indexer/         # Documentation indexing (docs/ → documented_by edges)
+├── graph/               # GraphEngine, queries, context, traversal, clustering, cache, export (HTML/SVG/GraphML/Neo4j)
+├── indexer/             # tree-sitter parsers (13), extractors, git analysis, Terraform, CI/CD
+├── mcp/                 # MCP tools (35), handler, server (rmcp), auth, write tracker
+├── orchestrator/        # Query orchestration with intent parsing and persistent cache
+├── compress/            # RTK-style compression: 8 read modes, response/shell/cargo/git compressors, entropy analysis
+├── web/                 # Axum web UI (20+ routes, embedded HTML/CSS/JS)
+├── api/                 # REST API handlers, auth middleware
+├── watcher/             # notify-based file watcher for auto-indexing
+├── hooks/               # Git hooks (pre-commit, post-commit, post-checkout, GitWatcher)
+├── benchmark/           # Benchmark runner (LeanKG vs OpenCode/Gemini/Kilo)
+├── registry.rs          # Global repository registry (multi-repo management)
+└── runtime.rs           # Tokio runtime utilities
+```
+
+---
+
+## 7. MCP Tools (35 total)
+
+### Project Management (5)
+| Tool | Description |
+|------|-------------|
+| `mcp_init` | Initialize LeanKG project |
+| `mcp_index` | Index codebase |
+| `mcp_index_docs` | Index docs directory |
+| `mcp_install` | Create .mcp.json |
+| `mcp_status` | Show index status |
+
+### Impact & Dependency (6)
+| Tool | Description |
+|------|-------------|
+| `mcp_impact` | Calculate blast radius |
+| `get_impact_radius` | Affected files within N hops with confidence/severity |
+| `detect_changes` | Pre-commit risk analysis |
+| `get_dependencies` | Direct imports of a file |
+| `get_dependents` | Files depending on target |
+| `get_review_context` | Focused subgraph + review prompt |
+
+### Code Search (7)
+| Tool | Description |
+|------|-------------|
+| `search_code` | Search by name/type |
+| `find_function` | Locate function definition |
+| `query_file` | Find file by pattern |
+| `get_callers` | Find callers of a function |
+| `get_call_graph` | Bounded call chain |
+| `get_code_tree` | Codebase structure |
+| `find_large_functions` | Oversized functions by line count |
+
+### Context & Compression (3)
+| Tool | Description |
+|------|-------------|
+| `get_context` | AI-optimized file context |
+| `ctx_read` | Read file with 8 compression modes |
+| `orchestrate` | Smart query routing with cache |
+
+### Testing & Docs (7)
+| Tool | Description |
+|------|-------------|
+| `get_tested_by` | Test coverage info |
+| `get_doc_for_file` | Docs referencing code element |
+| `get_files_for_doc` | Code elements in a doc |
+| `get_doc_structure` | Documentation directory structure |
+| `get_doc_tree` | Doc tree with hierarchy |
+| `generate_doc` | Generate documentation |
+| `find_related_docs` | Docs related to code change |
+
+### Traceability (2)
+| Tool | Description |
+|------|-------------|
+| `get_traceability` | Full traceability chain |
+| `search_by_requirement` | Code for a requirement |
+
+### Clustering & Graph (3)
+| Tool | Description |
+|------|-------------|
+| `get_clusters` | Functional communities |
+| `get_cluster_context` | Cluster symbols and dependencies |
+| `generate_graph_report` | Comprehensive graph analysis |
+
+### Export & Utility (2)
+| Tool | Description |
+|------|-------------|
+| `export_graph` | Export in json/html/svg/graphml/neo4j |
+| `mcp_hello` | Health check / debug |
+
+---
+
+## 8. Release Criteria
+
+### 8.1 MVP (v1.x) - COMPLETED
+
+- [x] Code indexing works for 10 languages
+- [x] Dependency graph builds correctly with 10 relationship types
+- [x] CLI commands functional (28+ commands)
+- [x] MCP server exposes 35 query tools
+- [x] Documentation generation produces valid markdown
+- [x] Business logic annotations can be created and queried
+- [x] Impact radius analysis works with confidence scores
+- [x] Auto-install MCP config works for 7 AI tools
+- [x] Web UI shows interactive graph visualization (20+ routes)
+- [x] Resource usage within targets
+
+### 8.2 v2.0 Release - COMPLETED
+
+- [x] Cross-file call edges resolved correctly
+- [x] Go implements edges only for embedded fields
+- [x] Datalog injection prevention via escape_datalog
+- [x] Push-down queries for search_code, find_function, query_file
+- [x] signature_only mode for get_context
+- [x] Bounded call graph with depth and max_results
+- [x] mcp_index_docs tool functional
+- [x] Doc reference extraction with code-block skipping
+
+### 8.3 v3.0 Release (Current: v0.11.1) - NEARLY COMPLETE
+
+- [x] RTK compression (8 modes, response compression)
+- [x] Smart orchestrator with persistent cache
+- [x] Git hooks (pre/post-commit, post-checkout, GitWatcher)
+- [x] Context metrics tracking
+- [x] REST API server with auth
+- [x] Global multi-repo registry
+- [x] Wiki generation
+- [x] Graph export (HTML, SVG, GraphML, Neo4j)
+- [x] Cluster detection and cluster-grouped search
+- [x] Pre-commit change detection with severity
+- [x] Benchmark runner (vs OpenCode, Gemini, Kilo)
+- [ ] npm-based installation (US-14)
+- [ ] Dart/Swift/XML entity extraction
+- [ ] REST API auth wiring + mutation endpoints
+
+---
+
+## 9. Non-Functional Requirements
+
+| Metric | Target | Status |
+|--------|--------|--------|
+| Cold start time | < 2 seconds | TBD |
+| Indexing speed | > 10,000 lines/second (parallel via rayon) | TBD |
+| Query response time | < 100ms | TBD |
+| Memory usage (idle) | < 100MB | TBD |
+| Memory usage (indexing) | < 500MB | TBD |
+| detect_changes response time | < 2 seconds | TBD |
+| get_context enhanced response size | < 4000 tokens | TBD |
+| Batch insert size | 5000 rows/batch | DONE |
+| Supported parser count | 13 parsers (10 fully extracted) | DONE |
+| MCP tool count | 35 tools (0 stubs) | DONE |
+
+---
+
+## 10. Out of Scope
+
+1. **Vector embeddings / semantic search** - Rule-based only
+2. **Cloud sync** - Fully local
+3. **Multi-user / team features** - Single user only
+4. **Plugin system** - Future consideration
+5. **Enterprise integrations** - Future consideration
+6. **Raw Datalog query passthrough** - Security risk
+
+---
+
+## 11. Glossary
+
+| Term | Definition |
+|------|------------|
+| Knowledge Graph | Graph structure storing entities and relationships from codebase |
+| Code Indexing | Process of parsing code and extracting structural information |
+| MCP Server | Model Context Protocol server for AI tool integration (rmcp) |
+| Context Window | AI model's input capacity; LeanKG minimizes tokens needed |
+| Business Logic Mapping | Linking code to business requirements |
+| Qualified Name | Natural node identifier: `file_path::parent::name` format |
+| Blast Radius | All files affected by a change within N hops |
+| Impact Radius | Same as blast radius |
+| Confidence Score | Float 0.0-1.0 indicating edge reliability |
+| Severity Classification | WILL BREAK / LIKELY AFFECTED / MAY BE AFFECTED |
+| Cluster | Functional community of code elements (Leiden algorithm) |
+| RTK (Rust Token Killer) | Compression module reducing LLM token consumption by 60-90% |
+| Orchestrator | Smart query routing with intent parsing and persistent cache |
+| Read Mode | File compression mode: adaptive, full, map, signatures, diff, aggressive, entropy, lines |
+| GitWatcher | Component that monitors git events and triggers reindexing |
+| Global Registry | Multi-repo management system for cross-project queries |
+| Entropy Analysis | Shannon entropy, Jaccard similarity, Kolmogorov adjustment for information density |
+
+---
+
+## 12. References
+
+- CozoDB: https://github.com/cozodb/cozo
+- tree-sitter: https://tree-sitter.github.io/tree-sitter/
+- MCP Protocol: https://modelcontextprotocol.io/
+- rmcp: https://crates.io/crates/rmcp
+- Leiden Algorithm: https://en.wikipedia.org/wiki/Leiden_algorithm
+
+---
+
+*Last updated: 2026-04-11 (v3.0-consolidated, codebase audit)*

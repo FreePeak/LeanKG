@@ -6,10 +6,10 @@ LeanKG includes a built-in web UI for visualizing and querying your knowledge gr
 
 ```bash
 # Start the web server (default port: 8080)
-leankg serve
+leankg web
 
 # Or specify a custom port
-leankg serve --port 9000
+leankg web --port 9000
 ```
 
 Open **http://localhost:8080** in your browser.
@@ -38,4 +38,4 @@ leankg index ./src
 
 **Empty graph**: Run `leankg index ./src` to populate the database first.
 
-**Connection refused**: Ensure `leankg serve` is running on port 8080.
+**Connection refused**: Ensure `leankg web` is running on port 8080.
