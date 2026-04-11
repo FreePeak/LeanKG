@@ -528,33 +528,47 @@ leankg metrics --cleanup --retention 60
 
 ### Metrics Schema
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `tool_name` | String | LeanKG tool name (search_code, get_context, etc.) |
-| `timestamp` | Int | Unix timestamp of the call |
-| `input_tokens` | Int | Tokens in the query |
-| `output_tokens` | Int | Tokens returned |
-| `tokens_saved` | Int | Tokens saved vs baseline grep scan |
-| `savings_percent` | Float | Percentage savings |
-| `baseline_tokens` | Int | Tokens a grep scan would use |
-| `execution_time_ms` | Int | Tool execution time |
-| `success` | Bool | Whether the tool succeeded |
+| Field | Index | Type | Description |
+|-------|-------|------|-------------|
+| `tool_name` | 0 | String | LeanKG tool name (search_code, get_context, etc.) |
+| `timestamp` | 1 | Int | Unix timestamp of the call |
+| `project_path` | 2 | String | Project root being queried |
+| `input_tokens` | 3 | Int | Tokens in the query |
+| `output_tokens` | 4 | Int | Tokens returned |
+| `output_elements` | 5 | Int | Number of elements returned |
+| `execution_time_ms` | 6 | Int | Tool execution time |
+| `baseline_tokens` | 7 | Int | Tokens a grep scan would use |
+| `baseline_lines_scanned` | 8 | Int | Lines grep would scan |
+| `tokens_saved` | 9 | Int | `baseline_tokens - output_tokens` |
+| `savings_percent` | 10 | Float | `(tokens_saved / baseline_tokens) * 100` |
+| `correct_elements` | - | Int? | Elements matching expected (if ground truth) |
+| `total_expected` | - | Int? | Total expected elements |
+| `f1_score` | - | Float? | Precision/recall F1 |
+| `query_pattern` | - | String? | What was being searched |
+| `query_file` | - | String? | File being queried |
+| `query_depth` | - | Int? | Depth parameter |
+| `success` | - | Bool | Whether the tool succeeded |
+| `is_deleted` | - | Bool | Soft delete flag |
+
+**Note:** Entries with negative savings (where LeanKG outputs more tokens than baseline) are automatically filtered from the display. This ensures metrics only show tools that actually saved tokens.
 
 ### Example Output
 
 ```
 === LeanKG Context Metrics ===
 
-Total Savings: 64,660 tokens across 5 calls
-Average Savings: 99.5%
+Total Savings: 64,160 tokens across 7 calls
+Average Savings: 99.4%
 Retention: 30 days
 
 By Tool:
-  search_code: 2 calls, avg 100% saved, 25,903 tokens saved
-  get_impact_radius: 1 calls, avg 99% saved, 24,820 tokens saved
-  get_context: 1 calls, avg 100% saved, 7,965 tokens saved
-  find_function: 1 calls, avg 100% saved, 5,972 tokens saved
+  search_code:        2 calls,  avg 100% saved, 25,903 tokens saved
+  get_impact_radius:  1 calls,  avg 99% saved, 24,820 tokens saved
+  get_context:        1 calls,  avg 100% saved, 7,965 tokens saved
+  find_function:      1 calls,  avg 100% saved, 5,972 tokens saved
 ```
+
+**Average calculation:** Only entries with positive `savings_percent` contribute to the average. Negative entries (where LeanKG outputs more tokens than baseline) are excluded from both the total count and the percentage calculation.
 
 ---
 

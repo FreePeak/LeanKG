@@ -2,4 +2,4 @@ target/
 .worktrees/
 .leankg/
 .worktrees/
-.cargo_home/
+.cargo_home/.leankg

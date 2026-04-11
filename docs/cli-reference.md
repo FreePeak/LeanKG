@@ -112,7 +112,7 @@ leankg export --output graph.cypher --format neo4j
 
 ## Context Metrics
 
-Track token savings and usage:
+Track token savings and usage. Only entries with positive savings (where LeanKG outputs fewer tokens than baseline) are displayed.
 
 ```bash
 # View metrics summary
@@ -135,6 +135,21 @@ leankg metrics --reset
 
 # Cleanup old metrics
 leankg metrics --cleanup --retention 60
+```
+
+**Example output:**
+```
+=== LeanKG Context Metrics ===
+
+Total Savings: 64,160 tokens across 7 calls
+Average Savings: 99.4%
+Retention: 30 days
+
+By Tool:
+  search_code:        2 calls,  avg 100% saved, 25,903 tokens saved
+  get_impact_radius:  1 calls,  avg 99% saved, 24,820 tokens saved
+  get_context:        1 calls,  avg 100% saved, 7,965 tokens saved
+  find_function:      1 calls,  avg 100% saved, 5,972 tokens saved
 ```
 
 ## Benchmark
