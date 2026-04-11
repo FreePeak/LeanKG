@@ -23,7 +23,7 @@ cargo clippy -- -D warnings  # Lint (warnings as errors)
 ```bash
 cargo run -- init [--path <path>]     # Initialize .leankg in current dir
 cargo run -- index ./src [--incremental] [--lang <lang>] [--exclude <patterns>]
-cargo run -- mcp-stdio [--watch]     # Start MCP server with stdio transport
+cargo run -- mcp-stdio [--watch] [--dir <path>] [--project-path <path>]  # Start MCP server with stdio transport
 cargo run -- web [--port <port>]     # Start embedded web UI server
 cargo run -- impact <file> [--depth <depth>]  # Calculate blast radius
 cargo run -- status                  # Show index status

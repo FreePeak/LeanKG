@@ -12,7 +12,7 @@ Complete reference for all LeanKG CLI commands.
 | `leankg query [--kind <type>]` | Query the knowledge graph |
 | `leankg serve [--port <port>]` | Start the MCP server (deprecated, use `mcp-stdio`) |
 | `leankg web [--port <port>]` | Start the embedded web UI server |
-| `leankg mcp-stdio [--watch] [--project-path <path>]` | Start MCP server with stdio transport |
+| `leankg mcp-stdio [--watch] [--dir <path>] [--project-path <path>]` | Start MCP server with stdio transport |
 | `leankg impact <file> [--depth <depth>]` | Compute blast radius for a file |
 | `leankg status` | Show index statistics and status |
 | `leankg install` | Auto-install MCP config for AI tools |

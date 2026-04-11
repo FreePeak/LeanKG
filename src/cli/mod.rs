@@ -57,6 +57,9 @@ pub enum CLICommand {
         /// Enable auto-indexing with file watcher
         #[arg(long)]
         watch: bool,
+        /// Directory to index (overrides auto-detection via cwd)
+        #[arg(long)]
+        dir: Option<String>,
         /// Explicit project path (overrides auto-detection via cwd)
         #[arg(long)]
         project_path: Option<String>,

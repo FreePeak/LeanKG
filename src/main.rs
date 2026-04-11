@@ -107,17 +107,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ensure_db_path(&db_path).await?;
             web::start_server(port, db_path).await?;
         }
-        cli::CLICommand::McpStdio { watch, project_path } => {
-            let explicit_project_path = project_path.map(|p| std::path::PathBuf::from(p));
+        cli::CLICommand::McpStdio { watch, dir, project_path } => {
+            let explicit_project_path = dir.map(|p| std::path::PathBuf::from(p))
+                .or_else(|| project_path.map(|p| std::path::PathBuf::from(p)));
             let project_path = explicit_project_path.clone().unwrap_or_else(|| find_project_root().unwrap_or_else(|_| std::path::PathBuf::from(".")));
             let db_path = project_path.join(".leankg");
 
             ensure_db_path(&db_path).await?;
 
-            let mcp_server = if let Some(ref pp) = explicit_project_path {
-                mcp::MCPServer::new_with_project_path(db_path, pp.clone())
-            } else if watch {
+            let mcp_server = if watch {
                 mcp::MCPServer::new_with_watch(db_path, project_path.clone())
+            } else if let Some(ref pp) = explicit_project_path {
+                mcp::MCPServer::new_with_project_path(db_path, pp.clone())
             } else {
                 mcp::MCPServer::new(db_path)
             };
