@@ -2,7 +2,7 @@
 
 LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowledge graph.
 
-**Total: 36 MCP tools**
+**Total: 35 MCP tools** (all fully implemented, 0 stubs)
 
 ## Core Tools
 
