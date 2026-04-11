@@ -248,6 +248,8 @@ pub enum CLICommand {
         #[arg(long)]
         seed: bool,
     },
+    /// Update LeanKG to the latest version from GitHub releases
+    Update,
 }
 
 #[derive(Subcommand, Debug)]
