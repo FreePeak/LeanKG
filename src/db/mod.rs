@@ -625,6 +625,26 @@ pub fn record_metric(
     Ok(())
 }
 
+const CONTEXT_TOOLS: &[&str] = &[
+    "search_code",
+    "find_function",
+    "get_context",
+    "get_impact_radius",
+    "get_call_graph",
+    "get_callers",
+    "get_dependencies",
+    "get_dependents",
+    "get_tested_by",
+    "get_review_context",
+    "get_doc_for_file",
+    "get_traceability",
+    "get_cluster_context",
+    "get_code_tree",
+    "query_file",
+    "leankg_ctx_read",
+    "leankg_orchestrate",
+];
+
 pub fn get_metrics_summary(
     db: &CozoDb,
     tool_filter: Option<&str>,
@@ -668,13 +688,21 @@ pub fn get_metrics_summary(
         std::collections::HashMap::new();
 
     for row in &result.rows {
-        summary.total_invocations += 1;
+        let tool_name = row[0].as_str().unwrap_or("unknown").to_string();
+        if !CONTEXT_TOOLS.contains(&tool_name.as_str()) {
+            continue;
+        }
+
         let saved = row[9].as_i64().unwrap_or(0);
+        if saved < 0 {
+            continue;
+        }
+
+        summary.total_invocations += 1;
         summary.total_tokens_saved += saved;
         let pct = row[10].as_f64().unwrap_or(0.0);
         sum_savings_percent += pct;
 
-        let tool_name = row[0].as_str().unwrap_or("unknown").to_string();
         let entry = by_tool_map.entry(tool_name.clone()).or_insert((0, 0, 0.0));
         entry.0 += 1;
         entry.1 += saved;
