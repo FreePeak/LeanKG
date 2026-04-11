@@ -28,32 +28,23 @@ LeanKG provides these MCP tools for codebase navigation and analysis:
 | `get_clusters` | Get functional clusters |
 | `detect_changes` | Pre-commit risk analysis |
 
-## MANDATORY 4-Tier Search Fallback Chain
+## Workflow: LeanKG First, Grep Fallback
 
-**VIOLATION OF THIS CHAIN IS UNACCEPTABLE. ALWAYS follow this exact order:**
+**MANDATORY: Use LeanKG First**
 
-```
-Tier 1: LeanKG MCP Server (leankg_mcp_* tools)
-    |       mcp_status → search_code / find_function / query_file
-    |       If MCP down/error → Tier 2
-    v
-Tier 2: leankg CLI command
-    |       leankg query "X" --kind name
-    |       If empty/error → Tier 3
-    v
-Tier 3: rtk (rich toolkit grep)
-    |       rtk grep "X" --path .
-    |       If empty → Tier 4
-    v
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
+Before ANY codebase search/navigation, you MUST:
 
-| Instead of | Use LeanKG |
-|------------|------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
-| glob + content search for tests | `get_tested_by` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| Reading entire files | `get_context` (token-optimized) |
+1. Check if LeanKG is available via `mcp_status`
+2. If LeanKG is not initialized, run `mcp_init` first
+3. Use the appropriate LeanKG tool for the task
+4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
+
+| Instead of | Use LeanKG | Grep Fallback |
+|------------|------------|---------------|
+| grep/ripgrep for "where is X?" | `search_code` or `find_function` | `grep -rn "X" --include="*.rs"` |
+| glob + content search for tests | `get_tested_by` | `grep -rn "X" tests/` |
+| Manual dependency tracing | `get_impact_radius` or `get_dependencies` | N/A |
+| Reading entire files | `get_context` (token-optimized) | `cat file.rs` |
 
 ## Auto-Init Behavior
 
@@ -66,12 +57,12 @@ LeanKG automatically initializes on first use:
 
 ```bash
 # Index a codebase
-leankg init
-leankg index ./src
+cargo run -- init
+cargo run -- index ./src
 
 # Calculate impact radius
-leankg impact src/main.rs 3
+cargo run -- impact src/main.rs 3
 
 # Start MCP server
-leankg mcp-stdio
+cargo run -- serve
 ```

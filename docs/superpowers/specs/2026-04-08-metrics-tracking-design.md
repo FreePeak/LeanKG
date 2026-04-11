@@ -42,33 +42,33 @@ The **baseline** for comparison is what would happen if the agent used `grep` in
 
 ```cozo
 :create context_metrics {
+    id: String,                   // UUID
     tool_name: String,            // e.g., "get_impact_radius"
     timestamp: Int,               // Unix timestamp (seconds)
     project_path: String,         // Project root being queried
-
+    
     // LeanKG tool execution
     input_tokens: Int,           // Tokens in the query/request
     output_tokens: Int,           // Tokens in LeanKG response
     output_elements: Int,         // Number of elements returned
     execution_time_ms: Int,       // Tool execution time
-
+    
     // Baseline (grep comparison)
     baseline_tokens: Int,        // Estimated tokens if using grep
     baseline_lines_scanned: Int, // Lines grep would scan
     tokens_saved: Int,           // baseline_tokens - output_tokens
     savings_percent: Float,      // (tokens_saved / baseline_tokens) * 100
-
+    
     // Quality metrics (when ground truth available)
     correct_elements: Int?,      // Elements matching expected
     total_expected: Int?,         // Total expected elements
     f1_score: Float?,             // Precision/recall F1
-
+    
     // Context
     query_pattern: String?,      // What was being searched
     query_file: String?,          // File being queried (if applicable)
     query_depth: Int?,           // Depth parameter (if applicable)
-    success: Bool,               // Tool succeeded
-    is_deleted: Bool             // Soft delete flag
+    success: Bool                // Tool succeeded
 }
 
 // Indexes
@@ -127,86 +127,20 @@ Returns aggregated metrics (default: all time):
 
 ```json
 {
-  "total_invocations": 7,
-  "total_tokens_saved": 64160,
-  "average_savings_percent": 99.4,
+  "total_invocations": 150,
+  "total_tokens_saved": 125000,
+  "average_savings_percent": 87.5,
   "retention_days": 30,
   "by_tool": {
-    "search_code": { "calls": 2, "avg_savings": "99.6%", "total_saved": 25903 },
-    "get_impact_radius": { "calls": 1, "avg_savings": "99.3%", "total_saved": 24820 },
-    "get_context": { "calls": 1, "avg_savings": "99.6%", "total_saved": 7965 },
-    "find_function": { "calls": 1, "avg_savings": "99.5%", "total_saved": 5972 }
+    "search_code": { "calls": 50, "avg_savings": "91%", "total_saved": 45000 },
+    "get_impact_radius": { "calls": 30, "avg_savings": "85%", "total_saved": 35000 },
+    "get_context": { "calls": 70, "avg_savings": "88%", "total_saved": 45000 }
   },
   "by_day": [
-    { "date": "2026-04-10", "calls": 5, "savings": 64160 }
+    { "date": "2026-04-08", "calls": 12, "savings": 8500 },
+    { "date": "2026-04-07", "calls": 25, "savings": 22000 }
   ]
 }
-```
-
-**Note:** Only entries with positive savings are displayed. Negative savings (where LeanKG outputs more tokens than baseline) are filtered out from the display but still recorded in the database for analysis.
-
----
-
-### 5.2 Calculation Formula
-
-The metrics are derived from the `context_metrics` schema. Each row contains:
-
-| Field | Index | Description |
-|-------|-------|-------------|
-| `baseline_tokens` | 7 | Tokens if using grep |
-| `output_tokens` | 4 | Actual LeanKG output tokens |
-| `tokens_saved` | 9 | `baseline_tokens - output_tokens` |
-| `savings_percent` | 10 | `(tokens_saved / baseline_tokens) * 100` |
-
-**Example with seeded data:**
-
-```
-| id     | tool              | baseline_tokens | output_tokens | tokens_saved | savings_percent |
-|--------|-------------------|----------------|---------------|--------------|-----------------|
-| seed1  | search_code       | 12000          | 45            | 11955        | 99.6%           |
-| seed2  | get_context       | 8000           | 35            | 7965         | 99.6%           |
-| seed3  | find_function     | 6000           | 28            | 5972         | 99.5%           |
-| seed4  | search_code       | 14000          | 52            | 13948        | 99.6%           |
-| seed5  | get_impact_radius | 25000          | 180           | 24820        | 99.3%           |
-| seed6  | get_clusters      | 300            | 500           | -200         | -66.7% (hidden) |
-| seed7  | get_code_tree     | 500            | 800           | -300         | -60.0% (hidden) |
-```
-
-**Aggregation logic:**
-
-```rust
-// In src/db/mod.rs - get_metrics_summary()
-
-for row in &result.rows {
-    summary.total_invocations += 1;
-    let saved = row[9].as_i64().unwrap_or(0);     // tokens_saved
-    summary.total_tokens_saved += saved;
-    let pct = row[10].as_f64().unwrap_or(0.0);    // savings_percent
-
-    // Per-tool aggregation
-    let entry = by_tool_map.entry(tool_name.clone()).or_insert((0, 0, 0.0));
-    entry.0 += 1;  // calls
-    entry.1 += saved;  // total_saved
-    entry.2 += pct;  // sum for avg calculation
-}
-
-// Average only calculated from POSITIVE savings_percent entries
-// to avoid dragging down the average with negative entries
-if summary.total_invocations > 0 {
-    summary.average_savings_percent = sum_savings_percent / summary.total_invocations as f64;
-}
-```
-
-**Display filtering:**
-
-```rust
-// Only show tools with positive savings
-if tm.total_saved > 0 {
-    println!("  {}: {} calls,  avg {:.0}% saved, {} tokens saved", ...);
-}
-
-// Total shows 0 if negative (no net savings)
-let display_total = if summary.total_tokens_saved < 0 { 0 } else { summary.total_tokens_saved };
 ```
 
 **Parameters:**
@@ -256,21 +190,21 @@ leankg metrics --retention 60
 ```
 === LeanKG Context Metrics ===
 
-Total Savings: 64,160 tokens across 7 calls
-Average Savings: 99.4%
+Total Savings: 125,000 tokens across 150 calls
+Average Savings: 87.5%
 Retention: 30 days
 
 By Tool:
-  search_code:        2 calls,  avg 100% saved, 25,903 tokens saved
-  get_impact_radius:  1 calls,  avg 99% saved, 24,820 tokens saved
-  get_context:        1 calls,  avg 100% saved, 7,965 tokens saved
-  find_function:      1 calls,  avg 100% saved, 5,972 tokens saved
+  search_code:        50 calls,  avg 91% saved, 45,000 tokens saved
+  get_impact_radius:  30 calls,  avg 85% saved, 35,000 tokens saved
+  get_context:        70 calls,  avg 88% saved, 45,000 tokens saved
 
 By Day:
-  2026-04-10:  5 calls, 64,160 tokens saved
-```
+  2026-04-08:  12 calls, 8,500 tokens saved
+  2026-04-07:  25 calls, 22,000 tokens saved
 
-**Note:** Entries with negative savings (where LeanKG outputs more tokens than baseline) are automatically filtered from display. This ensures the metrics only show tools that actually saved tokens.
+Session: 5 calls, 4,200 tokens saved
+```
 
 ---
 

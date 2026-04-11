@@ -1,6 +1,6 @@
 project:
   name: my-project
-  root: ./
+  root: ./src
   languages:
   - go
   - typescript
