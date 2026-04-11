@@ -35,9 +35,19 @@ This installs:
 
 LeanKG activates automatically for code search patterns:
 
-- **Rule** `leankg-rule.mdc` - `alwaysApply: true` with `priority: 10` auto-triggers for code patterns
+- **Rule** `leankg-rule.mdc` - `priority: 10` with trigger patterns for code search detection
 - **Skill** `using-leankg` - Invoked when detecting code search/navigation context
 - **Hook** `session-start` - Injects LeanKG bootstrap context on session start
+
+### Trigger Patterns
+
+The rule activates when detecting:
+- "where is", "find", "locate", "search for"
+- "how does", "what is", "explain", "show me"
+- "who calls", "what calls", "who uses", "imports"
+- "function", "method", "class", "struct", "interface"
+- "implementation", "definition", "file containing"
+- "impact", "depends on", "what breaks"
 
 ## Per-Project Fallback
 
