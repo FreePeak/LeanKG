@@ -1,12 +1,23 @@
 # LeanKG High Level Design
 
-**Version:** 2.0
+**Version:** 2.1-mempalace
 **Date:** 2026-04-11
-**Based on:** PRD v3.0-consolidated
+**Based on:** PRD v3.1-mempalace
 **Status:** Active
 **Codebase Version:** 0.11.1
 
 **Changelog:**
+- v2.1-mempalace - MemPalace-inspired features:
+  - Added temporal fields (valid_from, valid_to) to Relationship schema
+  - Added 2 new relationship types: tunnel, decided_about
+  - Added 4 new element types: decision, preference, milestone, problem
+  - Added 3 planned modules: conversation, consistency, agents
+  - Added Layered Context Loading (L0-L3) architecture
+  - Added Temporal Knowledge Graph data flow
+  - Added Consistency Check data flow
+  - Added 9 planned MCP tools (wake_up, load_layer, temporal_query, timeline, check_consistency, find_tunnels, agent_focus, agent_diary_write, agent_diary_read)
+  - Added MemPalace competitive analysis notes
+  - Source: https://github.com/milla-jovovich/mempalace
 - v2.0 - Full codebase audit rewrite:
   - Converted all Vietnamese content to English
   - Added 6 missing modules: orchestrator, compress, hooks, benchmark, registry, api
@@ -118,6 +129,9 @@ graph TB
         Hooks[Git Hooks<br/>pre/post-commit]
         Bench[Benchmark<br/>Runner]
         Registry[Global Registry<br/>Multi-repo]
+        Conv[Conversation<br/>Miner<br/>PLANNED]
+        Consist[Consistency<br/>Checker<br/>PLANNED]
+        Agents[Agent<br/>Contexts<br/>PLANNED]
 
         DB[(CozoDB<br/>Database)]
 
@@ -148,6 +162,11 @@ graph TB
         Hooks --> Indexer
         Watcher --> Indexer
         Bench --> Graph
+        Conv --> DB
+        Consist --> DB
+        Consist --> FS
+        Agents --> Graph
+        Agents --> DB
         
         MCP --> Graph
         MCP --> DocGen
@@ -155,6 +174,8 @@ graph TB
         MCP --> Trace
         MCP --> Compress
         MCP --> Orch
+        MCP --> Consist
+        MCP --> Agents
         
         Web --> Graph
         Web --> DocGen
@@ -170,7 +191,7 @@ graph TB
 | Container | Responsibility | Technology |
 |-----------|---------------|------------|
 | CLI Interface | Command-line interaction (28+ commands) | Clap (Rust) |
-| MCP Server | MCP protocol communication (35 tools) | rmcp (Rust) |
+| MCP Server | MCP protocol communication (35+9 planned tools) | rmcp (Rust) |
 | Web UI Server | HTTP server for graph visualization (20+ routes) | Axum (Rust) |
 | REST API Server | REST API with auth | Axum + tower-http (Rust) |
 | Code Indexer | Parse source code with tree-sitter (10 languages fully) | tree-sitter (Rust) |
@@ -188,6 +209,9 @@ graph TB
 | Benchmark | Compare vs OpenCode, Gemini CLI, Kilo CLI | Rust |
 | Global Registry | Multi-repo management | Rust + CozoDB |
 | CozoDB | Persistent storage (per-project) | CozoDB 0.2 (embedded SQLite-backed) |
+| Conversation Miner | [PLANNED] Mine Claude/ChatGPT/Slack transcripts for decisions | Rust (JSON parsing) |
+| Consistency Checker | [PLANNED] Detect stale/broken graph links | Rust + CozoDB |
+| Agent Contexts | [PLANNED] Specialist agent personas with focused graph views | Rust + CozoDB |
 
 ### 2.3 Component Diagram (C4-3)
 
@@ -484,6 +508,71 @@ sequenceDiagram
     end
 ```
 
+### 3.5 Temporal Query Flow (PLANNED)
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Tool
+    participant MCP as MCP Server
+    participant TQ as Temporal Query
+    participant DB as CozoDB
+
+    AI->>MCP: temporal_query(element="src/handler.rs", as_of="2026-03-01")
+    MCP->>TQ: Parse timestamp
+    TQ->>DB: SELECT * FROM relationships WHERE source_qualified LIKE 'src/handler.rs%' AND valid_from <= timestamp AND (valid_to IS NULL OR valid_to > timestamp)
+    DB-->>TQ: Historical relationships
+    TQ->>DB: SELECT * FROM code_elements WHERE qualified_name IN (targets)
+    DB-->>TQ: Historical element states
+    TQ-->>MCP: Graph snapshot at timestamp
+    MCP-->>AI: "Handler imported 5 modules and called 12 functions on March 1"
+```
+
+### 3.6 Wake-up Context Flow (PLANNED)
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Tool
+    participant MCP as MCP Server
+    participant Cache as File Cache
+    participant DB as CozoDB
+
+    AI->>MCP: wake_up()
+    MCP->>Cache: Check .leankg/wake_up.txt
+    alt Cache fresh (index unchanged)
+        Cache-->>MCP: L0+L1 (~170 tokens)
+    else Cache stale
+        MCP->>DB: Query project stats (languages, element counts, cluster count)
+        MCP->>DB: Query recent git hotspots (top 5 changed files)
+        MCP->>DB: Query critical paths (most-depended-upon files)
+        DB-->>MCP: Stats
+        MCP->>MCP: Compress to L0 (~50 tok) + L1 (~120 tok)
+        MCP->>Cache: Write .leankg/wake_up.txt
+        MCP-->>AI: L0+L1 context (~170 tokens)
+    end
+```
+
+### 3.7 Consistency Check Flow (PLANNED)
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Tool
+    participant MCP as MCP Server
+    participant CC as Consistency Checker
+    participant FS as File System
+    participant DB as CozoDB
+
+    AI->>MCP: check_consistency()
+    MCP->>CC: Run consistency checks
+    CC->>DB: Get all documented_by edges
+    CC->>FS: Verify target files exist
+    FS-->>CC: Existence results
+    CC->>DB: Get annotations for elements
+    CC->>DB: Check if elements still exist
+    CC->>DB: Check if clusters still valid
+    CC->>MCP: Report: 🔴 BROKEN (3), 🟡 STALE (7), 🟢 CURRENT (289)
+    MCP-->>AI: Consistency report
+```
+
 ---
 
 ## 4. Data Model
@@ -497,6 +586,7 @@ erDiagram
     CODE_ELEMENTS ||--o| DOCUMENTS : referenced_by
     USER_STORIES ||--o{ BUSINESS_LOGIC : mapped_to
     FEATURES ||--o{ BUSINESS_LOGIC : implements
+    AGENTS ||--o{ AGENT_DIARY : writes
 
     CODE_ELEMENTS {
         string qualified_name PK
@@ -517,6 +607,8 @@ erDiagram
         string target_qualified FK
         string rel_type
         float confidence
+        int valid_from
+        int valid_to
         json metadata
     }
 
@@ -560,17 +652,35 @@ erDiagram
         string key_hash
         int created_at
     }
+
+    AGENTS {
+        string id PK
+        string name
+        string focus
+        json filters
+        int created_at
+    }
+
+    AGENT_DIARY {
+        string id PK
+        string agent_id FK
+        string content
+        int created_at
+        string context
+    }
 ```
 
 ### 4.2 Schema Description
 
 | Table | Description | Indexes |
 |-------|-------------|---------|
-| `code_elements` | All code/doc/pipeline elements. PK = qualified_name (`file_path::parent::name`) | PK: qualified_name |
-| `relationships` | 10 relationship types: imports, calls, references, documented_by, tested_by, tests, contains, defines, implements, implementations | rel_type_index, target_qualified_index |
+| `code_elements` | All code/doc/pipeline/conversation elements. PK = qualified_name (`file_path::parent::name`) | PK: qualified_name |
+| `relationships` | 12 relationship types (10 original + tunnel + decided_about) with temporal validity | rel_type_index, target_qualified_index, valid_from_index |
 | `business_logic` | Business logic annotations per element | PK: element_qualified |
 | `context_metrics` | 18-field metrics tracking per MCP tool call | tool_name_index, timestamp_index, project_path_index |
 | `query_cache` | Persistent cache for orchestrator results | unique: cache_key, tool_name_index |
+| `agents` | [PLANNED] Specialist agent definitions with focus areas | PK: id |
+| `agent_diary` | [PLANNED] Per-agent session notes | PK: id, agent_id_index |
 
 ### 4.3 Element Types
 
@@ -588,21 +698,27 @@ erDiagram
 | `pipeline_step` | `path/to/ci.yml::pipeline::stage::step` | A pipeline step |
 | `terraform` | `path/to/file.tf::resource_type.name` | A Terraform resource |
 | `cicd` | `path/to/ci.yml::job_name` | A CI/CD job |
+| `decision` | `conversations/source::decision_hash` | [PLANNED] A decision extracted from conversations |
+| `preference` | `conversations/source::preference_hash` | [PLANNED] A user preference extracted from conversations |
+| `milestone` | `conversations/source::milestone_hash` | [PLANNED] A project milestone from conversations |
+| `problem` | `conversations/source::problem_hash` | [PLANNED] A problem/issue from conversations |
 
 ### 4.4 Relationship Types
 
-| Type | Source → Target | Description | Confidence |
-|------|-----------------|-------------|------------|
-| `imports` | file → file | Module A imports module B | 1.0 |
-| `calls` | function → function | Function A calls function B | 0.5-1.0 |
-| `references` | document → code_element | Doc references code element | 1.0 |
-| `documented_by` | code_element → document | Code is documented by doc | 1.0 |
-| `tested_by` | code_element → test_function | Code is tested by test | 1.0 |
-| `tests` | test_function → code_element | Test tests code | 1.0 |
-| `contains` | parent → child | Parent contains child (file→function, doc→section) | 1.0 |
-| `defines` | file → element | File defines element | 1.0 |
-| `implements` | struct → interface | Struct implements interface (Go) | 1.0 |
-| `implementations` | interface → struct | Interface implementations | 1.0 |
+| Type | Source → Target | Description | Confidence | Temporal |
+|------|-----------------|-------------|------------|----------|
+| `imports` | file → file | Module A imports module B | 1.0 | Yes |
+| `calls` | function → function | Function A calls function B | 0.5-1.0 | Yes |
+| `references` | document → code_element | Doc references code element | 1.0 | Yes |
+| `documented_by` | code_element → document | Code is documented by doc | 1.0 | Yes |
+| `tested_by` | code_element → test_function | Code is tested by test | 1.0 | Yes |
+| `tests` | test_function → code_element | Test tests code | 1.0 | Yes |
+| `contains` | parent → child | Parent contains child (file→function, doc→section) | 1.0 | No |
+| `defines` | file → element | File defines element | 1.0 | No |
+| `implements` | struct → interface | Struct implements interface (Go) | 1.0 | Yes |
+| `implementations` | interface → struct | Interface implementations | 1.0 | Yes |
+| `tunnel` | cluster → cluster | [PLANNED] Cross-cluster domain link | 0.5-1.0 | No |
+| `decided_about` | decision → code_element | [PLANNED] Decision relates to code | 0.7-1.0 | Yes |
 
 ---
 
@@ -805,7 +921,38 @@ documentation:
 - Swift entity extraction (US-LANG-02)
 - REST API auth wiring + mutation endpoints
 
-### 10.2 Phase 4 Features
+### 10.2 MemPalace-Inspired Features (Phase 3.5)
+
+> Competitive analysis source: [MemPalace](https://github.com/milla-jovovich/mempalace) — 96.6% LongMemEval R@5, 40.4k GitHub stars, local-first memory system.
+
+| Feature | Description | PRD Story | Priority |
+|---------|-------------|-----------|----------|
+| Temporal Knowledge Graph | valid_from/valid_to on relationships, historical queries | US-MP-01 | Must Have |
+| Layered Context (L0-L3) | Token-budgeted context layers, wake_up tool | US-MP-02 | Must Have |
+| Conversation Mining | Mine Claude/ChatGPT/Slack for decisions & preferences | US-MP-03 | Should Have |
+| Specialist Agents | Focused agent personas with per-agent diaries | US-MP-04 | Should Have |
+| Consistency Checking | Detect stale/broken graph links | US-MP-05 | Should Have |
+| Cross-Domain Tunnels | Auto-link shared domain concepts across clusters | US-MP-06 | Could Have |
+| Wake-up Protocol | ~170 token project bootstrap at session start | US-MP-07 | Should Have |
+
+**Key MemPalace concepts adapted for LeanKG:**
+
+| MemPalace Concept | LeanKG Equivalent | Status |
+|-------------------|-------------------|--------|
+| Wings (person/project) | Clusters (functional communities) | DONE |
+| Rooms (topics within wing) | Cluster labels + element types | DONE |
+| Closets (summaries) | RTK compression (8 read modes) | DONE |
+| Drawers (verbatim files) | ctx_read (full mode) | DONE |
+| Halls (memory types: facts, events, preferences) | Element types + relationship types | PARTIAL (need decision/preference types) |
+| Tunnels (cross-wing links) | Cross-cluster tunnels | PLANNED (US-MP-06) |
+| AAAK compression | RTK compression | DONE (different approach: LeanKG uses structure-aware compression, not entity abbreviation) |
+| L0-L3 memory stack | Orchestrator + context layers | PLANNED (US-MP-02) |
+| Temporal validity | Relationship valid_from/valid_to | PLANNED (US-MP-01) |
+| Specialist agents | Agent contexts | PLANNED (US-MP-04) |
+| Contradiction detection | Consistency checker | PLANNED (US-MP-05) |
+| Auto-save hooks | Git hooks + WriteTracker | DONE (git hooks only; session hooks not planned) |
+
+### 10.3 Phase 4 Features
 
 - Vector embeddings for semantic search
 - Cloud sync option
@@ -875,7 +1022,12 @@ documentation:
 | Global Registry | Multi-repo management for cross-project queries |
 | RTK | Rust Token Killer - compression module reducing LLM token consumption |
 | Entropy Analysis | Shannon entropy, Jaccard similarity, Kolmogorov adjustment for information density |
+| Temporal Graph | Relationships with valid_from/valid_to timestamps enabling historical queries |
+| Context Layer (L0-L3) | L0: Identity (~50 tok), L1: Critical facts (~120 tok), L2: Cluster (on demand), L3: Deep search (on demand) |
+| Tunnel | Cross-cluster relationship linking the same domain concept across different modules |
+| Consistency Check | Detection of stale/broken links between graph elements and actual code state |
+| Wake-up Protocol | Loading minimal L0+L1 context (~170 tokens) at session start for instant project awareness |
 
 ---
 
-*Last updated: 2026-04-11 (v2.0, full codebase audit)*
+*Last updated: 2026-04-11 (v2.1-mempalace, MemPalace-inspired features)*
