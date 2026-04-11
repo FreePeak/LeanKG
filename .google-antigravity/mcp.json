@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "/Users/linh.doan/work/harvey/freepeak/LeanKG/target/release/leankg",
+      "args": [
+        "mcp-stdio",
+        "--watch",
+        "--project-path",
+        "/Users/linh.doan/work/harvey/freepeak/LeanKG"
+      ]
+    }
+  }
+}
