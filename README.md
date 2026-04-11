@@ -337,74 +337,32 @@ Before ANY codebase search/navigation, use LeanKG tools:
 
 See [Agentic Instructions](docs/agentic-instructions.md) for detailed setup.
 
-### OpenCode Plugin (Auto-Trigger)
+### Per-Tool Setup
 
-LeanKG includes an OpenCode plugin that **automatically injects LeanKG context into every prompt**. Add to your `opencode.json`:
+All tools use the same MCP config. The install script handles setup automatically:
+
+| Tool | Install Command | MCP Config Location |
+|------|----------------|-------------------|
+| **OpenCode** | `curl ... \| bash -s -- opencode` | `~/.config/opencode/opencode.json` |
+| **Cursor** | `curl ... \| bash -s -- cursor` | `~/.cursor/mcp.json` (global) + `.cursor/mcp.json` (per-project) |
+| **Claude Code** | `curl ... \| bash -s -- claude` | `~/.config/claude/settings.json` |
+| **Gemini CLI** | `curl ... \| bash -s -- gemini` | `~/.config/gemini-cli/mcp.json` |
+| **Kilo Code** | `curl ... \| bash -s -- kilo` | `~/.config/kilo/kilo.json` |
+
+**Manual MCP config** (same for all tools):
 
 ```json
 {
-  "plugins": ["leankg@git+https://github.com/FreePeak/LeanKG.git"]
+  "mcpServers": {
+    "leankg": {
+      "command": "leankg",
+      "args": ["mcp-stdio", "--watch"]
+    }
+  }
 }
 ```
 
-This makes LeanKG tools **always available** without manual activation. See [`.opencode/INSTALL.md`](.opencode/INSTALL.md) for details.
-
-### Claude Code Plugin (Auto-Trigger)
-
-LeanKG is available via the official Claude plugin marketplace:
-
-```
-/plugin install leankg@claude-plugins-official
-```
-
-Or register the marketplace:
-
-```
-/plugin marketplace add FreePeak/leankg-marketplace
-/plugin install leankg@leankg-marketplace
-```
-
-See [`.claude-plugin/INSTALL.md`](.claude-plugin/INSTALL.md) for details.
-
-### Cursor Plugin (Auto-Trigger)
-
-LeanKG is available via the Cursor plugin marketplace:
-
-```
-/add-plugin leankg
-```
-
-See [`.cursor-plugin/INSTALL.md`](.cursor-plugin/INSTALL.md) for details.
-
-### Gemini CLI (Auto-Trigger)
-
-Install via gemini extensions:
-
-```
-gemini extensions install https://github.com/FreePeak/LeanKG
-```
-
-See [`GEMINI.md`](GEMINI.md) for context file details.
-
-### Codex (Fetch Instructions)
-
-Tell Codex:
-
-```
-Fetch and follow instructions from https://raw.githubusercontent.com/FreePeak/LeanKG/refs/heads/main/.codex/INSTALL.md
-```
-
-See [`.codex/INSTALL.md`](.codex/INSTALL.md) for details.
-
-### Kilo Code (Fetch Instructions)
-
-Tell Kilo Code:
-
-```
-Fetch and follow instructions from https://raw.githubusercontent.com/FreePeak/LeanKG/refs/heads/main/.kilo/INSTALL.md
-```
-
-See [`.kilo/INSTALL.md`](.kilo/INSTALL.md) for details.
+See [MCP Setup](docs/mcp-setup.md) for per-tool configuration details.
 
 ---
 
@@ -470,7 +428,7 @@ See [AB Testing Results](docs/analysis/ab-testing-results-2026-04-08.md) for det
 
 ## Web UI
 
-Start the web UI with `leankg web` or `leankg serve` and open [http://localhost:8080](http://localhost:8080).
+Start the web UI with `leankg web` and open [http://localhost:8080](http://localhost:8080).
 
 ### Graph Viewer
 
@@ -491,7 +449,7 @@ LeanKG watches your codebase and automatically keeps the knowledge graph up-to-d
 leankg watch ./src
 
 # Or use the serve command with auto-index enabled
-leankg serve --watch ./src
+leankg web --watch ./src
 ```
 
 See [CLI Reference](docs/cli-reference.md#auto-indexing) for detailed commands.
