@@ -1,18 +1,16 @@
 ---
-description: Enforces LeanKG as the mandatory first-resort for codebase search and navigation. Auto-triggers for code search queries.
-alwaysApply: true
-globs:
-  - "**/*.ts"
-  - "**/*.tsx"
-  - "**/*.js"
-  - "**/*.jsx"
-  - "**/*.rs"
-  - "**/*.go"
-  - "**/*.py"
-  - "**/*.java"
-  - "**/*.cpp"
-  - "**/*.c"
-  - "**/*.h"
+description: LeanKG is the DEFAULT search for code navigation and logic finding
+globs: '**'
+trigger: >
+  ALWAYS use LeanKG for code search when:
+  - "where is", "find", "locate", "search for"
+  - "how does", "what is", "explain", "show me"
+  - "who calls", "what calls", "who uses", "imports"
+  - "function", "method", "class", "struct", "interface"
+  - "implementation", "definition", "file containing"
+  - "impact", "depends on", "what breaks"
+  - "debug", "trace", "understand flow"
+  - "review code", "check implementation"
 priority: 10
 ---
 
@@ -20,33 +18,28 @@ priority: 10
 
 ## MANDATORY 4-Tier Search Fallback Chain
 
-**VIOLATION OF THIS CHAIN IS UNACCEPTABLE:**
-
 ```
-Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
+Tier 1: LeanKG MCP (mcp_status → search_code / find_function / query_file)
 Tier 2: leankg CLI (leankg query "X" --kind name)
 Tier 3: rtk (rtk grep "X" --path .)
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
+Tier 4: grep/rg (LAST RESORT)
 ```
 
-## Code Search/Navigation Triggers
+## LeanKG MCP Tools
 
-When user asks about codebase, these patterns **MUST** invoke LeanKG first:
-
-| Pattern | Action |
-|---------|--------|
-| "where is X" | `mcp_status` then `search_code("X")` |
-| "find logic Y" | `mcp_status` then `search_code("Y")` |
-| "how does Z work" | `mcp_status` then `find_function("Z")` then `get_context` |
-| "what calls X" | `get_callers("X")` or `get_call_graph("X")` |
-| "what breaks if I change X" | `get_impact_radius("X")` |
-| "find all files named X" | `query_file("X")` |
-| "what depends on X" | `get_dependents("X")` |
-| "what does X import" | `get_dependencies("X")` |
-| "what tests cover X" | `get_tested_by("X")` |
+1. `mcp_status` - Check readiness first
+2. `search_code("X")` - Find by name/type
+3. `find_function("X")` - Function definitions
+4. `query_file("*X*")` - Files by name
+5. `get_impact_radius(file)` - Change impact
+6. `get_context(file)` - Read content
+7. `get_dependencies(file)` - Imports
+8. `get_dependents(file)` - Reverse deps
+9. `get_callers("func")` - Who calls
+10. `get_call_graph("func")` - Full graph
 
 ## ABSOLUTE BANS
 
-- NEVER skip directly to grep/rg when LeanKG is available
-- NEVER use Glob to find code files before checking LeanKG
-- The ONLY exception: searching non-code files (config, docs, data)
+- NEVER skip to grep when LeanKG available
+- NEVER use Glob before LeanKG for code
+- ONLY exception: non-code files (config, docs)
