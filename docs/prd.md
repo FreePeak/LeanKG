@@ -326,8 +326,8 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 ```
 CodeElement:
-  - qualified_name: string (PK) - format: "path/to/file.rs::function_name"
-  - element_type: string - file | function | class | import | export | pipeline | pipeline_stage | pipeline_step | terraform | cicd | document | doc_section
+  - qualified_name: string (PK) - format: "path/to/file.rs::function_name" or "path/to/dir/" for directories
+  - element_type: string - directory | file | function | class | import | export | pipeline | pipeline_stage | pipeline_step | terraform | cicd | document | doc_section
   - name: string
   - file_path: string
   - line_start: int
@@ -336,15 +336,31 @@ CodeElement:
   - parent_qualified: string? (nullable)
   - cluster_id: string? (nullable)
   - cluster_label: string? (nullable)
-  - metadata: JSON (includes signature, headings, ci_platform, etc.)
+  - metadata: JSON (includes signature, headings, ci_platform, child_count for directories, etc.)
 
 Relationship:
   - source_qualified: string (FK)
   - target_qualified: string (FK)
-  - rel_type: string - imports | calls | references | documented_by | tested_by | tests | contains | defines | implements | implementations
+  - rel_type: string - imports | calls | references | documented_by | tested_by | tests | contains | defines | implements | implementations | tunnel | decided_about
   - confidence: float (0.0-1.0)
   - metadata: JSON
   Indexes: rel_type_index, target_qualified_index
+
+> **Folder-as-Graph Design (MemPalace-inspired):** Directories are first-class `directory` nodes in the graph. The `contains` edge is overloaded to represent the full hierarchy: `directory → directory`, `directory → file`, `file → function/class`. This mirrors MemPalace's wing → room → closet → drawer spatial architecture:
+>
+> | MemPalace | LeanKG | Edge |
+> |-----------|--------|------|
+> | Wing (project/person) | Top-level directory (`src/`, `docs/`) | `contains` |
+> | Room (topic) | Sub-directory (`src/graph/`, `src/mcp/`) | `contains` |
+> | Closet (summary) | File (`src/graph/query.rs`) | `contains` |
+> | Drawer (verbatim) | Function/class within file | `contains` |
+>
+> Benefits:
+> - **Impact analysis at directory level:** "What modules are affected if I change anything in `src/indexer/`?"
+> - **Cluster-to-directory alignment:** Auto-detect when a Leiden cluster maps to a physical directory
+> - **Wake-up context includes module map:** L0/L1 can list top-level directories as the "palace wings"
+> - **Tunnel edges between directories:** Link `src/auth/` and `src/middleware/` when they share domain concepts
+> - **Folder search:** `query_file` and `search_code` can scope to directory nodes
 
 BusinessLogic:
   - element_qualified: string (PK, FK)
@@ -576,6 +592,11 @@ src/
 | GitWatcher | Component that monitors git events and triggers reindexing |
 | Global Registry | Multi-repo management system for cross-project queries |
 | Entropy Analysis | Shannon entropy, Jaccard similarity, Kolmogorov adjustment for information density |
+| Temporal Graph | Relationships with valid_from/valid_to timestamps enabling historical queries |
+| Context Layer (L0-L3) | L0: Identity (~50 tok), L1: Critical facts (~120 tok), L2: Cluster (on demand), L3: Deep search (on demand) |
+| Tunnel | Cross-cluster relationship linking the same domain concept across different modules |
+| Consistency Check | Detection of stale/broken links between graph elements and actual code state |
+| Wake-up Protocol | Loading minimal L0+L1 context (~170 tokens) at session start for instant project awareness |
 
 ---
 
@@ -586,7 +607,8 @@ src/
 - MCP Protocol: https://modelcontextprotocol.io/
 - rmcp: https://crates.io/crates/rmcp
 - Leiden Algorithm: https://en.wikipedia.org/wiki/Leiden_algorithm
+- MemPalace: https://github.com/milla-jovovich/mempalace (competitive analysis source for US-MP stories)
 
 ---
 
-*Last updated: 2026-04-11 (v3.0-consolidated, codebase audit)*
+*Last updated: 2026-04-11 (v3.1-mempalace, MemPalace-inspired features)*
