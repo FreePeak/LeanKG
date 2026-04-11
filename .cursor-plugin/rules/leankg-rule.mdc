@@ -18,6 +18,17 @@ priority: 10
 
 # LeanKG Mandatory Rule
 
+## MANDATORY 4-Tier Search Fallback Chain
+
+**VIOLATION OF THIS CHAIN IS UNACCEPTABLE:**
+
+```
+Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
+Tier 2: leankg CLI (leankg query "X" --kind name)
+Tier 3: rtk (rtk grep "X" --path .)
+Tier 4: grep/rg (ABSOLUTE LAST RESORT)
+```
+
 ## Code Search/Navigation Triggers
 
 When user asks about codebase, these patterns **MUST** invoke LeanKG first:
@@ -27,21 +38,15 @@ When user asks about codebase, these patterns **MUST** invoke LeanKG first:
 | "where is X" | `mcp_status` then `search_code("X")` |
 | "find logic Y" | `mcp_status` then `search_code("Y")` |
 | "how does Z work" | `mcp_status` then `find_function("Z")` then `get_context` |
-| "what calls X" | `get_call_graph("X")` |
+| "what calls X" | `get_callers("X")` or `get_call_graph("X")` |
 | "what breaks if I change X" | `get_impact_radius("X")` |
 | "find all files named X" | `query_file("X")` |
 | "what depends on X" | `get_dependents("X")` |
 | "what does X import" | `get_dependencies("X")` |
 | "what tests cover X" | `get_tested_by("X")` |
 
-## Enforcement
+## ABSOLUTE BANS
 
-1. **ALWAYS** call `mcp_status` first to check LeanKG readiness
-2. **ONLY** fall back to grep/ripgrep if LeanKG returns EMPTY results
-3. **NEVER** use grep as primary search method
-
-## Fallback Chain
-
-```
-LeanKG MCP tools -> CLI (leankg query) -> RTK -> grep/ripgrep
-```
+- NEVER skip directly to grep/rg when LeanKG is available
+- NEVER use Glob to find code files before checking LeanKG
+- The ONLY exception: searching non-code files (config, docs, data)
