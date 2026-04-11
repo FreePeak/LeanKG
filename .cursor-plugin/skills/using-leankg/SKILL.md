@@ -4,64 +4,64 @@ description: Use for ANY code search, navigation, or finding code logic - "where
 ---
 
 <EXTREMELY_IMPORTANT>
-STRICT ENFORCEMENT: You MUST use LeanKG tools FIRST before ANY other method.
+STRICT ENFORCEMENT: You MUST follow the 4-Tier Search Fallback Chain EXACTLY.
 
-1. ALWAYS invoke `mcp_status` first to check LeanKG readiness
-2. If MCP UNAVAILABLE, fall back to CLI: `leankg query "name" --kind name`
-3. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
-4. Use LeanKG tools for ALL searches
-5. ONLY fall back to RTK or grep if LeanKG returns EMPTY results
+1. ALWAYS start with `mcp_status` to check LeanKG readiness
+2. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
+3. Use LeanKG MCP tools for ALL searches (Tier 1)
+4. ONLY fall back to `leankg` CLI if MCP fails (Tier 2)
+5. ONLY fall back to `rtk` if CLI fails (Tier 3)
+6. ONLY fall back to `grep`/`rg` as ABSOLUTE LAST RESORT (Tier 4)
 
-**NO EXCEPTIONS. NO RATIONALIZATION. Use LeanKG first.**
+**NO EXCEPTIONS. NO RATIONALIZATION. Follow the chain.**
 </EXTREMELY_IMPORTANT>
 
-## MANDATORY Search Flow: LeanKG -> CLI Fallback -> RTK -> Grep
+## MANDATORY 4-Tier Search Fallback Chain
 
 ```
 When user asks "where is X", "find logic Y", "how does Z work", etc:
            |
            v
-1. mcp_status (ALWAYS check first)
+TIER 1: LeanKG MCP Server (leankg_mcp_* tools)
            |
-           +-- MCP UNAVAILABLE --> CLI fallback (see below)
+           mcp_status (ALWAYS check first)
+           search_code("X") or find_function("X") or query_file("X")
+           |
+           +-- Results found --> get_context(file) to read content --> DONE
+           +-- MCP down/error --> TIER 2
            |
            v
-2. search_code("X") or find_function("X") or query_file("X")
+TIER 2: leankg CLI command
            |
-           +-- Results returned --> Use get_context(file) to read content
+           leankg query "X" --kind name
            |
-           v (EMPTY)
-3. CLI fallback: leankg query "X" --kind name
+           +-- Results found --> DONE
+           +-- Empty/error --> TIER 3
            |
-           v (EMPTY)
-4. rtk grep "X" --path .
+           v
+TIER 3: rtk (rich toolkit grep)
            |
-           v (EMPTY)
-5. grep -rn "X" --include="*.rs"
+           rtk grep "X" --path .
+           rtk file "pattern" --path .
+           |
+           +-- Results found --> DONE
+           +-- Empty --> TIER 4
+           |
+           v
+TIER 4: grep/rg (ABSOLUTE LAST RESORT)
+           |
+           rg "X"
+           grep -rn "X" --include="*.ext"
 ```
 
-## MCP Server Unavailable - CLI Fallback
+## ABSOLUTE BANS
 
-If LeanKG MCP tools fail (connection refused, not available), use CLI:
+- NEVER skip directly to grep/rg when LeanKG is available
+- NEVER use Glob to find code files before checking LeanKG
+- NEVER use Grep tool before exhausting Tiers 1-3
+- The ONLY exception: searching non-code files (config, docs, data files)
 
-```bash
-# Check status
-leankg status
-
-# Index codebase
-leankg index ./src
-
-# Query by name
-leankg query "function_name" --kind name
-
-# Query by pattern
-leankg query "*.rs" --kind pattern
-
-# Get impact radius
-leankg impact src/main.rs 3
-```
-
-## LeanKG MCP Tools (Use in this order)
+## Tier 1: LeanKG MCP Tools (Use in this order)
 
 | Step | Tool | When to Use |
 |------|------|-------------|
@@ -72,7 +72,32 @@ leankg impact src/main.rs 3
 | 5 | `get_impact_radius(file)` | Blast radius for changes |
 | 6 | `get_context(file)` | READ file content (token-optimized) |
 | 7 | `get_dependencies(file)` | Get imports |
-| 8 | `get_tested_by(file)` | Find tests |
+| 8 | `get_dependents(file)` | Get reverse dependencies |
+| 9 | `get_tested_by(file)` | Find tests |
+| 10 | `get_callers("func")` | Find who calls a function |
+| 11 | `get_call_graph("func")` | Full call graph |
+
+## Tier 2: leankg CLI (Only if MCP fails)
+
+```bash
+leankg status
+leankg query "X" --kind name
+leankg impact file 3
+```
+
+## Tier 3: rtk Fallback (Only if leankg CLI empty)
+
+```bash
+rtk grep "X" --path .
+rtk file "pattern" --path .
+```
+
+## Tier 4: grep/rg (ABSOLUTE LAST RESORT)
+
+```bash
+rg "X"
+grep -rn "X" --include="*.ext"
+```
 
 ## Critical: After search_code returns file paths
 
@@ -80,26 +105,15 @@ leankg impact src/main.rs 3
 1. Use `get_context(file_path)` to READ the actual file content
 2. Do NOT just report the file paths - show the code
 
-## RTK Fallback (Only if LeanKG EMPTY)
+## Common Triggers
 
-```bash
-rtk grep "search term" --path .
-rtk file "pattern" --path .
-```
-
-## Grep Fallback (LAST RESORT, only if RTK EMPTY too)
-
-```bash
-grep -rn "X" --include="*.rs"
-```
-
-## Common Triggers for LeanKG
-
-| User says... | LeanKG tool |
-|--------------|-------------|
+| User says... | Start with |
+|--------------|------------|
 | "where is X" | `search_code("X")` or `find_function("X")` |
 | "find the logic" | `search_code("logic_name")` |
 | "how does X work" | `get_context(file)` after search_code |
-| "what calls X" | `get_call_graph("X")` |
+| "what calls X" | `get_callers("X")` or `get_call_graph("X")` |
 | "what breaks if I change X" | `get_impact_radius("X")` |
 | "find all files named X" | `query_file("X")` |
+| "who imports X" | `get_dependents("X")` |
+| "what does X depend on" | `get_dependencies("X")` |

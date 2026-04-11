@@ -3,6 +3,7 @@
 ## Prerequisites
 
 - [Cursor](https://cursor.sh) installed
+- LeanKG binary installed (run without args to install)
 
 ## Installation
 
@@ -22,9 +23,7 @@ This installs:
    - **Commands** - `commands/leankg-commands.md` for leankg:* commands
    - **Hooks** - `hooks/session-start` to bootstrap LeanKG context
 
-## What It Does
-
-The plugin automatically injects LeanKG knowledge graph tools into your agent context:
+## What LeanKG Does
 
 - **Impact Analysis** - Calculate blast radius before making changes
 - **Code Search** - Find functions, files, dependencies instantly
@@ -34,48 +33,31 @@ The plugin automatically injects LeanKG knowledge graph tools into your agent co
 
 ## Auto-Trigger Behavior
 
-LeanKG activates automatically for code search and navigation:
+LeanKG activates automatically for code search patterns:
 
 - **Rule** `leankg-rule.mdc` - `alwaysApply: true` with `priority: 10` auto-triggers for code patterns
 - **Skill** `using-leankg` - Invoked when detecting code search/navigation context
 - **Hook** `session-start` - Injects LeanKG bootstrap context on session start
 
-## Updating
+## Per-Project Fallback
 
-Run the installer again to update LeanKG:
+If LeanKG MCP is not available for a project, the agent will ask:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
-```
+> "Would you like to install LeanKG MCP server for this project?"
 
-This updates all LeanKG plugin files without removing your other Cursor skills.
+The agent can create a per-project `.cursor/mcp.json` if needed.
 
 ## Quick Usage
 
-```
-# Check if LeanKG is ready
-mcp_status
-
-# Initialize for your project
-mcp_init({ path: "/path/to/your/project/.leankg" })
-
-# Ask questions like:
-# "What breaks if I change auth.rs?"
-# "Where is the login function?"
-# "What tests cover the payment module?"
+```bash
+# Ask the agent in any project:
+# "Where is the auth function?"
+# "What breaks if I change payment.rs?"
+# "What tests cover the user module?"
 ```
 
-## Manual Installation
+## Updating
 
-If the installer doesn't work, manually add to `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "leankg": {
-      "command": "leankg",
-      "args": ["mcp-stdio", "--watch"]
-    }
-  }
-}
+```bash
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
 ```
