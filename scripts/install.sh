@@ -210,10 +210,6 @@ install_binary() {
             echo "Add this to your shell profile if needed:"
             echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
         fi
-
-        if [ -d ".cursor-plugin" ]; then
-            cp -r ".cursor-plugin" "${INSTALL_DIR}/.cursor-plugin"
-        fi
     fi
 }
 
@@ -255,37 +251,43 @@ configure_opencode() {
 }
 
 configure_cursor() {
-    local config_file="$HOME/.cursor/mcp.json"
+    local config_dir="$HOME/.cursor"
+    local config_file="$config_dir/mcp.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
-    mkdir -p "$HOME/.cursor"
+    local needs_update=false
 
-    if [ -f "$config_file" ] && [ -s "$config_file" ]; then
-        if jq -e '.mcpServers.leankg' "$config_file" > /dev/null 2>&1; then
-            echo "LeanKG MCP already configured in Cursor global mcp.json"
-            return 0
+    mkdir -p "$config_dir"
+
+    if [ -f "$config_file" ]; then
+        local current_path
+        current_path=$(jq -r '.mcpServers.leankg.command // empty' "$config_file" 2>/dev/null)
+        local current_args
+        current_args=$(jq -r '.mcpServers.leankg.args // [] | join(" ")' "$config_file" 2>/dev/null)
+        
+        if [ -n "$current_path" ]; then
+            if [ "$current_path" != "$leankg_path" ]; then
+                echo "Updating LeanKG binary path for Cursor: $current_path -> $leankg_path"
+                needs_update=true
+            fi
+            if ! echo "$current_args" | grep -q "\-\-watch"; then
+                echo "Adding --watch flag to LeanKG for Cursor"
+                needs_update=true
+            fi
         fi
-
+        
+        if [ "$needs_update" = false ]; then
+            echo "LeanKG already properly configured in Cursor"
+            return
+        fi
+        
         local tmp_file
         tmp_file=$(mktemp)
-        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file" && mv "$tmp_file" "$config_file"
-        echo "Added LeanKG to Cursor global mcp.json at $config_file"
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
+        mv "$tmp_file" "$config_file"
     else
-        cat > "$config_file" <<EOF
-{
-  "mcpServers": {
-    "leankg": {
-      "command": "$leankg_path",
-      "args": ["mcp-stdio", "--watch"]
-    }
-  }
-}
-EOF
-        echo "Created Cursor global mcp.json with LeanKG at $config_file"
+        echo "{\"mcpServers\": {\"leankg\": {\"command\": \"$leankg_path\", \"args\": [\"mcp-stdio\", \"--watch\"]}}}" > "$config_file"
     fi
-
-    echo ""
-    echo "LeanKG MCP server configured globally for Cursor."
-    echo "LeanKG will be available in all Cursor projects."
+    echo "Configured LeanKG for Cursor at $config_file"
 }
 
 configure_claude() {
@@ -440,17 +442,14 @@ LeanKG is a lightweight knowledge graph for codebase understanding.
 - `get_clusters` - Get functional clusters
 - `detect_changes` - Pre-commit risk analysis
 
-**MANDATORY 4-Tier Search Fallback Chain:**
+**MANDATORY WORKFLOW: LeanKG First, Grep Fallback**
 
-```
-Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
-    If MCP down/error → Tier 2
-Tier 2: leankg CLI (leankg query "X" --kind name)
-    If empty/error → Tier 3
-Tier 3: rtk (rtk grep "X" --path .)
-    If empty → Tier 4
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
+Before ANY codebase search/navigation, you MUST:
+
+1. Check if LeanKG is available via `mcp_status`
+2. If LeanKG is not initialized, run `mcp_init` first
+3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 
 | Instead of | Use LeanKG |
 |------------|------------|
@@ -460,54 +459,6 @@ Tier 4: grep/rg (ABSOLUTE LAST RESORT)
 | Reading entire files | `get_context` (token-optimized) |
 BOOTSTRAPEOF
         echo "Created leankg-bootstrap.md for Claude Code"
-    else
-        if ! grep -q "CLI Fallback" "$plugin_dir/leankg-bootstrap.md" 2>/dev/null; then
-            cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
-# LeanKG Bootstrap
-
-LeanKG is a lightweight knowledge graph for codebase understanding.
-
-**Auto-Activated Tools:**
-- `mcp_status` - Check if LeanKG is initialized
-- `mcp_init` - Initialize LeanKG for a project
-- `mcp_index` - Index codebase
-- `search_code` - Search code elements by name/type
-- `find_function` - Locate function definitions
-- `get_impact_radius` - Calculate blast radius of changes
-- `get_dependencies` - Get direct imports of a file
-- `get_dependents` - Get files depending on target
-- `get_context` - Get AI-optimized context for a file
-- `get_tested_by` - Get test coverage info
-- `query_file` - Find files by name/pattern
-- `get_call_graph` - Get function call chains
-- `find_large_functions` - Find oversized functions
-- `get_doc_for_file` - Get documentation for a file
-- `get_traceability` - Get full traceability chain
-- `get_code_tree` - Get codebase structure
-- `get_clusters` - Get functional clusters
-- `detect_changes` - Pre-commit risk analysis
-
-**MANDATORY 4-Tier Search Fallback Chain:**
-
-```
-Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
-    If MCP down/error → Tier 2
-Tier 2: leankg CLI (leankg query "X" --kind name)
-    If empty/error → Tier 3
-Tier 3: rtk (rtk grep "X" --path .)
-    If empty → Tier 4
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
-
-| Instead of | Use LeanKG |
-|------------|------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
-| glob + content search for tests | `get_tested_by` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| Reading entire files | `get_context` (token-optimized) |
-BOOTSTRAPEOF
-            echo "Updated leankg-bootstrap.md for Claude Code (added CLI fallback)"
-        fi
     fi
     
     if [ "$hooks_installed" = true ]; then
@@ -588,17 +539,14 @@ LeanKG is a lightweight knowledge graph for codebase understanding.
 - `get_clusters` - Get functional clusters
 - `detect_changes` - Pre-commit risk analysis
 
-**MANDATORY 4-Tier Search Fallback Chain:**
+**MANDATORY WORKFLOW: LeanKG First, Grep Fallback**
 
-```
-Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
-    If MCP down/error → Tier 2
-Tier 2: leankg CLI (leankg query "X" --kind name)
-    If empty/error → Tier 3
-Tier 3: rtk (rtk grep "X" --path .)
-    If empty → Tier 4
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
+Before ANY codebase search/navigation, you MUST:
+
+1. Check if LeanKG is available via `mcp_status`
+2. If LeanKG is not initialized, run `mcp_init` first
+3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 
 | Instead of | Use LeanKG |
 |------------|------------|
@@ -608,54 +556,6 @@ Tier 4: grep/rg (ABSOLUTE LAST RESORT)
 | Reading entire files | `get_context` (token-optimized) |
 BOOTSTRAPEOF
         echo "Created leankg-bootstrap.md for Cursor"
-    else
-        if ! grep -q "CLI Fallback" "$plugin_dir/leankg-bootstrap.md" 2>/dev/null; then
-            cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
-# LeanKG Bootstrap
-
-LeanKG is a lightweight knowledge graph for codebase understanding.
-
-**Auto-Activated Tools:**
-- `mcp_status` - Check if LeanKG is initialized
-- `mcp_init` - Initialize LeanKG for a project
-- `mcp_index` - Index codebase
-- `search_code` - Search code elements by name/type
-- `find_function` - Locate function definitions
-- `get_impact_radius` - Calculate blast radius of changes
-- `get_dependencies` - Get direct imports of a file
-- `get_dependents` - Get files depending on target
-- `get_context` - Get AI-optimized context for a file
-- `get_tested_by` - Get test coverage info
-- `query_file` - Find files by name/pattern
-- `get_call_graph` - Get function call chains
-- `find_large_functions` - Find oversized functions
-- `get_doc_for_file` - Get documentation for a file
-- `get_traceability` - Get full traceability chain
-- `get_code_tree` - Get codebase structure
-- `get_clusters` - Get functional clusters
-- `detect_changes` - Pre-commit risk analysis
-
-**MANDATORY 4-Tier Search Fallback Chain:**
-
-```
-Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
-    If MCP down/error → Tier 2
-Tier 2: leankg CLI (leankg query "X" --kind name)
-    If empty/error → Tier 3
-Tier 3: rtk (rtk grep "X" --path .)
-    If empty → Tier 4
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
-
-| Instead of | Use LeanKG |
-|------------|------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
-| glob + content search for tests | `get_tested_by` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| Reading entire files | `get_context` (token-optimized) |
-BOOTSTRAPEOF
-            echo "Updated leankg-bootstrap.md for Cursor (added CLI fallback)"
-        fi
     fi
     
     if [ "$hooks_installed" = true ]; then
@@ -663,70 +563,6 @@ BOOTSTRAPEOF
     else
         echo "LeanKG hooks already configured for Cursor"
     fi
-}
-
-install_cursor_plugin() {
-    local plugin_dest_dir="$HOME/.cursor/plugins/leankg"
-    local github_raw="https://raw.githubusercontent.com/FreePeak/LeanKG/main"
-
-    echo "Installing/Updating LeanKG plugin to Cursor plugins directory..."
-
-    mkdir -p "$plugin_dest_dir"
-    mkdir -p "$plugin_dest_dir/skills/using-leankg"
-    mkdir -p "$plugin_dest_dir/rules"
-    mkdir -p "$plugin_dest_dir/agents"
-    mkdir -p "$plugin_dest_dir/commands"
-    mkdir -p "$plugin_dest_dir/hooks"
-
-    if [ -d ".cursor-plugin" ]; then
-        echo "Installing from local .cursor-plugin directory..."
-
-        cp -f ".cursor-plugin/plugin.json" "$plugin_dest_dir/plugin.json"
-        cp -f ".cursor-plugin/manifest.json" "$plugin_dest_dir/manifest.json"
-        cp -f ".cursor-plugin/INSTALL.md" "$plugin_dest_dir/INSTALL.md"
-        cp -f ".cursor-plugin/leankg-bootstrap.md" "$plugin_dest_dir/leankg-bootstrap.md"
-
-        cp -f ".cursor-plugin/skills/using-leankg/SKILL.md" "$plugin_dest_dir/skills/using-leankg/SKILL.md"
-
-        cp -f ".cursor-plugin/rules/leankg-rule.mdc" "$plugin_dest_dir/rules/leankg-rule.mdc"
-
-        cp -f ".cursor-plugin/agents/leankg-agents.md" "$plugin_dest_dir/agents/leankg-agents.md"
-
-        cp -f ".cursor-plugin/commands/leankg-commands.md" "$plugin_dest_dir/commands/leankg-commands.md"
-
-        cp -f ".cursor-plugin/hooks/hooks.json" "$plugin_dest_dir/hooks/hooks.json"
-        cp -f ".cursor-plugin/hooks/session-start" "$plugin_dest_dir/hooks/session-start"
-        chmod +x "$plugin_dest_dir/hooks/session-start"
-    else
-        echo "Downloading LeanKG plugin from GitHub..."
-
-        curl -fsSL "$github_raw/.cursor-plugin/plugin.json" -o "$plugin_dest_dir/plugin.json" 2>/dev/null || true
-        curl -fsSL "$github_raw/.cursor-plugin/manifest.json" -o "$plugin_dest_dir/manifest.json" 2>/dev/null || true
-        curl -fsSL "$github_raw/.cursor-plugin/INSTALL.md" -o "$plugin_dest_dir/INSTALL.md" 2>/dev/null || true
-        curl -fsSL "$github_raw/.cursor-plugin/leankg-bootstrap.md" -o "$plugin_dest_dir/leankg-bootstrap.md" 2>/dev/null || true
-
-        curl -fsSL "$github_raw/.cursor-plugin/skills/using-leankg/SKILL.md" -o "$plugin_dest_dir/skills/using-leankg/SKILL.md" 2>/dev/null || true
-
-        curl -fsSL "$github_raw/.cursor-plugin/rules/leankg-rule.mdc" -o "$plugin_dest_dir/rules/leankg-rule.mdc" 2>/dev/null || true
-
-        curl -fsSL "$github_raw/.cursor-plugin/agents/leankg-agents.md" -o "$plugin_dest_dir/agents/leankg-agents.md" 2>/dev/null || true
-
-        curl -fsSL "$github_raw/.cursor-plugin/commands/leankg-commands.md" -o "$plugin_dest_dir/commands/leankg-commands.md" 2>/dev/null || true
-
-        curl -fsSL "$github_raw/.cursor-plugin/hooks/hooks.json" -o "$plugin_dest_dir/hooks/hooks.json" 2>/dev/null || true
-        curl -fsSL "$github_raw/.cursor-plugin/hooks/session-start" -o "$plugin_dest_dir/hooks/session-start" 2>/dev/null || true
-        chmod +x "$plugin_dest_dir/hooks/session-start" 2>/dev/null || true
-    fi
-
-    echo ""
-    echo "LeanKG plugin files updated:"
-    echo "  - Plugin config: $([ -f "$plugin_dest_dir/plugin.json" ] && echo 'OK' || echo 'MISSING')"
-    echo "  - Skill: $([ -f "$plugin_dest_dir/skills/using-leankg/SKILL.md" ] && echo 'OK' || echo 'MISSING')"
-    echo "  - Rule: $([ -f "$plugin_dest_dir/rules/leankg-rule.mdc" ] && echo 'OK' || echo 'MISSING')"
-    echo "  - Agents: $([ -f "$plugin_dest_dir/agents/leankg-agents.md" ] && echo 'OK' || echo 'MISSING')"
-    echo "  - Hooks: $([ -f "$plugin_dest_dir/hooks/session-start" ] && echo 'OK' || echo 'MISSING')"
-
-    return 0
 }
 
 configure_kilo() {
@@ -847,20 +683,21 @@ install_claude_instructions() {
     local claude_md="$HOME/.config/claude/CLAUDE.md"
     mkdir -p "$(dirname "$claude_md")"
     
-    local leankg_content=$(cat <<'EOF'
+    if [ -f "$claude_md" ]; then
+        if grep -q "MANDATORY" "$claude_md" 2>/dev/null; then
+            echo "LeanKG instructions already exist in Claude Code CLAUDE.md"
+        else
+            echo "" >> "$claude_md"
+            curl -fsSL "$CLAUDE_TEMPLATE_URL" >> "$claude_md" 2>/dev/null || cat >> "$claude_md" <<'EOF'
 
 # LeanKG
 
-## MANDATORY 4-Tier Search Fallback Chain
+## MANDATORY: Use LeanKG First
 
-Before ANY codebase search/navigation, follow this chain:
-
-```
-Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
-Tier 2: leankg CLI (leankg query "X" --kind name)
-Tier 3: rtk (rtk grep "X" --path .)
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
+Before ANY codebase search/navigation, use LeanKG tools:
+1. `mcp_status` - check if ready
+2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+3. Only fallback to grep/read if LeanKG fails
 
 | Task | Use |
 |------|-----|
@@ -869,41 +706,18 @@ Tier 4: grep/rg (ABSOLUTE LAST RESORT)
 | What tests cover Y? | `get_tested_by` |
 | How does X work? | `get_context` |
 EOF
-)
-    
-    if [ -f "$claude_md" ]; then
-        if grep -q "MANDATORY" "$claude_md" 2>/dev/null; then
-            if grep -q "CLI Fallback" "$claude_md" 2>/dev/null; then
-                echo "LeanKG instructions already up to date in Claude Code CLAUDE.md"
-            else
-                if grep -qi "leankg" "$claude_md" 2>/dev/null; then
-                    sed -i.bak "/# LeanKG/,/How does X work?/c\\
-$leankg_content" "$claude_md"
-                    echo "Updated LeanKG instructions in Claude Code CLAUDE.md (added CLI fallback)"
-                else
-                    echo "$leankg_content" >> "$claude_md"
-                    echo "Added LeanKG instructions to Claude Code CLAUDE.md"
-                fi
-            fi
-        else
-            echo "" >> "$claude_md"
-            curl -fsSL "$CLAUDE_TEMPLATE_URL" >> "$claude_md" 2>/dev/null || echo "$leankg_content" >> "$claude_md"
             echo "Added LeanKG instructions to Claude Code CLAUDE.md"
         fi
     else
         curl -fsSL "$CLAUDE_TEMPLATE_URL" > "$claude_md" 2>/dev/null || cat > "$claude_md" <<'EOF'
 # LeanKG
 
-## MANDATORY 4-Tier Search Fallback Chain
+## MANDATORY: Use LeanKG First
 
-Before ANY codebase search/navigation, follow this chain:
-
-```
-Tier 1: LeanKG MCP tools (mcp_status → search_code / find_function / query_file)
-Tier 2: leankg CLI (leankg query "X" --kind name)
-Tier 3: rtk (rtk grep "X" --path .)
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
+Before ANY codebase search/navigation, use LeanKG tools:
+1. `mcp_status` - check if ready
+2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+3. Only fallback to grep/read if LeanKG fails
 
 | Task | Use |
 |------|-----|
@@ -958,64 +772,37 @@ description: Use for ANY code search, navigation, or finding code logic - "where
 ---
 
 <EXTREMELY_IMPORTANT>
-STRICT ENFORCEMENT: You MUST follow the 4-Tier Search Fallback Chain EXACTLY.
+STRICT ENFORCEMENT: You MUST use LeanKG tools FIRST before ANY other method.
 
-1. ALWAYS start with `mcp_status` to check LeanKG readiness
+1. ALWAYS invoke `mcp_status` first to check LeanKG readiness
 2. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
-3. Use LeanKG MCP tools for ALL searches (Tier 1)
-4. ONLY fall back to `leankg` CLI if MCP fails (Tier 2)
-5. ONLY fall back to `rtk` if CLI fails (Tier 3)
-6. ONLY fall back to `grep`/`rg` as ABSOLUTE LAST RESORT (Tier 4)
+3. Use LeanKG tools for ALL searches
+4. ONLY fall back to RTK or grep if LeanKG returns EMPTY results
 
-**NO EXCEPTIONS. NO RATIONALIZATION. Follow the chain.**
+**NO EXCEPTIONS. NO RATIONALIZATION. Use LeanKG first.**
 </EXTREMELY_IMPORTANT>
 
-## MANDATORY 4-Tier Search Fallback Chain
+## MANDATORY Search Flow: LeanKG -> RTK -> Grep
 
 ```
 When user asks "where is X", "find logic Y", "how does Z work", etc:
            |
            v
-TIER 1: LeanKG MCP Server (leankg_mcp_* tools)
-           |
-           mcp_status (ALWAYS check first)
-           search_code("X") or find_function("X") or query_file("X")
-           |
-           +-- Results found --> get_context(file) to read content --> DONE
-           +-- MCP down/error --> TIER 2
+1. mcp_status (ALWAYS check first)
            |
            v
-TIER 2: leankg CLI command
+2. search_code("X") or find_function("X") or query_file("X")
            |
-           leankg query "X" --kind name
+           +-- Results returned --> Use get_context(file) to read content
            |
-           +-- Results found --> DONE
-           +-- Empty/error --> TIER 3
+           v (EMPTY)
+3. rtk grep "X" --path .
            |
-           v
-TIER 3: rtk (rich toolkit grep)
-           |
-           rtk grep "X" --path .
-           rtk file "pattern" --path .
-           |
-           +-- Results found --> DONE
-           +-- Empty --> TIER 4
-           |
-           v
-TIER 4: grep/rg (ABSOLUTE LAST RESORT)
-           |
-           rg "X"
-           grep -rn "X" --include="*.ext"
+           v (EMPTY)
+4. grep -rn "X" --include="*.rs"
 ```
 
-## ABSOLUTE BANS
-
-- NEVER skip directly to grep/rg when LeanKG is available
-- NEVER use Glob to find code files before checking LeanKG
-- NEVER use Grep tool before exhausting Tiers 1-3
-- The ONLY exception: searching non-code files (config, docs, data files)
-
-## Tier 1: LeanKG MCP Tools (Use in this order)
+## LeanKG MCP Tools (Use in this order)
 
 | Step | Tool | When to Use |
 |------|------|-------------|
@@ -1026,32 +813,7 @@ TIER 4: grep/rg (ABSOLUTE LAST RESORT)
 | 5 | `get_impact_radius(file)` | Blast radius for changes |
 | 6 | `get_context(file)` | READ file content (token-optimized) |
 | 7 | `get_dependencies(file)` | Get imports |
-| 8 | `get_dependents(file)` | Get reverse dependencies |
-| 9 | `get_tested_by(file)` | Find tests |
-| 10 | `get_callers("func")` | Find who calls a function |
-| 11 | `get_call_graph("func")` | Full call graph |
-
-## Tier 2: leankg CLI (Only if MCP fails)
-
-```bash
-leankg status
-leankg query "X" --kind name
-leankg impact file 3
-```
-
-## Tier 3: rtk Fallback (Only if leankg CLI empty)
-
-```bash
-rtk grep "X" --path .
-rtk file "pattern" --path .
-```
-
-## Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-
-```bash
-rg "X"
-grep -rn "X" --include="*.ext"
-```
+| 8 | `get_tested_by(file)` | Find tests |
 
 ## Critical: After search_code returns file paths
 
@@ -1059,23 +821,41 @@ grep -rn "X" --include="*.ext"
 1. Use `get_context(file_path)` to READ the actual file content
 2. Do NOT just report the file paths - show the code
 
-## Common Triggers
+## RTK Fallback (Only if LeanKG EMPTY)
 
-| User says... | Start with |
-|--------------|------------|
+```bash
+rtk grep "search term" --path .
+rtk file "pattern" --path .
+```
+
+## Grep Fallback (LAST RESORT, only if RTK EMPTY too)
+
+```bash
+grep -rn "X" --include="*.rs"
+```
+
+## Common Triggers for LeanKG
+
+| User says... | LeanKG tool |
+|--------------|-------------|
 | "where is X" | `search_code("X")` or `find_function("X")` |
 | "find the logic" | `search_code("logic_name")` |
 | "how does X work" | `get_context(file)` after search_code |
-| "what calls X" | `get_callers("X")` or `get_call_graph("X")` |
+| "what calls X" | `get_call_graph("X")` |
 | "what breaks if I change X" | `get_impact_radius("X")` |
 | "find all files named X" | `query_file("X")` |
-| "who imports X" | `get_dependents("X")` |
-| "what does X depend on" | `get_dependencies("X")` |
 EOF
 )
 
+    if [ -f "$leankg_skill_dir/SKILL.md" ]; then
+        if grep -q "STRICT ENFORCEMENT" "$leankg_skill_dir/SKILL.md" 2>/dev/null; then
+            echo "LeanKG skill already installed at $leankg_skill_dir"
+            return
+        fi
+    fi
+    
     echo "$skill_content" > "$leankg_skill_dir/SKILL.md"
-    echo "Installed/Updated LeanKG skill to $leankg_skill_dir for $agent_name"
+    echo "Installed LeanKG skill to $leankg_skill_dir for $agent_name"
 }
 
 install_agents_instructions() {
@@ -1088,30 +868,17 @@ install_agents_instructions() {
 
 ## LeanKG Tools Usage
 
-### MANDATORY 4-Tier Search Fallback Chain
+### MANDATORY RULE - ALWAYS USE LEANKG FIRST
 
-**VIOLATION OF THIS CHAIN IS UNACCEPTABLE. ALWAYS follow this exact order:**
+**Before doing ANY codebase search, navigation, or analysis, you MUST use LeanKG tools.**
 
-```
-Tier 1: LeanKG MCP Server (leankg_mcp_* tools)
-    |       mcp_status → search_code / find_function / query_file
-    |       If MCP down/error → Tier 2
-    v
-Tier 2: leankg CLI command
-    |       leankg query "X" --kind name
-    |       If empty/error → Tier 3
-    v
-Tier 3: rtk (rich toolkit grep)
-    |       rtk grep "X" --path .
-    |       If empty → Tier 4
-    v
-Tier 4: grep/rg (ABSOLUTE LAST RESORT)
-```
+### This Is Not Optional
 
-### ABSOLUTE BANS
-- NEVER skip directly to grep/rg when LeanKG is available
-- NEVER use Glob to find code files before checking LeanKG
-- The ONLY exception: searching non-code files (config, docs, data)
+When a user asks about the codebase, you MUST:
+1. Check if LeanKG is available via `mcp_status`
+2. If LeanKG is not initialized, run `mcp_init` first
+3. Use the appropriate LeanKG tool for the task
+4. **ONLY after LeanKG is exhausted** may you fall back to other methods
 
 ### Why This Matters
 
@@ -1132,7 +899,6 @@ Tier 4: grep/rg (ABSOLUTE LAST RESORT)
 | `query_file` | Find file by name/pattern |
 | `get_impact_radius` | Blast radius before changes |
 | `get_call_graph` | Understand function flow |
-| `get_callers` | Find who calls a function |
 | `get_dependencies` | Get direct imports |
 | `get_dependents` | Get files depending on target |
 | `get_tested_by` | Find related tests |
@@ -1226,7 +992,6 @@ main() {
                 setup_cursor_hooks
                 install_leankg_skill "$HOME/.cursor/skills" "cursor"
                 install_agents_instructions "$HOME/.cursor/AGENTS.md"
-                install_cursor_plugin
                 ;;
             claude)
                 configure_claude

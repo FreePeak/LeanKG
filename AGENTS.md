@@ -1,123 +1,114 @@
-# LeanKG - Agent Instructions
+# LeanKG - AI Agent Context
 
-**Tech Stack:** Rust 1.70+, CozoDB (embedded), tree-sitter, Axum, Clap, Tokio, MCP
+## Project Overview
 
-**Repo:** https://github.com/FreePeak/LeanKG
+LeanKG is a lightweight knowledge graph for codebase understanding. It indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.
 
----
+**Tech Stack:** Rust + CozoDB + tree-sitter + MCP
 
-## Build & Test
-
-```bash
-cargo build                # Debug build
-cargo build --release     # Release build
-cargo test                # Run all tests
-cargo test <name>         # Run test matching <name>
-cargo test -- --nocapture # Show println output
-cargo fmt -- --check      # Check formatting
-cargo clippy -- -D warnings  # Lint (warnings as errors)
-```
-
-## CLI Commands
+## Quick Start
 
 ```bash
-cargo run -- init [--path <path>]     # Initialize .leankg in current dir
-cargo run -- index ./src [--incremental] [--lang <lang>] [--exclude <patterns>]
-cargo run -- mcp-stdio [--watch] [--dir <path>] [--project-path <path>]  # Start MCP server with stdio transport
-cargo run -- web [--port <port>]     # Start embedded web UI server
-cargo run -- impact <file> [--depth <depth>]  # Calculate blast radius
-cargo run -- status                  # Show index status
-cargo run -- watch [--path <path>]   # Start file watcher for auto-indexing
-cargo run -- export [--format <json|dot|mermaid|html|svg|graphml|neo4j>] # Export graph
-cargo run -- annotate <element> --description <desc>  # Business logic annotation
-cargo run -- trace [--feature <id>]  # Traceability chain
-cargo run -- detect-clusters         # Community detection
-cargo run -- benchmark [--category <cat>] [--cli <opencode|gemini|kilo>]
-cargo run -- api-serve [--port <port>] [--auth]  # REST API server
-cargo run -- metrics [--since <period>] [--json]  # Context metrics
-cargo run -- wiki [--output <dir>]  # Generate wiki
-cargo run -- hooks install           # Install git hooks
+# Index a codebase
+cargo run -- init
+cargo run -- index ./src
+
+# Calculate impact radius
+cargo run -- impact src/main.rs 3
+
+# Start MCP server
+cargo run -- serve
 ```
 
-## Module Map
+## Development Workflow
+
+**When implementing features, follow:** `docs/workflow-opencode-agent.md`
+
+### Pattern: Update Docs -> Implement -> Test -> Commit -> Push -> Bump Version -> Tag
+
+1. **Update docs first** - PRD (`docs/requirement/prd-leankg.md`) -> HLD (`docs/design/hld-leankg.md`) -> README
+2. **Implement** - Follow patterns in `docs/workflow-opencode-agent.md`
+3. **Build & test** - `cargo build && cargo test`
+4. **Commit** - `git commit -m "feat: description"` (one feature per commit)
+5. **Push** - `git pull --rebase && git push`
+6. **Bump version** - Update `version` in `Cargo.toml`
+7. **Tag** - `git tag -a v<version> -m "Release v<version>" && git push origin v<version>` (after version bump)
+
+### Parallel Subagent Workflow
+
+When facing 3+ independent tasks that can work in parallel without shared state:
+
+1. **Dispatch multiple subagents** - One agent per independent problem domain
+2. **Each agent works in isolated `.worktree/`** - Prevents interference between agents
+3. **Each worktree uses feature branch** - Format: `.worktree/<feature-name>/`
+4. **Verify isolation** - Confirm directory is in `.gitignore`
+5. **Run baseline tests** - Ensure clean starting point per worktree
+6. **Agent completes independently** - Agent returns summary of changes
+7. **Merge to main** - After all agents complete, merge each feature branch to main
 
 ```
-src/
-├── main.rs              # CLI entry point (28+ commands)
-├── lib.rs               # Library exports
-├── cli/                 # Clap commands enum + ShellRunner
-├── config/              # ProjectConfig, IndexerConfig, DocConfig, McpConfig
-├── db/                  # CozoDB models, schema, operations, API key store
-├── doc/                 # DocGenerator, template rendering, wiki generation
-├── doc_indexer/         # Documentation indexing (docs/ -> documented_by edges)
-├── graph/               # GraphEngine, queries, context, traversal, clustering, cache, export
-├── indexer/             # tree-sitter parsers (13), extractors, git analysis, Terraform, CI/CD
-├── mcp/                 # MCP tools (35), handler, server (rmcp), auth, write tracker
-├── orchestrator/        # Query orchestration with intent parsing and persistent cache
-├── compress/            # RTK-style compression: 8 read modes, response/shell/cargo/git, entropy
-├── web/                 # Axum web UI (20+ routes, embedded HTML/CSS/JS)
-├── api/                 # REST API handlers, auth middleware
-├── watcher/             # notify-based file watcher for auto-indexing
-├── hooks/               # Git hooks (pre-commit, post-commit, post-checkout, GitWatcher)
-├── benchmark/           # Benchmark runner (LeanKG vs OpenCode/Gemini/Kilo)
-├── registry.rs          # Global repository registry (multi-repo management)
-└── runtime.rs           # Tokio runtime utilities
+# Example workflow
+Agent 1 -> .worktree/feature-a/ (works on tests in file_a.test.ts)
+Agent 2 -> .worktree/feature-b/ (works on tests in file_b.test.ts)
+Agent 3 -> .worktree/feature-c/ (works on tests in file_c.test.ts)
+
+# After all complete
+git checkout main
+git merge feature-a
+git merge feature-b
+git merge feature-c
+git push
 ```
 
-**Key files:** `src/lib.rs` (exports), `src/db/models.rs` (CodeElement, Relationship, BusinessLogic, ContextMetric), `src/mcp/tools.rs` (35 tool defs), `src/mcp/handler.rs` (tool execution)
+**When to use:**
+- 3+ test files failing with different root causes
+- Multiple subsystems broken independently
+- Each problem can be understood without context from others
+
+**When NOT to use:**
+- Failures are related (fix one might fix others)
+- Need to understand full system state
+- Agents would interfere with each other
+
+## Key Commands
+
+```bash
+cargo build      # Build project
+cargo test       # Run tests
+cargo run -- <cmd>  # Run CLI commands
+```
+
+## Important Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib.rs` | Module exports |
+| `src/db/models.rs` | Data models (CodeElement, Relationship, BusinessLogic) |
+| `src/graph/query.rs` | Graph query engine |
+| `src/mcp/tools.rs` | MCP tool definitions |
+| `src/mcp/handler.rs` | MCP tool handlers |
+| `src/indexer/extractor.rs` | Code parsing with tree-sitter |
 
 ## Data Model
 
-- **qualified_name** format: `path/to/file.rs::function_name` (e.g., `src/main.rs::main`)
-- **Relationship** types (10): `imports`, `calls`, `references`, `documented_by`, `tested_by`, `tests`, `contains`, `defines`, `implements`, `implementations`
+- **CodeElement** - Files, functions, classes with `qualified_name` (e.g., `src/main.rs::main`)
+- **Relationship** - `imports`, `calls`, `tested_by`, `references`, `documented_by`
+- **BusinessLogic** - Annotations linking code to business requirements
 
-## Workflow (Feature Per Branch)
+## MCP Tools
 
-1. Update docs first (PRD → HLD → README)
-2. Implement on a `feature/<name>` branch
-3. Commit: `git commit -m "feat: description"` (one feature per commit)
-4. Push and create PR via `gh pr create`
-5. After merge: bump version in `Cargo.toml`, tag as `vX.Y.Z`
+Core tools: `query_file`, `get_dependencies`, `get_dependents`, `get_impact_radius`, `get_review_context`, `find_function`, `get_call_graph`, `search_code`, `generate_doc`, `find_large_functions`, `get_tested_by`
 
-**Commit rules:**
-- NEVER add `Co-Authored-By:` or AI attribution to commits
-- NEVER add "Generated with AI" to PR descriptions
+Doc/Traceability tools: `get_doc_for_file`, `get_files_for_doc`, `get_doc_structure`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`, `find_related_docs`
 
-## LeanKG MCP Tools (for codebase queries)
+Cluster tools: `get_clusters`, `get_cluster_context`
 
-Use LeanKG tools BEFORE grep/read when navigating code:
+Risk tools: `detect_changes`
 
-| Task | Use |
-|------|-----|
-| Where is X? | `search_code`, `find_function` |
-| What breaks if I change Y? | `get_impact_radius`, `detect_changes` |
-| What tests cover Y? | `get_tested_by` |
-| How does X work? | `get_context`, `get_review_context`, `orchestrate` |
-| Dependencies | `get_dependencies`, `get_dependents` |
-| Call graph | `get_call_graph`, `get_callers` |
-| Read file efficiently | `ctx_read` (8 compression modes) |
-| Smart routing | `orchestrate` (cache-graph-compress) |
+## Verification Status
 
-Doc/Traceability: `get_doc_for_file`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`
+See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
-Clustering: `get_clusters`, `get_cluster_context`, `generate_graph_report`
+---
 
-## Testing Notes
-
-- Unit tests in `#[cfg(test)]` modules within each `.rs` file
-- Integration tests in `tests/` directory
-- Use `tempfile::TempDir` for filesystem tests
-- Use `tokio::test` for async tests
-- Follow Arrange-Act-Assert pattern
-
-## Adding New Features
-
-When adding a new MCP tool:
-1. Define in `src/mcp/tools.rs` with input schema
-2. Add handler in `src/mcp/handler.rs`
-3. Add match arm in `execute_tool`
-
-When adding a new data model:
-1. Add struct to `src/db/models.rs`
-2. Add DB operations to `src/db/mod.rs`
-3. Add query methods to `src/graph/query.rs`
+*Last updated: 2026-03-28*

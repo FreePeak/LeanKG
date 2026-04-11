@@ -6,13 +6,18 @@
 
 ## Installation
 
-Run the one-line installer:
+Superpowers is available via the official Claude plugin marketplace:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- claude
+```
+/plugin install leankg@claude-plugins-official
 ```
 
-This configures MCP in `~/.config/claude/settings.json` and adds LeanKG instructions to `~/.config/claude/CLAUDE.md`.
+Or register the marketplace first:
+
+```
+/plugin marketplace add FreePeak/leankg-marketplace
+/plugin install leankg@leankg-marketplace
+```
 
 ## What It Does
 
@@ -41,8 +46,10 @@ mcp_init leankg { path: "/path/to/your/project/.leankg" }
 
 ## Updating
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- update
+LeanKG updates automatically when you update the plugin:
+
+```
+/plugin update leankg
 ```
 
 ## Manual Installation

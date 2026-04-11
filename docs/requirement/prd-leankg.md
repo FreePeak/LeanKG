@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 2.1-mempalace
-**Date:** 2026-04-11
+**Version:** 2.0-consolidated
+**Date:** 2026-03-28
 **Status:** Active Development
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)
@@ -9,11 +9,6 @@
 ---
 
 ## Changelog (Merged)
-
-### v2.1-mempalace - MemPalace-inspired features
-- Added competitive analysis of MemPalace (github.com/milla-jovovich/mempalace)
-- New user stories US-MP-01 to US-MP-07: Temporal Graph, Layered Context, Conversation Mining, Specialist Agents, Consistency Checking, Cross-Domain Tunnels, Wake-up Protocol
-- See docs/prd.md v3.1-mempalace for full details
 
 ### v2.0-consolidated - Merged from 3 source PRDs
 - Source 1: `prd-leankg.md` (v1.7, 2026-03-27)
@@ -160,22 +155,6 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | US-RTK-02 | LeanKG internal command compression via LeanKGCompressor | Must Have | IN PROGRESS |
 | US-RTK-03 | Cargo test output compression (failures only mode) | Must Have | IN PROGRESS |
 | US-RTK-04 | Git diff compression for indexer pipeline | Should Have | PENDING |
-
-### 3.6 MemPalace-Inspired Stories (US-MP-01 to US-MP-07)
-
-> **Source:** Competitive analysis of [MemPalace](https://github.com/milla-jovovich/mempalace) (96.6% LongMemEval R@5, local-first AI memory system)
-
-| ID | User Story | Priority | Status |
-|----|------------|----------|--------|
-| US-MP-01 | Temporal Knowledge Graph — relationships have valid_from/valid_to for historical queries | Must Have | PENDING |
-| US-MP-02 | Layered Context Loading (L0-L3) — token-budgeted context layers with wake_up tool | Must Have | PENDING |
-| US-MP-03 | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts for decisions | Should Have | PENDING |
-| US-MP-04 | Specialist Agent Contexts — agent personas with focused codebase views and diaries | Should Have | PENDING |
-| US-MP-05 | Contradiction & Staleness Detection — detect stale annotations and broken traceability | Should Have | PENDING |
-| US-MP-06 | Cross-Domain Tunnels — auto-link clusters sharing the same domain concept | Could Have | PENDING |
-| US-MP-07 | Wake-up Context Protocol — ~170 token project bootstrap at session start | Should Have | PENDING |
-
-See `docs/prd.md` section 3.8 for detailed feature descriptions.
 
 ---
 

@@ -1,83 +1,46 @@
 # Roadmap
 
-**Last updated:** 2026-04-11
-**Current version:** 0.11.1
+## Phase 2 -- Enhanced MCP Tools (GitNexus-Inspired)
 
----
-
-## Completed Phases
-
-### Phase 1: MVP (v0.1.0) - COMPLETED
-- Core indexing (Go, TS/JS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP)
-- Dependency graph with 10 relationship types
-- CLI interface (28+ commands)
-- MCP server (35 tools via rmcp)
-- Documentation generation
-- Business logic annotations
-
-### Phase 2: Enhanced Features (v0.2.0) - COMPLETED
-- Pipeline information extraction (Terraform, CI/CD YAML)
-- Documentation-structure mapping
-- Enhanced business logic tagging
-- Impact analysis with confidence scores
-- Web UI embedded (20+ routes)
-- Git hooks (pre-commit, post-commit, post-checkout)
-
-### Phase 3: Intelligence (v0.3.0) - COMPLETED
-- Confidence scoring on relationships
-- Pre-commit change detection (detect_changes)
-- Multi-repo global registry (register/unregister/list)
-- Community detection (Leiden algorithm)
-- Cluster-grouped search
-- Enhanced 360-degree context (orchestrate)
-- RTK compression (8 modes, response compression)
-- Orchestrator with persistent cache
-- Context metrics tracking
-- REST API server
-- Wiki generation
-- Graph export (HTML, SVG, GraphML, Neo4j)
-- Benchmark runner (vs OpenCode, Gemini, Kilo)
-- GitWatcher for continuous freshness
-
----
-
-## Current Sprint (In Progress)
+Based on analysis of GitNexus architecture, LeanKG is adopting **precomputed relational intelligence**: structure computed at index time, not at query time. This converts LeanKG from a raw-edge graph query engine into a high-confidence context engine.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **npm-based installation** | PENDING | Binary distribution via npm (US-14) |
-| **Dart entity extraction** | PENDING | Parser exists, needs extractor (US-LANG-01) |
-| **Swift entity extraction** | PENDING | Parser exists, needs extractor (US-LANG-02) |
-| **REST API auth wiring** | PENDING | Auth middleware exists but not wired into routes |
-| **REST API mutation endpoints** | PENDING | Add index, annotation endpoints |
+| **Confidence Scoring** | Planned | Add confidence scores (0.0-1.0) to relationships based on resolution quality. Impact analysis distinguishes "WILL BREAK" from "MAY BE AFFECTED" |
+| **Pre-Commit Change Detection** | Planned | New `detect_changes` tool shows affected symbols and risk level before committing |
+| **Multi-Repo Registry** | Planned | Global registry at `~/.leankg/registry.json` so one MCP config serves all projects |
+| **Community Detection** | Planned | Auto-detect functional clusters using graph algorithms (Leiden-inspired) |
+| **Cluster-Grouped Search** | Planned | `search_code` results include cluster membership for architectural context |
+| **Enhanced Context** | Planned | `get_context` returns cluster, dependents_count, dependencies_count in one call |
 
----
+## Phase 3 -- Intelligence Features
 
-## Planned Features
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Cluster-Level Skills** | Planned | Auto-generate SKILL.md per functional cluster for targeted AI agent context |
+| **MCP Resources** | Planned | Read-only URIs for repos, clusters, schema -- overview without tool calls |
+| **Wiki Generation** | Planned | LLM-powered documentation from graph structure |
 
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| **Cluster-level SKILL.md** | Could Have | Auto-generate SKILL.md per functional cluster |
-| **MCP Resources** | Could Have | Read-only URIs for repos, clusters, schema |
-| **XML entity extraction** | Could Have | Parser exists, needs extractor (US-LANG-03) |
-
----
-
-## Future (Phase 4)
+## Future Features
 
 | Feature | Description |
 |---------|-------------|
 | **Semantic Search** | AI-powered code search using embeddings |
-| **Cloud Sync** | Optional cloud sync for team features |
-| **Team Features** | Shared knowledge graphs |
-| **Plugin System** | Extensible plugin architecture |
+| **Security Analysis** | Detect vulnerable dependencies and patterns |
+| **Cost Estimation** | Cloud resource cost tracking via pipeline data |
 
----
+## Completed Features
+
+| Feature | Version | Description |
+|---------|---------|-------------|
+| **Embedded Web UI** | v1.14 | Web UI embedded in LeanKG binary via Axum. No external server dependency |
+| **Doc-to-Code Traceability** | v1.0 | Index docs/ directory, map doc references to code elements |
+| **Business Logic Tagging** | v1.0 | Annotate code elements with business logic descriptions and link to features |
+| **Incremental Indexing** | v1.0 | Track changes and extract only delta updates via file watcher |
 
 ## References
 
-- [PRD](prd.md)
-- [ERD/HLD](erd.md)
-- [MCP Tools](mcp-tools.md)
-- [CLI Reference](cli-reference.md)
-- [AGENTS.md](../AGENTS.md)
+- [GitNexus Analysis](../analysis/gitnexus-analysis-2026-03-27.md)
+- [GitNexus Enhancements PRD](../requirement/prd-leankg-gitnexus-enhancements.md)
+- [Core PRD](../requirement/prd-leankg.md)
+- [HLD](../design/hld-leankg.md)
