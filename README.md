@@ -437,6 +437,7 @@ Open **http://localhost:8080** in your browser.
 ### Graph Viewer & Code Inspector
 
 ![LeanKG Graph Visualization](docs/screenshots/graph.jpeg)
+![LeanKG Obsidian](docs/screenshots/obsidian.jpeg)
 
 The newly reconstructed **LeanKG Web UI** provides full architectural parity with the GitNexus visualizer:
 - **Force-Directed Physics:** Utilizes `Sigma.js` and `ForceAtlas2` to render a beautifully balanced, fully-centered, spherical dependency map of your codebase.
