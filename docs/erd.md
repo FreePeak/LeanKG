@@ -686,6 +686,7 @@ erDiagram
 
 | Element Type | qualified_name Format | Description |
 |-------------|----------------------|-------------|
+| `directory` | `path/to/dir/` | [PLANNED] A source code directory (trailing slash distinguishes from files) |
 | `file` | `path/to/file.rs` | A source code file |
 | `function` | `path/to/file.rs::function_name` | A function or method |
 | `class` | `path/to/file.rs::ClassName` | A class, struct, or interface |
@@ -703,6 +704,53 @@ erDiagram
 | `milestone` | `conversations/source::milestone_hash` | [PLANNED] A project milestone from conversations |
 | `problem` | `conversations/source::problem_hash` | [PLANNED] A problem/issue from conversations |
 
+### 4.4 Folder-as-Graph Hierarchy (PLANNED)
+
+> Maps directory structure into the knowledge graph, inspired by MemPalace's wing/room/closet/drawer spatial architecture.
+
+```mermaid
+graph TB
+    subgraph "Palace Mapping: Folder Structure as Graph"
+        SRC["src/<br/>directory<br/>(Wing)"]
+        GRAPH["src/graph/<br/>directory<br/>(Room)"]
+        MCP_DIR["src/mcp/<br/>directory<br/>(Room)"]
+        QUERY["src/graph/query.rs<br/>file<br/>(Closet)"]
+        HANDLER["src/mcp/handler.rs<br/>file<br/>(Closet)"]
+        GE["query.rs::GraphEngine<br/>function<br/>(Drawer)"]
+        QP["query.rs::QueryProcessor<br/>function<br/>(Drawer)"]
+        HT["handler.rs::handle_tool<br/>function<br/>(Drawer)"]
+    end
+
+    SRC -->|contains| GRAPH
+    SRC -->|contains| MCP_DIR
+    GRAPH -->|contains| QUERY
+    MCP_DIR -->|contains| HANDLER
+    QUERY -->|contains| GE
+    QUERY -->|contains| QP
+    HANDLER -->|contains| HT
+
+    GE -.->|calls| HT
+```
+
+**Hierarchy levels:**
+
+| MemPalace Level | LeanKG Level | Element Type | `contains` Edge |
+|-----------------|-------------|-------------|-----------------|
+| Wing (project area) | Top-level directory | `directory` | dir → dir |
+| Room (module/topic) | Sub-directory | `directory` | dir → dir |
+| Closet (file) | Source file | `file` | dir → file |
+| Drawer (element) | Function/class | `function`/`class` | file → element |
+
+**Directory metadata JSON:**
+```json
+{
+  "child_count": 12,
+  "language_distribution": {"rust": 8, "typescript": 4},
+  "total_lines": 3420,
+  "file_types": [".rs", ".ts"]
+}
+```
+
 ### 4.4 Relationship Types
 
 | Type | Source → Target | Description | Confidence | Temporal |
@@ -713,7 +761,7 @@ erDiagram
 | `documented_by` | code_element → document | Code is documented by doc | 1.0 | Yes |
 | `tested_by` | code_element → test_function | Code is tested by test | 1.0 | Yes |
 | `tests` | test_function → code_element | Test tests code | 1.0 | Yes |
-| `contains` | parent → child | Parent contains child (file→function, doc→section) | 1.0 | No |
+| `contains` | parent → child | Parent contains child: dir→dir, dir→file, file→function/class, doc→section | 1.0 | No |
 | `defines` | file → element | File defines element | 1.0 | No |
 | `implements` | struct → interface | Struct implements interface (Go) | 1.0 | Yes |
 | `implementations` | interface → struct | Interface implementations | 1.0 | Yes |

@@ -167,6 +167,140 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | US-LANG-02 | Swift parser (tree-sitter-swift) | Should Have | PARTIAL (parser only, no extraction) |
 | US-LANG-03 | XML parser (tree-sitter-xml) | Could Have | PARTIAL (parser only, no extraction) |
 
+### 3.8 MemPalace-Inspired Stories (US-MP-01 to US-MP-08)
+
+> **Source:** Competitive analysis of [MemPalace](https://github.com/milla-jovovich/mempalace) — the highest-scoring AI memory system on LongMemEval (96.6% R@5 raw mode). Key differentiator: raw verbatim storage without summarization, structured spatial navigation (wings/rooms/closets/drawers), temporal entity graph with validity windows, and a 4-layer memory stack (L0-L3) for token-efficient context loading.
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-MP-01 | Temporal Knowledge Graph — relationships have valid_from/valid_to; historical queries ("what dependencies existed before the refactor?") | Must Have | PENDING |
+| US-MP-02 | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok), L1 critical facts (~120 tok), L2 cluster context (on demand), L3 deep search (on demand) | Must Have | PENDING |
+| US-MP-03 | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decisions, preferences, milestones that explain *why* code changed | Should Have | PENDING |
+| US-MP-04 | Specialist Agent Contexts — define agent personas (reviewer, architect, ops) each with a focused lens on the codebase and their own session diary | Should Have | PENDING |
+| US-MP-05 | Contradiction & Staleness Detection — detect when stored context contradicts current code state; flag stale annotations, outdated docs, broken traceability chains | Should Have | PENDING |
+| US-MP-06 | Cross-Domain Tunnels — auto-link clusters across projects/modules that share the same domain concept (e.g., "auth" in both user-service and gateway) | Could Have | PENDING |
+| US-MP-07 | Wake-up Context Protocol — standardized `wake_up` MCP tool that loads ~170 tokens of critical project facts at session start | Should Have | PENDING |
+| US-MP-08 | Folder Structure as Graph Edges — directories as first-class `directory` nodes with `contains` edges (dir→dir, dir→file, file→element), mirroring MemPalace's wing/room/closet/drawer hierarchy | Must Have | PENDING |
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-MP-01: Temporal Knowledge Graph</summary>
+
+**MemPalace inspiration:** Entity relationships have validity windows (`valid_from`, `valid_to`). When something stops being true, it's invalidated but retained for historical queries.
+
+**LeanKG adaptation:**
+- Add `valid_from` and `valid_to` (nullable) fields to `Relationship` table
+- When re-indexing detects a removed import/call, set `valid_to = now()` instead of deleting
+- New MCP tool: `temporal_query` — "what did the dependency graph look like before commit X?"
+- New MCP tool: `invalidate_edge` — manually mark an edge as no longer current
+- Timeline view: chronological story of how a code element's dependencies evolved
+</details>
+
+<details>
+<summary>US-MP-02: Layered Context Loading (L0-L3)</summary>
+
+**MemPalace inspiration:** 4-layer memory stack where L0+L1 (~170 tokens) are always loaded, L2 is on-demand, L3 is deep search.
+
+**LeanKG adaptation:**
+- **L0 — Project Identity** (~50 tokens): Project name, languages, top-level directories, architecture pattern.
+- **L1 — Critical Facts** (~120 tokens): Module map, critical dependencies, recent change hotspots.
+- **L2 — Cluster Context** (on demand): When a query touches a specific area, load the relevant cluster's symbols.
+- **L3 — Deep Search** (on demand): Full graph traversal, impact analysis, cross-cluster queries.
+- New MCP tools: `wake_up` (L0+L1), `load_layer` (L2/L3)
+</details>
+
+<details>
+<summary>US-MP-03: Conversation/Decision Mining</summary>
+
+**MemPalace inspiration:** Mines conversation exports (Claude, ChatGPT, Slack) to extract decisions, preferences, milestones. Stores raw verbatim.
+
+**LeanKG adaptation:**
+- New indexer module: `conversation_indexer` — parses Claude/ChatGPT/Slack export JSON
+- Extracts: decisions, preferences, milestones, problems
+- Creates `decision`, `preference`, `milestone`, `problem` element types
+- Links decisions to code elements via `decided_about` relationship
+- Store raw verbatim — no summarization
+- New CLI command: `leankg mine-conversations ~/chats/ --format claude|chatgpt|slack`
+</details>
+
+<details>
+<summary>US-MP-04: Specialist Agent Contexts</summary>
+
+**MemPalace inspiration:** Define agent personas (reviewer, architect, ops) each with their own wing and diary.
+
+**LeanKG adaptation:**
+- Agent config in `.leankg/agents/*.json` — focus areas and context filters
+- Each agent gets a filtered view of the graph
+- Agent diary: per-agent CozoDB table storing session notes
+- New MCP tools: `agent_focus`, `agent_diary_write`, `agent_diary_read`
+</details>
+
+<details>
+<summary>US-MP-05: Contradiction & Staleness Detection</summary>
+
+**MemPalace inspiration:** `fact_checker.py` validates assertions against stored entity facts.
+
+**LeanKG adaptation:**
+- New module: `consistency_checker` — runs on `detect_changes` or standalone
+- Checks: annotations referencing deleted code, documented_by links to moved files, stale clusters
+- Severity: 🔴 BROKEN, 🟡 STALE, 🟢 CURRENT
+- New MCP tool: `check_consistency`, new CLI: `leankg check-consistency`
+</details>
+
+<details>
+<summary>US-MP-06: Cross-Domain Tunnels</summary>
+
+**MemPalace inspiration:** "Tunnels" auto-connect rooms from different wings when the same topic appears.
+
+**LeanKG adaptation:**
+- Auto-detect shared domain concepts across clusters
+- Create `tunnel` relationship type linking related clusters
+- New MCP tool: `find_tunnels`
+- Enhance `orchestrate` to follow tunnels
+</details>
+
+<details>
+<summary>US-MP-07: Wake-up Context Protocol</summary>
+
+**MemPalace inspiration:** `mempalace wake-up` loads ~170 tokens of L0+L1.
+
+**LeanKG adaptation:**
+- New MCP tool: `wake_up` — returns compressed project summary (~170 tokens)
+- Content: project name, languages, top directories (wings), recent hotspots, critical files
+- Cached in `.leankg/wake_up.txt`, regenerated on re-index
+</details>
+
+<details>
+<summary>US-MP-08: Folder Structure as Graph Edges</summary>
+
+**MemPalace inspiration:** MemPalace's wing → room → closet → drawer is a spatial hierarchy. Each level is a navigable node with typed edges.
+
+**LeanKG adaptation:**
+- **`directory` element type** — every indexed directory becomes a first-class node
+- **`contains` edges for full hierarchy:**
+  - `directory → directory` (e.g., `src/` contains `src/graph/`)
+  - `directory → file` (e.g., `src/graph/` contains `query.rs`)
+  - `file → function/class` (existing behavior)
+- **qualified_name format:** `src/graph/` for directories (trailing slash distinguishes from files)
+- **metadata on directory nodes:** `child_count`, `language_distribution`, `total_lines`
+- **Impact analysis at directory level:** `get_impact_radius("src/indexer/")` shows all affected modules
+- **Cluster-to-directory alignment:** When Leiden clusters map to physical directories, link them
+- **Wake-up context:** L0/L1 lists top-level directories as "palace wings"
+- **Folder-scoped search:** `search_code` and `query_file` accept directory qualified names
+
+```
+Palace Mapping:
+
+  Wing (project area)     →  src/            [directory node]
+    Room (module)         →  src/graph/      [directory node]
+      Closet (file)       →  src/graph/query.rs  [file node]
+        Drawer (element)  →  query.rs::GraphEngine  [function node]
+
+  All connected by `contains` edges. Traversal = BFS from any directory.
+```
+</details>
+
 ---
 
 ## 4. Implementation Status Summary
@@ -280,7 +414,36 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - [x] **FR-INF-09**: Graph export (HTML interactive, SVG, GraphML, Neo4j, JSON, DOT/Mermaid)
 - [x] **FR-INF-10**: Orchestrator with intent parsing (7 types) and persistent cache
 
-### 5.6 Multi-Language Support
+### 5.6 MemPalace-Inspired Features (PENDING)
+
+- [ ] **FR-MP-01**: Add `valid_from` (timestamp) and `valid_to` (nullable timestamp) to Relationship schema
+- [ ] **FR-MP-02**: On re-index, set `valid_to = now()` on removed edges instead of deleting them
+- [ ] **FR-MP-03**: New MCP tool `temporal_query` — query graph state as of a given timestamp or commit
+- [ ] **FR-MP-04**: New MCP tool `timeline` — chronological evolution of a code element's relationships
+- [ ] **FR-MP-05**: Generate `.leankg/identity.md` (L0 context, ~50 tokens) on `init` and `index`
+- [ ] **FR-MP-06**: Generate `.leankg/critical_facts.md` (L1 context, ~120 tokens) from graph stats + git log
+- [ ] **FR-MP-07**: New MCP tool `wake_up` — returns L0+L1 in ~170 tokens, cached and regenerated on re-index
+- [ ] **FR-MP-08**: New MCP tool `load_layer` — load L2 (cluster) or L3 (deep) context on demand
+- [ ] **FR-MP-09**: New conversation_indexer module: parse Claude export JSON format
+- [ ] **FR-MP-10**: New conversation_indexer module: parse ChatGPT export JSON format
+- [ ] **FR-MP-11**: New conversation_indexer module: parse Slack export JSON format
+- [ ] **FR-MP-12**: Extract decisions, preferences, milestones, problems from conversations as new element types
+- [ ] **FR-MP-13**: New CLI command `mine-conversations` with `--format` and `--project` flags
+- [ ] **FR-MP-14**: New MCP tool `check_consistency` — detect stale/broken links, outdated annotations
+- [ ] **FR-MP-15**: New CLI command `check-consistency` with `--severity` filter
+- [ ] **FR-MP-16**: New relationship type `tunnel` for cross-cluster domain links
+- [ ] **FR-MP-17**: New MCP tool `find_tunnels` — discover cross-cluster connections
+- [ ] **FR-MP-18**: Agent config system: `.leankg/agents/*.json` with focus and filter definitions
+- [ ] **FR-MP-19**: New MCP tools `agent_focus`, `agent_diary_write`, `agent_diary_read`
+- [ ] **FR-MP-20**: Enhance `orchestrate` intent parser to follow tunnels and use L0-L3 layer strategy
+- [ ] **FR-MP-21**: `directory` element type — every indexed directory becomes a first-class graph node
+- [ ] **FR-MP-22**: `contains` edges for full hierarchy: directory→directory, directory→file (extends existing file→element)
+- [ ] **FR-MP-23**: Directory metadata: `child_count`, `language_distribution`, `total_lines` in metadata JSON
+- [ ] **FR-MP-24**: `get_impact_radius` accepts directory qualified names (e.g., `"src/indexer/"`) for module-level analysis
+- [ ] **FR-MP-25**: `search_code` and `query_file` accept directory nodes for folder-scoped search
+- [ ] **FR-MP-26**: Cluster-to-directory alignment: when Leiden cluster maps to a physical directory, store `cluster_directory` in cluster metadata
+
+### 5.7 Multi-Language Support
 
 | Language | Extensions | Extractor Status | Parser |
 |----------|-----------|-----------------|--------|
