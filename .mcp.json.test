@@ -5,7 +5,7 @@
         "mcp-stdio",
         "--watch"
       ],
-      "command": "/Users/linh.doan/.local/bin/leankg"
+      "command": "~/.local/bin/leankg"
     }
   }
 }
