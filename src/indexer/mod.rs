@@ -49,6 +49,14 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
             && !path.to_string_lossy().contains("node_modules")
             && !path.to_string_lossy().contains("vendor")
             && !path.to_string_lossy().contains(".git")
+            && !path.to_string_lossy().contains("/target/")
+            && !path.to_string_lossy().contains("/dist/")
+            && !path.to_string_lossy().contains("/.next/")
+            && !path.to_string_lossy().contains("/build/")
+            && !path.to_string_lossy().contains("/out/")
+            && !path.to_string_lossy().contains("/ Coverage/")
+            && !path.to_string_lossy().contains("/.svelte-kit/")
+            && !path.to_string_lossy().contains("/.nuxt/")
         {
             files.push(path.to_string_lossy().to_string());
         }

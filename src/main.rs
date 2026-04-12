@@ -10,6 +10,7 @@ mod doc_indexer;
 mod graph;
 mod indexer;
 mod mcp;
+mod obsidian;
 mod orchestrator;
 mod registry;
 mod runtime;
@@ -343,6 +344,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             cli::ApiKeyCommand::Revoke { id } => {
                 api_key_revoke(&id)?;
+            }
+        },
+        cli::CLICommand::Obsidian { command } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            
+            match command {
+                cli::ObsidianCommand::Init { vault } => {
+                    obsidian_init(&db_path, vault.as_deref())?;
+                }
+                cli::ObsidianCommand::Push { vault } => {
+                    obsidian_push(&db_path, vault.as_deref()).await?;
+                }
+                cli::ObsidianCommand::Pull { vault } => {
+                    obsidian_pull(&db_path, vault.as_deref()).await?;
+                }
+                cli::ObsidianCommand::Watch { vault, debounce_ms } => {
+                    obsidian_watch(&db_path, vault.as_deref(), debounce_ms).await?;
+                }
+                cli::ObsidianCommand::Status { vault } => {
+                    obsidian_status(&db_path, vault.as_deref()).await?;
+                }
             }
         },
         cli::CLICommand::Metrics {
@@ -1269,6 +1292,165 @@ fn api_key_revoke(id: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn obsidian_init(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    
+    let engine = obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
+    
+    engine.init()?;
+    
+    let readme_content = r#"# LeanKG Obsidian Vault
+
+This vault is managed by LeanKG. Notes in `.leankg/obsidian/vault/` are auto-generated from LeanKG's knowledge graph.
+
+## Sync Commands
+
+- `leankg obsidian push` - Generate notes from LeanKG database
+- `leankg obsidian pull` - Import annotation edits back to LeanKG
+- `leankg obsidian watch` - Watch for changes and auto-sync
+
+## Frontmatter Fields
+
+- `leankg_id` - Unique identifier for the code element
+- `leankg_type` - Element type (function, file, class, etc.)
+- `leankg_file` - Source file path
+- `leankg_line` - Line range in source file
+- `leankg_relationships` - List of related elements
+- `leankg_annotation` - Editable annotation description
+
+## Notes
+
+- LeanKG is the source of truth
+- `push` overwrites `leankg_*` frontmatter fields
+- `pull` imports only `leankg_annotation` back to LeanKG
+- Your custom notes in note bodies are never overwritten
+"#;
+
+    let readme_path = vault_path.join("README.md");
+    std::fs::write(&readme_path, readme_content)?;
+
+    println!("Obsidian vault initialized at:");
+    println!("  {}", vault_path.display());
+    println!();
+    println!("Next steps:");
+    println!("  leankg obsidian push    # Generate notes from LeanKG");
+    println!("  leankg obsidian status  # Check vault status");
+
+    Ok(())
+}
+
+async fn obsidian_push(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    
+    if !vault_path.exists() {
+        eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
+        return Ok(());
+    }
+
+    println!("Pushing LeanKG data to Obsidian vault...");
+    
+    let engine = obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
+    let result = engine.push().await?;
+
+    println!();
+    println!("Push complete:");
+    println!("  Notes generated: {}", result.pushed);
+    println!("  Annotations pulled: {}", result.pulled);
+    println!("  Conflicts: {}", result.conflicts);
+
+    Ok(())
+}
+
+async fn obsidian_pull(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    
+    if !vault_path.exists() {
+        eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
+        return Ok(());
+    }
+
+    println!("Pulling annotations from Obsidian vault...");
+    
+    let engine = obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
+    let result = engine.pull().await?;
+
+    println!();
+    println!("Pull complete:");
+    println!("  Notes pushed: {}", result.pushed);
+    println!("  Annotations imported: {}", result.pulled);
+    println!("  Conflicts: {}", result.conflicts);
+
+    if result.conflicts > 0 {
+        println!();
+        println!("Conflicts detected (manual merge required):");
+        println!("  Run 'leankg obsidian pull' after resolving conflicts.");
+    }
+
+    Ok(())
+}
+
+async fn obsidian_watch(db_path: &std::path::Path, vault: Option<&str>, debounce_ms: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    
+    if !vault_path.exists() {
+        eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
+        return Ok(());
+    }
+
+    println!("╔═══════════════════════════════════════════╗");
+    println!("║  LeanKG Obsidian Watcher                ║");
+    println!("╚═══════════════════════════════════════════╝");
+    println!("  Vault: {}", vault_path.display());
+    println!("  Debounce: {}ms", debounce_ms);
+    println!("  Press Ctrl+C to stop.");
+    println!();
+
+    let engine = std::sync::Arc::new(obsidian::SyncEngine::new(
+        vault_path.to_str().unwrap_or(""),
+        db_path.to_path_buf(),
+    ));
+    let watcher = obsidian::ObsidianWatcher::new(engine.clone(), debounce_ms);
+
+    watcher.watch(vault_path.to_str().unwrap_or("")).await?;
+
+    Ok(())
+}
+
+async fn obsidian_status(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    
+    println!("LeanKG Obsidian Vault Status");
+    println!("============================");
+    println!();
+    println!("  Vault: {}", vault_path.display());
+    println!("  Exists: {}", vault_path.exists());
+    
+    if vault_path.exists() {
+        let note_count = walkdir_count(&vault_path);
+        println!("  Notes: {}", note_count);
+    } else {
+        println!();
+        println!("  Run 'leankg obsidian init' to initialize.");
+    }
+
+    Ok(())
+}
+
+fn walkdir_count(path: &std::path::Path) -> usize {
+    let mut count = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                count += walkdir_count(&path);
+            } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 fn show_metrics(

@@ -210,6 +210,11 @@ pub enum CLICommand {
         #[command(subcommand)]
         command: ApiKeyCommand,
     },
+    /// Obsidian vault sync commands
+    Obsidian {
+        #[command(subcommand)]
+        command: ObsidianCommand,
+    },
     /// Show context metrics (token savings, usage stats)
     Metrics {
         /// Show metrics from the last N days (e.g., 7d, 30d)
@@ -254,5 +259,42 @@ pub enum ApiKeyCommand {
         /// ID of the API key to revoke
         #[arg(long)]
         id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ObsidianCommand {
+    /// Initialize Obsidian vault structure
+    Init {
+        /// Custom vault path (default: .leankg/obsidian/vault)
+        #[arg(long)]
+        vault: Option<String>,
+    },
+    /// Push LeanKG data to Obsidian notes
+    Push {
+        /// Custom vault path (default: .leankg/obsidian/vault)
+        #[arg(long)]
+        vault: Option<String>,
+    },
+    /// Pull annotation edits from Obsidian to LeanKG
+    Pull {
+        /// Custom vault path (default: .leankg/obsidian/vault)
+        #[arg(long)]
+        vault: Option<String>,
+    },
+    /// Watch Obsidian vault for changes and auto-pull
+    Watch {
+        /// Custom vault path (default: .leankg/obsidian/vault)
+        #[arg(long)]
+        vault: Option<String>,
+        /// Debounce delay in milliseconds (default: 1000)
+        #[arg(long, default_value = "1000")]
+        debounce_ms: u64,
+    },
+    /// Show vault status
+    Status {
+        /// Custom vault path (default: .leankg/obsidian/vault)
+        #[arg(long)]
+        vault: Option<String>,
     },
 }

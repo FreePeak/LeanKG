@@ -1572,7 +1572,6 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
     };
 
     let initial_elements = elements_result.unwrap_or_default();
-    // Keep ALL elements including functions/methods - they have important call edges
     let elements_result: Result<Vec<_>, String> = Ok(initial_elements);
 
     match (elements_result, relationships_result) {
