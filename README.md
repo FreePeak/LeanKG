@@ -141,29 +141,32 @@ This will replace the existing binary with the latest release while preserving y
 # 1. Initialize LeanKG in your project
 leankg init
 
-# 2. Index your codebase
-leankg index ./src
+# 2. Build the Web UI (Vite + React)
+cd ui && npm install && npm run build && cd ..
 
-# 3. Start the MCP server (for AI tools)
-leankg serve
+# 3. Index your codebase
+leankg index ./src
 
 # 4. Start the Web UI (for visualization)
 # Open http://localhost:8080 in your browser
 leankg web
 
-# 5. Run commands with RTK-style compression
+# 5. Start the MCP server (for AI tools)
+leankg serve
+
+# 6. Run commands with RTK-style compression
 leankg run "cargo test"
 
-# 6. Compute impact radius for a file
+# 7. Compute impact radius for a file
 leankg impact src/main.rs --depth 3
 
-# 7. Check index status
+# 8. Check index status
 leankg status
 
-# 8. Watch for changes and auto-index
+# 9. Watch for changes and auto-index
 leankg watch ./src
 
-# 9. View context metrics (token savings)
+# 10. View context metrics (token savings)
 leankg metrics
 leankg metrics --seed  # Seed test data
 ```
@@ -423,7 +426,21 @@ See [AB Testing Results](docs/analysis/ab-testing-results-2026-04-08.md) for det
 
 ## Web UI
 
-If you installed LeanKG from the release binary or install scripts, the UI is already built in!
+LeanKG uses a modern **Vite + React + TailwindCSS** frontend with a Rust axum backend.
+
+### Build the UI
+
+```bash
+# Install dependencies and build
+cd ui
+npm install
+npm run build
+
+# Development mode with hot-reload
+npm run dev
+```
+
+### Run the Web UI
 
 ```bash
 # Start the web server (default port: 8080)
@@ -432,13 +449,16 @@ leankg web
 # Or specify a custom port
 leankg web --port 9000
 ```
+
+The Rust backend serves the built React app from `ui/dist/` and provides the API at `/api/*`.
+
 Open **http://localhost:8080** in your browser.
 
 ### Graph Viewer & Code Inspector
 
 ![LeanKG Graph Visualization](docs/screenshots/graph.jpeg)
 
-The newly reconstructed **LeanKG Web UI** provides full architectural parity with the GitNexus visualizer:
+The **LeanKG Web UI** provides:
 - **Force-Directed Physics:** Utilizes `Sigma.js` and `ForceAtlas2` to render a beautifully balanced, fully-centered, spherical dependency map of your codebase.
 - **Node Highlighting & Search:** Instant WebGL-based node and edge filtering without triggering expensive React re-renders.
 - **Community Clustering:** Uses Louvain algorithms and deep structural gravity (`CONTAINS` edges) to accurately cluster related modules, functions, and classes visually.
