@@ -130,14 +130,20 @@ export const createSigmaGraph = (
 
     if (!nodePositions.has(nodeId)) nodePositions.set(nodeId, { x, y });
 
-    const rawType = String(node.properties?.elementType || node.label || 'unknown');
-    const type = rawType.charAt(0).toUpperCase() + rawType.slice(1);
+    const rawType = String(node.properties?.elementType || node.label || 'unknown') || 'unknown';
+    const type = (rawType.charAt(0).toUpperCase() + rawType.slice(1)) || 'unknown';
     const baseSize = NODE_SIZES[type] || 8;
+
+    // Ensure color is always a valid hex string
+    let nodeColor = NODE_COLORS[type];
+    if (!nodeColor || typeof nodeColor !== 'string' || !nodeColor.startsWith('#')) {
+      nodeColor = '#9ca3af';
+    }
 
     graph.addNode(nodeId, {
       x, y,
       size: getScaledNodeSize(baseSize, nodeCount),
-      color: NODE_COLORS[type] || NODE_COLORS[type.toLowerCase()] || '#9ca3af',
+      color: nodeColor,
       label: node.properties?.name || node.label || String(nodeId).split('::').pop(),
       nodeType: type,
       filePath: node.properties?.filePath || node.properties?.file_path || '',
@@ -178,10 +184,11 @@ export const createSigmaGraph = (
         const relType = rel.type.toUpperCase();
         const style = EDGE_STYLES[relType] || { color: '#4a4a5a', sizeMultiplier: 0.5 };
         const curvature = 0.12 + Math.random() * 0.08;
-        
+        const edgeColor = typeof style.color === 'string' && style.color.startsWith('#') ? style.color : '#4a4a5a';
+
         graph.addEdge(rel.sourceId, rel.targetId, {
           size: edgeBaseSize * style.sizeMultiplier,
-          color: style.color,
+          color: edgeColor,
           relationType: relType,
           type: 'curved',
           curvature: curvature,

@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y ca-certificates git && rm -rf /var/lib/
 COPY --from=builder /app/target/release/leankg /usr/local/bin/
 COPY --from=builder /app/ui/dist /app/ui/dist
 COPY --from=builder /app/.leankg /app/.leankg
+COPY --from=builder /app/src /app/src
 
 ENV PORT=8080
 EXPOSE 8080

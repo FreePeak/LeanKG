@@ -25,7 +25,8 @@ const rgbToHex = (r: number, g: number, b: number): string => {
 };
 
 const dimColor = (hex: string, amount: number): string => {
-  const rgb = hexToRgb(hex);
+  const validHex = typeof hex === 'string' && hex.startsWith('#') ? hex : '#646464';
+  const rgb = hexToRgb(validHex);
   const darkBg = { r: 18, g: 18, b: 28 };
   return rgbToHex(
     darkBg.r + (rgb.r - darkBg.r) * amount,
@@ -35,7 +36,8 @@ const dimColor = (hex: string, amount: number): string => {
 };
 
 const brightenColor = (hex: string, factor: number): string => {
-  const rgb = hexToRgb(hex);
+  const validHex = typeof hex === 'string' && hex.startsWith('#') ? hex : '#646464';
+  const rgb = hexToRgb(validHex);
   return rgbToHex(
     rgb.r + ((255 - rgb.r) * (factor - 1)) / factor,
     rgb.g + ((255 - rgb.g) * (factor - 1)) / factor,
@@ -150,9 +152,10 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
         curved: EdgeCurveProgram,
       },
       defaultDrawNodeHover: (context: CanvasRenderingContext2D, data: any, settings: any) => {
-        const baseLabel = data.label;
+        const baseLabel = typeof data.label === 'string' ? data.label : String(data.label || '');
         if (!baseLabel) return;
-        const label = data.nodeType ? `[${data.nodeType}] ${baseLabel}` : baseLabel;
+        const nodeType = typeof data.nodeType === 'string' ? data.nodeType : '';
+        const label = nodeType ? `[${nodeType}] ${baseLabel}` : baseLabel;
 
         const size = settings.labelSize || 11;
         const font = settings.labelFont || 'JetBrains Mono, monospace';
@@ -198,10 +201,15 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
           res.hidden = true; return res;
         }
 
+        // Ensure color is always a valid string
+        const nodeColor = typeof data.color === 'string' && data.color.startsWith('#') ? data.color : '#9ca3af';
+        res.color = nodeColor;
+
         const searchTerm = searchTermRef.current;
-        const matchesSearch = !searchTerm || (data.label && data.label.toLowerCase().includes(searchTerm));
+        const labelStr = typeof data.label === 'string' ? data.label : String(data.label || '');
+        const matchesSearch = !searchTerm || (labelStr && labelStr.toLowerCase().includes(searchTerm));
         if (!matchesSearch) {
-          res.color = dimColor(data.color, 0.1);
+          res.color = dimColor(nodeColor, 0.1);
           res.size = (data.size || 8) * 0.4;
           res.zIndex = 0;
           return res;
@@ -218,23 +226,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
             const isSelected = node === currentSelected;
             const isNeighbor = g.hasEdge(node, currentSelected) || g.hasEdge(currentSelected, node);
             if (isSelected) {
-              res.color = data.color;
+              res.color = nodeColor;
               res.size = (data.size || 8) * 1.8;
               res.zIndex = 3;
               res.highlighted = true;
             } else if (isNeighbor) {
-              res.color = data.color;
+              res.color = nodeColor;
               res.size = (data.size || 8) * 1.3;
               res.zIndex = 2;
             } else {
-              res.color = dimColor(data.color, 0.25);
+              res.color = dimColor(nodeColor, 0.25);
               res.size = (data.size || 8) * 0.6;
               res.zIndex = 0;
             }
           }
         } else if (searchTerm) {
           // Extra highlight if it's the only thing matching
-          res.color = data.color;
+          res.color = nodeColor;
           res.size = (data.size || 8) * 1.5;
           res.zIndex = 2;
         }
@@ -259,10 +267,12 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
           const [source, target] = graph.extremities(edge);
           const sourceAttrs = graph.getNodeAttributes(source);
           const targetAttrs = graph.getNodeAttributes(target);
-          const sourceMatch = sourceAttrs.label && sourceAttrs.label.toLowerCase().includes(searchTerm);
-          const targetMatch = targetAttrs.label && targetAttrs.label.toLowerCase().includes(searchTerm);
+          const sourceLabel = typeof sourceAttrs.label === 'string' ? sourceAttrs.label : String(sourceAttrs.label || '');
+          const targetLabel = typeof targetAttrs.label === 'string' ? targetAttrs.label : String(targetAttrs.label || '');
+          const sourceMatch = sourceLabel && sourceLabel.toLowerCase().includes(searchTerm);
+          const targetMatch = targetLabel && targetLabel.toLowerCase().includes(searchTerm);
           if (!sourceMatch && !targetMatch) {
-            res.color = dimColor(data.color, 0.05);
+            res.color = dimColor(typeof data.color === 'string' ? data.color : '#2a2a3a', 0.05);
             res.size = 0.1;
             res.zIndex = 0;
             return res;
@@ -273,11 +283,11 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
           const [source, target] = graph.extremities(edge);
           const isConnected = source === currentSelected || target === currentSelected;
           if (isConnected) {
-            res.color = brightenColor(data.color, 1.5);
+            res.color = brightenColor(typeof data.color === 'string' ? data.color : '#2a2a3a', 1.5);
             res.size = Math.max(3, (data.size || 1) * 4);
             res.zIndex = 2;
           } else {
-            res.color = dimColor(data.color, 0.1);
+            res.color = dimColor(typeof data.color === 'string' ? data.color : '#2a2a3a', 0.1);
             res.size = 0.3;
             res.zIndex = 0;
           }
