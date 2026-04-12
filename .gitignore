@@ -3,3 +3,4 @@ target/
 .leankg/
 .worktrees/
 .cargo_home/
+.DS_Store
