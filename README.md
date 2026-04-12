@@ -145,7 +145,7 @@ leankg init
 leankg index ./src
 
 # 3. Start the MCP server (for AI tools)
-leankg serve
+leankg mcp-stdio
 
 # 4. Start the Web UI (for visualization)
 # Open http://localhost:8080 in your browser
@@ -423,7 +423,7 @@ See [AB Testing Results](docs/analysis/ab-testing-results-2026-04-08.md) for det
 
 ## Web UI
 
-If you installed LeanKG from the release binary or install scripts, the UI is already built in!
+The **LeanKG Web UI** is a Vite + React + TailwindCSS frontend with a Rust axum backend. The built UI is bundled in the binary.
 
 ```bash
 # Start the web server (default port: 8080)
@@ -439,11 +439,11 @@ Open **http://localhost:8080** in your browser.
 ![LeanKG Graph Visualization](docs/screenshots/graph.jpeg)
 ![LeanKG Obsidian](docs/screenshots/obsidian.jpeg)
 
-The newly reconstructed **LeanKG Web UI** provides full architectural parity with the GitNexus visualizer:
-- **Force-Directed Physics:** Utilizes `Sigma.js` and `ForceAtlas2` to render a beautifully balanced, fully-centered, spherical dependency map of your codebase.
-- **Node Highlighting & Search:** Instant WebGL-based node and edge filtering without triggering expensive React re-renders.
-- **Community Clustering:** Uses Louvain algorithms and deep structural gravity (`CONTAINS` edges) to accurately cluster related modules, functions, and classes visually.
-- **Resizable Code Viewer:** Click any node to open a dynamic code inspector pane.
+The **LeanKG Web UI** features:
+- **Force-Directed Graph:** Sigma.js with ForceAtlas2 renders a balanced, centered dependency map.
+- **WebGL Rendering:** Fast WebGL-based node and edge filtering without React re-renders.
+- **Community Clustering:** Louvain algorithms group related modules, functions, and classes.
+- **Code Inspector:** Click any node to view code in a resizable pane.
 
 See [Web UI](docs/web-ui.md) for detailed documentation.
 
@@ -455,10 +455,7 @@ LeanKG watches your codebase and automatically keeps the knowledge graph up-to-d
 
 ```bash
 # Watch mode - auto-index on file changes
-leankg watch ./src
-
-# Or use the serve command with auto-index enabled
-leankg serve --watch ./src
+leankg watch --path ./src
 ```
 
 See [CLI Reference](docs/cli-reference.md#auto-indexing) for detailed commands.
