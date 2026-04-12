@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.svg" alt="LeanKG" width="80" height="80">
+  <img src="https://www.leankg.com/icon.svg" alt="LeanKG" width="80" height="80">
 </p>
 
 # LeanKG
