@@ -128,8 +128,8 @@ leankg web --port 9000
 
 Visualize your knowledge graph with force-directed layout, WebGL rendering, and community clustering.
 
-![LeanKG Graph Visualization](screenshots/graph.jpeg)
-![LeanKG Obsidian](screenshots/obsidian.jpeg)
+![LeanKG Graph Visualization](docs/screenshots/graph.jpeg)
+![LeanKG Obsidian](docs/screenshots/obsidian.jpeg)
 
 See [docs/web-ui.md](docs/web-ui.md) for more features.
 
