@@ -291,11 +291,9 @@ configure_cursor() {
 }
 
 configure_claude() {
-    local config_file="$HOME/.claude/mcp_settings.json"
+    local config_file="$HOME/.claude.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
     local needs_update=false
-
-    mkdir -p "$(dirname "$config_file")"
 
     if [ -f "$config_file" ] && [ -s "$config_file" ]; then
         local current_path
@@ -303,7 +301,9 @@ configure_claude() {
         local current_args
         current_args=$(jq -r '.mcpServers.leankg.args // [] | join(" ")' "$config_file" 2>/dev/null)
         
-        if [ -n "$current_path" ]; then
+        if [ -z "$current_path" ]; then
+            needs_update=true
+        else
             if [ "$current_path" != "$leankg_path" ]; then
                 echo "Updating LeanKG binary path for Claude Code: $current_path -> $leankg_path"
                 needs_update=true
@@ -318,21 +318,28 @@ configure_claude() {
             echo "LeanKG already properly configured in Claude Code"
             return
         fi
+    else
+        needs_update=true
     fi
 
     local tmp_file
     tmp_file=$(mktemp)
-    cat "$config_file" 2>/dev/null | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file" || cat > "$tmp_file" <<EOF
+    if [ -f "$config_file" ] && [ "$needs_update" = true ]; then
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"type": "stdio", "command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file" && mv "$tmp_file" "$config_file"
+    else
+        cat > "$tmp_file" <<EOF
 {
   "mcpServers": {
     "leankg": {
+      "type": "stdio",
       "command": "$leankg_path",
       "args": ["mcp-stdio", "--watch"]
     }
   }
 }
 EOF
-    mv "$tmp_file" "$config_file"
+        mv "$tmp_file" "$config_file"
+    fi
     echo "Configured LeanKG for Claude Code at $config_file"
 }
 
@@ -577,7 +584,7 @@ configure_kilo() {
         local current_path
         current_path=$(jq -r '.mcp.leankg.command[0] // empty' "$config_file" 2>/dev/null)
         local current_args
-        current_args=$(jq -r '.mcp.leankg.command[1,2,3] // [] | join(" ")' "$config_file" 2>/dev/null)
+        current_args=$(jq -r '.mcp.leankg.command[1:] | join(" ")' "$config_file" 2>/dev/null)
         
         if [ -n "$current_path" ]; then
             if [ "$current_path" != "$leankg_path" ]; then
@@ -601,7 +608,7 @@ configure_kilo() {
     local tmp_file
     tmp_file=$(mktemp)
     if [ -f "$config_file" ] && [ "$needs_update" = true ]; then
-        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcp.leankg = {"type": "local", "command": [$leankg_path, "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
+        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcp.leankg = {"type": "local", "command": [$leankg, "mcp-stdio", "--watch"], "enabled": true}' > "$tmp_file"
     else
         cat > "$tmp_file" <<EOF
 {
@@ -622,6 +629,7 @@ EOF
 
 configure_gemini() {
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    local needs_update=false
     
     if command -v gemini >/dev/null 2>&1; then
         echo "Configuring LeanKG for Gemini CLI using 'gemini mcp add'..."
@@ -631,21 +639,48 @@ configure_gemini() {
         local config_file="$HOME/.gemini/settings.json"
         mkdir -p "$HOME/.gemini"
 
-        if [ -f "$config_file" ]; then
-            local content
-            content=$(cat "$config_file")
-            if echo "$content" | grep -q "leankg"; then
-                echo "LeanKG already configured in Gemini CLI"
+        if [ -f "$config_file" ] && [ -s "$config_file" ]; then
+            local current_path
+            current_path=$(jq -r '.mcpServers.leankg.command // empty' "$config_file" 2>/dev/null)
+            local current_args
+            current_args=$(jq -r '.mcpServers.leankg.args // [] | join(" ")' "$config_file" 2>/dev/null)
+            
+            if [ -n "$current_path" ]; then
+                if [ "$current_path" != "$leankg_path" ]; then
+                    echo "Updating LeanKG binary path for Gemini CLI: $current_path -> $leankg_path"
+                    needs_update=true
+                fi
+                if ! echo "$current_args" | grep -q "\-\-watch"; then
+                    echo "Adding --watch flag to LeanKG for Gemini CLI"
+                    needs_update=true
+                fi
+            fi
+            
+            if [ "$needs_update" = false ]; then
+                echo "LeanKG already properly configured in Gemini CLI"
                 return
             fi
         else
-            echo "{}" > "$config_file"
+            needs_update=true
         fi
 
         local tmp_file
         tmp_file=$(mktemp)
-        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
-        mv "$tmp_file" "$config_file"
+        if [ -f "$config_file" ] && [ "$needs_update" = true ]; then
+            cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file" && mv "$tmp_file" "$config_file"
+        else
+            cat > "$tmp_file" <<EOF
+{
+  "mcpServers": {
+    "leankg": {
+      "command": "$leankg_path",
+      "args": ["mcp-stdio", "--watch"]
+    }
+  }
+}
+EOF
+            mv "$tmp_file" "$config_file"
+        fi
         echo "Configured LeanKG for Gemini CLI at $config_file"
     fi
 }
