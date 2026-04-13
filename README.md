@@ -12,25 +12,23 @@
 
 LeanKG is a local-first knowledge graph that gives AI coding tools accurate codebase context. It indexes your code, builds dependency graphs, and exposes an MCP server so tools like Cursor, OpenCode, and Claude Code can query the knowledge graph directly. No cloud services, no external databases.
 
+
+Visualize your knowledge graph with force-directed layout, WebGL rendering, and community clustering.
+
+![LeanKG Graph Visualization](docs/screenshots/graph.jpeg)
+![LeanKG Obsidian](docs/screenshots/obsidian.jpeg)
+
+See [docs/web-ui.md](docs/web-ui.md) for more features.
+
 ---
 
-## How LeanKG Helps
+## Live Demo
 
-```mermaid
-graph LR
-    subgraph "Without LeanKG"
-        A1[AI Tool] -->|Scans entire codebase| B1[10,000+ tokens]
-        B1 --> A1
-    end
+Try LeanKG without installing: **https://leankg.onrender.com**
 
-    subgraph "With LeanKG"
-        A2[AI Tool] -->|13-42 tokens| C[LeanKG Graph]
-        C -->|Targeted subgraph| A2
-    end
+```bash
+leankg web --port 9000
 ```
-
-**Without LeanKG**: AI scans entire codebase (~10,000+ tokens).
-**With LeanKG**: AI queries knowledge graph for targeted context (13-42 tokens). **98% token saving** for impact analysis.
 
 ---
 
@@ -87,6 +85,27 @@ See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
 
 ---
 
+## How LeanKG Helps
+
+```mermaid
+graph LR
+    subgraph "Without LeanKG"
+        A1[AI Tool] -->|Scans entire codebase| B1[10,000+ tokens]
+        B1 --> A1
+    end
+
+    subgraph "With LeanKG"
+        A2[AI Tool] -->|13-42 tokens| C[LeanKG Graph]
+        C -->|Targeted subgraph| A2
+    end
+```
+
+**Without LeanKG**: AI scans entire codebase (~10,000+ tokens).
+**With LeanKG**: AI queries knowledge graph for targeted context (13-42 tokens). **98% token saving** for impact analysis.
+
+---
+
+
 ## Highlights
 
 - **Auto-Init** -- Install script configures MCP, rules, skills, and hooks automatically
@@ -120,21 +139,6 @@ See [docs/agentic-instructions.md](docs/agentic-instructions.md) for detailed se
 
 ---
 
-## Web UI
-
-```bash
-leankg web --port 9000
-```
-
-Visualize your knowledge graph with force-directed layout, WebGL rendering, and community clustering.
-
-![LeanKG Graph Visualization](docs/screenshots/graph.jpeg)
-![LeanKG Obsidian](docs/screenshots/obsidian.jpeg)
-
-See [docs/web-ui.md](docs/web-ui.md) for more features.
-
----
-
 ## Context Metrics
 
 Track token savings to understand LeanKG's efficiency.
@@ -159,11 +163,6 @@ leankg version
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- update
 ```
 
----
-
-## Live Demo
-
-Try LeanKG without installing: **https://leankg.onrender.com**
 
 ---
 
