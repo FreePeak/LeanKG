@@ -219,6 +219,7 @@ pub struct MetricsSummary {
     pub total_invocations: i64,
     pub total_tokens_saved: i64,
     pub average_savings_percent: f64,
+    pub average_correctness_percent: f64,
     pub retention_days: i32,
     pub by_tool: Vec<ToolMetrics>,
     pub by_day: Vec<DailyMetrics>,
@@ -229,6 +230,7 @@ pub struct ToolMetrics {
     pub tool_name: String,
     pub calls: i64,
     pub avg_savings_percent: f64,
+    pub avg_correctness_percent: f64,
     pub total_saved: i64,
 }
 
@@ -237,6 +239,7 @@ pub struct DailyMetrics {
     pub date: String,
     pub calls: i64,
     pub savings: i64,
+    pub correctness: f64,
 }
 
 #[cfg(test)]
