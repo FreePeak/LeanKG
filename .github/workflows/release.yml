@@ -55,6 +55,7 @@ jobs:
           cd ui
           bun install
           bun run build
+          rm -rf ../src/embed/*
           cp -r dist/* ../src/embed/
 
       - name: Build
