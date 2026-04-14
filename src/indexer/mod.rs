@@ -25,10 +25,10 @@ pub use maven_extractor::*;
 
 use crate::db::models::{CodeElement, Relationship};
 use crate::graph::GraphEngine;
+use ignore::WalkBuilder;
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
-use walkdir::WalkDir;
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
@@ -37,18 +37,12 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
                         "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
                         "pom.xml"];
 
-    for entry in WalkDir::new(root)
+    let walker = WalkBuilder::new(root)
         .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
+        .build();
 
-        // ── Fast-path: skip ignored directories entirely ──
-        let path_str = path.to_string_lossy();
-        if should_ignore_path(&path_str) {
-            continue;
-        }
+    for entry in walker.flatten() {
+        let path = entry.path();
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -60,7 +54,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         };
 
         if path.is_file() && is_valid_file {
-            files.push(path_str.to_string());
+            files.push(path.to_string_lossy().to_string());
         }
     }
 
