@@ -250,7 +250,6 @@ pub async fn start_server(
 
     let app = Router::new()
         .route("/", get(root_handler))
-        .route("/*path", get(fallback_handler))
         .route("/api/elements", get(handlers::api_elements))
         .route("/api/relationships", get(handlers::api_relationships))
         .route("/api/annotations", get(handlers::api_annotations))
@@ -273,6 +272,7 @@ pub async fn start_server(
         .route("/api/github/clone", post(handlers::api_github_clone))
         .route("/api/file", get(handlers::api_get_file))
         .route("/services", get(handlers::services_page))
+        .route("/*path", get(fallback_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
