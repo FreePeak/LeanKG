@@ -113,7 +113,8 @@ impl MCPServer {
                 self.get_db_path()
             }
         } else {
-            self.get_db_path()
+            Self::find_leankg_for_path(".")
+                .unwrap_or_else(|| self.get_db_path())
         };
 
         {
