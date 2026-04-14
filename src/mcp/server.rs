@@ -11,6 +11,7 @@ use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
@@ -19,6 +20,7 @@ pub struct MCPServer {
     auth_config: Arc<TokioRwLock<AuthConfig>>,
     db_path: Arc<RwLock<PathBuf>>,
     graph_engine: Arc<parking_lot::Mutex<Option<GraphEngine>>>,
+    graph_engine_cache: Arc<RwLock<HashMap<PathBuf, GraphEngine>>>,
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
 }
@@ -37,6 +39,7 @@ impl Clone for MCPServer {
             auth_config: self.auth_config.clone(),
             db_path: self.db_path.clone(),
             graph_engine: self.graph_engine.clone(),
+            graph_engine_cache: self.graph_engine_cache.clone(),
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
         }
@@ -49,6 +52,7 @@ impl MCPServer {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
             db_path: Arc::new(RwLock::new(db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
+            graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
         }
@@ -59,6 +63,7 @@ impl MCPServer {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
             db_path: Arc::new(RwLock::new(db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
+            graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             watch_path: Some(watch_path),
             write_tracker: Arc::new(WriteTracker::new()),
         }
@@ -70,6 +75,75 @@ impl MCPServer {
 
     fn get_db_path(&self) -> std::path::PathBuf {
         self.db_path.read().clone()
+    }
+
+    fn find_leankg_for_path(path: &str) -> Option<PathBuf> {
+        let path = if path.starts_with('/') {
+            PathBuf::from(path)
+        } else {
+            std::env::current_dir().ok()?.join(path)
+        };
+        
+        for ancestor in path.ancestors() {
+            let leankg_path = ancestor.join(".leankg");
+            if leankg_path.is_dir() {
+                return Some(leankg_path);
+            }
+            if ancestor.join("leankg.yaml").exists() {
+                return Some(leankg_path);
+            }
+        }
+        None
+    }
+
+    fn get_graph_engine_for_path(&self, file_path: Option<&str>) -> Result<GraphEngine, String> {
+        let project_db_path = if let Some(fp) = file_path {
+            if let Some(leankg_path) = Self::find_leankg_for_path(fp) {
+                tracing::debug!(
+                    "Routing query for '{}' to database at {}",
+                    fp,
+                    leankg_path.display()
+                );
+                leankg_path
+            } else {
+                tracing::debug!(
+                    "No .leankg found for '{}', using default db_path",
+                    fp
+                );
+                self.get_db_path()
+            }
+        } else {
+            self.get_db_path()
+        };
+
+        {
+            let cache = self.graph_engine_cache.read();
+            if let Some(ge) = cache.get(&project_db_path) {
+                return Ok(ge.clone());
+            }
+        }
+
+        let project_db_path = project_db_path
+            .canonicalize()
+            .or_else(|_| std::env::current_dir().map(|d| d.join(&project_db_path)))
+            .map_err(|e| format!("Failed to resolve db path: {}", e))?;
+
+        if !project_db_path.exists() {
+            return Err(format!(
+                "LeanKG not initialized. No .leankg directory found. Run 'leankg init' first."
+            ));
+        }
+
+        tracing::debug!("Initializing database at: {}", project_db_path.display());
+        let db = init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?;
+        let ge = GraphEngine::with_persistence(db);
+        
+        {
+            let mut cache = self.graph_engine_cache.write();
+            cache.insert(project_db_path.clone(), ge.clone());
+        }
+        
+        Ok(ge)
     }
 
     pub async fn auth_config_read(&self) -> tokio::sync::RwLockReadGuard<'_, AuthConfig> {
@@ -489,7 +563,10 @@ impl MCPServer {
             }
         }
 
-        let graph_engine = self.get_graph_engine()?;
+        let file_path = arguments.get("file").and_then(|v| v.as_str())
+            .or_else(|| arguments.get("path").and_then(|v| v.as_str()));
+        
+        let graph_engine = self.get_graph_engine_for_path(file_path)?;
         let handler = ToolHandler::new(graph_engine, self.get_db_path());
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;
