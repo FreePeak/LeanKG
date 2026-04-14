@@ -140,6 +140,10 @@ update_binary() {
     fi
 
     echo ""
+    echo "Stopping any running LeanKG processes..."
+    pkill -f "leankg" 2>/dev/null || true
+    sleep 1
+
     echo "Updating LeanKG for ${platform}..."
 
     local url
