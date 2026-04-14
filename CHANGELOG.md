@@ -5,7 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.13.0] - 2026-04-12
+## [0.14.8] - 2026-04-14
+
+### Fixed
+- Inline call resolution during indexing (resolves `__unresolved__` calls in-memory, eliminates separate DB pass)
+- Batch delete for resolved call edges (O(1) queries vs O(n) sequential deletes)
+- ~6x speedup: 10s → 1.7s for indexing with 7926 call edges
+
+## [0.14.7] - 2026-04-12
 
 ### Added
 - Obsidian vault integration for annotation IDE
