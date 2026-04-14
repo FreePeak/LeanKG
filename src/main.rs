@@ -376,7 +376,15 @@ fn find_project_root() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
 }
 
 fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config::ProjectConfig::default();
+    let project_name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("my-project")
+        .to_string();
+
+    let mut config = config::ProjectConfig::default();
+    config.project.name = project_name;
+
     let config_yaml = serde_yaml::to_string(&config)?;
 
     std::fs::create_dir_all(path)?;
@@ -417,9 +425,29 @@ async fn index_codebase(
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
 
-    println!("Indexing codebase at {}...", path);
+    let config_path = db_path.parent().unwrap_or(std::path::Path::new(".")).join("leankg.yaml");
+    let config = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)?;
+        serde_yaml::from_str::<config::ProjectConfig>(&content).unwrap_or_default()
+    } else {
+        config::ProjectConfig::default()
+    };
 
-    let mut files = indexer::find_files_sync(path)?;
+    let index_path = if path == "." {
+        config.project.root.to_string_lossy().to_string()
+    } else {
+        path.to_string()
+    };
+
+    let final_exclude: Vec<String> = if exclude_patterns.is_empty() {
+        config.indexer.exclude.clone()
+    } else {
+        exclude_patterns.to_vec()
+    };
+
+    println!("Indexing codebase at {}...", index_path);
+
+    let mut files = indexer::find_files_sync(&index_path)?;
 
     if let Some(lang) = lang_filter {
         let allowed_langs: Vec<&str> = lang.split(',').map(|s| s.trim()).collect();
@@ -450,13 +478,28 @@ async fn index_codebase(
         }
     }
 
-    if !exclude_patterns.is_empty() {
+    if !final_exclude.is_empty() {
         let prev_len = files.len();
-        files.retain(|f| !exclude_patterns.iter().any(|pat| f.contains(pat)));
+        let normalized_excludes: Vec<String> = final_exclude
+            .iter()
+            .map(|pat| {
+                pat.replace("**/", "/")
+                    .replace("/**", "/")
+                    .replace('*', "")
+                    .trim_matches('/')
+                    .to_string()
+            })
+            .filter(|p| !p.is_empty())
+            .collect();
+        files.retain(|f| {
+            let path_lower = f.to_ascii_lowercase();
+            !normalized_excludes.iter().any(|pat| path_lower.contains(pat))
+        });
         if verbose {
             println!(
-                "Excluded {} files (matched --exclude patterns)",
-                prev_len - files.len()
+                "Excluded {} files (matched {} exclude patterns)",
+                prev_len - files.len(),
+                normalized_excludes.len()
             );
         }
     }
