@@ -1256,9 +1256,8 @@ impl GraphEngine {
         }
         debug!("Loaded {} functions into memory", by_name.len());
 
-        let mut resolved = 0;
         let mut to_insert: Vec<Relationship> = Vec::new();
-        let batch_size = 500;
+        let mut to_delete_keys: Vec<[serde_json::Value; 5]> = Vec::new();
 
         for row in unresolved_rows.iter() {
             let source = row[0].as_str().unwrap_or("").to_string();
@@ -1283,8 +1282,13 @@ impl GraphEngine {
                     .unwrap_or_else(|| bare_name.clone())
             };
 
-            let delete_target = format!("__unresolved__{}", bare_name);
-            self._delete_relationship(&source, &delete_target)?;
+            to_delete_keys.push([
+                serde_json::Value::String(source.clone()),
+                serde_json::Value::String(target_qualified.to_string()),
+                serde_json::Value::String("calls".to_string()),
+                row[3].clone(),
+                row[4].clone(),
+            ]);
             to_insert.push(Relationship {
                 id: None,
                 source_qualified: source,
@@ -1293,21 +1297,39 @@ impl GraphEngine {
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
             });
-            resolved += 1;
-
-            if to_insert.len() >= batch_size {
-                self.insert_relationships(&to_insert)?;
-                to_insert.clear();
-            }
         }
 
-        if !to_insert.is_empty() {
-            self.insert_relationships(&to_insert)?;
-        }
+        self._batch_delete_unresolved_calls(&to_delete_keys)?;
+        self.insert_relationships(&to_insert)?;
         
-        debug!("Resolved {} call edges", resolved);
+        debug!("Resolved {} call edges", to_insert.len());
 
-        Ok(resolved)
+        Ok(to_insert.len())
+    }
+
+    fn _batch_delete_unresolved_calls(
+        &self,
+        keys: &[[serde_json::Value; 5]],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        for chunk in keys.chunks(1000) {
+            let batch_data: Vec<serde_json::Value> = chunk
+                .iter()
+                .map(|row| serde_json::Value::Array(row.to_vec()))
+                .collect();
+
+            let query = r#"
+                ?[source_qualified, target_qualified, rel_type, confidence, metadata] <-
+                    $batch_data
+                :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}
+            "#;
+            let mut params = std::collections::BTreeMap::new();
+            params.insert("batch_data".to_string(), serde_json::Value::Array(batch_data));
+            self.db.run_script(query, params)?;
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -1331,19 +1353,6 @@ impl GraphEngine {
         Ok((result.rows.first().and_then(|row| row[0].as_str().map(String::from)), 0.7))
     }
 
-    fn _delete_relationship(&self, source: &str, target: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let query = r#"
-            ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
-                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified = $sq, target_qualified = $tq, rel_type = "calls"
-            :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}
-        "#;
-        let mut params = std::collections::BTreeMap::new();
-        params.insert("sq".to_string(), serde_json::Value::String(source.to_string()));
-        params.insert("tq".to_string(), serde_json::Value::String(target.to_string()));
-        
-        self.db.run_script(query, params)?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
