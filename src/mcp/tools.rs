@@ -400,6 +400,17 @@ impl ToolRegistry {
                     "required": ["query"]
                 }),
             },
+            ToolDefinition {
+                name: "get_service_graph".to_string(),
+                description: "Get microservice call graph with service repos as nodes. Returns aggregated service-to-service topology from service_calls relationships. The current service repo is the biggest node.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "service": {"type": "string", "description": "Current service name (defaults to project directory name)"}
+                    },
+                    "required": []
+                }),
+            },
         ]
     }
 }

@@ -1,6 +1,7 @@
 use crate::db::models::{BusinessLogic, CodeElement, Relationship, DocLink, TraceabilityEntry, TraceabilityReport};
 use crate::db::schema::CozoDb;
 use crate::graph::cache::QueryCache;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tracing::debug;
@@ -1353,6 +1354,130 @@ impl GraphEngine {
         Ok((result.rows.first().and_then(|row| row[0].as_str().map(String::from)), 0.7))
     }
 
+    fn _delete_relationship(&self, source: &str, target: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let query = r#"
+            ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified = $sq, target_qualified = $tq, rel_type = "calls"
+            :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}
+        "#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("sq".to_string(), serde_json::Value::String(source.to_string()));
+        params.insert("tq".to_string(), serde_json::Value::String(target.to_string()));
+        
+        self.db.run_script(query, params)?;
+        Ok(())
+    }
+
+    pub fn get_service_graph(
+        &self,
+        current_service: &str,
+    ) -> Result<ServiceGraph, Box<dyn std::error::Error>> {
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], rel_type = "service_calls""#;
+        let result = self.db.run_script(query, std::collections::BTreeMap::new())?;
+
+        let mut service_connections: std::collections::HashMap<(String, String), Vec<serde_json::Value>> = std::collections::HashMap::new();
+        let mut all_services: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        all_services.insert(current_service.to_string());
+
+        for row in &result.rows {
+            let source = row[0].as_str().unwrap_or("").to_string();
+            let target = row[1].as_str().unwrap_or("").to_string();
+            let metadata_str = row[4].as_str().unwrap_or("{}");
+            let metadata: serde_json::Value = serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({}));
+
+            all_services.insert(source.clone());
+            all_services.insert(target.clone());
+
+            let key = (source.clone(), target.clone());
+            service_connections.entry(key).or_default().push(metadata);
+        }
+
+        let mut nodes: Vec<ServiceNode> = Vec::new();
+        let mut edges: Vec<ServiceEdge> = Vec::new();
+
+        let current_lc = current_service.to_lowercase();
+        for service in &all_services {
+            let connection_count = service_connections.keys()
+                .filter(|(s, t)| s == service || t == service)
+                .map(|(_, targets)| targets)
+                .count();
+
+            let is_current = service.to_lowercase() == current_lc;
+            let weight = if is_current { 10.0 } else { 1.0 + (connection_count as f64 * 0.5).min(5.0) };
+
+            nodes.push(ServiceNode {
+                id: service.clone(),
+                label: service.clone(),
+                is_current_service: is_current,
+                weight,
+                connection_count,
+            });
+        }
+
+        nodes.sort_by(|a, b| {
+            b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut seen_edges: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        for ((source, target), metas) in &service_connections {
+            if seen_edges.contains(&(source.clone(), target.clone())) {
+                continue;
+            }
+            seen_edges.insert((source.clone(), target.clone()));
+
+            let protocols: std::collections::HashSet<String> = metas.iter()
+                .filter_map(|m| m.get("protocol").and_then(|p| p.as_str()).map(String::from))
+                .collect();
+
+            edges.push(ServiceEdge {
+                id: format!("{}_{}", source, target),
+                source_id: source.clone(),
+                target_id: target.clone(),
+                call_count: metas.len(),
+                protocols: protocols.into_iter().collect(),
+                rel_type: "service_calls".to_string(),
+            });
+        }
+
+        let total_connections = edges.len();
+
+        Ok(ServiceGraph {
+            nodes,
+            edges,
+            current_service: current_service.to_string(),
+            total_services: all_services.len(),
+            total_connections,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceNode {
+    pub id: String,
+    pub label: String,
+    pub is_current_service: bool,
+    pub weight: f64,
+    pub connection_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEdge {
+    pub id: String,
+    pub source_id: String,
+    pub target_id: String,
+    pub call_count: usize,
+    pub protocols: Vec<String>,
+    pub rel_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceGraph {
+    pub nodes: Vec<ServiceNode>,
+    pub edges: Vec<ServiceEdge>,
+    pub current_service: String,
+    pub total_services: usize,
+    pub total_connections: usize,
 }
 
 #[cfg(test)]

@@ -265,12 +265,14 @@ pub async fn start_server(
         )
         .route("/api/search", get(handlers::api_search))
         .route("/api/graph/data", get(handlers::api_graph_data))
+        .route("/api/graph/services", get(handlers::api_service_graph))
         .route("/api/export/graph", get(handlers::api_export_graph))
         .route("/api/query", post(handlers::api_query))
         .route("/api/project/switch", post(handlers::api_switch_path))
         .route("/api/index/status", get(handlers::api_index_status))
         .route("/api/github/clone", post(handlers::api_github_clone))
         .route("/api/file", get(handlers::api_get_file))
+        .route("/services", get(handlers::services_page))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

@@ -15,18 +15,20 @@ impl MicroserviceExtractor {
     pub fn new() -> Self {
         Self {
             // Matches: dns:///service-name.default.svc.cluster.local.:10000
-            grpc_pattern: Regex::new(
-                r"dns:///([a-z0-9-]+)\.default\.svc\.cluster\.local\.:\d+"
-            ).unwrap(),
+            grpc_pattern: Regex::new(r"dns:///([a-z0-9-]+)\.default\.svc\.cluster\.local\.:\d+")
+                .unwrap(),
             // Matches: http://service-name.default.svc.cluster.local./
-            http_pattern: Regex::new(
-                r"https?://([a-z0-9-]+)\.default\.svc\.cluster\.local\."
-            ).unwrap(),
+            http_pattern: Regex::new(r"https?://([a-z0-9-]+)\.default\.svc\.cluster\.local\.")
+                .unwrap(),
             client_dirs: vec!["internal/external".to_string()],
         }
     }
 
-    pub fn with_config(client_dirs: Vec<String>, grpc_pattern: String, http_pattern: String) -> Self {
+    pub fn with_config(
+        client_dirs: Vec<String>,
+        grpc_pattern: String,
+        http_pattern: String,
+    ) -> Self {
         Self {
             grpc_pattern: Regex::new(&grpc_pattern).unwrap_or_else(|_| {
                 Regex::new(r"dns:///[a-z0-9-]+\.default\.svc\.cluster\.local\.\:\d+").unwrap()
@@ -42,18 +44,19 @@ impl MicroserviceExtractor {
     pub fn extract(&self, project_path: &str) -> Vec<Relationship> {
         let mut relationships = Vec::new();
         let service_names = self.discover_services(project_path);
+        let project_service = service_names.values().next().cloned();
 
         // Scan client files for gRPC calls
         for client_dir in &self.client_dirs {
             let full_path = Path::new(project_path).join(client_dir);
             if full_path.exists() {
-                let file_relationships = self.scan_client_files(&full_path, &service_names);
+                let file_relationships = self.scan_client_files(&full_path, &project_service);
                 relationships.extend(file_relationships);
             }
         }
 
         // Scan config files for service addresses
-        let config_relationships = self.scan_config_files(project_path, &service_names);
+        let config_relationships = self.scan_config_files(project_path, &project_service);
         relationships.extend(config_relationships);
 
         relationships
@@ -82,7 +85,7 @@ impl MicroserviceExtractor {
     }
 
     /// Scan client files (internal/external/) for gRPC client instantiations
-    fn scan_client_files(&self, dir: &Path, _services: &HashMap<String, String>) -> Vec<Relationship> {
+    fn scan_client_files(&self, dir: &Path, project_service: &Option<String>) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
         for entry in WalkDir::new(dir)
@@ -92,7 +95,11 @@ impl MicroserviceExtractor {
         {
             let file_path = entry.path();
             if let Ok(content) = std::fs::read_to_string(file_path) {
-                let file_rels = self.extract_grpc_calls(&content, file_path.to_str().unwrap_or(""));
+                let file_rels = self.extract_grpc_calls(
+                    &content,
+                    file_path.to_str().unwrap_or(""),
+                    project_service,
+                );
                 relationships.extend(file_rels);
             }
         }
@@ -101,13 +108,16 @@ impl MicroserviceExtractor {
     }
 
     /// Extract gRPC calls from file content
-    fn extract_grpc_calls(&self, content: &str, file_path: &str) -> Vec<Relationship> {
+    fn extract_grpc_calls(
+        &self,
+        content: &str,
+        file_path: &str,
+        project_service: &Option<String>,
+    ) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
         // Pattern: grpc.NewClient("dns:///service-name.default.svc.cluster.local.:10000", ...)
-        let grpc_client_re = Regex::new(
-            r#"(?m)grpc\.NewClient\s*\(\s*"([^"]+)"[,\s]"#
-        ).unwrap();
+        let grpc_client_re = Regex::new(r#"(?m)grpc\.NewClient\s*\(\s*"([^"]+)"[,\s]"#).unwrap();
 
         for cap in grpc_client_re.captures_iter(content) {
             let address = &cap[1];
@@ -123,6 +133,7 @@ impl MicroserviceExtractor {
                     "unknown".to_string(),
                     file_path.to_string(),
                     line_number,
+                    project_service,
                 ));
             }
         }
@@ -135,14 +146,22 @@ impl MicroserviceExtractor {
         if protocol == "grpc" {
             // dns:///service-name.default.svc.cluster.local.:10000
             if let Some(caps) = self.grpc_pattern.captures(address) {
-                return Some(caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default());
+                return Some(
+                    caps.get(1)
+                        .map(|m| m.as_str().to_string())
+                        .unwrap_or_default(),
+                );
             }
         }
         None
     }
 
     /// Scan config files for service address configurations
-    fn scan_config_files(&self, project_path: &str, _services: &HashMap<String, String>) -> Vec<Relationship> {
+    fn scan_config_files(
+        &self,
+        project_path: &str,
+        project_service: &Option<String>,
+    ) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
         // Scan config/config.go for YAML configs
@@ -164,6 +183,7 @@ impl MicroserviceExtractor {
                                 format!("config:{}", &cap[1]),
                                 config_go.to_str().unwrap_or("").to_string(),
                                 0,
+                                project_service,
                             ));
                         }
                     }
@@ -177,12 +197,18 @@ impl MicroserviceExtractor {
             .filter_map(|e| e.ok())
             .filter(|e| {
                 let path = e.path();
-                path.extension().map(|ext| ext == "yaml" || ext == "yml").unwrap_or(false)
+                path.extension()
+                    .map(|ext| ext == "yaml" || ext == "yml")
+                    .unwrap_or(false)
             })
         {
             if let Ok(content) = std::fs::read_to_string(entry.path()) {
                 if let Ok(yaml) = serde_yaml::from_str::<Value>(&content) {
-                    let file_rels = self.extract_from_yaml(&yaml, entry.path().to_str().unwrap_or(""));
+                    let file_rels = self.extract_from_yaml(
+                        &yaml,
+                        entry.path().to_str().unwrap_or(""),
+                        project_service,
+                    );
                     relationships.extend(file_rels);
                 }
             }
@@ -192,13 +218,23 @@ impl MicroserviceExtractor {
     }
 
     /// Extract service addresses from YAML content
-    fn extract_from_yaml(&self, yaml: &Value, file_path: &str) -> Vec<Relationship> {
+    fn extract_from_yaml(
+        &self,
+        yaml: &Value,
+        file_path: &str,
+        project_service: &Option<String>,
+    ) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
         if let Some(obj) = yaml.as_mapping() {
             for (key, val) in obj {
                 let key_str = key.as_str().unwrap_or("");
-                if key_str.ends_with("_address") && val.as_str().map(|s| s.starts_with("dns:///")).unwrap_or(false) {
+                if key_str.ends_with("_address")
+                    && val
+                        .as_str()
+                        .map(|s| s.starts_with("dns:///"))
+                        .unwrap_or(false)
+                {
                     let address = val.as_str().unwrap_or("");
                     if let Some(service_name) = self.extract_service_name(address, "grpc") {
                         relationships.push(self.create_relationship(
@@ -208,12 +244,14 @@ impl MicroserviceExtractor {
                             key_str.to_string(),
                             file_path.to_string(),
                             0,
+                            project_service,
                         ));
                     }
                 }
                 // Recurse into nested mappings
                 if let Some(nested) = val.as_mapping() {
-                    let nested_rels = self.extract_from_yaml_internal(nested, file_path);
+                    let nested_rels =
+                        self.extract_from_yaml_internal(nested, file_path, project_service);
                     relationships.extend(nested_rels);
                 }
             }
@@ -222,12 +260,22 @@ impl MicroserviceExtractor {
         relationships
     }
 
-    fn extract_from_yaml_internal(&self, yaml: &serde_yaml::Mapping, file_path: &str) -> Vec<Relationship> {
+    fn extract_from_yaml_internal(
+        &self,
+        yaml: &serde_yaml::Mapping,
+        file_path: &str,
+        project_service: &Option<String>,
+    ) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
         for (key, val) in yaml {
             let key_str = key.as_str().unwrap_or("");
-            if key_str.ends_with("_address") && val.as_str().map(|s| s.starts_with("dns:///")).unwrap_or(false) {
+            if key_str.ends_with("_address")
+                && val
+                    .as_str()
+                    .map(|s| s.starts_with("dns:///"))
+                    .unwrap_or(false)
+            {
                 let address = val.as_str().unwrap_or("");
                 if let Some(service_name) = self.extract_service_name(address, "grpc") {
                     relationships.push(self.create_relationship(
@@ -237,11 +285,13 @@ impl MicroserviceExtractor {
                         key_str.to_string(),
                         file_path.to_string(),
                         0,
+                        project_service,
                     ));
                 }
             }
             if let Some(nested) = val.as_mapping() {
-                let nested_rels = self.extract_from_yaml_internal(nested, file_path);
+                let nested_rels =
+                    self.extract_from_yaml_internal(nested, file_path, project_service);
                 relationships.extend(nested_rels);
             }
         }
@@ -258,10 +308,13 @@ impl MicroserviceExtractor {
         api_path: String,
         source_file: String,
         line_number: u32,
+        project_service: &Option<String>,
     ) -> Relationship {
         Relationship {
             id: None,
-            source_qualified: self.infer_source_service(&source_file),
+            source_qualified: project_service
+                .clone()
+                .unwrap_or_else(|| self.infer_source_service(&source_file)),
             target_qualified: target_service,
             rel_type: RelationshipType::ServiceCalls.as_str().to_string(),
             confidence: 1.0,
@@ -332,7 +385,7 @@ grpc.NewClient("dns:///service-a.default.svc.cluster.local.:10000",
 )
 "#;
         let extractor = MicroserviceExtractor::new();
-        let relationships = extractor.extract_grpc_calls(content, "test.go");
+        let relationships = extractor.extract_grpc_calls(content, "test.go", &None);
         assert!(!relationships.is_empty());
         assert_eq!(relationships[0].target_qualified, "service-a");
     }

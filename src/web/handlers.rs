@@ -95,6 +95,7 @@ fn build_nav_html() -> String {
         <nav style="margin-bottom: 20px; padding: 10px; background: #f5f5f5; border-radius: 8px;">
             <a href="/" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Dashboard</a>
             <a href="/graph" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Graph</a>
+            <a href="/services" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Services</a>
             <a href="/browse" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Browse</a>
             <a href="/docs" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Docs</a>
             <a href="/annotate" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Annotate</a>
@@ -1361,6 +1362,279 @@ pub async fn settings() -> axum::response::Html<String> {
         </div>"#;
 
     axum::response::Html(base_html("Settings", content))
+}
+
+#[derive(Deserialize)]
+pub struct ServiceQueryParams {
+    pub service: Option<String>,
+}
+
+#[allow(dead_code)]
+pub async fn services_page(State(state): State<AppState>) -> axum::response::Html<String> {
+    let current_service = state.current_project_path.read().await;
+    let service_name = current_service
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    drop(current_service);
+
+    let content = format!(r#"
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
+        <div class="card">
+            <h2>Microservice Call Graph</h2>
+            <p style="color: #666; margin-bottom: 15px;">Service-to-service gRPC call topology. Current service <strong>{service_name}</strong> is the largest node.</p>
+            <div id="graph-container" style="width:100%; height:650px; border:1px solid #ddd; border-radius:8px; background:#fff; position:relative;">
+                <div class="loading">Loading service graph...</div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>Legend</h3>
+            <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:center;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="width:20px;height:20px;border-radius:50%;background:#0066cc;"></div>
+                    <span>Current Service (biggest)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="width:14px;height:14px;border-radius:50%;background:#66bb6a;"></div>
+                    <span>External Service</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="color:#888;">Arrow = gRPC call direction</span>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>Services Table</h3>
+            <table id="services-table">
+                <thead><tr><th>Service</th><th>Role</th><th>Connections</th><th>Outbound Calls</th><th>Inbound Calls</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <style>
+            .svc-tooltip {{
+                position:fixed;background:#fff;border:1px solid #ddd;border-radius:8px;
+                padding:12px 16px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;
+                max-width:320px;pointer-events:none;opacity:0;transition:opacity 0.15s;
+            }}
+            .svc-tooltip.visible {{ opacity:1; }}
+        </style>
+        <script>
+        (async function() {{
+            let sig = null;
+            let mouseX = 0, mouseY = 0;
+            document.addEventListener('mousemove', e => {{ mouseX = e.clientX; mouseY = e.clientY; }});
+
+            try {{
+                const resp = await fetch('/api/graph/services?service=' + encodeURIComponent('{service_name}'));
+                const data = await resp.json();
+                if (!data.success || !data.data) {{
+                    document.getElementById('graph-container').innerHTML = '<div class="error">No service call data found. Index a Go microservice project with gRPC clients first.</div>';
+                    return;
+                }}
+                const sg = data.data;
+                const nodes = sg.nodes || [];
+                const edges = sg.edges || [];
+                if (nodes.length === 0) {{
+                    document.getElementById('graph-container').innerHTML = '<div class="error">No service relationships detected.</div>';
+                    return;
+                }}
+
+                // Build table
+                const tbody = document.querySelector('#services-table tbody');
+                const outbound = {{}}, inbound = {{}};
+                edges.forEach(e => {{
+                    outbound[e.source_id] = (outbound[e.source_id]||0) + e.call_count;
+                    inbound[e.target_id] = (inbound[e.target_id]||0) + e.call_count;
+                }});
+                nodes.sort((a,b) => b.weight - a.weight);
+                nodes.forEach(n => {{
+                    const role = n.is_current_service ? 'Current Service' : 'External';
+                    const conns = n.connection_count;
+                    const out = outbound[n.id] || 0;
+                    const inb = inbound[n.id] || 0;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td><strong>${{n.label}}</strong></td><td>${{role}}</td><td>${{conns}}</td><td>${{out}}</td><td>${{inb}}</td>`;
+                    tbody.appendChild(tr);
+                }});
+
+                // Build graphology graph
+                const graph = new Graph({{ type: 'directed' }});
+                const maxWeight = Math.max(...nodes.map(n => n.weight), 1);
+
+                nodes.forEach(n => {{
+                    const normSize = 8 + (n.weight / maxWeight) * 30;
+                    const color = n.is_current_service ? '#0066cc' : '#66bb6a';
+                    const angle = Math.random() * 2 * Math.PI;
+                    const spread = nodes.length <= 5 ? 150 : nodes.length <= 15 ? 250 : 400;
+                    graph.addNode(n.id, {{
+                        label: n.label,
+                        x: Math.cos(angle) * spread * (0.5 + Math.random()),
+                        y: Math.sin(angle) * spread * (0.5 + Math.random()),
+                        size: normSize,
+                        color: color,
+                        isCurrent: n.is_current_service,
+                        weight: n.weight
+                    }});
+                }});
+
+                edges.forEach(e => {{
+                    if (graph.hasNode(e.source_id) && graph.hasNode(e.target_id)) {{
+                        if (!graph.hasEdge(e.source_id, e.target_id)) {{
+                            graph.addEdge(e.source_id, e.target_id, {{
+                                size: Math.min(1 + e.call_count * 0.3, 5),
+                                color: 'rgba(100,100,100,0.5)',
+                                callCount: e.call_count,
+                                protocols: e.protocols
+                            }});
+                        }}
+                    }}
+                }});
+
+                const container = document.getElementById('graph-container');
+                container.innerHTML = '';
+
+                let hovered = null;
+                const tooltip = document.createElement('div');
+                tooltip.className = 'svc-tooltip';
+                document.body.appendChild(tooltip);
+
+                sig = new Sigma(graph, container, {{
+                    renderLabels: true,
+                    labelFont: 'Arial',
+                    labelSize: 14,
+                    labelColor: '#333',
+                    labelRenderedSizeThreshold: 6,
+                    defaultEdgeType: 'arrow',
+                    defaultEdgeColor: 'rgba(150,150,150,0.5)',
+                    nodeReducer: (node, data) => {{
+                        if (hovered) {{
+                            const isConnected = node === hovered || graph.hasEdge(node, hovered) || graph.hasEdge(hovered, node);
+                            return isConnected ? {{ ...data, zIndex: 1 }} : {{ ...data, zIndex: 0, label: '', color: '#ddd', hidden: false }};
+                        }}
+                        return data;
+                    }},
+                    edgeReducer: (edge, data) => {{
+                        if (hovered) {{
+                            const [src, tgt] = graph.extremities(edge);
+                            const isConnected = src === hovered || tgt === hovered;
+                            return isConnected ? {{ ...data, color: '#333', size: Math.min(data.size * 2, 6), zIndex: 1 }} : {{ ...data, color: 'rgba(200,200,200,0.2)', hidden: true }};
+                        }}
+                        return data;
+                    }}
+                }});
+
+                sig.on('enterNode', ({{ node }}) => {{
+                    hovered = node;
+                    sig.refresh();
+                    const attrs = graph.getNodeAttributes(node);
+                    const outEdges = graph.outEdges(node);
+                    const inEdges = graph.inEdges(node);
+                    let html = `<strong>${{attrs.label}}</strong>`;
+                    if (attrs.isCurrent) html += ` <span style="background:#0066cc;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">CURRENT</span>`;
+                    html += `<br><span style="color:#888;font-size:12px;">Outbound: ${{outEdges.length}} · Inbound: ${{inEdges.length}}</span>`;
+                    if (outEdges.length > 0) {{
+                        html += `<br><span style="color:#666;font-size:12px;">Calls → ${{outEdges.map(e => {{ const [,t] = graph.extremities(e); return graph.getNodeAttributes(t).label; }}).join(', ')}}</span>`;
+                    }}
+                    tooltip.innerHTML = html;
+                    tooltip.style.left = (mouseX + 15) + 'px';
+                    tooltip.style.top = (mouseY + 15) + 'px';
+                    tooltip.classList.add('visible');
+                }});
+
+                sig.on('leaveNode', () => {{
+                    hovered = null;
+                    sig.refresh();
+                    tooltip.classList.remove('visible');
+                }});
+
+                // Force layout
+                const iterations = 120;
+                const springLen = 120;
+                const springStr = 0.06;
+                const repulsion = nodes.length > 10 ? 800 : 500;
+                const damp = 0.85;
+                const vels = {{}};
+                graph.forEachNode(n => {{ vels[n] = {{x:0, y:0}}; }});
+                const nArr = graph.nodes();
+                const xPos = nArr.map(n => graph.getNodeAttribute(n, 'x'));
+                const yPos = nArr.map(n => graph.getNodeAttribute(n, 'y'));
+
+                for (let iter = 0; iter < iterations; iter++) {{
+                    for (let i = 0; i < nArr.length; i++) {{
+                        let fx = 0, fy = 0;
+                        for (let j = 0; j < nArr.length; j++) {{
+                            if (i===j) continue;
+                            const dx = xPos[i]-xPos[j], dy = yPos[i]-yPos[j];
+                            const d = Math.sqrt(dx*dx+dy*dy)||1;
+                            fx += (dx/d)*repulsion/(d*d);
+                            fy += (dy/d)*repulsion/(d*d);
+                        }}
+                        graph.forEachEdge(nArr[i], e => {{
+                            const [s,t] = graph.extremities(e);
+                            const o = s===nArr[i]?t:s;
+                            const oi = nArr.indexOf(o);
+                            if (oi<0) return;
+                            const dx=xPos[i]-xPos[oi], dy=yPos[i]-yPos[oi];
+                            const d=Math.sqrt(dx*dx+dy*dy)||1;
+                            const f = springStr*(d-springLen);
+                            fx -= (dx/d)*f;
+                            fy -= (dy/d)*f;
+                        }});
+                        vels[nArr[i]].x = vels[nArr[i]].x*damp + fx*(1-damp);
+                        vels[nArr[i]].y = vels[nArr[i]].y*damp + fy*(1-damp);
+                    }}
+                    for (let i = 0; i < nArr.length; i++) {{
+                        xPos[i] += Math.max(-8, Math.min(8, vels[nArr[i]].x));
+                        yPos[i] += Math.max(-8, Math.min(8, vels[nArr[i]].y));
+                        graph.setNodeAttribute(nArr[i], 'x', xPos[i]);
+                        graph.setNodeAttribute(nArr[i], 'y', yPos[i]);
+                    }}
+                }}
+                sig.refresh();
+
+            }} catch(e) {{
+                document.getElementById('graph-container').innerHTML = '<div class="error">Failed to load service graph: ' + (e.message||String(e)) + '</div>';
+            }}
+        }})();
+        </script>"#,
+        service_name = service_name
+    );
+
+    axum::response::Html(base_html("Microservice Calls", &content))
+}
+
+#[allow(dead_code)]
+pub async fn api_service_graph(
+    State(state): State<AppState>,
+    Query(params): Query<ServiceQueryParams>,
+) -> impl IntoResponse {
+    let service_name = params.service.unwrap_or_else(|| {
+        crate::runtime::run_blocking(async {
+            let path = state.current_project_path.read().await;
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+    });
+
+    let result = match state.get_graph_engine().await {
+        Ok(g) => g.get_service_graph(&service_name).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+
+    match result {
+        Ok(sg) => ApiResponse {
+            success: true,
+            data: Some(sg),
+            error: None,
+        },
+        Err(e) => ApiResponse::<crate::graph::query::ServiceGraph> {
+            success: false,
+            data: None,
+            error: Some(e),
+        },
+    }
 }
 
 #[allow(dead_code)]

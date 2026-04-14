@@ -183,6 +183,7 @@ impl ToolHandler {
             "get_clusters" => self.get_clusters(arguments),
             "get_cluster_context" => self.get_cluster_context(arguments),
             "run_raw_query" => self.run_raw_query(arguments),
+            "get_service_graph" => self.get_service_graph(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
@@ -1545,6 +1546,19 @@ impl ToolHandler {
             .map_err(|e| format!("Failed to serialize result: {}", e))?;
             
         Ok(value)
+    }
+
+    fn get_service_graph(&self, args: &Value) -> Result<Value, String> {
+        let service_name = args["service"].as_str().map(String::from).unwrap_or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "unknown".to_string())
+        });
+
+        let sg = self.graph_engine.get_service_graph(&service_name).map_err(|e| e.to_string())?;
+
+        Ok(serde_json::to_value(&sg).map_err(|e| format!("Failed to serialize service graph: {}", e))?)
     }
 
     fn get_cluster_context(&self, args: &Value) -> Result<Value, String> {
