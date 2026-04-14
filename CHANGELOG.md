@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-04-14
+
+### Fixed
+- Normalize glob patterns in exclude matching
+- Use .gitignore files only for file traversal
+- Apply config.project.root when indexing with '.'
+
+### Changed
+- Read config from .leankg/leankg.yaml in index_codebase()
+- Default project.root changed from './src' to '.'
+
+### Removed
+- Dead should_ignore_path function
+
 ## [0.14.9] - 2026-04-14
 
 ### Fixed
