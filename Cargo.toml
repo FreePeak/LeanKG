@@ -42,6 +42,7 @@ tar = "0.4"
 flate2 = "1"
 tempfile = "3"
 rust-embed = "8"
+ignore = "0.4.25"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = "0.7"

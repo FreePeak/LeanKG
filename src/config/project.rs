@@ -28,14 +28,15 @@ impl Default for MicroserviceExtractorConfig {
                 "config/*.yaml".to_string(),
                 "config/*.yml".to_string(),
             ],
-            grpc_address_pattern: r"dns:///{service}\.default\.svc\.cluster\.local\.::{port}".to_string(),
+            grpc_address_pattern: r"dns:///{service}\.default\.svc\.cluster\.local\.::{port}"
+                .to_string(),
             http_address_pattern: r"http://{service}\.default\.svc\.cluster\.local\.".to_string(),
             track_protocols: vec!["grpc".to_string()],
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectSettings {
     pub name: String,
     pub root: PathBuf,
@@ -69,7 +70,7 @@ impl Default for ProjectConfig {
         Self {
             project: ProjectSettings {
                 name: "my-project".to_string(),
-                root: PathBuf::from("./src"),
+                root: PathBuf::from("."),
                 languages: vec![
                     "go".to_string(),
                     "typescript".to_string(),
@@ -112,7 +113,7 @@ mod tests {
     #[test]
     fn test_config_project_settings() {
         let config = ProjectConfig::default();
-        assert_eq!(config.project.root, PathBuf::from("./src"));
+        assert_eq!(config.project.root, PathBuf::from("."));
         assert_eq!(config.project.languages, vec!["go", "typescript", "python"]);
     }
 
