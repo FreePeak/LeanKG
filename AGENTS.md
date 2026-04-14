@@ -83,16 +83,19 @@ cargo run -- <cmd>  # Run CLI commands
 | File | Purpose |
 |------|---------|
 | `src/lib.rs` | Module exports |
-| `src/db/models.rs` | Data models (CodeElement, Relationship, BusinessLogic) |
+| `src/db/models.rs` | Data models (CodeElement, Relationship, BusinessLogic, RelationshipType) |
 | `src/graph/query.rs` | Graph query engine |
 | `src/mcp/tools.rs` | MCP tool definitions |
 | `src/mcp/handler.rs` | MCP tool handlers |
 | `src/indexer/extractor.rs` | Code parsing with tree-sitter |
+| `src/indexer/microservice.rs` | Microservice gRPC call extraction |
+| `config/microservice-extractor.yaml` | Default rules for microservice relationship extraction |
 
 ## Data Model
 
 - **CodeElement** - Files, functions, classes with `qualified_name` (e.g., `src/main.rs::main`)
-- **Relationship** - `imports`, `calls`, `tested_by`, `references`, `documented_by`
+- **Relationship** - `imports`, `calls`, `tested_by`, `references`, `documented_by`, `service_calls`
+- **ServiceCalls** - Microservice gRPC calls between services via DNS addresses
 - **BusinessLogic** - Annotations linking code to business requirements
 
 ## MCP Tools

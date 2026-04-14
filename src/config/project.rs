@@ -7,6 +7,32 @@ pub struct ProjectConfig {
     pub indexer: IndexerConfig,
     pub mcp: McpConfig,
     pub documentation: DocConfig,
+    pub microservice: Option<MicroserviceExtractorConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MicroserviceExtractorConfig {
+    pub client_dirs: Vec<String>,
+    pub config_files: Vec<String>,
+    pub grpc_address_pattern: String,
+    pub http_address_pattern: String,
+    pub track_protocols: Vec<String>,
+}
+
+impl Default for MicroserviceExtractorConfig {
+    fn default() -> Self {
+        Self {
+            client_dirs: vec!["internal/external".to_string()],
+            config_files: vec![
+                "config/config.go".to_string(),
+                "config/*.yaml".to_string(),
+                "config/*.yml".to_string(),
+            ],
+            grpc_address_pattern: r"dns:///{service}\.default\.svc\.cluster\.local\.::{port}".to_string(),
+            http_address_pattern: r"http://{service}\.default\.svc\.cluster\.local\.".to_string(),
+            track_protocols: vec!["grpc".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +92,7 @@ impl Default for ProjectConfig {
                 output: PathBuf::from("./docs"),
                 templates: vec!["agents".to_string(), "claude".to_string()],
             },
+            microservice: None,
         }
     }
 }

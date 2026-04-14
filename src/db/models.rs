@@ -27,6 +27,7 @@ pub enum RelationshipType {
     Queries,
     EntryPointOf,
     StepInProcess,
+    ServiceCalls,
 }
 
 impl RelationshipType {
@@ -55,6 +56,7 @@ impl RelationshipType {
             RelationshipType::Queries => "queries",
             RelationshipType::EntryPointOf => "entry_point_of",
             RelationshipType::StepInProcess => "step_in_process",
+            RelationshipType::ServiceCalls => "service_calls",
         }
     }
 
@@ -84,6 +86,7 @@ impl RelationshipType {
             "queries" => Some(RelationshipType::Queries),
             "entry_point_of" => Some(RelationshipType::EntryPointOf),
             "step_in_process" => Some(RelationshipType::StepInProcess),
+            "service_calls" => Some(RelationshipType::ServiceCalls),
             _ => None,
         }
     }

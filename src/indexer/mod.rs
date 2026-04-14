@@ -1,6 +1,7 @@
 pub mod cicd;
 pub mod extractor;
 pub mod git;
+pub mod microservice;
 pub mod parser;
 pub mod process_processor;
 pub mod terraform;
@@ -13,6 +14,7 @@ pub mod maven_extractor;
 pub use cicd::*;
 pub use extractor::*;
 pub use git::*;
+pub use microservice::*;
 pub use parser::*;
 pub use process_processor::*;
 pub use terraform::*;
@@ -336,6 +338,18 @@ pub fn index_files_parallel(
     all_relationships.extend(fw_rels);
 
     resolve_call_edges_inline(&mut all_elements, &mut all_relationships);
+
+    // Extract microservice relationships (gRPC service-to-service calls)
+    if verbose {
+        eprintln!("Detecting microservice calls...");
+    }
+    let microservice_rels = extract_microservice_relationships(
+        std::env::current_dir().unwrap_or_default().to_str().unwrap_or(".")
+    );
+    if verbose {
+        eprintln!("  Detected {} microservice calls", microservice_rels.len());
+    }
+    all_relationships.extend(microservice_rels);
 
     eprintln!("Inserting {} elements and {} relationships...", all_elements.len(), all_relationships.len());
 
@@ -686,6 +700,14 @@ where
         }
     }
 
+    // Extract microservice relationships (gRPC service-to-service calls)
+    let microservice_rels = extract_microservice_relationships(path);
+    if !microservice_rels.is_empty() {
+        if let Err(e) = graph.insert_relationships(&microservice_rels) {
+            tracing::warn!("Failed to insert microservice relationships: {}", e);
+        }
+    }
+
     if let Err(e) = graph.resolve_call_edges() {
         tracing::warn!("Failed to resolve call edges: {}", e);
     }
@@ -871,6 +893,13 @@ pub fn detect_maven_submodules(pom_content: &[u8]) -> Vec<String> {
     re.captures_iter(content)
         .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
         .collect()
+}
+
+/// Extract microservice relationships from Go services
+/// Scans internal/external/ directories for gRPC client calls
+pub fn extract_microservice_relationships(project_path: &str) -> Vec<Relationship> {
+    let extractor = MicroserviceExtractor::new();
+    extractor.extract(project_path)
 }
 
 #[cfg(test)]
