@@ -466,18 +466,6 @@ async fn index_codebase(
     let total_elements = indexer::index_files_parallel(&graph_engine, &files, verbose)?;
     println!("Indexed {} files ({} elements)", files.len(), total_elements);
 
-    println!("Resolving call edges...");
-    match graph_engine.resolve_call_edges() {
-        Ok(count) => {
-            if count > 0 {
-                println!("  Resolved {} call edges", count);
-            }
-        }
-        Err(e) => {
-            eprintln!("Warning: Failed to resolve call edges: {}", e);
-        }
-    }
-
     let docs_path = std::path::Path::new("docs");
     if docs_path.exists() {
         println!("Indexing documentation at docs/...");
