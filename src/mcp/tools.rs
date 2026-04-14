@@ -84,7 +84,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "File name or pattern to search"},
-                        "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module"], "description": "Optional filter by element type"}
+                        "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module"], "description": "Optional filter by element type"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -234,7 +235,8 @@ impl ToolRegistry {
                     "properties": {
                         "query": {"type": "string", "description": "Search query string"},
                         "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module", "import"], "description": "Filter by element type"},
-                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20, max: 50)"}
+                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20, max: 50)"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["query"]
                 }),

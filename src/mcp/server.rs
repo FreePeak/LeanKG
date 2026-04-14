@@ -564,7 +564,8 @@ impl MCPServer {
         }
 
         let file_path = arguments.get("file").and_then(|v| v.as_str())
-            .or_else(|| arguments.get("path").and_then(|v| v.as_str()));
+            .or_else(|| arguments.get("path").and_then(|v| v.as_str()))
+            .or_else(|| arguments.get("project").and_then(|v| v.as_str()));
         
         let graph_engine = self.get_graph_engine_for_path(file_path)?;
         let handler = ToolHandler::new(graph_engine, self.get_db_path());
