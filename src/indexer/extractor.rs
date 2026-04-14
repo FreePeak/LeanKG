@@ -253,7 +253,7 @@ impl<'a> EntityExtractor<'a> {
         elements: &mut Vec<CodeElement>,
         relationships: &mut Vec<Relationship>,
     ) {
-        let node_type = node.kind(); 
+        let node_type = node.kind();
 
         match node_type {
             "function_declaration"
@@ -284,6 +284,7 @@ impl<'a> EntityExtractor<'a> {
                 self.extract_property(node, parent, elements, relationships);
             }
             "import_declaration"
+            | "import"
             | "import_specifier"
             | "import_statement"
             | "import_from_statement"
@@ -302,7 +303,11 @@ impl<'a> EntityExtractor<'a> {
             "call_expression" | "method_invocation" => {
                 self.extract_call(node, parent, elements, relationships);
             }
-            "decorator" | "decorator_definition" | "marker_annotation" | "annotation" => {
+            "decorator"
+            | "decorator_definition"
+            | "marker_annotation"
+            | "annotation"
+            | "annotation_entry" => {
                 self.extract_decorator(node, parent, elements);
             }
             _ => {}
@@ -341,15 +346,28 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn extract_function(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>, relationships: &mut Vec<Relationship>) {
-        let is_constructor = matches!(node.kind(), "constructor_declaration" | "secondary_constructor");
+    fn extract_function(
+        &self,
+        node: Node,
+        parent: Option<&str>,
+        elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        let is_constructor = matches!(
+            node.kind(),
+            "constructor_declaration" | "secondary_constructor"
+        );
         let name = if is_constructor {
-            self.get_node_name(node).or_else(|| parent.map(String::from))
+            self.get_node_name(node)
+                .or_else(|| parent.map(String::from))
         } else {
             self.get_node_name(node)
         };
-        
-        let element_type = if is_constructor || name.as_deref() == Some("__init__") || name.as_deref() == Some("constructor") {
+
+        let element_type = if is_constructor
+            || name.as_deref() == Some("__init__")
+            || name.as_deref() == Some("constructor")
+        {
             "constructor"
         } else if parent.is_some() {
             "method"
@@ -403,12 +421,21 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn extract_constructor_fields(&self, node: Node, class_name: &str, elements: &mut Vec<CodeElement>, relationships: &mut Vec<Relationship>) {
+    fn extract_constructor_fields(
+        &self,
+        node: Node,
+        class_name: &str,
+        elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
         let mut stack = vec![node];
         while let Some(current) = stack.pop() {
             let kind = current.kind();
 
-            if kind == "assignment_expression" || kind == "assignment_statement" || kind == "assignment" {
+            if kind == "assignment_expression"
+                || kind == "assignment_statement"
+                || kind == "assignment"
+            {
                 if let Some(left) = current.child_by_field_name("left") {
                     self.process_assignment_target(left, class_name, elements, relationships);
                 }
@@ -417,7 +444,12 @@ impl<'a> EntityExtractor<'a> {
                 for child in current.children(&mut cursor) {
                     if child.kind() == "assignment_expression" {
                         if let Some(left) = child.child_by_field_name("left") {
-                            self.process_assignment_target(left, class_name, elements, relationships);
+                            self.process_assignment_target(
+                                left,
+                                class_name,
+                                elements,
+                                relationships,
+                            );
                         }
                     }
                 }
@@ -432,9 +464,19 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn process_assignment_target(&self, left_node: Node, class_name: &str, elements: &mut Vec<CodeElement>, relationships: &mut Vec<Relationship>) {
+    fn process_assignment_target(
+        &self,
+        left_node: Node,
+        class_name: &str,
+        elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
         let kind = left_node.kind();
-        if kind == "member_expression" || kind == "attribute" || kind == "field_expression" || kind == "selector_expression" {
+        if kind == "member_expression"
+            || kind == "attribute"
+            || kind == "field_expression"
+            || kind == "selector_expression"
+        {
             let mut cursor = left_node.walk();
             let mut is_self = false;
             let mut field_name = None;
@@ -443,11 +485,17 @@ impl<'a> EntityExtractor<'a> {
                 if let Some(bytes) = self.source.get(child.byte_range()) {
                     if let Ok(text) = std::str::from_utf8(bytes) {
                         let inner_kind = child.kind();
-                        if inner_kind == "identifier" || inner_kind == "this" || inner_kind == "self" {
+                        if inner_kind == "identifier"
+                            || inner_kind == "this"
+                            || inner_kind == "self"
+                        {
                             if text == "this" || text == "self" || text == "cls" {
                                 is_self = true;
                             }
-                        } else if inner_kind == "property_identifier" || inner_kind == "field_identifier" || inner_kind == "identifier" {
+                        } else if inner_kind == "property_identifier"
+                            || inner_kind == "field_identifier"
+                            || inner_kind == "identifier"
+                        {
                             field_name = Some(text.to_string());
                         }
                     }
@@ -457,9 +505,10 @@ impl<'a> EntityExtractor<'a> {
             if is_self {
                 if let Some(f_name) = field_name {
                     let qualified_name = format!("{}::{}::{}", self.file_path, class_name, f_name);
-                    
-                    let already_exists = elements.iter().any(|e| e.qualified_name == qualified_name);
-                    
+
+                    let already_exists =
+                        elements.iter().any(|e| e.qualified_name == qualified_name);
+
                     if !already_exists {
                         elements.push(CodeElement {
                             qualified_name: qualified_name.clone(),
@@ -523,7 +572,13 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn extract_class(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>, relationships: &mut Vec<Relationship>) { 
+    fn extract_class(
+        &self,
+        node: Node,
+        parent: Option<&str>,
+        elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
         if let Some(name) = self.get_node_name(node) {
             let element_type = if node.kind() == "enum_declaration" {
                 "enum"
@@ -572,17 +627,69 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn extract_class_heritage(&self, node: Node, class_qualified: &str, relationships: &mut Vec<Relationship>) {
+    fn extract_class_heritage(
+        &self,
+        node: Node,
+        class_qualified: &str,
+        relationships: &mut Vec<Relationship>,
+    ) {
         let mut cursor = node.walk();
+        let mut delegation_index = 0usize;
         for child in node.children(&mut cursor) {
             let kind = child.kind();
-            if kind == "class_heritage" || kind == "superclass" || kind == "super_interfaces" || kind == "extends_clause" || kind == "implements_clause" || kind == "argument_list" {
-                self.extract_heritage_types(child, class_qualified, kind == "implements_clause" || kind == "super_interfaces", relationships);
+            if kind == "class_heritage"
+                || kind == "superclass"
+                || kind == "super_interfaces"
+                || kind == "extends_clause"
+                || kind == "implements_clause"
+                || kind == "argument_list"
+            {
+                self.extract_heritage_types(
+                    child,
+                    class_qualified,
+                    kind == "implements_clause" || kind == "super_interfaces",
+                    relationships,
+                );
+            }
+            // Kotlin: class AdminUser : User, Authenticatable
+            // AST: (class_declaration (delegation_specifiers (delegation_specifier (user_type (identifier)))))
+            // delegation_specifiers is the wrapper, delegation_specifier is the child
+            if kind == "delegation_specifiers" {
+                let mut inner_cursor = child.walk();
+                for spec_child in child.children(&mut inner_cursor) {
+                    if spec_child.kind() == "delegation_specifier" {
+                        let is_first = delegation_index == 0;
+                        delegation_index += 1;
+                        self.extract_heritage_types(
+                            spec_child,
+                            class_qualified,
+                            !is_first, // first is extends, rest are implements
+                            relationships,
+                        );
+                    }
+                }
+            }
+            // Also handle direct delegation_specifier child (some Kotlin versions)
+            if kind == "delegation_specifier" {
+                let is_first = delegation_index == 0;
+                delegation_index += 1;
+                self.extract_heritage_types(
+                    child,
+                    class_qualified,
+                    !is_first, // first is extends, rest are implements
+                    relationships,
+                );
             }
         }
     }
 
-    fn extract_heritage_types(&self, node: Node, source_qualified: &str, is_implements: bool, relationships: &mut Vec<Relationship>) {
+    fn extract_heritage_types(
+        &self,
+        node: Node,
+        source_qualified: &str,
+        is_implements: bool,
+        relationships: &mut Vec<Relationship>,
+    ) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             let kind = child.kind();
@@ -593,14 +700,23 @@ impl<'a> EntityExtractor<'a> {
                             id: None,
                             source_qualified: source_qualified.to_string(),
                             target_qualified: format!("__unresolved__{}", target_name),
-                            rel_type: if is_implements { "implements".to_string() } else { "extends".to_string() },
+                            rel_type: if is_implements {
+                                "implements".to_string()
+                            } else {
+                                "extends".to_string()
+                            },
                             confidence: 0.8,
                             metadata: serde_json::json!({ "heritage_name": target_name }),
                         });
                     }
                 }
             } else {
-                self.extract_heritage_types(child, source_qualified, kind == "implements_clause" || is_implements, relationships);
+                self.extract_heritage_types(
+                    child,
+                    source_qualified,
+                    kind == "implements_clause" || is_implements,
+                    relationships,
+                );
             }
         }
     }
@@ -701,7 +817,13 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn extract_interface(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>, relationships: &mut Vec<Relationship>) {
+    fn extract_interface(
+        &self,
+        node: Node,
+        parent: Option<&str>,
+        elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
         if let Some(name) = self.get_node_name(node) {
             let qualified_name = format!("{}::{}", self.file_path, name);
             if let Some(p) = parent {
@@ -736,16 +858,33 @@ impl<'a> EntityExtractor<'a> {
                 metadata: serde_json::json!({}),
                 ..Default::default()
             });
-            
+
             self.extract_class_heritage(node, &qualified_name, relationships);
         }
     }
 
     fn extract_decorator(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
+        self.extract_decorator_impl(node, parent, elements, &mut Vec::new())
+    }
+
+    fn extract_decorator_impl(
+        &self,
+        node: Node,
+        parent: Option<&str>,
+        elements: &mut Vec<CodeElement>,
+        mut visited: &mut Vec<usize>,
+    ) {
+        // Avoid infinite recursion
+        let node_ptr = node.id() as usize;
+        if visited.contains(&node_ptr) {
+            return;
+        }
+        visited.push(node_ptr);
+
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
-                "identifier" | "dotted_name" => {
+                "identifier" | "dotted_name" | "simple_identifier" => {
                     if let Some(bytes) = self.source.get(child.byte_range()) {
                         if let Ok(name) = std::str::from_utf8(bytes) {
                             let qualified_name = format!("{}::@{}", self.file_path, name);
@@ -785,27 +924,12 @@ impl<'a> EntityExtractor<'a> {
                     }
                     return;
                 }
-                _ => {}
-            }
-            if child.kind() == "attribute" {
-                if let Some(bytes) = self.source.get(child.byte_range()) {
-                    if let Ok(name) = std::str::from_utf8(bytes) {
-                        let qualified_name = format!("{}::@{}", self.file_path, name);
-                        elements.push(CodeElement {
-                            qualified_name: qualified_name.clone(),
-                            element_type: "decorator".to_string(),
-                            name: name.to_string(),
-                            file_path: self.file_path.to_string(),
-                            line_start: node.start_position().row as u32 + 1,
-                            line_end: node.end_position().row as u32 + 1,
-                            language: self.language.to_string(),
-                            parent_qualified: parent.map(String::from),
-                            metadata: serde_json::json!({}),
-                            ..Default::default()
-                        });
-                    }
+                // Kotlin: annotation (constructor_invocation (user_type (identifier)) ...)
+                // Kotlin: annotation (user_type (identifier))
+                "constructor_invocation" | "user_type" => {
+                    self.extract_decorator_impl(child, parent, elements, &mut visited);
                 }
-                break;
+                _ => {}
             }
         }
     }
@@ -963,7 +1087,7 @@ impl<'a> EntityExtractor<'a> {
     }
 
     fn get_node_name(&self, node: Node) -> Option<String> {
-        let node_type = node.kind(); 
+        let node_type = node.kind();
 
         if node_type == "type_spec" {
             if let Some(name_node) = node.child_by_field_name("name") {
@@ -1002,21 +1126,33 @@ impl<'a> EntityExtractor<'a> {
             }
         }
 
-        if node_type == "field_declaration" || node_type == "property_declaration" || node_type == "public_field_definition" {
+        if node_type == "field_declaration"
+            || node_type == "property_declaration"
+            || node_type == "public_field_definition"
+        {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.kind() == "variable_declarator" {
                     if let Some(name_node) = child.child_by_field_name("name") {
-                        return std::str::from_utf8(self.source.get(name_node.byte_range())?).ok().map(String::from);
+                        return std::str::from_utf8(self.source.get(name_node.byte_range())?)
+                            .ok()
+                            .map(String::from);
                     }
                     let mut inner_cursor = child.walk();
                     for inner in child.children(&mut inner_cursor) {
                         if inner.kind() == "identifier" {
-                            return std::str::from_utf8(self.source.get(inner.byte_range())?).ok().map(String::from);
+                            return std::str::from_utf8(self.source.get(inner.byte_range())?)
+                                .ok()
+                                .map(String::from);
                         }
                     }
-                } else if child.kind() == "property_identifier" || child.kind() == "field_identifier" || child.kind() == "identifier" {
-                    return std::str::from_utf8(self.source.get(child.byte_range())?).ok().map(String::from);
+                } else if child.kind() == "property_identifier"
+                    || child.kind() == "field_identifier"
+                    || child.kind() == "identifier"
+                {
+                    return std::str::from_utf8(self.source.get(child.byte_range())?)
+                        .ok()
+                        .map(String::from);
                 }
             }
         }
@@ -1097,6 +1233,33 @@ impl<'a> EntityExtractor<'a> {
                     }
                     return sources;
                 }
+            }
+            return sources;
+        }
+
+        // Kotlin: import com.example.Foo
+        // Kotlin AST uses "import" node with "qualified_identifier" containing multiple "identifier" children
+        if node_type == "import" && self.language == "kotlin" {
+            let mut parts = Vec::new();
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "qualified_identifier" {
+                    let mut inner_cursor = child.walk();
+                    for inner_child in child.children(&mut inner_cursor) {
+                        if inner_child.kind() == "identifier"
+                            || inner_child.kind() == "simple_identifier"
+                        {
+                            if let Some(bytes) = self.source.get(inner_child.byte_range()) {
+                                if let Ok(s) = std::str::from_utf8(bytes) {
+                                    parts.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !parts.is_empty() {
+                sources.push(parts.join("."));
             }
             return sources;
         }
@@ -1613,16 +1776,33 @@ mod tests {
         // Python call extraction uses tree-sitter `call` node (not `call_expression`),
         // so we verify noise filtering works at the is_noise_call level.
         let python_noise = vec![
-            "print", "range", "enumerate", "isinstance", "append", "join",
-            "split", "strip", "lower", "upper", "sorted", "reversed",
+            "print",
+            "range",
+            "enumerate",
+            "isinstance",
+            "append",
+            "join",
+            "split",
+            "strip",
+            "lower",
+            "upper",
+            "sorted",
+            "reversed",
         ];
         for name in &python_noise {
-            assert!(is_noise_call(name), "'{}' should be filtered as noise", name);
+            assert!(
+                is_noise_call(name),
+                "'{}' should be filtered as noise",
+                name
+            );
         }
 
         let python_legit = vec![
-            "process_data", "authenticate_user", "validate_input",
-            "calculate_total", "fetch_records",
+            "process_data",
+            "authenticate_user",
+            "validate_input",
+            "calculate_total",
+            "fetch_records",
         ];
         for name in &python_legit {
             assert!(!is_noise_call(name), "'{}' should NOT be filtered", name);
@@ -1664,7 +1844,8 @@ mod tests {
 
     #[test]
     fn test_extract_java_method() {
-        let source = b"public class Service { public String process(String input) { return input; } }";
+        let source =
+            b"public class Service { public String process(String input) { return input; } }";
         if let Some(tree) = parse_java(source) {
             let extractor = EntityExtractor::new(source, "Service.java", "java");
             let (elements, _) = extractor.extract(&tree);
@@ -1715,13 +1896,17 @@ mod tests {
                 .filter(|r| r.rel_type == "imports")
                 .collect();
             assert!(!imports.is_empty(), "Should extract Java import");
-            assert_eq!(imports[0].target_qualified, "com.example.service.UserService");
+            assert_eq!(
+                imports[0].target_qualified,
+                "com.example.service.UserService"
+            );
         }
     }
 
     #[test]
     fn test_extract_java_annotation() {
-        let source = b"public class Service { @Override public String toString() { return \"\"; } }";
+        let source =
+            b"public class Service { @Override public String toString() { return \"\"; } }";
         if let Some(tree) = parse_java(source) {
             let extractor = EntityExtractor::new(source, "Service.java", "java");
             let (elements, _) = extractor.extract(&tree);
@@ -1729,7 +1914,10 @@ mod tests {
                 .iter()
                 .filter(|e| e.element_type == "decorator")
                 .collect();
-            assert!(!decorators.is_empty(), "Should extract Java annotation as decorator");
+            assert!(
+                !decorators.is_empty(),
+                "Should extract Java annotation as decorator"
+            );
             assert_eq!(decorators[0].name, "Override");
         }
     }
@@ -1860,7 +2048,10 @@ mod tests {
                 .collect();
             assert_eq!(tested_by.len(), 1);
             assert_eq!(tested_by[0].source_qualified, "service/UserService.java");
-            assert_eq!(tested_by[0].target_qualified, "service/UserServiceTest.java");
+            assert_eq!(
+                tested_by[0].target_qualified,
+                "service/UserServiceTest.java"
+            );
         }
     }
 
@@ -1881,7 +2072,10 @@ class Container {
             let extractor = EntityExtractor::new(source, "UserService.kt", "kotlin");
             let (elements, _) = extractor.extract(&tree);
 
-            let class_elements: Vec<_> = elements.iter().filter(|e| e.element_type == "class").collect();
+            let class_elements: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
             assert_eq!(class_elements.len(), 3); // UserService, DatabaseManager, Container
 
             assert!(class_elements.iter().any(|e| e.name == "UserService"));
@@ -1905,12 +2099,26 @@ class Account(val id: String) {
             let extractor = EntityExtractor::new(source, "Account.kt", "kotlin");
             let (elements, _) = extractor.extract(&tree);
 
-            let func_elements: Vec<_> = elements.iter().filter(|e| matches!(e.element_type.as_str(), "function" | "method" | "constructor")).collect();
+            let func_elements: Vec<_> = elements
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        e.element_type.as_str(),
+                        "function" | "method" | "constructor"
+                    )
+                })
+                .collect();
             assert_eq!(func_elements.len(), 3);
 
-            assert!(func_elements.iter().any(|e| e.name == "calculateInterest" && e.element_type == "function"));
-            assert!(func_elements.iter().any(|e| e.name == "checkBalance" && e.element_type == "method"));
-            assert!(func_elements.iter().any(|e| e.name == "Account" && e.element_type == "constructor"));
+            assert!(func_elements
+                .iter()
+                .any(|e| e.name == "calculateInterest" && e.element_type == "function"));
+            assert!(func_elements
+                .iter()
+                .any(|e| e.name == "checkBalance" && e.element_type == "method"));
+            assert!(func_elements
+                .iter()
+                .any(|e| e.name == "Account" && e.element_type == "constructor"));
         }
     }
 
@@ -1941,15 +2149,25 @@ class UserServiceTest {
         if let Some(tree) = parse_typescript(source) {
             let extractor = EntityExtractor::new(source, "service.ts", "typescript");
             let (_, relationships) = extractor.extract(&tree);
-            
-            let extends: Vec<_> = relationships.iter().filter(|r| r.rel_type == "extends").collect();
+
+            let extends: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "extends")
+                .collect();
             assert_eq!(extends.len(), 1);
             assert_eq!(extends[0].target_qualified, "__unresolved__BaseService");
 
-            let implements: Vec<_> = relationships.iter().filter(|r| r.rel_type == "implements").collect();
+            let implements: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "implements")
+                .collect();
             assert_eq!(implements.len(), 2);
-            assert!(implements.iter().any(|r| r.target_qualified == "__unresolved__IService"));
-            assert!(implements.iter().any(|r| r.target_qualified == "__unresolved__IDisposable"));
+            assert!(implements
+                .iter()
+                .any(|r| r.target_qualified == "__unresolved__IService"));
+            assert!(implements
+                .iter()
+                .any(|r| r.target_qualified == "__unresolved__IDisposable"));
         }
     }
 
@@ -1959,15 +2177,24 @@ class UserServiceTest {
         if let Some(tree) = parse_java(source) {
             let extractor = EntityExtractor::new(source, "User.java", "java");
             let (elements, relationships) = extractor.extract(&tree);
-            
-            let props: Vec<_> = elements.iter().filter(|e| e.element_type == "property").collect();
+
+            let props: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "property")
+                .collect();
             assert_eq!(props.len(), 2);
             assert!(props.iter().any(|e| e.name == "name"));
             assert!(props.iter().any(|e| e.name == "age"));
 
-            let has_prop: Vec<_> = relationships.iter().filter(|r| r.rel_type == "has_property").collect();
+            let has_prop: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "has_property")
+                .collect();
             assert_eq!(has_prop.len(), 2);
-            assert!(has_prop.iter().any(|r| r.source_qualified == "User.java::User" && r.target_qualified == "User.java::name"));
+            assert!(has_prop
+                .iter()
+                .any(|r| r.source_qualified == "User.java::User"
+                    && r.target_qualified == "User.java::name"));
         }
     }
 
@@ -1977,13 +2204,102 @@ class UserServiceTest {
         if let Some(tree) = parse_typescript(source) {
             let extractor = EntityExtractor::new(source, "User.ts", "typescript");
             let (_, relationships) = extractor.extract(&tree);
-            
+
             // TS now unifies method relationships to 'contains'
-            let has_method: Vec<_> = relationships.iter().filter(|r| r.rel_type == "contains" && (r.target_qualified.ends_with("::constructor") || r.target_qualified.ends_with("::getName"))).collect();
+            let has_method: Vec<_> = relationships
+                .iter()
+                .filter(|r| {
+                    r.rel_type == "contains"
+                        && (r.target_qualified.ends_with("::constructor")
+                            || r.target_qualified.ends_with("::getName"))
+                })
+                .collect();
             assert_eq!(has_method.len(), 2); // constructor and getName
 
-            let has_prop: Vec<_> = relationships.iter().filter(|r| r.rel_type == "has_property").collect();
+            let has_prop: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "has_property")
+                .collect();
             assert_eq!(has_prop.len(), 1);
+        }
+    }
+
+    // ── Kotlin-specific tests ──
+
+    #[test]
+    fn test_extract_kotlin_import() {
+        let source = b"import com.example.service.UserService\n\nclass Main { }";
+        if let Some(tree) = parse_kotlin(source) {
+            let extractor = EntityExtractor::new(source, "Main.kt", "kotlin");
+            let (_, relationships) = extractor.extract(&tree);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(!imports.is_empty(), "Should extract Kotlin import");
+            assert!(
+                imports
+                    .iter()
+                    .any(|r| r.target_qualified.contains("UserService")),
+                "Import should contain UserService, got: {:?}",
+                imports
+                    .iter()
+                    .map(|r| &r.target_qualified)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_kotlin_heritage() {
+        let source = b"class AdminUser : User, Authenticatable { }";
+        if let Some(tree) = parse_kotlin(source) {
+            let extractor = EntityExtractor::new(source, "AdminUser.kt", "kotlin");
+            let (_, relationships) = extractor.extract(&tree);
+
+            let extends: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "extends")
+                .collect();
+            let implements: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "implements")
+                .collect();
+
+            assert!(
+                !extends.is_empty() || !implements.is_empty(),
+                "Should extract heritage relationships, got: {:?}",
+                relationships
+                    .iter()
+                    .map(|r| format!("{}: {}", r.rel_type, r.target_qualified))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_kotlin_annotation() {
+        let source = br#"
+@Deprecated("Use newApi instead")
+class OldService {
+    @Inject
+    fun process() {}
+}
+"#;
+        if let Some(tree) = parse_kotlin(source) {
+            let extractor = EntityExtractor::new(source, "OldService.kt", "kotlin");
+            let (elements, _) = extractor.extract(&tree);
+            let decorators: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "decorator")
+                .collect();
+            assert!(
+                decorators
+                    .iter()
+                    .any(|d| d.name == "Deprecated" || d.name == "Inject"),
+                "Should extract Kotlin annotations, got: {:?}",
+                decorators.iter().map(|d| &d.name).collect::<Vec<_>>()
+            );
         }
     }
 }
