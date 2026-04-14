@@ -1,0 +1,35 @@
+# Microservice extraction rules for LeanKG
+# Project-specific config can override by placing a similar file in the project root
+
+extraction:
+  # Directories containing gRPC/HTTP client definitions
+  client_dirs:
+    - "internal/external"
+
+  # Config file patterns to scan for service addresses
+  config_files:
+    - "config/config.go"
+    - "config/*.yaml"
+    - "config/*.yml"
+
+service_discovery:
+  # gRPC DNS pattern (service-to-service) - TRACKED as service_calls
+  # {service} = service name, {port} = port number
+  grpc_address_pattern: 'dns:///{service}\.default\.svc\.cluster\.local\.::{port}'
+
+  # HTTP URL pattern (external clients) - NOT tracked as service_calls
+  http_address_pattern: 'http://{service}\.default\.svc\.cluster\.local\.'
+
+  # Only track gRPC as service_calls
+  # HTTP clients are external-facing APIs (web/mobile), not microservice-to-microservice
+  track_protocols:
+    - grpc
+
+metadata:
+  # Fields to extract into Relationship.metadata
+  fields:
+    - protocol
+    - address
+    - api_path
+    - source_file
+    - line_number
