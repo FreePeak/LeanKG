@@ -79,7 +79,17 @@ leankg impact src/main.rs --depth 3       # Calculate blast radius
 leankg status                             # Check index status
 leankg metrics                            # View token savings
 leankg web                                # Start Web UI at http://localhost:8080
-leankg obsidian export                    # Export Obsidian vault
+
+# Obsidian vault sync
+leankg obsidian init                      # Initialize Obsidian vault structure
+leankg obsidian push                      # Push LeanKG data to Obsidian notes
+leankg obsidian pull                      # Pull annotation edits from Obsidian
+leankg obsidian watch                     # Watch vault for changes and auto-pull
+leankg obsidian status                    # Show vault status
+
+# Microservice call graph (via Web UI)
+leankg web                                # Start Web UI at http://localhost:8080
+                                          # Then visit http://localhost:8080/services
 ```
 
 See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
@@ -163,9 +173,10 @@ leankg version
 # Update LeanKG binary via install script
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- update
 
-# Export/Import Obsidian vault
-leankg obsidian export --vault /path/to/vault   # Export Obsidian vault to LeanKG
-leankg obsidian import --vault /path/to/vault    # Import from LeanKG to Obsidian vault
+# Obsidian vault sync
+leankg obsidian init                      # Initialize Obsidian vault
+leankg obsidian push                      # Push LeanKG data to Obsidian notes
+leankg obsidian pull                      # Pull annotation edits from Obsidian
 ```
 
 
