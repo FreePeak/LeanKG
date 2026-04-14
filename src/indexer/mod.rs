@@ -319,6 +319,8 @@ pub fn index_files_parallel(
     all_elements.extend(fw_elements);
     all_relationships.extend(fw_rels);
 
+    resolve_call_edges_inline(&mut all_elements, &mut all_relationships);
+
     eprintln!("Inserting {} elements and {} relationships...", all_elements.len(), all_relationships.len());
 
     if !all_elements.is_empty() {
@@ -782,5 +784,60 @@ pub fn generate_physical_structure(repo_root: &str, files: &[String]) -> (Vec<Co
     }
 
     (elements, relationships)
+}
+
+pub fn resolve_call_edges_inline(
+    elements: &mut Vec<CodeElement>,
+    relationships: &mut Vec<Relationship>,
+) {
+    if relationships.is_empty() {
+        return;
+    }
+
+    let mut by_name: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    let mut by_name_and_file: std::collections::HashMap<(&str, &str), &str> = std::collections::HashMap::new();
+
+    for elem in elements.iter() {
+        if elem.element_type == "function" {
+            let key = (elem.name.as_str(), elem.file_path.as_str());
+            by_name_and_file.insert(key, elem.qualified_name.as_str());
+            if !by_name.contains_key(elem.name.as_str()) {
+                by_name.insert(&elem.name, &elem.qualified_name);
+            }
+        }
+    }
+
+    let mut resolved = 0;
+    let mut unresolved = Vec::new();
+
+    for rel in relationships.iter_mut() {
+        if rel.rel_type == "calls" && rel.target_qualified.starts_with("__unresolved__") {
+            let bare_name = rel.target_qualified.trim_start_matches("__unresolved__");
+            let file_hint = rel.metadata.get("callee_file_hint").and_then(|v| v.as_str());
+
+            let target_qn = if let Some(hint) = file_hint {
+                by_name_and_file
+                    .get(&(bare_name, hint))
+                    .or_else(|| by_name.get(bare_name))
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| bare_name.to_string())
+            } else {
+                by_name.get(bare_name)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| bare_name.to_string())
+            };
+
+            rel.target_qualified = target_qn;
+            rel.confidence = 1.0;
+            rel.metadata = serde_json::json!({});
+            resolved += 1;
+        } else if rel.rel_type == "calls" {
+            unresolved.push(rel.target_qualified.clone());
+        }
+    }
+
+    if resolved > 0 {
+        eprintln!("Resolved {} call edges inline (no DB pass needed)", resolved);
+    }
 }
 
