@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::db;
+use crate::db::{self, models::CodeElement};
 
 use super::{ApiResponse, AppState};
 
@@ -1983,51 +1983,39 @@ pub async fn api_graph_expand_service(
 
     match (elements_result, relationships_result) {
         (Ok(all_elements), Ok(all_relationships)) => {
-            // Filter elements that belong to this folder path (depth <= 2)
-            // depth-1: main.py (no slash in remainder)
-            // depth-2: src/main.py (one slash in remainder)
             let prefix = format!("{}/", folder_path);
-            let _project_prefix = format!("{}/", project_path);
 
-            let filtered_elements: Vec<&crate::db::models::CodeElement> = all_elements
+            let filtered_elements: Vec<&CodeElement> = all_elements
                 .iter()
                 .filter(|e| {
-                    let is_within_depth = |remainder: &str| -> bool {
-                        !remainder.contains('/') || (remainder.matches('/').count() == 1 && !remainder.ends_with('/'))
-                    };
-                    // Try absolute path first
                     let fp = &e.file_path;
                     if fp.starts_with(&prefix) {
                         let remainder = &fp[prefix.len()..];
-                        return is_within_depth(remainder);
+                        return !remainder.contains('/');
                     }
-                    // Try resolving relative path (./foo -> project_path/foo)
                     if fp.starts_with("./") {
                         let resolved = format!("{}{}", project_path, &fp[1..]);
                         if resolved.starts_with(&prefix) {
                             let remainder = &resolved[prefix.len()..];
-                            return is_within_depth(remainder);
+                            return !remainder.contains('/');
                         }
                     }
-                    // Try bare relative path
                     if !fp.starts_with('/') && !fp.starts_with("./") {
                         let resolved = format!("{}/{}", project_path, fp);
                         if resolved.starts_with(&prefix) {
                             let remainder = &resolved[prefix.len()..];
-                            return is_within_depth(remainder);
+                            return !remainder.contains('/');
                         }
                     }
                     false
                 })
                 .collect();
 
-            // Get all element IDs in this service
             let service_element_ids: std::collections::HashSet<String> = filtered_elements
                 .iter()
                 .map(|e| e.qualified_name.clone())
                 .collect();
 
-            // Filter relationships where source is in this service (include orphan targets)
             let filtered_relationships: Vec<_> = all_relationships
                 .iter()
                 .filter(|r| {
@@ -2036,7 +2024,6 @@ pub async fn api_graph_expand_service(
                 })
                 .collect();
 
-            // Build GraphNode list
             let nodes: Vec<GraphNode> = filtered_elements
                 .iter()
                 .map(|e| {
@@ -3630,13 +3617,9 @@ pub async fn api_graph_children(
     match result {
         Ok(engine) => {
             let project_path = state.current_project_path.read().await;
-            let project_path_str = project_path.to_string_lossy().trim_end_matches('/').to_string();
-            let effective_parent = if params.parent.starts_with('/') {
-                if let Some(relative) = params.parent.strip_prefix(&project_path_str) {
-                    relative.trim_start_matches('/').to_string()
-                } else {
-                    params.parent.clone()
-                }
+            let project_path_str = project_path.to_string_lossy();
+            let effective_parent = if params.parent.starts_with('/') && params.parent.starts_with(&*project_path_str) {
+                String::new()
             } else {
                 params.parent.clone()
             };

@@ -473,24 +473,27 @@ impl GraphEngine {
 
         let (query, params) = if prefix_with_slash.is_empty() {
             let query = format!(
-                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]{}:limit {}:offset {}",
-                type_clause,
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit {} :offset {}",
                 limit,
                 offset
             );
             (query, std::collections::BTreeMap::new())
         } else {
-            let lo = format!("./{}/", prefix_with_slash);
-            let hi = format!("./{}/\x7f", prefix_with_slash);
-            let query = format!(
-                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], file_path >= $lo and file_path < $hi{}:limit {}:offset {}",
-                type_clause,
-                limit,
-                offset
-            );
+            let stripped = prefix_with_slash.strip_prefix("./").unwrap_or(prefix_with_slash.as_str()).trim_end_matches('/').to_string();
+            let literal_pattern = format!(".*{}/.*", stripped);
+            let query = if type_clause.is_empty() {
+                format!(
+                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(file_path, $pat) :limit {} :offset {}",
+                    limit, offset
+                )
+            } else {
+                format!(
+                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(file_path, $pat), {} :limit {} :offset {}",
+                    type_clause, limit, offset
+                )
+            };
             let mut params = std::collections::BTreeMap::new();
-            params.insert("lo".to_string(), serde_json::Value::String(lo));
-            params.insert("hi".to_string(), serde_json::Value::String(hi));
+            params.insert("pat".to_string(), serde_json::Value::String(literal_pattern));
             (query, params)
         };
 
@@ -500,12 +503,10 @@ impl GraphEngine {
 
         let prefix_for_filter = if prefix_with_slash.is_empty() {
             "./".to_string()
-        } else if prefix_with_slash.starts_with("./") {
-            format!(".{}", prefix_with_slash)
         } else {
             format!("./{}", prefix_with_slash)
         };
-
+        
         let elements: Vec<CodeElement> = rows
             .iter()
             .filter_map(|row| {
@@ -594,9 +595,20 @@ impl GraphEngine {
             format!("{}/", normalized_prefix)
         };
 
-        let query = r#"?[fp] := *code_elements[fp], starts_with_str(fp, $prefix)"#;
+        let lo = if prefix_with_slash.is_empty() {
+            "./".to_string()
+        } else {
+            prefix_with_slash.clone()
+        };
+        let hi = if prefix_with_slash.is_empty() {
+            "./\x7f".to_string()
+        } else {
+            format!("{}\x7f", prefix_with_slash)
+        };
+        let query = r#"?[fp] := *code_elements[fp], file_path >= $lo and file_path < $hi"#;
         let mut params = std::collections::BTreeMap::new();
-        params.insert("prefix".to_string(), serde_json::Value::String(prefix_with_slash.clone()));
+        params.insert("lo".to_string(), serde_json::Value::String(lo));
+        params.insert("hi".to_string(), serde_json::Value::String(hi));
 
         let result = self.db.run_script(query, params)?;
         let mut directories: std::collections::HashSet<String> = std::collections::HashSet::new();
