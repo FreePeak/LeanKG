@@ -1,10 +1,16 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.6  
-**Ngay:** 2026-03-28  
+**Phien ban:** 1.20  
+**Ngay:** 2026-04-15  
 **Dua tren:** PRD v1.7  
 **Trang thai:** Ban nhap  
 **Changelog:** 
+- v1.20 - Stats API + Adaptive Loading:
+  - Add `GET /api/graph/stats` endpoint returning full DB histogram (nodes_by_type, edges_by_type, nodes_by_depth, folders, services)
+  - Add adaptive loading strategy: small DB (< 2000 nodes) loads all, large DB loads by depth layers, multi-repo loads per-service
+  - Add `depth` query parameter to `GET /api/graph/data` for layer-based loading
+  - Stats result cached with 60s TTL, invalidated on project switch and after indexing
+  - Frontend decides loading strategy based on stats before fetching graph data
 - v1.19 - Auto-Index on DB Write:
   - Add WriteTracker with atomic dirty flag for external CozoDB writes
   - Add TrackingDb wrapper to intercept :put/:delete operations
@@ -1007,6 +1013,29 @@ External Agent writes to CozoDB → TrackingDb sets dirty flag → MCP tool call
 | `/quality` | Code quality metrics |
 | `/export` | Generate self-contained HTML graph |
 | `/settings` | Configuration |
+
+### 5.4 Graph API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/graph/stats` | GET | Returns full DB histogram (nodes_by_type, edges_by_type, depth distribution, folders, services). Cached 60s. Used by UI to decide loading strategy. |
+| `/api/graph/data` | GET | Returns graph nodes + relationships. Optional `depth` param for layer-based loading (e.g., `?depth=0,1`). |
+| `/api/graph/service-topology` | GET | Returns service nodes for multi-repo or folder nodes for single-repo. Detects project type. |
+| `/api/graph/children` | GET | Returns direct children of a node. DB-level filtering with pagination. |
+| `/api/graph/expand-node` | GET | Unified expand for any node type. |
+| `/api/graph/stats` caching | — | Stats cached in AppState with 60s TTL. Invalidated on project switch and after indexing. |
+
+### 5.5 Adaptive Loading Strategy
+
+The UI fetches stats first, then decides how to load graph data:
+
+| Condition | Strategy | Initial API Call |
+|-----------|----------|-----------------|
+| Single repo, < 2000 nodes | Load all | `GET /api/graph/data` |
+| Single repo, >= 2000 nodes | Depth layers | `GET /api/graph/data?depth=0,1` |
+| Multi repo | Per-service | `GET /api/graph/service-topology` |
+
+Threshold configurable via `leankg.yaml` `web.stats_threshold` (default 2000).
 
 ---
 

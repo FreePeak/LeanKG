@@ -32,13 +32,16 @@ export interface SigmaEdgeAttributes {
 export interface KGNode {
   id: string;
   label: string;
-  properties?: any;
+  properties?: Record<string, unknown>;
 }
 
 export interface KGEdge {
-  sourceId: string;
-  targetId: string;
-  type: string;
+  source_id?: string;
+  sourceId?: string;
+  target_id?: string;
+  targetId?: string;
+  type?: string;
+  rel_type?: string;
 }
 
 const getScaledNodeSize = (baseSize: number, nodeCount: number): number => {
@@ -51,10 +54,19 @@ const getScaledNodeSize = (baseSize: number, nodeCount: number): number => {
 
 const getNodeMass = (nodeType: string, nodeCount: number): number => {
   const baseMassMultiplier = nodeCount > 5000 ? 2 : nodeCount > 1000 ? 1.5 : 1;
+
+  // Handle null/undefined/empty
+  if (!nodeType) {
+    return 1;
+  }
+
+  // Handle Cluster types (e.g., "Cluster[14 files]")
+  if (nodeType.startsWith('Cluster[')) {
+    return 20 * baseMassMultiplier;
+  }
+
   switch (nodeType) {
-    case 'Project': return 50 * baseMassMultiplier;
-    case 'Package': return 30 * baseMassMultiplier;
-    case 'Module': return 20 * baseMassMultiplier;
+    case 'Service': return 25 * baseMassMultiplier;
     case 'Folder': return 15 * baseMassMultiplier;
     case 'File': return 3 * baseMassMultiplier;
     case 'Class':
@@ -65,6 +77,74 @@ const getNodeMass = (nodeType: string, nodeCount: number): number => {
   }
 };
 
+const getNodeColor = (type: string): string => {
+  // Handle null/undefined/empty
+  if (!type) {
+    return '#9ca3af';
+  }
+
+  // Check exact match first
+  let color = NODE_COLORS[type];
+  if (color && typeof color === 'string' && color.startsWith('#')) {
+    return color;
+  }
+
+  // Handle Cluster[N files] pattern - extract base type
+  if (type.startsWith('Cluster[')) {
+    return '#f59e0b'; // Use amber for clusters
+  }
+
+  // Handle lowercase types
+  if (type.length > 0) {
+    color = NODE_COLORS[type.charAt(0).toUpperCase() + type.slice(1).toLowerCase()];
+    if (color && typeof color === 'string' && color.startsWith('#')) {
+      return color;
+    }
+  }
+
+  // Default gray
+  return '#9ca3af';
+};
+
+const addNodeToGraph = (
+  graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
+  node: KGNode,
+  nodeCount: number,
+  x?: number,
+  y?: number,
+): void => {
+  if (graph.hasNode(node.id)) return;
+
+  const rawType = String(node.properties?.elementType || node.label || 'unknown') || 'unknown';
+
+  // Handle Cluster[N files] pattern - use 'Cluster' as base type
+  let type: string;
+  let effectiveType: string;
+  if (rawType.startsWith('Cluster[')) {
+    type = 'Cluster';
+    effectiveType = rawType; // Store full cluster type for filtering
+  } else {
+    type = rawType.charAt(0).toUpperCase() + rawType.slice(1) || 'unknown';
+    effectiveType = type;
+  }
+
+  const baseSize = NODE_SIZES[effectiveType] || NODE_SIZES[type] || 8;
+
+  graph.addNode(node.id, {
+    x: x ?? (Math.random() - 0.5) * 2000,
+    y: y ?? (Math.random() - 0.5) * 2000,
+    size: getScaledNodeSize(baseSize, nodeCount),
+    color: getNodeColor(effectiveType),
+    label: String(node.properties?.name || node.label || String(node.id).split('::').pop()),
+    nodeType: effectiveType, // Use effectiveType for filtering (e.g., 'Cluster[14 files]')
+    filePath: String((node.properties?.filePath || node.properties?.file_path || '') as string),
+    startLine: (node.properties?.startLine ?? node.properties?.start_line) as number | undefined,
+    endLine: (node.properties?.endLine ?? node.properties?.end_line) as number | undefined,
+    hidden: false,
+    mass: getNodeMass(type, nodeCount),
+  });
+};
+
 export const createSigmaGraph = (
   kgNodes: KGNode[],
   kgEdges: KGEdge[]
@@ -72,33 +152,33 @@ export const createSigmaGraph = (
   const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
   const nodeCount = kgNodes.length;
 
+  const nodeMap = new Map(kgNodes.map((n) => [n.id, n]));
+
   const parentToChildren = new Map<string, string[]>();
   const childToParent = new Map<string, string>();
-  // Remove IMPORTS, keep structural edges only
-  const hierarchyRelations = new Set(['CONTAINS', 'DEFINES', 'DECLARES']);
 
   kgEdges.forEach((rel) => {
-    const relType = rel.type.toUpperCase();
-    if (hierarchyRelations.has(relType)) {
-      if (!parentToChildren.has(rel.sourceId)) {
-        parentToChildren.set(rel.sourceId, []);
+    const sourceId = rel.source_id || rel.sourceId;
+    const targetId = rel.target_id || rel.targetId;
+    if (!sourceId || !targetId) return;
+
+    const relType = (rel.type || rel.rel_type || 'UNKNOWN').toUpperCase();
+    if (relType === 'CONTAINS' || relType === 'DEFINES' || relType === 'DECLARES') {
+      if (!parentToChildren.has(sourceId)) {
+        parentToChildren.set(sourceId, []);
       }
-      parentToChildren.get(rel.sourceId)!.push(rel.targetId);
-      if (!childToParent.has(rel.targetId)) {
-        childToParent.set(rel.targetId, rel.sourceId);
+      parentToChildren.get(sourceId)!.push(targetId);
+      if (!childToParent.has(targetId)) {
+        childToParent.set(targetId, sourceId);
       }
     }
   });
 
-  const nodeMap = new Map(kgNodes.map((n) => [n.id, n]));
   const rootNodes = kgNodes.filter((n) => !childToParent.has(n.id));
 
-  const structuralSpread = Math.max(10, Math.sqrt(nodeCount) * 80);
+  const structuralSpread = Math.max(10, Math.sqrt(nodeCount) * 20);
   const nodePositions = new Map<string, { x: number; y: number }>();
 
-  // Place structural root nodes strictly at the center 
-  // ForceAtlas2 will naturally and accurately repel them. If we spread them mathematically,
-  // empty outlier roots create invisible bounds that skews the camera off-center.
   rootNodes.forEach((node) => {
     nodePositions.set(node.id, { x: 0, y: 0 });
   });
@@ -113,57 +193,31 @@ export const createSigmaGraph = (
     const parentPos = parentId ? nodePositions.get(parentId) : null;
 
     if (parentPos) {
-      // Place children mathematically farther out to instantly fill the screen symmetrically
-      // Use higher dispersion for a pre-balanced look natively
       const childJitter = Math.max(50, structuralSpread / (depth + 1));
       x = parentPos.x + (Math.random() - 0.5) * childJitter;
       y = parentPos.y + (Math.random() - 0.5) * childJitter;
-    } else if (!nodePositions.has(nodeId)) {
+    } else {
       x = (Math.random() - 0.5) * structuralSpread;
       y = (Math.random() - 0.5) * structuralSpread;
-      nodePositions.set(nodeId, { x, y });
-    } else {
-      const pos = nodePositions.get(nodeId)!;
-      x = pos.x; 
-      y = pos.y;
     }
+    nodePositions.set(nodeId, { x, y });
 
-    if (!nodePositions.has(nodeId)) nodePositions.set(nodeId, { x, y });
-
-    const rawType = String(node.properties?.elementType || node.label || 'unknown') || 'unknown';
-    const type = (rawType.charAt(0).toUpperCase() + rawType.slice(1)) || 'unknown';
-    const baseSize = NODE_SIZES[type] || 8;
-
-    // Ensure color is always a valid hex string
-    let nodeColor = NODE_COLORS[type];
-    if (!nodeColor || typeof nodeColor !== 'string' || !nodeColor.startsWith('#')) {
-      nodeColor = '#9ca3af';
-    }
-
-    graph.addNode(nodeId, {
-      x, y,
-      size: getScaledNodeSize(baseSize, nodeCount),
-      color: nodeColor,
-      label: node.properties?.name || node.label || String(nodeId).split('::').pop(),
-      nodeType: type,
-      filePath: node.properties?.filePath || node.properties?.file_path || '',
-      startLine: node.properties?.startLine || node.properties?.start_line,
-      endLine: node.properties?.endLine || node.properties?.end_line,
-      hidden: false,
-      mass: getNodeMass(type, nodeCount),
-    });
+    addNodeToGraph(graph, node, nodeCount, x, y);
   };
 
-  const queue: { id: string; depth: number }[] = rootNodes.map((n) => ({ id: n.id, depth: 0 }));
+  const queue: { id: string; depth: number }[] = rootNodes.map((n) => ({
+    id: n.id,
+    depth: 0,
+  }));
   const visited = new Set<string>();
 
   while (queue.length > 0) {
     const { id: currentId, depth } = queue.shift()!;
     if (visited.has(currentId)) continue;
     visited.add(currentId);
-    
+
     addNodeWithPosition(currentId, depth);
-    
+
     const children = parentToChildren.get(currentId) || [];
     for (const childId of children) {
       if (!visited.has(childId)) {
@@ -173,33 +227,41 @@ export const createSigmaGraph = (
   }
 
   kgNodes.forEach((node) => {
-    if (!graph.hasNode(node.id)) addNodeWithPosition(node.id, 0);
+    if (!graph.hasNode(node.id)) {
+      addNodeToGraph(graph, node, nodeCount);
+    }
   });
 
   const edgeBaseSize = nodeCount > 20000 ? 0.4 : nodeCount > 5000 ? 0.6 : 1.0;
 
   kgEdges.forEach((rel) => {
-    if (graph.hasNode(rel.sourceId) && graph.hasNode(rel.targetId)) {
-      if (!graph.hasEdge(rel.sourceId, rel.targetId)) {
-        const relType = rel.type.toUpperCase();
+    // Handle both snake_case (API) and camelCase (interface) field names
+    const sourceId = rel.source_id || rel.sourceId;
+    const targetId = rel.target_id || rel.targetId;
+    if (!sourceId || !targetId) return;
+
+    if (graph.hasNode(sourceId) && graph.hasNode(targetId)) {
+      if (!graph.hasEdge(sourceId, targetId)) {
+        const relType = (rel.type || rel.rel_type || 'UNKNOWN').toUpperCase();
         const style = EDGE_STYLES[relType] || { color: '#4a4a5a', sizeMultiplier: 0.5 };
         const curvature = 0.12 + Math.random() * 0.08;
-        const edgeColor = typeof style.color === 'string' && style.color.startsWith('#') ? style.color : '#4a4a5a';
+        const edgeColor =
+          typeof style.color === 'string' && style.color.startsWith('#')
+            ? style.color
+            : '#4a4a5a';
 
-        graph.addEdge(rel.sourceId, rel.targetId, {
+        graph.addEdge(sourceId, targetId, {
           size: edgeBaseSize * style.sizeMultiplier,
           color: edgeColor,
           relationType: relType,
           type: 'curved',
-          curvature: curvature,
+          curvature,
           weight: relType === 'CONTAINS' ? 2.5 : 0.5,
         });
       }
     }
   });
 
-  // Run Louvain community detection locally to provide community metadata
-  // This assigns a `community` integer to every node based on connected links.
   try {
     louvain.assign(graph, {
       resolution: 1.2,
@@ -216,8 +278,19 @@ export const filterGraphByLabels = (
   graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
   visibleLabels: string[],
 ): void => {
+  const normalizedVisible = new Set(visibleLabels);
+  if (normalizedVisible.has('Folder')) normalizedVisible.add('Directory');
+  if (normalizedVisible.has('Directory')) normalizedVisible.add('Folder');
+
   graph.forEachNode((nodeId, attributes) => {
-    const isVisible = visibleLabels.includes(attributes.nodeType);
+    const nodeType = attributes.nodeType;
+    let isVisible = normalizedVisible.has(nodeType);
+
+    if (!isVisible && nodeType.startsWith('Cluster[')) {
+      isVisible = normalizedVisible.has('Cluster') ||
+        visibleLabels.some(label => nodeType === label);
+    }
+
     graph.setNodeAttribute(nodeId, 'hidden', !isVisible);
   });
 };
@@ -228,7 +301,9 @@ export const getNodesWithinHops = (
   maxHops: number,
 ): Set<string> => {
   const visited = new Set<string>();
-  const queue: { nodeId: string; depth: number }[] = [{ nodeId: startNodeId, depth: 0 }];
+  const queue: { nodeId: string; depth: number }[] = [
+    { nodeId: startNodeId, depth: 0 },
+  ];
 
   while (queue.length > 0) {
     const { nodeId, depth } = queue.shift()!;
@@ -266,4 +341,86 @@ export const filterGraphByDepth = (
     const isInRange = nodesInRange.has(nodeId);
     graph.setNodeAttribute(nodeId, 'hidden', !isLabelVisible || !isInRange);
   });
+};
+
+export const setNodeExpanded = (
+  graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
+  nodeId: string,
+  expanded: boolean,
+): void => {
+  if (!graph.hasNode(nodeId)) return;
+  graph.forEachNeighbor(nodeId, (neighborId) => {
+    graph.setNodeAttribute(neighborId, 'hidden', !expanded);
+  });
+};
+
+export const getFileFunctions = (
+  kgNodes: KGNode[],
+  kgEdges: KGEdge[],
+  fileId: string
+): KGNode[] => {
+  const functionIds = new Set<string>();
+  kgEdges.forEach((rel) => {
+    const sourceId = rel.source_id || rel.sourceId;
+    const targetId = rel.target_id || rel.targetId;
+    if (!sourceId || !targetId) return;
+    if (sourceId === fileId && (rel.type || rel.rel_type || '').toUpperCase() === 'DEFINES') {
+      functionIds.add(targetId);
+    }
+  });
+  return kgNodes.filter((node) => functionIds.has(node.id));
+};
+
+export const getNodeRelationships = (
+  kgNodes: KGNode[],
+  kgEdges: KGEdge[],
+  nodeId: string
+): {
+  defines: KGNode[];
+  callsFrom: KGEdge[];
+  callsTo: KGEdge[];
+  imports: KGEdge[];
+} => {
+  const defines: KGNode[] = [];
+  const callsFrom: KGEdge[] = [];
+  const callsTo: KGEdge[] = [];
+  const imports: KGEdge[] = [];
+
+  const fileFunctionIds = new Set<string>();
+  kgEdges.forEach((rel) => {
+    const sourceId = rel.source_id || rel.sourceId;
+    const targetId = rel.target_id || rel.targetId;
+    if (!sourceId || !targetId) return;
+    if (sourceId === nodeId && (rel.type || rel.rel_type || '').toUpperCase() === 'DEFINES') {
+      fileFunctionIds.add(targetId);
+    }
+  });
+
+  kgEdges.forEach((rel) => {
+    const sourceId = rel.source_id || rel.sourceId;
+    const targetId = rel.target_id || rel.targetId;
+    if (!sourceId || !targetId) return;
+
+    const relType = (rel.type || rel.rel_type || '').toUpperCase();
+    if (relType === 'CALLS') {
+      if (sourceId === nodeId || fileFunctionIds.has(sourceId)) {
+        callsFrom.push(rel);
+      }
+      if (targetId === nodeId || fileFunctionIds.has(targetId)) {
+        callsTo.push(rel);
+      }
+    } else if (relType === 'IMPORTS') {
+      if (sourceId === nodeId || fileFunctionIds.has(sourceId)) {
+        imports.push(rel);
+      }
+    }
+  });
+
+  kgNodes.forEach((node) => {
+    if (fileFunctionIds.has(node.id)) {
+      defines.push(node);
+    }
+  });
+
+  return { defines, callsFrom, callsTo, imports };
 };

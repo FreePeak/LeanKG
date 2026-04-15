@@ -34,9 +34,10 @@ export const CodeViewer = ({ selectedNode, graphData, onClose }: CodeViewerProps
   const [isResizing, setIsResizing] = useState(false);
 
   const node = graphData?.nodes.find((n) => n.id === selectedNode);
-  const filePath = node?.properties?.filePath || node?.properties?.file_path;
-  const startLine = node?.properties?.startLine || node?.properties?.start_line || 0;
-  const endLine = node?.properties?.endLine || node?.properties?.end_line || startLine;
+  const props = node?.properties as Record<string, unknown> | undefined;
+  const filePath = (props?.filePath || props?.file_path) as string | undefined;
+  const startLine = ((props?.startLine || props?.start_line) as number | undefined) ?? 0;
+  const endLine = ((props?.endLine || props?.end_line) as number | undefined) ?? startLine;
   
   useEffect(() => {
     if (!isResizing) return;

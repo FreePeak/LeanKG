@@ -13,7 +13,24 @@ fn escape_datalog(s: &str) -> String {
 }
 
 fn normalize_path(path: &str) -> String {
-    path.strip_prefix("./").unwrap_or(path).to_string()
+    let p = if path == "." || path.is_empty() {
+        String::new()
+    } else {
+        path.strip_prefix("./").unwrap_or(path).to_string()
+    };
+    if p.is_empty() {
+        String::new()
+    } else {
+        p
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChildrenResult {
+    pub elements: Vec<CodeElement>,
+    pub relationships: Vec<Relationship>,
+    pub total_count: usize,
+    pub has_more: bool,
 }
 
 #[derive(Clone)]
@@ -424,6 +441,189 @@ impl GraphEngine {
             .collect();
 
         Ok(elements)
+    }
+
+    pub fn get_children_filtered(
+        &self,
+        parent_path: &str,
+        element_types: Option<&[String]>,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<ChildrenResult, Box<dyn std::error::Error>> {
+        let normalized_prefix = normalize_path(parent_path);
+        let prefix_with_slash = if normalized_prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", normalized_prefix)
+        };
+
+        let limit = limit.unwrap_or(200).min(500);
+        let offset = offset.unwrap_or(0);
+
+        let type_clause = match element_types {
+            Some(types) if !types.is_empty() => {
+                let type_list = types.iter()
+                    .map(|t| format!("\"{}\"", t))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(", element_type in [{}]", type_list)
+            }
+            _ => String::new(),
+        };
+
+        let (query, params) = if prefix_with_slash.is_empty() {
+            let query = format!(
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]{}:limit {}:offset {}",
+                type_clause,
+                limit,
+                offset
+            );
+            (query, std::collections::BTreeMap::new())
+        } else {
+            let escaped_prefix = regex::Regex::new(r"[$+\.?*\\^\(\)\[\]\{\}\|]").unwrap()
+                .replace_all(&prefix_with_slash, "\\$&")
+                .to_string();
+            let regex_pattern = format!("^\\.\\/{}", escaped_prefix);
+            let query = format!(
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(file_path, $pattern){}:limit {}:offset {}",
+                type_clause,
+                limit,
+                offset
+            );
+            let mut params = std::collections::BTreeMap::new();
+            params.insert("pattern".to_string(), serde_json::Value::String(regex_pattern));
+            (query, params)
+        };
+
+        let result = self.db.run_script(&query, params).map_err(|e| e)?;
+        let total_count = result.rows.len();
+        let rows = result.rows;
+
+        let prefix_for_filter = if prefix_with_slash.is_empty() {
+            "./".to_string()
+        } else if prefix_with_slash.starts_with("./") {
+            format!(".{}", prefix_with_slash)
+        } else {
+            format!("./{}", prefix_with_slash)
+        };
+
+        let elements: Vec<CodeElement> = rows
+            .iter()
+            .filter_map(|row| {
+                let file_path = row[3].as_str().unwrap_or("");
+                let element_type = row[1].as_str().unwrap_or("");
+                let qualified_name = row[0].as_str().unwrap_or("");
+
+                let remainder = file_path.strip_prefix(&prefix_for_filter).unwrap_or(file_path);
+                let is_direct_child = if prefix_for_filter == "./" {
+                    !remainder.contains('/') || element_type == "Folder"
+                } else {
+                    !remainder.contains('/') || element_type == "Folder"
+                };
+
+                if !is_direct_child {
+                    return None;
+                }
+
+                let parent_qualified = row[7].as_str().map(String::from);
+                let cluster_id = row[8].as_str().map(String::from);
+                let cluster_label = row[9].as_str().map(String::from);
+                let metadata_str = row[10].as_str().unwrap_or("{}");
+                Some(CodeElement {
+                    qualified_name: row[0].as_str().unwrap_or("").to_string(),
+                    element_type: row[1].as_str().unwrap_or("").to_string(),
+                    name: row[2].as_str().unwrap_or("").to_string(),
+                    file_path: row[3].as_str().unwrap_or("").to_string(),
+                    line_start: row[4].as_i64().unwrap_or(0) as u32,
+                    line_end: row[5].as_i64().unwrap_or(0) as u32,
+                    language: row[6].as_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    ..Default::default()
+                })
+            })
+            .collect();
+
+        let element_qns: std::collections::HashSet<String> = elements.iter()
+            .map(|e| e.qualified_name.clone())
+            .collect();
+
+        let rel_query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+    *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+    source_qualified in $qns"#;
+        let mut rel_params = std::collections::BTreeMap::new();
+        rel_params.insert("qns".to_string(), serde_json::Value::Array(
+            element_qns.iter().map(|s| serde_json::Value::String(s.clone())).collect()
+        ));
+        let rel_result = self.db.run_script(rel_query, rel_params)?;
+        let relationships: Vec<Relationship> = rel_result
+            .rows
+            .iter()
+            .map(|row| {
+                let metadata_str = row[4].as_str().unwrap_or("{}");
+                Relationship {
+                    id: None,
+                    source_qualified: row[0].as_str().unwrap_or("").to_string(),
+                    target_qualified: row[1].as_str().unwrap_or("").to_string(),
+                    rel_type: row[2].as_str().unwrap_or("").to_string(),
+                    confidence: row[3].as_f64().unwrap_or(1.0),
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                }
+            })
+            .collect();
+
+        let has_more = elements.len() == limit;
+
+        Ok(ChildrenResult {
+            elements,
+            relationships,
+            total_count,
+            has_more,
+        })
+    }
+
+    pub fn get_top_level_directories(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let normalized_prefix = normalize_path(prefix);
+        let prefix_with_slash = if normalized_prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", normalized_prefix)
+        };
+
+        let query = r#"?[fp] := *code_elements[fp], starts_with_str(fp, $prefix)"#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("prefix".to_string(), serde_json::Value::String(prefix_with_slash.clone()));
+
+        let result = self.db.run_script(query, params)?;
+        let mut directories: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for row in result.rows.iter() {
+            if let Some(fp) = row[0].as_str() {
+                let remainder = if prefix_with_slash.is_empty() {
+                    fp.to_string()
+                } else if let Some(idx) = fp.strip_prefix(&prefix_with_slash) {
+                    idx.to_string()
+                } else {
+                    continue;
+                };
+
+                if let Some(first_slash) = remainder.find('/') {
+                    let top_dir = remainder[..first_slash].to_string();
+                    if !top_dir.is_empty() && !top_dir.starts_with('.') {
+                        directories.insert(top_dir);
+                    }
+                }
+            }
+        }
+
+        let mut dirs: Vec<String> = directories.into_iter().collect();
+        dirs.sort();
+        Ok(dirs)
     }
 
     pub fn get_annotation(

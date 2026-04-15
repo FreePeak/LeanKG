@@ -47,6 +47,7 @@ const brightenColor = (hex: string, factor: number): string => {
 
 interface UseSigmaOptions {
   onNodeClick?: (nodeId: string) => void;
+  onNodeDoubleClick?: (nodeId: string) => void;
   onNodeHover?: (nodeId: string | null) => void;
   onStageClick?: () => void;
   visibleEdgeTypes?: EdgeType[];
@@ -69,32 +70,37 @@ interface UseSigmaReturn {
 }
 
 const NOVERLAP_SETTINGS = {
-  maxIterations: 20,
-  ratio: 1.1,
-  margin: 10,
-  expansion: 1.05,
+  maxIterations: 300,
+  ratio: 0.05,
+  margin: 80,
+  expansion: 3.0,
 };
 
 const getFA2Settings = (nodeCount: number) => {
-  const isSmall = nodeCount < 500;
+  const isTiny = nodeCount < 100;
+  const isSmall = nodeCount >= 100 && nodeCount < 500;
   const isMedium = nodeCount >= 500 && nodeCount < 2000;
   const isLarge = nodeCount >= 2000 && nodeCount < 10000;
 
   return {
-    gravity: isSmall ? 0.8 : isMedium ? 0.5 : isLarge ? 0.3 : 0.15,
-    scalingRatio: isSmall ? 15 : isMedium ? 30 : isLarge ? 60 : 100,
-    slowDown: isSmall ? 1 : isMedium ? 2 : isLarge ? 3 : 5,
-    barnesHutOptimize: nodeCount > 200,
-    barnesHutTheta: isLarge ? 0.8 : 0.6,
-    strongGravityMode: false,
-    outboundAttractionDistribution: true,
-    linLogMode: false,
+    gravity: isTiny ? 5 : isSmall ? 3 : isMedium ? 2 : isLarge ? 1 : 0.5,
+    scalingRatio: isTiny ? 5 : isSmall ? 20 : isMedium ? 60 : isLarge ? 120 : 200,
+    slowDown: isTiny ? 30 : isSmall ? 25 : isMedium ? 15 : isLarge ? 10 : 8,
+    barnesHutOptimize: nodeCount > 100,
+    barnesHutTheta: 0.5,
+    strongGravityMode: true,
+    outboundAttractionDistribution: false,
+    linLogMode: true,
     adjustSizes: true,
-    edgeWeightInfluence: 1,
+    edgeWeightInfluence: 0.1,
+    jitterTolerance: 0.01,
+    spaceBetweenIterations: 200,
   };
 };
 
 const getLayoutDuration = (nodeCount: number): number => {
+  if (nodeCount < 100) return 8000;
+  if (nodeCount < 500) return 15000;
   if (nodeCount > 10000) return 45000;
   if (nodeCount > 5000) return 35000;
   if (nodeCount > 2000) return 30000;
@@ -112,6 +118,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const visibleEdgeTypesRef = useRef<EdgeType[] | null>(null);
   const searchTermRef = useRef<string>('');
   const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const [selectedNode, setSelectedNodeState] = useState<string | null>(null);
 
@@ -124,11 +131,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const setSelectedNode = useCallback((nodeId: string | null) => {
     selectedNodeRef.current = nodeId;
     setSelectedNodeState(nodeId);
-    const sigma = sigmaRef.current;
-    if (!sigma) return;
-    const camera = sigma.getCamera();
-    camera.animate({ ratio: camera.ratio * 1.0001 }, { duration: 50 });
-    sigma.refresh();
+    // Note: sigma.refresh() is handled by the useEffect in GraphViewer
+    // to avoid double-refresh on every node click
   }, []);
 
   useEffect(() => {
@@ -139,12 +143,12 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     const sigma = new Sigma(graph, containerRef.current, {
       renderLabels: true,
       labelFont: 'JetBrains Mono, monospace',
-      labelSize: 11,
+      labelSize: 12,
       labelWeight: '500',
       labelColor: { color: '#e4e4ed' },
-      labelRenderedSizeThreshold: 8,
-      labelDensity: 0.1,
-      labelGridCellSize: 70,
+      labelRenderedSizeThreshold: 12,
+      labelDensity: 0.07,
+      labelGridCellSize: 120,
       defaultNodeColor: '#6b7280',
       defaultEdgeColor: '#2a2a3a',
       defaultEdgeType: 'curved',
@@ -212,8 +216,12 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
           res.color = dimColor(nodeColor, 0.1);
           res.size = (data.size || 8) * 0.4;
           res.zIndex = 0;
+          res.label = null;
           return res;
         }
+
+        // Check if this is a service node
+        const isServiceNode = node.startsWith('service:') || data.nodeType === 'Service';
 
         // Elevate structural nodes visually above functions when exploring
         const baseZIndex = (data.size || 8) >= 10 ? 1 : 0;
@@ -230,14 +238,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
               res.size = (data.size || 8) * 1.8;
               res.zIndex = 3;
               res.highlighted = true;
+              // Show label for selected node
             } else if (isNeighbor) {
               res.color = nodeColor;
               res.size = (data.size || 8) * 1.3;
               res.zIndex = 2;
+              // Show label for neighbor nodes
             } else {
               res.color = dimColor(nodeColor, 0.25);
               res.size = (data.size || 8) * 0.6;
               res.zIndex = 0;
+              // Hide labels for non-relevant nodes when something is selected
+              if (isServiceNode) {
+                // Keep service node labels visible but dimmed
+                res.label = labelStr;
+              } else {
+                res.label = null;
+              }
             }
           }
         } else if (searchTerm) {
@@ -245,6 +262,9 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
           res.color = nodeColor;
           res.size = (data.size || 8) * 1.5;
           res.zIndex = 2;
+        } else {
+          // No selection, no search - show all labels
+          res.label = labelStr;
         }
         return res;
       },
@@ -302,8 +322,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     }
 
     sigma.on('clickNode', ({ node }) => {
-      setSelectedNode(node);
-      options.onNodeClick?.(node);
+      clickTimeoutRef.current = setTimeout(() => {
+        setSelectedNode(node);
+        options.onNodeClick?.(node);
+      }, 250);
+    });
+
+    sigma.on('doubleClickNode', ({ node }) => {
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+        clickTimeoutRef.current = null;
+      }
+      options.onNodeDoubleClick?.(node);
     });
 
     sigma.on('clickStage', () => {
@@ -323,6 +353,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
     return () => {
       if (layoutTimeoutRef.current) clearTimeout(layoutTimeoutRef.current);
+      if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
       layoutRef.current?.kill();
       sigma.kill();
       sigmaRef.current = null;

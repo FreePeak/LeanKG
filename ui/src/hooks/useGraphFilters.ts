@@ -1,10 +1,45 @@
-import { useState, useCallback } from 'react';
-import type { EdgeType } from '../lib/constants';
+import { useState, useCallback, useMemo } from 'react';
+import { DEFAULT_NODE_TYPE_ORDER, EDGE_STYLES } from '../lib/constants';
+
+export type EdgeType = string;
+
+export type ZoomLevel = 'clusters' | 'modules' | 'files' | 'functions';
+
+export const ZOOM_LEVEL_CONFIG: Record<ZoomLevel, {
+  label: string;
+  description: string;
+  visibleLabels: string[];
+}> = {
+  clusters: {
+    label: 'Clusters',
+    description: 'Top-level module clusters',
+    visibleLabels: [], // All hidden except conceptual cluster nodes
+  },
+  modules: {
+    label: 'Modules',
+    description: 'Folders and packages',
+    visibleLabels: ['Folder', 'Package', 'Module'],
+  },
+  files: {
+    label: 'Files',
+    description: 'Source files and modules',
+    visibleLabels: ['Folder', 'File', 'Module'],
+  },
+  functions: {
+    label: 'Functions',
+    description: 'All elements including functions',
+    visibleLabels: ['Folder', 'File', 'Module', 'Class', 'Interface', 'Function', 'Method'],
+  },
+};
+
+export const STRUCTURAL_LABELS = ['Folder', 'Directory', 'File', 'Module', 'Class', 'Struct'];
 
 export const useGraphFilters = () => {
-  const [visibleLabels, setVisibleLabels] = useState<string[]>([]);
-  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<EdgeType[]>([]);
+  const [visibleLabels, setVisibleLabels] = useState<string[]>([...DEFAULT_NODE_TYPE_ORDER]);
+  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<EdgeType[]>([...Object.keys(EDGE_STYLES)]);
   const [depthFilter, setDepthFilter] = useState<number | null>(null);
+  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('functions');
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
   const toggleLabelVisibility = useCallback((label: string) => {
     setVisibleLabels((prev) =>
@@ -18,6 +53,25 @@ export const useGraphFilters = () => {
     );
   }, []);
 
+  const cycleZoomLevel = useCallback(() => {
+    const levels: ZoomLevel[] = ['clusters', 'modules', 'files', 'functions'];
+    const currentIndex = levels.indexOf(zoomLevel);
+    const nextIndex = (currentIndex + 1) % levels.length;
+    setZoomLevel(levels[nextIndex]);
+  }, [zoomLevel]);
+
+  const resetToStructuralDefaults = useCallback(() => {
+    setVisibleLabels(STRUCTURAL_LABELS);
+  }, []);
+
+  const effectiveLabels = useMemo(() => {
+    if (visibleLabels.length > 0) {
+      return visibleLabels;
+    }
+    // When nothing manually selected, return ALL known filterable types (show everything)
+    return DEFAULT_NODE_TYPE_ORDER;
+  }, [visibleLabels]);
+
   return {
     visibleLabels,
     setVisibleLabels,
@@ -27,5 +81,12 @@ export const useGraphFilters = () => {
     toggleEdgeVisibility,
     depthFilter,
     setDepthFilter,
+    zoomLevel,
+    setZoomLevel,
+    cycleZoomLevel,
+    resetToStructuralDefaults,
+    selectedNode,
+    setSelectedNode,
+    effectiveLabels,
   };
 };

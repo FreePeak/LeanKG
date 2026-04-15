@@ -4,6 +4,7 @@ import { createSigmaGraph, filterGraphByDepth } from '../lib/graph-adapter';
 import type { KGNode, KGEdge } from '../lib/graph-adapter';
 import { CodeViewer } from './CodeViewer';
 import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import type { ZoomLevel } from '../hooks/useGraphFilters';
 
 interface GraphViewerProps {
   data: { nodes: KGNode[]; relationships: KGEdge[] } | null;
@@ -13,16 +14,22 @@ interface GraphViewerProps {
   visibleEdgeTypes: string[];
   depthFilter: number | null;
   visibleLabels: string[];
+  zoomLevel?: ZoomLevel;
+  onNodeClick?: (nodeId: string) => void;
+  onNodeDoubleClick?: (nodeId: string) => void;
 }
 
-export const GraphViewer = ({ 
-  data, 
-  loading, 
-  error, 
+export const GraphViewer = ({
+  data,
+  loading,
+  error,
   searchTerm,
-  visibleEdgeTypes, 
-  depthFilter, 
-  visibleLabels 
+  visibleEdgeTypes,
+  depthFilter,
+  visibleLabels,
+  zoomLevel = 'functions',
+  onNodeClick,
+  onNodeDoubleClick,
 }: GraphViewerProps) => {
   const {
     containerRef,
@@ -32,28 +39,31 @@ export const GraphViewer = ({
     resetZoom,
     selectedNode,
     setSelectedNode,
-    sigmaRef
+    sigmaRef,
   } = useSigma({
     visibleEdgeTypes,
     searchTerm,
+    onNodeClick,
+    onNodeDoubleClick,
   });
 
-  // Transform and load Graphology instance
   useEffect(() => {
     if (!data || data.nodes.length === 0) return;
     const graph = createSigmaGraph(data.nodes, data.relationships);
     setGraph(graph);
   }, [data, setGraph]);
 
-  // Apply Graph depth filter
   useEffect(() => {
     if (sigmaRef.current && data) {
       const g = sigmaRef.current.getGraph();
-      const labels = visibleLabels.length > 0 ? visibleLabels : Array.from(new Set(data.nodes.map(n => n.properties?.elementType || n.label)));
-      filterGraphByDepth(g as any, selectedNode, depthFilter, labels);
+      const labels =
+        visibleLabels.length > 0
+          ? visibleLabels
+          : Array.from(new Set(data.nodes.map((n) => String((n.properties as Record<string, unknown>)?.elementType || n.label || ''))));
+      filterGraphByDepth(g as unknown as Parameters<typeof filterGraphByDepth>[0], selectedNode, depthFilter, labels);
       sigmaRef.current.refresh();
     }
-  }, [depthFilter, selectedNode, visibleLabels, sigmaRef, data]);
+  }, [depthFilter, selectedNode, visibleLabels, sigmaRef, data, zoomLevel]);
 
   if (loading) {
     return (
@@ -75,26 +85,41 @@ export const GraphViewer = ({
 
   return (
     <div className="relative w-full h-full bg-[#0A0F24] overflow-hidden flex">
-      {/* Sigma Container */}
       <div ref={containerRef} className="absolute inset-0 outline-none" />
 
-      {/* Floating Canvas Controls */}
       <div className="absolute top-4 left-4 z-10">
-        <div className="bg-[#12182b]/95 backdrop-blur-md border border-slate-700/50 rounded-lg shadow-xl flex flex-col p-1">
-          <button onClick={zoomIn} className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors" title="Zoom In"><ZoomIn className="h-4 w-4" /></button>
-          <div className="h-px w-full bg-slate-700/50 my-1" />
-          <button onClick={zoomOut} className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors" title="Zoom Out"><ZoomOut className="h-4 w-4" /></button>
-          <div className="h-px w-full bg-slate-700/50 my-1" />
-          <button onClick={resetZoom} className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors" title="Fit to screen"><Maximize className="h-4 w-4" /></button>
+        <div className="bg-[#12182b]/95 backdrop-blur-md border border-slate-700/50 rounded-lg shadow-xl flex flex-col p-1 gap-1">
+          <button
+            onClick={zoomIn}
+            className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors"
+            title="Zoom In"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+          <div className="h-px w-full bg-slate-700/50" />
+          <button
+            onClick={zoomOut}
+            className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors"
+            title="Zoom Out"
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+          <div className="h-px w-full bg-slate-700/50" />
+          <button
+            onClick={resetZoom}
+            className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors"
+            title="Fit to screen"
+          >
+            <Maximize className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
-      {/* Code Viewer Panel */}
       {selectedNode && (
-        <CodeViewer 
-          selectedNode={selectedNode} 
-          graphData={data} 
-          onClose={() => setSelectedNode(null)} 
+        <CodeViewer
+          selectedNode={selectedNode}
+          graphData={data}
+          onClose={() => setSelectedNode(null)}
         />
       )}
     </div>

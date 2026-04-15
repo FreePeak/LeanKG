@@ -580,22 +580,7 @@ async fn index_codebase(
         files.retain(|f| {
             if let Some(ext) = std::path::Path::new(f).extension() {
                 let ext_str = ext.to_string_lossy().to_lowercase();
-                let lang_map: std::collections::HashMap<&str, &str> = [
-                    ("go", "go"),
-                    ("rs", "rust"),
-                    ("ts", "typescript"),
-                    ("js", "javascript"),
-                    ("py", "python"),
-                    ("java", "java"),
-                    ("kt", "kotlin"),
-                    ("kts", "kotlin"),
-                ]
-                .iter()
-                .cloned()
-                .collect();
-                if let Some(lang_name) = lang_map.get(ext_str.as_str()) {
-                    return allowed_langs.iter().any(|l| l.to_lowercase() == *lang_name);
-                }
+                return allowed_langs.iter().any(|l| l.to_lowercase() == ext_str);
             }
             false
         });
