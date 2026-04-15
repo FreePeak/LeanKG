@@ -5,7 +5,9 @@ project:
   - go
   - typescript
   - python
-indexer:
+  - java
+  - kotlin
+  indexer:
   exclude:
   - '**/node_modules/**'
   - '**/vendor/**'
@@ -13,6 +15,11 @@ indexer:
   - '*.go'
   - '*.ts'
   - '*.py'
+  - '*.java'
+  - '*.kt'
+  - '*.xml'
+  - 'AndroidManifest.xml'
+  - 'res/**/*.xml'
 mcp:
   enabled: true
   port: 3000

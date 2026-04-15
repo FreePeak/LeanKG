@@ -6,11 +6,14 @@ pub mod parser;
 pub mod process_processor;
 pub mod terraform;
 
+pub mod android_manifest;
 pub mod config_extractor;
 pub mod framework_detector;
 pub mod gradle_extractor;
 pub mod maven_extractor;
+pub mod xml_layout;
 
+pub use android_manifest::*;
 pub use cicd::*;
 pub use extractor::*;
 pub use git::*;
@@ -22,6 +25,7 @@ pub use config_extractor::*;
 pub use framework_detector::*;
 pub use gradle_extractor::*;
 pub use maven_extractor::*;
+pub use xml_layout::*;
 
 use crate::db::models::{CodeElement, Relationship};
 use crate::graph::GraphEngine;
@@ -35,7 +39,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let extensions = ["go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml", "mod"];
     let config_files = ["package.json", "tsconfig.json", "Cargo.toml", "go.mod",
                         "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
-                        "pom.xml"];
+                        "pom.xml", "AndroidManifest.xml"];
 
     let walker = WalkBuilder::new(root)
         .follow_links(true)
@@ -48,6 +52,8 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         let is_valid_file = if config_files.contains(&file_name) {
+            true
+        } else if path.to_string_lossy().contains("/res/") && ext == "xml" {
             true
         } else {
             extensions.contains(&ext) || is_cicd_yaml_file(path)
@@ -140,6 +146,14 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
         return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
     } else if file_name == "pom.xml" {
         let extractor = crate::indexer::MavenExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+    } else if file_name == "AndroidManifest.xml" {
+        let extractor = crate::indexer::AndroidManifestExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+    } else if file_path.contains("/res/") && file_path.ends_with(".xml") {
+        let extractor = crate::indexer::XmlLayoutExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
     }
