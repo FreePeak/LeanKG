@@ -7,6 +7,7 @@ pub mod process_processor;
 pub mod terraform;
 
 pub mod android_manifest;
+pub mod android_resources;
 pub mod config_extractor;
 pub mod framework_detector;
 pub mod gradle_extractor;
@@ -14,6 +15,7 @@ pub mod maven_extractor;
 pub mod xml_layout;
 
 pub use android_manifest::*;
+pub use android_resources::*;
 pub use cicd::*;
 pub use extractor::*;
 pub use git::*;
@@ -150,6 +152,10 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
         return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
     } else if file_name == "AndroidManifest.xml" {
         let extractor = crate::indexer::AndroidManifestExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+    } else if file_path.contains("/res/values/") && file_path.ends_with(".xml") {
+        let extractor = crate::indexer::AndroidResourcesExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
     } else if file_path.contains("/res/") && file_path.ends_with(".xml") {
@@ -350,6 +356,68 @@ pub fn index_file_sync(
         && (file_path.ends_with(".yml") || file_path.ends_with(".yaml"))
     {
         let extractor = CicdYamlExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements(&elements);
+        let _ = graph.insert_relationships(&relationships);
+        return Ok(elements.len());
+    }
+
+    let file_name = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    if file_name == "AndroidManifest.xml" {
+        let extractor = crate::indexer::AndroidManifestExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements(&elements);
+        let _ = graph.insert_relationships(&relationships);
+        return Ok(elements.len());
+    }
+
+    if file_path.contains("/res/values/") && file_path.ends_with(".xml") {
+        let extractor = crate::indexer::AndroidResourcesExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements(&elements);
+        let _ = graph.insert_relationships(&relationships);
+        return Ok(elements.len());
+    }
+
+    if file_path.contains("/res/") && file_path.ends_with(".xml") {
+        let extractor = crate::indexer::XmlLayoutExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements(&elements);
+        let _ = graph.insert_relationships(&relationships);
+        return Ok(elements.len());
+    }
+
+    if file_path.ends_with("pom.xml") {
+        let extractor = crate::indexer::MavenExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements(&elements);
+        let _ = graph.insert_relationships(&relationships);
+        return Ok(elements.len());
+    }
+
+    if file_name == "build.gradle" || file_name == "build.gradle.kts"
+        || file_name == "settings.gradle" || file_name == "settings.gradle.kts"
+    {
+        let extractor = crate::indexer::GradleExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
