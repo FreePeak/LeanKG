@@ -102,8 +102,20 @@ function App() {
     loadChildren(breadcrumbs[breadcrumbs.length - 1].path);
   }, []);
 
-  const handleNodeClick = useCallback(async (_nodeId: string) => {
-  }, [data, breadcrumbs, loadChildren]);
+  const handleNodeClick = useCallback(async (nodeId: string) => {
+    const node = data?.nodes.find(n => n.id === nodeId);
+    if (!node) return false;
+
+    const elementType = (node.properties?.elementType as string)?.toLowerCase() || '';
+
+    if (elementType === 'service' || nodeId.startsWith('service:')) {
+      return false;
+    }
+    if (elementType === 'folder' || elementType === 'directory' || nodeId.startsWith('folder:')) {
+      return false;
+    }
+    return true;
+  }, [data]);
 
   const expandService = useCallback(async (servicePath: string, _label: string) => {
     setLoading(true);

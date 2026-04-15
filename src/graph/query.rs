@@ -480,18 +480,17 @@ impl GraphEngine {
             );
             (query, std::collections::BTreeMap::new())
         } else {
-            let escaped_prefix = regex::Regex::new(r"[$+\.?*\\^\(\)\[\]\{\}\|]").unwrap()
-                .replace_all(&prefix_with_slash, "\\$&")
-                .to_string();
-            let regex_pattern = format!("^\\.\\/{}", escaped_prefix);
+            let lo = format!("./{}/", prefix_with_slash);
+            let hi = format!("./{}/\x7f", prefix_with_slash);
             let query = format!(
-                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(file_path, $pattern){}:limit {}:offset {}",
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], file_path >= $lo and file_path < $hi{}:limit {}:offset {}",
                 type_clause,
                 limit,
                 offset
             );
             let mut params = std::collections::BTreeMap::new();
-            params.insert("pattern".to_string(), serde_json::Value::String(regex_pattern));
+            params.insert("lo".to_string(), serde_json::Value::String(lo));
+            params.insert("hi".to_string(), serde_json::Value::String(hi));
             (query, params)
         };
 

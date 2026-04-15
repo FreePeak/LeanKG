@@ -46,7 +46,7 @@ const brightenColor = (hex: string, factor: number): string => {
 };
 
 interface UseSigmaOptions {
-  onNodeClick?: (nodeId: string) => void;
+  onNodeClick?: (nodeId: string) => boolean | void;
   onNodeDoubleClick?: (nodeId: string) => void;
   onNodeHover?: (nodeId: string | null) => void;
   onStageClick?: () => void;
@@ -323,8 +323,10 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
     sigma.on('clickNode', ({ node }) => {
       clickTimeoutRef.current = setTimeout(() => {
-        setSelectedNode(node);
-        options.onNodeClick?.(node);
+        const shouldSelect = options.onNodeClick?.(node);
+        if (shouldSelect !== false) {
+          setSelectedNode(node);
+        }
       }, 250);
     });
 

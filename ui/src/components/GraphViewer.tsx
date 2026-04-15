@@ -115,13 +115,20 @@ export const GraphViewer = ({
         </div>
       </div>
 
-      {selectedNode && (
-        <CodeViewer
-          selectedNode={selectedNode}
-          graphData={data}
-          onClose={() => setSelectedNode(null)}
-        />
-      )}
+      {selectedNode && (() => {
+        const node = data?.nodes.find(n => n.id === selectedNode);
+        const elementType = (node?.properties?.elementType as string)?.toLowerCase() || '';
+        if (elementType === 'service' || elementType === 'folder') {
+          return null;
+        }
+        return (
+          <CodeViewer
+            selectedNode={selectedNode}
+            graphData={data}
+            onClose={() => setSelectedNode(null)}
+          />
+        );
+      })()}
     </div>
   );
 };

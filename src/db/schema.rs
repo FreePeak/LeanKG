@@ -34,7 +34,28 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Failed to create code_elements: {:?}", e);
         }
     } else {
-        // Validate schema has correct column count
+        let create_file_path_index =
+            r#":create code_elements::file_path_index {ref: (file_path), compressed: true}"#;
+        if let Err(e) = db.run_script(create_file_path_index, Default::default()) {
+            tracing::debug!("file_path index may already exist: {:?}", e);
+        }
+
+        let create_qualified_name_index = r#":create code_elements::qualified_name_index {ref: (qualified_name), compressed: true}"#;
+        if let Err(e) = db.run_script(create_qualified_name_index, Default::default()) {
+            tracing::debug!("qualified_name index may already exist: {:?}", e);
+        }
+
+        let create_element_type_index =
+            r#":create code_elements::element_type_index {ref: (element_type), compressed: true}"#;
+        if let Err(e) = db.run_script(create_element_type_index, Default::default()) {
+            tracing::debug!("element_type index may already exist: {:?}", e);
+        }
+
+        let create_parent_qualified_index = r#":create code_elements::parent_qualified_index {ref: (parent_qualified), compressed: true}"#;
+        if let Err(e) = db.run_script(create_parent_qualified_index, Default::default()) {
+            tracing::debug!("parent_qualified index may already exist: {:?}", e);
+        }
+
         validate_code_elements_schema(db)?;
     }
 
