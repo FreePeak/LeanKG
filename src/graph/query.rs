@@ -375,6 +375,89 @@ impl GraphEngine {
         Ok(elements)
     }
 
+    pub fn get_elements_in_folder(&self, folder_path: &str) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let pattern = format!(".*{}/.*", folder_path.replace('.', "\\.").replace('/', "\\/"));
+        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(file_path, $pat)"#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("pat".to_string(), serde_json::Value::String(pattern));
+
+        let result = self.db.run_script(query, params)?;
+        let rows = result.rows;
+
+        let elements: Vec<CodeElement> = rows
+            .iter()
+            .map(|row| {
+                let parent_qualified = row[7].as_str().map(String::from);
+                let cluster_id = row[8].as_str().map(String::from);
+                let cluster_label = row[9].as_str().map(String::from);
+                let metadata_str = row[10].as_str().unwrap_or("{}");
+                CodeElement {
+                    qualified_name: row[0].as_str().unwrap_or("").to_string(),
+                    element_type: row[1].as_str().unwrap_or("").to_string(),
+                    name: row[2].as_str().unwrap_or("").to_string(),
+                    file_path: row[3].as_str().unwrap_or("").to_string(),
+                    line_start: row[4].as_i64().unwrap_or(0) as u32,
+                    line_end: row[5].as_i64().unwrap_or(0) as u32,
+                    language: row[6].as_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        Ok(elements)
+    }
+
+    pub fn get_relationships_for_elements(
+        &self,
+        element_ids: &[String],
+        rel_types: Option<&[&str]>,
+    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        if element_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let rel_types_filter = if let Some(types) = rel_types {
+            let type_list: Vec<String> = types.iter().map(|s| format!("\"{}\"", s)).collect();
+            format!(", rel_type in [{}]", type_list.join(", "))
+        } else {
+            String::new()
+        };
+
+        let query = format!(
+            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified in $ids or target_qualified in $ids{}"#,
+            rel_types_filter
+        );
+
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("ids".to_string(), serde_json::Value::Array(
+            element_ids.iter().map(|s| serde_json::Value::String(s.clone())).collect()
+        ));
+
+        let result = self.db.run_script(&query, params)?;
+        let rows = result.rows;
+
+        let relationships: Vec<Relationship> = rows
+            .iter()
+            .map(|row| {
+                let metadata_str = row[4].as_str().unwrap_or("{}");
+                Relationship {
+                    id: None,
+                    source_qualified: row[0].as_str().unwrap_or("").to_string(),
+                    target_qualified: row[1].as_str().unwrap_or("").to_string(),
+                    rel_type: row[2].as_str().unwrap_or("").to_string(),
+                    confidence: row[3].as_f64().unwrap_or(1.0),
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                }
+            })
+            .collect();
+
+        Ok(relationships)
+    }
+
     pub fn all_relationships(&self) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata]"#;
 

@@ -1976,42 +1976,25 @@ pub async fn api_graph_expand_service(
         path.to_string_lossy().to_string()
     };
 
+    let relative_folder = if folder_path.starts_with(&project_path) {
+        let remainder = &folder_path[project_path.len()..];
+        if remainder.starts_with('/') {
+            format!("./{}", &remainder[1..])
+        } else {
+            format!("./{}", remainder)
+        }
+    } else {
+        folder_path.clone()
+    };
+
     let (elements_result, relationships_result) = match state.get_graph_engine().await {
-        Ok(g) => (g.all_elements().map_err(|e| e.to_string()), g.all_relationships().map_err(|e| e.to_string())),
+        Ok(g) => (g.get_elements_in_folder(&relative_folder).map_err(|e| e.to_string()), g.all_relationships().map_err(|e| e.to_string())),
         Err(e) => (Err(e.to_string()), Err(e.to_string())),
     };
 
     match (elements_result, relationships_result) {
         (Ok(all_elements), Ok(all_relationships)) => {
-            let prefix = format!("{}/", folder_path);
-
-            let filtered_elements: Vec<&CodeElement> = all_elements
-                .iter()
-                .filter(|e| {
-                    let fp = &e.file_path;
-                    if fp.starts_with(&prefix) {
-                        let remainder = &fp[prefix.len()..];
-                        return !remainder.contains('/');
-                    }
-                    if fp.starts_with("./") {
-                        let resolved = format!("{}{}", project_path, &fp[1..]);
-                        if resolved.starts_with(&prefix) {
-                            let remainder = &resolved[prefix.len()..];
-                            return !remainder.contains('/');
-                        }
-                    }
-                    if !fp.starts_with('/') && !fp.starts_with("./") {
-                        let resolved = format!("{}/{}", project_path, fp);
-                        if resolved.starts_with(&prefix) {
-                            let remainder = &resolved[prefix.len()..];
-                            return !remainder.contains('/');
-                        }
-                    }
-                    false
-                })
-                .collect();
-
-            let service_element_ids: std::collections::HashSet<String> = filtered_elements
+            let service_element_ids: std::collections::HashSet<String> = all_elements
                 .iter()
                 .map(|e| e.qualified_name.clone())
                 .collect();
@@ -2024,7 +2007,7 @@ pub async fn api_graph_expand_service(
                 })
                 .collect();
 
-            let nodes: Vec<GraphNode> = filtered_elements
+            let nodes: Vec<GraphNode> = all_elements
                 .iter()
                 .map(|e| {
                     let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
