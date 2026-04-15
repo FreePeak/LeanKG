@@ -2,9 +2,15 @@ use std::sync::OnceLock;
 
 /// Returns a shared, static Tokio runtime for the entire LeanKG engine.
 /// This prevents spawning new threads and tokio runtimes repeatedly across synchronous methods.
+///
+/// WARNING: Never call tokio::runtime::Runtime::new() directly in library code.
+/// Creating a runtime is ~100ms overhead (spawns threads, allocates resources).
+/// Always use run_blocking() or get_runtime() instead.
 pub fn get_runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to initialize static tokio runtime"))
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Runtime::new().expect("Failed to initialize static tokio runtime")
+    })
 }
 
 /// A safe blocking executor that adapts regardless of whether the calling thread is inside a Tokio runtime or not.
