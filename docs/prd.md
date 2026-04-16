@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.0-consolidated
-**Date:** 2026-04-11
+**Version:** 3.1-massive-graph
+**Date:** 2026-04-16
 **Status:** Active Development
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
@@ -10,6 +10,13 @@
 ---
 
 ## Changelog
+
+### v3.1-massive-graph - Massive graph service expansion
+- Added US-MG-01..05 user stories for service node double-click behavior
+- Added FR-MG-01..08 functional requirements for expand-service optimization and filter UI
+- Expand-service API optimized: targeted folder query (7.7k vs 1.5M elements), ~30% faster
+- FR-MG-01..02, 04..08 implemented: expand-service returns all edge types, double-click calls expandService directly, filter panel always shows all 14 types, defaults = Service/Folder/File/Function
+- FR-MG-03 (single-repo root expansion) still pending
 
 ### v3.0-consolidated - Full codebase audit
 - Deep dive codebase analysis: 35 MCP tools verified (0 stubs), 28+ CLI commands, 10 language extractors
@@ -167,7 +174,96 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | US-LANG-02 | Swift parser (tree-sitter-swift) | Should Have | PARTIAL (parser only, no extraction) |
 | US-LANG-03 | XML parser (tree-sitter-xml) | Could Have | PARTIAL (parser only, no extraction) |
 
-### 3.8 MemPalace-Inspired Stories (US-MP-01 to US-MP-08)
+### 3.8 Massive Graph Stories (US-MG-01 to US-MG-05)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-MG-01 | Double-click Service node loads ALL elements and edges in one shot | Must Have | DONE |
+| US-MG-02 | Single-repo projects expand fully on service double-click (no multi-level drilling) | Must Have | PARTIAL (expand-service called, FR-MG-03 pending) |
+| US-MG-03 | Filter UI always shows ALL node type toggles regardless of loaded data | Must Have | DONE |
+| US-MG-04 | Default visible filters: Service, Folder, File, Function ON; rest OFF | Must Have | DONE |
+| US-MG-05 | Expand-service API optimized: targeted DB query instead of full scan | Must Have | DONE |
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-MG-01: Service node loads all elements and edges</summary>
+
+**Problem:** Previously, double-clicking a Service node in the graph only returned a subset of relationship types (`contains`, `defines`, `imports`, `calls`). Other edges like `extends`, `implements`, `references`, `tested_by` were missing from the expanded view.
+
+**Behavior:**
+- Double-click on a Service node → `/api/graph/expand-service?path=<absolute_path>` returns ALL elements under that service folder AND ALL relationship types between them
+- Backend must NOT filter by relationship type — let the frontend filter UI control visibility
+- All node types are returned: `service`, `folder`, `directory`, `file`, `module`, `class`, `struct`, `interface`, `enum`, `function`, `method`, `constructor`, `property`, `decorator`
+
+**Backend changes:**
+- `api_graph_expand_service` handler removes the `matches!(r.rel_type.as_str(), "contains" | "defines" | "imports" | "calls")` filter
+- Returns ALL relationships where source is in the service folder
+
+**Frontend changes:**
+- Filter UI is the sole mechanism for controlling what's visible
+- User toggles edge types on/off to see calls, imports, contains, etc.
+</details>
+
+<details>
+<summary>US-MG-02: Single-repo full expansion</summary>
+
+**Problem:** When a service has many nested folder layers (e.g., `platform-transport/be-engagement/internal/handler/v2/`), the user must double-click through each folder level to see contents. This loses the overall service context.
+
+**Behavior:**
+- Double-click on a Service node loads the ENTIRE service tree at once
+- All folders, sub-folders, files, and functions are loaded in a single API call
+- The filter UI controls visibility: by default, only `Service`, `Folder`, `File`, `Function` nodes are shown
+- User can toggle on `Method`, `Class`, etc. to see more detail without making another API call
+- For single-repo projects (no multi-service layout), the same behavior applies — the root is treated as the "service"
+
+**Rationale:** Loading everything at once is fast (~13s for 7.7k elements after optimization) and avoids the UX problem of losing the chart context during multi-level drilling.
+</details>
+
+<details>
+<summary>US-MG-03: Filter UI always shows all node types</summary>
+
+**Problem:** Previously `discoveredNodeTypes` was computed from loaded graph data. If the current view only has `File` and `Function` nodes, the filter panel only shows `File` and `Function` toggles.
+
+**Behavior:**
+- The filter panel ALWAYS shows ALL node types from `DEFAULT_NODE_TYPE_ORDER`: `Service`, `Folder`, `Directory`, `File`, `Module`, `Class`, `Struct`, `Interface`, `Enum`, `Function`, `Method`, `Constructor`, `Property`, `Decorator`
+- This is a static list, not data-driven
+- Types not present in current data still appear but are visually dimmed or show "(0)" count
+
+**Implementation:**
+- `discoveredNodeTypes` in `App.tsx` uses `DEFAULT_NODE_TYPE_ORDER` directly instead of computing from `data.nodes`
+</details>
+
+<details>
+<summary>US-MG-04: Default visible filters</summary>
+
+**Problem:** Previously the default visible labels included `Service`, `Folder`, `Directory`, `File` — missing `Function` which is the most important code-level type. Also, ALL types started as visible, making the graph too noisy.
+
+**Behavior:**
+- **Default ON (visible):** `Service`, `Folder`, `File`, `Function`
+- **Default OFF (hidden):** `Directory`, `Module`, `Class`, `Struct`, `Interface`, `Enum`, `Method`, `Constructor`, `Property`, `Decorator`
+- `resetToStructuralDefaults()` resets to these 4 types
+- After double-clicking a service, filters reset to these 4 defaults
+
+**Implementation:**
+- `DEFAULT_VISIBLE_LABELS` = `['Service', 'Folder', 'File', 'Function']`
+- `useGraphFilters` initial state uses `DEFAULT_VISIBLE_LABELS`
+- `resetToStructuralDefaults()` uses `DEFAULT_VISIBLE_LABELS`
+</details>
+
+<details>
+<summary>US-MG-05: Expand-service API optimization</summary>
+
+**Problem:** The original `api_graph_expand_service` handler called `g.all_elements()` and `g.all_relationships()` which loaded ALL 1.5M elements and ALL 1.6M relationships into memory, then filtered in Rust. This took ~19 seconds.
+
+**Solution (DONE):**
+- Added `get_elements_in_folder()` to `GraphEngine` using CozoDB `regex_matches(file_path, $pat)` with bound parameter
+- Handler converts absolute paths to DB format: `/Users/.../be-engagement` → `./platform-transport/be-engagement`
+- Only loads ~7.7k relevant elements instead of 1.5M
+- Response time: ~13s (30% improvement). Remaining time is from loading all 1.6M relationships.
+</details>
+
+### 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08)
 
 > **Source:** Competitive analysis of [MemPalace](https://github.com/milla-jovovich/mempalace) — the highest-scoring AI memory system on LongMemEval (96.6% R@5 raw mode). Key differentiator: raw verbatim storage without summarization, structured spatial navigation (wings/rooms/closets/drawers), temporal entity graph with validity windows, and a 4-layer memory stack (L0-L3) for token-efficient context loading.
 
@@ -343,6 +439,7 @@ Palace Mapping:
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | npm-based installation (US-14) | Must Have | Binary distribution via npm |
+| Single-repo root expansion (FR-MG-03) | Must Have | Treat root as service on double-click |
 | Cluster-level SKILL.md generation (US-GN-07) | Could Have | Depends on stable cluster detection |
 | MCP Resources (US-GN-08) | Could Have | MCP resource endpoints |
 | Dart entity extraction (US-LANG-01) | Should Have | Parser exists, needs extractor |
@@ -443,7 +540,18 @@ Palace Mapping:
 - [ ] **FR-MP-25**: `search_code` and `query_file` accept directory nodes for folder-scoped search
 - [ ] **FR-MP-26**: Cluster-to-directory alignment: when Leiden cluster maps to a physical directory, store `cluster_directory` in cluster metadata
 
-### 5.7 Multi-Language Support
+### 5.7 Massive Graph UI (DONE)
+
+- [x] **FR-MG-01**: `api_graph_expand_service` returns ALL relationship types (remove `matches!(r.rel_type, "contains" | "defines" | "imports" | "calls")` filter)
+- [x] **FR-MG-02**: Double-click Service node loads entire service tree in single API call
+- [ ] **FR-MG-03**: Single-repo projects treated as single service — root double-click loads everything
+- [x] **FR-MG-04**: Filter panel always shows ALL node types from `DEFAULT_NODE_TYPE_ORDER` (static list, not data-driven)
+- [x] **FR-MG-05**: Default visible node types: `Service`, `Folder`, `File`, `Function` (all others OFF by default)
+- [x] **FR-MG-06**: `resetToStructuralDefaults()` resets to `DEFAULT_VISIBLE_LABELS` (Service, Folder, File, Function)
+- [x] **FR-MG-07**: `get_elements_in_folder()` targeted DB query for expand-service (regex_matches with bound param)
+- [x] **FR-MG-08**: Handler converts absolute folder paths to DB format (`./platform-transport/...`)
+
+### 5.8 Multi-Language Support
 
 | Language | Extensions | Extractor Status | Parser |
 |----------|-----------|-----------------|--------|
@@ -774,4 +882,4 @@ src/
 
 ---
 
-*Last updated: 2026-04-11 (v3.1-mempalace, MemPalace-inspired features)*
+*Last updated: 2026-04-16 (v3.1-massive-graph, service expand optimization + filter UI)*
