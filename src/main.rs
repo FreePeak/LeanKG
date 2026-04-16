@@ -407,7 +407,19 @@ fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let config_yaml = serde_yaml::to_string(&config)?;
 
     std::fs::create_dir_all(path)?;
-    std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)?;
+    let leankg_dir_config = std::path::Path::new(path).join("leankg.yaml");
+    std::fs::write(&leankg_dir_config, &config_yaml)?;
+
+    let cwd_config = std::path::Path::new("leankg.yaml");
+    if cwd_config.exists() {
+        if let Ok(existing) = std::fs::read_to_string(cwd_config) {
+            if existing != config_yaml {
+                std::fs::write(cwd_config, &config_yaml)?;
+            }
+        }
+    } else {
+        std::fs::write(cwd_config, &config_yaml)?;
+    }
 
     println!("Initialized LeanKG project at {}", path);
     if detected_root != "./src" {
