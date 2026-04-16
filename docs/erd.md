@@ -25,7 +25,7 @@
   - Updated data model with ContextMetric, QueryCache, ApiKey tables
   - Added all 35 MCP tools to interface specifications
   - Added all 28+ CLI commands
-  - Updated parser list to 13 languages (10 fully extracted)
+  - Updated parser list to 18 languages (13 fully extracted native programming languages)
   - Added RTK compression architecture
   - Added orchestrator architecture
   - Added git hooks architecture
@@ -194,7 +194,7 @@ graph TB
 | MCP Server | MCP protocol communication (35+9 planned tools) | rmcp (Rust) |
 | Web UI Server | HTTP server for graph visualization (20+ routes) | Axum (Rust) |
 | REST API Server | REST API with auth | Axum + tower-http (Rust) |
-| Code Indexer | Parse source code with tree-sitter (10 languages fully) | tree-sitter (Rust) |
+| Code Indexer | Parse source code with tree-sitter (13 languages fully) | tree-sitter (Rust) |
 | Pipeline Indexer | Parse CI/CD configuration files | Custom YAML parsers (Rust) |
 | Doc Indexer | Parse documentation files and extract code references | pulldown-cmark (Rust) |
 | Graph Engine | Query and traverse knowledge graph | Rust + CozoDB Datalog |
@@ -427,7 +427,7 @@ sequenceDiagram
 
     Dev->>CLI: leankg index ./src
     CLI->>Parse: Parse directory (parallel via rayon)
-    Parse->>Extract: Extract entities (10 languages)
+    Parse->>Extract: Extract entities (13 languages)
     Extract->>Build: Build relationships (10 types)
     Build->>DB: Batch insert (5000 rows/batch)
     
