@@ -2002,8 +2002,7 @@ pub async fn api_graph_expand_service(
             let filtered_relationships: Vec<_> = all_relationships
                 .iter()
                 .filter(|r| {
-                    service_element_ids.contains(&r.source_qualified) &&
-                    matches!(r.rel_type.as_str(), "contains" | "defines" | "imports" | "calls")
+                    service_element_ids.contains(&r.source_qualified)
                 })
                 .collect();
 

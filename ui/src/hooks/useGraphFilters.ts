@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { DEFAULT_NODE_TYPE_ORDER, EDGE_STYLES } from '../lib/constants';
+import { DEFAULT_NODE_TYPE_ORDER, DEFAULT_VISIBLE_LABELS, EDGE_STYLES } from '../lib/constants';
 
 export type EdgeType = string;
 
@@ -32,10 +32,10 @@ export const ZOOM_LEVEL_CONFIG: Record<ZoomLevel, {
   },
 };
 
-export const STRUCTURAL_LABELS = ['Folder', 'Directory', 'File', 'Module', 'Class', 'Struct'];
+export const STRUCTURAL_LABELS = DEFAULT_VISIBLE_LABELS;
 
 export const useGraphFilters = () => {
-  const [visibleLabels, setVisibleLabels] = useState<string[]>([...DEFAULT_NODE_TYPE_ORDER]);
+  const [visibleLabels, setVisibleLabels] = useState<string[]>([...DEFAULT_VISIBLE_LABELS]);
   const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<EdgeType[]>([...Object.keys(EDGE_STYLES)]);
   const [depthFilter, setDepthFilter] = useState<number | null>(null);
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('functions');

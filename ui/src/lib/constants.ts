@@ -68,6 +68,6 @@ export const DEFAULT_NODE_TYPE_ORDER = [
 export const DEFAULT_VISIBLE_LABELS = [
   'Service',
   'Folder',
-  'Directory',
   'File',
+  'Function',
 ];

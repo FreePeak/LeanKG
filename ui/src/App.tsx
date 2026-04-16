@@ -31,16 +31,8 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
 
   const discoveredNodeTypes = useMemo(() => {
-    if (!data) return DEFAULT_NODE_TYPE_ORDER;
-    const types = new Set<string>();
-    data.nodes.forEach(n => {
-      const t = (n.properties?.elementType as string) || 'Unknown';
-      types.add(t.charAt(0).toUpperCase() + t.slice(1));
-    });
-    const ordered = DEFAULT_NODE_TYPE_ORDER.filter(t => types.has(t));
-    const rest = Array.from(types).filter(t => !DEFAULT_NODE_TYPE_ORDER.includes(t)).sort();
-    return [...ordered, ...rest];
-  }, [data]);
+    return DEFAULT_NODE_TYPE_ORDER;
+  }, []);
 
   const discoveredEdgeTypes = useMemo(() => {
     if (!data) return Object.keys(EDGE_STYLES);
@@ -153,10 +145,7 @@ function App() {
       if (servicePath) {
         const label = (node.properties?.name as string) || node.label || nodeId;
         setBreadcrumbs([{ label: 'Root', path: '' }, { label, path: servicePath }]);
-        const hasChildren = await loadChildren(servicePath);
-        if (!hasChildren) {
-          await expandService(servicePath, label);
-        }
+        await expandService(servicePath, label);
         resetToStructuralDefaults();
         setSelectedFileId(null);
       }
