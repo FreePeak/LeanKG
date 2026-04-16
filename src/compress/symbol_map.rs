@@ -19,7 +19,7 @@ impl Iterator for AnchorGenerator {
     fn next(&mut self) -> Option<Self::Item> {
         let mut num = self.index;
         self.index += 1;
-        
+
         let mut result = String::new();
         loop {
             let rem = num % 52;
@@ -29,7 +29,7 @@ impl Iterator for AnchorGenerator {
                 (b'a' + (rem - 26) as u8) as char
             };
             result.insert(0, chr);
-            
+
             if num < 52 {
                 break;
             }
@@ -72,7 +72,8 @@ impl SymbolMap {
         loop {
             let short_id = generator.next().unwrap();
             if !self.existing_words.contains(&short_id) {
-                self.forward.insert(identifier.to_string(), short_id.clone());
+                self.forward
+                    .insert(identifier.to_string(), short_id.clone());
                 self.existing_words.insert(short_id.clone());
                 return Some(short_id);
             }
@@ -116,10 +117,7 @@ impl SymbolMap {
 
 const MAP_ENTRY_OVERHEAD: usize = 2; // "  A=identifier\n" ~= tokens(ident) + 1 + 2
 
-pub fn should_register(
-    identifier: &str,
-    occurrences: usize,
-) -> bool {
+pub fn should_register(identifier: &str, occurrences: usize) -> bool {
     if identifier.len() < MIN_IDENT_LENGTH {
         return false;
     }
@@ -147,8 +145,14 @@ fn is_keyword(word: &str, ext: &str) -> bool {
             word,
             "constructor" | "arguments" | "undefined" | "prototype" | "instanceof" | "function"
         ),
-        "py" => matches!(word, "continue" | "lambda" | "return" | "import" | "class" | "def"),
-        "go" => matches!(word, "continue" | "default" | "return" | "struct" | "interface" | "func"),
+        "py" => matches!(
+            word,
+            "continue" | "lambda" | "return" | "import" | "class" | "def"
+        ),
+        "go" => matches!(
+            word,
+            "continue" | "default" | "return" | "struct" | "interface" | "func"
+        ),
         _ => false,
     }
 }
@@ -187,13 +191,17 @@ mod tests {
         let mut gen = AnchorGenerator::new();
         assert_eq!(gen.next().unwrap(), "A");
         assert_eq!(gen.next().unwrap(), "B");
-        
+
         let mut gen2 = AnchorGenerator::new();
         // Skip first 26 (A-Z)
-        for _ in 0..26 { gen2.next(); }
+        for _ in 0..26 {
+            gen2.next();
+        }
         assert_eq!(gen2.next().unwrap(), "a");
         // Skip next 25 (b-z)
-        for _ in 0..25 { gen2.next(); }
+        for _ in 0..25 {
+            gen2.next();
+        }
         assert_eq!(gen2.next().unwrap(), "AA");
         assert_eq!(gen2.next().unwrap(), "AB");
     }
@@ -203,7 +211,7 @@ mod tests {
         let content = "fn my_long_function_name() {}";
         let mut map = SymbolMap::new(content);
         map.register("my_long_function_name");
-        
+
         let result = map.apply(content);
         // Assuming 'A' is not used in "fn" and "my_long_function_name"
         // Wait, "fn" is extracted, "my_long_function_name" is extracted. "A" is perfectly free!
@@ -225,7 +233,7 @@ mod tests {
         assert!(is_keyword("continue", "rs"));
         assert!(is_keyword("interface", "go"));
         assert!(!is_keyword("my_var", "rs"));
-        
+
         let content = "fn continue() {} fn my_custom_ident() {}";
         let idents = extract_identifiers(content, "rs");
         assert!(!idents.contains(&"continue".to_string()));

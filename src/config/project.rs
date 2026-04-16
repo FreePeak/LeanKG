@@ -75,11 +75,20 @@ impl Default for ProjectConfig {
                     "go".to_string(),
                     "typescript".to_string(),
                     "python".to_string(),
+                    "java".to_string(),
+                    "kotlin".to_string(),
                 ],
             },
             indexer: IndexerConfig {
                 exclude: vec!["**/node_modules/**".to_string(), "**/vendor/**".to_string()],
-                include: vec!["*.go".to_string(), "*.ts".to_string(), "*.py".to_string()],
+                include: vec![
+                    "*.go".to_string(),
+                    "*.ts".to_string(),
+                    "*.py".to_string(),
+                    "*.java".to_string(),
+                    "*.kt".to_string(),
+                    "*.xml".to_string(),
+                ],
             },
             mcp: McpConfig {
                 enabled: true,
@@ -114,7 +123,10 @@ mod tests {
     fn test_config_project_settings() {
         let config = ProjectConfig::default();
         assert_eq!(config.project.root, PathBuf::from("."));
-        assert_eq!(config.project.languages, vec!["go", "typescript", "python"]);
+        assert_eq!(
+            config.project.languages,
+            vec!["go", "typescript", "python", "java", "kotlin"]
+        );
     }
 
     #[test]
@@ -126,6 +138,7 @@ mod tests {
             .contains(&"**/node_modules/**".to_string()));
         assert!(config.indexer.exclude.contains(&"**/vendor/**".to_string()));
         assert!(config.indexer.include.contains(&"*.go".to_string()));
+        assert!(config.indexer.include.contains(&"*.java".to_string()));
     }
 
     #[test]

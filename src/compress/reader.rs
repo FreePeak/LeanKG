@@ -47,7 +47,7 @@ impl FileReader {
         };
 
         let total_tokens = super::estimate_tokens(&content);
-        
+
         let (entry, is_hit, old_content, file_ref) = {
             let mut cache = self.session_cache.write();
             let (entry, hit, old) = cache.store(path, content.clone());
@@ -57,7 +57,10 @@ impl FileReader {
 
         // Cache Return Pre-emption
         if is_hit && !fresh && mode != ReadMode::Diff && mode != ReadMode::Lines {
-            let short_name = Path::new(path).file_name().unwrap_or_default().to_string_lossy();
+            let short_name = Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
             let msg = format!(
                 "{}={} cached {}t {}L\n[File unchanged in SessionCache. Use fresh=true to pull absolute text]",
                 file_ref, short_name, entry.read_count, entry.line_count
@@ -90,7 +93,7 @@ impl FileReader {
                 let diff_res = self.read_diff(path, &file_ref, &content, old_content.as_deref());
                 // Override tokens tracking on read_diff
                 return Ok(diff_res);
-            },
+            }
             ReadMode::Aggressive => self.read_aggressive(&content, &lines),
             ReadMode::Entropy => self.read_entropy(&content, &lines),
             ReadMode::Lines => {
@@ -122,28 +125,31 @@ impl FileReader {
     }
 
     fn read_full(&self, path: &str, content: &str) -> ReadResult {
-        let ext = Path::new(path).extension().unwrap_or_default().to_string_lossy();
-        
+        let ext = Path::new(path)
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy();
+
         let mut final_content = content.to_string();
-        
+
         let mut sym_map = super::symbol_map::SymbolMap::new(content);
         let idents = super::symbol_map::extract_identifiers(content, &ext);
         for ident in &idents {
             sym_map.register(ident);
         }
-        
+
         if sym_map.len() >= 3 {
-             let table = sym_map.format_table();
-             let compressed = sym_map.apply(content);
-             let orig_tokens = super::estimate_tokens(content);
-             let new_tokens = super::estimate_tokens(&compressed) + super::estimate_tokens(&table);
-             let net_savings = orig_tokens.saturating_sub(new_tokens);
-             
-             if orig_tokens > 0 && net_savings * 100 / orig_tokens >= 5 {
-                 final_content = format!("{}{}", compressed, table);
-             }
+            let table = sym_map.format_table();
+            let compressed = sym_map.apply(content);
+            let orig_tokens = super::estimate_tokens(content);
+            let new_tokens = super::estimate_tokens(&compressed) + super::estimate_tokens(&table);
+            let net_savings = orig_tokens.saturating_sub(new_tokens);
+
+            if orig_tokens > 0 && net_savings * 100 / orig_tokens >= 5 {
+                final_content = format!("{}{}", compressed, table);
+            }
         }
-        
+
         let total_lines = content.lines().count();
 
         ReadResult {
@@ -169,7 +175,7 @@ impl FileReader {
         let mut result_lines = Vec::new();
         let mut imports = Vec::new();
         let mut exports = Vec::new();
-        
+
         // Scan basic imports matching
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -200,9 +206,12 @@ impl FileReader {
         }
 
         // Apply strict signature mapping rules instead of braces math
-        let ext = Path::new(path).extension().unwrap_or_default().to_string_lossy();
+        let ext = Path::new(path)
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy();
         let sigs = extract_signatures(content, &ext);
-        
+
         result_lines.push(String::new());
         result_lines.push("API:".to_string());
         for sig in &sigs {
@@ -233,7 +242,10 @@ impl FileReader {
         content: &str,
         lines: &[&str],
     ) -> Result<ReadResult, String> {
-        let ext = Path::new(path).extension().unwrap_or_default().to_string_lossy();
+        let ext = Path::new(path)
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy();
         let sigs = extract_signatures(content, &ext);
 
         let mut out = Vec::new();
@@ -246,7 +258,7 @@ impl FileReader {
             lines.len(),
             sigs.len()
         ));
-        
+
         for sig in &sigs {
             out.push(sig.to_tdd());
         }
@@ -265,9 +277,18 @@ impl FileReader {
         })
     }
 
-    fn read_diff(&self, path: &str, file_ref: &str, current_content: &str, old_content: Option<&str>) -> ReadResult {
-        let short_name = Path::new(path).file_name().unwrap_or_default().to_string_lossy();
-        
+    fn read_diff(
+        &self,
+        path: &str,
+        file_ref: &str,
+        current_content: &str,
+        old_content: Option<&str>,
+    ) -> ReadResult {
+        let short_name = Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+
         let lines: Vec<&str> = current_content.lines().collect();
         let total_lines = lines.len();
 
@@ -278,7 +299,10 @@ impl FileReader {
                 return ReadResult {
                     path: path.to_string(),
                     mode: ReadMode::Diff,
-                    content: format!("{}={} [New in Cache => Showing Full {}L]\n{}", file_ref, short_name, total_lines, current_content),
+                    content: format!(
+                        "{}={} [New in Cache => Showing Full {}L]\n{}",
+                        file_ref, short_name, total_lines, current_content
+                    ),
                     tokens: super::estimate_tokens(current_content),
                     total_tokens: super::estimate_tokens(current_content),
                     savings_percent: 0.0,
@@ -308,7 +332,10 @@ impl FileReader {
 
         let diff = similar::TextDiff::from_lines(old, current_content);
         let unified = diff.unified_diff().context_radius(3).to_string();
-        let msg = format!("{}={} [auto-delta] ∆{}L\n{}", file_ref, short_name, total_lines, unified);
+        let msg = format!(
+            "{}={} [auto-delta] ∆{}L\n{}",
+            file_ref, short_name, total_lines, unified
+        );
 
         let output_lines = unified.lines().count();
         let tokens = super::estimate_tokens(&msg);
@@ -400,8 +427,6 @@ impl FileReader {
     fn estimate_tokens(&self, text: &str) -> usize {
         text.len() / 4
     }
-
-
 }
 
 pub struct ReadResult {
@@ -433,8 +458,6 @@ fn is_import_line(line: &str) -> bool {
 fn is_export_line(line: &str) -> bool {
     line.starts_with("pub ") || line.starts_with("export ") || line.starts_with("module.exports")
 }
-
-
 
 fn is_noise_line(line: &str) -> bool {
     let noise = [
@@ -492,7 +515,7 @@ mod tests {
         let content = "pub fn execute() {}\nfn helper() {}\npub struct Point { x: i32 }";
         let lines: Vec<&str> = content.lines().collect();
         let result = reader.read_signatures("test.rs", content, &lines).unwrap();
-        
+
         assert_eq!(result.mode, ReadMode::Signatures);
         assert_eq!(result.total_lines, 3);
         assert_eq!(result.lines_included, Some(3));
@@ -506,7 +529,7 @@ mod tests {
         let content = "use std::io;\npub fn main() {}";
         let lines: Vec<&str> = content.lines().collect();
         let result = reader.read_map("test.rs", content, &lines).unwrap();
-        
+
         assert_eq!(result.mode, ReadMode::Map);
         assert!(result.content.contains("deps: L1: use std::io;"));
         assert!(result.content.contains("fn main()"));
@@ -518,11 +541,10 @@ mod tests {
         let content = "let x = 1;\n\n// a very low entropy string\naaaaaaaaaaaaa\npub fn run() {}";
         let lines: Vec<&str> = content.lines().collect();
         let result = reader.read_entropy(content, &lines);
-        
+
         assert_eq!(result.mode, ReadMode::Entropy);
         assert!(result.content.contains("run()"));
         // 'aaaaaaaaaaaaa' should be filtered out by entropy analyzer
         assert!(!result.content.contains("aaaaaaaaaaaaa"));
     }
 }
-

@@ -309,7 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Obsidian { command } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            
+
             match command {
                 cli::ObsidianCommand::Init { vault } => {
                     obsidian_init(&db_path, vault.as_deref())?;
@@ -327,7 +327,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     obsidian_status(&db_path, vault.as_deref()).await?;
                 }
             }
-        },
+        }
         cli::CLICommand::Metrics {
             since,
             tool,
@@ -340,12 +340,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            
+
             if seed {
                 seed_test_metrics(&db_path)?;
                 return Ok(());
             }
-            
+
             show_metrics(
                 &db_path,
                 since.as_deref(),
@@ -385,32 +385,155 @@ fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = config::ProjectConfig::default();
     config.project.name = project_name;
 
+    let detected_root = detect_project_root(".");
+    config.project.root = std::path::PathBuf::from(&detected_root);
+
+    let mut detected_langs = Vec::new();
+    let abs_root = std::path::Path::new(&detected_root);
+    if abs_root.exists() {
+        detect_languages(&detected_root, &mut detected_langs);
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        eprintln!(
+            "Warning: detected root '{}' not found (cwd: {})",
+            detected_root,
+            cwd.display()
+        );
+    }
+    if !detected_langs.is_empty() {
+        config.project.languages = detected_langs;
+    }
+
     let config_yaml = serde_yaml::to_string(&config)?;
 
     std::fs::create_dir_all(path)?;
-    std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)?;
+    let leankg_dir_config = std::path::Path::new(path).join("leankg.yaml");
+    std::fs::write(&leankg_dir_config, &config_yaml)?;
 
-    let readme = r#"# Project
-
-This project uses LeanKG for code intelligence.
-
-## Setup
-
-```bash
-leankg init
-leankg index ./src
-```
-
-## Commands
-
-- `leankg index ./src` - Index codebase
-- `leankg serve` - Start server
-- `leankg impact <file> --depth 3` - Calculate impact radius
-"#;
-    std::fs::write(std::path::Path::new(path).join("README.md"), readme)?;
+    let cwd_config = std::path::Path::new("leankg.yaml");
+    if cwd_config.exists() {
+        if let Ok(existing) = std::fs::read_to_string(cwd_config) {
+            if existing != config_yaml {
+                std::fs::write(cwd_config, &config_yaml)?;
+            }
+        }
+    } else {
+        std::fs::write(cwd_config, &config_yaml)?;
+    }
 
     println!("Initialized LeanKG project at {}", path);
+    if detected_root != "./src" {
+        println!("  Auto-detected source root: {}", detected_root);
+    }
+    if !config.project.languages.is_empty() {
+        println!(
+            "  Detected languages: {}",
+            config.project.languages.join(", ")
+        );
+    }
     Ok(())
+}
+
+fn detect_project_root(base: &str) -> String {
+    let candidates = [
+        ("./src", "standard src/"),
+        ("./app/src", "Android app/src/"),
+        ("./app", "Android app/"),
+        ("./lib", "library lib/"),
+        ("./packages", "monorepo packages/"),
+    ];
+
+    for (dir, label) in candidates {
+        let full = std::path::Path::new(base).join(dir.strip_prefix("./").unwrap_or(dir));
+        if full.exists() && full.is_dir() {
+            if has_code_files(&full) {
+                println!("  Detected project type: {}", label);
+                return dir.to_string();
+            }
+        }
+    }
+
+    ".".to_string()
+}
+
+fn has_code_files(dir: &std::path::Path) -> bool {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            let ext = std::path::Path::new(name_str.as_ref())
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if [
+                "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "xml",
+            ]
+            .contains(&ext)
+            {
+                return true;
+            }
+            if entry.path().is_dir()
+                && !name_str.starts_with('.')
+                && !["node_modules", "vendor", "build", ".gradle", "target"]
+                    .contains(&name_str.as_ref())
+            {
+                if has_code_files(&entry.path()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn detect_languages(root: &str, languages: &mut Vec<String>) {
+    let root_path = std::path::Path::new(root);
+    let ext_lang = [
+        (".go", "go"),
+        (".ts", "typescript"),
+        (".js", "javascript"),
+        (".py", "python"),
+        (".rs", "rust"),
+        (".java", "java"),
+        (".kt", "kotlin"),
+        (".kts", "kotlin"),
+    ];
+
+    for (ext, lang) in ext_lang {
+        if has_extension_recursive(root_path, ext, 6) {
+            if !languages.contains(&lang.to_string()) {
+                languages.push(lang.to_string());
+            }
+        }
+    }
+}
+
+fn has_extension_recursive(dir: &std::path::Path, ext: &str, max_depth: u32) -> bool {
+    if max_depth == 0 {
+        return false;
+    }
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some(ext.trim_start_matches('.')) {
+                return true;
+            }
+            if path.is_dir()
+                && !path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with('.'))
+                    .unwrap_or(false)
+                && !["node_modules", "vendor", "build", ".gradle", "target"]
+                    .iter()
+                    .any(|skip| path.file_name().map(|n| n == *skip).unwrap_or(false))
+            {
+                if has_extension_recursive(&path, ext, max_depth - 1) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 async fn index_codebase(
@@ -425,7 +548,10 @@ async fn index_codebase(
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
 
-    let config_path = db_path.parent().unwrap_or(std::path::Path::new(".")).join("leankg.yaml");
+    let config_path = db_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("leankg.yaml");
     let config = if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)?;
         serde_yaml::from_str::<config::ProjectConfig>(&content).unwrap_or_default()
@@ -493,7 +619,9 @@ async fn index_codebase(
             .collect();
         files.retain(|f| {
             let path_lower = f.to_ascii_lowercase();
-            !normalized_excludes.iter().any(|pat| path_lower.contains(pat))
+            !normalized_excludes
+                .iter()
+                .any(|pat| path_lower.contains(pat))
         });
         if verbose {
             println!(
@@ -507,7 +635,11 @@ async fn index_codebase(
     println!("Found {} files to index", files.len());
 
     let total_elements = indexer::index_files_parallel(&graph_engine, &files, verbose)?;
-    println!("Indexed {} files ({} elements)", files.len(), total_elements);
+    println!(
+        "Indexed {} files ({} elements)",
+        files.len(),
+        total_elements
+    );
 
     let docs_path = std::path::Path::new("docs");
     if docs_path.exists() {
@@ -1285,13 +1417,17 @@ fn api_key_revoke(id: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn obsidian_init(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+fn obsidian_init(
+    db_path: &std::path::Path,
+    vault: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
-    
-    let engine = obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
-    
+
+    let engine =
+        obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
+
     engine.init()?;
-    
+
     let readme_content = r#"# LeanKG Obsidian Vault
 
 This vault is managed by LeanKG. Notes in `.leankg/obsidian/vault/` are auto-generated from LeanKG's knowledge graph.
@@ -1332,17 +1468,21 @@ This vault is managed by LeanKG. Notes in `.leankg/obsidian/vault/` are auto-gen
     Ok(())
 }
 
-async fn obsidian_push(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+async fn obsidian_push(
+    db_path: &std::path::Path,
+    vault: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
-    
+
     if !vault_path.exists() {
         eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
         return Ok(());
     }
 
     println!("Pushing LeanKG data to Obsidian vault...");
-    
-    let engine = obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
+
+    let engine =
+        obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
     let result = engine.push().await?;
 
     println!();
@@ -1354,17 +1494,21 @@ async fn obsidian_push(db_path: &std::path::Path, vault: Option<&str>) -> Result
     Ok(())
 }
 
-async fn obsidian_pull(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+async fn obsidian_pull(
+    db_path: &std::path::Path,
+    vault: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
-    
+
     if !vault_path.exists() {
         eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
         return Ok(());
     }
 
     println!("Pulling annotations from Obsidian vault...");
-    
-    let engine = obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
+
+    let engine =
+        obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
     let result = engine.pull().await?;
 
     println!();
@@ -1382,9 +1526,13 @@ async fn obsidian_pull(db_path: &std::path::Path, vault: Option<&str>) -> Result
     Ok(())
 }
 
-async fn obsidian_watch(db_path: &std::path::Path, vault: Option<&str>, debounce_ms: u64) -> Result<(), Box<dyn std::error::Error>> {
+async fn obsidian_watch(
+    db_path: &std::path::Path,
+    vault: Option<&str>,
+    debounce_ms: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
     let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
-    
+
     if !vault_path.exists() {
         eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
         return Ok(());
@@ -1409,15 +1557,18 @@ async fn obsidian_watch(db_path: &std::path::Path, vault: Option<&str>, debounce
     Ok(())
 }
 
-async fn obsidian_status(db_path: &std::path::Path, vault: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+async fn obsidian_status(
+    db_path: &std::path::Path,
+    vault: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
-    
+
     println!("LeanKG Obsidian Vault Status");
     println!("============================");
     println!();
     println!("  Vault: {}", vault_path.display());
     println!("  Exists: {}", vault_path.exists());
-    
+
     if vault_path.exists() {
         let note_count = walkdir_count(&vault_path);
         println!("  Notes: {}", note_count);
@@ -1465,7 +1616,10 @@ fn show_metrics(
     if cleanup {
         let ret_days = retention.unwrap_or(30);
         let count = db::cleanup_old_metrics(&db, ret_days)?;
-        println!("Cleaned up {} old metric record(s) (retention: {} days).", count, ret_days);
+        println!(
+            "Cleaned up {} old metric record(s) (retention: {} days).",
+            count, ret_days
+        );
         return Ok(());
     }
 
@@ -1506,10 +1660,7 @@ fn show_metrics(
         for tm in &summary.by_tool {
             println!(
                 "  {}: {} calls, {:.0}% save, {:.1}% correct",
-                tm.tool_name,
-                tm.calls,
-                tm.avg_savings_percent,
-                tm.avg_correctness_percent
+                tm.tool_name, tm.calls, tm.avg_savings_percent, tm.avg_correctness_percent
             );
         }
     }
@@ -1533,20 +1684,85 @@ fn show_metrics(
 
 fn seed_test_metrics(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let db = db::schema::init_db(db_path)?;
-    
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    
+
     let test_metrics = vec![
-        ("seed1", "search_code", now - 100, 150i32, 45i32, 12i32, 25i32, 12000i32, 5000i32, 11955i32, 99.6f64, true),
-        ("seed2", "get_context", now - 90, 200i32, 35i32, 8i32, 18i32, 8000i32, 3200i32, 7965i32, 99.6f64, true),
-        ("seed3", "find_function", now - 80, 80i32, 28i32, 5i32, 12i32, 6000i32, 2400i32, 5972i32, 99.5f64, true),
-        ("seed4", "search_code", now - 70, 120i32, 52i32, 15i32, 30i32, 14000i32, 5800i32, 13948i32, 99.6f64, true),
-        ("seed5", "get_impact_radius", now - 60, 300i32, 180i32, 25i32, 45i32, 25000i32, 10000i32, 24820i32, 99.3f64, true),
+        (
+            "seed1",
+            "search_code",
+            now - 100,
+            150i32,
+            45i32,
+            12i32,
+            25i32,
+            12000i32,
+            5000i32,
+            11955i32,
+            99.6f64,
+            true,
+        ),
+        (
+            "seed2",
+            "get_context",
+            now - 90,
+            200i32,
+            35i32,
+            8i32,
+            18i32,
+            8000i32,
+            3200i32,
+            7965i32,
+            99.6f64,
+            true,
+        ),
+        (
+            "seed3",
+            "find_function",
+            now - 80,
+            80i32,
+            28i32,
+            5i32,
+            12i32,
+            6000i32,
+            2400i32,
+            5972i32,
+            99.5f64,
+            true,
+        ),
+        (
+            "seed4",
+            "search_code",
+            now - 70,
+            120i32,
+            52i32,
+            15i32,
+            30i32,
+            14000i32,
+            5800i32,
+            13948i32,
+            99.6f64,
+            true,
+        ),
+        (
+            "seed5",
+            "get_impact_radius",
+            now - 60,
+            300i32,
+            180i32,
+            25i32,
+            45i32,
+            25000i32,
+            10000i32,
+            24820i32,
+            99.3f64,
+            true,
+        ),
     ];
-    
+
     for (id, tool, ts, inp, out, elem, ms, base, lines, saved, pct, success) in &test_metrics {
         let metric = db::models::ContextMetric {
             tool_name: tool.to_string(),
@@ -1572,7 +1788,7 @@ fn seed_test_metrics(db_path: &std::path::Path) -> Result<(), Box<dyn std::error
         db::record_metric(&db, &metric)?;
         println!("Seeded metric: {} ({})", id, tool);
     }
-    
+
     println!("Seeded {} test metrics", test_metrics.len());
     Ok(())
 }
@@ -1749,8 +1965,16 @@ fn export_mermaid(relationships: &[db::models::Relationship]) -> String {
 
     let mut mermaid = String::from("graph LR\n");
     for r in relationships {
-        let source_short = r.source_qualified.split("::").last().unwrap_or(&r.source_qualified);
-        let target_short = r.target_qualified.split("::").last().unwrap_or(&r.target_qualified);
+        let source_short = r
+            .source_qualified
+            .split("::")
+            .last()
+            .unwrap_or(&r.source_qualified);
+        let target_short = r
+            .target_qualified
+            .split("::")
+            .last()
+            .unwrap_or(&r.target_qualified);
         mermaid.push_str(&format!(
             "    {}[\"{}\"] -->|{}| {}[\"{}\"]\n",
             sanitize_id(&r.source_qualified),
@@ -1804,16 +2028,26 @@ fn find_ui_dist_path() -> Option<std::path::PathBuf> {
     None
 }
 
-async fn spawn_vite_dev_server(port: u16) -> Result<tokio::process::Child, Box<dyn std::error::Error>> {
+async fn spawn_vite_dev_server(
+    port: u16,
+) -> Result<tokio::process::Child, Box<dyn std::error::Error>> {
     let ui_path = std::path::Path::new("ui");
 
     if !ui_path.exists() {
-        return Err(format!("UI directory not found at {}. Run 'cd ui && npm install' first.", ui_path.display()).into());
+        return Err(format!(
+            "UI directory not found at {}. Run 'cd ui && npm install' first.",
+            ui_path.display()
+        )
+        .into());
     }
 
     let package_json = ui_path.join("package.json");
     if !package_json.exists() {
-        return Err(format!("package.json not found in {}. Run 'cd ui && npm install' first.", ui_path.display()).into());
+        return Err(format!(
+            "package.json not found in {}. Run 'cd ui && npm install' first.",
+            ui_path.display()
+        )
+        .into());
     }
 
     let vite_exe = which_vite().await?;
@@ -1997,7 +2231,10 @@ fn get_download_url(platform: &str, version: &str) -> String {
     )
 }
 
-async fn download_file(url: &str, dest: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+async fn download_file(
+    url: &str,
+    dest: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let resp = reqwest::get(url).await?;
     let bytes = resp.bytes().await?;
 
@@ -2013,7 +2250,8 @@ async fn extract_and_install(tar_path: &std::path::Path) -> Result<(), Box<dyn s
     let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(tar_gz));
     ar.unpack(extract_dir)?;
 
-    let install_dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/bin");
+    let install_dir =
+        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/bin");
     std::fs::create_dir_all(&install_dir)?;
 
     let entries: Vec<_> = std::fs::read_dir(extract_dir)?

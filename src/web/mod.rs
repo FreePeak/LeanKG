@@ -3,8 +3,8 @@ pub mod handlers;
 
 use axum::{
     body::Body,
-
-    http::{StatusCode, header},
+    extract::State,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
@@ -14,8 +14,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::db::schema::{init_db, CozoDb};
-use crate::graph::GraphEngine;
 use crate::embed;
+use crate::graph::GraphEngine;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -105,7 +105,7 @@ impl AppState {
         project_path: std::path::PathBuf,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let db_path = project_path.join(".leankg");
-        
+
         {
             let mut path_guard = self.db_path.write().await;
             *path_guard = db_path.clone();
@@ -114,18 +114,19 @@ impl AppState {
             let mut proj_guard = self.current_project_path.write().await;
             *proj_guard = project_path.clone();
         }
-        
+
         let db = init_db(&db_path).map_err(|e| {
             let msg = e.to_string();
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg)) as Box<dyn std::error::Error + Send + Sync>
+            Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg))
+                as Box<dyn std::error::Error + Send + Sync>
         })?;
         {
             let mut lock = self.db.write().await;
             *lock = Some(db);
         }
-        
+
         self.reset_indexing_state().await;
-        
+
         Ok(())
     }
 
@@ -242,7 +243,8 @@ pub async fn start_server(
     db_path: std::path::PathBuf,
     _ui_dist_path: Option<std::path::PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let project_root = db_path.parent()
+    let project_root = db_path
+        .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| db_path.clone());
     let state = AppState::new(db_path.clone(), project_root.clone()).await?;

@@ -15,7 +15,7 @@ impl FrameworkDetector {
 
         // Maps common package names or imports to high-level framework names
         let mut framework_map: HashMap<&str, &str> = HashMap::new();
-        
+
         // JS/TS
         framework_map.insert("react", "React");
         framework_map.insert("react-dom", "React");
@@ -26,24 +26,24 @@ impl FrameworkDetector {
         framework_map.insert("vue", "Vue");
         framework_map.insert("svelte", "Svelte");
         framework_map.insert("nuxt", "Nuxt.js");
-        
+
         // Rust
         framework_map.insert("axum", "Axum");
         framework_map.insert("actix-web", "Actix");
         framework_map.insert("rocket", "Rocket");
         framework_map.insert("yew", "Yew");
         framework_map.insert("leptos", "Leptos");
-        
+
         // Python
         framework_map.insert("django", "Django");
         framework_map.insert("flask", "Flask");
         framework_map.insert("fastapi", "FastAPI");
-        
+
         // Go
         framework_map.insert("github.com/gin-gong/gin", "Gin");
         framework_map.insert("github.com/labstack/echo/v4", "Echo");
         framework_map.insert("github.com/gofiber/fiber", "Fiber");
-        
+
         // Java / Kotlin
         framework_map.insert("org.springframework.boot", "Spring Boot");
 
@@ -58,30 +58,37 @@ impl FrameworkDetector {
         for rel in relationships {
             if rel.rel_type == "has_dependency" || rel.rel_type == "imports" {
                 let lib_name = get_lib_name(&rel.target_qualified);
-                
+
                 // Fallback for sub-packages
-                let matched_fw = framework_map.get(lib_name.as_str())
-                    .copied()
-                    .or_else(|| {
-                        // try matching prefixes for imports e.g. express/router
-                        framework_map.iter()
-                            .find(|(k, _)| lib_name.starts_with(&format!("{}/", k)))
-                            .map(|(_, v)| *v)
-                    });
+                let matched_fw = framework_map.get(lib_name.as_str()).copied().or_else(|| {
+                    // try matching prefixes for imports e.g. express/router
+                    framework_map
+                        .iter()
+                        .find(|(k, _)| lib_name.starts_with(&format!("{}/", k)))
+                        .map(|(_, v)| *v)
+                });
 
                 if let Some(fw_name) = matched_fw {
                     let source_path = Path::new(&rel.source_qualified);
-                    let project_dir = source_path.parent().unwrap_or(Path::new("")).to_string_lossy().to_string();
-                    let project_dir_key = if project_dir.is_empty() { "." } else { &project_dir };
+                    let project_dir = source_path
+                        .parent()
+                        .unwrap_or(Path::new(""))
+                        .to_string_lossy()
+                        .to_string();
+                    let project_dir_key = if project_dir.is_empty() {
+                        "."
+                    } else {
+                        &project_dir
+                    };
 
                     let detect_key = format!("{}::{}", project_dir_key, fw_name);
-                    
+
                     if !detected.contains(&detect_key) {
                         detected.insert(detect_key.clone());
 
                         let fw_id = format!("__fw__{}", fw_name);
 
-                        // Only add the framework node if it doesn't already exist globally? 
+                        // Only add the framework node if it doesn't already exist globally?
                         // Wait, we add it, DB insert will handle deduplication of nodes usually.
                         new_elements.push(CodeElement {
                             qualified_name: fw_id.clone(),

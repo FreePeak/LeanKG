@@ -171,7 +171,6 @@ impl SessionCache {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_store_and_hit() {
         let mut cache = SessionCache::new();
@@ -184,7 +183,7 @@ mod tests {
         assert!(hit2);
         assert!(old2.is_none());
         assert_eq!(entry2.read_count, 2);
-        
+
         let (_entry3, hit3, old3) = cache.store("dummy.rs", "pub fn diff() {}".to_string());
         assert!(!hit3);
         assert!(old3.is_some());
@@ -196,7 +195,7 @@ mod tests {
         let mut cache = SessionCache::new();
         cache.store("target.rs", "data".to_string());
         assert!(cache.get("target.rs").is_some());
-        
+
         cache.invalidate("target.rs");
         assert!(cache.get("target.rs").is_none());
     }
@@ -206,11 +205,17 @@ mod tests {
         let mut cache = SessionCache::new();
         // Since LEANKG_CACHE_MAX_TOKENS = 500,000 natively, we'll force small eviction limit in env later or just test manual sizes.
         // Actually we can just unit test eviction logic directly.
-        cache.store("file1", "a b c d e f g h i j k l m n o p q r s t u v w x y z".to_string());
+        cache.store(
+            "file1",
+            "a b c d e f g h i j k l m n o p q r s t u v w x y z".to_string(),
+        );
         cache.store("file2", "hello world".to_string());
-        
+
         // Let's force an eviction constraint manually by calling evict_if_needed with a huge incoming token requirement
         cache.evict_if_needed(500_001); // Requires max size eviction!
-        assert!(cache.entries.is_empty(), "Eviction should drain entries to make room");
+        assert!(
+            cache.entries.is_empty(),
+            "Eviction should drain entries to make room"
+        );
     }
 }

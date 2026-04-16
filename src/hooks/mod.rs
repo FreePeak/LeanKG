@@ -541,7 +541,6 @@ impl std::error::Error for HookError {}
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_githooks_new() {
         let path = PathBuf::from("/test/path");

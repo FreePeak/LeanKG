@@ -337,38 +337,41 @@ mod handler_tests {
         let file_path = tmp_dir.path().join("dummy.rs");
         let mut file = std::fs::File::create(&file_path).unwrap();
         writeln!(file, "fn main() {{}}").unwrap();
-        
+
         // 2. Perform ctx_read natively
         let args = json!({
             "file": file_path.to_str().unwrap(),
             "mode": "full"
         });
-        
+
         let result1 = handler.execute_tool("ctx_read", &args).await;
         assert!(result1.is_ok());
         let val1 = result1.unwrap();
-        
+
         // Ensure the value is a pure JSON String scalar and NOT an Object!
-        assert!(val1.is_string(), "Phase 1: Output must be pure TOON string!");
+        assert!(
+            val1.is_string(),
+            "Phase 1: Output must be pure TOON string!"
+        );
         let output_str = val1.as_str().unwrap();
         assert!(output_str.contains("fn main() {}"));
-        
+
         // 3. Perform second read to verify Phase 2 SessionCache hits
         let result2 = handler.execute_tool("ctx_read", &args).await;
         let val2 = result2.unwrap();
         let output_str_2 = val2.as_str().unwrap();
         assert!(output_str_2.contains("[File unchanged in SessionCache"));
-        
+
         // 4. Force Invalidation by deleting file and reading
         std::fs::remove_file(&file_path).unwrap();
         let result3 = handler.execute_tool("ctx_read", &args).await;
         assert!(result3.is_err());
-        
+
         // The cache should be invalidated now.
         // Let's create it anew and ensure cache doesn't return cache hit.
         let mut file2 = std::fs::File::create(&file_path).unwrap();
         writeln!(file2, "fn after_invalidate() {{}}").unwrap();
-        
+
         let result4 = handler.execute_tool("ctx_read", &args).await;
         let val4 = result4.unwrap();
         assert!(!val4.as_str().unwrap().contains("[File unchanged"));
@@ -383,27 +386,27 @@ mod handler_tests {
         let file_path = tmp_dir.path().join("diff_target.rs");
         let mut file = std::fs::File::create(&file_path).unwrap();
         writeln!(file, "fn main() {{\n    println!(\"Hello\");\n}}").unwrap();
-        
+
         let args = json!({
             "file": file_path.to_str().unwrap(),
             "mode": "diff"
         });
-        
+
         let result1 = handler.execute_tool("ctx_read", &args).await;
         let output1 = result1.unwrap().as_str().unwrap().to_string();
-        
+
         // On first read with mode=diff, it should fallback to full output
         assert!(output1.contains("[New in Cache => Showing Full"));
         assert!(output1.contains("println!(\"Hello\");"));
-        
+
         // 2. Modify file
         let mut file2 = std::fs::File::create(&file_path).unwrap();
         writeln!(file2, "fn main() {{\n    println!(\"Goodbye\");\n}}").unwrap();
-        
+
         // 3. Read again
         let result2 = handler.execute_tool("ctx_read", &args).await;
         let output2 = result2.unwrap().as_str().unwrap().to_string();
-        
+
         assert!(output2.contains("[auto-delta]"));
         assert!(output2.contains("-    println!(\"Hello\");"));
         assert!(output2.contains("+    println!(\"Goodbye\");"));
