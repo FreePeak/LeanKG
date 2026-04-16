@@ -414,6 +414,11 @@ graph TB
 | Go Parser | Parse Go source files |
 | TS/JS Parser | Parse TypeScript/JavaScript files |
 | Python Parser | Parse Python files |
+| Ruby Parser | Parse Ruby files |
+| PHP Parser | Parse PHP files |
+| Perl Parser | Parse Perl files |
+| R Parser | Parse R files |
+| Elixir Parser | Parse Elixir files |
 | Entity Extractor | Extract functions, classes, imports, TESTED_BY |
 | Graph Builder | Build relationships va store to DB |
 | Pipeline Detector | Auto-detect CI/CD config files by path and naming convention |
