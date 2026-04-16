@@ -83,7 +83,7 @@ impl MCPServer {
         } else {
             std::env::current_dir().ok()?.join(path)
         };
-        
+
         for ancestor in path.ancestors() {
             let leankg_path = ancestor.join(".leankg");
             if leankg_path.is_dir() {
@@ -106,15 +106,11 @@ impl MCPServer {
                 );
                 leankg_path
             } else {
-                tracing::debug!(
-                    "No .leankg found for '{}', using default db_path",
-                    fp
-                );
+                tracing::debug!("No .leankg found for '{}', using default db_path", fp);
                 self.get_db_path()
             }
         } else {
-            Self::find_leankg_for_path(".")
-                .unwrap_or_else(|| self.get_db_path())
+            Self::find_leankg_for_path(".").unwrap_or_else(|| self.get_db_path())
         };
 
         {
@@ -138,12 +134,12 @@ impl MCPServer {
         tracing::debug!("Initializing database at: {}", project_db_path.display());
         let db = init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?;
         let ge = GraphEngine::with_persistence(db);
-        
+
         {
             let mut cache = self.graph_engine_cache.write();
             cache.insert(project_db_path.clone(), ge.clone());
         }
-        
+
         Ok(ge)
     }
 
@@ -451,9 +447,14 @@ impl MCPServer {
             .map_err(|e| format!("Parser init error: {}", e))?;
 
         let root_str = project_root.to_string_lossy().to_string();
-        match crate::indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &root_str).await {
+        match crate::indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &root_str)
+            .await
+        {
             Ok(result) => {
-                tracing::info!("Reindex triggered by external write: {} files processed", result.total_files_processed);
+                tracing::info!(
+                    "Reindex triggered by external write: {} files processed",
+                    result.total_files_processed
+                );
             }
             Err(e) => {
                 tracing::warn!("Reindex failed: {}", e);
@@ -467,7 +468,10 @@ impl MCPServer {
         Ok(())
     }
 
-    fn load_config(&self, project_root: &std::path::Path) -> Result<crate::config::ProjectConfig, String> {
+    fn load_config(
+        &self,
+        project_root: &std::path::Path,
+    ) -> Result<crate::config::ProjectConfig, String> {
         let config_path = project_root.join(".leankg/leankg.yaml");
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)
@@ -564,10 +568,12 @@ impl MCPServer {
             }
         }
 
-        let file_path = arguments.get("file").and_then(|v| v.as_str())
+        let file_path = arguments
+            .get("file")
+            .and_then(|v| v.as_str())
             .or_else(|| arguments.get("path").and_then(|v| v.as_str()))
             .or_else(|| arguments.get("project").and_then(|v| v.as_str()));
-        
+
         let graph_engine = self.get_graph_engine_for_path(file_path)?;
         let handler = ToolHandler::new(graph_engine, self.get_db_path());
         let args_value = serde_json::Value::Object(arguments);

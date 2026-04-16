@@ -17,16 +17,16 @@ pub mod xml_layout;
 pub use android_manifest::*;
 pub use android_resources::*;
 pub use cicd::*;
+pub use config_extractor::*;
 pub use extractor::*;
+pub use framework_detector::*;
 pub use git::*;
+pub use gradle_extractor::*;
+pub use maven_extractor::*;
 pub use microservice::*;
 pub use parser::*;
 pub use process_processor::*;
 pub use terraform::*;
-pub use config_extractor::*;
-pub use framework_detector::*;
-pub use gradle_extractor::*;
-pub use maven_extractor::*;
 pub use xml_layout::*;
 
 use crate::db::models::{CodeElement, Relationship};
@@ -38,14 +38,24 @@ use std::sync::Arc;
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
-    let extensions = ["go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml", "mod"];
-    let config_files = ["package.json", "tsconfig.json", "Cargo.toml", "go.mod",
-                        "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
-                        "pom.xml", "AndroidManifest.xml"];
+    let extensions = [
+        "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
+        "mod",
+    ];
+    let config_files = [
+        "package.json",
+        "tsconfig.json",
+        "Cargo.toml",
+        "go.mod",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+        "pom.xml",
+        "AndroidManifest.xml",
+    ];
 
-    let walker = WalkBuilder::new(root)
-        .follow_links(true)
-        .build();
+    let walker = WalkBuilder::new(root).follow_links(true).build();
 
     for entry in walker.flatten() {
         let path = entry.path();
@@ -101,8 +111,14 @@ fn get_language(file_path: &str) -> Option<&'static str> {
     }
 }
 
-fn try_extract_android(source: &[u8], file_path: &str) -> Option<(Vec<CodeElement>, Vec<Relationship>)> {
-    let file_name = std::path::Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or("");
+fn try_extract_android(
+    source: &[u8],
+    file_path: &str,
+) -> Option<(Vec<CodeElement>, Vec<Relationship>)> {
+    let file_name = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
     if file_name == "AndroidManifest.xml" {
         let extractor = crate::indexer::AndroidManifestExtractor::new(source, file_path);
         return Some(extractor.extract());
@@ -118,53 +134,104 @@ fn try_extract_android(source: &[u8], file_path: &str) -> Option<(Vec<CodeElemen
     None
 }
 
-fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>> {
+fn extract_elements_for_file(
+    file_path: &str,
+) -> Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>> {
     let content = std::fs::read(file_path)?;
     let source = content.as_slice();
 
     if file_path.ends_with(".tf") {
         let extractor = crate::indexer::TerraformExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     }
 
-    if is_cicd_yaml_file(std::path::Path::new(file_path)) && (file_path.ends_with(".yml") || file_path.ends_with(".yaml")) {
+    if is_cicd_yaml_file(std::path::Path::new(file_path))
+        && (file_path.ends_with(".yml") || file_path.ends_with(".yaml"))
+    {
         let extractor = crate::indexer::CicdYamlExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     }
 
-    let file_name = std::path::Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let file_name = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
     if file_name == "package.json" || file_name == "tsconfig.json" {
-        let file_type = if file_name == "package.json" { "package_json" } else { "tsconfig_json" };
+        let file_type = if file_name == "package.json" {
+            "package_json"
+        } else {
+            "tsconfig_json"
+        };
         let extractor = crate::indexer::ConfigExtractor::new(source, file_path, file_type);
         let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     } else if file_name == "Cargo.toml" {
         let extractor = crate::indexer::ConfigExtractor::new(source, file_path, "cargo_toml");
         let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     } else if file_name == "go.mod" {
         let extractor = crate::indexer::ConfigExtractor::new(source, file_path, "go_mod");
         let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
-    } else if file_name == "build.gradle" || file_name == "build.gradle.kts"
-        || file_name == "settings.gradle" || file_name == "settings.gradle.kts"
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
+    } else if file_name == "build.gradle"
+        || file_name == "build.gradle.kts"
+        || file_name == "settings.gradle"
+        || file_name == "settings.gradle.kts"
     {
         let extractor = crate::indexer::GradleExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     } else if file_name == "pom.xml" {
         let extractor = crate::indexer::MavenExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     } else if let Some((elements, relationships)) = try_extract_android(source, file_path) {
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     }
 
     let language = match get_language(file_path) {
         Some(l) => l,
-        None => return Ok(ParsedFile { element_count: 0, elements: vec![], relationships: vec![] }),
+        None => {
+            return Ok(ParsedFile {
+                element_count: 0,
+                elements: vec![],
+                relationships: vec![],
+            })
+        }
     };
 
     thread_local! {
@@ -178,7 +245,13 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
         "rust" => 3,
         "java" => 4,
         "kotlin" => 5,
-        _ => return Ok(ParsedFile { element_count: 0, elements: vec![], relationships: vec![] }),
+        _ => {
+            return Ok(ParsedFile {
+                element_count: 0,
+                elements: vec![],
+                relationships: vec![],
+            })
+        }
     };
 
     let tree = PARSERS.with(|parsers| {
@@ -202,7 +275,11 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
 
     let extractor = crate::indexer::EntityExtractor::new(source, file_path, language);
     let (elements, relationships) = extractor.extract(&tree);
-    Ok(ParsedFile { element_count: elements.len(), elements, relationships })
+    Ok(ParsedFile {
+        element_count: elements.len(),
+        elements,
+        relationships,
+    })
 }
 
 pub fn index_files_parallel(
@@ -233,16 +310,19 @@ pub fn index_files_parallel(
     eprintln!("\r  Parsed {}/{} files", total_count, total_count);
 
     let (mut structure_elements, mut structure_rels) = generate_physical_structure(
-        std::env::current_dir().unwrap_or_default().to_str().unwrap_or("."),
-        files
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or("."),
+        files,
     );
 
     let mut all_elements = Vec::new();
     let mut all_relationships = Vec::new();
-    
+
     all_elements.append(&mut structure_elements);
     all_relationships.append(&mut structure_rels);
-    
+
     let mut total = 0;
 
     for result in results {
@@ -261,11 +341,12 @@ pub fn index_files_parallel(
     if verbose {
         eprintln!("Detecting execution flows and processes...");
     }
-    
+
     let process_result = detect_processes(&all_elements, &all_relationships, None);
     if verbose {
-        eprintln!("  Detected {} execution flows spanning {} relationships", 
-            process_result.process_elements.len(), 
+        eprintln!(
+            "  Detected {} execution flows spanning {} relationships",
+            process_result.process_elements.len(),
             process_result.process_relationships.len()
         );
     }
@@ -275,7 +356,8 @@ pub fn index_files_parallel(
     if verbose {
         eprintln!("Detecting frameworks...");
     }
-    let (fw_elements, fw_rels) = FrameworkDetector::detect_frameworks(&all_elements, &all_relationships);
+    let (fw_elements, fw_rels) =
+        FrameworkDetector::detect_frameworks(&all_elements, &all_relationships);
     if verbose {
         eprintln!("  Detected {} frameworks", fw_elements.len());
     }
@@ -289,14 +371,21 @@ pub fn index_files_parallel(
         eprintln!("Detecting microservice calls...");
     }
     let microservice_rels = extract_microservice_relationships(
-        std::env::current_dir().unwrap_or_default().to_str().unwrap_or(".")
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or("."),
     );
     if verbose {
         eprintln!("  Detected {} microservice calls", microservice_rels.len());
     }
     all_relationships.extend(microservice_rels);
 
-    eprintln!("Inserting {} elements and {} relationships...", all_elements.len(), all_relationships.len());
+    eprintln!(
+        "Inserting {} elements and {} relationships...",
+        all_elements.len(),
+        all_relationships.len()
+    );
 
     if !all_elements.is_empty() {
         let total_elements = all_elements.len();
@@ -309,10 +398,13 @@ pub fn index_files_parallel(
             }
         }
         if verbose {
-            eprintln!("\r  Inserted {}/{} elements", total_elements, total_elements);
+            eprintln!(
+                "\r  Inserted {}/{} elements",
+                total_elements, total_elements
+            );
         }
     }
-    
+
     if !all_relationships.is_empty() {
         let total_rels = all_relationships.len();
         const REL_BATCH_SIZE: usize = 5000;
@@ -388,8 +480,10 @@ pub fn index_file_sync(
         return Ok(elements.len());
     }
 
-    if file_name == "build.gradle" || file_name == "build.gradle.kts"
-        || file_name == "settings.gradle" || file_name == "settings.gradle.kts"
+    if file_name == "build.gradle"
+        || file_name == "build.gradle.kts"
+        || file_name == "settings.gradle"
+        || file_name == "settings.gradle.kts"
     {
         let extractor = crate::indexer::GradleExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
@@ -629,7 +723,10 @@ where
     let total_files = files.len();
     let progress = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    let results: Vec<(String, Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>>)> = files
+    let results: Vec<(
+        String,
+        Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>>,
+    )> = files
         .par_iter()
         .map(|file_path| {
             let count = progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -641,22 +738,28 @@ where
 
     let mut indexed_files = 0;
     let mut skipped_files = 0;
-    
+
     let (mut structure_elements, mut structure_rels) = generate_physical_structure(
-        std::env::current_dir().unwrap_or_default().to_str().unwrap_or("."),
-        &files
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or("."),
+        &files,
     );
 
     let mut all_elements = Vec::new();
     let mut all_relationships = Vec::new();
-    
+
     all_elements.append(&mut structure_elements);
     all_relationships.append(&mut structure_rels);
 
     for (file_path, result) in results {
         match result {
             Ok(parsed) => {
-                if parsed.element_count > 0 || !parsed.elements.is_empty() || !parsed.relationships.is_empty() {
+                if parsed.element_count > 0
+                    || !parsed.elements.is_empty()
+                    || !parsed.relationships.is_empty()
+                {
                     indexed_files += 1;
                     all_elements.extend(parsed.elements);
                     all_relationships.extend(parsed.relationships);
@@ -676,7 +779,7 @@ where
             tracing::warn!("Failed to batch insert elements: {}", e);
         }
     }
-    
+
     if !all_relationships.is_empty() {
         if let Err(e) = graph.insert_relationships(&all_relationships) {
             tracing::warn!("Failed to batch insert relationships: {}", e);
@@ -702,7 +805,10 @@ where
     })
 }
 
-pub fn generate_physical_structure(repo_root: &str, files: &[String]) -> (Vec<CodeElement>, Vec<Relationship>) {
+pub fn generate_physical_structure(
+    repo_root: &str,
+    files: &[String],
+) -> (Vec<CodeElement>, Vec<Relationship>) {
     let mut elements = Vec::new();
     let mut relationships = Vec::new();
     let mut seen_folders = std::collections::HashSet::new();
@@ -726,7 +832,11 @@ pub fn generate_physical_structure(repo_root: &str, files: &[String]) -> (Vec<Co
         elements.push(CodeElement {
             qualified_name: file.to_string(),
             element_type: "File".to_string(),
-            name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
             file_path: file.to_string(),
             ..Default::default()
         });
@@ -734,10 +844,14 @@ pub fn generate_physical_structure(repo_root: &str, files: &[String]) -> (Vec<Co
         let current_dir = path.parent();
         if let Some(parent) = current_dir {
             let parent_str = parent.to_string_lossy().into_owned();
-            
+
             relationships.push(Relationship {
                 id: None,
-                source_qualified: if parent_str.is_empty() { repo_root.to_string() } else { parent_str.clone() },
+                source_qualified: if parent_str.is_empty() {
+                    repo_root.to_string()
+                } else {
+                    parent_str.clone()
+                },
                 target_qualified: file.to_string(),
                 rel_type: "contains".to_string(),
                 confidence: 1.0,
@@ -752,8 +866,9 @@ pub fn generate_physical_structure(repo_root: &str, files: &[String]) -> (Vec<Co
 
                 if !seen_folders.contains(current_str) {
                     seen_folders.insert(current_str.to_string());
-                    
-                    let dir_name = node_dir.file_name()
+
+                    let dir_name = node_dir
+                        .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| current_str.to_string());
 
@@ -781,14 +896,14 @@ pub fn generate_physical_structure(repo_root: &str, files: &[String]) -> (Vec<Co
                         metadata: serde_json::json!({}),
                     });
                 }
-                
+
                 node_dir = match node_dir.parent() {
                     Some(p) => {
                         if p.as_os_str().is_empty() {
                             break;
                         }
                         p
-                    },
+                    }
                     None => break,
                 };
             }
@@ -816,7 +931,8 @@ pub fn resolve_call_edges_inline(
     }
 
     let mut by_name: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    let mut by_name_and_file: std::collections::HashMap<(&str, &str), &str> = std::collections::HashMap::new();
+    let mut by_name_and_file: std::collections::HashMap<(&str, &str), &str> =
+        std::collections::HashMap::new();
 
     for elem in elements.iter() {
         if elem.element_type == "function" {
@@ -834,7 +950,10 @@ pub fn resolve_call_edges_inline(
     for rel in relationships.iter_mut() {
         if rel.rel_type == "calls" && rel.target_qualified.starts_with("__unresolved__") {
             let bare_name = rel.target_qualified.trim_start_matches("__unresolved__");
-            let file_hint = rel.metadata.get("callee_file_hint").and_then(|v| v.as_str());
+            let file_hint = rel
+                .metadata
+                .get("callee_file_hint")
+                .and_then(|v| v.as_str());
 
             let target_qn = if let Some(hint) = file_hint {
                 by_name_and_file
@@ -843,7 +962,8 @@ pub fn resolve_call_edges_inline(
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| bare_name.to_string())
             } else {
-                by_name.get(bare_name)
+                by_name
+                    .get(bare_name)
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| bare_name.to_string())
             };
@@ -858,7 +978,10 @@ pub fn resolve_call_edges_inline(
     }
 
     if resolved > 0 {
-        eprintln!("Resolved {} call edges inline (no DB pass needed)", resolved);
+        eprintln!(
+            "Resolved {} call edges inline (no DB pass needed)",
+            resolved
+        );
     }
 }
 
@@ -914,4 +1037,3 @@ include("web-app")"#;
         assert!(submodules.contains(&"core".to_string()));
     }
 }
-

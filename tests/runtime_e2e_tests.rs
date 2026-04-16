@@ -6,11 +6,11 @@ use tokio::time::{sleep, Duration};
 #[test]
 fn test_get_runtime_singleton_spawns_tasks() {
     let rt = get_runtime();
-    
+
     // We can spawn 1000 tasks and verify they evaluate completely synchronously behind the scenes
     // without ever allocating multiple runtime configurations or deadlocking internally
     let counter = Arc::new(AtomicUsize::new(0));
-    
+
     let mut handles = vec![];
     for _ in 0..10_000 {
         let c = counter.clone();
@@ -39,7 +39,7 @@ async fn test_run_blocking_fallback_multi_threaded() {
         }
         x
     });
-    
+
     assert_eq!(result, 100);
 }
 
@@ -53,6 +53,6 @@ fn test_run_blocking_no_active_runtime() {
         }
         x
     });
-    
+
     assert_eq!(result, 1225);
 }

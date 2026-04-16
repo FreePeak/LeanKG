@@ -6,6 +6,11 @@ pub struct XmlLayoutExtractor<'a> {
     file_path: &'a str,
 }
 
+struct WidgetParseResult {
+    elements: Vec<CodeElement>,
+    relationships: Vec<Relationship>,
+}
+
 impl<'a> XmlLayoutExtractor<'a> {
     pub fn new(source: &'a [u8], file_path: &'a str) -> Self {
         Self { source, file_path }
@@ -117,7 +122,319 @@ impl<'a> XmlLayoutExtractor<'a> {
         self.extract_resource_references(content, &mut elements, &mut relationships);
         self.extract_style_references(content, &mut elements, &mut relationships);
 
+        let widgets = Self::extract_widgets(content, self.file_path);
+        let mut widget_elements: Vec<CodeElement> = widgets.elements;
+        let mut widget_relationships: Vec<Relationship> = widgets.relationships;
+
+        elements.append(&mut widget_elements);
+        relationships.append(&mut widget_relationships);
+
+        let on_click_rels = Self::extract_on_click_handlers(content, self.file_path);
+        relationships.extend(on_click_rels);
+
         (elements, relationships)
+    }
+
+    fn extract_widgets(content: &str, file_path: &str) -> WidgetParseResult {
+        let mut elements = Vec::new();
+        let mut relationships = Vec::new();
+        let mut widget_index: usize = 0;
+        let mut parent_stack: Vec<(String, String)> = Vec::new();
+
+        let widget_re =
+            Regex::new(r"<([a-zA-Z][a-zA-Z0-9_.]*)\s[^>]*>|</([a-zA-Z][a-zA-Z0-9_.]*)\s*>")
+                .unwrap();
+        let id_re = Regex::new(r#"android:id\s*=\s*["']@\+id/([^"']+)["']"#).unwrap();
+        let on_click_re = Regex::new(r#"android:onClick\s*=\s*["']([^"']+)["']"#).unwrap();
+
+        let mut processed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for cap in widget_re.captures_iter(content) {
+            if let (Some(tag_match), None) = (cap.get(1), cap.get(2)) {
+                let tag_name = tag_match.as_str();
+
+                if tag_name.starts_with("xmlns") || tag_name.starts_with("tools:") {
+                    continue;
+                }
+
+                let full_match = cap.get(0).unwrap();
+                let is_self_closing = full_match.as_str().trim().ends_with("/>");
+                let match_str = full_match.as_str();
+
+                let view_id = id_re
+                    .captures(match_str)
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str().to_string());
+
+                if let Some(ref id) = view_id {
+                    let key = format!("{}:{}", tag_name, id);
+                    if processed_ids.contains(&key) {
+                        continue;
+                    }
+                    processed_ids.insert(key);
+                }
+
+                let widget_type = Self::normalize_widget_type(tag_name);
+                let on_click = on_click_re
+                    .captures(match_str)
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str().to_string());
+
+                widget_index += 1;
+                let qualified_name = if let Some(ref id) = view_id {
+                    format!("{}/@+id/{}", file_path, id)
+                } else {
+                    format!("{}/widget[{}]", file_path, widget_index)
+                };
+
+                let parent_qualified = parent_stack.last().cloned();
+
+                let mut metadata = serde_json::json!({
+                    "widget_type": widget_type.0,
+                    "widget_package": widget_type.1,
+                    "tag_name": tag_name,
+                });
+
+                if let Some(ref id) = view_id {
+                    metadata["view_id"] = serde_json::json!(id);
+                }
+                if let Some(ref handler) = on_click {
+                    metadata["on_click_handler"] = serde_json::json!(handler);
+                }
+
+                elements.push(CodeElement {
+                    qualified_name: qualified_name.clone(),
+                    element_type: "android_widget".to_string(),
+                    name: view_id
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}", widget_type.0, widget_index)),
+                    file_path: file_path.to_string(),
+                    language: "android".to_string(),
+                    parent_qualified: parent_qualified.map(|(q, _)| q),
+                    metadata,
+                    ..Default::default()
+                });
+
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: file_path.to_string(),
+                    target_qualified: qualified_name.clone(),
+                    rel_type: "defines_widget".to_string(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({
+                        "widget_type": widget_type.0,
+                    }),
+                });
+
+                if !is_self_closing {
+                    parent_stack.push((qualified_name.clone(), tag_name.to_string()));
+                }
+            } else if let (None, Some(closing_tag)) = (cap.get(1), cap.get(2)) {
+                let tag_name = closing_tag.as_str();
+                if tag_name.starts_with("xmlns") || tag_name.starts_with("tools:") {
+                    continue;
+                }
+                if let Some((_, stack_tag)) = parent_stack.last() {
+                    if *stack_tag == tag_name {
+                        parent_stack.pop();
+                    }
+                }
+            }
+        }
+
+        WidgetParseResult {
+            elements,
+            relationships,
+        }
+    }
+
+    fn normalize_widget_type(tag: &str) -> (String, String) {
+        let common_widgets: std::collections::HashMap<&str, (&str, &str)> =
+            std::collections::HashMap::from([
+                ("Button", ("Button", "android.widget")),
+                ("ImageButton", ("ImageButton", "android.widget")),
+                ("TextView", ("TextView", "android.widget")),
+                ("EditText", ("EditText", "android.widget")),
+                ("CheckBox", ("CheckBox", "android.widget")),
+                ("RadioButton", ("RadioButton", "android.widget")),
+                ("ToggleButton", ("ToggleButton", "android.widget")),
+                ("Switch", ("Switch", "android.widget")),
+                ("SeekBar", ("SeekBar", "android.widget")),
+                ("ProgressBar", ("ProgressBar", "android.widget")),
+                ("RatingBar", ("RatingBar", "android.widget")),
+                ("LinearLayout", ("LinearLayout", "android.widget")),
+                ("RelativeLayout", ("RelativeLayout", "android.widget")),
+                ("FrameLayout", ("FrameLayout", "android.widget")),
+                ("TableLayout", ("TableLayout", "android.widget")),
+                ("GridLayout", ("GridLayout", "android.widget")),
+                (
+                    "ConstraintLayout",
+                    ("ConstraintLayout", "androidx.constraintlayout.widget"),
+                ),
+                (
+                    "RecyclerView",
+                    ("RecyclerView", "androidx.recyclerview.widget"),
+                ),
+                ("ListView", ("ListView", "android.widget")),
+                ("GridView", ("GridView", "android.widget")),
+                ("Spinner", ("Spinner", "android.widget")),
+                ("ScrollView", ("ScrollView", "android.widget")),
+                (
+                    "HorizontalScrollView",
+                    ("HorizontalScrollView", "android.widget"),
+                ),
+                ("WebView", ("WebView", "android.webkit")),
+                ("VideoView", ("VideoView", "android.widget")),
+                ("ImageView", ("ImageView", "android.widget")),
+                ("SurfaceView", ("SurfaceView", "android.view")),
+                ("View", ("View", "android.view")),
+                ("ViewGroup", ("ViewGroup", "android.view")),
+                ("ActionBar", ("ActionBar", "android.app")),
+                ("Toolbar", ("Toolbar", "androidx.appcompat.widget")),
+                (
+                    "TabLayout",
+                    ("TabLayout", "com.google.android.material.tabs"),
+                ),
+                (
+                    "BottomNavigationView",
+                    (
+                        "BottomNavigationView",
+                        "com.google.android.material.bottomnavigation",
+                    ),
+                ),
+                (
+                    "NavigationView",
+                    ("NavigationView", "com.google.android.material.navigation"),
+                ),
+                (
+                    "DrawerLayout",
+                    ("DrawerLayout", "androidx.drawerlayout.widget"),
+                ),
+                (
+                    "CoordinatorLayout",
+                    ("CoordinatorLayout", "androidx.coordinatorlayout.widget"),
+                ),
+                (
+                    "FloatingActionButton",
+                    (
+                        "FloatingActionButton",
+                        "com.google.android.material.floatingactionbutton",
+                    ),
+                ),
+                (
+                    "TextInputLayout",
+                    ("TextInputLayout", "com.google.android.material.textfield"),
+                ),
+                ("CardView", ("CardView", "com.google.android.material.card")),
+                ("Chip", ("Chip", "com.google.android.material.chip")),
+                (
+                    "SwipeRefreshLayout",
+                    ("SwipeRefreshLayout", "androidx.swiperefreshlayout.widget"),
+                ),
+                (
+                    "NestedScrollView",
+                    ("NestedScrollView", "androidx.core.widget"),
+                ),
+                ("SlidingDrawer", ("SlidingDrawer", "android.widget")),
+                ("TabHost", ("TabHost", "android.widget")),
+                (
+                    "AutoCompleteTextView",
+                    ("AutoCompleteTextView", "android.widget"),
+                ),
+                (
+                    "MultiAutoCompleteTextView",
+                    ("MultiAutoCompleteTextView", "android.widget"),
+                ),
+                ("CheckedTextView", ("CheckedTextView", "android.widget")),
+                ("ZoomButton", ("ZoomButton", "android.widget")),
+                ("ZoomControls", ("ZoomControls", "android.widget")),
+                ("Chronometer", ("Chronometer", "android.widget")),
+                ("DigitalClock", ("DigitalClock", "android.widget")),
+                ("AnalogClock", ("AnalogClock", "android.widget")),
+                ("ViewFlipper", ("ViewFlipper", "android.widget")),
+                ("ViewAnimator", ("ViewAnimator", "android.widget")),
+                ("ViewSwitcher", ("ViewSwitcher", "android.widget")),
+                ("ImageSwitcher", ("ImageSwitcher", "android.widget")),
+                ("TextSwitcher", ("TextSwitcher", "android.widget")),
+                (
+                    "AdapterViewFlipper",
+                    ("AdapterViewFlipper", "android.widget"),
+                ),
+                ("StackView", ("StackView", "android.widget")),
+                ("ViewStub", ("ViewStub", "android.view")),
+                ("Menu", ("Menu", "android.view")),
+                ("MenuItem", ("MenuItem", "android.view")),
+                ("PopupWindow", ("PopupWindow", "android.widget")),
+                ("Toast", ("Toast", "android.widget")),
+                ("AlertDialog", ("AlertDialog", "android.app")),
+                ("DatePicker", ("DatePicker", "android.widget")),
+                ("TimePicker", ("TimePicker", "android.widget")),
+                ("NumberPicker", ("NumberPicker", "android.widget")),
+                ("CalendarView", ("CalendarView", "android.widget")),
+                ("ProgressDialog", ("ProgressDialog", "android.app")),
+            ]);
+
+        if let Some((name, pkg)) = common_widgets.get(tag) {
+            return (name.to_string(), pkg.to_string());
+        }
+
+        if tag.contains('.') {
+            let parts: Vec<&str> = tag.split('.').collect();
+            let name = *parts.last().unwrap_or(&tag);
+            let pkg = parts[..parts.len() - 1].join(".");
+            return (name.to_string(), pkg);
+        }
+
+        ("View".to_string(), "android.view".to_string())
+    }
+
+    fn extract_on_click_handlers(content: &str, file_path: &str) -> Vec<Relationship> {
+        let mut relationships = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let re = Regex::new(r#"android:onClick\s*=\s*["']([^"']+)["']"#).unwrap();
+        let id_re = Regex::new(r#"android:id\s*=\s*["']@\+id/([^"']+)["']"#).unwrap();
+
+        let element_re = Regex::new(r"<[a-zA-Z][^>]*>").unwrap();
+
+        for cap in element_re.captures_iter(content) {
+            let full_elem = cap.get(0).unwrap().as_str();
+
+            if let Some(on_click_match) = re.captures(full_elem) {
+                if let Some(handler) = on_click_match.get(1) {
+                    let handler_name = handler.as_str();
+                    let key = format!("{}:{}", file_path, handler_name);
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+
+                    let view_id = id_re
+                        .captures(full_elem)
+                        .and_then(|c| c.get(1))
+                        .map(|m| m.as_str());
+
+                    let source = if let Some(id) = view_id {
+                        format!("{}/@+id/{}", file_path, id)
+                    } else {
+                        file_path.to_string()
+                    };
+
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: source,
+                        target_qualified: handler_name.to_string(),
+                        rel_type: "on_click_handler".to_string(),
+                        confidence: 0.9,
+                        metadata: serde_json::json!({
+                            "handler_name": handler_name,
+                        }),
+                    });
+                }
+            }
+        }
+
+        relationships
     }
 
     fn extract_view_ids(content: &str) -> Vec<String> {
@@ -546,5 +863,122 @@ mod tests {
             .filter(|e| e.element_type == "android_style_reference")
             .collect();
         assert_eq!(style_refs.len(), 1, "Should extract 1 style reference");
+    }
+
+    #[test]
+    fn test_extract_widgets() {
+        let source = br#"
+<LinearLayout>
+    <Button android:id="@+id/submit_button" />
+    <ImageButton android:id="@+id/icon_button" />
+    <TextView android:id="@+id/title" />
+    <RecyclerView android:id="@+id/list_view" />
+</LinearLayout>"#;
+        let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/activity_main.xml");
+        let (elements, relationships) = extractor.extract();
+
+        let widgets: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "android_widget")
+            .collect();
+        assert_eq!(widgets.len(), 4, "Should extract 4 widgets");
+
+        let button = widgets.iter().find(|w| w.name == "submit_button").unwrap();
+        assert_eq!(button.metadata["widget_type"], "Button");
+
+        let imagebutton = widgets.iter().find(|w| w.name == "icon_button").unwrap();
+        assert_eq!(imagebutton.metadata["widget_type"], "ImageButton");
+
+        let defines_widget: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "defines_widget")
+            .collect();
+        assert_eq!(
+            defines_widget.len(),
+            4,
+            "Should have 4 defines_widget relationships"
+        );
+    }
+
+    #[test]
+    fn test_extract_widgets_with_on_click() {
+        let source = br#"
+<LinearLayout>
+    <Button
+        android:id="@+id/submit_button"
+        android:onClick="onSubmitClicked" />
+    <Button
+        android:id="@+id/cancel_button"
+        android:onClick="onCancelClicked" />
+</LinearLayout>"#;
+        let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/activity_main.xml");
+        let (elements, relationships) = extractor.extract();
+
+        let on_click_rels: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "on_click_handler")
+            .collect();
+        assert_eq!(on_click_rels.len(), 2, "Should have 2 onClick handlers");
+
+        let submit_handler = on_click_rels
+            .iter()
+            .find(|r| r.source_qualified.contains("submit_button"))
+            .unwrap();
+        assert_eq!(submit_handler.target_qualified, "onSubmitClicked");
+    }
+
+    #[test]
+    fn test_extract_nested_widgets() {
+        let source = br#"
+<LinearLayout android:id="@+id/parent_layout">
+    <LinearLayout android:id="@+id/nested_layout">
+        <Button android:id="@+id/nested_button" />
+    </LinearLayout>
+</LinearLayout>"#;
+        let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/activity_main.xml");
+        let (elements, relationships) = extractor.extract();
+
+        let widgets: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "android_widget")
+            .collect();
+        assert_eq!(widgets.len(), 3, "Should extract 3 widgets");
+    }
+
+    #[test]
+    fn test_extract_constraint_layout_widgets() {
+        let source = br#"<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <Button
+        android:id="@+id/btn_confirm"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Confirm" />
+    <ImageButton
+        android:id="@+id/btn_icon"
+        android:layout_width="48dp"
+        android:layout_height="48dp" />
+</androidx.constraintlayout.widget.ConstraintLayout>"#;
+        let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/main.xml");
+        let (elements, relationships) = extractor.extract();
+
+        let widgets: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "android_widget")
+            .collect();
+        assert_eq!(
+            widgets.len(),
+            3,
+            "Should extract 3 widgets (ConstraintLayout + Button + ImageButton)"
+        );
+
+        let button = widgets.iter().find(|w| w.name == "btn_confirm").unwrap();
+        assert_eq!(button.metadata["widget_type"], "Button");
+
+        let imagebutton = widgets.iter().find(|w| w.name == "btn_icon").unwrap();
+        assert_eq!(imagebutton.metadata["widget_type"], "ImageButton");
     }
 }

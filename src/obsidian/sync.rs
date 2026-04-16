@@ -40,14 +40,16 @@ impl SyncEngine {
     pub async fn push(&self) -> Result<SyncResult, ObsidianError> {
         let graph_engine = GraphEngine::new(self.db.clone());
 
-        let elements = graph_engine.all_elements()
+        let elements = graph_engine
+            .all_elements()
             .map_err(|e| ObsidianError::IoError(e.to_string()))?;
 
-        let relationships = graph_engine.all_relationships()
+        let relationships = graph_engine
+            .all_relationships()
             .map_err(|e| ObsidianError::IoError(e.to_string()))?;
 
-        let annotations = db::all_business_logic(&self.db)
-            .map_err(|e| ObsidianError::IoError(e.to_string()))?;
+        let annotations =
+            db::all_business_logic(&self.db).map_err(|e| ObsidianError::IoError(e.to_string()))?;
 
         let annotation_map: HashMap<_, _> = annotations
             .iter()
@@ -73,15 +75,22 @@ impl SyncEngine {
             {
                 continue;
             }
-            
+
             let annotation = annotation_map.get(&element.qualified_name).copied();
-            let element_rels: Vec<_> = rel_map.get(&element.qualified_name)
+            let element_rels: Vec<_> = rel_map
+                .get(&element.qualified_name)
                 .cloned()
                 .unwrap_or_default();
-            
-            match self.generator.generate_note(&element, &element_rels, annotation) {
+
+            match self
+                .generator
+                .generate_note(&element, &element_rels, annotation)
+            {
                 Ok(note) => pushed.push(note.element_id),
-                Err(e) => eprintln!("Failed to generate note for {}: {}", element.qualified_name, e),
+                Err(e) => eprintln!(
+                    "Failed to generate note for {}: {}",
+                    element.qualified_name, e
+                ),
             }
         }
 
@@ -106,18 +115,23 @@ impl SyncEngine {
 
         for entry in entries {
             if let Ok(Some(annotation)) = self.generator.read_existing_annotation(
-                entry.path().strip_prefix(vault_path).unwrap().to_str().unwrap_or("")
+                entry
+                    .path()
+                    .strip_prefix(vault_path)
+                    .unwrap()
+                    .to_str()
+                    .unwrap_or(""),
             ) {
                 let frontmatter = self.parse_frontmatter(&entry.path())?;
                 let element_id = frontmatter.get("leankg_id").cloned().unwrap_or_default();
-                
+
                 if element_id.is_empty() {
                     continue;
                 }
 
                 if let Some(existing) = db::get_business_logic(&self.db, &element_id)
-                    .map_err(|e| ObsidianError::IoError(e.to_string()))? {
-                    
+                    .map_err(|e| ObsidianError::IoError(e.to_string()))?
+                {
                     if existing.description != annotation && !annotation.is_empty() {
                         conflicts.push(ConflictInfo {
                             element_id: element_id.clone(),
@@ -148,8 +162,8 @@ impl SyncEngine {
     }
 
     fn parse_frontmatter(&self, path: &Path) -> Result<HashMap<String, String>, ObsidianError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ObsidianError::IoError(e.to_string()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| ObsidianError::IoError(e.to_string()))?;
 
         let mut result = HashMap::new();
         let mut in_frontmatter = false;
@@ -174,7 +188,7 @@ impl SyncEngine {
 
     pub async fn status(&self) -> Result<VaultStatus, ObsidianError> {
         let vault_path = Path::new(&self.generator.vault_path);
-        
+
         if !vault_path.exists() {
             return Ok(VaultStatus {
                 initialized: false,
@@ -197,8 +211,7 @@ impl SyncEngine {
 
     pub fn init(&self) -> Result<(), ObsidianError> {
         let vault_path = Path::new(&self.generator.vault_path);
-        std::fs::create_dir_all(vault_path)
-            .map_err(|e| ObsidianError::IoError(e.to_string()))?;
+        std::fs::create_dir_all(vault_path).map_err(|e| ObsidianError::IoError(e.to_string()))?;
 
         let readme_content = r#"# LeanKG Obsidian Vault
 

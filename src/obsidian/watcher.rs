@@ -12,12 +12,15 @@ pub struct ObsidianWatcher {
 
 impl ObsidianWatcher {
     pub fn new(engine: Arc<SyncEngine>, debounce_ms: u64) -> Self {
-        Self { engine, debounce_ms }
+        Self {
+            engine,
+            debounce_ms,
+        }
     }
 
     pub async fn watch(&self, vault_path: &str) -> Result<(), ObsidianError> {
         let (tx, mut rx) = mpsc::channel::<Event>(100);
-        
+
         let tx_clone = tx.clone();
         let watch_path = vault_path.to_string();
 
@@ -29,9 +32,12 @@ impl ObsidianWatcher {
                     }
                 },
                 Config::default().with_poll_interval(Duration::from_secs(1)),
-            ).unwrap();
+            )
+            .unwrap();
 
-            watcher.watch(Path::new(&watch_path), RecursiveMode::Recursive).unwrap();
+            watcher
+                .watch(Path::new(&watch_path), RecursiveMode::Recursive)
+                .unwrap();
 
             loop {
                 std::thread::sleep(Duration::from_secs(1));
@@ -60,7 +66,7 @@ impl ObsidianWatcher {
 
     fn should_sync_event(&self, event: &Event) -> bool {
         use notify::EventKind;
-        
+
         matches!(
             event.kind,
             EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)

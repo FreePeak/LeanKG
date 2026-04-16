@@ -1378,7 +1378,8 @@ pub async fn services_page(State(state): State<AppState>) -> axum::response::Htm
         .unwrap_or_else(|| "unknown".to_string());
     drop(current_service);
 
-    let content = format!(r#"
+    let content = format!(
+        r#"
         <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
         <div class="card">
@@ -1619,7 +1620,9 @@ pub async fn api_service_graph(
     });
 
     let result = match state.get_graph_engine().await {
-        Ok(g) => g.get_service_graph(&service_name).map_err(|e| e.to_string()),
+        Ok(g) => g
+            .get_service_graph(&service_name)
+            .map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
 
@@ -1867,17 +1870,17 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                             name: e.name.clone(),
                             file_path: e.file_path.clone(),
                             element_type: e.element_type.clone(),
-                        }
+                        },
                     }
                 })
                 .collect();
 
             let node_ids: std::collections::HashSet<_> =
                 nodes.iter().map(|n| n.id.clone()).collect();
-            
+
             let mut seen_edges: std::collections::HashSet<(String, String)> =
                 std::collections::HashSet::new();
-            
+
             let relationships: Vec<GraphRelationship> = relationships
                 .iter()
                 .filter_map(|r| {
@@ -1895,7 +1898,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
 
                     let src_id = resolve_id(&r.source_qualified)?;
                     let tgt_id = resolve_id(&r.target_qualified)?;
-                    
+
                     let edge_key = (src_id.clone(), tgt_id.clone());
                     if seen_edges.contains(&edge_key) {
                         return None;
@@ -1958,7 +1961,7 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                             name: e.name.clone(),
                             file_path: e.file_path.clone(),
                             element_type: e.element_type.clone(),
-                        }
+                        },
                     }
                 })
                 .collect();
@@ -1970,7 +1973,10 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                     node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified)
                 })
                 .map(|r| GraphRelationship {
-                    id: format!("{}_{}_{}", r.source_qualified, r.rel_type, r.target_qualified),
+                    id: format!(
+                        "{}_{}_{}",
+                        r.source_qualified, r.rel_type, r.target_qualified
+                    ),
                     source_id: r.source_qualified.clone(),
                     target_id: r.target_qualified.clone(),
                     rel_type: r.rel_type.clone(),
@@ -2544,15 +2550,17 @@ pub async fn api_get_file(
     Query(query): Query<FileQuery>,
 ) -> impl IntoResponse {
     let proj_path = state.current_project_path.read().await.clone();
-    
+
     // Normalize: strip leading "./" prefix that the indexer stores
     let clean_path = query.path.strip_prefix("./").unwrap_or(&query.path);
     let target_path = proj_path.join(clean_path);
-    
+
     // Security: canonicalize and verify the resolved path is within the project root
-    let canonical_proj = proj_path.canonicalize().unwrap_or_else(|_| proj_path.clone());
+    let canonical_proj = proj_path
+        .canonicalize()
+        .unwrap_or_else(|_| proj_path.clone());
     let canonical_target = target_path.canonicalize();
-    
+
     match canonical_target {
         Ok(ref resolved) if resolved.starts_with(&canonical_proj) => {
             match tokio::fs::read_to_string(resolved).await {

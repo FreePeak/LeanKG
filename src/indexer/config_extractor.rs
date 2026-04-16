@@ -1,6 +1,6 @@
 use crate::db::models::{CodeElement, Relationship};
-use std::path::Path;
 use regex::Regex;
+use std::path::Path;
 
 pub struct ConfigExtractor<'a> {
     source: &'a [u8],
@@ -34,7 +34,11 @@ impl<'a> ConfigExtractor<'a> {
         let content = String::from_utf8_lossy(self.source);
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&content);
 
-        let config_name = Path::new(self.file_path).file_name().unwrap_or_default().to_string_lossy().to_string();
+        let config_name = Path::new(self.file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         elements.push(CodeElement {
             qualified_name: self.file_path.to_string(),
             element_type: "config_file".to_string(),
@@ -77,7 +81,11 @@ impl<'a> ConfigExtractor<'a> {
     fn extract_tsconfig_json(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut elements = Vec::new();
 
-        let config_name = Path::new(self.file_path).file_name().unwrap_or_default().to_string_lossy().to_string();
+        let config_name = Path::new(self.file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         elements.push(CodeElement {
             qualified_name: self.file_path.to_string(),
             element_type: "config_file".to_string(),
@@ -89,11 +97,11 @@ impl<'a> ConfigExtractor<'a> {
 
         // We only extract target/module settings if valid JSON (ignoring comments which break strict JSON)
         let content = String::from_utf8_lossy(self.source);
-        
+
         // Strip out single-line `//` comments using a basic regex so serde_json has a chance
         let re_comments = Regex::new(r"(?m)^\s*//.*$").unwrap();
         let cleaned = re_comments.replace_all(&content, "");
-        
+
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&cleaned);
         if let Ok(json) = parsed {
             if let Some(compiler_options) = json.get("compilerOptions") {
@@ -112,7 +120,11 @@ impl<'a> ConfigExtractor<'a> {
         let mut elements = Vec::new();
         let mut relationships = Vec::new();
 
-        let config_name = Path::new(self.file_path).file_name().unwrap_or_default().to_string_lossy().to_string();
+        let config_name = Path::new(self.file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         elements.push(CodeElement {
             qualified_name: self.file_path.to_string(),
             element_type: "config_file".to_string(),
@@ -123,7 +135,7 @@ impl<'a> ConfigExtractor<'a> {
         });
 
         let content = String::from_utf8_lossy(self.source);
-        
+
         // Match standard single-line `[dependencies]` blocks including dev and build.
         // E.g., `serde = "1.0"` or `serde = { version = "1.0" }`
         let mut in_deps_block = false;
@@ -140,7 +152,9 @@ impl<'a> ConfigExtractor<'a> {
 
             if let Some(caps) = block_header_re.captures(trimmed) {
                 in_deps_block = true;
-                current_dep_type = caps.get(1).map_or("dependencies".to_string(), |m| m.as_str().to_string());
+                current_dep_type = caps
+                    .get(1)
+                    .map_or("dependencies".to_string(), |m| m.as_str().to_string());
                 continue;
             } else if trimmed.starts_with('[') {
                 in_deps_block = false;
@@ -174,7 +188,11 @@ impl<'a> ConfigExtractor<'a> {
         let mut elements = Vec::new();
         let mut relationships = Vec::new();
 
-        let config_name = Path::new(self.file_path).file_name().unwrap_or_default().to_string_lossy().to_string();
+        let config_name = Path::new(self.file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         elements.push(CodeElement {
             qualified_name: self.file_path.to_string(),
             element_type: "config_file".to_string(),

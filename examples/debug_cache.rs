@@ -17,14 +17,16 @@ fn main() {
         ..Default::default()
     };
     graph.insert_element(&elem_b).unwrap();
-    graph.insert_relationship(&Relationship {
-        id: None,
-        source_qualified: "src/a.rs".to_string(),
-        target_qualified: "src/b.rs::mod_b".to_string(),
-        rel_type: "imports".to_string(),
-        confidence: 1.0,
-        metadata: serde_json::json!({}),
-    }).unwrap();
+    graph
+        .insert_relationship(&Relationship {
+            id: None,
+            source_qualified: "src/a.rs".to_string(),
+            target_qualified: "src/b.rs::mod_b".to_string(),
+            rel_type: "imports".to_string(),
+            confidence: 1.0,
+            metadata: serde_json::json!({}),
+        })
+        .unwrap();
 
     match graph.get_dependencies("src/a.rs") {
         Ok(deps) => println!("get_dependencies returned {} elements", deps.len()),

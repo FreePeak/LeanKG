@@ -176,7 +176,10 @@ impl PersistentCache {
         Ok(())
     }
 
-    async fn delete_from_db(&self, key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn delete_from_db(
+        &self,
+        key: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let query = r#":delete query_cache where cache_key = $key"#;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
@@ -215,7 +218,10 @@ mod tests {
         let cache = PersistentCache::new(db, 300);
 
         cache
-            .insert::<String, Vec<String>>("test_key".to_string(), vec!["value1".to_string(), "value2".to_string()])
+            .insert::<String, Vec<String>>(
+                "test_key".to_string(),
+                vec!["value1".to_string(), "value2".to_string()],
+            )
             .await;
 
         let result: Option<Vec<String>> = cache.get("test_key").await;
@@ -246,13 +252,22 @@ mod tests {
         let cache = PersistentCache::new(db, 300);
 
         cache
-            .insert::<String, Vec<String>>("deps:src/main.rs".to_string(), vec!["lib.rs".to_string()])
+            .insert::<String, Vec<String>>(
+                "deps:src/main.rs".to_string(),
+                vec!["lib.rs".to_string()],
+            )
             .await;
         cache
-            .insert::<String, Vec<String>>("deps:src/lib.rs".to_string(), vec!["mod.rs".to_string()])
+            .insert::<String, Vec<String>>(
+                "deps:src/lib.rs".to_string(),
+                vec!["mod.rs".to_string()],
+            )
             .await;
         cache
-            .insert::<String, String>("orch:context:src/main.rs".to_string(), "content".to_string())
+            .insert::<String, String>(
+                "orch:context:src/main.rs".to_string(),
+                "content".to_string(),
+            )
             .await;
 
         cache.invalidate_prefix("deps:src/").await;
