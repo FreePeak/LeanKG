@@ -30,8 +30,6 @@ impl<'a> AndroidManifestExtractor<'a> {
             ..Default::default()
         });
 
-        let mut _app_element: Option<String> = None;
-
         let component_tags = [
             ("activity", "android_activity"),
             ("service", "android_service"),
@@ -74,7 +72,6 @@ impl<'a> AndroidManifestExtractor<'a> {
 
         if let Some(app_name) = Self::extract_tag_content(content, "application") {
             if let Some(name) = Self::extract_android_name(&app_name, "application") {
-                _app_element = Some(name.clone());
                 let app_id = format!(
                     "__android__application__{}",
                     name.replace('.', "_").replace('$', "_")

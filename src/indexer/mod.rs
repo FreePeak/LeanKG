@@ -87,27 +87,35 @@ struct ParsedFile {
 }
 
 fn get_language(file_path: &str) -> Option<&'static str> {
-    if file_path.ends_with(".go") {
-        Some("go")
-    } else if file_path.ends_with(".ts") || file_path.ends_with(".js") {
-        Some("typescript")
-    } else if file_path.ends_with(".py") {
-        Some("python")
-    } else if file_path.ends_with(".rs") {
-        Some("rust")
-    } else if file_path.ends_with(".java") {
-        Some("java")
-    } else if file_path.ends_with(".kt") || file_path.ends_with(".kts") {
-        Some("kotlin")
-    } else if file_path.ends_with("package.json") || file_path.ends_with("tsconfig.json") {
-        Some("package_json")
-    } else if file_path.ends_with("Cargo.toml") {
-        Some("cargo_toml")
-    } else if file_path.ends_with("go.mod") {
-        Some("go_mod")
-    } else {
-        None
+    let ext = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())?;
+    match ext {
+        "go" => Some("go"),
+        "ts" | "js" => Some("typescript"),
+        "py" => Some("python"),
+        "rs" => Some("rust"),
+        "java" => Some("java"),
+        "kt" => Some("kotlin"),
+        _ => None,
     }
+}
+
+fn try_extract_android(source: &[u8], file_path: &str) -> Option<(Vec<CodeElement>, Vec<Relationship>)> {
+    let file_name = std::path::Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if file_name == "AndroidManifest.xml" {
+        let extractor = crate::indexer::AndroidManifestExtractor::new(source, file_path);
+        return Some(extractor.extract());
+    }
+    if file_path.contains("/res/values/") && file_path.ends_with(".xml") {
+        let extractor = crate::indexer::AndroidResourcesExtractor::new(source, file_path);
+        return Some(extractor.extract());
+    }
+    if file_path.contains("/res/") && file_path.ends_with(".xml") {
+        let extractor = crate::indexer::XmlLayoutExtractor::new(source, file_path);
+        return Some(extractor.extract());
+    }
+    None
 }
 
 fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>> {
@@ -150,17 +158,7 @@ fn extract_elements_for_file(file_path: &str) -> Result<ParsedFile, Box<dyn std:
         let extractor = crate::indexer::MavenExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
-    } else if file_name == "AndroidManifest.xml" {
-        let extractor = crate::indexer::AndroidManifestExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
-    } else if file_path.contains("/res/values/") && file_path.ends_with(".xml") {
-        let extractor = crate::indexer::AndroidResourcesExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
-        return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
-    } else if file_path.contains("/res/") && file_path.ends_with(".xml") {
-        let extractor = crate::indexer::XmlLayoutExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
+    } else if let Some((elements, relationships)) = try_extract_android(source, file_path) {
         return Ok(ParsedFile { element_count: elements.len(), elements, relationships });
     }
 
@@ -370,31 +368,7 @@ pub fn index_file_sync(
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
-    if file_name == "AndroidManifest.xml" {
-        let extractor = crate::indexer::AndroidManifestExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
-        if elements.is_empty() && relationships.is_empty() {
-            return Ok(0);
-        }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
-        return Ok(elements.len());
-    }
-
-    if file_path.contains("/res/values/") && file_path.ends_with(".xml") {
-        let extractor = crate::indexer::AndroidResourcesExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
-        if elements.is_empty() && relationships.is_empty() {
-            return Ok(0);
-        }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
-        return Ok(elements.len());
-    }
-
-    if file_path.contains("/res/") && file_path.ends_with(".xml") {
-        let extractor = crate::indexer::XmlLayoutExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
+    if let Some((elements, relationships)) = try_extract_android(source, file_path) {
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }

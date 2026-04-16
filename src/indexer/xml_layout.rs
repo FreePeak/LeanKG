@@ -90,11 +90,10 @@ impl<'a> XmlLayoutExtractor<'a> {
 
         if let Some(activity) = Self::extract_tools_context(content) {
             let activity_qualified = format!("{}", activity);
-            let context_rel = format!("{}/tools:context", self.file_path);
 
             relationships.push(Relationship {
                 id: None,
-                source_qualified: context_rel,
+                source_qualified: self.file_path.to_string(),
                 target_qualified: activity_qualified,
                 rel_type: "associated_with".to_string(),
                 confidence: 0.9,

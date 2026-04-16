@@ -385,32 +385,142 @@ fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = config::ProjectConfig::default();
     config.project.name = project_name;
 
+    let detected_root = detect_project_root(".");
+    config.project.root = std::path::PathBuf::from(&detected_root);
+
+    let mut detected_langs = Vec::new();
+    let abs_root = std::path::Path::new(&detected_root);
+    if abs_root.exists() {
+        detect_languages(&detected_root, &mut detected_langs);
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        eprintln!(
+            "Warning: detected root '{}' not found (cwd: {})",
+            detected_root,
+            cwd.display()
+        );
+    }
+    if !detected_langs.is_empty() {
+        config.project.languages = detected_langs;
+    }
+
     let config_yaml = serde_yaml::to_string(&config)?;
 
     std::fs::create_dir_all(path)?;
     std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)?;
 
-    let readme = r#"# Project
-
-This project uses LeanKG for code intelligence.
-
-## Setup
-
-```bash
-leankg init
-leankg index ./src
-```
-
-## Commands
-
-- `leankg index ./src` - Index codebase
-- `leankg serve` - Start server
-- `leankg impact <file> --depth 3` - Calculate impact radius
-"#;
-    std::fs::write(std::path::Path::new(path).join("README.md"), readme)?;
-
     println!("Initialized LeanKG project at {}", path);
+    if detected_root != "./src" {
+        println!("  Auto-detected source root: {}", detected_root);
+    }
+    if !config.project.languages.is_empty() {
+        println!(
+            "  Detected languages: {}",
+            config.project.languages.join(", ")
+        );
+    }
     Ok(())
+}
+
+fn detect_project_root(base: &str) -> String {
+    let candidates = [
+        ("./src", "standard src/"),
+        ("./app/src", "Android app/src/"),
+        ("./app", "Android app/"),
+        ("./lib", "library lib/"),
+        ("./packages", "monorepo packages/"),
+    ];
+
+    for (dir, label) in candidates {
+        let full = std::path::Path::new(base).join(dir.strip_prefix("./").unwrap_or(dir));
+        if full.exists() && full.is_dir() {
+            if has_code_files(&full) {
+                println!("  Detected project type: {}", label);
+                return dir.to_string();
+            }
+        }
+    }
+
+    ".".to_string()
+}
+
+fn has_code_files(dir: &std::path::Path) -> bool {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            let ext = std::path::Path::new(name_str.as_ref())
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if [
+                "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "xml",
+            ]
+            .contains(&ext)
+            {
+                return true;
+            }
+            if entry.path().is_dir()
+                && !name_str.starts_with('.')
+                && !["node_modules", "vendor", "build", ".gradle", "target"].contains(&name_str.as_ref())
+            {
+                if has_code_files(&entry.path()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn detect_languages(root: &str, languages: &mut Vec<String>) {
+    let root_path = std::path::Path::new(root);
+    let ext_lang = [
+        (".go", "go"),
+        (".ts", "typescript"),
+        (".js", "javascript"),
+        (".py", "python"),
+        (".rs", "rust"),
+        (".java", "java"),
+        (".kt", "kotlin"),
+        (".kts", "kotlin"),
+    ];
+
+    for (ext, lang) in ext_lang {
+        if has_extension_recursive(root_path, ext, 6) {
+            if !languages.contains(&lang.to_string()) {
+                languages.push(lang.to_string());
+            }
+        }
+    }
+}
+
+fn has_extension_recursive(dir: &std::path::Path, ext: &str, max_depth: u32) -> bool {
+    if max_depth == 0 {
+        return false;
+    }
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some(ext.trim_start_matches('.')) {
+                return true;
+            }
+            if path.is_dir()
+                && !path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with('.'))
+                    .unwrap_or(false)
+                && !["node_modules", "vendor", "build", ".gradle", "target"]
+                    .iter()
+                    .any(|skip| path.file_name().map(|n| n == *skip).unwrap_or(false))
+            {
+                if has_extension_recursive(&path, ext, max_depth - 1) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 async fn index_codebase(
