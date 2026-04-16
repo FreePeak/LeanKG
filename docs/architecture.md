@@ -105,6 +105,11 @@ graph LR
 - Python
 - Java
 - Kotlin
+- Ruby
+- PHP
+- Perl
+- R
+- Elixir
 
 ---
 
