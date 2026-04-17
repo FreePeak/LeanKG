@@ -186,7 +186,11 @@ impl IntentParser {
         for word in &words {
             let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
             if cleaned.len() >= 3
-                && cleaned.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
+                && cleaned
+                    .chars()
+                    .next()
+                    .map(|c| c.is_lowercase())
+                    .unwrap_or(false)
                 && cleaned.contains('_')
             {
                 return Some(cleaned.to_string());
@@ -198,8 +202,15 @@ impl IntentParser {
             let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
             // Skip common words, look for likely module names
             if cleaned.len() >= 4
-                && cleaned.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
-                && !["the", "for", "with", "from", "this", "that", "file", "module", "show"].contains(&cleaned)
+                && cleaned
+                    .chars()
+                    .next()
+                    .map(|c| c.is_lowercase())
+                    .unwrap_or(false)
+                && ![
+                    "the", "for", "with", "from", "this", "that", "file", "module", "show",
+                ]
+                .contains(&cleaned)
             {
                 // Check if it looks like a module/class name (camelCase or snake_case)
                 if cleaned.contains('_')
