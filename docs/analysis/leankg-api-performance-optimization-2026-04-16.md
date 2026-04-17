@@ -397,7 +397,7 @@ pub async fn init_db(&self) -> Result<(), ...> {
 
 ```bash
 # Start API server
-cd /Users/linh.doan/work/be
+cd <your-leankg-path>
 /Users/linh.doan/.local/bin/leankg api-serve --port 8081
 
 # Test search performance
