@@ -62,10 +62,8 @@ impl QueryOrchestrator {
         let intent = self.intent_parser.parse(intent_str);
         // Use intent target as fallback when file is not explicitly provided
         let target_file = file.or(intent.target.as_deref());
-        let effective_file = target_file.map(|t| {
-            self.resolve_module_to_file(t)
-                .unwrap_or_else(|| t.to_string())
-        });
+        let effective_file = target_file
+            .map(|t| self.resolve_module_to_file(t).unwrap_or_else(|| t.to_string()));
         let cache_key = self.compute_cache_key(&intent, effective_file.as_deref(), mode);
 
         if !fresh {
@@ -138,9 +136,9 @@ impl QueryOrchestrator {
         file: Option<&str>,
         mode: Option<&str>,
     ) -> Result<CachedContent, String> {
-        let target_file = file.ok_or(
+        let target_file = file.ok_or_else(|| {
             "File required for context query. Example: 'context for src/main.rs' or 'show me context for ./src/main.rs'"
-        )?;
+        })?;
         let read_mode = self.resolve_mode(mode, target_file);
 
         let file_elements = self

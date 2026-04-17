@@ -186,6 +186,7 @@ impl IntentParser {
         for word in &words {
             let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
             if cleaned.len() >= 3
+<<<<<<< HEAD
                 && cleaned
                     .chars()
                     .next()
@@ -202,6 +203,7 @@ impl IntentParser {
             let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
             // Skip common words, look for likely module names
             if cleaned.len() >= 4
+<<<<<<< HEAD
                 && cleaned
                     .chars()
                     .next()
