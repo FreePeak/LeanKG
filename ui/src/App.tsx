@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { GraphViewer } from './components/GraphViewer';
 import { FileDetailPanel } from './components/FileDetailPanel';
 import { Database, Search, ChevronRight, Home, Loader2 } from 'lucide-react';
@@ -29,6 +29,7 @@ function App() {
     resetToStructuralDefaults,
   } = useGraphFilters();
   const [searchTerm, setSearchTerm] = useState('');
+  const initialLoadRef = useRef(false);
 
   const discoveredNodeTypes = useMemo(() => {
     return DEFAULT_NODE_TYPE_ORDER;
@@ -91,7 +92,32 @@ function App() {
   }, []);
 
   useEffect(() => {
-    loadChildren(breadcrumbs[breadcrumbs.length - 1].path);
+    // Guard against Strict Mode double-invocation
+    if (initialLoadRef.current) return;
+    initialLoadRef.current = true;
+
+    // Multi-repo: check service-topology first, if services found show them as root nodes
+    // Single-repo: fallback to expandService with all=true to load all nodes (including functions)
+    (async () => {
+      setLoading(true);
+      try {
+        const topoRes = await fetch('/api/graph/service-topology');
+        const topoJson = await topoRes.json();
+        if (topoJson.success && topoJson.data && topoJson.data.nodes && topoJson.data.nodes.length > 1) {
+          // Multi-project: show services as root nodes
+          setData({
+            nodes: topoJson.data.nodes,
+            relationships: topoJson.data.relationships || [],
+          });
+          setLoading(false);
+          return;
+        }
+      } catch {
+        // service-topology not available, fall through to single-repo mode
+      }
+      // Single-repo: load all nodes including functions
+      expandService('', 'Root', true);
+    })();
   }, []);
 
   const handleNodeClick = useCallback(async (nodeId: string) => {
@@ -109,12 +135,13 @@ function App() {
     return true;
   }, [data]);
 
-  const expandService = useCallback(async (servicePath: string, _label: string) => {
+  const expandService = useCallback(async (servicePath: string, _label: string, loadAll: boolean = false) => {
     setLoading(true);
     setError(null);
     try {
       const encodedPath = encodeURIComponent(servicePath);
-      const res = await fetch(`/api/graph/expand-service?path=${encodedPath}`);
+      const allParam = loadAll ? '&all=true' : '';
+      const res = await fetch(`/api/graph/expand-service?path=${encodedPath}${allParam}`);
       const json = await res.json();
 
       if (json.success && json.data) {
@@ -145,7 +172,7 @@ function App() {
       if (servicePath) {
         const label = (node.properties?.name as string) || node.label || nodeId;
         setBreadcrumbs([{ label: 'Root', path: '' }, { label, path: servicePath }]);
-        await expandService(servicePath, label);
+        await expandService(servicePath, label, true);  // loadAll=true to load all content
         resetToStructuralDefaults();
         setSelectedFileId(null);
       }
@@ -171,7 +198,11 @@ function App() {
         setBreadcrumbs(prev => [...prev, { label, path: newPath }]);
       }
 
-      await loadChildren(newPath);
+      // In single-repo, expand folder to show ALL content (functions, classes, etc.)
+      // Use expandService with all=true to load all nested content
+      const folderPath = newPath === '' ? '' : './' + newPath;
+      const label = (node.properties?.name as string) || node.label || (newPath === '' ? 'Root' : nodeId);
+      await expandService(folderPath, label, true);
       resetToStructuralDefaults();
       setSelectedFileId(null);
     } else if (elementType === 'file' || elementType === 'document' || elementType === 'config_file') {

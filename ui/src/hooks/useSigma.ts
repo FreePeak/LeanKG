@@ -57,7 +57,7 @@ interface UseSigmaOptions {
 interface UseSigmaReturn {
   containerRef: React.RefObject<HTMLDivElement | null>;
   sigmaRef: React.RefObject<Sigma | null>;
-  setGraph: (graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => void;
+  setGraph: (graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, skipAnimation?: boolean) => void;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -363,7 +363,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const runLayout = useCallback((graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => {
+  const runLayout = useCallback((graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, skipAnimation: boolean = false) => {
     const nodeCount = graph.order;
     if (nodeCount === 0) return;
 
@@ -372,6 +372,34 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       layoutRef.current = null;
     }
     if (layoutTimeoutRef.current) clearTimeout(layoutTimeoutRef.current);
+
+    if (skipAnimation) {
+      // Skip layout animation for initial load
+      // For massive graphs, also skip noverlap as it can cause Set overflow errors
+      if (nodeCount < 10000) {
+        noverlap.assign(graph, NOVERLAP_SETTINGS);
+      }
+      const sigma = sigmaRef.current;
+      if (sigma) {
+        // Calculate graph bounds and fit camera synchronously
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        graph.forEachNode((_n: string, attrs: SigmaNodeAttributes) => {
+          if (attrs.x < minX) minX = attrs.x;
+          if (attrs.x > maxX) maxX = attrs.x;
+          if (attrs.y < minY) minY = attrs.y;
+          if (attrs.y > maxY) maxY = attrs.y;
+        });
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const graphW = maxX - minX || 1;
+        const graphH = maxY - minY || 1;
+        const container = sigma.getContainer();
+        const ratio = Math.max(graphW / (container?.clientWidth || 800), graphH / (container?.clientHeight || 600)) * 1.2;
+        sigma.getCamera().setState({ x: cx, y: cy, angle: 0, ratio });
+      }
+      sigmaRef.current?.refresh();
+      return;
+    }
 
     const inferredSettings = forceAtlas2.inferSettings(graph);
     const customSettings = getFA2Settings(nodeCount);
@@ -387,7 +415,10 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       if (layoutRef.current) {
         layoutRef.current.stop();
         layoutRef.current = null;
-        noverlap.assign(graph, NOVERLAP_SETTINGS);
+        // Skip noverlap for massive graphs to avoid Set overflow
+        if (nodeCount < 10000) {
+          noverlap.assign(graph, NOVERLAP_SETTINGS);
+        }
         sigmaRef.current?.refresh();
         sigmaRef.current?.getCamera().animatedReset({ duration: 800 });
         setIsLayoutRunning(false);
@@ -395,7 +426,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     }, duration);
   }, []);
 
-  const setGraph = useCallback((newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => {
+  const setGraph = useCallback((newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, skipAnimation: boolean = false) => {
     const sigma = sigmaRef.current;
     if (!sigma) return;
 
@@ -406,8 +437,9 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     sigma.setGraph(newGraph);
     setSelectedNode(null);
 
-    runLayout(newGraph);
-    sigma.getCamera().animatedReset({ duration: 500 });
+    runLayout(newGraph, skipAnimation);
+    // Always ensure camera is properly fitted to graph bounds, even on initial load
+    sigma.getCamera().animatedReset({ duration: skipAnimation ? 0 : 500 });
   }, [runLayout, setSelectedNode]);
 
   const focusNode = useCallback((nodeId: string) => {
@@ -446,7 +478,9 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       layoutRef.current = null;
       const graph = graphRef.current;
       if (graph) {
-        noverlap.assign(graph, NOVERLAP_SETTINGS);
+        if (graph.order < 10000) {
+          noverlap.assign(graph, NOVERLAP_SETTINGS);
+        }
         sigmaRef.current?.refresh();
       }
       setIsLayoutRunning(false);

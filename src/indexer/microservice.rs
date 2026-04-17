@@ -300,6 +300,7 @@ impl MicroserviceExtractor {
     }
 
     /// Create a Relationship with service_calls type
+    #[allow(clippy::too_many_arguments)]
     fn create_relationship(
         &self,
         target_service: String,
@@ -338,20 +339,16 @@ impl MicroserviceExtractor {
         // Pattern: .../service-name/internal/external/...
         // The service name is the parent of "internal"
         for i in 0..components.len() {
-            if components[i].as_os_str() == "internal" {
-                if i > 0 {
-                    return components[i - 1].as_os_str().to_string_lossy().to_string();
-                }
+            if components[i].as_os_str() == "internal" && i > 0 {
+                return components[i - 1].as_os_str().to_string_lossy().to_string();
             }
         }
 
         // Fallback: use the directory containing internal/external
         for i in 0..components.len() {
-            if components[i].as_os_str() == "external" {
-                if i >= 2 {
-                    // Return the grandparent (parent of "external"'s parent)
-                    return components[i - 2].as_os_str().to_string_lossy().to_string();
-                }
+            if components[i].as_os_str() == "external" && i >= 2 {
+                // Return the grandparent (parent of "external"'s parent)
+                return components[i - 2].as_os_str().to_string_lossy().to_string();
             }
         }
 

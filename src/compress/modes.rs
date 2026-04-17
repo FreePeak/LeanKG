@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ReadMode {
+    #[default]
     Adaptive,
     Full,
     Map,
@@ -13,13 +16,8 @@ pub enum ReadMode {
     Lines,
 }
 
-impl Default for ReadMode {
-    fn default() -> Self {
-        ReadMode::Adaptive
-    }
-}
-
 impl ReadMode {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "adaptive" => Some(ReadMode::Adaptive),
@@ -82,6 +80,22 @@ impl ReadMode {
         } else {
             ReadMode::Map
         }
+    }
+}
+
+impl fmt::Display for ReadMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ReadMode::Adaptive => "adaptive",
+            ReadMode::Full => "full",
+            ReadMode::Map => "map",
+            ReadMode::Signatures => "signatures",
+            ReadMode::Diff => "diff",
+            ReadMode::Aggressive => "aggressive",
+            ReadMode::Entropy => "entropy",
+            ReadMode::Lines => "lines",
+        };
+        write!(f, "{}", s)
     }
 }
 

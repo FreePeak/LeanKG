@@ -126,9 +126,10 @@ impl MCPServer {
             .map_err(|e| format!("Failed to resolve db path: {}", e))?;
 
         if !project_db_path.exists() {
-            return Err(format!(
+            return Err(
                 "LeanKG not initialized. No .leankg directory found. Run 'leankg init' first."
-            ));
+                    .to_string(),
+            );
         }
 
         tracing::debug!("Initializing database at: {}", project_db_path.display());

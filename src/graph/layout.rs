@@ -1,7 +1,7 @@
 use crate::db::schema::CozoDb;
 use crate::graph::GraphEngine;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Pre-calculated node layout for efficient graph rendering
 /// This module provides server-side layout computation to offload
@@ -57,10 +57,12 @@ impl LayoutEngine {
         height: f64,
     ) -> Result<PrecalculatedLayout, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let elements = self.graph_engine.all_elements().map_err(|e| {
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error + Send + Sync>
+            Box::new(std::io::Error::other(e.to_string()))
+                as Box<dyn std::error::Error + Send + Sync>
         })?;
         let relationships = self.graph_engine.all_relationships().map_err(|e| {
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error + Send + Sync>
+            Box::new(std::io::Error::other(e.to_string()))
+                as Box<dyn std::error::Error + Send + Sync>
         })?;
 
         if elements.is_empty() {
@@ -106,10 +108,7 @@ impl LayoutEngine {
         for node_id in &node_ids {
             positions.insert(
                 node_id.clone(),
-                (
-                    (rand_simple() * width),
-                    (rand_simple() * height),
-                ),
+                ((rand_simple() * width), (rand_simple() * height)),
             );
         }
 
@@ -121,10 +120,8 @@ impl LayoutEngine {
             let t = temperature * cooling.powi(iter as i32);
 
             // Calculate repulsive forces between all node pairs
-            let mut displacements: HashMap<String, (f64, f64)> = node_ids
-                .iter()
-                .map(|id| (id.clone(), (0.0, 0.0)))
-                .collect();
+            let mut displacements: HashMap<String, (f64, f64)> =
+                node_ids.iter().map(|id| (id.clone(), (0.0, 0.0))).collect();
 
             for i in 0..n {
                 for j in (i + 1)..n {
@@ -140,19 +137,27 @@ impl LayoutEngine {
                     let fx = (dx / dist) * rep_force;
                     let fy = (dy / dist) * rep_force;
 
-                    *displacements.get_mut(&node_ids[i]).unwrap() =
-                        (displacements[&node_ids[i]].0 + fx, displacements[&node_ids[i]].1 + fy);
-                    *displacements.get_mut(&node_ids[j]).unwrap() =
-                        (displacements[&node_ids[j]].0 - fx, displacements[&node_ids[j]].1 - fy);
+                    *displacements.get_mut(&node_ids[i]).unwrap() = (
+                        displacements[&node_ids[i]].0 + fx,
+                        displacements[&node_ids[i]].1 + fy,
+                    );
+                    *displacements.get_mut(&node_ids[j]).unwrap() = (
+                        displacements[&node_ids[j]].0 - fx,
+                        displacements[&node_ids[j]].1 - fy,
+                    );
                 }
             }
 
             // Calculate attractive forces along edges
             for rel in &relationships {
-                if rel.rel_type == "calls" || rel.rel_type == "imports" || rel.rel_type == "contains" {
-                    if let (Some(&(x1, y1)), Some(&(x2, y2))) =
-                        (positions.get(&rel.source_qualified), positions.get(&rel.target_qualified))
-                    {
+                if rel.rel_type == "calls"
+                    || rel.rel_type == "imports"
+                    || rel.rel_type == "contains"
+                {
+                    if let (Some(&(x1, y1)), Some(&(x2, y2))) = (
+                        positions.get(&rel.source_qualified),
+                        positions.get(&rel.target_qualified),
+                    ) {
                         let dx = x1 - x2;
                         let dy = y1 - y2;
                         let dist = (dx * dx + dy * dy).sqrt().max(0.01);

@@ -25,7 +25,7 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     let existing_relations: std::collections::HashSet<String> = relations_result
         .rows
         .iter()
-        .filter_map(|row| row.get(0).and_then(|v| v.as_str().map(String::from)))
+        .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
         .collect();
 
     if !existing_relations.contains("code_elements") {
@@ -75,6 +75,9 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = db.run_script(create_target_index, Default::default()) {
             tracing::debug!("target_qualified index may already exist: {:?}", e);
         }
+
+        // NOTE: source_qualified_index is created for each DB to avoid migration issues
+        // See get_relationships_for_elements_optimized in query.rs
 
         validate_relationships_schema(db)?;
     }

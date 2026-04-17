@@ -13,7 +13,7 @@ pub enum CommandCategory {
     Linter,
     Build,
     Python,
-    AWS,
+    Aws,
     Database,
     Terraform,
     #[allow(dead_code)]
@@ -61,7 +61,7 @@ impl CommandCategory {
         {
             Some(CommandCategory::Build)
         } else if cmd_lower.contains("aws") {
-            Some(CommandCategory::AWS)
+            Some(CommandCategory::Aws)
         } else if cmd_lower.contains("psql") || cmd_lower.contains("mysql") {
             Some(CommandCategory::Database)
         } else if cmd_lower.contains("terraform") || cmd_lower.contains("tf") {

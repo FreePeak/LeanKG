@@ -3,7 +3,6 @@ use crate::db::models::{
 };
 use crate::db::schema::CozoDb;
 use crate::graph::cache::QueryCache;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
@@ -34,9 +33,15 @@ pub struct ChildrenResult {
 }
 
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct GraphEngine {
     db: CozoDb,
     cache: QueryCache,
+    elements_cache: std::sync::Arc<parking_lot::RwLock<Option<Vec<CodeElement>>>>,
+    relationships_cache: std::sync::Arc<parking_lot::RwLock<Option<Vec<Relationship>>>>,
+    // Secondary index: element_id -> indices of relationships involving that element
+    relationships_by_element:
+        std::sync::Arc<parking_lot::RwLock<Option<std::collections::HashMap<String, Vec<usize>>>>>,
 }
 
 impl GraphEngine {
@@ -44,12 +49,25 @@ impl GraphEngine {
         Self {
             db,
             cache: QueryCache::new(300, 1000),
+            elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
+            relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
+                None::<Vec<Relationship>>,
+            )),
+            relationships_by_element: std::sync::Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
     #[allow(dead_code)]
     pub fn with_cache(db: CozoDb, cache: QueryCache) -> Self {
-        Self { db, cache }
+        Self {
+            db,
+            cache,
+            elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
+            relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
+                None::<Vec<Relationship>>,
+            )),
+            relationships_by_element: std::sync::Arc::new(parking_lot::RwLock::new(None)),
+        }
     }
 
     pub fn with_persistence(db: CozoDb) -> Self {
@@ -58,11 +76,30 @@ impl GraphEngine {
         Self {
             db: (*db_arc).clone(),
             cache,
+            elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
+            relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
+                None::<Vec<Relationship>>,
+            )),
+            relationships_by_element: std::sync::Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
     pub fn db(&self) -> &CozoDb {
         &self.db
+    }
+
+    /// Invalidate all caches - call this when data changes (e.g., after indexing)
+    pub fn invalidate_cache(&self) {
+        *self.elements_cache.write() = None;
+        *self.relationships_cache.write() = None;
+        *self.relationships_by_element.write() = None;
+    }
+
+    /// Check if cache is valid (has data loaded)
+    pub fn is_cache_valid(&self) -> bool {
+        self.elements_cache.read().is_some()
+            && self.relationships_cache.read().is_some()
+            && self.relationships_by_element.read().is_some()
     }
 
     pub fn find_element(
@@ -100,7 +137,6 @@ impl GraphEngine {
             cluster_id,
             cluster_label,
             metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-            ..Default::default()
         }))
     }
 
@@ -140,7 +176,6 @@ impl GraphEngine {
             cluster_id,
             cluster_label,
             metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-            ..Default::default()
         }))
     }
 
@@ -149,7 +184,7 @@ impl GraphEngine {
         file_path: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
         let normalized = normalize_path(file_path);
-        let escaped_normalized = escape_datalog(&normalized);
+        let _escaped_normalized = escape_datalog(&normalized);
 
         let cache = self.cache.clone();
         let cache_key = normalized.clone();
@@ -251,7 +286,7 @@ impl GraphEngine {
         target: &str,
     ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
         let normalized = normalize_path(target);
-        let escaped_normalized = escape_datalog(&normalized);
+        let _escaped_normalized = escape_datalog(&normalized);
 
         let cache = self.cache.clone();
         let cache_key = normalized.clone();
@@ -335,12 +370,16 @@ impl GraphEngine {
     ) -> Result<cozo::NamedRows, Box<dyn std::error::Error + Send + Sync>> {
         self.db.run_script(query, params).map_err(|e| {
             let msg = e.to_string();
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg))
-                as Box<dyn std::error::Error + Send + Sync>
+            Box::new(std::io::Error::other(msg)) as Box<dyn std::error::Error + Send + Sync>
         })
     }
 
     pub fn all_elements(&self) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        // Check cache first
+        if let Some(cached) = self.elements_cache.read().as_ref() {
+            return Ok(cached.clone());
+        }
+
         let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]"#;
 
         let result = self
@@ -367,31 +406,255 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
 
+        // Store in cache
+        *self.elements_cache.write() = Some(elements.clone());
+
         Ok(elements)
     }
 
-    pub fn get_elements_in_folder(&self, folder_path: &str) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let pattern = format!(".*{}/.*", folder_path.replace('.', "\\.").replace('/', "\\/"));
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(file_path, $pat)"#;
+    pub fn get_elements_in_folder(
+        &self,
+        folder_path: &str,
+        limit: Option<usize>,
+        offset: Option<usize>,
+        all_content: bool,
+    ) -> Result<ChildrenResult, Box<dyn std::error::Error>> {
+        let limit = limit.unwrap_or(500).min(500);
+        let offset = offset.unwrap_or(0);
+
+        // When path is empty or ".", return root-level elements
+        // If all_content=true, return all elements under root (for single-repo expansion)
+        if folder_path.is_empty() || folder_path == "." {
+            if all_content {
+                // Load ALL elements under root (for single-repo when user wants full content)
+                let query_str = format!(
+                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit {} :offset {}",
+                    limit,
+                    offset
+                );
+                let result = self
+                    .db
+                    .run_script(&query_str, std::collections::BTreeMap::new())?;
+                let total_count = result.rows.len();
+
+                let elements: Vec<CodeElement> = result
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        let parent_qualified = row[7].as_str().map(String::from);
+                        let cluster_id = row[8].as_str().map(String::from);
+                        let cluster_label = row[9].as_str().map(String::from);
+                        let metadata_str = row[10].as_str().unwrap_or("{}");
+                        CodeElement {
+                            qualified_name: row[0].as_str().unwrap_or("").to_string(),
+                            element_type: row[1].as_str().unwrap_or("").to_string(),
+                            name: row[2].as_str().unwrap_or("").to_string(),
+                            file_path: row[3].as_str().unwrap_or("").to_string(),
+                            line_start: row[4].as_i64().unwrap_or(0) as u32,
+                            line_end: row[5].as_i64().unwrap_or(0) as u32,
+                            language: row[6].as_str().unwrap_or("").to_string(),
+                            parent_qualified,
+                            cluster_id,
+                            cluster_label,
+                            metadata: serde_json::from_str(metadata_str)
+                                .unwrap_or(serde_json::json!({})),
+                        }
+                    })
+                    .collect();
+
+                let element_qns: std::collections::HashSet<String> =
+                    elements.iter().map(|e| e.qualified_name.clone()).collect();
+
+                let rel_query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                    *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+                    source_qualified in $qns"#;
+                let mut rel_params = std::collections::BTreeMap::new();
+                rel_params.insert(
+                    "qns".to_string(),
+                    serde_json::Value::Array(
+                        element_qns
+                            .iter()
+                            .map(|s| serde_json::Value::String(s.clone()))
+                            .collect(),
+                    ),
+                );
+                let rel_result = self.db.run_script(rel_query, rel_params)?;
+                let relationships: Vec<Relationship> = rel_result
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        let metadata_str = row[4].as_str().unwrap_or("{}");
+                        Relationship {
+                            id: None,
+                            source_qualified: row[0].as_str().unwrap_or("").to_string(),
+                            target_qualified: row[1].as_str().unwrap_or("").to_string(),
+                            rel_type: row[2].as_str().unwrap_or("").to_string(),
+                            confidence: row[3].as_f64().unwrap_or(1.0),
+                            metadata: serde_json::from_str(metadata_str)
+                                .unwrap_or(serde_json::json!({})),
+                        }
+                    })
+                    .collect();
+
+                let has_more = offset + limit < total_count;
+                return Ok(ChildrenResult {
+                    elements,
+                    relationships,
+                    total_count,
+                    has_more,
+                });
+            }
+
+            // For root without all_content, return direct children only
+            // Query a reasonable number of rows (direct children are typically few)
+            let query_str = format!(
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit {} :offset {}",
+                5000,  // Large enough to get all root elements
+                0
+            );
+
+            let result = self
+                .db
+                .run_script(&query_str, std::collections::BTreeMap::new())?;
+            let _total_count = result.rows.len();
+
+            // Filter to direct children only (paths starting with "./" and containing exactly one "/")
+            let all_direct: Vec<CodeElement> = result
+                .rows
+                .iter()
+                .filter_map(|row| {
+                    let file_path = row[3].as_str().unwrap_or("");
+                    // Direct child: starts with "./", has at most one more "/" (for the child name)
+                    let is_direct = file_path.starts_with("./") && !file_path[2..].contains('/');
+
+                    if !is_direct {
+                        return None;
+                    }
+
+                    let parent_qualified = row[7].as_str().map(String::from);
+                    let cluster_id = row[8].as_str().map(String::from);
+                    let cluster_label = row[9].as_str().map(String::from);
+                    let metadata_str = row[10].as_str().unwrap_or("{}");
+                    Some(CodeElement {
+                        qualified_name: row[0].as_str().unwrap_or("").to_string(),
+                        element_type: row[1].as_str().unwrap_or("").to_string(),
+                        name: row[2].as_str().unwrap_or("").to_string(),
+                        file_path: row[3].as_str().unwrap_or("").to_string(),
+                        line_start: row[4].as_i64().unwrap_or(0) as u32,
+                        line_end: row[5].as_i64().unwrap_or(0) as u32,
+                        language: row[6].as_str().unwrap_or("").to_string(),
+                        parent_qualified,
+                        cluster_id,
+                        cluster_label,
+                        metadata: serde_json::from_str(metadata_str)
+                            .unwrap_or(serde_json::json!({})),
+                    })
+                })
+                .collect();
+
+            // Apply offset/limit to direct children
+            let total_direct_count = all_direct.len();
+            let has_more = offset + limit < total_direct_count;
+            let elements: Vec<CodeElement> =
+                all_direct.into_iter().skip(offset).take(limit).collect();
+
+            // Get relationships for these root elements
+            let element_qns: std::collections::HashSet<String> =
+                elements.iter().map(|e| e.qualified_name.clone()).collect();
+
+            let rel_query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+                source_qualified in $qns"#;
+            let mut rel_params = std::collections::BTreeMap::new();
+            rel_params.insert(
+                "qns".to_string(),
+                serde_json::Value::Array(
+                    element_qns
+                        .iter()
+                        .map(|s| serde_json::Value::String(s.clone()))
+                        .collect(),
+                ),
+            );
+            let rel_result = self.db.run_script(rel_query, rel_params)?;
+            let relationships: Vec<Relationship> = rel_result
+                .rows
+                .iter()
+                .map(|row| {
+                    let metadata_str = row[4].as_str().unwrap_or("{}");
+                    Relationship {
+                        id: None,
+                        source_qualified: row[0].as_str().unwrap_or("").to_string(),
+                        target_qualified: row[1].as_str().unwrap_or("").to_string(),
+                        rel_type: row[2].as_str().unwrap_or("").to_string(),
+                        confidence: row[3].as_f64().unwrap_or(1.0),
+                        metadata: serde_json::from_str(metadata_str)
+                            .unwrap_or(serde_json::json!({})),
+                    }
+                })
+                .collect();
+
+            return Ok(ChildrenResult {
+                elements,
+                relationships,
+                total_count: total_direct_count,
+                has_more,
+            });
+        }
+
+        // For non-empty path, get elements in the folder (same as before but with limit/offset)
+        let pattern = format!(
+            ".*{}/.*",
+            folder_path.replace('.', "\\.").replace('/', "\\/")
+        );
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(file_path, $pat) :limit {} :offset {}"#,
+            limit, offset
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert("pat".to_string(), serde_json::Value::String(pattern));
 
-        let result = self.db.run_script(query, params)?;
-        let rows = result.rows;
+        let result = self.db.run_script(&query, params)?;
+        let total_count = result.rows.len();
 
-        let elements: Vec<CodeElement> = rows
+        // Filter to direct children only (same logic as search_elements)
+        // When all_content=true, skip this filter to return all nested content
+        let prefix_for_filter = if folder_path.is_empty() || folder_path == "." {
+            "./".to_string()
+        } else {
+            format!("./{}/", folder_path.trim_start_matches("./"))
+        };
+
+        let elements: Vec<CodeElement> = result
+            .rows
             .iter()
-            .map(|row| {
+            .filter_map(|row| {
+                let file_path = row[3].as_str().unwrap_or("");
+                let _element_type = row[1].as_str().unwrap_or("");
+
+                let remainder = file_path
+                    .strip_prefix(&prefix_for_filter)
+                    .unwrap_or(file_path);
+                // Direct child = no additional path separator after the prefix
+                // When all_content=true, we want all nested content (files, functions, etc.)
+                let is_direct_child = if all_content {
+                    true // No filtering when loading all content
+                } else {
+                    !remainder.contains('/')
+                };
+
+                if !is_direct_child {
+                    return None;
+                }
+
                 let parent_qualified = row[7].as_str().map(String::from);
                 let cluster_id = row[8].as_str().map(String::from);
                 let cluster_label = row[9].as_str().map(String::from);
                 let metadata_str = row[10].as_str().unwrap_or("{}");
-                CodeElement {
+                Some(CodeElement {
                     qualified_name: row[0].as_str().unwrap_or("").to_string(),
                     element_type: row[1].as_str().unwrap_or("").to_string(),
                     name: row[2].as_str().unwrap_or("").to_string(),
@@ -403,44 +666,30 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
-                }
+                })
             })
             .collect();
 
-        Ok(elements)
-    }
+        // Get relationships for these elements
+        let element_qns: std::collections::HashSet<String> =
+            elements.iter().map(|e| e.qualified_name.clone()).collect();
 
-    pub fn get_relationships_for_elements(
-        &self,
-        element_ids: &[String],
-        rel_types: Option<&[&str]>,
-    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
-        if element_ids.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let rel_types_filter = if let Some(types) = rel_types {
-            let type_list: Vec<String> = types.iter().map(|s| format!("\"{}\"", s)).collect();
-            format!(", rel_type in [{}]", type_list.join(", "))
-        } else {
-            String::new()
-        };
-
-        let query = format!(
-            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified in $ids or target_qualified in $ids{}"#,
-            rel_types_filter
+        let rel_query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+            *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+            source_qualified in $qns"#;
+        let mut rel_params = std::collections::BTreeMap::new();
+        rel_params.insert(
+            "qns".to_string(),
+            serde_json::Value::Array(
+                element_qns
+                    .iter()
+                    .map(|s| serde_json::Value::String(s.clone()))
+                    .collect(),
+            ),
         );
-
-        let mut params = std::collections::BTreeMap::new();
-        params.insert("ids".to_string(), serde_json::Value::Array(
-            element_ids.iter().map(|s| serde_json::Value::String(s.clone())).collect()
-        ));
-
-        let result = self.db.run_script(&query, params)?;
-        let rows = result.rows;
-
-        let relationships: Vec<Relationship> = rows
+        let rel_result = self.db.run_script(rel_query, rel_params)?;
+        let relationships: Vec<Relationship> = rel_result
+            .rows
             .iter()
             .map(|row| {
                 let metadata_str = row[4].as_str().unwrap_or("{}");
@@ -455,10 +704,62 @@ impl GraphEngine {
             })
             .collect();
 
+        let has_more = elements.len() == limit;
+
+        Ok(ChildrenResult {
+            elements,
+            relationships,
+            total_count,
+            has_more,
+        })
+    }
+
+    pub fn get_relationships_for_elements(
+        &self,
+        element_ids: &[String],
+        rel_types: Option<&[&str]>,
+    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        if element_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Ensure relationships are loaded (and index is built)
+        let all_rels = self.all_relationships()?;
+        let index = self.relationships_by_element.read();
+
+        // Use the index to find relationship indices for our elements
+        let mut relevant_indices: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        for element_id in element_ids {
+            if let Some(indices) = index.as_ref().and_then(|i| i.get(element_id)) {
+                for &idx in indices {
+                    relevant_indices.insert(idx);
+                }
+            }
+        }
+
+        let rel_types_filter: std::collections::HashSet<&str> = rel_types
+            .map(|types| types.iter().copied().collect())
+            .unwrap_or_default();
+
+        // Filter by relationship types if specified
+        let relationships: Vec<Relationship> = relevant_indices
+            .iter()
+            .filter_map(|&idx| all_rels.get(idx).cloned())
+            .filter(|r| {
+                rel_types_filter.is_empty() || rel_types_filter.contains(r.rel_type.as_str())
+            })
+            .collect();
+
         Ok(relationships)
     }
 
     pub fn all_relationships(&self) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        // Check cache first
+        if let Some(cached) = self.relationships_cache.read().as_ref() {
+            return Ok(cached.clone());
+        }
+
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata]"#;
 
         let result = self
@@ -480,6 +781,24 @@ impl GraphEngine {
                 }
             })
             .collect();
+
+        // Build secondary index: element_id -> relationship indices
+        let mut index: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (idx, rel) in relationships.iter().enumerate() {
+            index
+                .entry(rel.source_qualified.clone())
+                .or_default()
+                .push(idx);
+            index
+                .entry(rel.target_qualified.clone())
+                .or_default()
+                .push(idx);
+        }
+
+        // Store in cache
+        *self.relationships_cache.write() = Some(relationships.clone());
+        *self.relationships_by_element.write() = Some(index);
 
         Ok(relationships)
     }
@@ -518,7 +837,6 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -543,18 +861,21 @@ impl GraphEngine {
         let limit = limit.unwrap_or(200).min(500);
         let offset = offset.unwrap_or(0);
 
+        // Build type filter clause using CozoDB's = syntax
+        // For multiple types, we use multiple = clauses separated by comma (AND logic)
         let type_clause = match element_types {
             Some(types) if !types.is_empty() => {
-                let type_list = types.iter()
-                    .map(|t| format!("\"{}\"", t))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(", element_type in [{}]", type_list)
+                // For simplicity, use only the first type if multiple specified
+                // TODO: support multiple types with proper OR logic
+                let t = &types[0];
+                format!(", element_type = \"{}\"", t)
             }
             _ => String::new(),
         };
 
         let (query, params) = if prefix_with_slash.is_empty() {
+            // Empty parent - return root-level direct children (no type filtering in this branch)
+            // Note: Type filtering for empty parent would need a different approach
             let query = format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit {} :offset {}",
                 limit,
@@ -562,7 +883,11 @@ impl GraphEngine {
             );
             (query, std::collections::BTreeMap::new())
         } else {
-            let stripped = prefix_with_slash.strip_prefix("./").unwrap_or(prefix_with_slash.as_str()).trim_end_matches('/').to_string();
+            let stripped = prefix_with_slash
+                .strip_prefix("./")
+                .unwrap_or(prefix_with_slash.as_str())
+                .trim_end_matches('/')
+                .to_string();
             let literal_pattern = format!(".*{}/.*", stripped);
             let query = if type_clause.is_empty() {
                 format!(
@@ -576,11 +901,14 @@ impl GraphEngine {
                 )
             };
             let mut params = std::collections::BTreeMap::new();
-            params.insert("pat".to_string(), serde_json::Value::String(literal_pattern));
+            params.insert(
+                "pat".to_string(),
+                serde_json::Value::String(literal_pattern),
+            );
             (query, params)
         };
 
-        let result = self.db.run_script(&query, params).map_err(|e| e)?;
+        let result = self.db.run_script(&query, params)?;
         let total_count = result.rows.len();
         let rows = result.rows;
 
@@ -589,22 +917,36 @@ impl GraphEngine {
         } else {
             format!("./{}", prefix_with_slash)
         };
-        
+
+        // At root level (empty parent), exclude nested content types (function, class, method, etc.)
+        // These are not "structural" children like files and folders
+        let nested_types = [
+            "function",
+            "class",
+            "method",
+            "interface",
+            "property",
+            "struct",
+            "enum",
+        ];
+
         let elements: Vec<CodeElement> = rows
             .iter()
             .filter_map(|row| {
                 let file_path = row[3].as_str().unwrap_or("");
                 let element_type = row[1].as_str().unwrap_or("");
-                let qualified_name = row[0].as_str().unwrap_or("");
+                let _qualified_name = row[0].as_str().unwrap_or("");
 
-                let remainder = file_path.strip_prefix(&prefix_for_filter).unwrap_or(file_path);
-                let is_direct_child = if prefix_for_filter == "./" {
-                    !remainder.contains('/') || element_type == "Folder"
-                } else {
-                    !remainder.contains('/') || element_type == "Folder"
-                };
+                let remainder = file_path
+                    .strip_prefix(&prefix_for_filter)
+                    .unwrap_or(file_path);
+                // Direct child = no additional path separator after the prefix
+                // At root level, also filter out nested content types
+                let is_direct_child = !remainder.contains('/');
+                let is_nested_content =
+                    prefix_with_slash.is_empty() && nested_types.contains(&element_type);
 
-                if !is_direct_child {
+                if !is_direct_child || is_nested_content {
                     return None;
                 }
 
@@ -624,22 +966,26 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 })
             })
             .collect();
 
-        let element_qns: std::collections::HashSet<String> = elements.iter()
-            .map(|e| e.qualified_name.clone())
-            .collect();
+        let element_qns: std::collections::HashSet<String> =
+            elements.iter().map(|e| e.qualified_name.clone()).collect();
 
         let rel_query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
     *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
     source_qualified in $qns"#;
         let mut rel_params = std::collections::BTreeMap::new();
-        rel_params.insert("qns".to_string(), serde_json::Value::Array(
-            element_qns.iter().map(|s| serde_json::Value::String(s.clone())).collect()
-        ));
+        rel_params.insert(
+            "qns".to_string(),
+            serde_json::Value::Array(
+                element_qns
+                    .iter()
+                    .map(|s| serde_json::Value::String(s.clone()))
+                    .collect(),
+            ),
+        );
         let rel_result = self.db.run_script(rel_query, rel_params)?;
         let relationships: Vec<Relationship> = rel_result
             .rows
@@ -1226,7 +1572,6 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -1239,6 +1584,13 @@ impl GraphEngine {
         name: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
         let safe_name = escape_datalog(&name.to_lowercase());
+        let cache_key = format!("search:name:{}", safe_name);
+
+        // Check cache first
+        if let Some(cached) = self.cache.get_search(&cache_key) {
+            return Ok(cached);
+        }
+
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(lowercase(name), ".*{safe_name}.*")"#,
             safe_name = safe_name
@@ -1268,10 +1620,12 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
+
+        // Cache results
+        self.cache.set_search(cache_key, elements.clone());
 
         Ok(elements)
     }
@@ -1309,7 +1663,6 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -1353,7 +1706,6 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -1427,7 +1779,6 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -1475,7 +1826,6 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -1514,7 +1864,6 @@ impl GraphEngine {
                     cluster_id,
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
                 }
             })
             .collect())
@@ -1600,6 +1949,7 @@ impl GraphEngine {
         self.run_element_query(&query)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_call_graph_bounded(
         &self,
         source_qualified: &str,
@@ -1884,7 +2234,6 @@ impl GraphEngine {
             let connection_count = service_connections
                 .keys()
                 .filter(|(s, t)| s == service || t == service)
-                .map(|(_, targets)| targets)
                 .count();
 
             let is_current = service.to_lowercase() == current_lc;

@@ -135,11 +135,7 @@ fn trace_from_entry_point(
         let callees = calls.get(&current_id);
         let callees_len = callees.map(|v| v.len()).unwrap_or(0);
 
-        if callees_len == 0 {
-            if path.len() >= config.min_steps {
-                traces.push(path.clone());
-            }
-        } else if path.len() >= config.max_trace_depth {
+        if callees_len == 0 || path.len() >= config.max_trace_depth {
             if path.len() >= config.min_steps {
                 traces.push(path.clone());
             }
@@ -177,7 +173,7 @@ fn deduplicate_traces(traces: Vec<Vec<String>>) -> Vec<Vec<String>> {
     }
 
     let mut sorted = traces;
-    sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.len()));
     let mut unique: Vec<Vec<String>> = Vec::new();
 
     for trace in sorted {
@@ -202,7 +198,7 @@ fn deduplicate_by_endpoints(traces: Vec<Vec<String>>) -> Vec<Vec<String>> {
 
     let mut by_endpoints = HashMap::new();
     let mut sorted = traces;
-    sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
     for trace in sorted {
         let first = trace.first().unwrap();
@@ -245,7 +241,7 @@ pub fn detect_processes(
     let unique_traces = deduplicate_traces(all_traces);
     let mut endpoint_deduped = deduplicate_by_endpoints(unique_traces);
 
-    endpoint_deduped.sort_by(|a, b| b.len().cmp(&a.len()));
+    endpoint_deduped.sort_by_key(|b| std::cmp::Reverse(b.len()));
     let limited_traces: Vec<Vec<String>> = endpoint_deduped
         .into_iter()
         .take(cfg.max_processes)

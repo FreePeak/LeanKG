@@ -91,6 +91,7 @@ impl DocIndexer {
         })
     }
 
+    #[allow(clippy::type_complexity)]
     fn parse_doc_file(
         &self,
         path: &Path,
@@ -179,8 +180,8 @@ impl DocIndexer {
     fn extract_title(&self, content: &str) -> Option<String> {
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("# ") {
-                return Some(trimmed[2..].trim().to_string());
+            if let Some(stripped) = trimmed.strip_prefix("# ") {
+                return Some(stripped.trim().to_string());
             }
         }
         None
@@ -271,7 +272,7 @@ impl DocIndexer {
         (sections, relationships)
     }
 
-    fn extract_code_references<'a>(&self, content: &'a str) -> Vec<(String, String)> {
+    fn extract_code_references(&self, content: &str) -> Vec<(String, String)> {
         let mut refs = Vec::new();
         let file_pattern =
             regex::Regex::new(r"\b([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py))\b").unwrap();

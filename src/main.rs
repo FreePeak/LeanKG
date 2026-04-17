@@ -255,7 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cli_tool = match cli.as_str() {
                 "opencode" => benchmark::CliTool::OpenCode,
                 "gemini" => benchmark::CliTool::Gemini,
-                "kilo" | _ => benchmark::CliTool::Kilo,
+                _ => benchmark::CliTool::Kilo,
             };
             benchmark::run(category, cli_tool)?;
         }
@@ -445,11 +445,9 @@ fn detect_project_root(base: &str) -> String {
 
     for (dir, label) in candidates {
         let full = std::path::Path::new(base).join(dir.strip_prefix("./").unwrap_or(dir));
-        if full.exists() && full.is_dir() {
-            if has_code_files(&full) {
-                println!("  Detected project type: {}", label);
-                return dir.to_string();
-            }
+        if full.exists() && full.is_dir() && has_code_files(&full) {
+            println!("  Detected project type: {}", label);
+            return dir.to_string();
         }
     }
 
@@ -476,10 +474,9 @@ fn has_code_files(dir: &std::path::Path) -> bool {
                 && !name_str.starts_with('.')
                 && !["node_modules", "vendor", "build", ".gradle", "target"]
                     .contains(&name_str.as_ref())
+                && has_code_files(&entry.path())
             {
-                if has_code_files(&entry.path()) {
-                    return true;
-                }
+                return true;
             }
         }
     }
@@ -500,10 +497,8 @@ fn detect_languages(root: &str, languages: &mut Vec<String>) {
     ];
 
     for (ext, lang) in ext_lang {
-        if has_extension_recursive(root_path, ext, 6) {
-            if !languages.contains(&lang.to_string()) {
-                languages.push(lang.to_string());
-            }
+        if has_extension_recursive(root_path, ext, 6) && !languages.contains(&lang.to_string()) {
+            languages.push(lang.to_string());
         }
     }
 }
@@ -526,10 +521,9 @@ fn has_extension_recursive(dir: &std::path::Path, ext: &str, max_depth: u32) -> 
                 && !["node_modules", "vendor", "build", ".gradle", "target"]
                     .iter()
                     .any(|skip| path.file_name().map(|n| n == *skip).unwrap_or(false))
+                && has_extension_recursive(&path, ext, max_depth - 1)
             {
-                if has_extension_recursive(&path, ext, max_depth - 1) {
-                    return true;
-                }
+                return true;
             }
         }
     }
@@ -1327,7 +1321,7 @@ fn detect_clusters(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
     println!("  Average cluster size: {:.1}", stats.avg_cluster_size);
 
     let mut sorted_clusters: Vec<_> = clusters.values().collect();
-    sorted_clusters.sort_by(|a, b| b.members.len().cmp(&a.members.len()));
+    sorted_clusters.sort_by_key(|b| std::cmp::Reverse(b.members.len()));
 
     for cluster in sorted_clusters.iter().take(20) {
         println!("\n  Cluster: {} ({})", cluster.label, cluster.id);
@@ -1406,7 +1400,7 @@ fn obsidian_init(
     db_path: &std::path::Path,
     vault: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    let vault_path = obsidian::vault_path(db_path, vault);
 
     let engine =
         obsidian::SyncEngine::new(vault_path.to_str().unwrap_or(""), db_path.to_path_buf());
@@ -1457,7 +1451,7 @@ async fn obsidian_push(
     db_path: &std::path::Path,
     vault: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    let vault_path = obsidian::vault_path(db_path, vault);
 
     if !vault_path.exists() {
         eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
@@ -1483,7 +1477,7 @@ async fn obsidian_pull(
     db_path: &std::path::Path,
     vault: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    let vault_path = obsidian::vault_path(db_path, vault);
 
     if !vault_path.exists() {
         eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
@@ -1516,7 +1510,7 @@ async fn obsidian_watch(
     vault: Option<&str>,
     debounce_ms: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    let vault_path = obsidian::vault_path(db_path, vault);
 
     if !vault_path.exists() {
         eprintln!("Vault not initialized. Run 'leankg obsidian init' first.");
@@ -1546,7 +1540,7 @@ async fn obsidian_status(
     db_path: &std::path::Path,
     vault: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vault_path = obsidian::vault_path(&db_path.to_path_buf(), vault);
+    let vault_path = obsidian::vault_path(db_path, vault);
 
     println!("LeanKG Obsidian Vault Status");
     println!("============================");
@@ -1580,6 +1574,7 @@ fn walkdir_count(path: &std::path::Path) -> usize {
     count
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_metrics(
     db_path: &std::path::Path,
     since: Option<&str>,
@@ -1609,8 +1604,8 @@ fn show_metrics(
     }
 
     let ret_days = if let Some(s) = since {
-        if s.ends_with('d') {
-            s[..s.len() - 1].parse().unwrap_or(30)
+        if let Some(days) = s.strip_suffix('d') {
+            days.parse().unwrap_or(30)
         } else {
             s.parse().unwrap_or(30)
         }
@@ -1886,6 +1881,8 @@ fn export_json(
     Ok(serde_json::to_string_pretty(&export)?)
 }
 
+#[allow(clippy::collapsible_str_replace)]
+#[allow(clippy::used_underscore_binding)]
 fn export_dot(
     elements: &[db::models::CodeElement],
     relationships: &[db::models::Relationship],
@@ -1939,6 +1936,7 @@ fn export_dot(
     dot
 }
 
+#[allow(clippy::collapsible_str_replace)]
 fn export_mermaid(relationships: &[db::models::Relationship]) -> String {
     let sanitize_id = |s: &str| -> String {
         s.replace("::", "__")

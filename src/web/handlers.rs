@@ -5,9 +5,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use std::time::Duration;
 
-use crate::db::{self, models::CodeElement};
+use crate::db::{self};
 
 use super::{ApiResponse, AppState};
 
@@ -43,6 +42,8 @@ pub struct GraphData {
     pub nodes: Vec<GraphNode>,
     pub relationships: Vec<GraphRelationship>,
     pub filtered: Option<GraphFilterInfo>,
+    #[serde(rename = "hasMore")]
+    pub has_more: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -1691,7 +1692,8 @@ pub async fn api_service_topology(
     let project_path_clone = project_path.clone();
     let topology_result = tokio::task::spawn_blocking(move || {
         extract_service_topology(&project_path_clone, show_orphans)
-    }).await;
+    })
+    .await;
 
     match topology_result {
         Ok(Ok(mut topology)) => {
@@ -1769,14 +1771,15 @@ pub async fn api_service_topology(
     }
 }
 
-fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<ServiceTopology, String> {
+fn extract_service_topology(
+    project_path: &str,
+    show_orphans: bool,
+) -> Result<ServiceTopology, String> {
     use std::collections::HashMap;
     use walkdir::WalkDir;
 
     // DNS pattern to extract service reference from dns:/// URIs
-    let dns_pattern = regex::Regex::new(
-        r"dns://[/]{0,2}([a-zA-Z0-9][-a-zA-Z0-9_]*)"
-    ).unwrap();
+    let dns_pattern = regex::Regex::new(r"dns://[/]{0,2}([a-zA-Z0-9][-a-zA-Z0-9_]*)").unwrap();
 
     // Step 1: Discover service folders
     // A service = any top-level directory (or immediate subdir of platform/*) that has .git/
@@ -1801,7 +1804,8 @@ fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<Se
         for entry in entries.filter_map(|e| e.ok()) {
             let platform_path = entry.path();
             if platform_path.is_dir() {
-                let platform_name = platform_path.file_name()
+                let platform_name = platform_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
                 // Skip hidden directories
@@ -1847,7 +1851,8 @@ fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<Se
         let file_path_str = file_path.to_string_lossy();
 
         // Determine which service this file belongs to
-        let caller_service = services.iter()
+        let caller_service = services
+            .iter()
             .find(|(_, folder_path)| file_path_str.starts_with(*folder_path))
             .map(|(name, _)| name.clone());
 
@@ -1858,11 +1863,14 @@ fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<Se
 
                     if let Some(ref caller) = caller_service {
                         // Find the actual service name (with platform prefix) for the callee
-                        let callee_qualified = services.keys()
+                        let callee_qualified = services
+                            .keys()
                             .find(|k| {
                                 let key: &str = k;
-                                key.ends_with(&callee) || key == &callee ||
-                                callee.ends_with(key) || callee == key
+                                key.ends_with(&callee)
+                                    || *key == callee
+                                    || callee.ends_with(key)
+                                    || callee == key
                             })
                             .cloned();
 
@@ -1871,7 +1879,7 @@ fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<Se
                             if caller != &qualified_callee {
                                 caller_to_callee.insert(
                                     (caller.clone(), qualified_callee),
-                                    "SERVICE_CALLS".to_string()
+                                    "SERVICE_CALLS".to_string(),
                                 );
                             }
                         }
@@ -1904,7 +1912,8 @@ fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<Se
         }
         rels
     } else {
-        caller_to_callee.iter()
+        caller_to_callee
+            .iter()
             .map(|((src, tgt), rel_type)| ServiceRelationship {
                 id: format!("{}_{}_{}", src, rel_type, tgt),
                 source_id: format!("service:{}", src),
@@ -1915,18 +1924,26 @@ fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<Se
     };
 
     // Determine which nodes have relationships
-    let connected_services: std::collections::HashSet<String> = relationships.iter()
+    let connected_services: std::collections::HashSet<String> = relationships
+        .iter()
         .map(|r| {
             // Extract service name from "service:name" format
-            r.source_id.strip_prefix("service:").unwrap_or(&r.source_id).to_string()
+            r.source_id
+                .strip_prefix("service:")
+                .unwrap_or(&r.source_id)
+                .to_string()
         })
         .chain(relationships.iter().map(|r| {
-            r.target_id.strip_prefix("service:").unwrap_or(&r.target_id).to_string()
+            r.target_id
+                .strip_prefix("service:")
+                .unwrap_or(&r.target_id)
+                .to_string()
         }))
         .collect();
 
     // Step 4: Build nodes - filter orphans unless show_orphans is true
-    let nodes: Vec<ServiceNode> = services.iter()
+    let nodes: Vec<ServiceNode> = services
+        .iter()
         .filter(|(name, _)| show_orphans || connected_services.contains(*name))
         .map(|(name, folder_path)| ServiceNode {
             id: format!("service:{}", name),
@@ -1939,11 +1956,16 @@ fn extract_service_topology(project_path: &str, show_orphans: bool) -> Result<Se
         })
         .collect();
 
-    Ok(ServiceTopology { nodes, relationships, project_type: String::new() })
+    Ok(ServiceTopology {
+        nodes,
+        relationships,
+        project_type: String::new(),
+    })
 }
 
 /// Expand a single service to show its child nodes (Folder, File, Class, Function, Method, etc.)
 /// Accepts `?path=<file-path>` where path is the service's folder path from node properties
+/// Also accepts `?limit=` and `?offset=` for pagination
 #[allow(dead_code)]
 pub async fn api_graph_expand_service(
     State(state): State<AppState>,
@@ -1970,16 +1992,24 @@ pub async fn api_graph_expand_service(
         }
     };
 
+    // Parse pagination parameters
+    let limit: Option<usize> = params.get("limit").and_then(|s| s.parse().ok());
+    let offset: Option<usize> = params.get("offset").and_then(|s| s.parse().ok());
+    // When all=true, load ALL content under the folder (not just direct children)
+    let all_content: bool = params
+        .get("all")
+        .map(|s| s == "true" || s == "1")
+        .unwrap_or(false);
+
     // Get project path for resolving relative DB paths
     let project_path = {
         let path = state.current_project_path.read().await;
         path.to_string_lossy().to_string()
     };
 
-    let relative_folder = if folder_path.starts_with(&project_path) {
-        let remainder = &folder_path[project_path.len()..];
-        if remainder.starts_with('/') {
-            format!("./{}", &remainder[1..])
+    let relative_folder = if let Some(remainder) = folder_path.strip_prefix(&project_path) {
+        if let Some(stripped) = remainder.strip_prefix('/') {
+            format!("./{}", stripped)
         } else {
             format!("./{}", remainder)
         }
@@ -1987,76 +2017,86 @@ pub async fn api_graph_expand_service(
         folder_path.clone()
     };
 
-    let (elements_result, relationships_result) = match state.get_graph_engine().await {
-        Ok(g) => (g.get_elements_in_folder(&relative_folder).map_err(|e| e.to_string()), g.all_relationships().map_err(|e| e.to_string())),
-        Err(e) => (Err(e.to_string()), Err(e.to_string())),
+    let graph_engine = match state.get_graph_engine().await {
+        Ok(g) => g,
+        Err(e) => {
+            return ApiResponse::<GraphData> {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            };
+        }
     };
 
-    match (elements_result, relationships_result) {
-        (Ok(all_elements), Ok(all_relationships)) => {
-            let service_element_ids: std::collections::HashSet<String> = all_elements
-                .iter()
-                .map(|e| e.qualified_name.clone())
-                .collect();
-
-            let filtered_relationships: Vec<_> = all_relationships
-                .iter()
-                .filter(|r| {
-                    service_element_ids.contains(&r.source_qualified)
-                })
-                .collect();
-
-            let nodes: Vec<GraphNode> = all_elements
-                .iter()
-                .map(|e| {
-                    let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
-                    if let Some(first) = capitalized.first_mut() {
-                        *first = first.to_ascii_uppercase();
-                    }
-                    GraphNode {
-                        id: e.qualified_name.clone(),
-                        label: e.name.clone(),
-                        properties: NodeProperties {
-                            name: e.name.clone(),
-                            file_path: e.file_path.clone(),
-                            element_type: e.element_type.clone(),
-                        }
-                    }
-                })
-                .collect();
-
-            let relationships: Vec<GraphRelationship> = filtered_relationships
-                .iter()
-                .map(|r| GraphRelationship {
-                    id: format!("{}_{}_{}", r.source_qualified, r.rel_type, r.target_qualified),
-                    source_id: r.source_qualified.clone(),
-                    target_id: r.target_qualified.clone(),
-                    rel_type: r.rel_type.clone(),
-                })
-                .collect();
-
-            let nodes_count = nodes.len();
-            let relationships_count = relationships.len();
-
-            ApiResponse {
-                success: true,
-                data: Some(GraphData {
-                    nodes,
-                    relationships,
-                    filtered: Some(GraphFilterInfo {
-                        tests_filtered: 0,
-                        message: format!("Expanded service '{}' with {} elements and {} relationships",
-                            folder_path.split('/').last().unwrap_or(&folder_path), nodes_count, relationships_count),
-                    }),
-                }),
-                error: None,
+    // Get elements in folder with pagination
+    // For empty path, this returns root-level elements only (not ALL elements)
+    // When all_content=true, returns all nested content (for service node expansion)
+    let result =
+        match graph_engine.get_elements_in_folder(&relative_folder, limit, offset, all_content) {
+            Ok(result) => result,
+            Err(e) => {
+                return ApiResponse::<GraphData> {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                };
             }
-        }
-        (Err(e), _) | (_, Err(e)) => ApiResponse::<GraphData> {
-            success: false,
-            data: None,
-            error: Some(e),
-        },
+        };
+
+    let nodes: Vec<GraphNode> = result
+        .elements
+        .iter()
+        .map(|e| {
+            let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+            if let Some(first) = capitalized.first_mut() {
+                *first = first.to_ascii_uppercase();
+            }
+            GraphNode {
+                id: e.qualified_name.clone(),
+                label: e.name.clone(),
+                properties: NodeProperties {
+                    name: e.name.clone(),
+                    file_path: e.file_path.clone(),
+                    element_type: e.element_type.clone(),
+                },
+            }
+        })
+        .collect();
+
+    let graph_relationships: Vec<GraphRelationship> = result
+        .relationships
+        .iter()
+        .map(|r| GraphRelationship {
+            id: format!(
+                "{}_{}_{}",
+                r.source_qualified, r.rel_type, r.target_qualified
+            ),
+            source_id: r.source_qualified.clone(),
+            target_id: r.target_qualified.clone(),
+            rel_type: r.rel_type.clone(),
+        })
+        .collect();
+
+    let nodes_count = nodes.len();
+    let relationships_count = graph_relationships.len();
+
+    ApiResponse {
+        success: true,
+        data: Some(GraphData {
+            nodes,
+            relationships: graph_relationships,
+            filtered: Some(GraphFilterInfo {
+                tests_filtered: 0,
+                message: format!(
+                    "Expanded service '{}' with {} elements and {} relationships",
+                    folder_path.split('/').next_back().unwrap_or(&folder_path),
+                    nodes_count,
+                    relationships_count
+                ),
+            }),
+            has_more: result.has_more,
+        }),
+        error: None,
     }
 }
 
@@ -2075,7 +2115,8 @@ fn find_service_folder(project_path: &str, service_name: &str) -> Option<String>
         for entry in entries.filter_map(|e| e.ok()) {
             let platform_path = entry.path();
             if platform_path.is_dir() {
-                let platform_name = platform_path.file_name()
+                let platform_name = platform_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
                 if platform_name.starts_with('.') {
@@ -2157,7 +2198,10 @@ pub async fn api_graph_expand_cluster(
     let _project_prefix = format!("{}/", project_path);
 
     let (elements_result, relationships_result) = match state.get_graph_engine().await {
-        Ok(g) => (g.all_elements().map_err(|e| e.to_string()), g.all_relationships().map_err(|e| e.to_string())),
+        Ok(g) => (
+            g.all_elements().map_err(|e| e.to_string()),
+            g.all_relationships().map_err(|e| e.to_string()),
+        ),
         Err(e) => (Err(e.to_string()), Err(e.to_string())),
     };
 
@@ -2170,7 +2214,8 @@ pub async fn api_graph_expand_cluster(
                 .iter()
                 .filter(|e| {
                     let is_within_depth = |remainder: &str| -> bool {
-                        !remainder.contains('/') || (remainder.matches('/').count() == 1 && !remainder.ends_with('/'))
+                        !remainder.contains('/')
+                            || (remainder.matches('/').count() == 1 && !remainder.ends_with('/'))
                     };
                     let fp = &e.file_path;
                     if fp.starts_with(&prefix) {
@@ -2206,8 +2251,11 @@ pub async fn api_graph_expand_cluster(
             let filtered_relationships: Vec<_> = all_relationships
                 .iter()
                 .filter(|r| {
-                    cluster_element_ids.contains(&r.source_qualified) &&
-                    matches!(r.rel_type.as_str(), "contains" | "defines" | "imports" | "declares")
+                    cluster_element_ids.contains(&r.source_qualified)
+                        && matches!(
+                            r.rel_type.as_str(),
+                            "contains" | "defines" | "imports" | "declares"
+                        )
                 })
                 .collect();
 
@@ -2226,7 +2274,7 @@ pub async fn api_graph_expand_cluster(
                             name: e.name.clone(),
                             file_path: e.file_path.clone(),
                             element_type: e.element_type.clone(),
-                        }
+                        },
                     }
                 })
                 .collect();
@@ -2234,7 +2282,10 @@ pub async fn api_graph_expand_cluster(
             let relationships: Vec<GraphRelationship> = filtered_relationships
                 .iter()
                 .map(|r| GraphRelationship {
-                    id: format!("{}_{}_{}", r.source_qualified, r.rel_type, r.target_qualified),
+                    id: format!(
+                        "{}_{}_{}",
+                        r.source_qualified, r.rel_type, r.target_qualified
+                    ),
                     source_id: r.source_qualified.clone(),
                     target_id: r.target_qualified.clone(),
                     rel_type: r.rel_type.clone(),
@@ -2251,9 +2302,14 @@ pub async fn api_graph_expand_cluster(
                     relationships,
                     filtered: Some(GraphFilterInfo {
                         tests_filtered: 0,
-                        message: format!("Expanded cluster '{}' with {} elements and {} relationships",
-                            folder_path.split('/').last().unwrap_or(&folder_path), nodes_count, relationships_count),
+                        message: format!(
+                            "Expanded cluster '{}' with {} elements and {} relationships",
+                            folder_path.split('/').next_back().unwrap_or(&folder_path),
+                            nodes_count,
+                            relationships_count
+                        ),
                     }),
+                    has_more: false,
                 }),
                 error: None,
             }
@@ -2519,7 +2575,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                             name: svc.clone(),
                             file_path: String::new(),
                             element_type: "service".to_string(),
-                        }
+                        },
                     });
                 }
             }
@@ -2569,6 +2625,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                     nodes,
                     relationships,
                     filtered: None,
+                    has_more: false,
                 }),
                 error: None,
             }
@@ -2634,6 +2691,7 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                     nodes,
                     relationships,
                     filtered: None,
+                    has_more: false,
                 }),
                 error: None,
             }
@@ -2655,7 +2713,9 @@ pub struct SubgraphParams {
     pub types: Option<String>,
 }
 
-fn default_depth() -> usize { 3 }
+fn default_depth() -> usize {
+    3
+}
 
 /// Get subgraph around a root node with configurable BFS depth
 /// This enables the "Targeted Subgraph" approach for massive graphs:
@@ -2667,15 +2727,18 @@ pub async fn api_graph_subgraph(
 ) -> impl IntoResponse {
     let root = match params.root {
         Some(ref r) if !r.is_empty() => r.clone(),
-        _ => return ApiResponse::<GraphData> {
-            success: false,
-            data: None,
-            error: Some("Missing required parameter: root node ID".to_string()),
-        },
+        _ => {
+            return ApiResponse::<GraphData> {
+                success: false,
+                data: None,
+                error: Some("Missing required parameter: root node ID".to_string()),
+            }
+        }
     };
 
     let depth = params.depth.min(10); // Cap at 10 levels
-    let allowed_types: Option<std::collections::HashSet<String>> = params.types
+    let allowed_types: Option<std::collections::HashSet<String>> = params
+        .types
         .as_ref()
         .map(|t| t.split(',').map(|s| s.trim().to_uppercase()).collect());
 
@@ -2737,7 +2800,10 @@ pub async fn api_graph_subgraph(
             let visited_nodes: std::collections::HashSet<String> = visited.clone();
             let nodes: Vec<GraphNode> = elements
                 .iter()
-                .filter(|e| visited.contains(&e.qualified_name) || visited.contains(&format!("./{}", e.qualified_name)))
+                .filter(|e| {
+                    visited.contains(&e.qualified_name)
+                        || visited.contains(&format!("./{}", e.qualified_name))
+                })
                 .map(|e| {
                     let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
                     if let Some(first) = capitalized.first_mut() {
@@ -2750,7 +2816,7 @@ pub async fn api_graph_subgraph(
                             name: e.name.clone(),
                             file_path: e.file_path.clone(),
                             element_type: e.element_type.clone(),
-                        }
+                        },
                     }
                 })
                 .collect();
@@ -2761,13 +2827,17 @@ pub async fn api_graph_subgraph(
             let edges: Vec<GraphRelationship> = relationships
                 .iter()
                 .filter(|r| {
-                    visited_nodes.contains(&r.source_qualified) || visited_nodes.contains(&format!("./{}", r.source_qualified))
+                    visited_nodes.contains(&r.source_qualified)
+                        || visited_nodes.contains(&format!("./{}", r.source_qualified))
                 })
                 .filter_map(|r| {
                     let src_id = if visited_nodes.contains(&r.source_qualified) {
                         r.source_qualified.clone()
                     } else if visited_nodes.contains(&format!("./{}", r.source_qualified)) {
-                        r.source_qualified.strip_prefix("./").unwrap_or(&r.source_qualified).to_string()
+                        r.source_qualified
+                            .strip_prefix("./")
+                            .unwrap_or(&r.source_qualified)
+                            .to_string()
                     } else {
                         return None;
                     };
@@ -2775,7 +2845,10 @@ pub async fn api_graph_subgraph(
                     let tgt_id = if visited_nodes.contains(&r.target_qualified) {
                         r.target_qualified.clone()
                     } else if visited_nodes.contains(&format!("./{}", r.target_qualified)) {
-                        r.target_qualified.strip_prefix("./").unwrap_or(&r.target_qualified).to_string()
+                        r.target_qualified
+                            .strip_prefix("./")
+                            .unwrap_or(&r.target_qualified)
+                            .to_string()
                     } else {
                         return None;
                     };
@@ -2806,9 +2879,12 @@ pub async fn api_graph_subgraph(
                     relationships: edges,
                     filtered: Some(GraphFilterInfo {
                         tests_filtered: 0,
-                        message: format!("Subgraph: {} nodes, {} edges within {} hops of '{}'",
-                            nodes_count, edges_count, depth, root),
+                        message: format!(
+                            "Subgraph: {} nodes, {} edges within {} hops of '{}'",
+                            nodes_count, edges_count, depth, root
+                        ),
                     }),
+                    has_more: false,
                 }),
                 error: None,
             }
@@ -2824,9 +2900,7 @@ pub async fn api_graph_subgraph(
 /// Get cluster overview for semantic zooming (Zoom Level 0)
 /// Returns top-level clusters instead of all individual nodes
 #[allow(dead_code)]
-pub async fn api_graph_clusters(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn api_graph_clusters(State(state): State<AppState>) -> impl IntoResponse {
     let elements_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
         Ok(g) => g.all_elements().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
@@ -2840,8 +2914,10 @@ pub async fn api_graph_clusters(
     match (elements_result, relationships_result) {
         (Ok(elements), Ok(relationships)) => {
             // Group elements by parent directory / cluster
-            let mut clusters: std::collections::HashMap<String, Vec<&crate::db::models::CodeElement>> =
-                std::collections::HashMap::new();
+            let mut clusters: std::collections::HashMap<
+                String,
+                Vec<&crate::db::models::CodeElement>,
+            > = std::collections::HashMap::new();
 
             for elem in &elements {
                 let cluster_key = if let Some(last_slash) = elem.file_path.rfind('/') {
@@ -2857,21 +2933,26 @@ pub async fn api_graph_clusters(
                 .iter()
                 .map(|(cluster_key, members)| {
                     let file_count = members.len();
-                    let _type_dist: std::collections::HashMap<String, usize> = members
-                        .iter()
-                        .fold(std::collections::HashMap::new(), |mut acc, e| {
-                            *acc.entry(e.element_type.clone()).or_insert(0) += 1;
-                            acc
-                        });
+                    let _type_dist: std::collections::HashMap<String, usize> =
+                        members
+                            .iter()
+                            .fold(std::collections::HashMap::new(), |mut acc, e| {
+                                *acc.entry(e.element_type.clone()).or_insert(0) += 1;
+                                acc
+                            });
 
                     GraphNode {
                         id: format!("cluster:{}", cluster_key),
-                        label: format!("{} ({})", cluster_key.split('/').last().unwrap_or(cluster_key), file_count),
+                        label: format!(
+                            "{} ({})",
+                            cluster_key.split('/').next_back().unwrap_or(cluster_key),
+                            file_count
+                        ),
                         properties: NodeProperties {
                             name: cluster_key.clone(),
                             file_path: cluster_key.clone(),
                             element_type: format!("Cluster[{} files]", file_count),
-                        }
+                        },
                     }
                 })
                 .collect();
@@ -2893,7 +2974,11 @@ pub async fn api_graph_clusters(
                 };
 
                 if src_cluster != tgt_cluster {
-                    let edge_key = (src_cluster.clone(), tgt_cluster.clone(), rel.rel_type.clone());
+                    let edge_key = (
+                        src_cluster.clone(),
+                        tgt_cluster.clone(),
+                        rel.rel_type.clone(),
+                    );
                     cluster_edges.insert(edge_key);
                 }
             }
@@ -2921,9 +3006,12 @@ pub async fn api_graph_clusters(
                     relationships,
                     filtered: Some(GraphFilterInfo {
                         tests_filtered: 0,
-                        message: format!("Cluster overview: {} clusters, {} inter-cluster edges",
-                            nodes_count, edges_count),
+                        message: format!(
+                            "Cluster overview: {} clusters, {} inter-cluster edges",
+                            nodes_count, edges_count
+                        ),
                     }),
+                    has_more: false,
                 }),
                 error: None,
             }
@@ -2977,9 +3065,15 @@ pub struct LayoutParams {
     pub height: f64,
 }
 
-fn default_layout_iterations() -> usize { 50 }
-fn default_layout_width() -> f64 { 2000.0 }
-fn default_layout_height() -> f64 { 2000.0 }
+fn default_layout_iterations() -> usize {
+    50
+}
+fn default_layout_width() -> f64 {
+    2000.0
+}
+fn default_layout_height() -> f64 {
+    2000.0
+}
 
 #[derive(Serialize)]
 pub struct LayoutResponse {
@@ -3010,8 +3104,8 @@ pub async fn api_graph_layout(
     use crate::graph::layout::LayoutEngine;
 
     let iterations = params.iterations.min(100); // Cap at 100 iterations
-    let width = params.width.max(100.0).min(10000.0);
-    let height = params.height.max(100.0).min(10000.0);
+    let width = params.width.clamp(100.0, 10000.0);
+    let height = params.height.clamp(100.0, 10000.0);
 
     match state.get_db() {
         Ok(db) => {
@@ -3020,11 +3114,15 @@ pub async fn api_graph_layout(
                 Ok(layout) => ApiResponse {
                     success: true,
                     data: Some(LayoutResponse {
-                        nodes: layout.nodes.into_iter().map(|n| LayoutNode {
-                            node_id: n.node_id,
-                            x: n.x,
-                            y: n.y,
-                        }).collect(),
+                        nodes: layout
+                            .nodes
+                            .into_iter()
+                            .map(|n| LayoutNode {
+                                node_id: n.node_id,
+                                x: n.x,
+                                y: n.y,
+                            })
+                            .collect(),
                         bounds: LayoutBounds {
                             min_x: layout.bounds.min_x,
                             max_x: layout.bounds.max_x,
@@ -3084,8 +3182,7 @@ pub async fn api_switch_path(
 
         let repo_name = url
             .split('/')
-            .filter(|s| !s.is_empty())
-            .last()
+            .rfind(|s| !s.is_empty())
             .unwrap_or("repo")
             .replace(".git", "");
 
@@ -3229,7 +3326,8 @@ pub async fn api_switch_path(
                 state_guard.indexed_files = idx + 1;
                 state_guard.current_file = file_path.clone();
                 if total > 0 {
-                    state_guard.progress_percent = ((idx + 1) * 100) / total;
+                    state_guard.progress_percent =
+                        ((idx + 1) * 100).checked_div(total).unwrap_or(0);
                 }
             }
 
@@ -3283,6 +3381,17 @@ pub async fn api_index_status(State(state): State<AppState>) -> impl IntoRespons
             indexed_files: indexing_state.indexed_files,
         }),
         error: indexing_state.error.clone(),
+    }
+}
+
+/// Invalidate all caches - call this after indexing or data changes
+pub async fn api_invalidate_cache(State(state): State<AppState>) -> impl IntoResponse {
+    state.invalidate_graph_cache().await;
+
+    ApiResponse::<&'static str> {
+        success: true,
+        data: Some("Cache invalidated"),
+        error: None,
     }
 }
 
@@ -3497,8 +3606,7 @@ pub async fn api_github_clone(
 
     let repo_name = url
         .split('/')
-        .filter(|s| !s.is_empty())
-        .last()
+        .rfind(|s| !s.is_empty())
         .unwrap_or("repo")
         .replace(".git", "");
 
@@ -3571,7 +3679,9 @@ pub struct ChildrenParams {
     pub offset: usize,
 }
 
-fn default_limit() -> usize { 200 }
+fn default_limit() -> usize {
+    200
+}
 
 #[derive(Serialize)]
 pub struct ChildrenResponse {
@@ -3587,7 +3697,8 @@ pub async fn api_graph_children(
     State(state): State<AppState>,
     Query(params): Query<ChildrenParams>,
 ) -> impl IntoResponse {
-    let element_types: Option<Vec<String>> = params.element_types
+    let element_types: Option<Vec<String>> = params
+        .element_types
         .as_ref()
         .map(|s| s.split(',').map(|t| t.trim().to_string()).collect());
 
@@ -3600,7 +3711,9 @@ pub async fn api_graph_children(
         Ok(engine) => {
             let project_path = state.current_project_path.read().await;
             let project_path_str = project_path.to_string_lossy();
-            let effective_parent = if params.parent.starts_with('/') && params.parent.starts_with(&*project_path_str) {
+            let effective_parent = if params.parent.starts_with('/')
+                && params.parent.starts_with(&*project_path_str)
+            {
                 String::new()
             } else {
                 params.parent.clone()
@@ -3616,8 +3729,10 @@ pub async fn api_graph_children(
             match children_result {
                 Ok(cr) => {
                     let mut nodes: Vec<GraphNode> = Vec::new();
-                    let mut synthesized_dir_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-                    let mut existing_folder_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+                    let mut synthesized_dir_names: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut existing_folder_names: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
 
                     for elem in &cr.elements {
                         let mut capitalized = elem.element_type.chars().collect::<Vec<_>>();
@@ -3631,24 +3746,29 @@ pub async fn api_graph_children(
                                 name: elem.name.clone(),
                                 file_path: elem.file_path.clone(),
                                 element_type: elem.element_type.clone(),
-                            }
+                            },
                         });
                         if elem.element_type == "Folder" {
-                            let folder_name = elem.file_path.strip_prefix("./").unwrap_or(&elem.file_path);
+                            let folder_name =
+                                elem.file_path.strip_prefix("./").unwrap_or(&elem.file_path);
                             if let Some(last_part) = folder_name.rsplit('/').next() {
                                 existing_folder_names.insert(last_part.to_string());
                             }
                         }
                     }
 
-                    let parent_path = effective_parent.strip_suffix('/').unwrap_or(&effective_parent);
+                    let parent_path = effective_parent
+                        .strip_suffix('/')
+                        .unwrap_or(&effective_parent);
                     let prefix_for_dirs = if parent_path.is_empty() || parent_path == "." {
                         String::new()
                     } else {
                         format!("{}/", parent_path)
                     };
 
-                    let file_elements: Vec<&crate::db::models::CodeElement> = cr.elements.iter()
+                    let file_elements: Vec<&crate::db::models::CodeElement> = cr
+                        .elements
+                        .iter()
                         .filter(|e| e.element_type == "File" || e.element_type == "Document")
                         .collect();
 
@@ -3661,37 +3781,54 @@ pub async fn api_graph_children(
                         }
                     }
 
-                    let mut dir_nodes: Vec<GraphNode> = synthesized_dir_names.iter().filter(|dir| {
-                        if **dir == "." {
-                            return false;
-                        }
-                        if existing_folder_names.contains(*dir) {
-                            return false;
-                        }
-                        true
-                    }).map(|dir| {
-                        let folder_id = format!("{}folder:{}", if effective_parent.is_empty() { "" } else { &prefix_for_dirs }, dir);
-                        GraphNode {
-                            id: folder_id.clone(),
-                            label: dir.clone(),
-                            properties: NodeProperties {
-                                name: dir.clone(),
-                                file_path: format!("{}{}/", prefix_for_dirs, dir),
-                                element_type: "Directory".to_string(),
+                    let mut dir_nodes: Vec<GraphNode> = synthesized_dir_names
+                        .iter()
+                        .filter(|dir| {
+                            if **dir == "." {
+                                return false;
                             }
-                        }
-                    }).collect();
+                            if existing_folder_names.contains(*dir) {
+                                return false;
+                            }
+                            true
+                        })
+                        .map(|dir| {
+                            let folder_id = format!(
+                                "{}folder:{}",
+                                if effective_parent.is_empty() {
+                                    ""
+                                } else {
+                                    &prefix_for_dirs
+                                },
+                                dir
+                            );
+                            GraphNode {
+                                id: folder_id.clone(),
+                                label: dir.clone(),
+                                properties: NodeProperties {
+                                    name: dir.clone(),
+                                    file_path: format!("{}{}/", prefix_for_dirs, dir),
+                                    element_type: "Directory".to_string(),
+                                },
+                            }
+                        })
+                        .collect();
 
                     nodes.append(&mut dir_nodes);
 
-                    let relationships: Vec<GraphRelationship> = cr.relationships.iter().map(|r| {
-                        GraphRelationship {
-                            id: format!("{}_{}_{}", r.source_qualified, r.rel_type, r.target_qualified),
+                    let relationships: Vec<GraphRelationship> = cr
+                        .relationships
+                        .iter()
+                        .map(|r| GraphRelationship {
+                            id: format!(
+                                "{}_{}_{}",
+                                r.source_qualified, r.rel_type, r.target_qualified
+                            ),
                             source_id: r.source_qualified.clone(),
                             target_id: r.target_qualified.clone(),
                             rel_type: r.rel_type.clone(),
-                        }
-                    }).collect();
+                        })
+                        .collect();
 
                     ApiResponse {
                         success: true,
@@ -3708,14 +3845,14 @@ pub async fn api_graph_children(
                     success: false,
                     data: None,
                     error: Some(e.to_string()),
-                }
+                },
             }
         }
         Err(e) => ApiResponse::<ChildrenResponse> {
             success: false,
             data: None,
             error: Some(e.to_string()),
-        }
+        },
     }
 }
 
@@ -3733,26 +3870,32 @@ pub struct ExpandNodeParams {
     pub limit: usize,
 }
 
-fn default_expand_depth() -> usize { 1 }
-fn default_expand_limit() -> usize { 200 }
+fn default_expand_depth() -> usize {
+    1
+}
+fn default_expand_limit() -> usize {
+    200
+}
 
 pub async fn api_graph_expand_node(
     State(state): State<AppState>,
     Query(params): Query<ExpandNodeParams>,
 ) -> impl IntoResponse {
-    let element_types: Option<Vec<String>> = params.element_types
+    let element_types: Option<Vec<String>> = params
+        .element_types
         .as_ref()
         .map(|s| s.split(',').map(|t| t.trim().to_string()).collect());
 
     let limit = params.limit.min(500);
-    let depth = params.depth.min(2);
+    let _depth = params.depth.min(2);
 
     let result = state.get_graph_engine().await;
 
     match result {
         Ok(engine) => {
             let parent_path = if params.node_type == "directory" || params.node_type == "folder" {
-                params.node_id
+                params
+                    .node_id
                     .strip_prefix("folder:")
                     .unwrap_or(&params.node_id)
                     .trim_end_matches('/')
@@ -3770,24 +3913,29 @@ pub async fn api_graph_expand_node(
 
             match children_result {
                 Ok(cr) => {
-                    let mut nodes: Vec<GraphNode> = cr.elements.iter().map(|e| {
-                        let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
-                        if let Some(first) = capitalized.first_mut() {
-                            *first = first.to_ascii_uppercase();
-                        }
-                        GraphNode {
-                            id: e.qualified_name.clone(),
-                            label: e.name.clone(),
-                            properties: NodeProperties {
-                                name: e.name.clone(),
-                                file_path: e.file_path.clone(),
-                                element_type: e.element_type.clone(),
+                    let mut nodes: Vec<GraphNode> = cr
+                        .elements
+                        .iter()
+                        .map(|e| {
+                            let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+                            if let Some(first) = capitalized.first_mut() {
+                                *first = first.to_ascii_uppercase();
                             }
-                        }
-                    }).collect();
+                            GraphNode {
+                                id: e.qualified_name.clone(),
+                                label: e.name.clone(),
+                                properties: NodeProperties {
+                                    name: e.name.clone(),
+                                    file_path: e.file_path.clone(),
+                                    element_type: e.element_type.clone(),
+                                },
+                            }
+                        })
+                        .collect();
 
                     let prefix_for_dirs = format!("{}/", parent_path);
-                    let mut synthesized_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+                    let mut synthesized_dirs: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
 
                     for elem in &cr.elements {
                         if let Some(rel) = elem.file_path.strip_prefix(&prefix_for_dirs) {
@@ -3797,29 +3945,45 @@ pub async fn api_graph_expand_node(
                         }
                     }
 
-                    let mut dir_nodes: Vec<GraphNode> = synthesized_dirs.iter().map(|dir| {
-                        let folder_id = format!("{}folder:{}", if parent_path.is_empty() { "" } else { &prefix_for_dirs }, dir);
-                        GraphNode {
-                            id: folder_id.clone(),
-                            label: dir.clone(),
-                            properties: NodeProperties {
-                                name: dir.clone(),
-                                file_path: format!("{}{}/", prefix_for_dirs, dir),
-                                element_type: "Directory".to_string(),
+                    let mut dir_nodes: Vec<GraphNode> = synthesized_dirs
+                        .iter()
+                        .map(|dir| {
+                            let folder_id = format!(
+                                "{}folder:{}",
+                                if parent_path.is_empty() {
+                                    ""
+                                } else {
+                                    &prefix_for_dirs
+                                },
+                                dir
+                            );
+                            GraphNode {
+                                id: folder_id.clone(),
+                                label: dir.clone(),
+                                properties: NodeProperties {
+                                    name: dir.clone(),
+                                    file_path: format!("{}{}/", prefix_for_dirs, dir),
+                                    element_type: "Directory".to_string(),
+                                },
                             }
-                        }
-                    }).collect();
+                        })
+                        .collect();
 
                     nodes.append(&mut dir_nodes);
 
-                    let relationships: Vec<GraphRelationship> = cr.relationships.iter().map(|r| {
-                        GraphRelationship {
-                            id: format!("{}_{}_{}", r.source_qualified, r.rel_type, r.target_qualified),
+                    let relationships: Vec<GraphRelationship> = cr
+                        .relationships
+                        .iter()
+                        .map(|r| GraphRelationship {
+                            id: format!(
+                                "{}_{}_{}",
+                                r.source_qualified, r.rel_type, r.target_qualified
+                            ),
                             source_id: r.source_qualified.clone(),
                             target_id: r.target_qualified.clone(),
                             rel_type: r.rel_type.clone(),
-                        }
-                    }).collect();
+                        })
+                        .collect();
 
                     ApiResponse {
                         success: true,
@@ -3836,14 +4000,14 @@ pub async fn api_graph_expand_node(
                     success: false,
                     data: None,
                     error: Some(e.to_string()),
-                }
+                },
             }
         }
         Err(e) => ApiResponse::<ChildrenResponse> {
             success: false,
             data: None,
             error: Some(e.to_string()),
-        }
+        },
     }
 }
 

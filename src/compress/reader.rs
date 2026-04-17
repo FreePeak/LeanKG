@@ -405,8 +405,10 @@ impl FileReader {
         let mut selected = Vec::new();
 
         for range in ranges {
-            for i in (range.start.saturating_sub(1))..range.end.min(lines.len()) {
-                selected.push(lines[i]);
+            let start = range.start.saturating_sub(1);
+            let end = range.end.min(lines.len());
+            for line in lines.iter().take(end).skip(start) {
+                selected.push(*line);
             }
         }
 

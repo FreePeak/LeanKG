@@ -40,11 +40,7 @@ impl<'a> AndroidManifestExtractor<'a> {
         for (tag, elem_type) in &component_tags {
             for cap in Self::extract_tags(content, tag) {
                 if let Some(name) = Self::extract_android_name(&cap, tag) {
-                    let comp_id = format!(
-                        "__android__{}__{}",
-                        tag,
-                        name.replace('.', "_").replace('$', "_")
-                    );
+                    let comp_id = format!("__android__{}__{}", tag, name.replace(['.', '$'], "_"));
 
                     elements.push(CodeElement {
                         qualified_name: comp_id.clone(),
@@ -72,10 +68,7 @@ impl<'a> AndroidManifestExtractor<'a> {
 
         if let Some(app_name) = Self::extract_tag_content(content, "application") {
             if let Some(name) = Self::extract_android_name(&app_name, "application") {
-                let app_id = format!(
-                    "__android__application__{}",
-                    name.replace('.', "_").replace('$', "_")
-                );
+                let app_id = format!("__android__application__{}", name.replace(['.', '$'], "_"));
                 elements.push(CodeElement {
                     qualified_name: app_id,
                     element_type: "android_application".to_string(),
@@ -89,10 +82,7 @@ impl<'a> AndroidManifestExtractor<'a> {
 
         for cap in Self::extract_tags(content, "uses-permission") {
             if let Some(name) = Self::extract_android_name(&cap, "uses-permission") {
-                let perm_id = format!(
-                    "__android__permission__{}",
-                    name.replace('.', "_").replace(':', "_")
-                );
+                let perm_id = format!("__android__permission__{}", name.replace(['.', ':'], "_"));
 
                 elements.push(CodeElement {
                     qualified_name: perm_id.clone(),
@@ -116,10 +106,7 @@ impl<'a> AndroidManifestExtractor<'a> {
 
         for cap in Self::extract_tags(content, "uses-feature") {
             if let Some(name) = Self::extract_android_name(&cap, "uses-feature") {
-                let feature_id = format!(
-                    "__android__feature__{}",
-                    name.replace(':', "_").replace('-', "_")
-                );
+                let feature_id = format!("__android__feature__{}", name.replace([':', '-'], "_"));
 
                 elements.push(CodeElement {
                     qualified_name: feature_id.clone(),

@@ -106,7 +106,7 @@ impl ContextParser {
         if path.contains("\\n") || path.contains("\\r") || path.contains("\\t") {
             return false;
         }
-        let ext = path.split('.').last().unwrap_or("");
+        let ext = path.split('.').next_back().unwrap_or("");
         matches!(
             ext,
             "rs" | "go"

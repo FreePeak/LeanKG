@@ -2,10 +2,10 @@ use crate::db::schema::init_db;
 use crate::graph::GraphEngine;
 use crate::indexer::{reindex_file_sync, ParserManager};
 use crate::watcher::{FileChange, FileChangeKind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
-pub async fn handle_file_change(db_path: &PathBuf, change: FileChange) {
+pub async fn handle_file_change(db_path: &Path, change: FileChange) {
     let db = match init_db(db_path) {
         Ok(db) => db,
         Err(e) => {

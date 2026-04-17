@@ -42,7 +42,7 @@ impl ApiKeyStore {
         let existing_relations: std::collections::HashSet<String> = relations_result
             .rows
             .iter()
-            .filter_map(|row| row.get(0).and_then(|v| v.as_str().map(String::from)))
+            .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
             .collect();
 
         if !existing_relations.contains("api_keys") {
@@ -239,7 +239,7 @@ impl ApiKeyStore {
 fn generate_api_key() -> String {
     let salt = SaltString::generate(&mut OsRng);
     let key_part = Uuid::new_v4().to_string().replace("-", "");
-    format!("lkkg_{}_{}", key_part, salt.as_str()[..8].to_string())
+    format!("lkkg_{}_{}", key_part, &salt.as_str()[..8])
 }
 
 fn hash_api_key(key: &str) -> Result<String, String> {

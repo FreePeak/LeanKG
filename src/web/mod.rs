@@ -3,7 +3,6 @@ pub mod handlers;
 
 use axum::{
     body::Body,
-    extract::State,
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -22,6 +21,7 @@ pub struct AppState {
     pub db_path: Arc<RwLock<std::path::PathBuf>>,
     pub current_project_path: Arc<RwLock<std::path::PathBuf>>,
     db: Arc<RwLock<Option<CozoDb>>>,
+    graph_engine: Arc<RwLock<Option<GraphEngine>>>,
     pub indexing_state: Arc<RwLock<IndexingState>>,
 }
 
@@ -41,6 +41,7 @@ impl Default for AppState {
             db_path: Arc::new(RwLock::new(std::path::PathBuf::new())),
             current_project_path: Arc::new(RwLock::new(std::path::PathBuf::new())),
             db: Arc::new(RwLock::new(None)),
+            graph_engine: Arc::new(RwLock::new(None)),
             indexing_state: Arc::new(RwLock::new(IndexingState::default())),
         }
     }
@@ -55,6 +56,7 @@ impl AppState {
             db_path: Arc::new(RwLock::new(db_path)),
             current_project_path: Arc::new(RwLock::new(current_project_path)),
             db: Arc::new(RwLock::new(None)),
+            graph_engine: Arc::new(RwLock::new(None)),
             indexing_state: Arc::new(RwLock::new(IndexingState::default())),
         })
     }
@@ -83,7 +85,9 @@ impl AppState {
         state.indexed_files = indexed_files;
         state.current_file = current_file.to_string();
         if state.total_files > 0 {
-            state.progress_percent = (indexed_files * 100) / state.total_files;
+            state.progress_percent = (indexed_files * 100)
+                .checked_div(state.total_files)
+                .unwrap_or(0);
         }
     }
 
@@ -98,6 +102,18 @@ impl AppState {
         state.is_indexing = false;
         state.progress_percent = 100;
         state.current_file = String::new();
+
+        // Invalidate graph engine cache since data changed
+        if let Some(graph) = self.graph_engine.read().await.as_ref() {
+            graph.invalidate_cache();
+        }
+    }
+
+    /// Invalidate the graph engine cache (call after data changes)
+    pub async fn invalidate_graph_cache(&self) {
+        if let Some(graph) = self.graph_engine.read().await.as_ref() {
+            graph.invalidate_cache();
+        }
     }
 
     pub async fn switch_project(
@@ -117,12 +133,16 @@ impl AppState {
 
         let db = init_db(&db_path).map_err(|e| {
             let msg = e.to_string();
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg))
-                as Box<dyn std::error::Error + Send + Sync>
+            Box::new(std::io::Error::other(msg)) as Box<dyn std::error::Error + Send + Sync>
         })?;
+        let graph = GraphEngine::new(db.clone());
         {
-            let mut lock = self.db.write().await;
-            *lock = Some(db);
+            let mut db_lock = self.db.write().await;
+            *db_lock = Some(db);
+        }
+        {
+            let mut ge_lock = self.graph_engine.write().await;
+            *ge_lock = Some(graph);
         }
 
         self.reset_indexing_state().await;
@@ -133,8 +153,11 @@ impl AppState {
     pub async fn init_db(&self) -> Result<(), Box<dyn std::error::Error>> {
         let db_path = self.db_path.read().await.clone();
         let db = init_db(&db_path)?;
-        let mut lock = self.db.write().await;
-        *lock = Some(db);
+        let graph = GraphEngine::new(db.clone());
+        let mut db_lock = self.db.write().await;
+        let mut ge_lock = self.graph_engine.write().await;
+        *db_lock = Some(db);
+        *ge_lock = Some(graph);
         Ok(())
     }
 
@@ -149,13 +172,11 @@ impl AppState {
     pub async fn get_graph_engine(
         &self,
     ) -> Result<GraphEngine, Box<dyn std::error::Error + Send + Sync>> {
-        let lock = self.db.read().await;
-        let db = lock
-            .clone()
+        let lock = self.graph_engine.read().await;
+        lock.clone()
             .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
-                "Database not initialized".into()
-            })?;
-        Ok(GraphEngine::new(db))
+                "Graph engine not initialized. Call init_db() first.".into()
+            })
     }
 }
 
@@ -267,18 +288,34 @@ pub async fn start_server(
         .route("/api/search", get(handlers::api_search))
         .route("/api/graph/data", get(handlers::api_graph_data))
         .route("/api/graph/services", get(handlers::api_service_graph))
-        .route("/api/graph/service-topology", get(handlers::api_service_topology))
-        .route("/api/graph/expand-service", get(handlers::api_graph_expand_service))
-        .route("/api/graph/expand-cluster", get(handlers::api_graph_expand_cluster))
+        .route(
+            "/api/graph/service-topology",
+            get(handlers::api_service_topology),
+        )
+        .route(
+            "/api/graph/expand-service",
+            get(handlers::api_graph_expand_service),
+        )
+        .route(
+            "/api/graph/expand-cluster",
+            get(handlers::api_graph_expand_cluster),
+        )
         .route("/api/graph/subgraph", get(handlers::api_graph_subgraph))
         .route("/api/graph/clusters", get(handlers::api_graph_clusters))
         .route("/api/graph/children", get(handlers::api_graph_children))
-        .route("/api/graph/expand-node", get(handlers::api_graph_expand_node))
+        .route(
+            "/api/graph/expand-node",
+            get(handlers::api_graph_expand_node),
+        )
         .route("/api/graph/layout", get(handlers::api_graph_layout))
         .route("/api/export/graph", get(handlers::api_export_graph))
         .route("/api/query", post(handlers::api_query))
         .route("/api/project/switch", post(handlers::api_switch_path))
         .route("/api/index/status", get(handlers::api_index_status))
+        .route(
+            "/api/cache/invalidate",
+            post(handlers::api_invalidate_cache),
+        )
         .route("/api/github/clone", post(handlers::api_github_clone))
         .route("/api/file", get(handlers::api_get_file))
         .route("/services", get(handlers::services_page))

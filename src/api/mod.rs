@@ -20,6 +20,7 @@ use crate::graph::GraphEngine;
 pub struct ApiState {
     pub db_path: std::path::PathBuf,
     db: Arc<RwLock<Option<CozoDb>>>,
+    graph_engine: Arc<RwLock<Option<GraphEngine>>>, // Cache GraphEngine
 }
 
 impl ApiState {
@@ -27,13 +28,17 @@ impl ApiState {
         Ok(Self {
             db_path,
             db: Arc::new(RwLock::new(None)),
+            graph_engine: Arc::new(RwLock::new(None)),
         })
     }
 
     pub async fn init_db(&self) -> Result<(), Box<dyn std::error::Error>> {
         let db = init_db(&self.db_path)?;
-        let mut lock = self.db.write().await;
-        *lock = Some(db);
+        let graph = GraphEngine::new(db.clone());
+        let mut db_lock = self.db.write().await;
+        let mut ge_lock = self.graph_engine.write().await;
+        *db_lock = Some(db);
+        *ge_lock = Some(graph);
         Ok(())
     }
 
@@ -48,13 +53,11 @@ impl ApiState {
     pub async fn get_graph_engine(
         &self,
     ) -> Result<GraphEngine, Box<dyn std::error::Error + Send + Sync>> {
-        let lock = self.db.read().await;
-        let db = lock
-            .clone()
+        let lock = self.graph_engine.read().await;
+        lock.clone()
             .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
-                "Database not initialized".into()
-            })?;
-        Ok(GraphEngine::new(db))
+                "Graph engine not initialized. Call init_db() first.".into()
+            })
     }
 }
 

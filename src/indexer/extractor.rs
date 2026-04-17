@@ -201,19 +201,15 @@ impl<'a> EntityExtractor<'a> {
             .saturating_sub(1);
 
         let mut signature_lines = Vec::new();
-        let mut current_row = start as u32;
 
         let source_str = std::str::from_utf8(self.source).unwrap_or("");
-        for line in source_str.lines() {
+        for (current_row, line) in (start as u32..).zip(source_str.lines()) {
             if current_row > end_row {
                 break;
             }
-            if current_row == start as u32 || signature_lines.is_empty() {
-                signature_lines.push(line.to_string());
-            } else if current_row <= end_row {
+            if current_row == start as u32 || signature_lines.is_empty() || current_row <= end_row {
                 signature_lines.push(line.to_string());
             }
-            current_row += 1;
         }
 
         let signature = signature_lines.join("\n");
@@ -341,7 +337,7 @@ impl<'a> EntityExtractor<'a> {
             .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
             .collect();
 
-        let dot_access_re = Regex::new(r#"(\w+)\.(\w+)"#).unwrap();
+        let _dot_access_re = Regex::new(r#"(\w+)\.(\w+)"#).unwrap();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for binding_name in binding_class_names {
@@ -1019,10 +1015,10 @@ impl<'a> EntityExtractor<'a> {
         node: Node,
         parent: Option<&str>,
         elements: &mut Vec<CodeElement>,
-        mut visited: &mut Vec<usize>,
+        visited: &mut Vec<usize>,
     ) {
         // Avoid infinite recursion
-        let node_ptr = node.id() as usize;
+        let node_ptr = node.id();
         if visited.contains(&node_ptr) {
             return;
         }
@@ -1074,7 +1070,7 @@ impl<'a> EntityExtractor<'a> {
                 // Kotlin: annotation (constructor_invocation (user_type (identifier)) ...)
                 // Kotlin: annotation (user_type (identifier))
                 "constructor_invocation" | "user_type" => {
-                    self.extract_decorator_impl(child, parent, elements, &mut visited);
+                    self.extract_decorator_impl(child, parent, elements, visited);
                 }
                 _ => {}
             }

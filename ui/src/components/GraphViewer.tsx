@@ -50,7 +50,7 @@ export const GraphViewer = ({
   useEffect(() => {
     if (!data || data.nodes.length === 0) return;
     const graph = createSigmaGraph(data.nodes, data.relationships);
-    setGraph(graph);
+    setGraph(graph, true); // Always skip animation - positions are pre-calculated
   }, [data, setGraph]);
 
   useEffect(() => {
@@ -65,27 +65,23 @@ export const GraphViewer = ({
     }
   }, [depthFilter, selectedNode, visibleLabels, sigmaRef, data, zoomLevel]);
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-slate-400 bg-[#0A0F24]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-400 mb-4"></div>
-        <p>Analyzing Knowledge Graph...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-red-400 bg-[#0A0F24]">
-        <p className="text-xl mb-2">Failed to load graph</p>
-        <p className="text-sm opacity-80">{error}</p>
-      </div>
-    );
-  }
-
   return (
     <div className="relative w-full h-full bg-[#0A0F24] overflow-hidden flex">
       <div ref={containerRef} className="absolute inset-0 outline-none" />
+
+      {loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-[#0A0F24] z-20">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-400 mb-4"></div>
+          <p>Analyzing Knowledge Graph...</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-[#0A0F24] z-20">
+          <p className="text-xl mb-2">Failed to load graph</p>
+          <p className="text-sm opacity-80">{error}</p>
+        </div>
+      )}
 
       <div className="absolute top-4 left-4 z-10">
         <div className="bg-[#12182b]/95 backdrop-blur-md border border-slate-700/50 rounded-lg shadow-xl flex flex-col p-1 gap-1">

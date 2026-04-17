@@ -173,10 +173,7 @@ impl QueryOrchestrator {
         let read_mode = self.resolve_mode(mode, target_file);
         let result = self.read_file(target_file, read_mode)?;
 
-        content += &format!(
-            "\n## File Content ({} mode)\n\n",
-            format!("{:?}", read_mode)
-        );
+        content += &format!("\n## File Content ({} mode)\n\n", read_mode);
         content += &result.content;
 
         Ok(CachedContent {

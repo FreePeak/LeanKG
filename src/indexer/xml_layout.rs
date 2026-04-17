@@ -94,7 +94,7 @@ impl<'a> XmlLayoutExtractor<'a> {
         }
 
         if let Some(activity) = Self::extract_tools_context(content) {
-            let activity_qualified = format!("{}", activity);
+            let activity_qualified = activity.to_string();
 
             relationships.push(Relationship {
                 id: None,

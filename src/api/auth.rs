@@ -26,8 +26,8 @@ pub async fn auth_middleware(
     }
 
     let auth_header = auth_header.unwrap();
-    let token = if auth_header.starts_with("Bearer ") {
-        auth_header[7..].to_string()
+    let token = if let Some(token) = auth_header.strip_prefix("Bearer ") {
+        token.to_string()
     } else {
         return (StatusCode::UNAUTHORIZED, "Invalid Authorization format").into_response();
     };

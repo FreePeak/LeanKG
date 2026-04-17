@@ -63,15 +63,12 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-        let is_valid_file = if config_files.contains(&file_name) {
-            true
-        } else if path.to_string_lossy().contains("/res/") && ext == "xml" {
-            true
-        } else {
-            extensions.contains(&ext) || is_cicd_yaml_file(path)
-        };
+        let is_valid_file = config_files.contains(&file_name)
+            || (path.to_string_lossy().contains("/res/") && ext == "xml")
+            || extensions.contains(&ext)
+            || is_cicd_yaml_file(path);
 
-        if path.is_file() && is_valid_file {
+        if path.is_file() && is_valid_file && !path.to_string_lossy().contains("/node_modules/") {
             files.push(path.to_string_lossy().to_string());
         }
     }
@@ -300,7 +297,7 @@ pub fn index_files_parallel(
         .par_iter()
         .map(|file_path| {
             let count = progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if count % 1000 == 0 {
+            if count.is_multiple_of(1000) {
                 eprint!("\r  Parsed {}/{} files", count, total_count);
             }
             extract_elements_for_file(file_path)
@@ -675,7 +672,7 @@ pub async fn index_file(
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    Ok(index_file_sync(graph, parser_manager, file_path)?)
+    index_file_sync(graph, parser_manager, file_path)
 }
 
 #[allow(dead_code)]
@@ -684,7 +681,7 @@ pub async fn reindex_file(
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    Ok(reindex_file_sync(graph, parser_manager, file_path)?)
+    reindex_file_sync(graph, parser_manager, file_path)
 }
 
 #[allow(dead_code)]
@@ -714,15 +711,14 @@ where
     let files = match find_files_sync(path) {
         Ok(f) => f,
         Err(e) => {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )) as Box<dyn std::error::Error + Send + Sync>)
+            return Err(Box::new(std::io::Error::other(e.to_string()))
+                as Box<dyn std::error::Error + Send + Sync>)
         }
     };
     let total_files = files.len();
     let progress = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
+    #[allow(clippy::type_complexity)]
     let results: Vec<(
         String,
         Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>>,
@@ -922,10 +918,7 @@ pub fn generate_physical_structure(
     (elements, relationships)
 }
 
-pub fn resolve_call_edges_inline(
-    elements: &mut Vec<CodeElement>,
-    relationships: &mut Vec<Relationship>,
-) {
+pub fn resolve_call_edges_inline(elements: &mut [CodeElement], relationships: &mut [Relationship]) {
     if relationships.is_empty() {
         return;
     }

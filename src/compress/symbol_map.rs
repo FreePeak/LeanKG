@@ -7,6 +7,12 @@ pub struct AnchorGenerator {
     index: usize,
 }
 
+impl Default for AnchorGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnchorGenerator {
     pub fn new() -> Self {
         Self { index: 0 }
@@ -86,7 +92,7 @@ impl SymbolMap {
         }
 
         let mut sorted: Vec<(&String, &String)> = self.forward.iter().collect();
-        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        sorted.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
         let mut result = text.to_string();
         for (long, short) in &sorted {
@@ -112,6 +118,10 @@ impl SymbolMap {
 
     pub fn len(&self) -> usize {
         self.forward.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.forward.is_empty()
     }
 }
 

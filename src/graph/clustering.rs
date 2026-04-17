@@ -70,14 +70,16 @@ impl CommunityDetector {
         for (i, node_id) in node_ids.iter().enumerate() {
             community.insert(node_id.clone(), i);
             community_nodes.insert(i, vec![node_id.clone()]);
-            let w: f64 = adjacency.get(node_id)
+            let w: f64 = adjacency
+                .get(node_id)
                 .map(|neighbors| neighbors.iter().map(|(_, w)| w).sum())
                 .unwrap_or(0.0);
             community_weights.insert(i, w);
         }
 
         // Pre-compute node total weights
-        let node_weights: HashMap<String, f64> = adjacency.iter()
+        let node_weights: HashMap<String, f64> = adjacency
+            .iter()
             .map(|(k, v)| (k.clone(), v.iter().map(|(_, w)| w).sum()))
             .collect();
 
@@ -107,7 +109,7 @@ impl CommunityDetector {
                 let mut best_comm = current_comm;
                 let mut best_gain = 0.0;
 
-                for (neighbor, edge_weight) in &neighbors {
+                for (neighbor, _edge_weight) in &neighbors {
                     if let Some(&neighbor_comm) = community.get(neighbor) {
                         if neighbor_comm == current_comm {
                             continue;
@@ -115,8 +117,11 @@ impl CommunityDetector {
 
                         // Calculate modularity gain using Louvain formula
                         // gain = (Incoming / 2m) - (total_weight * community_weight / (2m)^2) * resolution
-                        let incoming: f64 = neighbors.iter()
-                            .filter(|(_, w)| *community.get(neighbor).unwrap_or(&0) == neighbor_comm)
+                        let incoming: f64 = neighbors
+                            .iter()
+                            .filter(|(_, _w)| {
+                                *community.get(neighbor).unwrap_or(&0) == neighbor_comm
+                            })
                             .map(|(_, w)| w)
                             .sum();
 
@@ -144,7 +149,7 @@ impl CommunityDetector {
                     community.insert(node_id.clone(), best_comm);
                     community_nodes
                         .entry(best_comm)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(node_id.clone());
                     if let Some(new_weight) = community_weights.get_mut(&best_comm) {
                         *new_weight += node_w;
@@ -166,9 +171,12 @@ impl CommunityDetector {
 
             // Use representative file to generate cluster label
             let representative = members.first().unwrap();
-            let elem = elements.iter().find(|e| &e.qualified_name == representative);
+            let elem = elements
+                .iter()
+                .find(|e| &e.qualified_name == representative);
             let file_path = elem.map(|e| e.file_path.as_str()).unwrap_or("");
-            let cluster_label = self.generate_cluster_label(&format!("comm_{}", comm_id), file_path);
+            let cluster_label =
+                self.generate_cluster_label(&format!("comm_{}", comm_id), file_path);
 
             let cluster_id = format!("cluster_{}", cluster_id_counter);
             cluster_id_counter += 1;
@@ -181,8 +189,9 @@ impl CommunityDetector {
                 }
             }
             let mut files: Vec<(String, usize)> = file_counts.into_iter().collect();
-            files.sort_by(|a, b| b.1.cmp(&a.1));
-            let representative_files: Vec<String> = files.into_iter().take(5).map(|(path, _)| path).collect();
+            files.sort_by_key(|b| std::cmp::Reverse(b.1));
+            let representative_files: Vec<String> =
+                files.into_iter().take(5).map(|(path, _)| path).collect();
 
             clusters.insert(
                 cluster_id.clone(),
@@ -213,7 +222,7 @@ impl CommunityDetector {
             };
             folder_groups
                 .entry(folder)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(elem.qualified_name.clone());
         }
 
@@ -225,11 +234,7 @@ impl CommunityDetector {
                 continue;
             }
 
-            let cluster_label = folder
-                .split('/')
-                .last()
-                .unwrap_or(&folder)
-                .to_string();
+            let cluster_label = folder.split('/').next_back().unwrap_or(&folder).to_string();
 
             let cluster_id = format!("cluster_{}", cluster_id_counter);
             cluster_id_counter += 1;
@@ -266,7 +271,9 @@ impl CommunityDetector {
                 return normalized;
             }
         }
-        cluster_id.replace("cluster_", "module_").replace("comm_", "module_")
+        cluster_id
+            .replace("cluster_", "module_")
+            .replace("comm_", "module_")
     }
 
     pub fn assign_clusters_to_elements(&self) -> Result<(), Box<dyn std::error::Error>> {

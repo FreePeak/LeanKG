@@ -72,6 +72,7 @@ impl PersistentCache {
         None
     }
 
+    #[allow(clippy::extra_unused_type_parameters)]
     pub async fn insert<K: Serialize, V: Serialize>(&self, key: String, value: V) {
         let value_json = serde_json::to_string(&value).unwrap_or_default();
         let now = SystemTime::now()
@@ -140,7 +141,7 @@ impl PersistentCache {
             }
         }
 
-        row.get(0)?.as_str().map(String::from)
+        row.first()?.as_str().map(String::from)
     }
 
     async fn save_to_db(
@@ -192,6 +193,10 @@ impl PersistentCache {
 
     pub async fn len(&self) -> usize {
         self.memory.read().await.len()
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        self.memory.read().await.is_empty()
     }
 }
 

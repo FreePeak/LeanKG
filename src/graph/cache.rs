@@ -95,10 +95,13 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
     }
 }
 
+use crate::db::models::CodeElement;
+
 #[derive(Clone)]
 pub struct QueryCache {
     dependencies: Arc<RwLock<TimedCache<String, Vec<String>>>>,
     dependents: Arc<RwLock<TimedCache<String, Vec<String>>>>,
+    search_cache: Arc<RwLock<TimedCache<String, Vec<CodeElement>>>>,
     persistent: Option<Arc<PersistentCache>>,
 }
 
@@ -107,6 +110,7 @@ impl QueryCache {
         Self {
             dependencies: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
             dependents: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
+            search_cache: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
             persistent: None,
         }
     }
@@ -119,8 +123,21 @@ impl QueryCache {
         Self {
             dependencies: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
             dependents: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
+            search_cache: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
             persistent: Some(Arc::new(PersistentCache::new(db, ttl_secs))),
         }
+    }
+
+    pub fn get_search(&self, key: &str) -> Option<Vec<CodeElement>> {
+        self.search_cache.read().get(&key.to_string())
+    }
+
+    pub fn set_search(&self, key: String, value: Vec<CodeElement>) {
+        self.search_cache.write().insert(key, value);
+    }
+
+    pub fn invalidate_search(&self, key: &str) {
+        self.search_cache.write().invalidate(&key.to_string());
     }
 
     #[allow(dead_code)]

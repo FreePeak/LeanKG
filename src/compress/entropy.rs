@@ -11,7 +11,7 @@ pub enum CompressibilityClass {
 }
 
 pub struct EntropyAnalyzer {
-    jaccard_threshold: f64,
+    _jaccard_threshold: f64,
 }
 
 impl Default for EntropyAnalyzer {
@@ -22,7 +22,9 @@ impl Default for EntropyAnalyzer {
 
 impl EntropyAnalyzer {
     pub fn new(jaccard_threshold: f64) -> Self {
-        Self { jaccard_threshold }
+        Self {
+            _jaccard_threshold: jaccard_threshold,
+        }
     }
 
     pub fn shannon_entropy(&self, text: &str) -> f64 {

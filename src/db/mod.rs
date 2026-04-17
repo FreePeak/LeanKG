@@ -642,10 +642,10 @@ pub fn get_metrics_summary(
         serde_json::Value::Number(cutoff_timestamp.into()),
     );
 
-    let query = if tool_filter.is_some() {
+    let query = if let Some(ref tool) = tool_filter {
         params.insert(
             "tool".to_string(),
-            serde_json::Value::String(tool_filter.unwrap().to_string()),
+            serde_json::Value::String(tool.to_string()),
         );
         r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted], timestamp >= $cutoff, tool_name = $tool, is_deleted = false"#
     } else {

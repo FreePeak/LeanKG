@@ -35,7 +35,7 @@ pub fn generate_summary_report(
     let mut quality_recalls = Vec::new();
     let mut quality_f1s = Vec::new();
 
-    for (_, (with_result, without_result)) in results {
+    for (with_result, without_result) in results.values() {
         if with_result.success && without_result.success {
             successful += 1;
             let overhead = calculate_token_savings(with_result, without_result);
@@ -135,7 +135,7 @@ pub fn generate_markdown_report(
     ));
 
     md.push_str("## Context Quality\n\n");
-    md.push_str(&format!("| Metric | Score |\n|--------|-------|\n"));
+    md.push_str("| Metric | Score |\n|--------|-------|\n");
     md.push_str(&format!(
         "| Precision | {:.2} |\n",
         report.quality_avg_precision

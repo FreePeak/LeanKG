@@ -262,13 +262,20 @@ export const createSigmaGraph = (
     }
   });
 
-  try {
-    louvain.assign(graph, {
-      resolution: 1.2,
-      randomWalk: true,
-    });
-  } catch (err) {
-    console.warn('Louvain community clustering error:', err);
+  // Skip Louvain community detection for large graphs (O(n^2) memory and compute)
+  // Louvain on 10k+ nodes can crash the browser tab
+  const LOUVAIN_THRESHOLD = 10000;
+  if (nodeCount <= LOUVAIN_THRESHOLD) {
+    try {
+      louvain.assign(graph, {
+        resolution: 1.2,
+        randomWalk: true,
+      });
+    } catch (err) {
+      console.warn('Louvain community clustering error:', err);
+    }
+  } else {
+    console.info(`Skipping Louvain community detection for large graph (${nodeCount} nodes, threshold: ${LOUVAIN_THRESHOLD})`);
   }
 
   return graph;

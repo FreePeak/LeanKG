@@ -251,7 +251,7 @@ impl ToolHandler {
             "search_code" => {
                 if let Some(query) = args["query"].as_str() {
                     let output = Command::new("grep")
-                        .args(&["-rn", "--include=*.rs", query, src_path])
+                        .args(["-rn", "--include=*.rs", query, src_path])
                         .output();
                     if let Ok(out) = output {
                         let lines = String::from_utf8_lossy(&out.stdout);
@@ -264,7 +264,7 @@ impl ToolHandler {
             "find_function" => {
                 if let Some(name) = args["name"].as_str() {
                     let output = Command::new("grep")
-                        .args(&["-rn", "--include=*.rs", name, src_path])
+                        .args(["-rn", "--include=*.rs", name, src_path])
                         .output();
                     if let Ok(out) = output {
                         let lines = String::from_utf8_lossy(&out.stdout);
@@ -277,7 +277,7 @@ impl ToolHandler {
             "query_file" => {
                 if let Some(pattern) = args["pattern"].as_str() {
                     let output = Command::new("find")
-                        .args(&[src_path, "-name", pattern])
+                        .args([src_path, "-name", pattern])
                         .output();
                     if let Ok(out) = output {
                         let files = String::from_utf8_lossy(&out.stdout);
@@ -290,7 +290,7 @@ impl ToolHandler {
             "get_dependencies" => {
                 if let Some(file) = args["file"].as_str() {
                     let output = Command::new("grep")
-                        .args(&["-n", "import\\|use\\|require", file])
+                        .args(["-n", "import\\|use\\|require", file])
                         .output();
                     if let Ok(out) = output {
                         let lines = String::from_utf8_lossy(&out.stdout);
@@ -303,7 +303,7 @@ impl ToolHandler {
             "get_dependents" => {
                 if let Some(file) = args["file"].as_str() {
                     let output = Command::new("grep")
-                        .args(&["-rn", &format!("import.*{}", file), src_path])
+                        .args(["-rn", &format!("import.*{}", file), src_path])
                         .output();
                     if let Ok(out) = output {
                         let lines = String::from_utf8_lossy(&out.stdout);
@@ -372,14 +372,22 @@ impl ToolHandler {
                 .map_err(|e| e.to_string())?
         };
 
-        Ok(json!({
-            "path": result.path,
-            "mode": format!("{:?}", result.mode),
-            "content": result.content,
-            "tokens": result.tokens,
-            "total_tokens": result.total_tokens,
-            "savings_percent": result.savings_percent
-        }))
+        let file_name = std::path::Path::new(file)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+
+        let header = format!(
+            "{} [{}L] mode={}",
+            file_name, result.output_lines, result.mode
+        );
+        let footer = format!(
+            "---\noriginal: {} tokens | sent: {} tokens ({:.1}% saved)",
+            result.total_tokens, result.tokens, result.savings_percent
+        );
+
+        let final_string = format!("{}\n{}\n{}", header, result.content, footer);
+        Ok(Value::String(final_string))
     }
 
     fn orchestrate_tool(&self, args: &Value) -> Result<Value, String> {
@@ -1579,8 +1587,7 @@ impl ToolHandler {
             .get_service_graph(&service_name)
             .map_err(|e| e.to_string())?;
 
-        Ok(serde_json::to_value(&sg)
-            .map_err(|e| format!("Failed to serialize service graph: {}", e))?)
+        serde_json::to_value(&sg).map_err(|e| format!("Failed to serialize service graph: {}", e))
     }
 
     fn get_cluster_context(&self, args: &Value) -> Result<Value, String> {

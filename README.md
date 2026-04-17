@@ -200,6 +200,51 @@ leankg obsidian pull                      # Pull annotation edits from Obsidian
 
 ---
 
+## Troubleshooting
+
+### Database Lock Error
+
+If you see `database is locked (code 5)`, another LeanKG process is holding the database:
+
+```bash
+# Kill all leankg and vite processes
+leankg-kill
+
+# Or manually
+pkill -9 -f "leankg"
+pkill -9 -f "vite"
+```
+
+### Process Management
+
+```bash
+leankg-kill              # Kill all leankg and vite processes (after adding to ~/.zshrc)
+leankg-status            # Show running leankg/vite processes
+```
+
+**Important:** Always kill the web server before indexing to avoid database lock conflicts.
+
+---
+
+## Performance Benchmarks
+
+### Load Test Results (100K nodes)
+
+| Test | Throughput |
+|------|------------|
+| Insert elements | ~173,000 elements/sec |
+| Insert relationships | ~179,000 relationships/sec |
+| Retrieve all elements | ~662,000 elements/sec |
+
+Run load tests:
+```bash
+cargo test --release load_test -- --nocapture
+```
+
+See [docs/analysis/load-testing-1m-nodes-2026-04-17.md](docs/analysis/load-testing-1m-nodes-2026-04-17.md) for detailed performance analysis.
+
+---
+
 ## Requirements
 
 - Rust 1.70+
