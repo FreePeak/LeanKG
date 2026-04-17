@@ -170,6 +170,46 @@ impl IntentParser {
             }
         }
 
+        // Try to find a module-like name (lowercase with underscores, e.g., "orchestrator", "cache_module")
+        // This helps when user says "show me the orchestrator module" without a marker
+        let words: Vec<&str> = text.split_whitespace().collect();
+
+        // First priority: any word with a file extension
+        for word in &words {
+            let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
+            if file_extensions.iter().any(|ext| cleaned.ends_with(ext)) {
+                return Some(cleaned.to_string());
+            }
+        }
+
+        // Second priority: module names with underscores (e.g., "cache_module")
+        for word in &words {
+            let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
+            if cleaned.len() >= 3
+                && cleaned.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
+                && cleaned.contains('_')
+            {
+                return Some(cleaned.to_string());
+            }
+        }
+
+        // Third priority: single lowercase words that might be module names (e.g., "orchestrator")
+        for word in &words {
+            let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
+            // Skip common words, look for likely module names
+            if cleaned.len() >= 4
+                && cleaned.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
+                && !["the", "for", "with", "from", "this", "that", "file", "module", "show"].contains(&cleaned)
+            {
+                // Check if it looks like a module/class name (camelCase or snake_case)
+                if cleaned.contains('_')
+                    || (cleaned.chars().all(|c| c.is_lowercase()) && cleaned.len() > 6)
+                {
+                    return Some(cleaned.to_string());
+                }
+            }
+        }
+
         // Try to extract identifier after function/class keywords
         let func_markers = ["function ", "class ", "struct ", "enum ", "trait ", "impl "];
         for marker in &func_markers {

@@ -60,7 +60,11 @@ impl QueryOrchestrator {
         fresh: bool,
     ) -> Result<OrchestratedResult, String> {
         let intent = self.intent_parser.parse(intent_str);
-        let cache_key = self.compute_cache_key(&intent, file, mode);
+        // Use intent target as fallback when file is not explicitly provided
+        let target_file = file.or(intent.target.as_deref());
+        let effective_file = target_file
+            .map(|t| self.resolve_module_to_file(t).unwrap_or_else(|| t.to_string()));
+        let cache_key = self.compute_cache_key(&intent, effective_file.as_deref(), mode);
 
         if !fresh {
             if let Some(cached) = self.cache.lock().get(&cache_key) {
@@ -79,7 +83,7 @@ impl QueryOrchestrator {
             }
         }
 
-        let result = self.execute_intent(&intent, file, mode)?;
+        let result = self.execute_intent(&intent, effective_file.as_deref(), mode)?;
         self.cache.lock().insert(cache_key.clone(), result.clone());
 
         Ok(OrchestratedResult {
@@ -132,7 +136,9 @@ impl QueryOrchestrator {
         file: Option<&str>,
         mode: Option<&str>,
     ) -> Result<CachedContent, String> {
-        let target_file = file.ok_or("File required for context query")?;
+        let target_file = file.ok_or_else(|| {
+            "File required for context query. Example: 'context for src/main.rs' or 'show me context for ./src/main.rs'"
+        })?;
         let read_mode = self.resolve_mode(mode, target_file);
 
         let file_elements = self
@@ -315,6 +321,24 @@ impl QueryOrchestrator {
             file.unwrap_or("*"),
             mode.unwrap_or("auto")
         )
+    }
+
+    /// Try to resolve a module name to a file path.
+    /// E.g., "orchestrator" -> "src/orchestrator/mod.rs"
+    fn resolve_module_to_file(&self, target: &str) -> Option<String> {
+        let candidates = [
+            format!("src/{}/mod.rs", target),
+            format!("src/{}.rs", target),
+            format!("{}/mod.rs", target),
+            format!("{}.rs", target),
+        ];
+
+        for candidate in &candidates {
+            if std::path::Path::new(candidate).exists() {
+                return Some(candidate.clone());
+            }
+        }
+        None
     }
 }
 
