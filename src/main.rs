@@ -357,6 +357,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cleanup,
             )?;
         }
+        cli::CLICommand::Proc { command } => {
+            match command {
+                cli::ProcCommand::Status => {
+                    proc_status()?;
+                }
+                cli::ProcCommand::Kill => {
+                    proc_kill()?;
+                }
+            }
+        }
     }
 
     Ok(())
@@ -1770,6 +1780,78 @@ fn seed_test_metrics(db_path: &std::path::Path) -> Result<(), Box<dyn std::error
     }
 
     println!("Seeded {} test metrics", test_metrics.len());
+    Ok(())
+}
+
+fn proc_status() -> Result<(), Box<dyn std::error::Error>> {
+    use sysinfo::System;
+
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let processes: Vec<_> = sys.processes().iter()
+        .filter(|(_pid, process)| {
+            let cmd: String = process.cmd().iter()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            cmd.contains("leankg") || cmd.contains("vite")
+        })
+        .collect();
+
+    if processes.is_empty() {
+        println!("No leankg or vite processes running");
+        return Ok(());
+    }
+
+    println!("LeanKG Processes:");
+    println!("==================");
+    for (pid, process) in processes {
+        let cmd: String = process.cmd().iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cpu = process.cpu_usage();
+        let mem_mb = process.memory() / 1_048_576; // Convert to MB
+        let mem_pct = (mem_mb as f32 / (sys.total_memory() / 1_048_576) as f32) * 100.0;
+
+        println!(
+            "PID: {} | CPU: {:.1}% | MEM: {:.1}% | RSS: {}MB | Command: {}",
+            pid, cpu, mem_pct, mem_mb, cmd
+        );
+    }
+
+    Ok(())
+}
+
+fn proc_kill() -> Result<(), Box<dyn std::error::Error>> {
+    let patterns = ["leankg", "vite"];
+    let mut killed_any = false;
+
+    for pattern in &patterns {
+        let output = std::process::Command::new("pkill")
+            .args(["-9", "-f", pattern])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                killed_any = true;
+            }
+            Ok(_) => {
+                // pkill returns non-zero when no processes matched
+            }
+            Err(e) => {
+                eprintln!("Warning: pkill not available or failed: {}", e);
+            }
+        }
+    }
+
+    if killed_any {
+        println!("Killed all leankg and vite processes");
+    } else {
+        println!("No leankg or vite processes found to kill");
+    }
+
     Ok(())
 }
 

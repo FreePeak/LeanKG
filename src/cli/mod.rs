@@ -244,6 +244,11 @@ pub enum CLICommand {
     },
     /// Update LeanKG to the latest version from GitHub releases
     Update,
+    /// Manage LeanKG and Vite processes
+    Proc {
+        #[command(subcommand)]
+        command: ProcCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -299,4 +304,12 @@ pub enum ObsidianCommand {
         #[arg(long)]
         vault: Option<String>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProcCommand {
+    /// Show running LeanKG and Vite processes
+    Status,
+    /// Kill all LeanKG and Vite processes
+    Kill,
 }
