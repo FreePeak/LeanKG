@@ -127,6 +127,7 @@ graph LR
 - **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, `TESTED_BY` edges
 - **MCP Server** -- Expose graph via MCP protocol for AI tool integration
 - **Multi-Language** -- Index Go, TypeScript, Python, Rust, Java, Kotlin with tree-sitter
+- **Android** -- Extract XML layouts, resources, and manifest relationships
 
 See [docs/architecture.md](docs/architecture.md) for system design and data model details.
 
@@ -195,6 +196,7 @@ leankg obsidian pull                      # Pull annotation edits from Obsidian
 | [docs/benchmark.md](docs/benchmark.md) | Performance benchmarks |
 | [docs/roadmap.md](docs/roadmap.md) | Feature planning |
 | [docs/tech-stack.md](docs/tech-stack.md) | Tech stack & structure |
+| [docs/android-extraction.md](docs/android-extraction.md) | Android XML & resource extraction |
 
 ---
 
