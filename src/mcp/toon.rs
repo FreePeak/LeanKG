@@ -8,7 +8,7 @@ pub fn to_string(value: &Value) -> String {
 
 fn format_value(value: &Value, output: &mut String, indent: usize, is_list_item: bool) {
     let spaces = "  ".repeat(indent);
-    
+
     match value {
         Value::Null => {
             output.push_str("null\n");
@@ -50,12 +50,12 @@ fn format_value(value: &Value, output: &mut String, indent: usize, is_list_item:
             if !is_list_item {
                 output.push('\n');
             }
-            
+
             let mut first = true;
             // Sort keys to ensure stable output format
             let mut keys: Vec<_> = obj.keys().collect();
             keys.sort();
-            
+
             for k in keys {
                 let v = &obj[k];
                 let current_indent = if is_list_item && first { "" } else { &spaces };

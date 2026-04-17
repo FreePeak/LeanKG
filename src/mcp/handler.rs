@@ -1,12 +1,12 @@
 use crate::compress::{FileReader, ReadMode, ResponseCompressor};
+use crate::db::models::ContextMetric;
 use crate::db::models::{CodeElement, Relationship};
 use crate::db::record_metric;
-use crate::db::models::ContextMetric;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
 use crate::orchestrator::QueryOrchestrator;
 use serde_json::{json, Value};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::process::Command;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const INSTRUCTIONS_CONTENT: &str = r#"# LeanKG Tools - Usage Instructions
 
@@ -122,7 +122,9 @@ impl ToolHandler {
             graph_engine: graph_engine.clone(),
             db_path,
             orchestrator: QueryOrchestrator::with_persistence(graph_engine),
-            session_cache: std::sync::Arc::new(parking_lot::RwLock::new(crate::compress::SessionCache::new())),
+            session_cache: std::sync::Arc::new(parking_lot::RwLock::new(
+                crate::compress::SessionCache::new(),
+            )),
         }
     }
 
@@ -192,16 +194,17 @@ impl ToolHandler {
         let execution_time_ms = start_time.elapsed().as_millis() as i32;
         let input_tokens = arguments.to_string().len() as i32 / 4;
 
-        let (output_tokens, output_elements, baseline_tokens, baseline_lines, success) = match &result {
-            Ok(response) => {
-                let response_str = response.to_string();
-                let output_tok = response_str.len() as i32 / 4;
-                let out_elem = Self::count_response_elements(response);
-                let (base_tok, base_lines) = self.estimate_baseline(tool_name, arguments);
-                (output_tok, out_elem, base_tok, base_lines, true)
-            }
-            Err(_) => (0, 0, 0, 0, false),
-        };
+        let (output_tokens, output_elements, baseline_tokens, baseline_lines, success) =
+            match &result {
+                Ok(response) => {
+                    let response_str = response.to_string();
+                    let output_tok = response_str.len() as i32 / 4;
+                    let out_elem = Self::count_response_elements(response);
+                    let (base_tok, base_lines) = self.estimate_baseline(tool_name, arguments);
+                    (output_tok, out_elem, base_tok, base_lines, true)
+                }
+                Err(_) => (0, 0, 0, 0, false),
+            };
 
         let tokens_saved = baseline_tokens - output_tokens;
         let savings_percent = if baseline_tokens > 0 {
@@ -351,44 +354,38 @@ impl ToolHandler {
 
         let mut reader = FileReader::new(self.session_cache.clone());
         let fresh = args["fresh"].as_bool().unwrap_or(false);
-        
+
         let result = if requested_mode == ReadMode::Adaptive {
             let content = std::fs::read_to_string(file)
                 .map_err(|e| format!("Failed to read file {}: {}", file, e))?;
             let lines: Vec<&str> = content.lines().collect();
             let lines_count = lines.len();
             let file_size = content.len();
-            
+
             let selected_mode = ReadMode::select_adaptive(file, file_size, lines_count);
-            reader.read(file, selected_mode, lines_spec, fresh).map_err(|e| e.to_string())?
+            reader
+                .read(file, selected_mode, lines_spec, fresh)
+                .map_err(|e| e.to_string())?
         } else {
-            reader.read(file, requested_mode, lines_spec, fresh).map_err(|e| e.to_string())?
+            reader
+                .read(file, requested_mode, lines_spec, fresh)
+                .map_err(|e| e.to_string())?
         };
 
-        let file_name = std::path::Path::new(file)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy();
-
-        let header = format!(
-            "{} [{}L] mode={:?}",
-            file_name,
-            result.output_lines,
-            result.mode
-        );
-        let footer = format!(
-            "---\noriginal: {} tokens | sent: {} tokens ({:.1}% saved)",
-            result.total_tokens,
-            result.tokens,
-            result.savings_percent
-        );
-
-        let final_string = format!("{}\n{}\n{}", header, result.content, footer);
-        Ok(Value::String(final_string))
+        Ok(json!({
+            "path": result.path,
+            "mode": format!("{:?}", result.mode),
+            "content": result.content,
+            "tokens": result.tokens,
+            "total_tokens": result.total_tokens,
+            "savings_percent": result.savings_percent
+        }))
     }
 
     fn orchestrate_tool(&self, args: &Value) -> Result<Value, String> {
-        let intent = args["intent"].as_str().ok_or("Missing 'intent' parameter")?;
+        let intent = args["intent"]
+            .as_str()
+            .ok_or("Missing 'intent' parameter")?;
         let file = args["file"].as_str();
         let mode = args["mode"].as_str();
         let fresh = args["fresh"].as_bool().unwrap_or(false);
@@ -514,20 +511,6 @@ impl ToolHandler {
                         ("ts", "typescript"),
                         ("js", "javascript"),
                         ("py", "python"),
-                        ("java", "java"),
-                        ("kt", "kotlin"),
-                        ("kts", "kotlin"),
-                        ("sh", "bash"),
-                        ("bash", "bash"),
-                        ("zsh", "bash"),
-                        ("rb", "ruby"),
-                        ("php", "php"),
-                        ("pl", "perl"),
-                        ("pm", "perl"),
-                        ("r", "r"),
-                        ("R", "r"),
-                        ("ex", "elixir"),
-                        ("exs", "elixir"),
                     ]
                     .iter()
                     .cloned()
@@ -1569,25 +1552,35 @@ impl ToolHandler {
             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
 
-        let result = self.graph_engine.run_raw_query(query, params).map_err(|e| e.to_string())?;
+        let result = self
+            .graph_engine
+            .run_raw_query(query, params)
+            .map_err(|e| e.to_string())?;
 
         let value = serde_json::to_value(&result)
             .map_err(|e| format!("Failed to serialize result: {}", e))?;
-            
+
         Ok(value)
     }
 
     fn get_service_graph(&self, args: &Value) -> Result<Value, String> {
-        let service_name = args["service"].as_str().map(String::from).unwrap_or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                .unwrap_or_else(|| "unknown".to_string())
-        });
+        let service_name = args["service"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
 
-        let sg = self.graph_engine.get_service_graph(&service_name).map_err(|e| e.to_string())?;
+        let sg = self
+            .graph_engine
+            .get_service_graph(&service_name)
+            .map_err(|e| e.to_string())?;
 
-        Ok(serde_json::to_value(&sg).map_err(|e| format!("Failed to serialize service graph: {}", e))?)
+        Ok(serde_json::to_value(&sg)
+            .map_err(|e| format!("Failed to serialize service graph: {}", e))?)
     }
 
     fn get_cluster_context(&self, args: &Value) -> Result<Value, String> {

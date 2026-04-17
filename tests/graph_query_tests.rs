@@ -33,16 +33,18 @@ fn create_code_element(name: &str, file_path: &str, element_type: &str, lines: u
 #[test]
 fn test_search_by_pattern() {
     with_test_graph(|graph, _| {
-        graph.insert_elements(&[
-            create_code_element("handle_user_auth", "src/auth.rs", "function", 10),
-            create_code_element("process_payment_auth", "src/pay.rs", "function", 20),
-            create_code_element("unrelated_func", "src/main.rs", "function", 5),
-        ]).unwrap();
+        graph
+            .insert_elements(&[
+                create_code_element("handle_user_auth", "src/auth.rs", "function", 10),
+                create_code_element("process_payment_auth", "src/pay.rs", "function", 20),
+                create_code_element("unrelated_func", "src/main.rs", "function", 5),
+            ])
+            .unwrap();
 
         // Standard substring search uses `escape_datalog` or `(?i)` under the hood
         let results = graph.search_by_pattern("auth").unwrap();
         assert_eq!(results.len(), 2);
-        
+
         let found_names: Vec<String> = results.into_iter().map(|e| e.name).collect();
         assert!(found_names.contains(&"handle_user_auth".to_string()));
         assert!(found_names.contains(&"process_payment_auth".to_string()));
@@ -52,25 +54,35 @@ fn test_search_by_pattern() {
 #[test]
 fn test_search_by_pattern_malicious_injection() {
     with_test_graph(|graph, _| {
-        graph.insert_elements(&[
-            create_code_element("regular_func", "src/main.rs", "function", 10),
-        ]).unwrap();
+        graph
+            .insert_elements(&[create_code_element(
+                "regular_func",
+                "src/main.rs",
+                "function",
+                10,
+            )])
+            .unwrap();
 
         // Testing SQL injection boundaries in parameter formats natively bounded by escape functions
         let malicious_pattern = "auth\"; DROP TABLE code_elements; --";
         let results = graph.search_by_pattern(malicious_pattern).unwrap();
-        assert!(results.is_empty(), "Injection should not cause failure but securely match zero elements");
+        assert!(
+            results.is_empty(),
+            "Injection should not cause failure but securely match zero elements"
+        );
     });
 }
 
 #[test]
 fn test_search_by_type() {
     with_test_graph(|graph, _| {
-        graph.insert_elements(&[
-            create_code_element("MyStruct", "src/mod.rs", "struct", 10),
-            create_code_element("my_func", "src/mod.rs", "function", 20),
-            create_code_element("MyEnum", "src/mod.rs", "enum", 5),
-        ]).unwrap();
+        graph
+            .insert_elements(&[
+                create_code_element("MyStruct", "src/mod.rs", "struct", 10),
+                create_code_element("my_func", "src/mod.rs", "function", 20),
+                create_code_element("MyEnum", "src/mod.rs", "enum", 5),
+            ])
+            .unwrap();
 
         let structs = graph.search_by_type("struct").unwrap();
         assert_eq!(structs.len(), 1);
@@ -101,7 +113,7 @@ fn test_search_by_relation_type() {
             confidence: 1.0,
             metadata: serde_json::json!({}),
         };
-        
+
         graph.insert_relationships(&[rel1, rel2]).unwrap();
 
         let calls = graph.search_by_relation_type("calls").unwrap();
@@ -117,37 +129,49 @@ fn test_search_by_relation_type() {
 #[test]
 fn test_find_oversized_functions() {
     with_test_graph(|graph, _| {
-        graph.insert_elements(&[
-            // 99 lines (start = 1, end = 100)
-            create_code_element("small_func", "src/a.rs", "function", 99),
-            // 200 lines
-            create_code_element("big_func", "src/a.rs", "function", 200),
-            // 50 lines, but it's a struct! Output shouldn't grab structural nodes.
-            create_code_element("big_struct", "src/b.rs", "struct", 300),
-        ]).unwrap();
+        graph
+            .insert_elements(&[
+                // 99 lines (start = 1, end = 100)
+                create_code_element("small_func", "src/a.rs", "function", 99),
+                // 200 lines
+                create_code_element("big_func", "src/a.rs", "function", 200),
+                // 50 lines, but it's a struct! Output shouldn't grab structural nodes.
+                create_code_element("big_struct", "src/b.rs", "struct", 300),
+            ])
+            .unwrap();
 
         // Fetch functions with lines > 150
         let big = graph.find_oversized_functions(150).unwrap();
         assert_eq!(big.len(), 1);
         assert_eq!(big[0].name, "big_func");
-        
+
         // Fetch > 50
         let medium = graph.find_oversized_functions(50).unwrap();
-        assert_eq!(medium.len(), 2, "Should grab both functions but IGNORE struct");
+        assert_eq!(
+            medium.len(),
+            2,
+            "Should grab both functions but IGNORE struct"
+        );
     });
 }
 
 #[test]
 fn test_update_element_cluster() {
     with_test_graph(|graph, _| {
-        graph.insert_elements(&[
-            create_code_element("func_a", "src/a.rs", "function", 10),
-        ]).unwrap();
-        
+        graph
+            .insert_elements(&[create_code_element("func_a", "src/a.rs", "function", 10)])
+            .unwrap();
+
         let initial = graph.find_element("src/a.rs::func_a").unwrap().unwrap();
         assert!(initial.cluster_id.is_none());
 
-        graph.update_element_cluster("src/a.rs::func_a", Some("cluster_99".to_string()), Some("Auth Services".to_string())).unwrap();
+        graph
+            .update_element_cluster(
+                "src/a.rs::func_a",
+                Some("cluster_99".to_string()),
+                Some("Auth Services".to_string()),
+            )
+            .unwrap();
 
         let updated = graph.find_element("src/a.rs::func_a").unwrap().unwrap();
         assert_eq!(updated.cluster_id.unwrap(), "cluster_99");

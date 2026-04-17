@@ -102,7 +102,7 @@ impl EntropyAnalyzer {
     pub fn filter_low_entropy_lines<'a>(&self, lines: &[&'a str], threshold: f64) -> Vec<&'a str> {
         let mut filtered = Vec::new();
         let mut last_was_empty = false;
-        
+
         // Fast paths for very uncompressible files
         let full_text = lines.join("\n");
         let class = Self::compressibility_class(&full_text);
@@ -176,7 +176,10 @@ mod tests {
         let text = "a".repeat(1000);
         let k = EntropyAnalyzer::kolmogorov_proxy(&text);
         assert!(k < 100);
-        
-        assert_eq!(EntropyAnalyzer::compressibility_class(&text), CompressibilityClass::High);
+
+        assert_eq!(
+            EntropyAnalyzer::compressibility_class(&text),
+            CompressibilityClass::High
+        );
     }
 }

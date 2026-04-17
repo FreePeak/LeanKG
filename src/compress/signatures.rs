@@ -144,7 +144,9 @@ fn rust_impl_re() -> &'static Regex {
 pub fn extract_signatures(content: &str, file_ext: &str) -> Vec<Signature> {
     match file_ext {
         "rs" => extract_rust_signatures(content),
-        "ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" | "mjs" | "cjs" => extract_ts_signatures(content),
+        "ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" | "mjs" | "cjs" => {
+            extract_ts_signatures(content)
+        }
         "py" | "pyi" => extract_python_signatures(content),
         "go" => extract_go_signatures(content),
         "java" => extract_java_signatures(content),
@@ -397,11 +399,24 @@ fn extract_java_signatures(content: &str) -> Vec<Signature> {
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("/*") || trimmed.starts_with("import ") || trimmed.starts_with("package ") { continue; }
-        
+        if trimmed.starts_with("//")
+            || trimmed.starts_with('*')
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("package ")
+        {
+            continue;
+        }
+
         if let Some(caps) = j_class.captures(line) {
             sigs.push(Signature {
-                kind: if &caps[2] == "interface" { "interface" } else if &caps[2] == "enum" { "enum" } else { "class" },
+                kind: if &caps[2] == "interface" {
+                    "interface"
+                } else if &caps[2] == "enum" {
+                    "enum"
+                } else {
+                    "class"
+                },
                 name: caps[3].to_string(),
                 params: String::new(),
                 return_type: String::new(),
@@ -413,8 +428,10 @@ fn extract_java_signatures(content: &str) -> Vec<Signature> {
             let indent = caps.get(1).map_or(0, |m| m.as_str().len());
             // Ignore common keywords that might match method return types like return, new, etc
             let ret = &caps[2];
-            if ["return", "new", "throw"].contains(&ret) { continue; }
-            
+            if ["return", "new", "throw"].contains(&ret) {
+                continue;
+            }
+
             sigs.push(Signature {
                 kind: "method",
                 name: caps[3].to_string(),

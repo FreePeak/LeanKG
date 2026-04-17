@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 use crate::graph::persistent_cache::PersistentCache;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -111,7 +111,11 @@ impl QueryCache {
         }
     }
 
-    pub fn with_persistence(db: Arc<crate::db::schema::CozoDb>, ttl_secs: u64, max_entries: usize) -> Self {
+    pub fn with_persistence(
+        db: Arc<crate::db::schema::CozoDb>,
+        ttl_secs: u64,
+        max_entries: usize,
+    ) -> Self {
         Self {
             dependencies: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
             dependents: Arc::new(RwLock::new(TimedCache::new(ttl_secs, max_entries))),
@@ -213,9 +217,11 @@ mod tests {
     #[test]
     fn test_query_cache_dependencies() {
         let cache = QueryCache::new(60, 100);
-        
+
         crate::runtime::run_blocking(async {
-            cache.set_dependencies("file1.rs".to_string(), vec!["file2.rs".to_string()]).await;
+            cache
+                .set_dependencies("file1.rs".to_string(), vec!["file2.rs".to_string()])
+                .await;
             let result = cache.get_dependencies("file1.rs").await;
             assert_eq!(result, Some(vec!["file2.rs".to_string()]));
         });
@@ -225,7 +231,9 @@ mod tests {
     fn test_query_cache_invalidate() {
         let cache = QueryCache::new(60, 100);
         crate::runtime::run_blocking(async {
-            cache.set_dependencies("src/file1.rs".to_string(), vec!["file2.rs".to_string()]).await;
+            cache
+                .set_dependencies("src/file1.rs".to_string(), vec!["file2.rs".to_string()])
+                .await;
             cache.invalidate_file("src/file1.rs").await;
             let result = cache.get_dependencies("src/file1.rs").await;
             assert_eq!(result, None);

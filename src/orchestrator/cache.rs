@@ -57,8 +57,9 @@ impl OrchestratorCache {
         }
         if let Some(ref p) = self.persistent {
             let key_full = format!("orch:{}", key);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            if let Some(v) = rt.block_on(p.get::<CachedContent>(&key_full)) {
+            // IMPORTANT: Never use Runtime::new() here - it creates a new runtime per call (~100ms overhead).
+            // Always use crate::runtime::run_blocking() which reuses the static OnceLock runtime.
+            if let Some(v) = crate::runtime::run_blocking(p.get::<CachedContent>(&key_full)) {
                 return Some(v);
             }
         }

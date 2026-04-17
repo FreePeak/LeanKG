@@ -81,7 +81,7 @@ pub fn reorder_for_lcurve(content: &str, task_keywords: &[String]) -> String {
             // LITM U-Curve generation: High weight at start and end of file. Middle is ignored.
             // mapping [0, 1] -> 0.0 -> 1.0 (start), 0.5 -> 0.0 (middle), 1.0 -> 1.0 (end)
             let l_curve_weight = (orig_pos - 0.5).abs() * 2.0;
-            
+
             let score = base + kw_boost + l_curve_weight * 0.2;
             (cl, score)
         })

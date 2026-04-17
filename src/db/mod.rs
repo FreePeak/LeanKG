@@ -693,7 +693,9 @@ pub fn get_metrics_summary(
         }
 
         let tool_name = row[0].as_str().unwrap_or("unknown").to_string();
-        let entry = by_tool_map.entry(tool_name.clone()).or_insert((0, 0, 0.0, 0.0, 0));
+        let entry = by_tool_map
+            .entry(tool_name.clone())
+            .or_insert((0, 0, 0.0, 0.0, 0));
         entry.0 += 1; // calls
         if saved > 0 {
             entry.1 += saved; // total_saved
@@ -709,7 +711,8 @@ pub fn get_metrics_summary(
         summary.average_savings_percent = sum_savings_percent / count_positive_savings as f64;
     }
     if count_has_correctness > 0 {
-        summary.average_correctness_percent = sum_correctness_percent / count_has_correctness as f64;
+        summary.average_correctness_percent =
+            sum_correctness_percent / count_has_correctness as f64;
     }
 
     for (tool_name, (calls, total_saved, sum_pct, sum_correct, count_correct)) in by_tool_map {

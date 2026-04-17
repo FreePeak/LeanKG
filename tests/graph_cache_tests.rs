@@ -211,7 +211,8 @@ mod query_cache_tests {
             .set_dependencies(
                 "file1.rs".to_string(),
                 vec!["file2.rs".to_string(), "file3.rs".to_string()],
-            ).await;
+            )
+            .await;
 
         let result = cache.get_dependencies("file1.rs").await;
         assert_eq!(
@@ -224,7 +225,8 @@ mod query_cache_tests {
     async fn test_set_and_get_dependents() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependents("file2.rs".to_string(), vec!["file1.rs".to_string()]).await;
+            .set_dependents("file2.rs".to_string(), vec!["file1.rs".to_string()])
+            .await;
 
         let result = cache.get_dependents("file2.rs").await;
         assert_eq!(result, Some(vec!["file1.rs".to_string()]));
@@ -248,7 +250,8 @@ mod query_cache_tests {
     async fn test_invalidate_file_clears_dependencies() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("src/main.rs".to_string(), vec!["lib.rs".to_string()]).await;
+            .set_dependencies("src/main.rs".to_string(), vec!["lib.rs".to_string()])
+            .await;
 
         cache.invalidate_file("src/main.rs").await;
 
@@ -260,7 +263,8 @@ mod query_cache_tests {
     async fn test_invalidate_file_clears_dependents() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependents("src/lib.rs".to_string(), vec!["main.rs".to_string()]).await;
+            .set_dependents("src/lib.rs".to_string(), vec!["main.rs".to_string()])
+            .await;
 
         cache.invalidate_file("src/lib.rs").await;
 
@@ -272,9 +276,11 @@ mod query_cache_tests {
     async fn test_invalidate_file_clears_both_caches() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("src/main.rs".to_string(), vec!["lib.rs".to_string()]).await;
+            .set_dependencies("src/main.rs".to_string(), vec!["lib.rs".to_string()])
+            .await;
         cache
-            .set_dependents("src/main.rs".to_string(), vec!["test.rs".to_string()]).await;
+            .set_dependents("src/main.rs".to_string(), vec!["test.rs".to_string()])
+            .await;
 
         cache.invalidate_file("src/main.rs").await;
 
@@ -291,12 +297,14 @@ mod query_cache_tests {
             .set_dependencies(
                 "src/handlers/mod.rs".to_string(),
                 vec!["lib.rs".to_string()],
-            ).await;
+            )
+            .await;
         cache
             .set_dependents(
                 "src/handlers/mod.rs".to_string(),
                 vec!["main.rs".to_string()],
-            ).await;
+            )
+            .await;
 
         cache.invalidate_file("src/handlers/mod.rs").await;
 
@@ -310,9 +318,11 @@ mod query_cache_tests {
     async fn test_invalidate_file_preserves_other_entries() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("src/file1.rs".to_string(), vec!["lib.rs".to_string()]).await;
+            .set_dependencies("src/file1.rs".to_string(), vec!["lib.rs".to_string()])
+            .await;
         cache
-            .set_dependencies("src/file2.rs".to_string(), vec!["lib.rs".to_string()]).await;
+            .set_dependencies("src/file2.rs".to_string(), vec!["lib.rs".to_string()])
+            .await;
 
         cache.invalidate_file("src/file1.rs").await;
 
@@ -326,9 +336,11 @@ mod query_cache_tests {
     async fn test_clear_clears_both_dependencies_and_dependents() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("file1.rs".to_string(), vec!["file2.rs".to_string()]).await;
+            .set_dependencies("file1.rs".to_string(), vec!["file2.rs".to_string()])
+            .await;
         cache
-            .set_dependents("file2.rs".to_string(), vec!["file1.rs".to_string()]).await;
+            .set_dependents("file2.rs".to_string(), vec!["file1.rs".to_string()])
+            .await;
 
         cache.clear();
 
@@ -352,9 +364,11 @@ mod query_cache_tests {
     async fn test_multiple_dependencies_entries() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("a.rs".to_string(), vec!["b.rs".to_string()]).await;
+            .set_dependencies("a.rs".to_string(), vec!["b.rs".to_string()])
+            .await;
         cache
-            .set_dependencies("c.rs".to_string(), vec!["d.rs".to_string()]).await;
+            .set_dependencies("c.rs".to_string(), vec!["d.rs".to_string()])
+            .await;
 
         assert_eq!(
             cache.get_dependencies("a.rs").await,
@@ -370,9 +384,11 @@ mod query_cache_tests {
     async fn test_multiple_dependents_entries() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependents("b.rs".to_string(), vec!["a.rs".to_string()]).await;
+            .set_dependents("b.rs".to_string(), vec!["a.rs".to_string()])
+            .await;
         cache
-            .set_dependents("d.rs".to_string(), vec!["c.rs".to_string()]).await;
+            .set_dependents("d.rs".to_string(), vec!["c.rs".to_string()])
+            .await;
 
         assert_eq!(
             cache.get_dependents("b.rs").await,
@@ -388,9 +404,11 @@ mod query_cache_tests {
     async fn test_update_existing_dependencies() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("file.rs".to_string(), vec!["old.rs".to_string()]).await;
+            .set_dependencies("file.rs".to_string(), vec!["old.rs".to_string()])
+            .await;
         cache
-            .set_dependencies("file.rs".to_string(), vec!["new.rs".to_string()]).await;
+            .set_dependencies("file.rs".to_string(), vec!["new.rs".to_string()])
+            .await;
 
         let result = cache.get_dependencies("file.rs").await;
         assert_eq!(result, Some(vec!["new.rs".to_string()]));
@@ -400,9 +418,11 @@ mod query_cache_tests {
     async fn test_update_existing_dependents() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependents("file.rs".to_string(), vec!["old.rs".to_string()]).await;
+            .set_dependents("file.rs".to_string(), vec!["old.rs".to_string()])
+            .await;
         cache
-            .set_dependents("file.rs".to_string(), vec!["new.rs".to_string()]).await;
+            .set_dependents("file.rs".to_string(), vec!["new.rs".to_string()])
+            .await;
 
         let result = cache.get_dependents("file.rs").await;
         assert_eq!(result, Some(vec!["new.rs".to_string()]));
@@ -430,7 +450,8 @@ mod query_cache_tests {
     async fn test_concurrent_dependencies_access() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("file.rs".to_string(), vec!["dep.rs".to_string()]).await;
+            .set_dependencies("file.rs".to_string(), vec!["dep.rs".to_string()])
+            .await;
 
         let cache_clone = cache.clone();
         let handle = tokio::spawn(async move { cache_clone.get_dependencies("file.rs").await });
@@ -443,7 +464,8 @@ mod query_cache_tests {
     async fn test_invalidate_nonexistent_file() {
         let cache = QueryCache::new(60, 100);
         cache
-            .set_dependencies("real.rs".to_string(), vec!["dep.rs".to_string()]).await;
+            .set_dependencies("real.rs".to_string(), vec!["dep.rs".to_string()])
+            .await;
 
         cache.invalidate_file("nonexistent.rs").await;
 

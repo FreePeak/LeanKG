@@ -62,11 +62,7 @@ fn is_test_file(file_path: &str) -> bool {
         || file_path.contains(".spec.")
 }
 
-fn calculate_entry_point_score(
-    name: &str,
-    callers_count: usize,
-    callees_count: usize,
-) -> f64 {
+fn calculate_entry_point_score(name: &str, callers_count: usize, callees_count: usize) -> f64 {
     // Simplified heuristic: prefers functions with few callers and many callees
     let base_score = (callees_count as f64).ln_1p() * 10.0;
     let penalty = ((callers_count as f64) * 2.0).exp2().min(100.0);
@@ -106,7 +102,10 @@ fn find_entry_points(
             continue; // Must have at least 1 outgoing call
         }
 
-        let callers = reverse_calls.get(&el.qualified_name).map(|v| v.len()).unwrap_or(0);
+        let callers = reverse_calls
+            .get(&el.qualified_name)
+            .map(|v| v.len())
+            .unwrap_or(0);
 
         let score = calculate_entry_point_score(&el.name, callers, callees);
         if score > 0.0 {
@@ -151,7 +150,7 @@ fn trace_from_entry_point(
                 .take(config.max_branching)
                 .cloned()
                 .collect();
-            
+
             let mut added_branch = false;
 
             for callee_id in limited_callees {
@@ -245,9 +244,12 @@ pub fn detect_processes(
 
     let unique_traces = deduplicate_traces(all_traces);
     let mut endpoint_deduped = deduplicate_by_endpoints(unique_traces);
-    
+
     endpoint_deduped.sort_by(|a, b| b.len().cmp(&a.len()));
-    let limited_traces: Vec<Vec<String>> = endpoint_deduped.into_iter().take(cfg.max_processes).collect();
+    let limited_traces: Vec<Vec<String>> = endpoint_deduped
+        .into_iter()
+        .take(cfg.max_processes)
+        .collect();
 
     let mut process_elements = Vec::new();
     let mut process_relationships = Vec::new();
@@ -262,8 +264,9 @@ pub fn detect_processes(
         let entry_name = entry_node.map(|n| n.name.as_str()).unwrap_or("Unknown");
         let terminal_name = terminal_node.map(|n| n.name.as_str()).unwrap_or("Unknown");
 
-        let heuristic_label = format!("{} \u{2192} {}", 
-            capitalize(entry_name), 
+        let heuristic_label = format!(
+            "{} \u{2192} {}",
+            capitalize(entry_name),
             capitalize(terminal_name)
         );
 
@@ -355,7 +358,11 @@ mod tests {
             qualified_name: name.to_string(),
             element_type: "function".to_string(),
             name: name.to_string(),
-            file_path: if is_test { "test_file.rs".to_string() } else { "main.rs".to_string() },
+            file_path: if is_test {
+                "test_file.rs".to_string()
+            } else {
+                "main.rs".to_string()
+            },
             line_start: 0,
             line_end: 0,
             language: "rust".to_string(),
@@ -385,7 +392,7 @@ mod tests {
         reverse_calls.insert("util_func".to_string(), vec!["handle_request".to_string()]);
 
         let entry_points = find_entry_points(&elements, &calls, &reverse_calls);
-        
+
         assert_eq!(entry_points.len(), 2);
         assert_eq!(entry_points[0], "main"); // "main" is boosted and has 0 callers
     }
@@ -442,7 +449,11 @@ mod tests {
         let rel_count = result.process_relationships.len();
         assert_eq!(rel_count, 5);
 
-        let step_rels: Vec<_> = result.process_relationships.iter().filter(|r| r.rel_type == "step_in_process").collect();
+        let step_rels: Vec<_> = result
+            .process_relationships
+            .iter()
+            .filter(|r| r.rel_type == "step_in_process")
+            .collect();
         assert_eq!(step_rels.len(), 4);
     }
 }

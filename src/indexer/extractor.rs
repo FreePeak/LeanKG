@@ -1,4 +1,5 @@
 use crate::db::models::{CodeElement, Relationship};
+use regex::Regex;
 use std::path::Path;
 use tree_sitter::{Node, Tree};
 
@@ -243,7 +244,153 @@ impl<'a> EntityExtractor<'a> {
             }
         }
 
+        if self.language == "kotlin" || self.language == "java" {
+            self.extract_android_bindings(&mut relationships);
+        }
+
         (elements, relationships)
+    }
+
+    fn extract_android_bindings(&self, relationships: &mut Vec<Relationship>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+
+        self.extract_kotlin_synthetic_imports(content, &source_path, relationships);
+        self.extract_find_view_by_id(content, &source_path, relationships);
+        self.extract_viewbinding_access(content, &source_path, relationships);
+    }
+
+    fn extract_kotlin_synthetic_imports(
+        &self,
+        content: &str,
+        source_path: &str,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        let synthetic_re = Regex::new(r#"import\s+kotlin\.android\.synthetic\.(\w+)\.\*"#).unwrap();
+
+        for cap in synthetic_re.captures_iter(content) {
+            if let Some(layout_name) = cap.get(1) {
+                let layout_file = format!("res/layout/{}.xml", layout_name.as_str());
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: source_path.to_string(),
+                    target_qualified: layout_file,
+                    rel_type: "synthetic_binding".to_string(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({
+                        "layout_name": layout_name.as_str(),
+                    }),
+                });
+            }
+        }
+    }
+
+    fn extract_find_view_by_id(
+        &self,
+        content: &str,
+        source_path: &str,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        let patterns = [
+            r#"findViewById<\w+>\(R\.id\.(\w+)\)"#,
+            r#"findViewById\(R\.id\.(\w+)\)"#,
+            r#"\.findViewById<\w+>\(R\.id\.(\w+)\)"#,
+            r#"\.findViewById\(R\.id\.(\w+)\)"#,
+        ];
+
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for pattern in &patterns {
+            let re = Regex::new(pattern).unwrap();
+            for cap in re.captures_iter(content) {
+                if let Some(id_match) = cap.get(1) {
+                    let view_id = id_match.as_str();
+                    let key = format!("{}:{}", source_path, view_id);
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+
+                    let view_id_qualified = format!("res/layout/__unknown__/@+id/{}", view_id);
+
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: source_path.to_string(),
+                        target_qualified: view_id_qualified,
+                        rel_type: "binds_view".to_string(),
+                        confidence: 0.9,
+                        metadata: serde_json::json!({
+                            "view_id": view_id,
+                            "method": "findViewById",
+                        }),
+                    });
+                }
+            }
+        }
+    }
+
+    fn extract_viewbinding_access(
+        &self,
+        content: &str,
+        source_path: &str,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        let binding_var_re = Regex::new(r#"(\w+Binding)\s+(\w+)\s*="#).unwrap();
+        let binding_class_names: std::collections::HashSet<String> = binding_var_re
+            .captures_iter(content)
+            .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+            .collect();
+
+        let dot_access_re = Regex::new(r#"(\w+)\.(\w+)"#).unwrap();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for binding_name in binding_class_names {
+            let escaped = regex::escape(&binding_name);
+            let prop_pattern = format!(r#"{}\.(\w+)"#, escaped);
+            let re = Regex::new(&prop_pattern).unwrap();
+
+            for cap in re.captures_iter(content) {
+                if let Some(prop_match) = cap.get(1) {
+                    let prop_name = prop_match.as_str();
+                    if prop_name == "root" || prop_name == "getRoot" {
+                        continue;
+                    }
+
+                    let view_id = Self::to_snake_case(prop_name);
+                    let key = format!("{}:{}:{}", source_path, binding_name, view_id);
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+
+                    let view_id_qualified = format!("res/layout/__unknown__/@+id/{}", view_id);
+
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: source_path.to_string(),
+                        target_qualified: view_id_qualified,
+                        rel_type: "viewbinding_property".to_string(),
+                        confidence: 0.9,
+                        metadata: serde_json::json!({
+                            "binding_class": binding_name,
+                            "property_name": prop_name,
+                            "view_id": view_id,
+                        }),
+                    });
+                }
+            }
+        }
+    }
+
+    fn to_snake_case(s: &str) -> String {
+        let mut result = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if c.is_uppercase() && i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_lowercase().next().unwrap_or(c));
+        }
+        result
     }
 
     fn visit_node(

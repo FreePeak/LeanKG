@@ -43,7 +43,11 @@ async fn test_find_files_in_nested_dirs() {
     std::fs::create_dir_all(&nested).unwrap();
     std::fs::write(nested.join("lib.py"), "def x(): pass").unwrap();
     let files = find_files_sync(tmp.path().to_str().unwrap()).unwrap();
-    assert!(files.iter().any(|f| f.ends_with("lib.py")), "Should find lib.py in nested dirs, got: {:?}", files);
+    assert!(
+        files.iter().any(|f| f.ends_with("lib.py")),
+        "Should find lib.py in nested dirs, got: {:?}",
+        files
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -176,8 +180,16 @@ async fn test_find_files_discovers_java_files() {
     )
     .unwrap();
     let files = find_files_sync(tmp.path().to_str().unwrap()).unwrap();
-    assert!(!files.is_empty(), "Should find some files, got: {:?}", files);
-    assert!(files.iter().any(|f| f.ends_with("Main.java")), "Should find Main.java, got: {:?}", files);
+    assert!(
+        !files.is_empty(),
+        "Should find some files, got: {:?}",
+        files
+    );
+    assert!(
+        files.iter().any(|f| f.ends_with("Main.java")),
+        "Should find Main.java, got: {:?}",
+        files
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -218,32 +230,47 @@ async fn test_get_relationships_with_real_db() {
         println!("Skipping - no .leankg database in current dir");
         return;
     }
-    
+
     let db = init_db(db_path).expect("failed to init db");
     let graph = GraphEngine::new(db);
-    
+
     // Test with path that exists in DB (from graph.json we know ./src/api/auth.rs has imports)
     let result = graph.get_relationships("./src/api/auth.rs");
     match result {
         Ok(rels) => {
-            println!("get_relationships('./src/api/auth.rs') returned {} results", rels.len());
+            println!(
+                "get_relationships('./src/api/auth.rs') returned {} results",
+                rels.len()
+            );
             for rel in rels.iter().take(5) {
-                println!("  {} -> {} ({})", rel.source_qualified, rel.target_qualified, rel.rel_type);
+                println!(
+                    "  {} -> {} ({})",
+                    rel.source_qualified, rel.target_qualified, rel.rel_type
+                );
             }
             // We expect at least one relationship based on graph.json
-            assert!(!rels.is_empty(), "Should find relationships for ./src/api/auth.rs");
+            assert!(
+                !rels.is_empty(),
+                "Should find relationships for ./src/api/auth.rs"
+            );
         }
         Err(e) => {
             panic!("get_relationships failed: {}", e);
         }
     }
-    
+
     // Test without ./ prefix
     let result2 = graph.get_relationships("src/api/auth.rs");
     match result2 {
         Ok(rels) => {
-            println!("get_relationships('src/api/auth.rs') returned {} results", rels.len());
-            assert!(!rels.is_empty(), "Should find relationships without prefix too");
+            println!(
+                "get_relationships('src/api/auth.rs') returned {} results",
+                rels.len()
+            );
+            assert!(
+                !rels.is_empty(),
+                "Should find relationships without prefix too"
+            );
         }
         Err(e) => {
             panic!("get_relationships without prefix failed: {}", e);
@@ -258,10 +285,10 @@ async fn test_get_dependencies_with_real_db() {
         println!("Skipping - no .leankg database");
         return;
     }
-    
+
     let db = init_db(db_path).expect("failed to init db");
     let graph = GraphEngine::new(db.clone());
-    
+
     // get_dependencies returns CodeElements for imported items
     // Since most imports are external (std::, crate::), we might get empty results
     // But the important thing is the QUERY works (path normalization is correct)
@@ -274,18 +301,28 @@ async fn test_get_dependencies_with_real_db() {
             panic!("get_dependencies failed: {}", e);
         }
     }
-    
+
     // Verify the raw relationship query works (this is the core fix)
-    let normalized = "./src/api/auth.rs".strip_prefix("./").unwrap_or("./src/api/auth.rs");
+    let normalized = "./src/api/auth.rs"
+        .strip_prefix("./")
+        .unwrap_or("./src/api/auth.rs");
     let escaped = normalized.replace('\\', "\\\\").replace('"', "\\\"");
     let query = format!(
         r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = "{}" or source_qualified = "./{}"), rel_type = "imports""#,
         escaped, escaped
     );
-    
-    let result = db.run_script(&query, std::collections::BTreeMap::new()).unwrap();
-    assert!(result.rows.len() > 0, "Should find import relationships with path normalization");
-    println!("Confirmed: path normalization works - found {} import relationships", result.rows.len());
+
+    let result = db
+        .run_script(&query, std::collections::BTreeMap::new())
+        .unwrap();
+    assert!(
+        result.rows.len() > 0,
+        "Should find import relationships with path normalization"
+    );
+    println!(
+        "Confirmed: path normalization works - found {} import relationships",
+        result.rows.len()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -295,15 +332,18 @@ async fn test_get_call_graph_with_real_db() {
         println!("Skipping - no .leankg database");
         return;
     }
-    
+
     let db = init_db(db_path).expect("failed to init db");
     let graph = GraphEngine::new(db);
-    
+
     // Find a function that has calls
     let call_graph_result = graph.get_call_graph_bounded("./src/api/auth.rs", 1, 10);
     match call_graph_result {
         Ok(calls) => {
-            println!("get_call_graph('./src/api/auth.rs', depth=1) returned {} calls", calls.len());
+            println!(
+                "get_call_graph('./src/api/auth.rs', depth=1) returned {} calls",
+                calls.len()
+            );
             for (src, tgt, depth) in calls.iter().take(5) {
                 println!("  {} -> {} (depth {})", src, tgt, depth);
             }
@@ -346,18 +386,28 @@ async fn test_persistent_cache_hit_after_insert() {
     graph.insert_relationship(&rel).unwrap();
 
     let deps_first = graph.get_dependencies("src/a.rs").unwrap();
-    assert!(!deps_first.is_empty(), "First call should return results from DB");
+    assert!(
+        !deps_first.is_empty(),
+        "First call should return results from DB"
+    );
 
     let deps_second = graph.get_dependencies("src/a.rs").unwrap();
-    assert!(!deps_second.is_empty(), "Second call (cache hit) should return results");
-    assert_eq!(deps_first.len(), deps_second.len(), "Cache hit should return same count");
+    assert!(
+        !deps_second.is_empty(),
+        "Second call (cache hit) should return results"
+    );
+    assert_eq!(
+        deps_first.len(),
+        deps_second.len(),
+        "Cache hit should return same count"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_persistent_cache_hit_on_second_call() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg_cache_survive_test.db");
-    
+
     let db = init_db(&db_path).unwrap();
     let graph = GraphEngine::with_persistence(db);
     use leankg::db::models::{CodeElement, Relationship};
@@ -394,4 +444,3 @@ async fn test_persistent_cache_hit_on_second_call() {
     );
     assert_eq!(deps_first.len(), deps_second.len(), "Same results expected");
 }
-
