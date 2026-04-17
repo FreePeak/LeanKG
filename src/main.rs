@@ -357,16 +357,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cleanup,
             )?;
         }
-        cli::CLICommand::Proc { command } => {
-            match command {
-                cli::ProcCommand::Status => {
-                    proc_status()?;
-                }
-                cli::ProcCommand::Kill => {
-                    proc_kill()?;
-                }
+        cli::CLICommand::Proc { command } => match command {
+            cli::ProcCommand::Status => {
+                proc_status()?;
             }
-        }
+            cli::ProcCommand::Kill => {
+                proc_kill()?;
+            }
+        },
     }
 
     Ok(())
@@ -1789,9 +1787,13 @@ fn proc_status() -> Result<(), Box<dyn std::error::Error>> {
     let mut sys = System::new_all();
     sys.refresh_all();
 
-    let processes: Vec<_> = sys.processes().iter()
+    let processes: Vec<_> = sys
+        .processes()
+        .iter()
         .filter(|(_pid, process)| {
-            let cmd: String = process.cmd().iter()
+            let cmd: String = process
+                .cmd()
+                .iter()
                 .map(|s| s.to_string_lossy().into_owned())
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -1807,7 +1809,9 @@ fn proc_status() -> Result<(), Box<dyn std::error::Error>> {
     println!("LeanKG Processes:");
     println!("==================");
     for (pid, process) in processes {
-        let cmd: String = process.cmd().iter()
+        let cmd: String = process
+            .cmd()
+            .iter()
             .map(|s| s.to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join(" ");
