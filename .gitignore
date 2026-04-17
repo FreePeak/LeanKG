@@ -4,3 +4,5 @@ target/
 .worktrees/
 .cargo_home/
 .DS_Store
+.leankg_backup/
+test-results/

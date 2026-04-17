@@ -78,6 +78,27 @@ cargo test       # Run tests
 cargo run -- <cmd>  # Run CLI commands
 ```
 
+## UI Development
+
+The UI is a Vite + React app in `<leankg-codebase>/ui/`:
+
+```bash
+cd <leankg-codebase>/ui && npm run dev    # Dev server at http://localhost:5173/ (hot reload)
+cd <leankg-codebase>/ui && npm run build  # Production build
+```
+
+**Workflow after testing:**
+```bash
+cp -r <leankg-codebase>/ui/dist/* <leankg-codebase>/src/embed/
+cargo build  # Rebuild Rust with new UI assets
+```
+
+**For full backend testing:**
+```bash
+cargo run -- serve      # Backend API at http://localhost:8080/
+# Then open http://localhost:8080 in browser
+```
+
 ## Important Files
 
 | File | Purpose |
