@@ -1,0 +1,14 @@
+# Exclude bundled/minified assets
+embed/
+dist/
+node_modules/
+
+# Exclude test files
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Exclude configuration
+*.config.js
+*.config.ts
