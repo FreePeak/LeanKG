@@ -828,6 +828,23 @@ impl ToolHandler {
 
         let element_type_filter = args["element_type"].as_str().map(String::from);
 
+        // Convert glob pattern to regex for matching
+        // *.rs -> matches files ending with .rs
+        // handler.rs -> matches files containing handler.rs
+        let regex_pattern = if pattern.contains('*') {
+            let mut regex_str = pattern.replace('.', r"\.").replace("*", ".*");
+            // Anchor at end for file paths
+            if !regex_str.ends_with(".*") {
+                regex_str.push('$');
+            }
+            regex_str
+        } else {
+            // For non-glob patterns, match if path contains the pattern
+            format!(".*{}.*$", regex::escape(pattern))
+        };
+
+        let re = regex::Regex::new(&regex_pattern).map_err(|e| e.to_string())?;
+
         let elements = self
             .graph_engine
             .all_elements()
@@ -836,8 +853,7 @@ impl ToolHandler {
         let matches: Vec<_> = elements
             .iter()
             .filter(|e| {
-                let pattern_match =
-                    e.file_path.contains(pattern) || e.qualified_name.contains(pattern);
+                let pattern_match = re.is_match(&e.file_path) || e.qualified_name.contains(pattern);
                 let type_match = element_type_filter
                     .as_ref()
                     .map(|et| e.element_type.to_lowercase() == et.to_lowercase())
