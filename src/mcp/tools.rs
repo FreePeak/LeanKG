@@ -258,7 +258,9 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "min_lines": {"type": "integer", "default": 50, "description": "Minimum line count threshold (default: 50)"}
+                        "min_lines": {"type": "integer", "default": 50, "description": "Minimum line count threshold (default: 50)"},
+                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20, max: 100)"},
+                        "offset": {"type": "integer", "default": 0, "description": "Number of results to skip (pagination offset)"}
                     },
                     "required": []
                 }),
@@ -332,7 +334,10 @@ impl ToolRegistry {
                 description: "Get documentation tree structure with hierarchy".to_string(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "limit": {"type": "integer", "default": 50, "description": "Maximum number of categories (default: 50, max: 200)"},
+                        "offset": {"type": "integer", "default": 0, "description": "Number of categories to skip (pagination offset)"}
+                    },
                     "required": []
                 }),
             },
@@ -341,7 +346,10 @@ impl ToolRegistry {
                 description: "Get codebase structure".to_string(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "limit": {"type": "integer", "default": 50, "description": "Maximum number of files (default: 50, max: 200)"},
+                        "offset": {"type": "integer", "default": 0, "description": "Number of files to skip (pagination offset)"}
+                    },
                     "required": []
                 }),
             },
@@ -370,7 +378,10 @@ impl ToolRegistry {
                 description: "Get all clusters (functional communities) in the codebase. Returns cluster ID, label, member count, and representative files.".to_string(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "limit": {"type": "integer", "default": 50, "description": "Maximum number of clusters (default: 50, max: 100)"},
+                        "offset": {"type": "integer", "default": 0, "description": "Number of clusters to skip (pagination offset)"}
+                    },
                     "required": []
                 }),
             },
