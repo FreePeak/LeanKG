@@ -636,7 +636,7 @@ impl ServerHandler for MCPServer {
                 let content_str = if let Some(s) = result.as_str() {
                     s.to_string() // Already purely text (e.g. from context chunk fetch)
                 } else {
-                    crate::mcp::toon::to_string(&result) // Compress standard JSON schemas into TOON format
+                    crate::mcp::toon::to_toon_string(&result) // Compress standard JSON schemas into TOON format
                 };
 
                 Ok(CallToolResult::success(vec![Content::text(content_str)]))

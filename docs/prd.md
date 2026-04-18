@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.1-massive-graph
-**Date:** 2026-04-16
+**Version:** 3.2-toon-format
+**Date:** 2026-04-18
 **Status:** Active Development
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
@@ -10,6 +10,13 @@
 ---
 
 ## Changelog
+
+### v3.2-toon-format - TOON response format for MCP tools (~40% token reduction)
+- Added US-TOON-01 user story for TOON (Token-Oriented Object Notation) format adoption
+- TOON is a compact notation that reduces field name repetition in arrays
+- Example: `elements[2]{qualified_name,type}: src/main.rs::main,function` vs JSON with full field names
+- TOON spec: https://github.com/toon-format/toon
+- Added Section 7.5 TOON Response Templates for all MCP tool categories
 
 ### v3.1-massive-graph - Massive graph service expansion
 - Added US-MG-01..05 user stories for service node double-click behavior
@@ -183,6 +190,53 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | US-MG-03 | Filter UI always shows ALL node type toggles regardless of loaded data | Must Have | DONE |
 | US-MG-04 | Default visible filters: Service, Folder, File, Function ON; rest OFF | Must Have | DONE |
 | US-MG-05 | Expand-service API optimized: targeted DB query instead of full scan | Must Have | DONE |
+
+### 3.9 TOON Format Stories (US-TOON-01)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-TOON-01 | MCP tool responses use TOON format for ~40% token reduction vs JSON | Must Have | DONE |
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-TOON-01: TOON Response Format</summary>
+
+**Problem:** JSON responses from MCP tools include repetitive field names in arrays, wasting tokens.
+
+**Solution:** Adopt TOON (Token-Oriented Object Notation) format which omits field names within array items when they match the schema template.
+
+**Example comparison:**
+
+JSON (312 tokens):
+```json
+{
+  "elements": [
+    {"qualified_name": "src/main.rs::main", "type": "function", "language": "rust"},
+    {"qualified_name": "src/lib.rs::init", "type": "function", "language": "rust"}
+  ],
+  "tokens": 312
+}
+```
+
+TOON (187 tokens, 40% reduction):
+```
+{
+  elements[2]{qualified_name,type,language}:
+    src/main.rs::main,function,rust
+    src/lib.rs::init,function,rust
+  tokens: 187
+}
+```
+
+**Specification:** https://github.com/toon-format/toon
+
+**Implementation:**
+- All MCP tool responses wrapped in Response Format Envelope
+- Envelope: `{status: ok, tool: <name>, format: toon|json, tokens: <count>, data: <toon_string>}`
+- Default format is `toon`; clients can request `json` via `format=json` parameter
+
+</details>
 
 **Detailed Feature Descriptions:**
 
@@ -766,6 +820,114 @@ src/
 |------|-------------|
 | `export_graph` | Export in json/html/svg/graphml/neo4j |
 | `mcp_hello` | Health check / debug |
+
+### 7.5 TOON Response Templates
+
+All MCP tool responses use TOON (Token-Oriented Object Notation) format by default for ~40% token reduction. See [TOON Specification](https://github.com/toon-format/toon) for details.
+
+**Response Format Envelope:**
+```
+{
+  status: ok|error
+  tool: <tool_name>
+  format: toon|json
+  tokens: <token_count>
+  data: <response_data>
+}
+```
+
+**TOON Format Examples:**
+
+1. **Search/Query Results:**
+```
+{
+  status: ok
+  tool: search_code
+  format: toon
+  tokens: 156
+  data:
+    results[3]{qualified_name,type,language}:
+      src/main.rs::main,function,rust
+      src/lib.rs::init,function,rust
+      src/cli.rs::run,function,rust
+}
+```
+
+2. **Impact Radius:**
+```
+{
+  status: ok
+  tool: get_impact_radius
+  format: toon
+  tokens: 203
+  data:
+    impact[4]{qualified_name,type,severity,confidence}:
+      src/main.rs::main,function,WILL_BREAK,1.0
+      src/lib.rs::init,function,LIKELY_AFFECTED,0.85
+      src/config.rs::load,function,LIKELY_AFFECTED,0.72
+      tests/main_test.rs::test_main,test,MAY_BE_AFFECTED,0.31
+}
+```
+
+3. **Dependencies/Dependents:**
+```
+{
+  status: ok
+  tool: get_dependencies
+  format: toon
+  tokens: 98
+  data:
+    dependencies[2]{qualified_name,type}:
+      src/lib.rs,file
+      src/config.rs,file
+}
+```
+
+4. **Call Graph:**
+```
+{
+  status: ok
+  tool: get_call_graph
+  format: toon
+  tokens: 187
+  data:
+    calls[3]{from,to,depth}:
+      src/main.rs::main,src/lib.rs::init,1
+      src/main.rs::main,src/cli.rs::run,1
+      src/lib.rs::init,src/config.rs::load,2
+}
+```
+
+5. **Context/Compression:**
+```
+{
+  status: ok
+  tool: get_context
+  format: toon
+  tokens: 412
+  data:
+    context:
+      sig[1]: src/main.rs::main->()
+      imports[2]: src/lib.rs,src/config.rs
+      calls[1]: src/lib.rs::init
+}
+```
+
+6. **Cluster/Graph Data:**
+```
+{
+  status: ok
+  tool: get_clusters
+  format: toon
+  tokens: 234
+  data:
+    clusters[2]{id,name,members}:
+      c1,mcp_tools,12
+      c2,graph_core,8
+}
+```
+
+**JSON Fallback:** Clients can request JSON format by adding `format=json` parameter to any MCP tool call.
 
 ---
 
