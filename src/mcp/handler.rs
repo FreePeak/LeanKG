@@ -1453,13 +1453,17 @@ impl ToolHandler {
     fn get_doc_tree(&self, args: &Value) -> Result<Value, String> {
         let limit = args["limit"].as_i64().unwrap_or(50).clamp(1, 200) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0).clamp(0, i64::MAX) as usize;
+        let max_docs = args["max_docs"].as_i64().unwrap_or(20).clamp(1, 100) as usize;
 
         let elements = self
             .graph_engine
             .all_elements()
             .map_err(|e| e.to_string())?;
 
-        let mut tree = serde_json::Map::new();
+        let mut tree: std::collections::BTreeMap<String, serde_json::Map<String, Value>> =
+            std::collections::BTreeMap::new();
+        let mut doc_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
         for elem in elements
             .iter()
@@ -1476,6 +1480,13 @@ impl ToolHandler {
                 .and_then(|v| v.as_str())
                 .unwrap_or("root");
 
+            let count = doc_counts.entry(category.to_string()).or_insert(0);
+            if *count >= max_docs {
+                *count += 1;
+                continue;
+            }
+            *count += 1;
+
             let node = json!({
                 "qualified_name": elem.qualified_name,
                 "name": elem.name,
@@ -1484,27 +1495,31 @@ impl ToolHandler {
                 "line_end": elem.line_end
             });
 
-            if !tree.contains_key(category) {
-                tree.insert(category.to_string(), json!({}));
-            }
-
-            if let Some(cat_obj) = tree.get_mut(category) {
-                if let Some(obj) = cat_obj.as_object_mut() {
-                    obj.insert(elem.name.clone(), node);
-                }
-            }
+            tree.entry(category.to_string())
+                .or_default()
+                .insert(elem.name.clone(), node);
         }
 
         // Sort and paginate categories
         let total_categories = tree.len();
-        let mut keys: Vec<_> = tree.keys().cloned().collect();
-        keys.sort();
+        let keys: Vec<_> = tree.keys().cloned().collect();
 
         let paginated_tree: serde_json::Map<String, serde_json::Value> = keys
             .into_iter()
             .skip(offset)
             .take(limit)
-            .filter_map(|k| tree.remove(&k).map(|v| (k, v)))
+            .filter_map(|k| {
+                let docs = tree.remove(&k)?;
+                let mut obj = serde_json::Map::new();
+                let truncated = doc_counts.get(&k).copied().unwrap_or(0) > max_docs;
+                obj.insert("docs".to_string(), json!(docs));
+                obj.insert("truncated".to_string(), json!(truncated));
+                obj.insert(
+                    "total_docs".to_string(),
+                    json!(doc_counts.get(&k).copied().unwrap_or(0)),
+                );
+                Some((k, json!(obj)))
+            })
             .collect();
 
         Ok(json!({
@@ -1521,13 +1536,15 @@ impl ToolHandler {
     fn get_code_tree(&self, args: &Value) -> Result<Value, String> {
         let limit = args["limit"].as_i64().unwrap_or(50).clamp(1, 200) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0).clamp(0, i64::MAX) as usize;
+        let max_elements = args["max_elements"].as_i64().unwrap_or(20).clamp(1, 100) as usize;
 
         let elements = self
             .graph_engine
             .all_elements()
             .map_err(|e| e.to_string())?;
 
-        let mut tree = serde_json::Map::new();
+        let mut tree: std::collections::BTreeMap<String, (String, Vec<Value>)> =
+            std::collections::BTreeMap::new();
 
         for elem in &elements {
             let is_code_element = matches!(
@@ -1545,43 +1562,41 @@ impl ToolHandler {
 
             let file_name = parts.last().unwrap_or(&"");
 
-            if !tree.contains_key(*file_name) {
-                tree.insert(
-                    file_name.to_string(),
-                    json!({
-                        "file_path": elem.file_path,
-                        "elements": Vec::<Value>::new()
-                    }),
-                );
-            }
+            let entry = tree
+                .entry(file_name.to_string())
+                .or_insert_with(|| (elem.file_path.clone(), Vec::new()));
 
-            if let Some(file_obj) = tree.get_mut(*file_name) {
-                if let Some(obj) = file_obj.as_object_mut() {
-                    if let Some(elems) = obj.get_mut("elements") {
-                        if let Some(arr) = elems.as_array_mut() {
-                            arr.push(json!({
-                                "qualified_name": elem.qualified_name,
-                                "name": elem.name,
-                                "type": elem.element_type,
-                                "line_start": elem.line_start,
-                                "line_end": elem.line_end
-                            }));
-                        }
-                    }
-                }
+            if entry.1.len() < max_elements {
+                entry.1.push(json!({
+                    "qualified_name": elem.qualified_name,
+                    "name": elem.name,
+                    "type": elem.element_type,
+                    "line_start": elem.line_start,
+                    "line_end": elem.line_end
+                }));
             }
         }
 
         // Sort and paginate
         let total_files = tree.len();
-        let mut keys: Vec<_> = tree.keys().cloned().collect();
-        keys.sort();
+        let keys: Vec<_> = tree.keys().cloned().collect();
 
         let paginated_tree: serde_json::Map<String, serde_json::Value> = keys
             .into_iter()
             .skip(offset)
             .take(limit)
-            .filter_map(|k| tree.remove(&k).map(|v| (k, v)))
+            .filter_map(|k| {
+                tree.remove(&k).map(|(file_path, elements)| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("file_path".to_string(), json!(file_path));
+                    obj.insert("elements".to_string(), json!(elements));
+                    obj.insert(
+                        "truncated".to_string(),
+                        json!(elements.len() >= max_elements),
+                    );
+                    (k, json!(obj))
+                })
+            })
             .collect();
 
         Ok(json!({
@@ -1623,6 +1638,7 @@ impl ToolHandler {
 
         let limit = args["limit"].as_i64().unwrap_or(50).clamp(1, 100) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0).clamp(0, i64::MAX) as usize;
+        let max_members = args["max_members"].as_i64().unwrap_or(10).clamp(1, 100) as usize;
 
         let detector = CommunityDetector::new(self.graph_engine.db());
         let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
@@ -1633,7 +1649,18 @@ impl ToolHandler {
         // Sort by cluster label for consistent pagination
         cluster_list.sort_by_key(|c| c.label.clone());
 
-        let paginated: Vec<_> = cluster_list.into_iter().skip(offset).take(limit).collect();
+        let paginated: Vec<_> = cluster_list
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|mut c| {
+                // Truncate members per cluster to keep response size bounded
+                if c.members.len() > max_members {
+                    c.members.truncate(max_members);
+                }
+                c
+            })
+            .collect();
         let stats = get_cluster_stats(&clusters);
 
         Ok(json!({
