@@ -5,7 +5,7 @@
         "mcp-stdio",
         "--watch"
       ],
-      "command": "/Users/linh.doan/.local/bin/leankg"
+      "command": "/Users/linh.doan/work/harvey/freepeak/leankg/.worktrees/orchestrate-perf-fix/target/release/leankg"
     }
   }
 }
