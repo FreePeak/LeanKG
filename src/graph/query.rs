@@ -1151,7 +1151,7 @@ impl GraphEngine {
         element_qualified: &str,
     ) -> Result<Vec<DocLink>, Box<dyn std::error::Error>> {
         let normalized = normalize_path(element_qualified);
-        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = $sq1 or source_qualified = $sq2), rel_type = "documented_by""#;
+        let query = r#"?[source_qualified, target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, metadata, confidence], (source_qualified = $sq1 or source_qualified = $sq2), rel_type = "documented_by""#;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "sq1".to_string(),

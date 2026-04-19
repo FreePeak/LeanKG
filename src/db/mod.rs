@@ -413,7 +413,7 @@ pub fn get_documented_by(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
-    let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified = $sq, rel_type = "documented_by""#;
+    let query = r#"?[target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, metadata, confidence], source_qualified = $sq, rel_type = "documented_by""#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
         "sq".to_string(),
