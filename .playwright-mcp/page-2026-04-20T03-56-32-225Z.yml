@@ -1,0 +1,146 @@
+- generic [ref=e1]:
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - generic [ref=e263]:
+            - link "Threads" [ref=e265] [cursor=pointer]:
+              - /url: /
+              - img "Threads" [ref=e267]
+            - generic [ref=e269]:
+              - link "Home" [ref=e271] [cursor=pointer]:
+                - /url: /
+                - img "Home" [ref=e275]
+              - link "Search" [ref=e278] [cursor=pointer]:
+                - /url: /search
+                - img "Search" [ref=e282]
+              - button "Create" [ref=e285] [cursor=pointer]:
+                - img "Create" [ref=e289]
+              - link "Notifications" [ref=e292] [cursor=pointer]:
+                - /url: /activity
+                - img "Notifications" [ref=e296]
+              - link "Profile" [ref=e300] [cursor=pointer]:
+                - /url: /@freepeak_life
+                - img "Profile" [ref=e304]
+            - button "More More" [ref=e308] [cursor=pointer]:
+              - generic [ref=e309]:
+                - img "More" [ref=e311]
+                - img "More" [ref=e315]
+          - generic [ref=e325]:
+            - generic [ref=e333]:
+              - button [ref=e477] [cursor=pointer]:
+                - img [ref=e478]
+              - link [ref=e479] [cursor=pointer]:
+                - /url: /@freepeak_life/post/DXVr_voGQ5d
+                - heading [level=1] [ref=e480]:
+                  - generic [ref=e345]: Thread
+                - generic [ref=e348]: 81 views
+              - generic [ref=e349]:
+                - button [ref=e481] [cursor=pointer]:
+                  - img [ref=e482]
+                - button [ref=e483] [cursor=pointer]:
+                  - img [ref=e484]
+            - region [ref=e485]:
+              - generic [ref=e371]:
+                - link [ref=e486] [cursor=pointer]:
+                  - /url: /@freepeak_life
+                  - img [ref=e487]
+                - generic [ref=e378]:
+                  - generic [ref=e379]:
+                    - link [ref=e488] [cursor=pointer]:
+                      - /url: /@freepeak_life
+                      - generic [ref=e386]: freepeak_life
+                    - button [ref=e489] [cursor=pointer]:
+                      - img [ref=e490]
+                    - link [ref=e491] [cursor=pointer]:
+                      - /url: /@freepeak_life/post/DXVr_voGQ5d
+                      - time [ref=e398]:
+                        - generic [ref=e492]: 10m
+                  - button [ref=e493] [cursor=pointer]:
+                    - img [ref=e494]
+                - generic [ref=e408]:
+                  - generic [ref=e409]:
+                    - generic [ref=e411]: "LeanKG: cut AI coding costs by 99%"
+                    - generic [ref=e413]: Instead of scanning 10,000+ tokens per codebase query, AI tools query the LeanKG knowledge graph for just 13-42 tokens.
+                    - generic [ref=e415]: "Real example: Q: \"What breaks if I change auth::validate_token?\""
+                    - generic [ref=e417]: "Without LeanKG: ~15,000 tokens ($0.045) With LeanKG: ~85 tokens ($0.00025)"
+                    - link [ref=e495] [cursor=pointer]:
+                      - /url: https://l.threads.com/?u=http%3A%2F%2Fgithub.com%2FFreePeak%2FLeanKG&e=AT4NfbeaN_jJrDUHlNiQkWlbuV4U8pFSk6Ea5BcRZxl4zolIKHVAytflT7W5pa2_1P1VoGC0K45JbMcNbLbX4KEEhQ0l7oH_gRywkc6QlOyaut2wYhKnDHvwplAyP3ggOjauGra8Sx1C
+                      - text: github.com/FreeP…
+                  - link [ref=e496] [cursor=pointer]:
+                    - /url: https://l.threads.com/?u=https%3A%2F%2Fgithub.com%2FFreePeak%2FLeanKG&e=AT431lDWoPBXkiMcXxkOE7JxbqcMTn2IYL0Ap1JoG3DOOuxXQIuHdQMFxVZMtScPzlEAMYBbeySsFLZNBg429CYQ3VrII2mUC9uxSc0xgn7TdYleIC8v8dA--QzrOxZAQrx0b4bIPt2T
+                    - generic [ref=e423]:
+                      - img [ref=e497]
+                      - generic [ref=e426]:
+                        - generic [ref=e427]:
+                          - img [ref=e429]
+                          - generic [ref=e431]: github.com
+                        - generic [ref=e434]: "GitHub - FreePeak/LeanKG: LeanKG: Stop Burning Tokens. Start Coding Lean."
+                  - generic [ref=e436]:
+                    - button [ref=e498] [cursor=pointer]:
+                      - generic [ref=e440]:
+                        - img [ref=e499]
+                        - generic [ref=e445]: "1"
+                    - button [ref=e500] [cursor=pointer]:
+                      - img [ref=e501]
+                    - button [ref=e502] [cursor=pointer]:
+                      - img [ref=e503]
+                    - button [ref=e504] [cursor=pointer]:
+                      - img [ref=e505]
+                - button [ref=e506] [cursor=pointer]:
+                  - generic [ref=e469]:
+                    - text: View activity
+                    - img [ref=e507]
+          - button "Create" [ref=e474] [cursor=pointer]:
+            - img "Create" [ref=e475]
+  - dialog [ref=e527]:
+    - generic [ref=e532]:
+      - generic [ref=e533]:
+        - button "Cancel" [ref=e535] [cursor=pointer]:
+          - generic [ref=e536]: Cancel
+        - heading "New thread" [level=1] [ref=e538]:
+          - generic [ref=e539]: New thread
+        - generic [ref=e540]:
+          - button "Drafts" [ref=e543] [cursor=pointer]:
+            - img "Drafts" [ref=e545]
+          - button "More" [ref=e548] [cursor=pointer]:
+            - img "More" [ref=e550]
+      - generic [ref=e557]:
+        - generic [ref=e558]:
+          - img "freepeak_life's profile picture" [ref=e562]
+          - generic [ref=e565]:
+            - generic [ref=e568]:
+              - generic [ref=e570]: freepeak_life
+              - img [ref=e572]
+              - generic [ref=e578]:
+                - img [ref=e581]
+                - searchbox "Add a topic" [ref=e588]
+            - generic [ref=e589]:
+              - textbox "Empty text field. Type to compose a new post." [ref=e590]:
+                - paragraph [ref=e591]
+              - generic:
+                - generic: What's new?
+            - generic [ref=e654]:
+              - button "Remove" [active] [ref=e658] [cursor=pointer]:
+                - img "Remove" [ref=e660]
+              - button "Attachment actions" [ref=e664] [cursor=pointer]:
+                - img "Attachment actions" [ref=e666]
+            - generic [ref=e592]:
+              - button "Attach media Add" [ref=e668] [cursor=pointer]:
+                - img "Attach media" [ref=e669]
+                - generic [ref=e672]: Add
+              - button "Add an emoji" [ref=e605] [cursor=pointer]:
+                - img "Add an emoji" [ref=e607]
+              - button "Add a location" [ref=e625] [cursor=pointer]:
+                - img "Add a location" [ref=e627]
+        - generic [ref=e630]:
+          - img "freepeak_life's profile picture" [ref=e633]
+          - button "Add to thread" [ref=e634] [cursor=pointer]:
+            - generic [ref=e635]: Add to thread
+      - generic [ref=e637]:
+        - button "Post" [ref=e639] [cursor=pointer]:
+          - generic [ref=e640]: Post
+        - button "Reply options" [ref=e642] [cursor=pointer]:
+          - generic [ref=e643]:
+            - img [ref=e645]
+            - generic [ref=e650]: Reply options

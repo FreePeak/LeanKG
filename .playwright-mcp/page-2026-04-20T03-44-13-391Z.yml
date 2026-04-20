@@ -1,0 +1,255 @@
+- generic [ref=e4]:
+  - generic:
+    - generic [ref=e6]:
+      - link "Threads" [ref=e8] [cursor=pointer]:
+        - /url: /
+        - img "Threads" [ref=e10]
+      - generic [ref=e12]:
+        - link "Home" [ref=e14] [cursor=pointer]:
+          - /url: /
+          - img "Home" [ref=e18]
+        - link "Search" [ref=e21] [cursor=pointer]:
+          - /url: /search
+          - img "Search" [ref=e25]
+        - button "Create" [ref=e28] [cursor=pointer]:
+          - img "Create" [ref=e32]
+        - link "Notifications" [ref=e35] [cursor=pointer]:
+          - /url: /activity
+          - img "Notifications" [ref=e39]
+        - link "Profile" [ref=e42] [cursor=pointer]:
+          - /url: /@freepeak_life
+          - img "Profile" [ref=e46]
+      - button "More More" [ref=e50] [cursor=pointer]:
+        - generic [ref=e51]:
+          - img "More" [ref=e53]
+          - img "More" [ref=e57]
+    - generic [ref=e65]:
+      - generic [ref=e68]:
+        - generic [ref=e78]:
+          - link [ref=e500] [cursor=pointer]:
+            - /url: /for_you
+            - heading [level=1] [ref=e501]:
+              - generic [ref=e81]: For you
+          - button [ref=e502] [cursor=pointer]:
+            - button [ref=e503]:
+              - img [ref=e504]
+        - region [ref=e505]:
+          - generic [ref=e92]:
+            - generic [ref=e94]:
+              - link [ref=e506] [cursor=pointer]:
+                - /url: /@freepeak_life
+                - img [ref=e507]
+              - button [ref=e508]:
+                - generic [ref=e99]: What's new?
+              - button [ref=e509] [cursor=pointer]:
+                - generic [ref=e102]: Post
+            - separator [ref=e103]
+            - generic [ref=e105]:
+              - generic [ref=e111] [cursor=pointer]:
+                - button [ref=e510]:
+                  - img [ref=e511]
+                  - button [ref=e512]:
+                    - img [ref=e513]
+                - generic [ref=e123]:
+                  - generic [ref=e124]:
+                    - link [ref=e514]:
+                      - /url: /@realpython
+                      - generic [ref=e131]: realpython
+                    - link [ref=e515]:
+                      - /url: /@realpython/post/DXU_rpHElNE
+                      - time [ref=e136]:
+                        - generic [ref=e516]: 6h
+                  - button [ref=e517]:
+                    - img [ref=e518]
+                - generic [ref=e146]:
+                  - generic [ref=e147]:
+                    - generic [ref=e149]: "🐍📰 Variables in Python: Usage and Best Practices"
+                    - generic [ref=e151]: Explore Python variables from creation to best practices, covering naming conventions, dynamic typing, variable scope, and type hints with examples.
+                    - link [ref=e519]:
+                      - /url: https://l.threads.com/?u=https%3A%2F%2Frealpython.com%2Fpython-variables%2F&e=AT4u2jeL9puAC4D36_t9e779nMO305CCJqAMmNLkGBliuPL2o-scuiC6prpBodKANaT2hr2vDMk1mEtd75Nydu9MljRiIJl_fsqpjYnct1btHPid-j_sa-Wu0_rDeASky2X7lNudGL19
+                      - text: realpython.com/pytho…
+                  - link [ref=e520]:
+                    - /url: /@realpython/post/DXU_rpHElNE/media
+                    - generic [ref=e161]:
+                      - img
+                  - generic [ref=e163]:
+                    - button [ref=e521]:
+                      - generic [ref=e167]:
+                        - img [ref=e522]
+                        - generic [ref=e172]: "12"
+                    - button [ref=e523]:
+                      - img [ref=e524]
+                    - button [ref=e525]:
+                      - generic [ref=e182]:
+                        - img [ref=e526]
+                        - generic [ref=e188]: "1"
+                    - button [ref=e527]:
+                      - generic [ref=e192]:
+                        - img [ref=e528]
+                        - generic [ref=e197]: "1"
+              - generic [ref=e203] [cursor=pointer]:
+                - button [ref=e529]:
+                  - img [ref=e530]
+                  - button [ref=e531]:
+                    - img [ref=e532]
+                - generic [ref=e215]:
+                  - generic [ref=e216]:
+                    - link [ref=e533]:
+                      - /url: /@freecodecamp
+                      - generic [ref=e223]: freecodecamp
+                    - link [ref=e534]:
+                      - /url: /@freecodecamp/post/DXUcF4plJT-
+                      - time [ref=e228]:
+                        - generic [ref=e535]: 11h
+                  - button [ref=e536]:
+                    - img [ref=e537]
+                - generic [ref=e238]:
+                  - generic [ref=e241]:
+                    - text: Machine Learning and Artificial Intelligence are hot topics right now. And this course will give you a solid foundation in ML & AI skills. You'll learn key concepts like overfitting & regularization, common algorithms, & you'll build some projects, too.
+                    - link [ref=e538]:
+                      - /url: https://l.threads.com/?u=https%3A%2F%2Fwww.freecodecamp.org%2Fnews%2Flearn-the-foundations-of-machine-learning-and-artificial-intelligence%2F&e=AT4u2jeL9puAC4D36_t9e779nMO305CCJqAMmNLkGBliuPL2o-scuiC6prpBodKANaT2hr2vDMk1mEtd75Nydu9MljRiIJl_fsqpjYnct1btHPid-j_sa-Wu0_rDeASky2X7lNudGL19
+                      - text: freecodecamp.org/news…
+                  - link [ref=e539]:
+                    - /url: /@freecodecamp/post/DXUcF4plJT-/media
+                    - generic [ref=e249]:
+                      - img
+                  - generic [ref=e251]:
+                    - button [ref=e540]:
+                      - generic [ref=e255]:
+                        - img [ref=e541]
+                        - generic [ref=e260]: "69"
+                    - button [ref=e542]:
+                      - img [ref=e543]
+                    - button [ref=e544]:
+                      - generic [ref=e270]:
+                        - img [ref=e545]
+                        - generic [ref=e276]: "9"
+                    - button [ref=e546]:
+                      - generic [ref=e280]:
+                        - img [ref=e547]
+                        - generic [ref=e285]: "17"
+              - generic [ref=e291] [cursor=pointer]:
+                - button [ref=e548]:
+                  - img [ref=e549]
+                  - button [ref=e550]:
+                    - img [ref=e551]
+                - generic [ref=e303]:
+                  - generic [ref=e304]:
+                    - link [ref=e552]:
+                      - /url: /@liftytubbs
+                      - generic [ref=e311]: liftytubbs
+                    - link [ref=e553]:
+                      - /url: /@liftytubbs/post/DXTO0SglVXH
+                      - time [ref=e316]:
+                        - generic [ref=e554]: 22h
+                  - button [ref=e555]:
+                    - img [ref=e556]
+                - generic [ref=e326]:
+                  - generic [ref=e329]: My local inference name for Claude is "Clud". He's not too smart but he's doing his best
+                  - link [ref=e557]:
+                    - /url: /@liftytubbs/post/DXTO0SglVXH/media
+                    - generic [ref=e336]:
+                      - img
+                  - generic [ref=e338]:
+                    - button [ref=e558]:
+                      - generic [ref=e342]:
+                        - img [ref=e559]
+                        - generic [ref=e347]: "131"
+                    - button [ref=e560]:
+                      - generic [ref=e351]:
+                        - img [ref=e561]
+                        - generic [ref=e356]: "39"
+                    - button [ref=e562]:
+                      - generic [ref=e360]:
+                        - img [ref=e563]
+                        - generic [ref=e366]: "1"
+                    - button [ref=e564]:
+                      - generic [ref=e370]:
+                        - img [ref=e565]
+                        - generic [ref=e375]: "4"
+              - generic [ref=e381] [cursor=pointer]:
+                - button [ref=e566]:
+                  - img [ref=e567]
+                  - button [ref=e568]:
+                    - img [ref=e569]
+                - generic [ref=e393]:
+                  - generic [ref=e394]:
+                    - link [ref=e570]:
+                      - /url: /@pyramidskeme.exe
+                      - generic [ref=e401]: pyramidskeme.exe
+                    - link [ref=e571]:
+                      - /url: /@pyramidskeme.exe/post/DXVjZruFSdp
+                      - time [ref=e406]:
+                        - generic [ref=e572]: 1h
+                  - button [ref=e573]:
+                    - img [ref=e574]
+                - generic [ref=e416]:
+                  - generic [ref=e419]: About to write an algorithm that runs in O(1/n)
+                  - generic [ref=e421]:
+                    - button [ref=e575]:
+                      - generic [ref=e425]:
+                        - img [ref=e576]
+                        - generic [ref=e430]: "6"
+                    - button [ref=e577]:
+                      - img [ref=e578]
+                    - button [ref=e579]:
+                      - img [ref=e580]
+                    - button [ref=e581]:
+                      - img [ref=e582]
+              - status [ref=e583]:
+                - img [ref=e584]
+      - button [ref=e585] [cursor=pointer]:
+        - img [ref=e586]
+    - button "Create" [ref=e497] [cursor=pointer]:
+      - img "Create" [ref=e498]
+  - dialog [ref=e595]:
+    - generic [ref=e600]:
+      - generic [ref=e601]:
+        - button "Cancel" [ref=e603] [cursor=pointer]:
+          - generic [ref=e604]: Cancel
+        - heading "New thread" [level=1] [ref=e606]:
+          - generic [ref=e607]: New thread
+        - generic [ref=e608]:
+          - button "Drafts" [ref=e611] [cursor=pointer]:
+            - img "Drafts" [ref=e613]
+          - button "More" [ref=e616] [cursor=pointer]:
+            - img "More" [ref=e618]
+      - generic [ref=e625]:
+        - generic [ref=e626]:
+          - img "freepeak_life's profile picture" [ref=e630]
+          - generic [ref=e633]:
+            - generic [ref=e636]:
+              - generic [ref=e638]: freepeak_life
+              - img [ref=e640]
+              - generic [ref=e646]:
+                - img [ref=e649]
+                - searchbox "Add a topic" [ref=e656]
+            - generic [ref=e657]:
+              - textbox "Empty text field. Type to compose a new post." [active] [ref=e658]:
+                - paragraph [ref=e659]
+              - generic:
+                - generic: What's new?
+            - generic [ref=e660]:
+              - button "Attach media" [ref=e661] [cursor=pointer]:
+                - img "Attach media" [ref=e663]
+              - button "Add a GIF" [ref=e666] [cursor=pointer]:
+                - img "Add a GIF" [ref=e668]
+              - button "Add an emoji" [ref=e673] [cursor=pointer]:
+                - img "Add an emoji" [ref=e675]
+              - button "Add a poll" [ref=e680] [cursor=pointer]:
+                - img "Add a poll" [ref=e682]
+              - button "Attach text" [ref=e686] [cursor=pointer]:
+                - img "Attach text" [ref=e688]
+              - button "Add a location" [ref=e693] [cursor=pointer]:
+                - img "Add a location" [ref=e695]
+        - generic [ref=e698]:
+          - img "freepeak_life's profile picture" [ref=e701]
+          - button "Add to thread" [disabled] [ref=e702]:
+            - generic [ref=e703]: Add to thread
+      - generic [ref=e705]:
+        - button "Post" [ref=e707]:
+          - generic [ref=e708]: Post
+        - button "Reply options" [ref=e710] [cursor=pointer]:
+          - generic [ref=e711]:
+            - img [ref=e713]
+            - generic [ref=e718]: Reply options

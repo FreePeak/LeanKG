@@ -1,0 +1,239 @@
+- generic [ref=e1]:
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - link "Threads" [ref=e8] [cursor=pointer]:
+        - /url: /
+        - img "Threads" [ref=e10]
+      - generic [ref=e12]:
+        - link "Home" [ref=e14] [cursor=pointer]:
+          - /url: /
+          - img "Home" [ref=e18]
+        - link "Search" [ref=e21] [cursor=pointer]:
+          - /url: /search
+          - img "Search" [ref=e25]
+        - button "Create" [active] [ref=e28] [cursor=pointer]:
+          - img "Create" [ref=e32]
+        - link "Notifications" [ref=e35] [cursor=pointer]:
+          - /url: /activity
+          - img "Notifications" [ref=e39]
+        - link "Profile" [ref=e43] [cursor=pointer]:
+          - /url: /@freepeak_life
+          - img "Profile" [ref=e47]
+      - button "More More" [ref=e51] [cursor=pointer]:
+        - generic [ref=e52]:
+          - img "More" [ref=e54]
+          - img "More" [ref=e58]
+    - generic [ref=e68]:
+      - generic [ref=e76]:
+        - link "Column title" [ref=e1090] [cursor=pointer]:
+          - /url: /@freepeak_life
+          - heading "Profile" [level=1] [ref=e1091]:
+            - generic [ref=e81]: Profile
+        - generic [ref=e82]:
+          - link "Search posts from freepeak_life" [ref=e1092] [cursor=pointer]:
+            - /url: /search?from_author=freepeak_life
+            - img "Search posts from freepeak_life" [ref=e1093]
+          - button "More" [ref=e1094] [cursor=pointer]:
+            - img "More" [ref=e1095]
+      - region "Column body" [ref=e1096]:
+        - generic [ref=e97]:
+          - generic [ref=e98]:
+            - generic [ref=e99]:
+              - generic [ref=e100]:
+                - heading "Free Peak" [level=1] [ref=e1097]
+                - generic [ref=e103]:
+                  - generic [ref=e105]: freepeak_life
+                  - button "Click to learn more about the fediverse" [ref=e1098] [cursor=pointer]:
+                    - img [ref=e108]
+              - button "freepeak_life's profile picture" [ref=e1099] [cursor=pointer]:
+                - img "freepeak_life's profile picture" [ref=e1100]
+            - generic [ref=e120]: Life is a candle. Whether it burns in vain or lights your path is your choice.
+            - button "freepeak.github.io +2" [ref=e1101] [cursor=pointer]:
+              - generic [ref=e126]: freepeak.github.io
+              - generic [ref=e127]:
+                - generic [ref=e128]: "+2"
+                - img [ref=e130]
+            - generic [ref=e133]:
+              - generic [ref=e134]:
+                - link "#SoftwareEngineering" [ref=e1102] [cursor=pointer]:
+                  - /url: /search?q=%23softwareengineering&serp_type=tags&tag_id=18420879433030428
+                  - generic [ref=e138]: "#SoftwareEngineering"
+                - link "#devlife" [ref=e1103] [cursor=pointer]:
+                  - /url: /search?q=%23devlife&serp_type=tags&tag_id=18304887607083627
+                  - generic [ref=e142]: "#devlife"
+                - link "opensourcesoftware" [ref=e1104] [cursor=pointer]:
+                  - /url: /search?q=opensourcesoftware&serp_type=tags&tag_id=18333928012106847
+                  - generic [ref=e146]: opensourcesoftware
+              - button "+ 1" [ref=e1105] [cursor=pointer]:
+                - generic [ref=e149]: + 1
+            - generic [ref=e150]:
+              - button "A Threads user's profile picture A Threads user's profile picture A Threads user's profile picture 384 followers" [ref=e1106] [cursor=pointer]:
+                - generic [ref=e153]:
+                  - generic [ref=e155]:
+                    - img "A Threads user's profile picture" [ref=e1107]
+                    - img "A Threads user's profile picture" [ref=e1108]
+                    - img "A Threads user's profile picture" [ref=e1109]
+                  - generic [ref=e165]: 384 followers
+              - link "Insights" [ref=e1110] [cursor=pointer]:
+                - /url: /insights
+                - img "Insights" [ref=e1111]
+          - button "Edit profile" [ref=e1112] [cursor=pointer]:
+            - generic [ref=e177]: Edit profile
+          - generic [ref=e178]:
+            - link "Threads" [ref=e1113] [cursor=pointer]:
+              - /url: /@freepeak_life
+              - generic [ref=e184]: Threads
+            - link "Replies" [ref=e1114] [cursor=pointer]:
+              - /url: /@freepeak_life/replies
+              - generic [ref=e191]: Replies
+            - link "Media" [ref=e1115] [cursor=pointer]:
+              - /url: /@freepeak_life/media
+              - generic [ref=e197]: Media
+            - link "Reposts" [ref=e1116] [cursor=pointer]:
+              - /url: /@freepeak_life/reposts
+              - generic [ref=e203]: Reposts
+          - generic [ref=e205]:
+            - link "freepeak_life's profile picture" [ref=e1117] [cursor=pointer]:
+              - /url: /@freepeak_life
+              - img "freepeak_life's profile picture" [ref=e1118]
+            - button "Empty text field. Type to compose a new post." [ref=e1119]:
+              - generic [ref=e210]: What's new?
+            - button "Post" [ref=e1120] [cursor=pointer]:
+              - generic [ref=e213]: Post
+          - separator [ref=e214]
+          - generic [ref=e216]:
+            - generic [ref=e222] [cursor=pointer]:
+              - link "freepeak_life's profile picture" [ref=e1121]:
+                - /url: /@freepeak_life
+                - img "freepeak_life's profile picture" [ref=e1122]
+              - generic [ref=e229]:
+                - generic [ref=e230]:
+                  - link "freepeak_life" [ref=e1123]:
+                    - /url: /@freepeak_life
+                    - generic [ref=e237]: freepeak_life
+                  - button "Post will be shared to Fediverse" [ref=e1124]:
+                    - img "Post will be shared to Fediverse" [ref=e1125]
+                  - link "about an hour ago" [ref=e1126]:
+                    - /url: /@freepeak_life/post/DXVu4WnmT7t
+                    - time [ref=e249]:
+                      - generic "about an hour ago" [ref=e1127]: 1h
+                - button "More" [ref=e1128]:
+                  - img "More" [ref=e1129]
+              - generic [ref=e259]:
+                - generic [ref=e260]:
+                  - generic [ref=e262]: Your Claude Code context window is 200K tokens.
+                  - generic [ref=e264]: Without LeanKG, each codebase query burns 10,000-50,000 tokens. A few hours of work = context window toast.
+                  - generic [ref=e266]: "LeanKG queries the knowledge graph instead: 13-42 tokens per operation. 99%+ savings."
+                  - generic [ref=e268]: Your context lasts all day.
+                  - link "github.com/FreeP…" [ref=e1130]:
+                    - /url: https://l.threads.com/?u=http%3A%2F%2Fgithub.com%2FFreePeak%2FLeanKG&e=AT62o5nwGWvgaZ8jnnu-WngThm08P6ew81w2wYTz0m9ti6kGDLTB8J3WxtEZ-_H8v-YCO601cvTs0GmHLkTz8LzXRPIQB8ZvKrPM2Utt3gk74Kw252-IDzUjcCzGQ3V5EW-Kj-Q-4IPb
+                - link "No photo description available." [ref=e1131]:
+                  - /url: /@freepeak_life/post/DXVu4WnmT7t/media
+                  - generic [ref=e282]:
+                    - img "No photo description available."
+                - generic [ref=e284]:
+                  - button "Like" [ref=e1132]:
+                    - img "Like" [ref=e1133]
+                  - button "Reply" [ref=e1134]:
+                    - img "Reply" [ref=e1135]
+                  - button "Repost" [ref=e1136]:
+                    - img "Repost" [ref=e1137]
+                  - button "Share" [ref=e1138]:
+                    - img "Share" [ref=e1139]
+            - generic [ref=e315] [cursor=pointer]:
+              - link "freepeak_life's profile picture" [ref=e1140]:
+                - /url: /@freepeak_life
+                - img "freepeak_life's profile picture" [ref=e1141]
+              - generic [ref=e322]:
+                - generic [ref=e323]:
+                  - link "freepeak_life" [ref=e1142]:
+                    - /url: /@freepeak_life
+                    - generic [ref=e330]: freepeak_life
+                  - button "Post will be shared to Fediverse" [ref=e1143]:
+                    - img "Post will be shared to Fediverse" [ref=e1144]
+                  - link "about an hour ago" [ref=e1145]:
+                    - /url: /@freepeak_life/post/DXVt22RmUey
+                    - time [ref=e342]:
+                      - generic "about an hour ago" [ref=e1146]: 1h
+                - button "More" [ref=e1147]:
+                  - img "More" [ref=e1148]
+              - generic [ref=e352]:
+                - generic [ref=e353]:
+                  - generic [ref=e355]: Stop burning tokens on codebase scans.
+                  - generic [ref=e357]: LeanKG builds a knowledge graph of your code - functions, imports, call relationships.
+                  - generic [ref=e359]: Then AI tools query the graph instead of scanning everything.
+                  - generic [ref=e361]: 13-42 tokens per query vs 10,000+ tokens without it.
+                  - generic [ref=e363]: 99% token savings for impact analysis.
+                  - generic [ref=e744]: Works with Rust, Python, TypeScript, Go, Java, Kotlin + MCP for Claude Code, Cursor, OpenCode.
+                  - link "github.com/FreeP…" [ref=e1149]:
+                    - /url: https://l.threads.com/?u=http%3A%2F%2Fgithub.com%2FFreePeak%2FLeanKG&e=AT62o5nwGWvgaZ8jnnu-WngThm08P6ew81w2wYTz0m9ti6kGDLTB8J3WxtEZ-_H8v-YCO601cvTs0GmHLkTz8LzXRPIQB8ZvKrPM2Utt3gk74Kw252-IDzUjcCzGQ3V5EW-Kj-Q-4IPb
+                - link "May be a cartoon of map, radar and text" [ref=e1150]:
+                  - /url: /@freepeak_life/post/DXVt22RmUey/media
+                  - generic [ref=e371]:
+                    - img "May be a cartoon of map, radar and text"
+                - generic [ref=e373]:
+                  - button "Like 1" [ref=e1151]:
+                    - generic [ref=e377]:
+                      - img "Like" [ref=e1152]
+                      - generic [ref=e382]: "1"
+                  - button "Reply" [ref=e1153]:
+                    - img "Reply" [ref=e1154]
+                  - button "Repost" [ref=e1155]:
+                    - img "Repost" [ref=e1156]
+                  - button "Share" [ref=e1157]:
+                    - img "Share" [ref=e1158]
+            - generic [ref=e752] [cursor=pointer]:
+              - link "freepeak_life's profile picture" [ref=e1159]:
+                - /url: /@freepeak_life
+                - img "freepeak_life's profile picture" [ref=e1160]
+              - generic [ref=e759]:
+                - generic [ref=e760]:
+                  - link "freepeak_life" [ref=e1161]:
+                    - /url: /@freepeak_life
+                    - generic [ref=e767]: freepeak_life
+                  - button "Post will be shared to Fediverse" [ref=e1162]:
+                    - img "Post will be shared to Fediverse" [ref=e1163]
+                  - link "about an hour ago" [ref=e1164]:
+                    - /url: /@freepeak_life/post/DXVtWJ7jGie
+                    - time [ref=e779]:
+                      - generic "about an hour ago" [ref=e1165]: 1h
+                - button "More" [ref=e1166]:
+                  - img "More" [ref=e1167]
+              - generic [ref=e789]:
+                - generic [ref=e790]:
+                  - generic [ref=e792]: "LeanKG: cut AI coding costs by 99%"
+                  - generic [ref=e794]: Instead of scanning 10,000+ tokens per codebase query, AI tools query the LeanKG knowledge graph for just 13-42 tokens.
+                  - generic [ref=e796]: "Real example: Q: \"What breaks if I change auth::validate_token?\""
+                  - generic [ref=e798]: "Without LeanKG: ~15,000 tokens ($0.045) With LeanKG: ~85 tokens ($0.00025)"
+                  - link "github.com/FreeP…" [ref=e1168]:
+                    - /url: https://l.threads.com/?u=http%3A%2F%2Fgithub.com%2FFreePeak%2FLeanKG&e=AT62o5nwGWvgaZ8jnnu-WngThm08P6ew81w2wYTz0m9ti6kGDLTB8J3WxtEZ-_H8v-YCO601cvTs0GmHLkTz8LzXRPIQB8ZvKrPM2Utt3gk74Kw252-IDzUjcCzGQ3V5EW-Kj-Q-4IPb
+                - link "May be a cartoon of map, radar and text" [ref=e1169]:
+                  - /url: /@freepeak_life/post/DXVtWJ7jGie/media
+                  - generic [ref=e808]:
+                    - img "May be a cartoon of map, radar and text"
+                - generic [ref=e810]:
+                  - button "Like 2" [ref=e1170]:
+                    - generic [ref=e814]:
+                      - img "Like" [ref=e1171]
+                      - generic [ref=e819]: "2"
+                  - button "Reply" [ref=e1172]:
+                    - img "Reply" [ref=e1173]
+                  - button "Repost 1" [ref=e1174]:
+                    - generic [ref=e829]:
+                      - img "Repost" [ref=e1175]
+                      - generic [ref=e835]: "1"
+                  - button "Share" [ref=e1176]:
+                    - img "Share" [ref=e1177]
+            - status "Loading..." [ref=e1178]:
+              - img "Loading..." [ref=e1179]
+    - button "Create" [ref=e422] [cursor=pointer]:
+      - img "Create" [ref=e423]
+  - generic:
+    - list:
+      - listitem [ref=e1180]:
+        - status [ref=e1181]:
+          - generic [ref=e1182]:
+            - status "Loading..." [ref=e1184]:
+              - img "Loading..." [ref=e1185]
+            - alert [ref=e1195]:
+              - generic [ref=e1196]: Posting...
