@@ -126,18 +126,18 @@ leankg setup
 ```mermaid
 graph LR
     subgraph "Without LeanKG"
-        A1[AI Tool] -->|Scans entire codebase| B1[10,000+ tokens]
+        A1[AI Tool] -->|Full codebase context| B1[15,000-45,000 tokens]
         B1 --> A1
     end
 
     subgraph "With LeanKG"
-        A2[AI Tool] -->|13-42 tokens| C[LeanKG Graph]
-        C -->|Targeted subgraph| A2
+        A2[AI Tool] -->|Targeted subgraph| C[LeanKG Graph]
+        C -->|Context reduction| A2
     end
 ```
 
-**Without LeanKG**: AI scans entire codebase (~10,000+ tokens).
-**With LeanKG**: AI queries knowledge graph for targeted context (13-42 tokens). **98% token saving** for impact analysis.
+**Without LeanKG**: AI processes full context from files found via grep/search.
+**With LeanKG**: AI queries knowledge graph for targeted context. Token reduction varies by task complexity (see [benchmark results](tests/benchmark/results/clean-benchmark-2026-04-21.md)).
 
 ---
 
@@ -146,8 +146,7 @@ graph LR
 
 - **Auto-Init** -- Install script configures MCP, rules, skills, and hooks automatically
 - **Auto-Trigger** -- Session hooks inject LeanKG context into every AI tool session
-- **Token Concise** -- 13-42 tokens per query vs 10,000+ for full codebase scan
-- **Token Saving** -- Up to 98% token reduction for impact analysis
+- **Token Optimized** -- Targeted subgraph retrieval vs full file scanning
 - **Impact Radius** -- Compute blast radius before making changes
 - **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, `TESTED_BY` edges
 - **MCP Server** -- Expose graph via MCP protocol for AI tool integration
@@ -258,18 +257,21 @@ leankg proc status      # Show running leankg/vite processes
 
 ### Load Test Results (100K nodes)
 
-| Test | Throughput |
-|------|------------|
-| Insert elements | ~173,000 elements/sec |
-| Insert relationships | ~179,000 relationships/sec |
-| Retrieve all elements | ~662,000 elements/sec |
+| Operation | Throughput |
+|-----------|------------|
+| Insert elements | ~57,618 elements/sec |
+| Insert relationships | ~67,067 relationships/sec |
+| Retrieve all elements | ~418,718 elements/sec |
+| Cache speedup (cold to warm) | 345-461x |
 
 Run load tests:
 ```bash
 cargo test --release load_test -- --nocapture
 ```
 
-See [docs/analysis/load-testing-1m-nodes-2026-04-17.md](docs/analysis/load-testing-1m-nodes-2026-04-17.md) for detailed performance analysis.
+### A/B Benchmark Results
+
+See [tests/benchmark/results/clean-benchmark-2026-04-21.md](tests/benchmark/results/clean-benchmark-2026-04-21.md) for detailed A/B testing results comparing LeanKG vs baseline code search.
 
 ---
 

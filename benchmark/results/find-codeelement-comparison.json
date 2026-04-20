@@ -1,30 +1,34 @@
 {
   "overhead": {
     "time_delta": 0.0,
-    "token_delta": 7,
+    "token_delta": 76,
     "token_delta_percent": 0.0
   },
   "task": "find-codeelement",
   "with_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 2336,
+    "cached_tokens": 0,
     "context": {
-      "files_referenced": []
+      "files_referenced": [
+        "src/db/models.rs"
+      ]
     },
-    "input_tokens": 14282,
+    "input_tokens": 16882,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 16696
+    "total_tokens": 16939
   },
   "without_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 2336,
+    "cached_tokens": 9528,
     "context": {
-      "files_referenced": []
+      "files_referenced": [
+        "src/db/models.rs"
+      ]
     },
-    "input_tokens": 14282,
+    "input_tokens": 7285,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 16689
+    "total_tokens": 16863
   }
 }

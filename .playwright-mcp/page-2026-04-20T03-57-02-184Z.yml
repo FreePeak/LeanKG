@@ -1,0 +1,100 @@
+- generic [ref=e1]:
+  - generic [ref=e262]:
+    - generic [ref=e263]:
+      - link "Threads" [ref=e265] [cursor=pointer]:
+        - /url: /
+        - img "Threads" [ref=e267]
+      - generic [ref=e269]:
+        - link "Home" [ref=e271] [cursor=pointer]:
+          - /url: /
+          - img "Home" [ref=e275]
+        - link "Search" [ref=e278] [cursor=pointer]:
+          - /url: /search
+          - img "Search" [ref=e282]
+        - button "Create" [active] [ref=e285] [cursor=pointer]:
+          - img "Create" [ref=e289]
+        - link "Notifications" [ref=e292] [cursor=pointer]:
+          - /url: /activity
+          - img "Notifications" [ref=e296]
+        - link "Profile" [ref=e300] [cursor=pointer]:
+          - /url: /@freepeak_life
+          - img "Profile" [ref=e304]
+      - button "More More" [ref=e308] [cursor=pointer]:
+        - generic [ref=e309]:
+          - img "More" [ref=e311]
+          - img "More" [ref=e315]
+    - generic [ref=e325]:
+      - generic [ref=e333]:
+        - button "Back" [ref=e674] [cursor=pointer]:
+          - img "Back" [ref=e675]
+        - link "Column title" [ref=e676] [cursor=pointer]:
+          - /url: /@freepeak_life/post/DXVr_voGQ5d
+          - heading "Thread" [level=1] [ref=e677]:
+            - generic [ref=e345]: Thread
+          - generic [ref=e348]: 81 views
+        - generic [ref=e349]:
+          - button "Notification settings" [ref=e678] [cursor=pointer]:
+            - img "Notification settings" [ref=e679]
+          - button "More" [ref=e680] [cursor=pointer]:
+            - img "More" [ref=e681]
+      - region "Column body" [ref=e682]:
+        - generic [ref=e371]:
+          - link "freepeak_life's profile picture" [ref=e683] [cursor=pointer]:
+            - /url: /@freepeak_life
+            - img "freepeak_life's profile picture" [ref=e684]
+          - generic [ref=e378]:
+            - generic [ref=e379]:
+              - link "freepeak_life" [ref=e685] [cursor=pointer]:
+                - /url: /@freepeak_life
+                - generic [ref=e386]: freepeak_life
+              - button "Post will be shared to Fediverse" [ref=e686] [cursor=pointer]:
+                - img "Post will be shared to Fediverse" [ref=e687]
+              - link "11 minutes ago" [ref=e688] [cursor=pointer]:
+                - /url: /@freepeak_life/post/DXVr_voGQ5d
+                - time [ref=e398]:
+                  - generic "11 minutes ago" [ref=e689]: 11m
+            - button "More" [ref=e690] [cursor=pointer]:
+              - img "More" [ref=e691]
+          - generic [ref=e408]:
+            - generic [ref=e409]:
+              - generic [ref=e411]: "LeanKG: cut AI coding costs by 99%"
+              - generic [ref=e413]: Instead of scanning 10,000+ tokens per codebase query, AI tools query the LeanKG knowledge graph for just 13-42 tokens.
+              - generic [ref=e415]: "Real example: Q: \"What breaks if I change auth::validate_token?\""
+              - generic [ref=e417]: "Without LeanKG: ~15,000 tokens ($0.045) With LeanKG: ~85 tokens ($0.00025)"
+              - link "github.com/FreeP…" [ref=e692] [cursor=pointer]:
+                - /url: https://l.threads.com/?u=http%3A%2F%2Fgithub.com%2FFreePeak%2FLeanKG&e=AT4NfbeaN_jJrDUHlNiQkWlbuV4U8pFSk6Ea5BcRZxl4zolIKHVAytflT7W5pa2_1P1VoGC0K45JbMcNbLbX4KEEhQ0l7oH_gRywkc6QlOyaut2wYhKnDHvwplAyP3ggOjauGra8Sx1C
+            - 'link "GitHub - FreePeak/LeanKG: LeanKG: Stop Burning Tokens. Start Coding Lean. github.com GitHub - FreePeak/LeanKG: LeanKG: Stop Burning Tokens. Start Coding Lean." [ref=e693] [cursor=pointer]':
+              - /url: https://l.threads.com/?u=https%3A%2F%2Fgithub.com%2FFreePeak%2FLeanKG&e=AT431lDWoPBXkiMcXxkOE7JxbqcMTn2IYL0Ap1JoG3DOOuxXQIuHdQMFxVZMtScPzlEAMYBbeySsFLZNBg429CYQ3VrII2mUC9uxSc0xgn7TdYleIC8v8dA--QzrOxZAQrx0b4bIPt2T
+              - generic [ref=e423]:
+                - 'img "GitHub - FreePeak/LeanKG: LeanKG: Stop Burning Tokens. Start Coding Lean." [ref=e694]'
+                - generic [ref=e426]:
+                  - generic [ref=e427]:
+                    - img [ref=e429]
+                    - generic [ref=e431]: github.com
+                  - generic [ref=e434]: "GitHub - FreePeak/LeanKG: LeanKG: Stop Burning Tokens. Start Coding Lean."
+            - generic [ref=e436]:
+              - button "Like 1" [ref=e695] [cursor=pointer]:
+                - generic [ref=e440]:
+                  - img "Like" [ref=e696]
+                  - generic [ref=e445]: "1"
+              - button "Reply" [ref=e697] [cursor=pointer]:
+                - img "Reply" [ref=e698]
+              - button "Repost" [ref=e699] [cursor=pointer]:
+                - img "Repost" [ref=e700]
+              - button "Share" [ref=e701] [cursor=pointer]:
+                - img "Share" [ref=e702]
+          - button "View activity View activity" [ref=e703] [cursor=pointer]:
+            - generic [ref=e469]:
+              - text: View activity
+              - img "View activity" [ref=e704]
+    - button "Create" [ref=e474] [cursor=pointer]:
+      - img "Create" [ref=e475]
+  - generic:
+    - list:
+      - listitem [ref=e705]:
+        - status [ref=e706]:
+          - generic [ref=e707]:
+            - status "Loading..." [ref=e709]:
+              - img "Loading..." [ref=e710]
+            - alert [ref=e720]:
+              - generic [ref=e721]: Posting...

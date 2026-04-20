@@ -10,7 +10,7 @@ use std::time::Duration;
 fn kilo_config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from(".config"))
-        .join("kilo")
+        .join("kilo-benchmark")
 }
 
 const KILO_MCP_WITH_LEANKG: &str = "mcp_settings_with_leankg.json";
@@ -112,12 +112,19 @@ impl BenchmarkRunner {
     }
 
     fn run_kilo_with_output(&self, prompt: &str) -> (BenchmarkResult, String) {
+        // Get the parent of kilo-benchmark (which is ~/.config)
+        let config_home = kilo_config_path()
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| String::from(".config"));
+
         let child = Command::new("kilo")
             .arg("run")
             .arg("--format")
             .arg("json")
             .arg("--auto")
             .arg(prompt)
+            .env("XDG_CONFIG_HOME", &config_home)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

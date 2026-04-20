@@ -596,6 +596,21 @@ impl ToolHandler {
         }
 
         let db = self.graph_engine.db();
+
+        // Verify database is actually initialized with proper tables
+        let tables_exist = match self.graph_engine.all_elements() {
+            Ok(elements) => !elements.is_empty(),
+            Err(_) => false,
+        };
+
+        if !tables_exist {
+            return Ok(json!({
+                "initialized": false,
+                "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
+                "database_exists": false
+            }));
+        }
+
         let elements = self
             .graph_engine
             .all_elements()
@@ -618,8 +633,21 @@ impl ToolHandler {
             .filter(|e| e.element_type == "class" || e.element_type == "struct")
             .count();
 
+        // Check if index is actually populated
+        let is_empty = elements.is_empty() && relationships.is_empty();
+
+        if is_empty {
+            return Ok(json!({
+                "initialized": true,
+                "index_populated": false,
+                "message": "Database exists but is empty. Run mcp_index to index codebase.",
+                "database": db_path.to_string_lossy()
+            }));
+        }
+
         Ok(json!({
             "initialized": true,
+            "index_populated": true,
             "database": db_path.to_string_lossy(),
             "elements": elements.len(),
             "relationships": relationships.len(),

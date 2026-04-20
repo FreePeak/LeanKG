@@ -1,0 +1,287 @@
+- generic [ref=e4]:
+  - generic:
+    - generic [ref=e6]:
+      - link "Threads" [ref=e8] [cursor=pointer]:
+        - /url: /
+        - img "Threads" [ref=e10]
+      - generic [ref=e12]:
+        - link "Home" [ref=e14] [cursor=pointer]:
+          - /url: /
+          - img "Home" [ref=e18]
+        - link "Search" [ref=e21] [cursor=pointer]:
+          - /url: /search
+          - img "Search" [ref=e25]
+        - button "Create" [ref=e28] [cursor=pointer]:
+          - img "Create" [ref=e32]
+        - link "Notifications" [ref=e35] [cursor=pointer]:
+          - /url: /activity
+          - img "Notifications" [ref=e39]
+        - link "Profile" [ref=e42] [cursor=pointer]:
+          - /url: /@freepeak_life
+          - img "Profile" [ref=e46]
+      - button "More More" [ref=e50] [cursor=pointer]:
+        - generic [ref=e51]:
+          - img "More" [ref=e53]
+          - img "More" [ref=e57]
+    - generic [ref=e65]:
+      - generic [ref=e68]:
+        - generic [ref=e78]:
+          - link [ref=e606] [cursor=pointer]:
+            - /url: /for_you
+            - heading [level=1] [ref=e607]:
+              - generic [ref=e81]: For you
+          - button [ref=e608] [cursor=pointer]:
+            - button [ref=e609]:
+              - img [ref=e610]
+        - region [ref=e611]:
+          - generic [ref=e92]:
+            - generic [ref=e94]:
+              - link [ref=e612] [cursor=pointer]:
+                - /url: /@freepeak_life
+                - img [ref=e613]
+              - button [ref=e614]:
+                - generic [ref=e99]: What's new?
+              - button [ref=e615] [cursor=pointer]:
+                - generic [ref=e102]: Post
+            - separator [ref=e103]
+            - generic [ref=e105]:
+              - generic [ref=e111] [cursor=pointer]:
+                - link [ref=e616]:
+                  - /url: /@joonahn_ai
+                  - img [ref=e617]
+                - generic [ref=e118]:
+                  - generic [ref=e119]:
+                    - link [ref=e618]:
+                      - /url: /@joonahn_ai
+                      - generic [ref=e126]: joonahn_ai
+                    - link [ref=e619]:
+                      - /url: /@joonahn_ai/post/DXVrHIXAqXk
+                      - time [ref=e131]:
+                        - generic [ref=e620]: 1m
+                  - button [ref=e621]:
+                    - img [ref=e622]
+                - generic [ref=e141]:
+                  - generic [ref=e142]:
+                    - generic [ref=e144]: Built another one.
+                    - generic [ref=e146]:
+                      - text: This time I added a tool inside the Threadsight MCP (
+                      - link [ref=e623]:
+                        - /url: /@threadsight.xyz
+                        - generic [ref=e151]: "@threadsight.xyz"
+                      - text: ) that saves and schedules long-form threads in one shot.
+                    - generic [ref=e153]: I chat with Claude, write 7 linked posts, save them all at once, and schedule them for whatever time I want.
+                    - generic [ref=e155]: Before this, I'd copy-paste each post separately, open the scheduler, line up the times. 20 minutes every time.
+                    - generic [ref=e157]: Now it's 30 seconds.
+                  - group [ref=e624]
+                  - generic [ref=e176]:
+                    - button [ref=e625]:
+                      - img [ref=e626]
+                    - button [ref=e627]:
+                      - img [ref=e628]
+                    - button [ref=e629]:
+                      - img [ref=e630]
+                    - button [ref=e631]:
+                      - img [ref=e632]
+              - generic [ref=e207] [cursor=pointer]:
+                - button [ref=e633]:
+                  - img [ref=e634]
+                  - button [ref=e635]:
+                    - img [ref=e636]
+                - generic [ref=e219]:
+                  - generic [ref=e220]:
+                    - link [ref=e637]:
+                      - /url: /@wybthon
+                      - generic [ref=e227]: wybthon
+                    - generic [ref=e228]:
+                      - generic [ref=e229]:
+                        - img [ref=e232]
+                        - link [ref=e638]:
+                          - /url: /search?q=techthreads&serp_type=tags&tag_id=18323853271107467
+                          - generic [ref=e236]:
+                            - img [ref=e237]
+                            - generic [ref=e242]: Tech Threads
+                      - link [ref=e639]:
+                        - /url: /@wybthon/post/DXVoZ8DDpAT
+                        - time [ref=e246]:
+                          - generic [ref=e640]: 25m
+                  - button [ref=e641]:
+                    - img [ref=e642]
+                - generic [ref=e256]:
+                  - generic [ref=e259]: 2026 is the year of Python in the browser.
+                  - generic [ref=e261]:
+                    - button [ref=e643]:
+                      - generic [ref=e265]:
+                        - img [ref=e644]
+                        - generic [ref=e270]: "2"
+                    - button [ref=e645]:
+                      - img [ref=e646]
+                    - button [ref=e647]:
+                      - img [ref=e648]
+                    - button [ref=e649]:
+                      - img [ref=e650]
+              - generic [ref=e295] [cursor=pointer]:
+                - button [ref=e651]:
+                  - img [ref=e652]
+                  - button [ref=e653]:
+                    - img [ref=e654]
+                - generic [ref=e307]:
+                  - generic [ref=e308]:
+                    - link [ref=e655]:
+                      - /url: /@grona.agency
+                      - generic [ref=e315]: grona.agency
+                    - link [ref=e656]:
+                      - /url: /@grona.agency/post/DXUTIWeCPgF
+                      - time [ref=e320]:
+                        - generic [ref=e657]: 12h
+                  - button [ref=e658]:
+                    - img [ref=e659]
+                - generic [ref=e330]:
+                  - generic [ref=e333]: Claude Design is impressive but it still needs someone who knows what “good” looks like
+                  - generic [ref=e335]:
+                    - button [ref=e660]:
+                      - generic [ref=e339]:
+                        - img [ref=e661]
+                        - generic [ref=e344]: "6"
+                    - button [ref=e662]:
+                      - generic [ref=e348]:
+                        - img [ref=e663]
+                        - generic [ref=e353]: "4"
+                    - button [ref=e664]:
+                      - img [ref=e665]
+                    - button [ref=e666]:
+                      - img [ref=e667]
+              - generic [ref=e372] [cursor=pointer]:
+                - button [ref=e668]:
+                  - img [ref=e669]
+                  - button [ref=e670]:
+                    - img [ref=e671]
+                - generic [ref=e384]:
+                  - generic [ref=e385]:
+                    - link [ref=e672]:
+                      - /url: /@koda__shin
+                      - generic [ref=e392]: koda__shin
+                    - generic [ref=e393]:
+                      - generic [ref=e394]:
+                        - img [ref=e397]
+                        - link [ref=e673]:
+                          - /url: /search?q=programming&serp_type=tags&tag_id=18380645191066129
+                          - generic [ref=e403]: programming
+                      - link [ref=e674]:
+                        - /url: /@koda__shin/post/DXTscIZE2fr
+                        - time [ref=e407]:
+                          - generic [ref=e675]: 18h
+                  - button [ref=e676]:
+                    - img [ref=e677]
+                - generic [ref=e417]:
+                  - generic [ref=e420]: Any other devs here building with .NET? Would love to connect and learn from you guys
+                  - generic [ref=e422]:
+                    - button [ref=e678]:
+                      - generic [ref=e426]:
+                        - img [ref=e679]
+                        - generic [ref=e431]: "4"
+                    - button [ref=e680]:
+                      - generic [ref=e435]:
+                        - img [ref=e681]
+                        - generic [ref=e440]: "9"
+                    - button [ref=e682]:
+                      - img [ref=e683]
+                    - button [ref=e684]:
+                      - img [ref=e685]
+              - generic [ref=e481] [cursor=pointer]:
+                - link [ref=e686]:
+                  - /url: /@alekseipetrov.me
+                  - img [ref=e687]
+                - generic [ref=e488]:
+                  - generic [ref=e489]:
+                    - link [ref=e688]:
+                      - /url: /@alekseipetrov.me
+                      - generic [ref=e496]: alekseipetrov.me
+                    - generic [ref=e497]:
+                      - generic [ref=e498]:
+                        - img [ref=e501]
+                        - link [ref=e689]:
+                          - /url: /search?q=glm51&serp_type=tags&tag_id=18448212826106341
+                          - generic [ref=e507]: glm51
+                      - link [ref=e690]:
+                        - /url: /@alekseipetrov.me/post/DXUfp-HjeWK
+                        - time [ref=e511]:
+                          - generic [ref=e691]: 11h
+                  - button [ref=e692]:
+                    - img [ref=e693]
+                - generic [ref=e521]:
+                  - generic [ref=e522]:
+                    - generic [ref=e524]: Back to the GLM Terminal Bench 2.0 full spin.
+                    - generic [ref=e526]: This run’s been frozen since Wednesday.
+                    - generic [ref=e528]: Restored it from the warm pool and hooked the monitor into ClaudeCode desktop to track it properly.
+                  - link [ref=e694]:
+                    - /url: /@alekseipetrov.me/post/DXUfp-HjeWK/media
+                    - generic [ref=e535]:
+                      - img
+                  - generic [ref=e537]:
+                    - button [ref=e695]:
+                      - generic [ref=e541]:
+                        - img [ref=e696]
+                        - generic [ref=e546]: "4"
+                    - button [ref=e697]:
+                      - img [ref=e698]
+                    - button [ref=e699]:
+                      - img [ref=e700]
+                    - button [ref=e701]:
+                      - img [ref=e702]
+              - status [ref=e703]:
+                - img [ref=e704]
+      - button [ref=e705] [cursor=pointer]:
+        - img [ref=e706]
+    - button "Create" [ref=e473] [cursor=pointer]:
+      - img "Create" [ref=e474]
+  - dialog [ref=e715]:
+    - generic [ref=e720]:
+      - generic [ref=e721]:
+        - button "Cancel" [ref=e723] [cursor=pointer]:
+          - generic [ref=e724]: Cancel
+        - heading "New thread" [level=1] [ref=e726]:
+          - generic [ref=e727]: New thread
+        - generic [ref=e728]:
+          - button "Drafts" [ref=e731] [cursor=pointer]:
+            - img "Drafts" [ref=e733]
+          - button "More" [ref=e736] [cursor=pointer]:
+            - img "More" [ref=e738]
+      - generic [ref=e745]:
+        - generic [ref=e746]:
+          - img "freepeak_life's profile picture" [ref=e750]
+          - generic [ref=e753]:
+            - generic [ref=e756]:
+              - generic [ref=e758]: freepeak_life
+              - img [ref=e760]
+              - generic [ref=e766]:
+                - img [ref=e769]
+                - searchbox "Add a topic" [ref=e776]
+            - generic [ref=e777]:
+              - textbox "Empty text field. Type to compose a new post." [active] [ref=e778]:
+                - paragraph [ref=e779]
+              - generic:
+                - generic: What's new?
+            - generic [ref=e780]:
+              - button "Attach media" [ref=e781] [cursor=pointer]:
+                - img "Attach media" [ref=e783]
+              - button "Add a GIF" [ref=e786] [cursor=pointer]:
+                - img "Add a GIF" [ref=e788]
+              - button "Add an emoji" [ref=e793] [cursor=pointer]:
+                - img "Add an emoji" [ref=e795]
+              - button "Add a poll" [ref=e800] [cursor=pointer]:
+                - img "Add a poll" [ref=e802]
+              - button "Attach text" [ref=e806] [cursor=pointer]:
+                - img "Attach text" [ref=e808]
+              - button "Add a location" [ref=e813] [cursor=pointer]:
+                - img "Add a location" [ref=e815]
+        - generic [ref=e818]:
+          - img "freepeak_life's profile picture" [ref=e821]
+          - button "Add to thread" [disabled] [ref=e822]:
+            - generic [ref=e823]: Add to thread
+      - generic [ref=e825]:
+        - button "Post" [ref=e827]:
+          - generic [ref=e828]: Post
+        - button "Reply options" [ref=e830] [cursor=pointer]:
+          - generic [ref=e831]:
+            - img [ref=e833]
+            - generic [ref=e838]: Reply options

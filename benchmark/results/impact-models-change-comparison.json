@@ -1,41 +1,30 @@
 {
   "overhead": {
     "time_delta": 0.0,
-    "token_delta": 4904,
+    "token_delta": 0,
     "token_delta_percent": 0.0
   },
   "task": "impact-models-change",
   "with_leankg": {
-    "build_time_seconds": 0.0,
-    "cached_tokens": 18816,
-    "context": {
-      "files_referenced": [
-        "src/graph/query.rs",
-        "src/doc_indexer/mod.rs",
-        "src/main.rs",
-        "src/mcp/handler.rs",
-        "src/graph/context.rs",
-        "src/db/models.rs",
-        "src/graph/traversal.rs",
-        "src/indexer/mod.rs",
-        "src/indexer/extractor.rs",
-        "tests/batched_insert_tests.rs"
-      ]
-    },
-    "input_tokens": 1965,
-    "success": true,
-    "token_percent": 0.0,
-    "total_tokens": 21616
-  },
-  "without_leankg": {
-    "build_time_seconds": 0.0,
-    "cached_tokens": 2336,
+    "build_time_seconds": 120.0,
+    "cached_tokens": 0,
     "context": {
       "files_referenced": []
     },
-    "input_tokens": 14288,
-    "success": true,
+    "input_tokens": 0,
+    "success": false,
     "token_percent": 0.0,
-    "total_tokens": 16712
+    "total_tokens": 0
+  },
+  "without_leankg": {
+    "build_time_seconds": 120.0,
+    "cached_tokens": 0,
+    "context": {
+      "files_referenced": []
+    },
+    "input_tokens": 0,
+    "success": false,
+    "token_percent": 0.0,
+    "total_tokens": 0
   }
 }

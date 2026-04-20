@@ -1,14 +1,16 @@
 # Benchmark Comparison: impact-db-change
 
 ## With LeanKG
-- Total Tokens: 22609
-- Input: 555
-- Cached: 21632
+- Total Tokens: 0
+- Input: 0
+- Cached: 0
+- Files Referenced: []
 
 ## Without LeanKG
-- Total Tokens: 18350
-- Input: 508
-- Cached: 17472
+- Total Tokens: 0
+- Input: 0
+- Cached: 0
+- Files Referenced: []
 
 ## Overhead
-- Token Delta: 4259
+- Token Delta: 0

@@ -1,36 +1,40 @@
 {
   "overhead": {
     "time_delta": 0.0,
-    "token_delta": 209,
+    "token_delta": -120,
     "token_delta_percent": 0.0
   },
   "task": "impl-new-tool",
   "with_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 21824,
+    "cached_tokens": 9528,
     "context": {
       "files_referenced": [
         "src/mcp/tools.rs",
-        "src/mcp/handler.rs"
+        "src/mcp/handler.rs",
+        "src/auth.rs",
+        "src/main.rs"
       ]
     },
-    "input_tokens": 253,
+    "input_tokens": 32910,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 22229
+    "total_tokens": 42661
   },
   "without_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 21632,
+    "cached_tokens": 9528,
     "context": {
       "files_referenced": [
         "src/mcp/tools.rs",
-        "src/mcp/handler.rs"
+        "src/mcp/handler.rs",
+        "src/auth.rs",
+        "src/main.rs"
       ]
     },
-    "input_tokens": 257,
+    "input_tokens": 32965,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 22020
+    "total_tokens": 42781
   }
 }

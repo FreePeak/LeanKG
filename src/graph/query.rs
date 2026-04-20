@@ -414,8 +414,10 @@ impl GraphEngine {
             })
             .collect();
 
-        // Store in cache
-        *self.elements_cache.write() = Some(elements.clone());
+        // Store in cache ONLY when we have data
+        if !elements.is_empty() {
+            *self.elements_cache.write() = Some(elements.clone());
+        }
 
         Ok(elements)
     }

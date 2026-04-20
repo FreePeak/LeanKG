@@ -2,6 +2,24 @@
 
 End-to-end testing framework for LeanKG MCP tools via Kilo AI agent.
 
+## Latest Results (2026-04-21) - Clean Benchmark
+
+| Category | Tests | LeanKG F1 Wins | Token Delta |
+|----------|-------|----------------|-------------|
+| Navigation | 4 | 2 | -19,216 |
+| Implementation | 3 | 1 | +22,001 |
+| Impact | 3 | TIMEOUT | N/A |
+| Debugging | 3 | TIMEOUT | N/A |
+
+**Total:** 13 tests, LeanKG wins F1 on 3 tests, +23,885 token overhead (completed tests)
+
+See [results/clean-benchmark-2026-04-21.md](results/clean-benchmark-2026-04-21.md) for full analysis.
+
+### Key Findings
+- **Token savings claims NOT validated**: "13-42 tokens" and "98% reduction" are marketing, not benchmark data
+- **Complex queries timeout**: Impact and debugging tasks timeout at 120s, returning 0 tokens
+- **Mixed quality results**: LeanKG wins on F1 in 3/10 completed tests
+
 ## Structure
 
 ```
