@@ -163,6 +163,11 @@ update_binary() {
     curl -fsSL -o "$tar_path" "$url"
 
     mkdir -p "$INSTALL_DIR"
+
+    # Remove existing binary first to avoid APFS metadata corruption issues
+    # (overwriting in place can leave corrupted metadata, causing SIGKILL on exec)
+    rm -f "${INSTALL_DIR}/${BINARY_NAME}"
+
     tar -xzf "$tar_path" -C "$INSTALL_DIR"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 
@@ -203,6 +208,10 @@ install_binary() {
     curl -fsSL -o "$tar_path" "$url"
 
     mkdir -p "$INSTALL_DIR"
+
+    # Remove existing binary first to avoid APFS metadata corruption issues
+    rm -f "${INSTALL_DIR}/${BINARY_NAME}"
+
     tar -xzf "$tar_path" -C "$INSTALL_DIR"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 
