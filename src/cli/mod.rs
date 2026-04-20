@@ -177,7 +177,7 @@ pub enum CLICommand {
         /// Name of the repository
         name: String,
     },
-    /// Global setup: configure MCP for all registered repos at once
+    /// Global setup: configure MCP for all registered repos at once, install Claude hooks and register plugin
     Setup {},
     /// Run a shell command with optional RTK-style compression
     Run {
