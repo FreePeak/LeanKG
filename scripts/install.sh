@@ -356,14 +356,22 @@ EOF
     echo "Configured LeanKG for Claude Code at $config_file"
 }
 
+remove_old_skill() {
+    local skill_dir="$HOME/.claude/skills/using-leankg"
+    if [ -d "$skill_dir" ]; then
+        rm -rf "$skill_dir"
+        echo "Removed old LeanKG skill from $skill_dir"
+    fi
+}
+
 setup_claude_hooks() {
     local plugin_dir="$HOME/.claude/plugins/leankg"
     local hooks_installed=false
-    
-    if [ ! -d "$plugin_dir/hooks" ]; then
-        mkdir -p "$plugin_dir/hooks"
-        
-        cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
+
+    mkdir -p "$plugin_dir/hooks"
+
+    # Write hooks.json with PreToolUse, PostToolUse, and SessionStart
+    cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
 {
   "hooks": {
     "SessionStart": [
@@ -372,8 +380,47 @@ setup_claude_hooks() {
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start",
-            "async": false
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sessionstart.mjs\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__leankg__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse.mjs\""
           }
         ]
       }
@@ -381,60 +428,203 @@ setup_claude_hooks() {
   }
 }
 EOF
-         
-        cat > "$plugin_dir/hooks/run-hook.cmd" <<'CMDEOF'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-leankg_bootstrap_content=$(cat "${PLUGIN_ROOT}/leankg-bootstrap.md" 2>&1 || echo "")
-escape_for_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
-}
-leankg_bootstrap_escaped=$(escape_for_json "$leankg_bootstrap_content")
-session_context="<LEANKG_BOOTSTRAP>\n${leankg_bootstrap_escaped}\n</LEANKG_BOOTSTRAP>"
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
-else
-  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
-fi
-exit 0
-CMDEOF
+    hooks_installed=true
 
-        cat > "$plugin_dir/hooks/session-start" <<'HOOKEOF'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-leankg_bootstrap_content=$(cat "${PLUGIN_ROOT}/leankg-bootstrap.md" 2>&1 || echo "")
-escape_for_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
+    # Write hook scripts
+    cat > "$plugin_dir/hooks/sessionstart.mjs" <<'HOOKEOF'
+#!/usr/bin/env node
+/**
+ * SessionStart hook for LeanKG
+ * Injects <tool_selection_hierarchy> at session start.
+ */
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+async function readStdin() {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
 }
-leankg_bootstrap_escaped=$(escape_for_json "$leankg_bootstrap_content")
-session_context="<LEANKG_BOOTSTRAP>\n${leankg_bootstrap_escaped}\n</LEANKG_BOOTSTRAP>"
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
-else
-  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
-fi
-exit 0
+
+const raw = await readStdin();
+const input = JSON.parse(raw);
+
+const ROUTING_BLOCK = `
+<tool_selection_hierarchy>
+  1. ORCHESTRATE: mcp__leankg__orchestrate(intent)
+     - Natural language: "show me impact of changing function X"
+
+  2. CODE DISCOVERY: mcp__leankg__search_code(query, element_type)
+     - Primary search. ONE call replaces many Grep/Bash commands.
+
+  3. IMPACT ANALYSIS: mcp__leankg__get_impact_radius(file, depth)
+     - Calculate blast radius BEFORE making changes.
+
+  4. CONTEXT: mcp__leankg__get_context(file)
+     - Get minimal token-optimized context for a file.
+
+  5. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
+
+  6. CALLERS: mcp__leankg__get_callers(function) | mcp__leankg__find_function(name)
+
+  7. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
+
+  8. TESTING: mcp__leankg__get_tested_by(file) | mcp__leankg__detect_changes(scope)
+</tool_selection_hierarchy>
+
+<forbidden_actions>
+  - DO NOT use Grep for code search (use mcp__leankg__search_code instead)
+  - DO NOT use Bash find/grep for file search (use mcp__leankg__query_file instead)
+</forbidden_actions>
+`;
+
+console.log(JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: "SessionStart",
+    additionalContext: ROUTING_BLOCK,
+  },
+}));
 HOOKEOF
 
-        chmod +x "$plugin_dir/hooks/run-hook.cmd" "$plugin_dir/hooks/session-start"
-        hooks_installed=true
-    fi
+    cat > "$plugin_dir/hooks/pretooluse.mjs" <<'HOOKEOF'
+#!/usr/bin/env node
+/**
+ * PreToolUse hook for LeanKG - Routing guidance for Claude Code
+ * Shows nudges when users reach for native tools instead of LeanKG.
+ */
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+async function readStdin() {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
+}
+
+const raw = await readStdin();
+const input = JSON.parse(raw);
+const tool = input.tool_name ?? "";
+const toolInput = input.tool_input ?? {};
+
+const GUIDANCE = {
+  Read: `
+<tool_routing>
+Use LeanKG instead of Read for code analysis:
+  - mcp__leankg__query_file(filename) - find files by name
+  - mcp__leankg__get_context(file) - read with token optimization
+</tool_routing>`,
+
+  Grep: `
+<tool_routing>
+Use LeanKG instead of Grep for code search:
+  - mcp__leankg__search_code(query, element_type) - search functions, files, structs
+  - mcp__leankg__find_function(name) - locate function definitions
+</tool_routing>`,
+
+  Bash: `
+<tool_routing>
+Use LeanKG instead of Bash for dependency analysis:
+  - mcp__leankg__get_impact_radius(file, depth) - blast radius analysis
+  - mcp__leankg__get_dependencies(file) - what this file imports
+  - mcp__leankg__get_dependents(file) - what depends on this file
+</tool_routing>`,
+};
+
+function isCodeAnalysis(tool, toolInput) {
+  if (tool === "Read") {
+    const path = toolInput.file_path ?? toolInput.path ?? "";
+    const codeExts = [".rs", ".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".cpp", ".c", ".h", ".cs", ".rb"];
+    return codeExts.some(ext => path.endsWith(ext));
+  }
+  if (tool === "Bash") {
+    const cmd = toolInput.command ?? "";
+    return /\b(grep|find|rg|ag|ack)\b/.test(cmd) || /\b(import|require|use|from)\b/.test(cmd);
+  }
+  return true;
+}
+
+if (GUIDANCE[tool] && isCodeAnalysis(tool, toolInput)) {
+  const response = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      guidance: GUIDANCE[tool].trim(),
+    },
+  };
+  process.stdout.write(JSON.stringify(response) + "\n");
+}
+HOOKEOF
+
+    cat > "$plugin_dir/hooks/posttooluse.mjs" <<'HOOKEOF'
+#!/usr/bin/env node
+/**
+ * PostToolUse hook for LeanKG - Session continuity.
+ * Captures LeanKG MCP tool calls for session continuity.
+ */
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+
+const LEANKG_TOOLS = [
+  "mcp__leankg__orchestrate",
+  "mcp__leankg__search_code",
+  "mcp__leankg__find_function",
+  "mcp__leankg__query_file",
+  "mcp__leankg__get_impact_radius",
+  "mcp__leankg__get_dependencies",
+  "mcp__leankg__get_dependents",
+  "mcp__leankg__get_context",
+  "mcp__leankg__get_callers",
+  "mcp__leankg__get_call_graph",
+  "mcp__leankg__get_clusters",
+  "mcp__leankg__get_doc_for_file",
+  "mcp__leankg__get_traceability",
+  "mcp__leankg__get_tested_by",
+  "mcp__leankg__detect_changes",
+  "mcp__leankg__mcp_status",
+  "mcp__leankg__mcp_index",
+];
+
+const SESSION_LOG_DIR = join(homedir(), ".leankg", "sessions");
+const SESSION_LOG_FILE = join(SESSION_LOG_DIR, "posttooluse.log");
+
+async function readStdin() {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
+}
+
+try {
+  const raw = await readStdin();
+  const input = JSON.parse(raw);
+  const toolName = input.tool_name ?? "";
+  const toolInput = input.tool_input ?? {};
+
+  const isLeankgTool = LEANKG_TOOLS.some(t => toolName.includes(t));
+
+  if (isLeankgTool) {
+    if (!existsSync(SESSION_LOG_DIR)) {
+      mkdirSync(SESSION_LOG_DIR, { recursive: true });
+    }
+    const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
+    const timestamp = new Date().toISOString();
+    const logEntry = JSON.stringify({
+      timestamp,
+      sessionId,
+      tool: toolName,
+      input: toolInput,
+    }) + "\n";
+    appendFileSync(SESSION_LOG_FILE, logEntry);
+  }
+} catch { /* silent */ }
+HOOKEOF
+
+    chmod +x "$plugin_dir/hooks/sessionstart.mjs" "$plugin_dir/hooks/pretooluse.mjs" "$plugin_dir/hooks/posttooluse.mjs"
     
     if [ ! -f "$plugin_dir/leankg-bootstrap.md" ]; then
         cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
@@ -1011,6 +1201,11 @@ main() {
     case "$target" in
         update)
             update_binary "$platform"
+            # Reinstall hooks on update (they may have new features)
+            setup_claude_hooks
+            # Remove old skill (replaced by hooks)
+            remove_old_skill
+            echo "LeanKG hooks updated, old skill removed."
             exit 0
             ;;
         version)
@@ -1044,7 +1239,6 @@ main() {
             claude)
                 configure_claude
                 setup_claude_hooks
-                install_leankg_skill "$HOME/.claude/skills" "claude"
                 install_claude_instructions
                 ;;
             gemini)
