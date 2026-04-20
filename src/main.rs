@@ -2196,6 +2196,9 @@ async fn update_leankg() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    println!("\nStopping any running LeanKG processes...");
+    kill_old_processes()?;
+
     println!("\nUpdating LeanKG...");
 
     let platform = detect_platform();
@@ -2209,6 +2212,12 @@ async fn update_leankg() -> Result<(), Box<dyn std::error::Error>> {
     download_file(&url, &tar_path).await?;
 
     extract_and_install(&tar_path).await?;
+
+    println!("\nUpdating LeanKG hooks...");
+    install_claude_hooks()?;
+
+    println!("\nRemoving old LeanKG skill...");
+    remove_old_skill()?;
 
     println!("\nSuccessfully updated to v{}", latest);
     println!("Run 'leankg --version' to verify.");
@@ -2323,6 +2332,14 @@ async fn extract_and_install(tar_path: &std::path::Path) -> Result<(), Box<dyn s
         std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/bin");
     std::fs::create_dir_all(&install_dir)?;
 
+    let dest = install_dir.join("leankg");
+
+    // Remove existing binary first to avoid APFS metadata corruption issues on macOS
+    // (overwriting in place can leave corrupted metadata, causing SIGKILL on exec)
+    if dest.exists() {
+        std::fs::remove_file(&dest)?;
+    }
+
     let entries: Vec<_> = std::fs::read_dir(extract_dir)?
         .filter_map(|e| e.ok())
         .collect();
@@ -2330,7 +2347,6 @@ async fn extract_and_install(tar_path: &std::path::Path) -> Result<(), Box<dyn s
     for entry in entries {
         let path = entry.path();
         if path.is_file() && path.file_name().map(|n| n == "leankg").unwrap_or(false) {
-            let dest = install_dir.join("leankg");
             std::fs::copy(&path, &dest)?;
 
             #[cfg(unix)]
@@ -2344,6 +2360,315 @@ async fn extract_and_install(tar_path: &std::path::Path) -> Result<(), Box<dyn s
             break;
         }
     }
+
+    Ok(())
+}
+
+fn kill_old_processes() -> Result<(), Box<dyn std::error::Error>> {
+    let patterns = ["leankg", "vite"];
+
+    for pattern in &patterns {
+        let output = std::process::Command::new("pkill")
+            .args(["-9", "-f", pattern])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                println!("  Killed {} processes", pattern);
+            }
+            Ok(_) => {
+                // pkill returns non-zero when no processes matched
+            }
+            Err(e) => {
+                eprintln!("Warning: pkill not available or failed: {}", e);
+            }
+        }
+    }
+
+    // Small delay to allow processes to terminate
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    Ok(())
+}
+
+fn remove_old_skill() -> Result<(), Box<dyn std::error::Error>> {
+    let skill_dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".claude/skills/using-leankg");
+
+    if skill_dir.exists() {
+        std::fs::remove_dir_all(&skill_dir)?;
+        println!("  Removed old LeanKG skill from {}", skill_dir.display());
+    }
+
+    Ok(())
+}
+
+fn install_claude_hooks() -> Result<(), Box<dyn std::error::Error>> {
+    let plugin_dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".claude/plugins/leankg");
+    let hooks_dir = plugin_dir.join("hooks");
+
+    std::fs::create_dir_all(&hooks_dir)?;
+
+    // Write hooks.json
+    let hooks_json = r#"{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sessionstart.mjs\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__leankg__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}"#;
+
+    std::fs::write(hooks_dir.join("hooks.json"), hooks_json)?;
+
+    // Write pretooluse.mjs
+    let pretooluse_mjs = r#"#!/usr/bin/env node
+/**
+ * PreToolUse hook for LeanKG - Routing guidance for Claude Code
+ * Shows nudges when users reach for native tools instead of LeanKG.
+ */
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+async function readStdin() {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
+}
+
+const raw = await readStdin();
+const input = JSON.parse(raw);
+const tool = input.tool_name ?? "";
+const toolInput = input.tool_input ?? {};
+
+const GUIDANCE = {
+  Read: `
+<tool_routing>
+Use LeanKG instead of Read for code analysis:
+  - mcp__leankg__query_file(filename) - find files by name
+  - mcp__leankg__get_context(file) - read with token optimization
+</tool_routing>`,
+
+  Grep: `
+<tool_routing>
+Use LeanKG instead of Grep for code search:
+  - mcp__leankg__search_code(query, element_type) - search functions, files, structs
+  - mcp__leankg__find_function(name) - locate function definitions
+</tool_routing>`,
+
+  Bash: `
+<tool_routing>
+Use LeanKG instead of Bash for dependency analysis:
+  - mcp__leankg__get_impact_radius(file, depth) - blast radius analysis
+  - mcp__leankg__get_dependencies(file) - what this file imports
+  - mcp__leankg__get_dependents(file) - what depends on this file
+</tool_routing>`,
+};
+
+function isCodeAnalysis(tool, toolInput) {
+  if (tool === "Read") {
+    const path = toolInput.file_path ?? toolInput.path ?? "";
+    const codeExts = [".rs", ".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".cpp", ".c", ".h", ".cs", ".rb"];
+    return codeExts.some(ext => path.endsWith(ext));
+  }
+  if (tool === "Bash") {
+    const cmd = toolInput.command ?? "";
+    return /\b(grep|find|rg|ag|ack)\b/.test(cmd) || /\b(import|require|use|from)\b/.test(cmd);
+  }
+  return true;
+}
+
+if (GUIDANCE[tool] && isCodeAnalysis(tool, toolInput)) {
+  const response = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      guidance: GUIDANCE[tool].trim(),
+    },
+  };
+  process.stdout.write(JSON.stringify(response) + "\n");
+}
+"#;
+
+    std::fs::write(hooks_dir.join("pretooluse.mjs"), pretooluse_mjs)?;
+
+    // Write posttooluse.mjs
+    let posttooluse_mjs = r#"#!/usr/bin/env node
+/**
+ * PostToolUse hook for LeanKG - Session continuity.
+ * Captures LeanKG MCP tool calls for session continuity.
+ */
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+
+const LEANKG_TOOLS = [
+  "mcp__leankg__orchestrate",
+  "mcp__leankg__search_code",
+  "mcp__leankg__find_function",
+  "mcp__leankg__query_file",
+  "mcp__leankg__get_impact_radius",
+  "mcp__leankg__get_dependencies",
+  "mcp__leankg__get_dependents",
+  "mcp__leankg__get_context",
+  "mcp__leankg__get_callers",
+  "mcp__leankg__get_call_graph",
+  "mcp__leankg__get_clusters",
+  "mcp__leankg__get_doc_for_file",
+  "mcp__leankg__get_traceability",
+  "mcp__leankg__get_tested_by",
+  "mcp__leankg__detect_changes",
+  "mcp__leankg__mcp_status",
+  "mcp__leankg__mcp_index",
+];
+
+const SESSION_LOG_DIR = join(homedir(), ".leankg", "sessions");
+const SESSION_LOG_FILE = join(SESSION_LOG_DIR, "posttooluse.log");
+
+async function readStdin() {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
+}
+
+try {
+  const raw = await readStdin();
+  const input = JSON.parse(raw);
+  const toolName = input.tool_name ?? "";
+  const toolInput = input.tool_input ?? {};
+
+  const isLeankgTool = LEANKG_TOOLS.some(t => toolName.includes(t));
+
+  if (isLeankgTool) {
+    if (!existsSync(SESSION_LOG_DIR)) {
+      mkdirSync(SESSION_LOG_DIR, { recursive: true });
+    }
+    const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
+    const timestamp = new Date().toISOString();
+    const logEntry = JSON.stringify({
+      timestamp,
+      sessionId,
+      tool: toolName,
+      input: toolInput,
+    }) + "\n";
+    appendFileSync(SESSION_LOG_FILE, logEntry);
+  }
+} catch { /* silent */ }
+"#;
+
+    std::fs::write(hooks_dir.join("posttooluse.mjs"), posttooluse_mjs)?;
+
+    // Write sessionstart.mjs
+    let sessionstart_mjs = r#"#!/usr/bin/env node
+/**
+ * SessionStart hook for LeanKG
+ * Injects <tool_selection_hierarchy> at session start.
+ */
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+async function readStdin() {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
+}
+
+const raw = await readStdin();
+const input = JSON.parse(raw);
+
+const ROUTING_BLOCK = `
+<tool_selection_hierarchy>
+  1. ORCHESTRATE: mcp__leankg__orchestrate(intent)
+     - Natural language: "show me impact of changing function X"
+
+  2. CODE DISCOVERY: mcp__leankg__search_code(query, element_type)
+     - Primary search. ONE call replaces many Grep/Bash commands.
+
+  3. IMPACT ANALYSIS: mcp__leankg__get_impact_radius(file, depth)
+     - Calculate blast radius BEFORE making changes.
+
+  4. CONTEXT: mcp__leankg__get_context(file)
+     - Get minimal token-optimized context for a file.
+
+  5. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
+
+  6. CALLERS: mcp__leankg__get_callers(function) | mcp__leankg__find_function(name)
+
+  7. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
+
+  8. TESTING: mcp__leankg__get_tested_by(file) | mcp__leankg__detect_changes(scope)
+</tool_selection_hierarchy>
+
+<forbidden_actions>
+  - DO NOT use Grep for code search (use mcp__leankg__search_code instead)
+  - DO NOT use Bash find/grep for file search (use mcp__leankg__query_file instead)
+</forbidden_actions>
+`;
+
+console.log(JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: "SessionStart",
+    additionalContext: ROUTING_BLOCK,
+  },
+}));
+"#;
+
+    std::fs::write(hooks_dir.join("sessionstart.mjs"), sessionstart_mjs)?;
+
+    println!("  Installed Claude hooks to {}", hooks_dir.display());
 
     Ok(())
 }
