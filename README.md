@@ -97,6 +97,30 @@ See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
 
 ---
 
+## Claude Code Setup
+
+LeanKG auto-triggers in Claude Code sessions via PreToolUse hooks that route search intents to LeanKG tools instead of native tools.
+
+```bash
+# Install LeanKG with Claude Code hooks and plugin
+leankg setup
+
+# Then restart Claude Code or run:
+/reload-plugins
+```
+
+**What `leankg setup` installs:**
+- `.claude-plugin/` - Plugin manifest for Claude Code validation
+- `hooks/` - PreToolUse, SessionStart, PostToolUse hooks
+- Adds `leankg@local` to `enabledPlugins` in `~/.claude/settings.json`
+
+**Auto-trigger behavior:**
+- `SessionStart` hook injects tool selection hierarchy into every session
+- `PreToolUse` hook nudges toward LeanKG when you use Grep/Read/Bash for code analysis
+- LeanKG returns token-optimized context instead of scanning entire files
+
+---
+
 ## How LeanKG Helps
 
 ```mermaid
@@ -172,7 +196,10 @@ See [docs/metrics.md](docs/metrics.md) for schema and examples.
 # Check current version
 leankg version
 
-# Update LeanKG binary via install script
+# Update LeanKG binary (kills processes, removes old binary, installs hooks)
+leankg update
+
+# Or via install script
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- update
 
 # Obsidian vault sync
@@ -219,8 +246,8 @@ pkill -9 -f "vite"
 ### Process Management
 
 ```bash
-leankg-kill              # Kill all leankg and vite processes (after adding to ~/.zshrc)
-leankg-status            # Show running leankg/vite processes
+leankg proc kill        # Kill all leankg and vite processes
+leankg proc status      # Show running leankg/vite processes
 ```
 
 **Important:** Always kill the web server before indexing to avoid database lock conflicts.
