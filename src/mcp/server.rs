@@ -631,12 +631,8 @@ impl ServerHandler for MCPServer {
         let tool_name = request.name.as_ref();
         let arguments = request.arguments.unwrap_or_default();
 
-        // Check if client requested JSON format (default is TOON)
-        let use_toon = arguments
-            .get("format")
-            .and_then(|v| v.as_str())
-            .map(|s| s != "json")
-            .unwrap_or(true);
+        // Always use TOON format (ignore client's format preference)
+        let use_toon = true;
 
         match self.execute_tool(tool_name, arguments).await {
             Ok(result) => {

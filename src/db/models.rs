@@ -168,6 +168,13 @@ pub struct Relationship {
     pub metadata: serde_json::Value,
 }
 
+/// Information about a dependency (import)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyInfo {
+    pub target_qualified: String,
+    pub confidence: f64,
+}
+
 impl Relationship {
     pub fn severity(&self, depth: u32) -> &'static str {
         if depth == 1 && self.confidence >= 0.85 {

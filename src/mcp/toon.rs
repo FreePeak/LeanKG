@@ -216,6 +216,34 @@ fn extract_shared_schema(arr: &[Value]) -> Option<(String, Schema)> {
 
 /// Infer a good name for the array based on its fields
 fn infer_array_name(fields: &[String]) -> String {
+    // Check for cluster-like structure (has label, members, representative_files)
+    if fields.iter().any(|f| f == "label")
+        && fields.iter().any(|f| f == "members")
+        && fields.iter().any(|f| f == "representative_files")
+    {
+        return "cluster".to_string();
+    }
+
+    // Check for code element structure (has qualified_name)
+    if fields.iter().any(|f| f == "qualified_name") {
+        return "element".to_string();
+    }
+
+    // Check for call graph structure (has from and to)
+    if fields.iter().any(|f| f == "from") && fields.iter().any(|f| f == "to") {
+        return "call".to_string();
+    }
+
+    // Check for relationship structure (has source and target)
+    if fields.iter().any(|f| f == "source") && fields.iter().any(|f| f == "target") {
+        return "rel".to_string();
+    }
+
+    // Check for doc structure (has doc and context)
+    if fields.iter().any(|f| f == "doc") && fields.iter().any(|f| f == "context") {
+        return "doc".to_string();
+    }
+
     // Priority fields that often indicate what the array represents
     let priority_fields = [
         "qualified_name",
@@ -353,8 +381,9 @@ mod tests {
         println!("Output:\n{}", out);
 
         // Fields are sorted alphabetically: qualified_name, type
+        // Array is named "element" because objects have qualified_name field
         assert!(
-            out.contains("qualified_name[2]{qualified_name,type}:"),
+            out.contains("element[2]{qualified_name,type}:"),
             "Schema header not found. Output:\n{}",
             out
         );
@@ -384,8 +413,9 @@ mod tests {
         println!("Output:\n{}", out);
 
         // Fields sorted alphabetically: language, qualified_name, type
+        // Array is named "element" because objects have qualified_name field
         assert!(
-            out.contains("qualified_name[2]{language,qualified_name,type}:"),
+            out.contains("element[2]{language,qualified_name,type}:"),
             "Schema header not found. Output:\n{}",
             out
         );
@@ -487,8 +517,9 @@ mod tests {
         println!("Output:\n{}", out);
 
         // Fields sorted alphabetically: confidence, qualified_name, severity, type
+        // Array is named "element" because objects have qualified_name field
         assert!(
-            out.contains("qualified_name[2]{confidence,qualified_name,severity,type}:"),
+            out.contains("element[2]{confidence,qualified_name,severity,type}:"),
             "Schema header not found. Output:\n{}",
             out
         );
@@ -513,9 +544,9 @@ mod tests {
         println!("Output:\n{}", out);
 
         // Fields sorted: depth, from, to
-        // Array name inferred from "from"
+        // Array is named "call" because objects have from and to fields
         assert!(
-            out.contains("from[2]{depth,from,to}:"),
+            out.contains("call[2]{depth,from,to}:"),
             "Schema header not found. Output:\n{}",
             out
         );
