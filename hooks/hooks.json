@@ -1,35 +1,6 @@
 {
-  "description": "LeanKG hooks - SessionStart routing, PreToolUse guidance, PostToolUse capture",
+  "description": "LeanKG hooks - SessionStart routing, PostToolUse capture",
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
-          }
-        ]
-      },
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
-          }
-        ]
-      },
-      {
-        "matcher": "Grep",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "mcp__leankg__",
