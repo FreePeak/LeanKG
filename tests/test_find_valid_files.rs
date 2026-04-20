@@ -10,7 +10,10 @@ async fn test_find_valid_files_for_relationships() {
 
     let relationships = graph.all_relationships().unwrap();
     let all_elements = graph.all_elements().unwrap();
-    let element_qns: std::collections::HashSet<_> = all_elements.iter().map(|e| e.qualified_name.clone()).collect();
+    let element_qns: std::collections::HashSet<_> = all_elements
+        .iter()
+        .map(|e| e.qualified_name.clone())
+        .collect();
 
     // Group calls by source file
     use std::collections::HashMap;

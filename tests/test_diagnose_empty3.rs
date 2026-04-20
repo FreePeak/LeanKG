@@ -30,18 +30,26 @@ async fn test_check_relationship_types() {
     for (rel_type, count) in &type_counts {
         if rel_type == "imports" || rel_type == "calls" || rel_type == "contains" {
             println!("\n{} ({} total):", rel_type, count);
-            let samples: Vec<_> = relationships.iter()
+            let samples: Vec<_> = relationships
+                .iter()
                 .filter(|r| &r.rel_type == rel_type)
                 .take(3)
                 .collect();
             for r in samples {
-                println!("  {} -> {} ({})", r.source_qualified, r.target_qualified, r.rel_type);
+                println!(
+                    "  {} -> {} ({})",
+                    r.source_qualified, r.target_qualified, r.rel_type
+                );
             }
         }
     }
 
     // Check what files have imports relationships
-    let imports: Vec<_> = relationships.iter().filter(|r| r.rel_type == "imports").take(5).collect();
+    let imports: Vec<_> = relationships
+        .iter()
+        .filter(|r| r.rel_type == "imports")
+        .take(5)
+        .collect();
     println!("\n=== Sample imports relationships ===");
     for r in imports {
         println!("  {} -> {}", r.source_qualified, r.target_qualified);

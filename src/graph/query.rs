@@ -1958,14 +1958,19 @@ impl GraphEngine {
         }
 
         // Now get code elements for the caller sources
-        let caller_sources: Vec<String> = result.rows.iter().filter_map(|r| r[0].as_str().map(|s| s.to_string())).collect();
+        let caller_sources: Vec<String> = result
+            .rows
+            .iter()
+            .filter_map(|r| r[0].as_str().map(|s| s.to_string()))
+            .collect();
 
         if caller_sources.is_empty() {
             return Ok(vec![]);
         }
 
         // Build query to get code elements for these sources
-        let sources_pattern = caller_sources.iter()
+        let sources_pattern = caller_sources
+            .iter()
             .map(|s| format!(r#"qualified_name = "{}""#, escape_datalog(s)))
             .collect::<Vec<_>>()
             .join(" or ");
@@ -2006,15 +2011,20 @@ impl GraphEngine {
                rel_type = "calls",
                {}
                :limit {}"#,
-            src_filter,
-            max_results,
+            src_filter, max_results,
         );
 
         let result = self.db.run_script(&query, Default::default())?;
         Ok(result
             .rows
             .iter()
-            .map(|row| (row[0].as_str().unwrap_or("").to_string(), row[1].as_str().unwrap_or("").to_string(), 1u32))
+            .map(|row| {
+                (
+                    row[0].as_str().unwrap_or("").to_string(),
+                    row[1].as_str().unwrap_or("").to_string(),
+                    1u32,
+                )
+            })
             .collect())
     }
 

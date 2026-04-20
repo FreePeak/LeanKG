@@ -27,16 +27,25 @@ async fn test_all_mcp_tools_return_data() {
         ("find_function", json!({"name": "main"})),
         ("get_dependencies", json!({"file": &valid_file})),
         ("get_dependents", json!({"file": &valid_file})),
-        ("get_call_graph", json!({"function": &valid_function, "depth": 1})),
+        (
+            "get_call_graph",
+            json!({"function": &valid_function, "depth": 1}),
+        ),
         ("get_callers", json!({"function": "validate_key"})),
         ("get_tested_by", json!({"file": &valid_file})),
         ("get_context", json!({"file": &valid_file})),
-        ("get_impact_radius", json!({"file": &valid_file, "depth": 2})),
+        (
+            "get_impact_radius",
+            json!({"file": &valid_file, "depth": 2}),
+        ),
         ("get_review_context", json!({"files": [&valid_file]})),
         ("find_large_functions", json!({})),
         ("generate_doc", json!({"file": &valid_file})),
         ("get_doc_for_file", json!({"file": &valid_file})),
-        ("get_files_for_doc", json!({"doc": "./docs/requirement/prd-leankg.md"})),
+        (
+            "get_files_for_doc",
+            json!({"doc": "./docs/requirement/prd-leankg.md"}),
+        ),
         ("get_doc_structure", json!({})),
         ("get_traceability", json!({"element": &valid_function})),
         ("get_doc_tree", json!({})),
@@ -52,8 +61,14 @@ async fn test_all_mcp_tools_return_data() {
         ("mcp_impact", json!({"file": "./src/main.rs", "depth": 2})),
         ("mcp_index_docs", json!({"path": "./docs"})),
         ("mcp_install", json!({})),
-        ("run_raw_query", json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _] :limit 5"})),
-        ("search_by_requirement", json!({"requirement_id": "REQ-001"})),
+        (
+            "run_raw_query",
+            json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _] :limit 5"}),
+        ),
+        (
+            "search_by_requirement",
+            json!({"requirement_id": "REQ-001"}),
+        ),
     ];
 
     let mut passed = 0;
@@ -68,9 +83,9 @@ async fn test_all_mcp_tools_return_data() {
                 } else if result.is_object() {
                     let obj = result.as_object().unwrap();
                     obj.values().all(|v| {
-                        v.is_null() ||
-                        (v.is_array() && v.as_array().unwrap().is_empty()) ||
-                        (v.is_string() && v.as_str().unwrap().is_empty())
+                        v.is_null()
+                            || (v.is_array() && v.as_array().unwrap().is_empty())
+                            || (v.is_string() && v.as_str().unwrap().is_empty())
                     })
                 } else {
                     false
@@ -88,13 +103,20 @@ async fn test_all_mcp_tools_return_data() {
             Err(e) => {
                 let err_str = e.to_string();
                 // Categorize errors
-                if err_str.contains("not found") || err_str.contains("No such file") ||
-                   err_str.contains("does not exist") || err_str.contains("not available") ||
-                   err_str.contains("no doc") || err_str.contains("no clusters") ||
-                   err_str.contains("empty") || err_str.contains("not exist") ||
-                   err_str.contains("Cluster not found") || err_str.contains("not initialized") ||
-                   err_str.contains("not indexed") || err_str.contains("not readable") ||
-                   err_str.contains("no matching") {
+                if err_str.contains("not found")
+                    || err_str.contains("No such file")
+                    || err_str.contains("does not exist")
+                    || err_str.contains("not available")
+                    || err_str.contains("no doc")
+                    || err_str.contains("no clusters")
+                    || err_str.contains("empty")
+                    || err_str.contains("not exist")
+                    || err_str.contains("Cluster not found")
+                    || err_str.contains("not initialized")
+                    || err_str.contains("not indexed")
+                    || err_str.contains("not readable")
+                    || err_str.contains("no matching")
+                {
                     println!("⚠️  {}: not applicable ({})", tool_name, e);
                     skipped += 1;
                 } else {

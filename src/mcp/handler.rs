@@ -1482,9 +1482,9 @@ impl ToolHandler {
 
             let file_name = parts.last().unwrap_or(&"");
 
-            let entry = files_map.entry(file_name.to_string()).or_insert_with(|| {
-                (elem.file_path.clone(), Vec::new())
-            });
+            let entry = files_map
+                .entry(file_name.to_string())
+                .or_insert_with(|| (elem.file_path.clone(), Vec::new()));
 
             entry.1.push(json!({
                 "qualified_name": elem.qualified_name,

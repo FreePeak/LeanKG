@@ -108,7 +108,48 @@ impl IntentParser {
     fn extract_target(&self, text: &str) -> Option<String> {
         let markers = ["for ", "of ", "in ", "to ", "from ", "named "];
         let file_extensions = [
-            ".rs", ".md", ".go", ".ts", ".js", ".py", ".java", ".cpp", ".c", ".h",
+            ".rs", ".md", ".go", ".ts", ".js", ".py", ".java", ".cpp", ".c", ".h", ".tsx", ".jsx",
+            ".cs", ".swift", ".kt",
+        ];
+        let path_indicators = [
+            "src/",
+            "lib/",
+            "bin/",
+            "test/",
+            "tests/",
+            "benches/",
+            "examples/",
+            "docs/",
+            "scripts/",
+        ];
+        // Common action words that often appear between marker and actual target
+        let skip_words = [
+            "the",
+            "a",
+            "an",
+            "changing",
+            "change",
+            "changing",
+            "update",
+            "updating",
+            "modifying",
+            "modify",
+            "editing",
+            "edit",
+            "removing",
+            "remove",
+            "adding",
+            "add",
+            "creating",
+            "create",
+            "deleting",
+            "delete",
+            "impact",
+            "affect",
+            "affected",
+            "affecting",
+            "file",
+            "files",
         ];
 
         for marker in &markers {
@@ -116,54 +157,65 @@ impl IntentParser {
                 let start = pos + marker.len();
                 let rest = &text[start..];
 
-                let first_token_end = rest.find(' ').unwrap_or(rest.len());
-                let first_token = &rest[..first_token_end];
+                // Find all tokens (words) in the rest of the string
+                let words: Vec<&str> = rest.split_whitespace().collect();
 
-                if !first_token.is_empty() && first_token.len() > 1 {
-                    if file_extensions.iter().any(|ext| first_token.ends_with(ext)) {
-                        return Some(first_token.to_string());
+                // First, scan for file extensions or paths in all words after the marker
+                for word in &words {
+                    let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
+                    // Check for file with extension
+                    if file_extensions.iter().any(|ext| cleaned.ends_with(ext)) {
+                        return Some(cleaned.to_string());
                     }
-
-                    if first_token.contains('_')
-                        && first_token
-                            .chars()
-                            .next()
-                            .map(|c| c.is_lowercase())
-                            .unwrap_or(false)
+                    // Check for path-like structures (e.g., src/main.rs)
+                    if path_indicators.iter().any(|p| cleaned.starts_with(p))
+                        && cleaned.contains('/')
                     {
-                        return Some(first_token.to_string());
+                        return Some(cleaned.to_string());
                     }
+                }
 
-                    for (i, _) in rest.char_indices() {
-                        if file_extensions.iter().any(|ext| rest[i..].starts_with(ext)) {
-                            let remaining = &rest[i..];
-                            let word_end = remaining
-                                .find(|c: char| {
-                                    c.is_whitespace()
-                                        || c == ','
-                                        || c == '\n'
-                                        || c == '"'
-                                        || c == '\''
-                                })
-                                .map(|p| i + p)
-                                .unwrap_or(rest.len());
-                            let word_start = rest[..i]
-                                .rfind(|c: char| {
-                                    c.is_whitespace()
-                                        || c == ','
-                                        || c == '\n'
-                                        || c == '"'
-                                        || c == '\''
-                                })
-                                .map(|p| p + 1)
-                                .unwrap_or(0);
-                            let candidate = &rest[word_start..word_end];
-                            if !candidate.is_empty()
-                                && candidate.len() > 1
-                                && candidate != first_token
-                            {
-                                return Some(candidate.to_string());
-                            }
+                // If no file/path found, try the first word if it's not a skip word
+                if let Some(first_word) = words.first() {
+                    let cleaned = first_word.trim_matches(|c: char| c.is_ascii_punctuation());
+                    if !cleaned.is_empty() && cleaned.len() > 1 && !skip_words.contains(&cleaned) {
+                        // Check for module-like names (lowercase with underscores)
+                        if cleaned.contains('_')
+                            && cleaned
+                                .chars()
+                                .next()
+                                .map(|c| c.is_lowercase())
+                                .unwrap_or(false)
+                        {
+                            return Some(cleaned.to_string());
+                        }
+
+                        // Check for file extension in first token
+                        if file_extensions.iter().any(|ext| cleaned.ends_with(ext)) {
+                            return Some(cleaned.to_string());
+                        }
+                    }
+                }
+
+                // Try to find file extension anywhere in the remaining text
+                for (i, _) in rest.char_indices() {
+                    if file_extensions.iter().any(|ext| rest[i..].starts_with(ext)) {
+                        let remaining = &rest[i..];
+                        let word_end = remaining
+                            .find(|c: char| {
+                                c.is_whitespace() || c == ',' || c == '\n' || c == '"' || c == '\''
+                            })
+                            .map(|p| i + p)
+                            .unwrap_or(rest.len());
+                        let word_start = rest[..i]
+                            .rfind(|c: char| {
+                                c.is_whitespace() || c == ',' || c == '\n' || c == '"' || c == '\''
+                            })
+                            .map(|p| p + 1)
+                            .unwrap_or(0);
+                        let candidate = &rest[word_start..word_end];
+                        if !candidate.is_empty() && candidate.len() > 1 {
+                            return Some(candidate.to_string());
                         }
                     }
                 }
@@ -338,5 +390,15 @@ mod tests {
 
         assert!(intent1.confidence >= 0.0);
         assert!(intent2.confidence >= 0.0);
+    }
+
+    #[test]
+    fn test_parse_impact_intent_with_path() {
+        let parser = IntentParser::new();
+
+        // This is the specific failing case: action word "changing" between marker and path
+        let intent = parser.parse("show me impact of changing src/mcp/handler.rs");
+        assert_eq!(intent.query_type, "impact");
+        assert_eq!(intent.target, Some("src/mcp/handler.rs".to_string()));
     }
 }

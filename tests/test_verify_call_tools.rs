@@ -13,8 +13,18 @@ async fn test_verify_call_tools() {
 
     // Test get_call_graph on main
     println!("=== Testing get_call_graph for ./src/main.rs::main ===");
-    let cg = handler.execute_tool("get_call_graph", &json!({"function": "./src/main.rs::main", "depth": 2})).await.unwrap();
-    let calls_count = cg.get("calls").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
+    let cg = handler
+        .execute_tool(
+            "get_call_graph",
+            &json!({"function": "./src/main.rs::main", "depth": 2}),
+        )
+        .await
+        .unwrap();
+    let calls_count = cg
+        .get("calls")
+        .and_then(|c| c.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
     println!("get_call_graph: {} calls", calls_count);
 
     // Test get_callers for main - find a target that has callers
@@ -43,8 +53,15 @@ async fn test_verify_call_tools() {
     // Test with a function that has callers
     if let Some((target, _)) = sorted_callers.iter().find(|(t, _)| t.contains("::main")) {
         println!("\n=== Testing get_callers for {} ===", target);
-        let callers = handler.execute_tool("get_callers", &json!({"function": target})).await.unwrap();
-        let callers_count = callers.get("callers").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
+        let callers = handler
+            .execute_tool("get_callers", &json!({"function": target}))
+            .await
+            .unwrap();
+        let callers_count = callers
+            .get("callers")
+            .and_then(|c| c.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
         println!("get_callers: {} callers", callers_count);
     }
 }

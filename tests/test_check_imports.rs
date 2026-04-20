@@ -11,13 +11,19 @@ async fn test_check_import_targets() {
 
     // Get all relationships that are imports
     let relationships = graph.all_relationships().unwrap();
-    let imports: Vec<_> = relationships.iter().filter(|r| r.rel_type == "imports").collect();
+    let imports: Vec<_> = relationships
+        .iter()
+        .filter(|r| r.rel_type == "imports")
+        .collect();
 
     println!("Total imports: {}", imports.len());
 
     // Check if targets exist in code_elements
     let all_elements = graph.all_elements().unwrap();
-    let element_qns: std::collections::HashSet<_> = all_elements.iter().map(|e| e.qualified_name.clone()).collect();
+    let element_qns: std::collections::HashSet<_> = all_elements
+        .iter()
+        .map(|e| e.qualified_name.clone())
+        .collect();
 
     println!("\nTotal elements: {}", all_elements.len());
 
@@ -44,7 +50,10 @@ async fn test_check_import_targets() {
     }
 
     // Now check calls relationships
-    let calls: Vec<_> = relationships.iter().filter(|r| r.rel_type == "calls").collect();
+    let calls: Vec<_> = relationships
+        .iter()
+        .filter(|r| r.rel_type == "calls")
+        .collect();
     println!("\n=== Calls relationships ===");
     println!("Total calls: {}", calls.len());
 
@@ -64,7 +73,10 @@ async fn test_check_import_targets() {
     }
 
     println!("Call targets found in code_elements: {}", callers_found);
-    println!("Call targets NOT found in code_elements: {}", callers_not_found);
+    println!(
+        "Call targets NOT found in code_elements: {}",
+        callers_not_found
+    );
     if !sample_call_targets.is_empty() {
         println!("\nSample NOT found call targets:");
         for t in &sample_call_targets {
