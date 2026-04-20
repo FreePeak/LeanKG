@@ -14,6 +14,21 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
 
     let db = cozo::new_cozo_sqlite(path_str)?;
 
+    // Set memory limits for SQLite (CozoDB backend) - run individually to avoid parsing issues
+    let pragmas = [
+        "PRAGMA cache_size = -64000",
+        "PRAGMA mmap_size = 268435456",
+        "PRAGMA temp_store = MEMORY",
+        "PRAGMA synchronous = NORMAL",
+        "PRAGMA journal_mode = WAL",
+        "PRAGMA wal_autocheckpoint = 100",
+    ];
+    for pragma in pragmas {
+        if let Err(e) = db.run_script(pragma, Default::default()) {
+            tracing::debug!("Pragma '{}' failed (may not be supported): {}", pragma, e);
+        }
+    }
+
     init_schema(&db)?;
 
     Ok(db)
