@@ -16,4 +16,5 @@ pub mod obsidian;
 pub mod orchestrator;
 pub mod registry;
 pub mod runtime;
+pub mod server;
 pub mod watcher;

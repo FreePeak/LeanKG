@@ -58,6 +58,18 @@ pub enum CLICommand {
         #[arg(long)]
         watch: bool,
     },
+    /// Start LeanKG MCP server as background process
+    McpServe {
+        /// Port to listen on (default: 7890)
+        #[arg(long, default_value = "7890")]
+        port: u16,
+    },
+    /// Stop the running LeanKG MCP server
+    McpStop {
+        /// Port where server is running (default: 7890)
+        #[arg(long, default_value = "7890")]
+        port: u16,
+    },
     /// Calculate impact radius
     Impact {
         /// File to analyze
