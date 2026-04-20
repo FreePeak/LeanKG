@@ -8,8 +8,8 @@ pub mod terraform;
 
 pub mod android_hilt;
 pub mod android_manifest;
-pub mod android_resources;
 pub mod android_resource_refs;
+pub mod android_resources;
 pub mod android_room;
 pub mod config_extractor;
 pub mod framework_detector;
@@ -20,8 +20,8 @@ pub mod xml_layout;
 
 pub use android_hilt::AndroidHiltExtractor;
 pub use android_manifest::*;
-pub use android_resources::*;
 pub use android_resource_refs::AndroidResourceRefExtractor;
+pub use android_resources::*;
 pub use android_room::AndroidRoomExtractor;
 pub use cicd::*;
 pub use config_extractor::*;

@@ -27,7 +27,7 @@ impl<'a> GenericXmlExtractor<'a> {
             Ok(content) => {
                 // Detect root element name via regex
                 let root_element = Self::detect_root_element(content);
-                
+
                 if !root_element.is_empty() {
                     // Create a CodeElement for the XML document structure
                     elements.push(CodeElement {
@@ -43,12 +43,16 @@ impl<'a> GenericXmlExtractor<'a> {
                     if let Some(first_line) = lines.next() {
                         let first_tag_start = first_line.find('<').unwrap_or(0);
                         let first_tag_end = first_line.rfind('>').unwrap_or(first_line.len());
-                        
+
                         if first_tag_start < first_tag_end && first_tag_end > 0 {
                             relationships.push(Relationship {
                                 id: None,
                                 source_qualified: format!("{}::{}", self.file_path, root_element),
-                                target_qualified: format!("{}::{}", self.file_path, &content[first_tag_start..first_tag_end]),
+                                target_qualified: format!(
+                                    "{}::{}",
+                                    self.file_path,
+                                    &content[first_tag_start..first_tag_end]
+                                ),
                                 rel_type: "has_root".to_string(),
                                 confidence: 1.0,
                                 metadata: serde_json::json!({}),
@@ -69,7 +73,7 @@ impl<'a> GenericXmlExtractor<'a> {
     /// Check if this is an Android-specific XML file
     fn is_android_xml(&self) -> bool {
         let path_lower = self.file_path.to_lowercase();
-        
+
         // Check for AndroidManifest.xml
         if path_lower.contains("androidmanifest.xml") {
             return true;
@@ -87,7 +91,7 @@ impl<'a> GenericXmlExtractor<'a> {
     fn detect_root_element(content: &str) -> String {
         // Match opening tag of root element (handles self-closing tags too)
         let re = Regex::new(r"<(\w+)(?:\s|>|/>)").unwrap();
-        
+
         if let Some(caps) = re.captures(content) {
             if let Some(tag_name) = caps.get(1) {
                 return tag_name.as_str().to_string();
@@ -106,7 +110,7 @@ mod tests {
     fn test_detect_root_element_simple() {
         let content = r#"<root>content</root>"#;
         let extractor = GenericXmlExtractor::new(content.as_bytes(), "test.xml");
-        
+
         // Manually call detect_root_element since it's private
         let root = GenericXmlExtractor::detect_root_element(content);
         assert_eq!(root, "root");

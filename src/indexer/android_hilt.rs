@@ -74,7 +74,10 @@ impl<'a> AndroidHiltExtractor<'a> {
         let mut found_open = false;
         for (i, ch) in after.char_indices() {
             match ch {
-                '{' => { depth += 1; found_open = true; }
+                '{' => {
+                    depth += 1;
+                    found_open = true;
+                }
                 '}' => {
                     depth -= 1;
                     if found_open && depth == 0 {
@@ -87,7 +90,11 @@ impl<'a> AndroidHiltExtractor<'a> {
         content.len()
     }
 
-    fn extract_providers(&self, content: &str, modules: &[CodeElement]) -> (Vec<CodeElement>, Vec<Relationship>) {
+    fn extract_providers(
+        &self,
+        content: &str,
+        modules: &[CodeElement],
+    ) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut providers = Vec::new();
         let mut relationships = Vec::new();
 
@@ -103,7 +110,10 @@ impl<'a> AndroidHiltExtractor<'a> {
             })
             .collect();
 
-        let provides_re = Regex::new(r"@Provides\s*\n?(?:@Singleton\s*\n?)?\s*fun\s+(\w+)\s*\([^)]*\)\s*:\s*(\w+)").unwrap();
+        let provides_re = Regex::new(
+            r"@Provides\s*\n?(?:@Singleton\s*\n?)?\s*fun\s+(\w+)\s*\([^)]*\)\s*:\s*(\w+)",
+        )
+        .unwrap();
 
         for cap in provides_re.captures_iter(content) {
             let method_match = cap.get(1);
@@ -160,7 +170,8 @@ impl<'a> AndroidHiltExtractor<'a> {
     fn extract_injections(&self, content: &str) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
-        let inject_re = Regex::new(r"class\s+(\w+).*?@Inject\s*\n?\s*constructor\s*\(([^)]+)\)").unwrap();
+        let inject_re =
+            Regex::new(r"class\s+(\w+).*?@Inject\s*\n?\s*constructor\s*\(([^)]+)\)").unwrap();
         let param_re = Regex::new(r"(\w+)\s*:\s*(\w+)").unwrap();
 
         for cap in inject_re.captures_iter(content) {
@@ -175,7 +186,10 @@ impl<'a> AndroidHiltExtractor<'a> {
                         let type_name = param_type.as_str();
                         relationships.push(Relationship {
                             id: None,
-                            source_qualified: format!("{}::__class__{}", self.file_path, class_name_str),
+                            source_qualified: format!(
+                                "{}::__class__{}",
+                                self.file_path, class_name_str
+                            ),
                             target_qualified: format!("__type__{}", type_name),
                             rel_type: "hilt_injected".to_string(),
                             confidence: 0.8,
@@ -187,7 +201,8 @@ impl<'a> AndroidHiltExtractor<'a> {
         }
 
         // Match @Inject field injection
-        let field_inject_re = Regex::new(r"@Inject\s*\n?\s*(?:lateinit\s+)?var\s+(\w+)\s*:\s*(\w+)").unwrap();
+        let field_inject_re =
+            Regex::new(r"@Inject\s*\n?\s*(?:lateinit\s+)?var\s+(\w+)\s*:\s*(\w+)").unwrap();
         for cap in field_inject_re.captures_iter(content) {
             let name_match = cap.get(1);
             let type_match = cap.get(2);
@@ -227,7 +242,10 @@ mod tests {
         let extractor = AndroidHiltExtractor::new(source.as_bytes(), "./test.kt");
         let (elements, _) = extractor.extract();
 
-        let modules: Vec<_> = elements.iter().filter(|e| e.element_type == "hilt_module").collect();
+        let modules: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "hilt_module")
+            .collect();
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].name, "AppModule");
     }
@@ -245,12 +263,18 @@ mod tests {
         let extractor = AndroidHiltExtractor::new(source.as_bytes(), "./test.kt");
         let (elements, relationships) = extractor.extract();
 
-        let providers: Vec<_> = elements.iter().filter(|e| e.element_type == "hilt_provider").collect();
+        let providers: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "hilt_provider")
+            .collect();
         assert!(!providers.is_empty());
         assert_eq!(providers[0].name, "provideDatabase");
 
         // Check relationship to type
-        let provides_rels: Vec<_> = relationships.iter().filter(|r| r.rel_type == "hilt_provides").collect();
+        let provides_rels: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "hilt_provides")
+            .collect();
         assert!(!provides_rels.is_empty());
     }
 
@@ -264,7 +288,10 @@ mod tests {
         let extractor = AndroidHiltExtractor::new(source.as_bytes(), "./test.kt");
         let (_, relationships) = extractor.extract();
 
-        let injected: Vec<_> = relationships.iter().filter(|r| r.rel_type == "hilt_injected").collect();
+        let injected: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "hilt_injected")
+            .collect();
         assert!(!injected.is_empty());
     }
 }

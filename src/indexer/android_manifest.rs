@@ -143,9 +143,9 @@ impl<'a> AndroidManifestExtractor<'a> {
 
         // Extract intent filters
         let intent_filters = Self::extract_intent_filters(content);
-        for (i, (filter_content, actions, categories)) in intent_filters.iter().enumerate() {
+        for (i, (_filter_content, actions, categories)) in intent_filters.iter().enumerate() {
             let filter_id = format!("{}::intent_filter:{}", self.file_path, i);
-            
+
             elements.push(CodeElement {
                 qualified_name: filter_id.clone(),
                 element_type: "android_intent_filter".to_string(),
@@ -173,7 +173,7 @@ impl<'a> AndroidManifestExtractor<'a> {
         let metadata = Self::extract_metadata(content);
         for (i, (name, value, resource)) in metadata.iter().enumerate() {
             let meta_id = format!("{}::metadata:{}", self.file_path, i);
-            
+
             elements.push(CodeElement {
                 qualified_name: meta_id.clone(),
                 element_type: "android_metadata".to_string(),
@@ -236,12 +236,12 @@ impl<'a> AndroidManifestExtractor<'a> {
         for cap in filter_re.captures_iter(content) {
             if let Some(filter_content) = cap.get(1) {
                 let fc = filter_content.as_str();
-                
+
                 let actions: Vec<String> = action_re
                     .captures_iter(fc)
                     .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
                     .collect();
-                
+
                 let categories: Vec<String> = category_re
                     .captures_iter(fc)
                     .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
@@ -265,7 +265,7 @@ impl<'a> AndroidManifestExtractor<'a> {
             let name = cap.get(1).map(|m| m.as_str().to_string());
             let value = cap.get(2).map(|m| m.as_str().to_string());
             let resource = cap.get(3).map(|m| m.as_str().to_string());
-            
+
             if let Some(n) = name {
                 metadata.push((n, value, resource));
             }

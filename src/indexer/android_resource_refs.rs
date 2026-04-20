@@ -63,7 +63,7 @@ impl<'a> AndroidResourceRefExtractor<'a> {
                 relationships.push(Relationship {
                     id: None,
                     source_qualified: self.file_path.to_string(),
-                    target_qualified: format!("res/{}/{}" , self.resource_dir(res_type), res_name),
+                    target_qualified: format!("res/{}/{}", self.resource_dir(res_type), res_name),
                     rel_type: rel_type.to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({
@@ -81,7 +81,8 @@ impl<'a> AndroidResourceRefExtractor<'a> {
         let mut relationships = Vec::new();
 
         // Pattern: resources.getString(R.string.xxx) or getString(R.string.xxx)
-        let re = Regex::new(r"(?:resources\.)?(?:getString|getText)\s*\(\s*R\.(\w+)\.(\w+)\s*\)").unwrap();
+        let re = Regex::new(r"(?:resources\.)?(?:getString|getText)\s*\(\s*R\.(\w+)\.(\w+)\s*\)")
+            .unwrap();
 
         for cap in re.captures_iter(content) {
             if let (Some(type_match), Some(name_match)) = (cap.get(1), cap.get(2)) {
@@ -92,7 +93,11 @@ impl<'a> AndroidResourceRefExtractor<'a> {
                     relationships.push(Relationship {
                         id: None,
                         source_qualified: self.file_path.to_string(),
-                        target_qualified: format!("res/{}/{}" , self.resource_dir(res_type), res_name),
+                        target_qualified: format!(
+                            "res/{}/{}",
+                            self.resource_dir(res_type),
+                            res_name
+                        ),
                         rel_type: format!("uses_{}_resource", res_type),
                         confidence: 1.0,
                         metadata: serde_json::json!({
@@ -139,11 +144,22 @@ mod tests {
         let extractor = AndroidResourceRefExtractor::new(source.as_bytes(), "./Test.kt");
         let (_, relationships) = extractor.extract();
 
-        let string_refs: Vec<_> = relationships.iter().filter(|r| r.rel_type == "uses_string_resource").collect();
+        let string_refs: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "uses_string_resource")
+            .collect();
         // May find duplicates from both R. and resources.method patterns
-        assert!(string_refs.len() >= 2, "Expected at least 2 string refs, found {}", string_refs.len());
-        assert!(string_refs.iter().any(|r| r.target_qualified.contains("app_name")));
-        assert!(string_refs.iter().any(|r| r.target_qualified.contains("description")));
+        assert!(
+            string_refs.len() >= 2,
+            "Expected at least 2 string refs, found {}",
+            string_refs.len()
+        );
+        assert!(string_refs
+            .iter()
+            .any(|r| r.target_qualified.contains("app_name")));
+        assert!(string_refs
+            .iter()
+            .any(|r| r.target_qualified.contains("description")));
     }
 
     #[test]
@@ -154,7 +170,10 @@ mod tests {
         let extractor = AndroidResourceRefExtractor::new(source.as_bytes(), "./Test.kt");
         let (_, relationships) = extractor.extract();
 
-        let drawable_refs: Vec<_> = relationships.iter().filter(|r| r.rel_type == "uses_drawable_resource").collect();
+        let drawable_refs: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "uses_drawable_resource")
+            .collect();
         assert_eq!(drawable_refs.len(), 1);
         assert!(drawable_refs[0].target_qualified.contains("ic_launcher"));
     }
@@ -168,7 +187,10 @@ mod tests {
         let extractor = AndroidResourceRefExtractor::new(source.as_bytes(), "./Test.kt");
         let (_, relationships) = extractor.extract();
 
-        let layout_refs: Vec<_> = relationships.iter().filter(|r| r.rel_type == "uses_layout_resource").collect();
+        let layout_refs: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "uses_layout_resource")
+            .collect();
         assert_eq!(layout_refs.len(), 2);
     }
 
@@ -180,7 +202,10 @@ mod tests {
         let extractor = AndroidResourceRefExtractor::new(source.as_bytes(), "./Test.kt");
         let (_, relationships) = extractor.extract();
 
-        let id_refs: Vec<_> = relationships.iter().filter(|r| r.rel_type == "references_view_by_id").collect();
+        let id_refs: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "references_view_by_id")
+            .collect();
         assert_eq!(id_refs.len(), 1);
         assert!(id_refs[0].target_qualified.contains("submit_button"));
     }

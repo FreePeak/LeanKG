@@ -132,7 +132,10 @@ impl<'a> AndroidRoomExtractor<'a> {
         let mut found_open = false;
         for (i, ch) in after.char_indices() {
             match ch {
-                '{' => { depth += 1; found_open = true; }
+                '{' => {
+                    depth += 1;
+                    found_open = true;
+                }
                 '}' => {
                     depth -= 1;
                     if found_open && depth == 0 {
@@ -161,7 +164,10 @@ impl<'a> AndroidRoomExtractor<'a> {
                         if let Some(ref_entity) = cap.get(1) {
                             relationships.push(Relationship {
                                 id: None,
-                                source_qualified: format!("{}::RoomEntity:{}", self.file_path, entity.name),
+                                source_qualified: format!(
+                                    "{}::RoomEntity:{}",
+                                    self.file_path, entity.name
+                                ),
                                 target_qualified: format!("__room_entity__{}", ref_entity.as_str()),
                                 rel_type: "room_entity_has_foreign_key".to_string(),
                                 confidence: 0.9,
@@ -180,7 +186,7 @@ impl<'a> AndroidRoomExtractor<'a> {
         &self,
         content: &str,
         databases: &[CodeElement],
-        entities: &[CodeElement],
+        _entities: &[CodeElement],
         daos: &[CodeElement],
     ) -> Vec<Relationship> {
         let mut relationships = Vec::new();
@@ -196,7 +202,8 @@ impl<'a> AndroidRoomExtractor<'a> {
                     for entity_cap in entity_class_re.captures_iter(array_match.as_str()) {
                         if let Some(entity_name) = entity_cap.get(1) {
                             let db_qualified = &db.qualified_name;
-                            let entity_qualified = format!("{}::RoomEntity:{}", self.file_path, entity_name.as_str());
+                            let entity_qualified =
+                                format!("{}::RoomEntity:{}", self.file_path, entity_name.as_str());
 
                             relationships.push(Relationship {
                                 id: None,
@@ -226,19 +233,22 @@ impl<'a> AndroidRoomExtractor<'a> {
         }
 
         // Extract DAO queries (look for @Query annotation with entity names)
+        let query_re = Regex::new(r#"@Query\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+        let from_re = Regex::new(r"(?i)FROM\s+(\w+)").unwrap();
         for dao in daos {
-            let query_re = Regex::new(r#"@Query\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
             for cap in query_re.captures_iter(content) {
                 if let Some(query) = cap.get(1) {
                     let query_str = query.as_str();
-                    // Look for FROM clauses referencing entities
-                    let from_re = Regex::new(r"(?i)FROM\s+(\w+)").unwrap();
                     if let Some(from_cap) = from_re.captures(query_str) {
                         if let Some(table_name) = from_cap.get(1) {
                             relationships.push(Relationship {
                                 id: None,
                                 source_qualified: dao.qualified_name.clone(),
-                                target_qualified: format!("{}::RoomEntity:{}", self.file_path, table_name.as_str()),
+                                target_qualified: format!(
+                                    "{}::RoomEntity:{}",
+                                    self.file_path,
+                                    table_name.as_str()
+                                ),
                                 rel_type: "room_dao_queries_entity".to_string(),
                                 confidence: 0.8,
                                 metadata: serde_json::json!({"query": query_str}),
@@ -269,7 +279,10 @@ mod tests {
         let extractor = AndroidRoomExtractor::new(source.as_bytes(), "./test.kt");
         let (elements, _) = extractor.extract();
 
-        let entities: Vec<_> = elements.iter().filter(|e| e.element_type == "room_entity").collect();
+        let entities: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "room_entity")
+            .collect();
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "ChannelEntity");
     }
@@ -286,7 +299,10 @@ mod tests {
         let extractor = AndroidRoomExtractor::new(source.as_bytes(), "./test.kt");
         let (elements, _) = extractor.extract();
 
-        let daos: Vec<_> = elements.iter().filter(|e| e.element_type == "room_dao").collect();
+        let daos: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "room_dao")
+            .collect();
         assert_eq!(daos.len(), 1);
         assert_eq!(daos[0].name, "ChannelDao");
     }
@@ -300,7 +316,10 @@ mod tests {
         let extractor = AndroidRoomExtractor::new(source.as_bytes(), "./test.kt");
         let (elements, _) = extractor.extract();
 
-        let dbs: Vec<_> = elements.iter().filter(|e| e.element_type == "room_database").collect();
+        let dbs: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "room_database")
+            .collect();
         assert_eq!(dbs.len(), 1);
         assert_eq!(dbs[0].name, "TvDatabase");
     }
