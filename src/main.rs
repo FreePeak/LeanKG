@@ -128,20 +128,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tokio::fs::create_dir_all(&db_path).await.ok();
 
-            // Acquire single-instance lock to prevent duplicate MCP servers
-            let _lock = match McpLock::acquire(&db_path) {
-                Ok(lock) => lock,
-                Err(_) => {
-                    eprintln!(
-                        "Error: Another LeanKG MCP server is already running for this project."
-                    );
-                    eprintln!(
-                        "If this is incorrect, remove the lock file at .leankg/locks/mcp.lock"
-                    );
-                    std::process::exit(1);
-                }
-            };
-
             let mcp_server = if watch {
                 mcp::MCPServer::new_with_watch(db_path, project_path.clone())
             } else {
@@ -395,66 +381,6 @@ fn find_project_root() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
         }
     }
     Ok(current_dir)
-}
-
-/// Simple single-instance lock for MCP server.
-/// Uses file-based locking with PID tracking and stale lock cleanup.
-struct McpLock {
-    lock_path: std::path::PathBuf,
-}
-
-impl McpLock {
-    fn acquire(db_path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let lock_dir = db_path.join("locks");
-        std::fs::create_dir_all(&lock_dir)?;
-        let lock_path = lock_dir.join("mcp.lock");
-
-        // Check for existing lock
-        if lock_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&lock_path) {
-                if let Ok(old_pid) = content.trim().parse::<u32>() {
-                    // Use kill(pid, 0) to check if process exists
-                    // This returns error ESRCH if process doesn't exist
-                    #[cfg(unix)]
-                    {
-                        let check = std::process::Command::new("kill")
-                            .arg("-0")
-                            .arg(old_pid.to_string())
-                            .output();
-                        if check.map(|o| o.status.success()).unwrap_or(false) {
-                            return Err(format!(
-                                "Another LeanKG MCP server (PID {}) is running for this project.\n\
-                                 If this is incorrect, remove the lock file at {}",
-                                old_pid,
-                                lock_path.display()
-                            )
-                            .into());
-                        }
-                        // Process dead, stale lock - remove it
-                        std::fs::remove_file(&lock_path)?;
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        // On non-Unix, just remove stale locks
-                        std::fs::remove_file(&lock_path)?;
-                    }
-                }
-            }
-        }
-
-        // Write our PID
-        let pid = std::process::id();
-        std::fs::write(&lock_path, pid.to_string())?;
-
-        Ok(Self { lock_path })
-    }
-}
-
-impl Drop for McpLock {
-    fn drop(&mut self) {
-        // Clean up lock file on drop
-        let _ = std::fs::remove_file(&self.lock_path);
-    }
 }
 
 fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
