@@ -2366,28 +2366,101 @@ async fn extract_and_install(tar_path: &std::path::Path) -> Result<(), Box<dyn s
 }
 
 fn kill_old_processes() -> Result<(), Box<dyn std::error::Error>> {
+    use sysinfo::System;
+
     let patterns = ["leankg", "vite"];
+    let max_retries = 3;
 
-    for pattern in &patterns {
-        let output = std::process::Command::new("pkill")
-            .args(["-9", "-f", pattern])
-            .output();
+    for pattern in patterns {
+        let mut retries = 0;
+        loop {
+            // Get all processes matching the pattern
+            let matching_pids: Vec<u32> = {
+                let mut sys = System::new_all();
+                sys.refresh_all();
+                sys.processes()
+                    .iter()
+                    .filter(|(_pid, process)| {
+                        let cmd: String = process
+                            .cmd()
+                            .iter()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        cmd.contains(pattern)
+                    })
+                    .map(|(pid, _)| pid.as_u32())
+                    .collect()
+            };
 
-        match output {
-            Ok(out) if out.status.success() => {
-                println!("  Killed {} processes", pattern);
+            if matching_pids.is_empty() {
+                if retries > 0 {
+                    println!(
+                        "  {} processes stopped (after {} retries)",
+                        pattern, retries
+                    );
+                }
+                break;
             }
-            Ok(_) => {
-                // pkill returns non-zero when no processes matched
+
+            if retries >= max_retries {
+                return Err(format!(
+                    "Failed to stop {} processes after {} retries. PIDs: {:?}. Run 'leankg proc kill' manually.",
+                    pattern, max_retries, matching_pids
+                ).into());
             }
-            Err(e) => {
-                eprintln!("Warning: pkill not available or failed: {}", e);
+
+            if retries == 0 {
+                println!(
+                    "  Stopping {} processes (PID: {:?})...",
+                    pattern, matching_pids
+                );
             }
+
+            // Kill each process directly
+            for pid in &matching_pids {
+                let kill_output = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+
+                if let Err(e) = kill_output {
+                    eprintln!("    Failed to kill PID {}: {}", pid, e);
+                }
+            }
+
+            // Wait for processes to terminate
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            retries += 1;
         }
     }
 
-    // Small delay to allow processes to terminate
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    // Final verification - wait a bit and check no processes remain
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        let remaining: Vec<_> = sys
+            .processes()
+            .iter()
+            .filter(|(_pid, process)| {
+                let cmd: String = process
+                    .cmd()
+                    .iter()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                cmd.contains("leankg") || cmd.contains("vite")
+            })
+            .collect();
+
+        if !remaining.is_empty() {
+            let pids: Vec<u32> = remaining.iter().map(|(p, _)| p.as_u32()).collect();
+            return Err(format!(
+                "LeanKG/Vite processes still running after kill: {:?}. Run 'leankg proc kill' manually.",
+                pids
+            ).into());
+        }
+    }
 
     Ok(())
 }
