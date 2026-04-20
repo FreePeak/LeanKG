@@ -350,128 +350,36 @@ EOF
 setup_claude_hooks() {
     local plugin_dir="$HOME/.claude/plugins/leankg"
     local hooks_installed=false
-    
+
     if [ ! -d "$plugin_dir/hooks" ]; then
         mkdir -p "$plugin_dir/hooks"
-        
-        cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|clear|compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start",
-            "async": false
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-         
-        cat > "$plugin_dir/hooks/run-hook.cmd" <<'CMDEOF'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-leankg_bootstrap_content=$(cat "${PLUGIN_ROOT}/leankg-bootstrap.md" 2>&1 || echo "")
-escape_for_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
-}
-leankg_bootstrap_escaped=$(escape_for_json "$leankg_bootstrap_content")
-session_context="<LEANKG_BOOTSTRAP>\n${leankg_bootstrap_escaped}\n</LEANKG_BOOTSTRAP>"
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
-else
-  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
-fi
-exit 0
-CMDEOF
-
-        cat > "$plugin_dir/hooks/session-start" <<'HOOKEOF'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-leankg_bootstrap_content=$(cat "${PLUGIN_ROOT}/leankg-bootstrap.md" 2>&1 || echo "")
-escape_for_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
-}
-leankg_bootstrap_escaped=$(escape_for_json "$leankg_bootstrap_content")
-session_context="<LEANKG_BOOTSTRAP>\n${leankg_bootstrap_escaped}\n</LEANKG_BOOTSTRAP>"
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
-else
-  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
-fi
-exit 0
-HOOKEOF
-
-        chmod +x "$plugin_dir/hooks/run-hook.cmd" "$plugin_dir/hooks/session-start"
         hooks_installed=true
     fi
-    
+
+    # Copy hook scripts
+    for hook_file in hooks.json sessionstart.mjs pretooluse.mjs posttooluse.mjs routing-block.mjs core/tool-naming.mjs; do
+        if [ -f "$hook_file" ]; then
+            cp "$hook_file" "$plugin_dir/hooks/"
+            echo "Installed $hook_file"
+        fi
+    done
+
+    # Create leankg-bootstrap.md if missing
     if [ ! -f "$plugin_dir/leankg-bootstrap.md" ]; then
         cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
 # LeanKG Bootstrap
 
 LeanKG is a lightweight knowledge graph for codebase understanding.
 
-**Auto-Activated Tools:**
-- `mcp_status` - Check if LeanKG is initialized
-- `mcp_init` - Initialize LeanKG for a project
-- `mcp_index` - Index codebase
-- `search_code` - Search code elements by name/type
-- `find_function` - Locate function definitions
-- `get_impact_radius` - Calculate blast radius of changes
-- `get_dependencies` - Get direct imports of a file
-- `get_dependents` - Get files depending on target
-- `get_context` - Get AI-optimized context for a file
-- `get_tested_by` - Get test coverage info
-- `query_file` - Find files by name/pattern
-- `get_call_graph` - Get function call chains
-- `find_large_functions` - Find oversized functions
-- `get_doc_for_file` - Get documentation for a file
-- `get_traceability` - Get full traceability chain
-- `get_code_tree` - Get codebase structure
-- `get_clusters` - Get functional clusters
-- `detect_changes` - Pre-commit risk analysis
-
 **MANDATORY WORKFLOW: LeanKG First, Grep Fallback**
 
 Before ANY codebase search/navigation, you MUST:
-
 1. Check if LeanKG is available via `mcp_status`
-2. If LeanKG is not initialized, run `mcp_init` first
-3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
-4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
-
-| Instead of | Use LeanKG |
-|------------|------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
-| glob + content search for tests | `get_tested_by` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| Reading entire files | `get_context` (token-optimized) |
+2. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+3. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 BOOTSTRAPEOF
-        echo "Created leankg-bootstrap.md for Claude Code"
     fi
-    
+
     if [ "$hooks_installed" = true ]; then
         echo "Configured LeanKG hooks for Claude Code"
     else
