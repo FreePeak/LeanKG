@@ -2669,37 +2669,65 @@ console.log(JSON.stringify({
 
     std::fs::write(hooks_dir.join("sessionstart.mjs"), sessionstart_mjs)?;
 
-    // Write manifest.json (required for Claude Code plugin marketplace)
-    let manifest_json = r#"{
-  "id": "leankg",
-  "name": "LeanKG",
-  "kind": "tool",
-  "description": "Lightweight knowledge graph for codebase understanding. Indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.",
+    // Write .claude-plugin/plugin.json (Claude Code plugin manifest)
+    let claude_plugin_dir = plugin_dir.join(".claude-plugin");
+    std::fs::create_dir_all(&claude_plugin_dir)?;
+
+    let plugin_json = r#"{
+  "name": "leankg",
   "version": "0.17.0",
-  "sandbox": {
-    "mode": "permissive",
-    "filesystem_access": "full",
-    "system_access": "full"
+  "description": "Lightweight knowledge graph for codebase understanding. Indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.",
+  "author": {
+    "name": "LeanKG Team",
+    "url": "https://github.com/FreePeak/LeanKG"
   },
-  "configSchema": {
-    "type": "object",
-    "properties": {
-      "enabled": {
-        "type": "boolean",
-        "default": true,
-        "description": "Enable or disable the LeanKG plugin."
-      },
-      "autoIndex": {
-        "type": "boolean",
-        "default": false,
-        "description": "Automatically index codebase on project open."
-      }
-    },
-    "additionalProperties": false
+  "homepage": "https://github.com/FreePeak/LeanKG#readme",
+  "repository": "https://github.com/FreePeak/LeanKG",
+  "license": "MIT",
+  "keywords": ["mcp", "knowledge-graph", "code-indexing", "dependency-analysis", "context-window"],
+  "mcpServers": {
+    "leankg": {
+      "command": "cargo",
+      "args": ["run", "--", "mcp-stdio"]
+    }
   }
 }"#;
-    std::fs::write(plugin_dir.join("openclaw.plugin.json"), manifest_json)?;
-    println!("  Installed plugin manifest to {}", plugin_dir.display());
+    std::fs::write(claude_plugin_dir.join("plugin.json"), plugin_json)?;
+    println!(
+        "  Installed plugin manifest to {}",
+        claude_plugin_dir.join("plugin.json").display()
+    );
+
+    // Write .claude-plugin/marketplace.json (for marketplace distribution)
+    let marketplace_json = r#"{
+  "name": "leankg",
+  "owner": {
+    "name": "LeanKG Team",
+    "email": "leankg@example.com"
+  },
+  "metadata": {
+    "description": "LeanKG - Lightweight knowledge graph for codebase understanding",
+    "version": "0.17.0"
+  },
+  "plugins": [
+    {
+      "name": "leankg",
+      "source": "./",
+      "description": "Claude Code plugin for lightweight knowledge graph-based codebase understanding. Indexes code, builds dependency graphs, calculates impact radius.",
+      "version": "0.17.0",
+      "author": {
+        "name": "LeanKG Team"
+      },
+      "category": "development",
+      "keywords": ["mcp", "knowledge-graph", "code-indexing", "dependency-analysis", "context-window"]
+    }
+  ]
+}"#;
+    std::fs::write(claude_plugin_dir.join("marketplace.json"), marketplace_json)?;
+    println!(
+        "  Installed marketplace manifest to {}",
+        claude_plugin_dir.join("marketplace.json").display()
+    );
 
     // Add LeanKG to enabledPlugins in settings.json
     add_to_enabled_plugins()?;
