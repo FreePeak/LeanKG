@@ -437,7 +437,6 @@ EOF
  * SessionStart hook for LeanKG
  * Injects <tool_selection_hierarchy> at session start.
  */
-import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -451,7 +450,6 @@ async function readStdin() {
 
 const raw = await readStdin();
 const input = JSON.parse(raw);
-const source = input.source ?? "startup";
 
 const ROUTING_BLOCK = `
 <tool_selection_hierarchy>
@@ -496,7 +494,6 @@ HOOKEOF
  * PreToolUse hook for LeanKG - Routing guidance for Claude Code
  * Shows nudges when users reach for native tools instead of LeanKG.
  */
-import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
