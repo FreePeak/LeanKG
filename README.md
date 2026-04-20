@@ -97,6 +97,30 @@ See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
 
 ---
 
+## Claude Code Setup
+
+LeanKG auto-triggers in Claude Code sessions via PreToolUse hooks that route search intents to LeanKG tools instead of native tools.
+
+```bash
+# Install LeanKG with Claude Code hooks and plugin
+leankg setup
+
+# Then restart Claude Code or run:
+/reload-plugins
+```
+
+**What `leankg setup` installs:**
+- `.claude-plugin/` - Plugin manifest for Claude Code validation
+- `hooks/` - PreToolUse, SessionStart, PostToolUse hooks
+- Adds `leankg@local` to `enabledPlugins` in `~/.claude/settings.json`
+
+**Auto-trigger behavior:**
+- `SessionStart` hook injects tool selection hierarchy into every session
+- `PreToolUse` hook nudges toward LeanKG when you use Grep/Read/Bash for code analysis
+- LeanKG returns token-optimized context instead of scanning entire files
+
+---
+
 ## How LeanKG Helps
 
 ```mermaid
