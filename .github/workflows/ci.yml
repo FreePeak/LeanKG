@@ -17,7 +17,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: actions/setup-rust@v1
+        with:
+          rust-stable: stable
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -50,7 +52,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: actions/setup-rust@v1
+        with:
+          rust-stable: stable
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -62,7 +66,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: actions/setup-rust@v1
+        with:
+          rust-stable: stable
 
       - name: Run clippy
         run: cargo clippy --all -- -D warnings
