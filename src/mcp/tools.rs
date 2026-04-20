@@ -96,7 +96,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string", "description": "File to get dependencies for"}
+                        "file": {"type": "string", "description": "File to get dependencies for"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -107,7 +108,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string", "description": "File to get dependents for"}
+                        "file": {"type": "string", "description": "File to get dependents for"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -121,7 +123,8 @@ impl ToolRegistry {
                         "file": {"type": "string", "description": "File to analyze"},
                         "depth": {"type": "integer", "default": 3, "description": "Hop depth (default: 3). Keep <=2 for context budgets."},
                         "min_confidence": {"type": "number", "default": 0.0, "description": "Minimum confidence threshold (0.0-1.0). Only return results with confidence >= this value."},
-                        "compress_response": {"type": "boolean", "default": false, "description": "Enable RTK-style compression for token savings"}
+                        "compress_response": {"type": "boolean", "default": false, "description": "Enable RTK-style compression for token savings"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -144,7 +147,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "files": {"type": "array", "items": {"type": "string"}, "description": "Files to include in review context"}
+                        "files": {"type": "array", "items": {"type": "string"}, "description": "Files to include in review context"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -157,7 +161,8 @@ impl ToolRegistry {
                     "properties": {
                         "file": {"type": "string", "description": "File to get context for"},
                         "signature_only": {"type": "boolean", "default": true, "description": "Return only signatures (default). Set false for full body metadata."},
-                        "max_tokens": {"type": "integer", "default": 4000, "description": "Token budget cap"}
+                        "max_tokens": {"type": "integer", "default": 4000, "description": "Token budget cap"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -171,7 +176,8 @@ impl ToolRegistry {
                         "intent": {"type": "string", "description": "Natural language intent (e.g., 'show me impact of changing main.rs', 'get context for handler.rs', 'find function named parse')"},
                         "file": {"type": "string", "description": "Optional: specific file to query"},
                         "mode": {"type": "string", "enum": ["adaptive", "full", "map", "signatures"], "default": "adaptive", "description": "Compression mode for file content"},
-                        "fresh": {"type": "boolean", "default": false, "description": "Force fresh query, bypass cache"}
+                        "fresh": {"type": "boolean", "default": false, "description": "Force fresh query, bypass cache"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["intent"]
                 }),
@@ -184,7 +190,8 @@ impl ToolRegistry {
                     "properties": {
                         "file": {"type": "string", "description": "File path to read"},
                         "mode": {"type": "string", "enum": ["adaptive", "full", "map", "signatures", "diff", "aggressive", "entropy", "lines"], "default": "adaptive", "description": "Compression mode"},
-                        "lines": {"type": "string", "description": "Lines specification for 'lines' mode (e.g., '1-10,20,30-40')"}
+                        "lines": {"type": "string", "description": "Lines specification for 'lines' mode (e.g., '1-10,20,30-40')"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -196,7 +203,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "Function name to search for"},
-                        "file": {"type": "string", "description": "Optional file to scope the search to"}
+                        "file": {"type": "string", "description": "Optional file to scope the search to"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["name"]
                 }),
@@ -209,7 +217,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "function": {"type": "string", "description": "Function name to find callers for"},
-                        "file": {"type": "string", "description": "Optional file to scope the search"}
+                        "file": {"type": "string", "description": "Optional file to scope the search"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["function"]
                 }),
@@ -222,7 +231,8 @@ impl ToolRegistry {
                     "properties": {
                         "function": {"type": "string", "description": "Function to get call graph for"},
                         "depth": {"type": "integer", "default": 2, "description": "Maximum call graph depth (default: 2, max: 3)"},
-                        "max_results": {"type": "integer", "default": 30, "description": "Maximum number of results (default: 30)"}
+                        "max_results": {"type": "integer", "default": 30, "description": "Maximum number of results (default: 30)"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["function"]
                 }),
@@ -247,7 +257,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string", "description": "File to generate documentation for"}
+                        "file": {"type": "string", "description": "File to generate documentation for"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -260,7 +271,8 @@ impl ToolRegistry {
                     "properties": {
                         "min_lines": {"type": "integer", "default": 50, "description": "Minimum line count threshold (default: 50)"},
                         "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20, max: 100)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of results to skip (pagination offset)"}
+                        "offset": {"type": "integer", "default": 0, "description": "Number of results to skip (pagination offset)"},
+                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
