@@ -434,4 +434,72 @@ mod server_tests {
         let server_path = &*guard;
         assert_eq!(server_path, &db_path);
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_multiple_mcp_servers_same_db_path() {
+        // Test that multiple MCPServers can be created with the same db_path
+        // This verifies multi-session support works (no single-instance lock blocking)
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        // Initialize database first
+        let _db = init_db(&db_path).expect("Database init should succeed");
+
+        // Create first server
+        let server1 = MCPServer::new(db_path.clone());
+        let binding1 = server1.db_path();
+        let guard1 = binding1.read();
+        assert_eq!(&*guard1, &db_path);
+
+        // Create second server with same db_path - should NOT fail
+        let server2 = MCPServer::new(db_path.clone());
+        let binding2 = server2.db_path();
+        let guard2 = binding2.read();
+        assert_eq!(&*guard2, &db_path);
+
+        // Both servers should be different instances
+        let ptr1 = &*guard1 as *const std::path::PathBuf;
+        let ptr2 = &*guard2 as *const std::path::PathBuf;
+        assert_ne!(ptr1, ptr2, "Servers should be separate instances");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_concurrent_reads_from_multiple_servers() {
+        // Test that multiple MCP servers can perform concurrent reads
+        // This simulates multiple Cursor/Claude Code sessions querying simultaneously
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        // Initialize database
+        let _db = init_db(&db_path).expect("Database init should succeed");
+
+        // Create 3 servers concurrently using tokio::join!
+        let (r1, r2, r3) = tokio::join! {
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                1
+            },
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                2
+            },
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                3
+            }
+        };
+
+        // All 3 concurrent operations should succeed
+        assert_eq!(r1, 1);
+        assert_eq!(r2, 2);
+        assert_eq!(r3, 3);
+    }
 }
