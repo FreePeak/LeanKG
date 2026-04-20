@@ -1,0 +1,235 @@
+- generic [ref=e5]:
+  - generic [ref=e6]:
+    - link "Threads" [ref=e8] [cursor=pointer]:
+      - /url: /
+      - img "Threads" [ref=e10]
+    - generic [ref=e12]:
+      - link "Home" [ref=e14] [cursor=pointer]:
+        - /url: /
+        - img "Home" [ref=e18]
+      - link "Search" [ref=e21] [cursor=pointer]:
+        - /url: /search
+        - img "Search" [ref=e25]
+      - button "Create" [ref=e28] [cursor=pointer]:
+        - img "Create" [ref=e32]
+      - link "Notifications" [ref=e35] [cursor=pointer]:
+        - /url: /activity
+        - img "Notifications" [ref=e39]
+      - link "Profile" [ref=e42] [cursor=pointer]:
+        - /url: /@freepeak_life
+        - img "Profile" [ref=e46]
+    - button "More More" [ref=e50] [cursor=pointer]:
+      - generic [ref=e51]:
+        - img "More" [ref=e53]
+        - img "More" [ref=e57]
+  - generic [ref=e65]:
+    - generic [ref=e68]:
+      - generic [ref=e78]:
+        - link "Column title" [ref=e925] [cursor=pointer]:
+          - /url: /for_you
+          - heading "For you" [level=1] [ref=e926]:
+            - generic [ref=e81]: For you
+        - button "More" [ref=e927] [cursor=pointer]:
+          - button "More" [ref=e928]:
+            - img "More" [ref=e929]
+      - region "Column body" [ref=e930]:
+        - generic [ref=e92]:
+          - generic [ref=e94]:
+            - link "freepeak_life's profile picture" [ref=e931] [cursor=pointer]:
+              - /url: /@freepeak_life
+              - img "freepeak_life's profile picture" [ref=e932]
+            - button "Empty text field. Type to compose a new post." [active] [ref=e933]:
+              - generic [ref=e99]: What's new?
+            - button "Post" [ref=e934] [cursor=pointer]:
+              - generic [ref=e102]: Post
+          - separator [ref=e103]
+          - generic [ref=e105]:
+            - generic [ref=e111] [cursor=pointer]:
+              - link "joonahn_ai's profile picture" [ref=e935]:
+                - /url: /@joonahn_ai
+                - img "joonahn_ai's profile picture" [ref=e936]
+              - generic [ref=e118]:
+                - generic [ref=e119]:
+                  - link "joonahn_ai" [ref=e937]:
+                    - /url: /@joonahn_ai
+                    - generic [ref=e126]: joonahn_ai
+                  - link "2 minutes ago" [ref=e938]:
+                    - /url: /@joonahn_ai/post/DXVrHIXAqXk
+                    - time [ref=e131]:
+                      - generic "2 minutes ago" [ref=e939]: 2m
+                - button "More" [ref=e940]:
+                  - img "More" [ref=e941]
+              - generic [ref=e141]:
+                - generic [ref=e142]:
+                  - generic [ref=e144]: Built another one.
+                  - generic [ref=e146]:
+                    - text: This time I added a tool inside the Threadsight MCP (
+                    - link "@threadsight.xyz" [ref=e942]:
+                      - /url: /@threadsight.xyz
+                      - generic [ref=e151]: "@threadsight.xyz"
+                    - text: ) that saves and schedules long-form threads in one shot.
+                  - generic [ref=e153]: I chat with Claude, write 7 linked posts, save them all at once, and schedule them for whatever time I want.
+                  - generic [ref=e155]: Before this, I'd copy-paste each post separately, open the scheduler, line up the times. 20 minutes every time.
+                  - generic [ref=e157]: Now it's 30 seconds.
+                - group "Video player" [ref=e943]
+                - generic [ref=e176]:
+                  - button "Like" [ref=e944]:
+                    - img "Like" [ref=e945]
+                  - button "Reply" [ref=e946]:
+                    - img "Reply" [ref=e947]
+                  - button "Repost" [ref=e948]:
+                    - img "Repost" [ref=e949]
+                  - button "Share" [ref=e950]:
+                    - img "Share" [ref=e951]
+            - generic [ref=e207] [cursor=pointer]:
+              - button "wybthon's profile picture Follow" [ref=e952]:
+                - img "wybthon's profile picture" [ref=e953]
+                - button "Follow" [ref=e954]:
+                  - img "Follow" [ref=e955]
+              - generic [ref=e219]:
+                - generic [ref=e220]:
+                  - link "wybthon" [ref=e956]:
+                    - /url: /@wybthon
+                    - generic [ref=e227]: wybthon
+                  - generic [ref=e228]:
+                    - generic [ref=e229]:
+                      - img [ref=e232]
+                      - link "Tech Threads" [ref=e957]:
+                        - /url: /search?q=techthreads&serp_type=tags&tag_id=18323853271107467
+                        - generic [ref=e236]:
+                          - img [ref=e237]
+                          - generic [ref=e242]: Tech Threads
+                    - link "27 minutes ago" [ref=e958]:
+                      - /url: /@wybthon/post/DXVoZ8DDpAT
+                      - time [ref=e246]:
+                        - generic "27 minutes ago" [ref=e959]: 27m
+                - button "More" [ref=e960]:
+                  - img "More" [ref=e961]
+              - generic [ref=e256]:
+                - generic [ref=e259]: 2026 is the year of Python in the browser.
+                - generic [ref=e261]:
+                  - button "Like 2" [ref=e962]:
+                    - generic [ref=e265]:
+                      - img "Like" [ref=e963]
+                      - generic [ref=e270]: "2"
+                  - button "Reply" [ref=e964]:
+                    - img "Reply" [ref=e965]
+                  - button "Repost" [ref=e966]:
+                    - img "Repost" [ref=e967]
+                  - button "Share" [ref=e968]:
+                    - img "Share" [ref=e969]
+            - generic [ref=e295] [cursor=pointer]:
+              - button "grona.agency's profile picture Follow" [ref=e970]:
+                - img "grona.agency's profile picture" [ref=e971]
+                - button "Follow" [ref=e972]:
+                  - img "Follow" [ref=e973]
+              - generic [ref=e307]:
+                - generic [ref=e308]:
+                  - link "grona.agency" [ref=e974]:
+                    - /url: /@grona.agency
+                    - generic [ref=e315]: grona.agency
+                  - link "12 hours ago" [ref=e975]:
+                    - /url: /@grona.agency/post/DXUTIWeCPgF
+                    - time [ref=e320]:
+                      - generic "12 hours ago" [ref=e976]: 12h
+                - button "More" [ref=e977]:
+                  - img "More" [ref=e978]
+              - generic [ref=e330]:
+                - generic [ref=e333]: Claude Design is impressive but it still needs someone who knows what “good” looks like
+                - generic [ref=e335]:
+                  - button "Like 6" [ref=e979]:
+                    - generic [ref=e339]:
+                      - img "Like" [ref=e980]
+                      - generic [ref=e344]: "6"
+                  - button "Reply 4" [ref=e981]:
+                    - generic [ref=e348]:
+                      - img "Reply" [ref=e982]
+                      - generic [ref=e353]: "4"
+                  - button "Repost" [ref=e983]:
+                    - img "Repost" [ref=e984]
+                  - button "Share" [ref=e985]:
+                    - img "Share" [ref=e986]
+            - generic [ref=e372] [cursor=pointer]:
+              - button "koda__shin's profile picture Follow" [ref=e987]:
+                - img "koda__shin's profile picture" [ref=e988]
+                - button "Follow" [ref=e989]:
+                  - img "Follow" [ref=e990]
+              - generic [ref=e384]:
+                - generic [ref=e385]:
+                  - link "koda__shin" [ref=e991]:
+                    - /url: /@koda__shin
+                    - generic [ref=e392]: koda__shin
+                  - generic [ref=e393]:
+                    - generic [ref=e394]:
+                      - img [ref=e397]
+                      - link "programming" [ref=e992]:
+                        - /url: /search?q=programming&serp_type=tags&tag_id=18380645191066129
+                        - generic [ref=e403]: programming
+                    - link "18 hours ago" [ref=e993]:
+                      - /url: /@koda__shin/post/DXTscIZE2fr
+                      - time [ref=e407]:
+                        - generic "18 hours ago" [ref=e994]: 18h
+                - button "More" [ref=e995]:
+                  - img "More" [ref=e996]
+              - generic [ref=e417]:
+                - generic [ref=e420]: Any other devs here building with .NET? Would love to connect and learn from you guys
+                - generic [ref=e422]:
+                  - button "Like 4" [ref=e997]:
+                    - generic [ref=e426]:
+                      - img "Like" [ref=e998]
+                      - generic [ref=e431]: "4"
+                  - button "Reply 9" [ref=e999]:
+                    - generic [ref=e435]:
+                      - img "Reply" [ref=e1000]
+                      - generic [ref=e440]: "9"
+                  - button "Repost" [ref=e1001]:
+                    - img "Repost" [ref=e1002]
+                  - button "Share" [ref=e1003]:
+                    - img "Share" [ref=e1004]
+            - generic [ref=e481] [cursor=pointer]:
+              - link "alekseipetrov.me's profile picture" [ref=e1005]:
+                - /url: /@alekseipetrov.me
+                - img "alekseipetrov.me's profile picture" [ref=e1006]
+              - generic [ref=e488]:
+                - generic [ref=e489]:
+                  - link "alekseipetrov.me" [ref=e1007]:
+                    - /url: /@alekseipetrov.me
+                    - generic [ref=e496]: alekseipetrov.me
+                  - generic [ref=e497]:
+                    - generic [ref=e498]:
+                      - img [ref=e501]
+                      - link "glm51" [ref=e1008]:
+                        - /url: /search?q=glm51&serp_type=tags&tag_id=18448212826106341
+                        - generic [ref=e507]: glm51
+                    - link "11 hours ago" [ref=e1009]:
+                      - /url: /@alekseipetrov.me/post/DXUfp-HjeWK
+                      - time [ref=e511]:
+                        - generic "11 hours ago" [ref=e1010]: 11h
+                - button "More" [ref=e1011]:
+                  - img "More" [ref=e1012]
+              - generic [ref=e521]:
+                - generic [ref=e522]:
+                  - generic [ref=e524]: Back to the GLM Terminal Bench 2.0 full spin.
+                  - generic [ref=e526]: This run’s been frozen since Wednesday.
+                  - generic [ref=e528]: Restored it from the warm pool and hooked the monitor into ClaudeCode desktop to track it properly.
+                - 'link "May be a graphic of text that says \"PILOT BENCH aws: ben ch- ጊጡ leaderboard V2 aggregated. log 76. 6.88 276 64.2-85.98 9% （6D. ア] 十木北冰木 5/5 47/hr sampl オ林ホ木水 5/5 5/5 E 岩村水 -madernization -git-webserver ホ十オホ水 L-differential-crypta cryptanalysi -document /5 井戸本水 -edi 井村本水 averfull 2/2 1/1 2/2 0/5 0/5 0/5 0/5 e25 0/5 975 XXAX 0/5 0/5 0/5 PROJECTION 76.89: 54. .2iー85. 9\"" [ref=e1013]':
+                  - /url: /@alekseipetrov.me/post/DXUfp-HjeWK/media
+                  - generic [ref=e535]:
+                    - 'img "May be a graphic of text that says \"PILOT BENCH aws: ben ch- ጊጡ leaderboard V2 aggregated. log 76. 6.88 276 64.2-85.98 9% （6D. ア] 十木北冰木 5/5 47/hr sampl オ林ホ木水 5/5 5/5 E 岩村水 -madernization -git-webserver ホ十オホ水 L-differential-crypta cryptanalysi -document /5 井戸本水 -edi 井村本水 averfull 2/2 1/1 2/2 0/5 0/5 0/5 0/5 e25 0/5 975 XXAX 0/5 0/5 0/5 PROJECTION 76.89: 54. .2iー85. 9\""'
+                - generic [ref=e537]:
+                  - button "Like 4" [ref=e1014]:
+                    - generic [ref=e541]:
+                      - img "Like" [ref=e1015]
+                      - generic [ref=e546]: "4"
+                  - button "Reply" [ref=e1016]:
+                    - img "Reply" [ref=e1017]
+                  - button "Repost" [ref=e1018]:
+                    - img "Repost" [ref=e1019]
+                  - button "Share" [ref=e1020]:
+                    - img "Share" [ref=e1021]
+            - status "Loading..." [ref=e1022]:
+              - img "Loading..." [ref=e1023]
+    - button "Add a column" [ref=e1024] [cursor=pointer]:
+      - img "Add a column" [ref=e1025]
+  - button "Create" [ref=e473] [cursor=pointer]:
+    - img "Create" [ref=e474]

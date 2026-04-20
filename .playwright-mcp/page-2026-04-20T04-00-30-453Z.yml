@@ -1,0 +1,373 @@
+- generic [ref=e5]:
+  - generic [ref=e6]:
+    - link "Threads" [ref=e8] [cursor=pointer]:
+      - /url: /
+      - img "Threads" [ref=e10]
+    - generic [ref=e12]:
+      - link "Home" [ref=e14] [cursor=pointer]:
+        - /url: /
+        - img "Home" [ref=e18]
+      - link "Search" [ref=e21] [cursor=pointer]:
+        - /url: /search
+        - img "Search" [ref=e25]
+      - button "Create" [ref=e28] [cursor=pointer]:
+        - img "Create" [ref=e32]
+      - link "Notifications" [ref=e35] [cursor=pointer]:
+        - /url: /activity
+        - img "Notifications" [ref=e39]
+      - link "Profile" [ref=e43] [cursor=pointer]:
+        - /url: /@freepeak_life
+        - img "Profile" [ref=e47]
+    - button "More More" [ref=e51] [cursor=pointer]:
+      - generic [ref=e52]:
+        - img "More" [ref=e54]
+        - img "More" [ref=e58]
+  - generic [ref=e66]:
+    - generic [ref=e69]:
+      - generic [ref=e79]:
+        - link "Column title" [ref=e80] [cursor=pointer]:
+          - /url: /for_you
+          - heading "For you" [level=1] [ref=e81]:
+            - generic [ref=e82]: For you
+        - button "More" [ref=e83] [cursor=pointer]:
+          - button "More" [ref=e84]:
+            - img "More" [ref=e88]
+      - region "Column body" [ref=e92]:
+        - generic [ref=e93]:
+          - generic [ref=e95]:
+            - link "freepeak_life's profile picture" [ref=e96] [cursor=pointer]:
+              - /url: /@freepeak_life
+              - img "freepeak_life's profile picture" [ref=e98]
+            - button "Empty text field. Type to compose a new post." [ref=e99]:
+              - generic [ref=e100]: What's new?
+            - button "Post" [ref=e102] [cursor=pointer]:
+              - generic [ref=e103]: Post
+          - separator [ref=e104]
+          - generic [ref=e106]:
+            - generic [ref=e112] [cursor=pointer]:
+              - button "roman_bun's profile picture Follow" [ref=e114]:
+                - img "roman_bun's profile picture" [ref=e117]
+                - button "Follow" [ref=e118]:
+                  - img "Follow" [ref=e121]
+              - generic [ref=e124]:
+                - generic [ref=e125]:
+                  - link "roman_bun" [ref=e130]:
+                    - /url: /@roman_bun
+                    - generic [ref=e132]: roman_bun
+                  - generic [ref=e133]:
+                    - generic [ref=e134]:
+                      - img [ref=e137]
+                      - link "buildinpublic" [ref=e140]:
+                        - /url: /search?q=buildinpublic&serp_type=tags&tag_id=18399440476027527
+                        - generic [ref=e143]: buildinpublic
+                    - link "about an hour ago" [ref=e146]:
+                      - /url: /@roman_bun/post/DXVhnZPFEMG
+                      - time [ref=e147]:
+                        - generic "about an hour ago" [ref=e149]: 1h
+                - button "More" [ref=e152]:
+                  - img "More" [ref=e154]
+              - generic [ref=e157]:
+                - generic [ref=e158]:
+                  - generic [ref=e160]: 520 minutes this weekend.
+                  - generic [ref=e162]:
+                    - link "getorla.app" [ref=e163]:
+                      - /url: https://l.threads.com/?u=http%3A%2F%2Fgetorla.app%2F&e=AT5K5o6rgG6ylxB1XWqMfQtNUGKjPdoqOf3YaVlO6gPg4DK20eXzZds5wnUboPtUxn9Z-yG5maeOPjff1qd1JLtwf6iJaNQCSi2-8TzYmp2PD03SjAjLB5rdxnj5Sbj_Ai1S6rVCCguj
+                    - text: 1.2 → waiting for review
+                - link "May be an image of screen and text that says 'iOS Version 1.2 WaitingforReview ၂ Waiting for Review'" [ref=e166]:
+                  - /url: /@roman_bun/post/DXVhnZPFEMG/media
+                  - generic [ref=e170]:
+                    - img "May be an image of screen and text that says 'iOS Version 1.2 WaitingforReview ၂ Waiting for Review'"
+                - generic [ref=e172]:
+                  - button "Like 5" [ref=e174]:
+                    - generic [ref=e176]:
+                      - img "Like" [ref=e177]
+                      - generic [ref=e181]: "5"
+                  - button "Reply" [ref=e183]:
+                    - img "Reply" [ref=e186]
+                  - button "Repost" [ref=e189]:
+                    - img "Repost" [ref=e192]
+                  - button "Share" [ref=e196]:
+                    - img "Share" [ref=e199]
+            - generic [ref=e206] [cursor=pointer]:
+              - button "ubuntu_os's profile picture Follow" [ref=e208]:
+                - img "ubuntu_os's profile picture" [ref=e211]
+                - button "Follow" [ref=e212]:
+                  - img "Follow" [ref=e215]
+              - generic [ref=e218]:
+                - generic [ref=e219]:
+                  - link "ubuntu_os" [ref=e224]:
+                    - /url: /@ubuntu_os
+                    - generic [ref=e226]: ubuntu_os
+                  - generic [ref=e227]:
+                    - generic [ref=e228]:
+                      - img [ref=e231]
+                      - link "Linux" [ref=e234]:
+                        - /url: /search?q=Linux&serp_type=tags&tag_id=18399591316039869
+                        - generic [ref=e237]: Linux
+                    - link "12 hours ago" [ref=e240]:
+                      - /url: /@ubuntu_os/post/DXUU1k3DLxz
+                      - time [ref=e241]:
+                        - generic "12 hours ago" [ref=e243]: 12h
+                - button "More" [ref=e246]:
+                  - img "More" [ref=e248]
+              - generic [ref=e251]:
+                - generic [ref=e252]:
+                  - generic [ref=e254]: Ubuntu 26.04 LTS, code named Resolute Raccoon, lands on April 23 2026.
+                  - generic [ref=e256]: Stay tuned.
+                - generic [ref=e261]:
+                  - 'button "May be an image of text that says ''Canonical Security or Ubuntu 26.04 LTS What''s new? t - A : 6''" [ref=e264]':
+                    - generic [ref=e267]:
+                      - generic:
+                        - 'img "May be an image of text that says ''Canonical Security or Ubuntu 26.04 LTS What''s new? t - A : 6''"'
+                  - button "May be a graphic of poster and text that says 'Secure by design Ubuntu 26.04 LTS got stronger, everywhere at once, by raising the security floor across layer of the system simultaneously. 合'" [ref=e269]:
+                    - generic [ref=e272]:
+                      - generic:
+                        - img "May be a graphic of poster and text that says 'Secure by design Ubuntu 26.04 LTS got stronger, everywhere at once, by raising the security floor across layer of the system simultaneously. 合'"
+                  - button "May be an image of aircraft and text" [ref=e274]:
+                    - generic [ref=e277]:
+                      - generic:
+                        - img "May be an image of aircraft and text"
+                  - button "May be a graphic of poster and text" [ref=e279]:
+                    - generic [ref=e282]:
+                      - generic:
+                        - img "May be a graphic of poster and text"
+                  - 'button "May be an image of text that says ''Canonical Ubuntu 26.04 LTS Lands on April 23, 2026 9 - A : 8''" [ref=e284]':
+                    - generic [ref=e287]:
+                      - generic:
+                        - 'img "May be an image of text that says ''Canonical Ubuntu 26.04 LTS Lands on April 23, 2026 9 - A : 8''"'
+                - generic [ref=e289]:
+                  - button "Like 218" [ref=e291]:
+                    - generic [ref=e293]:
+                      - img "Like" [ref=e294]
+                      - generic [ref=e298]: "218"
+                  - button "Reply 5" [ref=e300]:
+                    - generic [ref=e302]:
+                      - img "Reply" [ref=e303]
+                      - generic [ref=e307]: "5"
+                  - button "Repost 12" [ref=e309]:
+                    - generic [ref=e311]:
+                      - img "Repost" [ref=e312]
+                      - generic [ref=e317]: "12"
+                  - button "Share 2" [ref=e319]:
+                    - generic [ref=e321]:
+                      - img "Share" [ref=e322]
+                      - generic [ref=e326]: "2"
+            - generic [ref=e332] [cursor=pointer]:
+              - button "simplewealthdad's profile picture Follow" [ref=e334]:
+                - img "simplewealthdad's profile picture" [ref=e337]
+                - button "Follow" [ref=e338]:
+                  - img "Follow" [ref=e341]
+              - generic [ref=e344]:
+                - generic [ref=e345]:
+                  - link "simplewealthdad" [ref=e350]:
+                    - /url: /@simplewealthdad
+                    - generic [ref=e352]: simplewealthdad
+                  - generic [ref=e353]:
+                    - generic [ref=e354]:
+                      - img [ref=e357]
+                      - link "Business Threads" [ref=e360]:
+                        - /url: /search?q=businessthreads&serp_type=tags&tag_id=18295687789125939
+                        - generic [ref=e361]:
+                          - img [ref=e362]
+                          - generic [ref=e367]: Business Threads
+                    - link "6 hours ago" [ref=e370]:
+                      - /url: /@simplewealthdad/post/DXU_a4IAI20
+                      - time [ref=e371]:
+                        - generic "6 hours ago" [ref=e373]: 6h
+                - button "More" [ref=e376]:
+                  - img "More" [ref=e378]
+              - generic [ref=e381]:
+                - generic [ref=e382]:
+                  - generic [ref=e384]: Would love to connect with
+                  - generic [ref=e386]: "- solo entrepreneurs - makers instead of overthinkers - dads who build after bedtime"
+                  - generic [ref=e388]: drop a follow if that’s you
+                - generic [ref=e390]:
+                  - button "Like 19" [ref=e392]:
+                    - generic [ref=e394]:
+                      - img "Like" [ref=e395]
+                      - generic [ref=e399]: "19"
+                  - button "Reply 4" [ref=e401]:
+                    - generic [ref=e403]:
+                      - img "Reply" [ref=e404]
+                      - generic [ref=e408]: "4"
+                  - button "Repost" [ref=e410]:
+                    - img "Repost" [ref=e413]
+                  - button "Share" [ref=e417]:
+                    - img "Share" [ref=e420]
+            - generic [ref=e427] [cursor=pointer]:
+              - button "sysadminriley's profile picture Follow" [ref=e429]:
+                - img "sysadminriley's profile picture" [ref=e432]
+                - button "Follow" [ref=e433]:
+                  - img "Follow" [ref=e436]
+              - generic [ref=e439]:
+                - generic [ref=e440]:
+                  - link "sysadminriley" [ref=e445]:
+                    - /url: /@sysadminriley
+                    - generic [ref=e447]: sysadminriley
+                  - link "12 hours ago" [ref=e451]:
+                    - /url: /@sysadminriley/post/DXUVX7gjfj4
+                    - time [ref=e452]:
+                      - generic "12 hours ago" [ref=e454]: 12h
+                - button "More" [ref=e457]:
+                  - img "More" [ref=e459]
+              - generic [ref=e462]:
+                - generic [ref=e465]: Turns out your email can't contain the word "admin" when signing up for a Samsung account... 🙃
+                - 'link "A screenshot of the Samsung Account creation page. At the top, large black text reads: \"Create your Samsung account\". In the text input field, the email address \"cooladmin@gmail.com\" is typed in black. A thin red horizontal line underlines the input field. At the very bottom, a red error message states: \"Email address contains banned word.\"" [ref=e468]':
+                  - /url: /@sysadminriley/post/DXUVX7gjfj4/media
+                  - generic [ref=e472]:
+                    - 'img "A screenshot of the Samsung Account creation page. At the top, large black text reads: \"Create your Samsung account\". In the text input field, the email address \"cooladmin@gmail.com\" is typed in black. A thin red horizontal line underlines the input field. At the very bottom, a red error message states: \"Email address contains banned word.\""'
+                - generic [ref=e474]:
+                  - button "Like 346" [ref=e476]:
+                    - generic [ref=e478]:
+                      - img "Like" [ref=e479]
+                      - generic [ref=e483]: "346"
+                  - button "Reply 12" [ref=e485]:
+                    - generic [ref=e487]:
+                      - img "Reply" [ref=e488]
+                      - generic [ref=e492]: "12"
+                  - button "Repost 1" [ref=e494]:
+                    - generic [ref=e496]:
+                      - img "Repost" [ref=e497]
+                      - generic [ref=e502]: "1"
+                  - button "Share 2" [ref=e504]:
+                    - generic [ref=e506]:
+                      - img "Share" [ref=e507]
+                      - generic [ref=e511]: "2"
+            - generic [ref=e517] [cursor=pointer]:
+              - button "cuthuynh159's profile picture Follow" [ref=e519]:
+                - img "cuthuynh159's profile picture" [ref=e522]
+                - button "Follow" [ref=e523]:
+                  - img "Follow" [ref=e526]
+              - generic [ref=e529]:
+                - generic [ref=e530]:
+                  - link "cuthuynh159" [ref=e535]:
+                    - /url: /@cuthuynh159
+                    - generic [ref=e537]: cuthuynh159
+                  - generic [ref=e538]:
+                    - generic [ref=e539]:
+                      - img [ref=e542]
+                      - link "thiên đường bảo sơn" [ref=e545]:
+                        - /url: /search?q=thi%C3%AAn%20%C4%91%C6%B0%E1%BB%9Dng%20b%E1%BA%A3o%20s%C6%A1n&serp_type=tags&tag_id=18472644475030674
+                        - generic [ref=e548]: thiên đường bảo sơn
+                    - link "about a minute ago" [ref=e551]:
+                      - /url: /@cuthuynh159/post/DXVtl-Nk44h
+                      - time [ref=e552]:
+                        - generic "about a minute ago" [ref=e554]: 1m
+                - button "More" [ref=e557]:
+                  - img "More" [ref=e559]
+              - generic [ref=e562]:
+                - generic [ref=e565]:
+                  - text: Công viên mát lạnh giữa mùa hè này wow quá mấy bà. 📍thiên đường bảo sơn, Hà Nội
+                  - button "Translate" [ref=e567]:
+                    - generic [ref=e568]: Translate
+                - generic [ref=e573]:
+                  - button [ref=e576]
+                  - button "May be an image of signboard and text" [ref=e581]:
+                    - generic [ref=e584]:
+                      - generic:
+                        - img "May be an image of signboard and text"
+                  - button "May be an image of swimming, aquatic animal, aquarium and text" [ref=e586]:
+                    - generic [ref=e589]:
+                      - generic:
+                        - img "May be an image of swimming, aquatic animal, aquarium and text"
+                  - button "May be an image of roller coaster and text" [ref=e591]:
+                    - generic [ref=e594]:
+                      - generic:
+                        - img "May be an image of roller coaster and text"
+                  - button "May be an image of swan, giraffe, flamingo and text" [ref=e596]:
+                    - generic [ref=e599]:
+                      - generic:
+                        - img "May be an image of swan, giraffe, flamingo and text"
+                  - button "May be an image of slide, roller coaster and text that says \"BAOSON PARADISE PAR Na\"" [ref=e601]:
+                    - generic [ref=e604]:
+                      - generic:
+                        - img "May be an image of slide, roller coaster and text that says \"BAOSON PARADISE PAR Na\""
+                  - button "May be an image of fish, aquarium and text" [ref=e606]:
+                    - generic [ref=e609]:
+                      - generic:
+                        - img "May be an image of fish, aquarium and text"
+                  - button "May be an image of fish and text" [ref=e611]:
+                    - generic [ref=e614]:
+                      - generic:
+                        - img "May be an image of fish and text"
+                  - button "May be an image of aquarium and text" [ref=e616]:
+                    - generic [ref=e619]:
+                      - generic:
+                        - img "May be an image of aquarium and text"
+                  - button "May be an image of roller coaster and text" [ref=e621]:
+                    - generic [ref=e624]:
+                      - generic:
+                        - img "May be an image of roller coaster and text"
+                  - button "May be an image of swan and text" [ref=e626]:
+                    - generic [ref=e629]:
+                      - generic:
+                        - img "May be an image of swan and text"
+                  - button "May be an image of buildings, park and text" [ref=e631]:
+                    - generic [ref=e634]:
+                      - generic:
+                        - img "May be an image of buildings, park and text"
+                  - button "May be an image of park, carousel and text" [ref=e636]:
+                    - generic [ref=e639]:
+                      - generic:
+                        - img "May be an image of park, carousel and text"
+                  - button "May be an image of text" [ref=e641]:
+                    - generic [ref=e644]:
+                      - generic:
+                        - img "May be an image of text"
+                - generic [ref=e646]:
+                  - button "Like" [ref=e648]:
+                    - img "Like" [ref=e651]
+                  - button "Reply" [ref=e654]:
+                    - img "Reply" [ref=e657]
+                  - button "Repost" [ref=e660]:
+                    - img "Repost" [ref=e663]
+                  - button "Share" [ref=e667]:
+                    - img "Share" [ref=e670]
+            - generic [ref=e677] [cursor=pointer]:
+              - link "hridoyreh's profile picture" [ref=e680]:
+                - /url: /@hridoyreh
+                - img "hridoyreh's profile picture" [ref=e682]
+              - generic [ref=e684]:
+                - generic [ref=e685]:
+                  - link "hridoyreh" [ref=e690]:
+                    - /url: /@hridoyreh
+                    - generic [ref=e692]: hridoyreh
+                  - button "Post is shared to Fediverse" [ref=e693]:
+                    - img "Post is shared to Fediverse" [ref=e694]
+                  - link "10 hours ago" [ref=e703]:
+                    - /url: /@hridoyreh/post/DXUl-8nklZA
+                    - time [ref=e704]:
+                      - generic "10 hours ago" [ref=e706]: 10h
+                - button "More" [ref=e709]:
+                  - img "More" [ref=e711]
+              - generic [ref=e714]:
+                - generic [ref=e715]:
+                  - generic [ref=e717]: Vercel has been hacked.
+                  - generic [ref=e719]: A hacker has listed their customers’ data, source code, databases, and keys for sale...
+                - link "May be a cartoon of text" [ref=e722]:
+                  - /url: /@hridoyreh/post/DXUl-8nklZA/media
+                  - generic [ref=e726]:
+                    - img "May be a cartoon of text"
+                - generic [ref=e728]:
+                  - button "Like 208" [ref=e730]:
+                    - generic [ref=e732]:
+                      - img "Like" [ref=e733]
+                      - generic [ref=e737]: "208"
+                  - button "Reply 14" [ref=e739]:
+                    - generic [ref=e741]:
+                      - img "Reply" [ref=e742]
+                      - generic [ref=e746]: "14"
+                  - button "Repost 26" [ref=e748]:
+                    - generic [ref=e750]:
+                      - img "Repost" [ref=e751]
+                      - generic [ref=e756]: "26"
+                  - button "Share 52" [ref=e758]:
+                    - generic [ref=e760]:
+                      - img "Share" [ref=e761]
+                      - generic [ref=e765]: "52"
+            - status "Loading..." [ref=e779]:
+              - img "Loading..." [ref=e780]
+    - button "Add a column" [ref=e791] [cursor=pointer]:
+      - img "Add a column" [ref=e792]
+  - button "Create" [ref=e795] [cursor=pointer]:
+    - img "Create" [ref=e796]
