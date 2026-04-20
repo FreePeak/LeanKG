@@ -461,4 +461,43 @@ mod server_tests {
         let ptr2 = &*guard2 as *const std::path::PathBuf;
         assert_ne!(ptr1, ptr2, "Servers should be separate instances");
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_concurrent_reads_from_multiple_servers() {
+        // Test that multiple MCP servers can perform concurrent reads
+        // This simulates multiple Cursor/Claude Code sessions querying simultaneously
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        // Initialize database
+        let _db = init_db(&db_path).expect("Database init should succeed");
+
+        // Create 3 servers concurrently using tokio::join!
+        let (r1, r2, r3) = tokio::join! {
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                1
+            },
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                2
+            },
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                3
+            }
+        };
+
+        // All 3 concurrent operations should succeed
+        assert_eq!(r1, 1);
+        assert_eq!(r2, 2);
+        assert_eq!(r3, 3);
+    }
 }
