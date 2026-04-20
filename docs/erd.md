@@ -1,12 +1,18 @@
 # LeanKG High Level Design
 
-**Version:** 2.1-mempalace
-**Date:** 2026-04-11
+**Version:** 2.2-toon-format
+**Date:** 2026-04-18
 **Based on:** PRD v3.1-mempalace
 **Status:** Active
 **Codebase Version:** 0.11.1
 
 **Changelog:**
+- v2.2-toon-format - TOON response format for MCP tools (~40% token reduction):
+  - Added TOON (Token-Oriented Object Notation) format specification to Section 5.2 MCP Tools
+  - TOON reduces field name repetition in array responses
+  - Example: `elements[2]{qualified_name,type}: src/main.rs::main,function` vs JSON
+  - Added Response Format Envelope: {status, tool, format, tokens, data}
+  - All MCP tools use TOON by default, JSON available via format=json parameter
 - v2.1-mempalace - MemPalace-inspired features:
   - Added temporal fields (valid_from, valid_to) to Relationship schema
   - Added 2 new relationship types: tunnel, decided_about
@@ -828,6 +834,51 @@ When MCP server starts with existing project:
 1. **WriteTracker** - In-memory `Arc<AtomicBool>` dirty flag + `Arc<RwLock<Instant>>` last_write_time
 2. **TrackingDb** - Wraps `CozoDb` to intercept `:put` and `:delete` operations
 3. **Lazy Reindex** - On any MCP tool call, checks dirty flag; if set, triggers incremental reindex
+
+**TOON Response Format (v2.2):**
+> TOON (Token-Oriented Object Notation) reduces token usage by ~40% compared to JSON by omitting repetitive field names in arrays.
+
+All MCP tool responses are wrapped in a Response Format Envelope:
+```
+{
+  status: ok|error
+  tool: <tool_name>
+  format: toon|json
+  tokens: <token_count>
+  data: <response_data>
+}
+```
+
+**TOON Syntax:**
+- `array_name[count]{field1,field2}: value1,value2` - Header with count and schema
+- Values are comma-separated in order matching the schema
+- Nested objects use indented `{}` blocks
+- Example: `elements[2]{qualified_name,type}: src/main.rs::main,function` represents `[{qualified_name: "src/main.rs::main", type: "function"}]`
+
+**Example - JSON vs TOON:**
+
+JSON (312 tokens):
+```json
+{
+  "elements": [
+    {"qualified_name": "src/main.rs::main", "type": "function", "language": "rust"},
+    {"qualified_name": "src/lib.rs::init", "type": "function", "language": "rust"}
+  ],
+  "tokens": 312
+}
+```
+
+TOON (187 tokens, 40% reduction):
+```
+{
+  elements[2]{qualified_name,type,language}:
+    src/main.rs::main,function,rust
+    src/lib.rs::init,function,rust
+  tokens: 187
+}
+```
+
+**Reference:** https://github.com/toon-format/toon
 
 ### 5.3 REST API Routes
 

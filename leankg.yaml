@@ -1,13 +1,10 @@
 project:
-  name: my-project
+  name: .leankg
   root: ./src
   languages:
-  - go
-  - typescript
-  - python
-  - java
-  - kotlin
-  indexer:
+  - javascript
+  - rust
+indexer:
   exclude:
   - '**/node_modules/**'
   - '**/vendor/**'
@@ -18,17 +15,16 @@ project:
   - '*.java'
   - '*.kt'
   - '*.xml'
-  - 'AndroidManifest.xml'
-  - 'res/**/*.xml'
 mcp:
   enabled: true
   port: 3000
   auth_token: ''
   auto_index_on_start: true
   auto_index_threshold_minutes: 5
-  index_on_first_call: true
+  auto_index_on_db_write: true
 documentation:
   output: ./docs
   templates:
   - agents
   - claude
+microservice: null
