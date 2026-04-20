@@ -273,6 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         cli::CLICommand::Setup {} => {
             setup_global()?;
+            install_claude_hooks()?;
         }
         cli::CLICommand::Run { command, compress } => {
             run_shell_command(&command, compress)?;
@@ -2668,7 +2669,75 @@ console.log(JSON.stringify({
 
     std::fs::write(hooks_dir.join("sessionstart.mjs"), sessionstart_mjs)?;
 
+    // Write manifest.json (required for Claude Code plugin marketplace)
+    let manifest_json = r#"{
+  "id": "leankg",
+  "name": "LeanKG",
+  "kind": "tool",
+  "description": "Lightweight knowledge graph for codebase understanding. Indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.",
+  "version": "0.17.0",
+  "sandbox": {
+    "mode": "permissive",
+    "filesystem_access": "full",
+    "system_access": "full"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable or disable the LeanKG plugin."
+      },
+      "autoIndex": {
+        "type": "boolean",
+        "default": false,
+        "description": "Automatically index codebase on project open."
+      }
+    },
+    "additionalProperties": false
+  }
+}"#;
+    std::fs::write(plugin_dir.join("openclaw.plugin.json"), manifest_json)?;
+    println!("  Installed plugin manifest to {}", plugin_dir.display());
+
+    // Add LeanKG to enabledPlugins in settings.json
+    add_to_enabled_plugins()?;
+
     println!("  Installed Claude hooks to {}", hooks_dir.display());
+
+    Ok(())
+}
+
+fn add_to_enabled_plugins() -> Result<(), Box<dyn std::error::Error>> {
+    let settings_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".claude/settings.json");
+
+    if !settings_path.exists() {
+        println!("  Warning: settings.json not found, skipping enabledPlugins update");
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&settings_path)?;
+    let mut settings: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&content).unwrap_or_default();
+
+    // Get or create enabledPlugins object
+    let enabled = settings
+        .entry("enabledPlugins".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+
+    // Add LeanKG if not present
+    if let Some(obj) = enabled.as_object_mut() {
+        if !obj.contains_key("leankg@local") {
+            obj.insert("leankg@local".to_string(), serde_json::Value::Bool(true));
+            let new_content = serde_json::to_string_pretty(&settings)?;
+            std::fs::write(&settings_path, new_content)?;
+            println!("  Added leankg@local to enabledPlugins in settings.json");
+        } else {
+            println!("  leankg@local already in enabledPlugins");
+        }
+    }
 
     Ok(())
 }
