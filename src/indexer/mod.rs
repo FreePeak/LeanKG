@@ -18,11 +18,11 @@ pub mod maven_extractor;
 pub mod xml_generic;
 pub mod xml_layout;
 
-pub use android_hilt::*;
+pub use android_hilt::AndroidHiltExtractor;
 pub use android_manifest::*;
 pub use android_resources::*;
-pub use android_resource_refs::*;
-pub use android_room::*;
+pub use android_resource_refs::AndroidResourceRefExtractor;
+pub use android_room::AndroidRoomExtractor;
 pub use cicd::*;
 pub use config_extractor::*;
 pub use extractor::*;
@@ -34,7 +34,7 @@ pub use microservice::*;
 pub use parser::*;
 pub use process_processor::*;
 pub use terraform::*;
-pub use xml_generic::*;
+pub use xml_generic::GenericXmlExtractor;
 pub use xml_layout::*;
 
 use crate::db::models::{CodeElement, Relationship};
@@ -287,11 +287,11 @@ fn extract_elements_for_file(
         parser.parse(source, None).ok_or("parse failed")
     })?;
 
-    // For Kotlin files, also extract Room and Hilt patterns
     let mut room_elements = Vec::new();
     let mut room_relationships = Vec::new();
     let mut hilt_elements = Vec::new();
     let mut hilt_relationships = Vec::new();
+    let mut res_ref_relationships = Vec::new();
     if language == "kotlin" {
         let room_extractor = crate::indexer::AndroidRoomExtractor::new(source, file_path);
         let (re, rr) = room_extractor.extract();
@@ -304,24 +304,19 @@ fn extract_elements_for_file(
         hilt_relationships = hr;
 
         let res_ref_extractor = crate::indexer::AndroidResourceRefExtractor::new(source, file_path);
-        let (_, res_refs) = res_ref_extractor.extract();
+        let (_, rr) = res_ref_extractor.extract();
+        res_ref_relationships = rr;
     }
 
     let extractor = crate::indexer::EntityExtractor::new(source, file_path, language);
     let (mut elements, mut relationships) = extractor.extract(&tree);
-    
-    // Merge Room, Hilt, and resource ref relationships
+
     elements.extend(room_elements);
     relationships.extend(room_relationships);
     elements.extend(hilt_elements);
     relationships.extend(hilt_relationships);
-    // Resource ref relationships already collected in variable, add them too
-    if language == "kotlin" {
-        let res_ref_extractor = crate::indexer::AndroidResourceRefExtractor::new(source, file_path);
-        let (_, res_refs) = res_ref_extractor.extract();
-        relationships.extend(res_refs);
-    }
-    
+    relationships.extend(res_ref_relationships);
+
     Ok(ParsedFile {
         element_count: elements.len(),
         elements,

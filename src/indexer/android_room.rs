@@ -13,7 +13,13 @@ impl<'a> AndroidRoomExtractor<'a> {
     }
 
     pub fn extract(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
-        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let content = match std::str::from_utf8(self.source) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("warn: non-UTF-8 content in {}, skipping", self.file_path);
+                return (Vec::new(), Vec::new());
+            }
+        };
         let mut elements = Vec::new();
         let mut relationships = Vec::new();
 
@@ -120,32 +126,43 @@ impl<'a> AndroidRoomExtractor<'a> {
         databases
     }
 
+    fn find_class_body_end(content: &str, class_start: usize) -> usize {
+        let after = &content[class_start..];
+        let mut depth = 0i32;
+        let mut found_open = false;
+        for (i, ch) in after.char_indices() {
+            match ch {
+                '{' => { depth += 1; found_open = true; }
+                '}' => {
+                    depth -= 1;
+                    if found_open && depth == 0 {
+                        return class_start + i + 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        content.len()
+    }
+
     fn extract_foreign_keys(&self, content: &str, entities: &[CodeElement]) -> Vec<Relationship> {
         let mut relationships = Vec::new();
         let fk_re = Regex::new(r"ForeignKey\s*\(\s*entity\s*=\s*(\w+)::class[^)]+parentColumns\s*=\s*\[(\w+)\][^)]+childColumns\s*=\s*\[(\w+)\]").unwrap();
 
-        // Match foreign keys within entity definitions
         for entity in entities {
-            // Find this entity's definition in content
             let entity_pattern = format!(r"(?:data\s+)?class\s+{}", regex::escape(&entity.name));
             if let Ok(re) = Regex::new(&entity_pattern) {
                 if let Some(mat) = re.find(content) {
                     let entity_start = mat.start();
-                    let entity_end = content[entity_start..].find("data class")
-                        .or_else(|| content[entity_start..].find("class"))
-                        .map(|i| entity_start + i + 100) // Approximate class end
-                        .unwrap_or(entity_start + 500);
-                    let entity_content = &content[entity_start..entity_end.min(content.len())];
+                    let entity_end = Self::find_class_body_end(content, entity_start);
+                    let entity_content = &content[entity_start..entity_end];
 
                     for cap in fk_re.captures_iter(entity_content) {
                         if let Some(ref_entity) = cap.get(1) {
-                            let source = format!("{}::RoomEntity:{}", self.file_path, entity.name);
-                            let target = ref_entity.as_str();
-
                             relationships.push(Relationship {
                                 id: None,
-                                source_qualified: source,
-                                target_qualified: format!("__room_entity__{}", target),
+                                source_qualified: format!("{}::RoomEntity:{}", self.file_path, entity.name),
+                                target_qualified: format!("__room_entity__{}", ref_entity.as_str()),
                                 rel_type: "room_entity_has_foreign_key".to_string(),
                                 confidence: 0.9,
                                 metadata: serde_json::json!({}),

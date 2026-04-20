@@ -13,7 +13,13 @@ impl<'a> AndroidHiltExtractor<'a> {
     }
 
     pub fn extract(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
-        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let content = match std::str::from_utf8(self.source) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("warn: non-UTF-8 content in {}, skipping", self.file_path);
+                return (Vec::new(), Vec::new());
+            }
+        };
         let mut elements = Vec::new();
         let mut relationships = Vec::new();
 
@@ -62,20 +68,51 @@ impl<'a> AndroidHiltExtractor<'a> {
         modules
     }
 
+    fn find_class_body_end(content: &str, class_start: usize) -> usize {
+        let after = &content[class_start..];
+        let mut depth = 0i32;
+        let mut found_open = false;
+        for (i, ch) in after.char_indices() {
+            match ch {
+                '{' => { depth += 1; found_open = true; }
+                '}' => {
+                    depth -= 1;
+                    if found_open && depth == 0 {
+                        return class_start + i + 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        content.len()
+    }
+
     fn extract_providers(&self, content: &str, modules: &[CodeElement]) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut providers = Vec::new();
         let mut relationships = Vec::new();
 
-        // Match @Provides methods
+        // Build module body spans so each provider is attributed to its containing module
+        let module_re = Regex::new(r"(?s)@Module\s*\n?\s*(?:@InstallIn\(.*?\)\s*\n?\s*)?(?:abstract\s+)?(?:class|object)\s+\w+").unwrap();
+        let module_spans: Vec<(&CodeElement, usize, usize)> = modules
+            .iter()
+            .zip(module_re.find_iter(content))
+            .map(|(module, mat)| {
+                let start = mat.start();
+                let end = Self::find_class_body_end(content, start);
+                (module, start, end)
+            })
+            .collect();
+
         let provides_re = Regex::new(r"@Provides\s*\n?(?:@Singleton\s*\n?)?\s*fun\s+(\w+)\s*\([^)]*\)\s*:\s*(\w+)").unwrap();
 
         for cap in provides_re.captures_iter(content) {
             let method_match = cap.get(1);
             let return_match = cap.get(2);
             if let (Some(method_name), Some(return_type)) = (method_match, return_match) {
+                let provider_pos = cap.get(0).map(|m| m.start()).unwrap_or(0);
                 let provider_name = method_name.as_str();
                 let return_type_name = return_type.as_str();
-                
+
                 let qualified_name = format!("{}::HiltProvider:{}", self.file_path, provider_name);
 
                 providers.push(CodeElement {
@@ -91,22 +128,24 @@ impl<'a> AndroidHiltExtractor<'a> {
                     ..Default::default()
                 });
 
-                // Link to first module (heuristic)
-                if let Some(module) = modules.first() {
+                // Link to the module whose body contains this provider
+                let containing_module = module_spans
+                    .iter()
+                    .find(|(_, start, end)| provider_pos >= *start && provider_pos < *end);
+                if let Some((module, _, _)) = containing_module {
                     relationships.push(Relationship {
                         id: None,
                         source_qualified: module.qualified_name.clone(),
-                        target_qualified: qualified_name,
+                        target_qualified: qualified_name.clone(),
                         rel_type: "hilt_module_provides".to_string(),
-                        confidence: 0.8,
+                        confidence: 0.9,
                         metadata: serde_json::json!({}),
                     });
                 }
 
-                // Relationship to provided type
                 relationships.push(Relationship {
                     id: None,
-                    source_qualified: format!("{}::HiltProvider:{}", self.file_path, provider_name),
+                    source_qualified: qualified_name,
                     target_qualified: format!("__type__{}", return_type_name),
                     rel_type: "hilt_provides".to_string(),
                     confidence: 0.9,
@@ -121,18 +160,16 @@ impl<'a> AndroidHiltExtractor<'a> {
     fn extract_injections(&self, content: &str) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
-        // Match @Inject constructor parameters
         let inject_re = Regex::new(r"class\s+(\w+).*?@Inject\s*\n?\s*constructor\s*\(([^)]+)\)").unwrap();
-        
+        let param_re = Regex::new(r"(\w+)\s*:\s*(\w+)").unwrap();
+
         for cap in inject_re.captures_iter(content) {
             let class_match = cap.get(1);
             let params_match = cap.get(2);
             if let (Some(class_name), Some(params)) = (class_match, params_match) {
                 let class_name_str = class_name.as_str();
                 let params_str = params.as_str();
-                
-                // Extract parameter types
-                let param_re = Regex::new(r"(\w+)\s*:\s*(\w+)").unwrap();
+
                 for param_cap in param_re.captures_iter(params_str) {
                     if let Some(param_type) = param_cap.get(2) {
                         let type_name = param_type.as_str();

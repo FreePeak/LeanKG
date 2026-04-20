@@ -14,7 +14,13 @@ impl<'a> AndroidResourceRefExtractor<'a> {
     }
 
     pub fn extract(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
-        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let content = match std::str::from_utf8(self.source) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("warn: non-UTF-8 content in {}, skipping", self.file_path);
+                return (Vec::new(), Vec::new());
+            }
+        };
         let mut relationships = Vec::new();
 
         // Extract R.xxx.yyy patterns
