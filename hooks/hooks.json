@@ -1,5 +1,5 @@
 {
-  "description": "LeanKG hooks - SessionStart routing, PostToolUse capture",
+  "description": "LeanKG hooks - PostToolUse capture only",
   "hooks": {
     "PostToolUse": [
       {
@@ -8,17 +8,6 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse.mjs\""
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "matcher": "startup|clear|compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sessionstart.mjs\""
           }
         ]
       }

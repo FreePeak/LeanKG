@@ -357,7 +357,7 @@ setup_claude_hooks() {
     fi
 
     # Copy hook scripts
-    for hook_file in hooks.json sessionstart.mjs posttooluse.mjs routing-block.mjs core/tool-naming.mjs; do
+    for hook_file in hooks.json posttooluse.mjs; do
         if [ -f "$hook_file" ]; then
             cp "$hook_file" "$plugin_dir/hooks/"
             echo "Installed $hook_file"
