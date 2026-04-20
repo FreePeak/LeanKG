@@ -15,7 +15,6 @@ mod obsidian;
 mod orchestrator;
 mod registry;
 mod runtime;
-mod server;
 mod watcher;
 mod web;
 
@@ -137,33 +136,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = mcp_server.serve_stdio().await {
                 eprintln!("MCP stdio server error: {}", e);
             }
-        }
-        cli::CLICommand::McpServe { port } => {
-            let project_path = find_project_root()?;
-            let db_path = project_path.join(".leankg");
-
-            tokio::fs::create_dir_all(&db_path).await.ok();
-
-            // Check if server already running
-            if is_server_running(port).await {
-                println!("LeanKG MCP server already running on port {}", port);
-                return Ok(());
-            }
-
-            // Write PID to lock file
-            let lock_dir = db_path.join("locks");
-            tokio::fs::create_dir_all(&lock_dir).await.ok();
-            let lock_path = lock_dir.join(format!("server-{}.lock", port));
-            tokio::fs::write(&lock_path, std::process::id().to_string()).await?;
-
-            println!("Starting LeanKG MCP server on port {}...", port);
-            println!("Server PID: {}", std::process::id());
-
-            // Start the server (this blocks)
-            crate::server::listener::start_server(port, db_path).await?;
-        }
-        cli::CLICommand::McpStop { port } => {
-            stop_server(port).await?;
         }
         cli::CLICommand::Impact { file, depth } => {
             let project_path = find_project_root()?;
@@ -393,51 +365,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 proc_kill()?;
             }
         },
-    }
-
-    Ok(())
-}
-
-async fn is_server_running(port: u16) -> bool {
-    tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
-        .await
-        .is_ok()
-}
-
-async fn stop_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let project_path = find_project_root()?;
-    let lock_path = project_path
-        .join(".leankg")
-        .join("locks")
-        .join(format!("server-{}.lock", port));
-
-    // Try to read PID from lock file
-    if lock_path.exists() {
-        if let Ok(pid_str) = std::fs::read_to_string(&lock_path) {
-            if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                // Kill the process
-                #[cfg(unix)]
-                {
-                    let kill_result = std::process::Command::new("/bin/kill")
-                        .arg("-9")
-                        .arg(format!("{}", pid))
-                        .status();
-                    if kill_result.is_ok() {
-                        println!("LeanKG MCP server (PID {}) on port {} stopped", pid, port);
-                    } else {
-                        eprintln!("Failed to kill process");
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    println!("LeanKG MCP server on port {} stopped", port);
-                }
-            }
-        }
-        // Clean up lock file
-        std::fs::remove_file(&lock_path).ok();
-    } else {
-        eprintln!("No lock file found for port {}", port);
     }
 
     Ok(())
