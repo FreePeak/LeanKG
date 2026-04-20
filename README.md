@@ -172,7 +172,10 @@ See [docs/metrics.md](docs/metrics.md) for schema and examples.
 # Check current version
 leankg version
 
-# Update LeanKG binary via install script
+# Update LeanKG binary (kills processes, removes old binary, installs hooks)
+leankg update
+
+# Or via install script
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- update
 
 # Obsidian vault sync
@@ -219,8 +222,8 @@ pkill -9 -f "vite"
 ### Process Management
 
 ```bash
-leankg-kill              # Kill all leankg and vite processes (after adding to ~/.zshrc)
-leankg-status            # Show running leankg/vite processes
+leankg proc kill        # Kill all leankg and vite processes
+leankg proc status      # Show running leankg/vite processes
 ```
 
 **Important:** Always kill the web server before indexing to avoid database lock conflicts.
