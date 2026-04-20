@@ -100,7 +100,10 @@ impl MCPServer {
         if let Some(project_path) = config.project.project_path {
             let db_at_path = project_path.join(".leankg");
             if db_at_path.is_dir() {
-                tracing::info!("Using project_path from leankg.yaml: {}", db_at_path.display());
+                tracing::info!(
+                    "Using project_path from leankg.yaml: {}",
+                    db_at_path.display()
+                );
                 return db_at_path;
             } else {
                 tracing::warn!(
@@ -658,7 +661,12 @@ impl MCPServer {
                     let parsed = self.intent_parser.parse(intent);
                     parsed.target
                 })
-                .or_else(|| arguments.get("file").and_then(|v| v.as_str()).map(String::from))
+                .or_else(|| {
+                    arguments
+                        .get("file")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
         } else {
             arguments
                 .get("file")
