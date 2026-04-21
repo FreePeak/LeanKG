@@ -40,7 +40,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let mut files = Vec::new();
     let extensions = [
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod",
+        "mod", "dart",
     ];
     let config_files = [
         "package.json",
@@ -103,7 +103,8 @@ fn get_language(file_path: &str) -> Option<&'static str> {
         "py" => Some("python"),
         "rs" => Some("rust"),
         "java" => Some("java"),
-        "kt" => Some("kotlin"),
+        "kt" | "kts" => Some("kotlin"),
+        "dart" => Some("dart"),
         _ => None,
     }
 }
@@ -232,7 +233,7 @@ fn extract_elements_for_file(
     };
 
     thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None]);
+        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None]);
     }
 
     let parser_idx = match language {
@@ -242,6 +243,7 @@ fn extract_elements_for_file(
         "rust" => 3,
         "java" => 4,
         "kotlin" => 5,
+        "dart" => 6,
         _ => {
             return Ok(ParsedFile {
                 element_count: 0,
@@ -262,6 +264,7 @@ fn extract_elements_for_file(
                 "rust" => tree_sitter_rust::LANGUAGE.into(),
                 "java" => tree_sitter_java::LANGUAGE.into(),
                 "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
+                "dart" => tree_sitter_dart::LANGUAGE.into(),
                 _ => return p,
             };
             let _ = p.set_language(&lang);
@@ -504,6 +507,8 @@ pub fn index_file_sync(
         "java"
     } else if file_path.ends_with(".kt") || file_path.ends_with(".kts") {
         "kotlin"
+    } else if file_path.ends_with(".dart") {
+        "dart"
     } else {
         return Ok(0);
     };
