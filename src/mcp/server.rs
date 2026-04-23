@@ -6,6 +6,7 @@ use crate::mcp::handler::ToolHandler;
 use crate::mcp::tools::ToolRegistry;
 use crate::mcp::tracker::WriteTracker;
 use crate::mcp::watcher::start_watcher;
+use crate::orchestrator::intent::IntentParser;
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
@@ -23,6 +24,7 @@ pub struct MCPServer {
     graph_engine_cache: Arc<RwLock<HashMap<PathBuf, GraphEngine>>>,
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
+    intent_parser: IntentParser,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -42,31 +44,112 @@ impl Clone for MCPServer {
             graph_engine_cache: self.graph_engine_cache.clone(),
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
+            intent_parser: IntentParser::new(),
         }
     }
 }
 
 impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
+        let effective_db_path = Self::resolve_project_root(db_path);
         Self {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
-            db_path: Arc::new(RwLock::new(db_path)),
+            db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
+            intent_parser: IntentParser::new(),
         }
     }
 
     pub fn new_with_watch(db_path: std::path::PathBuf, watch_path: std::path::PathBuf) -> Self {
+        let effective_db_path = Self::resolve_project_root(db_path);
         Self {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
-            db_path: Arc::new(RwLock::new(db_path)),
+            db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             watch_path: Some(watch_path),
             write_tracker: Arc::new(WriteTracker::new()),
+            intent_parser: IntentParser::new(),
         }
+    }
+
+    /// Read leankg.yaml and resolve project root with fallback chain:
+    /// 1. project_path from config (if exists and valid)
+    /// 2. project.root relative path resolution
+    /// 3. Original db_path as fallback
+    fn resolve_project_root(db_path: std::path::PathBuf) -> std::path::PathBuf {
+        let config_path = db_path.join("leankg.yaml");
+        if !config_path.exists() {
+            return db_path;
+        }
+
+        let content = match std::fs::read_to_string(&config_path) {
+            Ok(c) => c,
+            Err(_) => return db_path,
+        };
+
+        let config: crate::config::ProjectConfig = match serde_yaml::from_str(&content) {
+            Ok(c) => c,
+            Err(_) => return db_path,
+        };
+
+        // 1. Check project_path first (absolute path stored at init time)
+        if let Some(project_path) = config.project.project_path {
+            let db_at_path = project_path.join(".leankg");
+            if db_at_path.is_dir() {
+                tracing::info!(
+                    "Using project_path from leankg.yaml: {}",
+                    db_at_path.display()
+                );
+                return db_at_path;
+            } else {
+                tracing::warn!(
+                    "project_path in leankg.yaml points to non-existent directory: {}. Searching for project...",
+                    project_path.display()
+                );
+            }
+        }
+
+        // 2. If root is not ".", check if that directory has its own .leankg
+        let root = &config.project.root;
+        if root.as_os_str() != "." && root.as_os_str() != "" {
+            // Resolve root relative to db_path's parent (project root)
+            let project_root = db_path.parent().unwrap_or(&db_path);
+            let resolved_root = if root.is_absolute() {
+                root.clone()
+            } else {
+                project_root.join(root)
+            };
+
+            // Check if root or its parent has .leankg
+            let alternative_db = resolved_root.join(".leankg");
+            if alternative_db.is_dir() && alternative_db != db_path {
+                tracing::info!(
+                    "Using project root from leankg.yaml: {}",
+                    alternative_db.display()
+                );
+                return alternative_db;
+            }
+
+            // Check parent of resolved root
+            if let Some(parent) = resolved_root.parent() {
+                let parent_db = parent.join(".leankg");
+                if parent_db.is_dir() && parent_db != db_path {
+                    tracing::info!(
+                        "Using parent project from leankg.yaml: {}",
+                        parent_db.display()
+                    );
+                    return parent_db;
+                }
+            }
+        }
+
+        // 3. Fall back to original db_path
+        tracing::debug!("Using default db_path: {}", db_path.display());
+        db_path
     }
 
     pub fn db_path(&self) -> std::sync::Arc<parking_lot::RwLock<std::path::PathBuf>> {
@@ -96,9 +179,9 @@ impl MCPServer {
         None
     }
 
-    fn get_graph_engine_for_path(&self, file_path: Option<&str>) -> Result<GraphEngine, String> {
+    fn get_graph_engine_for_path(&self, file_path: Option<&String>) -> Result<GraphEngine, String> {
         let project_db_path = if let Some(fp) = file_path {
-            if let Some(leankg_path) = Self::find_leankg_for_path(fp) {
+            if let Some(leankg_path) = Self::find_leankg_for_path(fp.as_str()) {
                 tracing::debug!(
                     "Routing query for '{}' to database at {}",
                     fp,
@@ -569,13 +652,31 @@ impl MCPServer {
             }
         }
 
-        let file_path = arguments
-            .get("file")
-            .and_then(|v| v.as_str())
-            .or_else(|| arguments.get("path").and_then(|v| v.as_str()))
-            .or_else(|| arguments.get("project").and_then(|v| v.as_str()));
+        let file_path: Option<String> = if tool_name == "orchestrate" {
+            // For orchestrate, parse intent to extract target file
+            arguments
+                .get("intent")
+                .and_then(|v| v.as_str())
+                .and_then(|intent| {
+                    let parsed = self.intent_parser.parse(intent);
+                    parsed.target
+                })
+                .or_else(|| {
+                    arguments
+                        .get("file")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+        } else {
+            arguments
+                .get("file")
+                .and_then(|v| v.as_str())
+                .or_else(|| arguments.get("path").and_then(|v| v.as_str()))
+                .or_else(|| arguments.get("project").and_then(|v| v.as_str()))
+                .map(String::from)
+        };
 
-        let graph_engine = self.get_graph_engine_for_path(file_path)?;
+        let graph_engine = self.get_graph_engine_for_path(file_path.as_ref())?;
         let handler = ToolHandler::new(graph_engine, self.get_db_path());
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;

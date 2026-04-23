@@ -613,6 +613,15 @@ mod graph_batched_insert_tests {
             .insert_elements(&[create_code_element("func", "src/victim.rs", 1)])
             .unwrap();
 
+        // insert_elements spawns async cache invalidation; wait for it then repopulate
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cache
+            .set_dependencies("src/victim.rs".to_string(), vec!["dep1".to_string()])
+            .await;
+        cache
+            .set_dependencies("src/bystander.rs".to_string(), vec!["dep2".to_string()])
+            .await;
+
         // Ensure cache is initially populated
         assert!(cache.get_dependencies("src/victim.rs").await.is_some());
 
@@ -644,6 +653,12 @@ mod graph_batched_insert_tests {
         graph
             .insert_relationships(&[create_relationship("src/victim.rs", "src/dest.rs")])
             .unwrap();
+
+        // insert_relationships spawns async cache invalidation; wait for it then repopulate
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cache
+            .set_dependents("src/victim.rs".to_string(), vec!["dep1".to_string()])
+            .await;
 
         assert!(cache.get_dependents("src/victim.rs").await.is_some());
         if let Err(e) = graph.remove_relationships_by_source("src/victim.rs") {

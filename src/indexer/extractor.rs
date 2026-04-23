@@ -530,10 +530,7 @@ impl<'a> EntityExtractor<'a> {
                 line_end: node.end_position().row as u32 + 1,
                 language: self.language.to_string(),
                 parent_qualified: parent.map(String::from),
-                metadata: serde_json::json!({
-                    "signature": signature,
-                    "signature_line_end": sig_end + 1,
-                }),
+                metadata: self.build_function_metadata(node, signature, sig_end),
                 ..Default::default()
             });
 
@@ -715,6 +712,162 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+    fn build_function_metadata(
+        &self,
+        node: Node,
+        signature: String,
+        sig_end: u32,
+    ) -> serde_json::Value {
+        let mut metadata = serde_json::json!({
+            "signature": signature,
+            "signature_line_end": sig_end + 1,
+        });
+
+        // Add Kotlin-specific metadata
+        if self.language == "kotlin" {
+            if let Some(obj) = metadata.as_object_mut() {
+                obj.insert(
+                    "is_suspend".to_string(),
+                    serde_json::json!(self.has_modifier(node, "suspend")),
+                );
+                obj.insert(
+                    "is_inline".to_string(),
+                    serde_json::json!(self.has_modifier(node, "inline")),
+                );
+                obj.insert(
+                    "is_operator".to_string(),
+                    serde_json::json!(self.has_modifier(node, "operator")),
+                );
+                obj.insert(
+                    "is_infix".to_string(),
+                    serde_json::json!(self.has_modifier(node, "infix")),
+                );
+                obj.insert(
+                    "is_extension".to_string(),
+                    serde_json::json!(self.is_extension_function(node)),
+                );
+
+                if let Some(receiver) = self.get_receiver_type(node) {
+                    obj.insert("receiver_type".to_string(), serde_json::json!(receiver));
+                }
+
+                let type_params = self.get_type_parameters(node);
+                if !type_params.is_empty() {
+                    obj.insert(
+                        "type_parameters".to_string(),
+                        serde_json::json!(type_params),
+                    );
+                }
+            }
+        }
+
+        metadata
+    }
+
+    fn has_modifier(&self, node: Node, modifier: &str) -> bool {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "modifiers" {
+                let mut mod_cursor = child.walk();
+                for mod_child in child.children(&mut mod_cursor) {
+                    if mod_child.kind() == modifier {
+                        return true;
+                    }
+                    // Also check inside annotation nodes
+                    if mod_child.kind() == "annotation" || mod_child.kind() == "annotation_entry" {
+                        if let Some(name) = self.get_annotation_name(mod_child) {
+                            if name == modifier {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn is_extension_function(&self, node: Node) -> bool {
+        // Check for receiver_type field or child
+        node.child_by_field_name("receiver_type").is_some()
+    }
+
+    fn get_receiver_type(&self, node: Node) -> Option<String> {
+        if let Some(receiver) = node.child_by_field_name("receiver_type") {
+            self.extract_type_name(receiver)
+        } else {
+            None
+        }
+    }
+
+    fn extract_type_name(&self, node: Node) -> Option<String> {
+        // Try to get the full type name from a type node
+        if let Some(bytes) = self.source.get(node.byte_range()) {
+            if let Ok(s) = std::str::from_utf8(bytes) {
+                return Some(s.trim().to_string());
+            }
+        }
+
+        // Walk for type_identifier or user_type
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "type_identifier" | "user_type" | "identifier" => {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            return Some(s.to_string());
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(name) = self.extract_type_name(child) {
+                        return Some(name);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn get_type_parameters(&self, node: Node) -> Vec<String> {
+        let mut params = Vec::new();
+
+        if let Some(type_params) = node.child_by_field_name("type_parameters") {
+            let mut cursor = type_params.walk();
+            for child in type_params.children(&mut cursor) {
+                if child.kind() == "type_parameter" {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            params.push(s.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        params
+    }
+
+    fn get_annotation_name(&self, node: Node) -> Option<String> {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "identifier" | "type_identifier" | "simple_identifier" => {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            return Some(s.to_string());
+                        }
+                    }
+                }
+                "user_type" | "constructor_invocation" => {
+                    return self.get_annotation_name(child);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     fn extract_class(
         &self,
         node: Node,
@@ -762,12 +915,75 @@ impl<'a> EntityExtractor<'a> {
                 line_end: node.end_position().row as u32 + 1,
                 language: self.language.to_string(),
                 parent_qualified: parent.map(String::from),
-                metadata: serde_json::json!({}),
+                metadata: self.build_class_metadata(node),
                 ..Default::default()
             });
 
             self.extract_class_heritage(node, &qualified_name, relationships);
         }
+    }
+
+    fn build_class_metadata(&self, node: Node) -> serde_json::Value {
+        let mut metadata = serde_json::json!({});
+
+        if self.language == "kotlin" {
+            if let Some(obj) = metadata.as_object_mut() {
+                // Determine class type
+                let class_type = if self.has_modifier(node, "data") {
+                    "data"
+                } else if self.has_modifier(node, "sealed") {
+                    "sealed"
+                } else if self.has_modifier(node, "abstract") {
+                    "abstract"
+                } else if self.has_modifier(node, "open") {
+                    "open"
+                } else if node.kind() == "object_declaration" {
+                    "object"
+                } else if node.kind() == "companion_object" {
+                    "companion"
+                } else if node.kind() == "enum_declaration" {
+                    "enum"
+                } else {
+                    "class"
+                };
+
+                obj.insert("class_type".to_string(), serde_json::json!(class_type));
+                obj.insert(
+                    "is_data".to_string(),
+                    serde_json::json!(class_type == "data"),
+                );
+                obj.insert(
+                    "is_sealed".to_string(),
+                    serde_json::json!(class_type == "sealed"),
+                );
+                obj.insert(
+                    "is_abstract".to_string(),
+                    serde_json::json!(self.has_modifier(node, "abstract")),
+                );
+                obj.insert(
+                    "is_open".to_string(),
+                    serde_json::json!(self.has_modifier(node, "open")),
+                );
+                obj.insert(
+                    "is_object".to_string(),
+                    serde_json::json!(node.kind() == "object_declaration"),
+                );
+                obj.insert(
+                    "is_companion".to_string(),
+                    serde_json::json!(node.kind() == "companion_object"),
+                );
+
+                let type_params = self.get_type_parameters(node);
+                if !type_params.is_empty() {
+                    obj.insert(
+                        "type_parameters".to_string(),
+                        serde_json::json!(type_params),
+                    );
+                }
+            }
+        }
+
+        metadata
     }
 
     fn extract_class_heritage(

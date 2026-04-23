@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:key="root_preferences"
+    android:title="@string/settings_title">
+
+    <PreferenceCategory 
+        android:title="@string/category_playback"
+        android:key="playback_category">
+
+        <ListPreference
+            android:key="buffer_size"
+            android:title="@string/pref_buffer_size"
+            android:entries="@array/buffer_size_entries"
+            android:entryValues="@array/buffer_size_values"
+            android:defaultValue="3" />
+
+        <SwitchPreference
+            android:key="auto_play_next"
+            android:title="@string/pref_auto_play"
+            android:summary="@string/pref_auto_play_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreference
+            android:key="show_subtitles"
+            android:title="@string/pref_subtitles"
+            android:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory 
+        android:title="@string/category_network"
+        android:key="network_category">
+
+        <EditTextPreference
+            android:key="playlist_url"
+            android:title="@string/pref_playlist_url"
+            android:summary="@string/pref_playlist_url_summary"
+            android:inputType="textUri" />
+
+        <ListPreference
+            android:key="stream_quality"
+            android:title="@string/pref_quality"
+            android:entries="@array/quality_entries"
+            android:entryValues="@array/quality_values"
+            android:defaultValue="auto" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/category_advanced">
+
+        <Preference
+            android:key="clear_cache"
+            android:title="@string/pref_clear_cache"
+            android:summary="@string/pref_clear_cache_summary" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

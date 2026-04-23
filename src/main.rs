@@ -394,6 +394,10 @@ fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = config::ProjectConfig::default();
     config.project.name = project_name;
 
+    // Store absolute path to project root for MCP server routing
+    let current_dir = std::env::current_dir()?;
+    config.project.project_path = Some(current_dir);
+
     let detected_root = detect_project_root(".");
     config.project.root = std::path::PathBuf::from(&detected_root);
 

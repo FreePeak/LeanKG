@@ -129,10 +129,14 @@ Cluster tools: `get_clusters`, `get_cluster_context`
 
 Risk tools: `detect_changes`
 
+## Known Limitations
+
+- **Android/Kotlin/XML search** - Search for Android-related code elements (Kotlin, XML layouts, AndroidManifest.xml) may return incomplete results. The indexer finds these files but search indexing has gaps.
+
 ## Verification Status
 
 See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ---
 
-*Last updated: 2026-03-28*
+*Last updated: 2026-04-20*

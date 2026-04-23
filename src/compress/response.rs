@@ -141,6 +141,58 @@ impl ResponseCompressor {
         })
     }
 
+    pub fn compress_search_annotations(&self, response: &Value) -> Value {
+        if !self.compress_enabled {
+            return response.clone();
+        }
+
+        let annotations = response
+            .get("annotations")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.to_vec())
+            .unwrap_or_default();
+
+        let total_count = annotations.len();
+        let top: Vec<Value> = annotations
+            .iter()
+            .take(self.max_elements)
+            .cloned()
+            .collect();
+
+        serde_json::json!({
+            "count": total_count,
+            "annotations_summary": if total_count > self.max_elements {
+                format!("Showing {} of {} annotations", self.max_elements, total_count)
+            } else {
+                format!("{} annotations", total_count)
+            },
+            "annotations": top,
+            "_compression_note": "Use search_annotations with compress=true for full results"
+        })
+    }
+
+    pub fn compress_nav_graph(&self, response: &Value) -> Value {
+        if !self.compress_enabled {
+            return response.clone();
+        }
+
+        let elements = response
+            .get("elements")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.to_vec())
+            .unwrap_or_default();
+
+        let total = elements.len();
+        let top: Vec<Value> = elements.iter().take(self.max_elements).cloned().collect();
+
+        serde_json::json!({
+            "count": total,
+            "elements": top,
+            "relationships": response.get("relationships").cloned().unwrap_or(serde_json::json!([])),
+            "_compression_note": "Use get_nav_graph with full file path for complete results"
+        })
+    }
+
     pub fn compress_dependencies(&self, response: &Value) -> Value {
         if !self.compress_enabled {
             return response.clone();

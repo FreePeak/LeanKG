@@ -40,6 +40,8 @@ impl Default for MicroserviceExtractorConfig {
 pub struct ProjectSettings {
     pub name: String,
     pub root: PathBuf,
+    #[serde(skip_serializing, default)]
+    pub project_path: Option<PathBuf>,
     pub languages: Vec<String>,
 }
 
@@ -71,6 +73,7 @@ impl Default for ProjectConfig {
             project: ProjectSettings {
                 name: "my-project".to_string(),
                 root: PathBuf::from("."),
+                project_path: None,
                 languages: vec![
                     "go".to_string(),
                     "typescript".to_string(),

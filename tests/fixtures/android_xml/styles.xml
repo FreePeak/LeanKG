@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base TV Theme -->
+    <style name="Theme.TVStream" parent="Theme.Leanback">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:colorPrimary">@color/primary</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorPrimaryDark">@color/primary</item>
+
+        <!-- TV specific -->
+        <item name="browseTitleViewLayout">@layout/title_view</item>
+        <item name="browseRowsMarginStart">192dp</item>
+        <item name="browseRowsMarginEnd">48dp</item>
+        <item name="browsePaddingBottom">48dp</item>
+
+        <!-- Focus -->
+        <item name="android:defaultFocusHighlightEnabled">true</item>
+    </style>
+
+    <!-- Player Theme (fullscreen) -->
+    <style name="Theme.TVStream.Player" parent="Theme.Leanback">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowTranslucentNavigation">true</item>
+        <item name="android:windowTranslucentStatus">true</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- Search Theme -->
+    <style name="Theme.TVStream.Search" parent="Theme.Leanback.Details">
+        <item name="android:windowSharedElementEnterTransition">
+            @transition/search_enter
+        </item>
+        <item name="android:windowSharedElementReturnTransition">
+            @transition/search_return
+        </item>
+    </style>
+
+    <!-- Button Styles -->
+    <style name="Widget.TVStream.Button" parent="Widget.Leanback.Button">
+        <item name="android:background">@drawable/selector_button</item>
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:paddingHorizontal">24dp</item>
+        <item name="android:paddingVertical">12dp</item>
+        <item name="android:focusable">true</item>
+        <item name="android:focusableInTouchMode">true</item>
+    </style>
+
+    <!-- Card Styles -->
+    <style name="Widget.TVStream.Card" parent="Widget.Leanback.ImageCardView">
+        <item name="infoAreaBackground">@color/surface_variant</item>
+        <item name="cardBackground">@color/surface</item>
+    </style>
+
+    <!-- Text Styles -->
+    <style name="TextAppearance.TVStream.Headline" parent="TextAppearance.Leanback.DetailsDescriptionTitle">
+        <item name="android:textSize">34sp</item>
+        <item name="android:textColor">@color/on_surface</item>
+    </style>
+
+    <style name="TextAppearance.TVStream.Body" parent="TextAppearance.Leanback.DetailsDescriptionBody">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/on_surface_variant</item>
+        <item name="android:lineSpacingMultiplier">1.2</item>
+    </style>
+
+    <!-- List Styles -->
+    <style name="Widget.TVStream.List" parent="Widget.Leanback.List">
+        <item name="itemsVerticalGridStyle">@style/Widget.TVStream.VerticalGrid</item>
+    </style>
+
+    <style name="Widget.TVStream.VerticalGrid" parent="Widget.Leanback.VerticalGrid">
+        <item name="columnWidth">240dp</item>
+        <item name="numColumns">auto_fit</item>
+    </style>
+
+</resources>

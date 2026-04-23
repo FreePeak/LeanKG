@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Material 3 color palette -->
+
+    <!-- Primary -->
+    <color name="primary">#FF6750A4</color>
+    <color name="on_primary">#FFFFFFFF</color>
+    <color name="primary_container">#FFEADDFF</color>
+    <color name="on_primary_container">#FF21005D</color>
+
+    <!-- Secondary -->
+    <color name="secondary">#FF625B71</color>
+    <color name="on_secondary">#FFFFFFFF</color>
+    <color name="secondary_container">#FFE8DEF8</color>
+    <color name="on_secondary_container">#FF1D192B</color>
+
+    <!-- Tertiary -->
+    <color name="tertiary">#FF7D5260</color>
+    <color name="on_tertiary">#FFFFFFFF</color>
+    <color name="tertiary_container">#FFFFD8E4</color>
+    <color name="on_tertiary_container">#FF31111D</color>
+
+    <!-- Error -->
+    <color name="error">#FFB3261E</color>
+    <color name="on_error">#FFFFFFFF</color>
+    <color name="error_container">#FFF9DEDC</color>
+    <color name="on_error_container">#FF410E0B</color>
+
+    <!-- Surface -->
+    <color name="surface">#FFFFFBFE</color>
+    <color name="on_surface">#FF1C1B1F</color>
+    <color name="surface_variant">#FFE7E0EC</color>
+    <color name="on_surface_variant">#FF49454F</color>
+
+    <!-- Background -->
+    <color name="background">#FFFFFBFE</color>
+    <color name="on_background">#FF1C1B1F</color>
+
+    <!-- Outline -->
+    <color name="outline">#FF79747E</color>
+    <color name="outline_variant">#FFCAC4D0</color>
+
+    <!-- TV specific -->
+    <color name="button_focused">#FF6750A4</color>
+    <color name="button_pressed">#FF4A4458</color>
+    <color name="button_selected">#FF332D41</color>
+    <color name="button_normal">#FF49454F</color>
+
+    <color name="accent">#FFD0BCFF</color>
+    <color name="live_indicator">#FFEFB8C8</color>
+    <color name="recording_indicator">#FFF9DEDC</color>
+
+    <!-- Overlay -->
+    <color name="overlay_scrim">#99000000</color>
+    <color name="overlay_light">#66FFFFFF</color>
+
+</resources>

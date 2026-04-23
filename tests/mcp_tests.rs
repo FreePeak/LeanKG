@@ -85,6 +85,8 @@ mod tool_registry_tests {
             let has_service = props.get("service").is_some();
             let has_limit = props.get("limit").is_some();
             let has_offset = props.get("offset").is_some();
+            let has_route = props.get("route").is_some();
+            let has_destination = props.get("destination").is_some();
 
             assert!(
                 is_empty
@@ -110,7 +112,9 @@ mod tool_registry_tests {
                     || has_cluster_label
                     || has_service
                     || has_limit
-                    || has_offset,
+                    || has_offset
+                    || has_route
+                    || has_destination,
                 "Tool {} should have at least one parameter or empty properties",
                 tool.name
             );
