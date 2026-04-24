@@ -1,6 +1,8 @@
 use cozo::{Db, SqliteStorage};
 use std::path::Path;
 
+use crate::config::project::DatabaseConfig;
+
 pub type CozoDb = Db<SqliteStorage>;
 
 pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
@@ -32,6 +34,53 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     init_schema(&db)?;
 
     Ok(db)
+}
+
+/// Initialize database with configuration-based backend selection
+/// Currently only supports SQLite. PostgreSQL support will be added when cozo adds it.
+/// The config struct is prepared for future use.
+pub fn init_db_with_config(config: &DatabaseConfig) -> Result<CozoDb, Box<dyn std::error::Error>> {
+    match config.backend.as_str() {
+        "postgres" | "postgresql" => {
+            Err("PostgreSQL support requires cozo version with PG storage. Currently only SQLite is supported.".into())
+        }
+        _ => {
+            // Default to SQLite if path is provided, otherwise use default location
+            if let Some(path) = &config.path {
+                init_sqlite_at_path(path)
+            } else {
+                // Use default path in current directory
+                init_sqlite_default()
+            }
+        }
+    }
+}
+
+fn init_sqlite_at_path(path_str: &str) -> Result<CozoDb, Box<dyn std::error::Error>> {
+    let db = cozo::new_cozo_sqlite(path_str.to_string())?;
+
+    // Set memory limits for SQLite (CozoDB backend)
+    let pragmas = [
+        "PRAGMA cache_size = -64000",
+        "PRAGMA mmap_size = 268435456",
+        "PRAGMA temp_store = MEMORY",
+        "PRAGMA synchronous = NORMAL",
+        "PRAGMA journal_mode = WAL",
+        "PRAGMA wal_autocheckpoint = 100",
+    ];
+    for pragma in pragmas {
+        if let Err(e) = db.run_script(pragma, Default::default()) {
+            tracing::debug!("Pragma '{}' failed (may not be supported): {}", pragma, e);
+        }
+    }
+
+    init_schema(&db)?;
+
+    Ok(db)
+}
+
+fn init_sqlite_default() -> Result<CozoDb, Box<dyn std::error::Error>> {
+    init_sqlite_at_path(".leankg/leankg.db")
 }
 
 fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
