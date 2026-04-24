@@ -4,6 +4,7 @@ pub mod git;
 pub mod microservice;
 pub mod parser;
 pub mod process_processor;
+pub mod regex_cache;
 pub mod terraform;
 
 pub mod android_hilt;
