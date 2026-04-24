@@ -19,10 +19,11 @@
   - Removed unbounded `elements_cache` and `relationships_cache`
   - Reduced SQLite memory: cache 64MB→16MB, mmap 256MB→64MB
   - Lazy parser initialization (TODO)
-  - Cached regex patterns (TODO)
+  - Cached regex patterns (COMPLETED)
   - Connection reuse in watcher (TODO)
   - Cursor-based relationship iteration (TODO)
   - File→relationships index for dependent lookup (TODO)
+  - Removed busy-loop sleep from AsyncFileWatcher (COMPLETED)
   - Target: Reduce idle CPU from 61% to <5%
 - v1.20 - Stats API + Adaptive Loading:
   - Add `GET /api/graph/stats` endpoint returning full DB histogram (nodes_by_type, edges_by_type, nodes_by_depth, folders, services)
