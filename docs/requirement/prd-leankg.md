@@ -15,16 +15,18 @@
 - Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
 - Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
 
+<<<<<<< HEAD
 ### v1.21 (IN PROGRESS) - CPU Optimization
 - **US-21.1:** Reduce idle CPU from 61% to <5%
 - **US-21.2:** Cache TTL tuning (300s→60s, max entries 1000→100) - COMPLETED
 - **US-21.3:** Remove unbounded `elements_cache` and `relationships_cache` - COMPLETED
 - **US-21.4:** SQLite memory reduction (cache 64MB→16MB, mmap 256MB→64MB) - COMPLETED
 - **US-21.5:** Lazy parser initialization - PENDING
-- **US-21.6:** Cached regex patterns - PENDING
+- **US-21.6:** Cached regex patterns - COMPLETED
 - **US-21.7:** Connection reuse in file watcher - PENDING
 - **US-21.8:** Cursor-based relationship iteration - PENDING
 - **US-21.9:** File→relationships index for dependent lookup - PENDING
+- **US-21.10:** Remove busy-loop sleep from AsyncFileWatcher - COMPLETED
 - **Root Causes:**
   - Tree-sitter AST deep traversal (recursive on every node)
   - `all_relationships()` loads entire graph into memory
