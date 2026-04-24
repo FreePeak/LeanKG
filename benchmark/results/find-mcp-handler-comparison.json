@@ -1,54 +1,61 @@
 {
   "overhead": {
     "time_delta": 0.0,
-    "token_delta": 113,
+    "token_delta": -1125,
     "token_delta_percent": 0.0
   },
   "task": "find-mcp-handler",
   "with_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 0,
+    "cached_tokens": 37331,
     "context": {
       "files_referenced": [
         "src/mcp/server.rs",
+        "src/main.rs",
+        "src/mcp/handler.rs",
         "src/mcp/tools.rs",
         "src/mcp/watcher.rs",
+        "src/mcp/toon.rs",
         "src/mcp/tracking_db.rs",
         "src/mcp/tracker.rs",
-        "src/mcp/toon.rs",
         "src/mcp/mod.rs",
-        "src/mcp/handler.rs",
         "src/mcp/auth.rs",
         "src/auth.rs",
-        "src/main.rs"
+        "tests/mcp_tests.rs"
       ]
     },
-    "input_tokens": 44898,
+    "input_tokens": 162,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 45285
+    "total_tokens": 37786
   },
   "without_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 16440,
+    "cached_tokens": 24485,
     "context": {
       "files_referenced": [
         "src/mcp/server.rs",
         "src/mcp/tools.rs",
-        "src/mcp/watcher.rs",
-        "src/mcp/tracking_db.rs",
-        "src/mcp/tracker.rs",
-        "src/mcp/toon.rs",
-        "src/mcp/mod.rs",
+        "src/web/mod.rs",
+        "src/orchestrator/mod.rs",
+        "src/orchestrator/intent.rs",
         "src/mcp/handler.rs",
-        "src/mcp/auth.rs",
+        "src/mcp/mod.rs",
+        "src/indexer/xml_layout.rs",
+        "src/graph/nl_query.rs",
+        "src/embed/assets/index-HQiHwNOl.js",
+        "src/embed/assets/index-CyE2Athb.js",
+        "src/embed/assets/index-Bt5agME-.js",
+        "src/db/models.rs",
+        "src/api/mod.rs",
+        "src/watcher/mod.rs",
         "src/auth.rs",
         "src/main.rs"
       ]
     },
-    "input_tokens": 28462,
+    "input_tokens": 14349,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 45172
+    "total_tokens": 38911
   }
 }

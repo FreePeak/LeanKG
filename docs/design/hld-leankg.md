@@ -14,6 +14,7 @@
   - CORS headers for browser-based clients
   - Support multiple concurrent MCP clients
   - Default port 9699 (consolidated with MCP watch mode)
+  - Database configuration structure added (PostgreSQL support pending cozo update)
 - v1.21 - CPU Optimization Phase 1:
   - Reduced cache TTL from 300s to 60s, max entries from 1000 to 100
   - Removed unbounded `elements_cache` and `relationships_cache`

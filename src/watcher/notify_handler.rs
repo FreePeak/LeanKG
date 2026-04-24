@@ -88,6 +88,7 @@ pub struct AsyncFileWatcher {
 impl AsyncFileWatcher {
     pub async fn run(self) {
         loop {
+            // recv_event() blocks until an event is available - no polling needed
             if let Some(event) = self.inner.recv_event() {
                 for path in event.paths {
                     let change = FileChange {
@@ -97,7 +98,8 @@ impl AsyncFileWatcher {
                     let _ = self.tokio_tx.send(change).await;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // No sleep here - recv_event() blocks properly via the notify library
+            // which uses OS-level file watching (inotify/FSEvents/kqueue)
         }
     }
 }
