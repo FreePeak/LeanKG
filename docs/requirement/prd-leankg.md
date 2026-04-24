@@ -15,6 +15,7 @@
 - Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
 - Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
 
+<<<<<<< HEAD
 ### v1.21 (IN PROGRESS) - CPU Optimization
 - **US-21.1:** Reduce idle CPU from 61% to <5%
 - **US-21.2:** Cache TTL tuning (300s→60s, max entries 1000→100) - COMPLETED
