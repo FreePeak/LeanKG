@@ -75,9 +75,11 @@ pub struct DatabaseConfig {
     /// For PostgreSQL: connection string (e.g., "postgres://user:pass@localhost:5432/leankg")
     pub path: Option<String>,
     /// PostgreSQL connection pool size (only for postgres backend)
+    /// Reserved for future PostgreSQL support - currently unused
     #[serde(default = "default_pool_size")]
     pub pool_size: u32,
     /// Enable SSL for PostgreSQL connections
+    /// Reserved for future PostgreSQL support - currently unused
     #[serde(default)]
     pub ssl_enabled: bool,
 }

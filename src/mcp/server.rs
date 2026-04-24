@@ -1022,6 +1022,8 @@ async fn process_jsonrpc_request(
                 .map_err(|e| e.to_string())?;
 
             // Format as MCP tool result
+            // Tool results are either plain strings (as_str()) or structured JSON
+            // that needs to be wrapped in MCP response format
             let content_str = if let Some(s) = result.as_str() {
                 s.to_string()
             } else {
