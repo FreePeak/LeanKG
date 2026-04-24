@@ -474,13 +474,28 @@ HOOKEOF
     cat > "$plugin_dir/hooks/pretooluse.mjs" <<'HOOKEOF'
 #!/usr/bin/env node
 /**
- * PreToolUse hook for LeanKG - Routing guidance for Claude Code
- * Intercepts ALL tools and directs to LeanKG for code analysis.
- * Uses "*" matcher for universal coverage (context-mode pattern).
+ * LeanKG PreToolUse Hook
+ * Intercepts code search/navigation tools and routes to LeanKG MCP tools.
+ * ENFORCES LeanKG usage by denying raw tools when LeanKG is available.
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
+
+// ─── LeanKG Tools Mapping ───
+const LEANKG_TOOLS = {
+  search_code: "Search code by name/type",
+  find_function: "Locate function definitions",
+  query_file: "Find files by name/pattern",
+  get_impact_radius: "Calculate blast radius",
+  get_dependencies: "Get direct imports",
+  get_dependents: "Get files depending on target",
+  get_context: "Get AI-optimized file context",
+  get_tested_by: "Get test coverage",
+  get_call_graph: "Get function call graph",
+  get_callers: "Get who calls a function",
+};
 
 async function readStdin() {
   return new Promise((resolve) => {
@@ -490,120 +505,124 @@ async function readStdin() {
   });
 }
 
-const raw = await readStdin();
-const input = JSON.parse(raw);
-const tool = input.tool_name ?? "";
-const toolInput = input.tool_input ?? {};
-const prompt = input.prompt ?? "";
-const cwd = input.cwd ?? "";
-
-// Search intent patterns
-const SEARCH_PATTERNS = /where is|find|search for|locate|how does|how do|what calls|what uses|impact|dependencies|dependents|get_callers|get_impact|get_context|explain|understand|logic|implement|function|class|struct|module/i;
-
-// Code file extensions
-const CODE_EXTS = /\.(rs|go|ts|tsx|js|jsx|py|java|cpp|c|h|cs|rb)$/i;
-
-function hasSearchIntent(text) {
-  return SEARCH_PATTERNS.test(text);
+// ─── Check if LeanKG MCP is available ───
+function isLeanKGMCPReady() {
+  try {
+    const leankgBin = process.env.LEANKG_BINARY || "leankg";
+    const result = spawnSync(leankgBin, ["status"], {
+      timeout: 3000,
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
 }
 
-function isCodeFile(path) {
-  if (!path) return false;
-  return CODE_EXTS.test(path) || path.includes("/src/") || path.includes("/lib/") || path.includes("/pkg/");
-}
+// ─── Detect code search tools ───
+const CODE_SEARCH_TOOLS = ["Grep", "Glob", "Read", "Bash", "Search"];
+const SEARCH_COMMANDS = ["grep", "rg", "find", "fd", "fzf", "cat"];
 
-function isCodeAnalysisTool(tool, toolInput, prompt) {
-  const analysisTools = ["Grep", "Glob", "Read", "Bash", "Agent", "TaskOutput"];
-  if (!analysisTools.includes(tool)) return false;
-
-  if (toolInput?.file_path && isCodeFile(toolInput.file_path)) return true;
-  if (toolInput?.path && isCodeFile(toolInput.path)) return true;
-  if (toolInput?.pattern && isCodeFile(toolInput.pattern)) return true;
-  if (toolInput?.command && isCodeFile(toolInput.command)) return true;
-
-  if (hasSearchIntent(prompt)) return true;
-  if (CODE_EXTS.test(prompt)) return true;
+function isCodeSearchTool(tool, toolInput) {
+  if (!CODE_SEARCH_TOOLS.includes(tool)) return false;
 
   if (tool === "Bash") {
-    const cmd = toolInput.command ?? "";
-    if (/\b(grep|find|rg|ag|ack|cat|head|tail|less)\b/.test(cmd)) return true;
-    if (/\.(rs|go|ts|js|py)$/.test(cmd)) return true;
+    const cmd = (toolInput.command || "").toLowerCase();
+    const isSearch = SEARCH_COMMANDS.some(c => cmd.includes(c));
+    const isLeankgCmd = cmd.includes("leankg");
+    return isSearch && !isLeankgCmd;
   }
 
-  return false;
+  return true;
 }
 
-function getLeankgDir(projectCwd) {
-  if (!projectCwd) return null;
-  const leankgPath = join(projectCwd, ".leankg");
-  if (existsSync(leankgPath)) return leankgPath;
-  const leankgPath2 = join(projectCwd, "leankg");
-  if (existsSync(leankgPath2)) return leankgPath2;
-  const globalPath = join(homedir(), ".leankg");
-  if (existsSync(globalPath)) return globalPath;
-  return null;
-}
-
-function buildGuidance(tool, toolInput, leankgDir) {
-  const leankgPrefix = leankgDir
-    ? `LeanKG project at '${leankgDir}' is initialized.`
-    : "LeanKG is available.";
+function buildToolGuidance(toolName, toolInput) {
+  const toolsList = Object.entries(LEANKG_TOOLS)
+    .map(([name, desc]) => `  - mcp__leankg__${name}: ${desc}`)
+    .join("\n");
 
   let query = "";
-  if (tool === "Grep") {
-    query = toolInput?.pattern ?? toolInput?.expr ?? "";
-  } else if (tool === "Glob") {
-    query = toolInput?.pattern ?? "";
-  } else if (tool === "Read") {
-    query = toolInput?.file_path ?? "";
-  } else if (tool === "Bash") {
-    const cmd = toolInput?.command ?? "";
-    const match = cmd.match(/ (?:grep|find|rg|ack|ag) .*?['"]([^'"]+)['"]/);
-    query = match ? match[1] : cmd.split(" ").slice(-1)[0] || "";
+  if (toolName === "Grep") query = toolInput?.pattern || "";
+  else if (toolName === "Glob") query = toolInput?.pattern || "";
+  else if (toolName === "Read") query = toolInput?.file_path || "";
+  else if (toolName === "Bash") {
+    const cmd = toolInput?.command || "";
+    const match = cmd.match(/['"]([^'"]+)['"]/);
+    query = match ? match[1] : cmd.split(" ").pop() || "";
   }
 
-  const queryPart = query ? ` for '${query}'` : "";
+  return `LEANKG ENFORCEMENT: Raw tool ${toolName} is blocked for code search.
 
-  let directive = "";
-  if (tool === "Grep" || tool === "Glob") {
-    directive = `DIRECTIVE: Use mcp__leankg__search_code('${query}') or mcp__leankg__find_function('${query}') instead of ${tool}.`;
-  } else if (tool === "Read") {
-    directive = `DIRECTIVE: Use mcp__leankg__get_context('${query}') or mcp__leankg__query_file('${query}') instead of ${tool}.`;
-  } else if (tool === "Bash") {
-    const cmd = toolInput?.command ?? "";
-    if (/\bgrep\b/.test(cmd)) {
-      directive = `DIRECTIVE: Use mcp__leankg__search_code('${query}') instead of Grep via Bash.`;
-    } else if (/\bfind\b/.test(cmd)) {
-      directive = `DIRECTIVE: Use mcp__leankg__query_file('${query}') instead of find.`;
-    } else {
-      directive = `LeanKG: Use mcp__leankg__get_impact_radius(), mcp__leankg__get_dependencies() for dependency analysis.`;
+Use LeanKG MCP tools INSTEAD:
+${toolsList}
+
+REQUIRED WORKFLOW:
+1. mcp__leankg__mcp_status → confirm LeanKG is ready
+2. For code search: mcp__leankg__search_code("${query}")
+   or mcp__leankg__find_function("${query}")
+3. For file content: mcp__leankg__get_context("<file_path>")
+4. For tests: mcp__leankg__get_tested_by("<file_path>")
+
+DENIAL REASON: Code search must use LeanKG for accurate, fast results.
+The original tool call: ${toolName}(${JSON.stringify(toolInput)})`;
+}
+
+async function main() {
+  try {
+    const raw = await readStdin();
+    if (!raw.trim()) {
+      process.exit(0);
     }
-  } else {
-    directive = `LeanKG: Use mcp__leankg__search_code(), mcp__leankg__find_function(), mcp__leankg__get_context() for code analysis.`;
+
+    const input = JSON.parse(raw);
+    const toolName = input.tool_name || "";
+    const toolInput = input.tool_input || {};
+
+    // Check if this is a code search tool
+    if (!isCodeSearchTool(toolName, toolInput)) {
+      process.exit(0);
+    }
+
+    // Check if LeanKG is ready
+    const leanKGReady = isLeanKGMCPReady();
+
+    if (!leanKGReady) {
+      // LeanKG not ready, allow through with context
+      const guidance = `LeanKG is not ready. Initialize with: mcp__leankg__mcp_init path:"${join(homedir(), ".leankg")}"
+Then use LeanKG tools for code search.`;
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          additionalContext: guidance,
+        },
+      }) + "\n");
+      process.exit(0);
+    }
+
+    // LeanKG ready - DENY raw tool and require LeanKG usage
+    const guidance = buildToolGuidance(toolName, toolInput);
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: guidance,
+      },
+    }) + "\n");
+    process.exit(0);
+  } catch {
+    // On error, allow tool through
+    process.exit(0);
   }
-
-  return `${directive} ${leankgPrefix}`;
 }
 
-if (isCodeAnalysisTool(tool, toolInput, prompt)) {
-  const leankgDir = getLeankgDir(cwd);
-  const guidance = buildGuidance(tool, toolInput, leankgDir);
-
-  const response = {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      guidance: guidance,
-    },
-  };
-  process.stdout.write(JSON.stringify(response) + "\n");
-}
+main();
 HOOKEOF
 
     cat > "$plugin_dir/hooks/posttooluse.mjs" <<'HOOKEOF'
 #!/usr/bin/env node
 /**
- * PostToolUse hook for LeanKG - Session continuity.
- * Captures LeanKG MCP tool calls for session continuity.
+ * PostToolUse hook for LeanKG
+ * Tracks LeanKG MCP tool usage and logs for analytics.
  */
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -630,7 +649,7 @@ const LEANKG_TOOLS = [
 ];
 
 const SESSION_LOG_DIR = join(homedir(), ".leankg", "sessions");
-const SESSION_LOG_FILE = join(SESSION_LOG_DIR, "posttooluse.log");
+const SESSION_LOG_FILE = join(SESSION_LOG_DIR, "tool-usage.log");
 
 async function readStdin() {
   return new Promise((resolve) => {
@@ -640,29 +659,37 @@ async function readStdin() {
   });
 }
 
-try {
-  const raw = await readStdin();
-  const input = JSON.parse(raw);
-  const toolName = input.tool_name ?? "";
-  const toolInput = input.tool_input ?? {};
-
-  const isLeankgTool = LEANKG_TOOLS.some(t => toolName.includes(t));
-
-  if (isLeankgTool) {
-    if (!existsSync(SESSION_LOG_DIR)) {
-      mkdirSync(SESSION_LOG_DIR, { recursive: true });
+async function main() {
+  try {
+    const raw = await readStdin();
+    if (!raw.trim()) {
+      process.exit(0);
     }
-    const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
-    const timestamp = new Date().toISOString();
-    const logEntry = JSON.stringify({
-      timestamp,
-      sessionId,
-      tool: toolName,
-      input: toolInput,
-    }) + "\n";
-    appendFileSync(SESSION_LOG_FILE, logEntry);
-  }
-} catch { /* silent */ }
+
+    const input = JSON.parse(raw);
+    const toolName = input.tool_name ?? "";
+    const toolInput = input.tool_input ?? {};
+
+    const isLeankgTool = LEANKG_TOOLS.some(t => toolName.includes(t));
+
+    if (isLeankgTool) {
+      if (!existsSync(SESSION_LOG_DIR)) {
+        mkdirSync(SESSION_LOG_DIR, { recursive: true });
+      }
+      const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
+      const timestamp = new Date().toISOString();
+      const logEntry = JSON.stringify({
+        timestamp,
+        sessionId,
+        tool: toolName,
+        input: toolInput,
+      }) + "\n";
+      appendFileSync(SESSION_LOG_FILE, logEntry);
+    }
+  } catch { /* silent */ }
+}
+
+main();
 HOOKEOF
 
     chmod +x "$plugin_dir/hooks/sessionstart.mjs" "$plugin_dir/hooks/pretooluse.mjs" "$plugin_dir/hooks/posttooluse.mjs"
