@@ -15,6 +15,46 @@
 - Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
 - Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
 
+### v1.21 (IN PROGRESS) - CPU Optimization
+- **US-21.1:** Reduce idle CPU from 61% to <5%
+- **US-21.2:** Cache TTL tuning (300s→60s, max entries 1000→100) - COMPLETED
+- **US-21.3:** Remove unbounded `elements_cache` and `relationships_cache` - COMPLETED
+- **US-21.4:** SQLite memory reduction (cache 64MB→16MB, mmap 256MB→64MB) - COMPLETED
+- **US-21.5:** Lazy parser initialization - PENDING
+- **US-21.6:** Cached regex patterns - PENDING
+- **US-21.7:** Connection reuse in file watcher - PENDING
+- **US-21.8:** Cursor-based relationship iteration - PENDING
+- **US-21.9:** File→relationships index for dependent lookup - PENDING
+- **Root Causes:**
+  - Tree-sitter AST deep traversal (recursive on every node)
+  - `all_relationships()` loads entire graph into memory
+  - Incremental index O(n) dependent finding
+  - Regex recreation per-file
+  - All 12 parsers initialized even when only 1 needed
+  - File watcher reinitializes DB + parsers on every file change
+- **Analysis Document:** `docs/design/cpu-optimization.md`
+- **Worktree:** `.worktrees/feat/cpu-optimization`
+
+### v1.22 (IN PROGRESS) - MCP HTTP Transport (Remote MCP Server)
+- **US-22.1:** Add `mcp-http` CLI command for HTTP-based MCP server
+- **US-22.2:** Implement Streamable HTTP transport per MCP spec (HTTP POST + SSE)
+- **US-22.3:** Support multiple concurrent MCP clients (vs stdio's single client)
+- **US-22.4:** Bearer token authentication for HTTP endpoint
+- **US-22.5:** CORS headers for browser-based MCP clients
+- **Worktree:** `.worktrees/feat/mcp-http`
+
+**MCP Transport Modes:**
+| Mode | Transport | Use Case | Max Clients |
+|------|-----------|----------|-------------|
+| `mcp-stdio` | stdin/stdout | Local AI tools (Cursor, Claude Code) | 1 |
+| `mcp-http` | HTTP + SSE | Remote access, browser clients | Many |
+
+### v1.20 (PENDING) - MCP Server Watch Mode
+- **US-20.1:** Add `--watch` flag to MCP server for auto-indexing on file changes
+- **US-20.2:** Port 8081→9699 consolidation
+- **US-20.3:** PostToolUse audit hook for non-LeanKG tool warnings
+- **Worktree:** `.worktrees/feat/mcp-server-watch`
+
 ### v1.16 (COMPLETED)
 - AB Testing & Validation: OpenCode token parsing, context correctness validation, data store tests, summary report
 

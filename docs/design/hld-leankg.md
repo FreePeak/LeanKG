@@ -1,10 +1,29 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.20  
-**Ngay:** 2026-04-15  
-**Dua tren:** PRD v1.7  
-**Trang thai:** Ban nhap  
-**Changelog:** 
+**Phien ban:** 1.22
+**Ngay:** 2026-04-24
+**Dua tren:** PRD v1.22
+**Trang thai:** Ban nhap
+**Changelog:**
+- v1.22 - MCP HTTP Transport (Remote MCP Server):
+  - Add `mcp-http` CLI command for HTTP-based MCP server
+  - Implement Streamable HTTP transport per MCP spec
+  - HTTP POST endpoint for JSON-RPC requests
+  - Server-Sent Events (SSE) for server-to-client streaming responses
+  - Bearer token authentication
+  - CORS headers for browser-based clients
+  - Support multiple concurrent MCP clients
+  - Default port 9699 (consolidated with MCP watch mode)
+- v1.21 - CPU Optimization Phase 1:
+  - Reduced cache TTL from 300s to 60s, max entries from 1000 to 100
+  - Removed unbounded `elements_cache` and `relationships_cache`
+  - Reduced SQLite memory: cache 64MB→16MB, mmap 256MB→64MB
+  - Lazy parser initialization (TODO)
+  - Cached regex patterns (TODO)
+  - Connection reuse in watcher (TODO)
+  - Cursor-based relationship iteration (TODO)
+  - File→relationships index for dependent lookup (TODO)
+  - Target: Reduce idle CPU from 61% to <5%
 - v1.20 - Stats API + Adaptive Loading:
   - Add `GET /api/graph/stats` endpoint returning full DB histogram (nodes_by_type, edges_by_type, nodes_by_depth, folders, services)
   - Add adaptive loading strategy: small DB (< 2000 nodes) loads all, large DB loads by depth layers, multi-repo loads per-service
@@ -129,46 +148,62 @@ graph TB
             DB[(CozoDB<br/>Database)]
             KG --- DB
         end
-        
-        AI1[Cursor]
-        AI2[OpenCode]
-        AI3[Claude Code]
-        AI4[Other AI Tools]
-        
+
+        subgraph "Local AI Tools (stdio)"
+            AI1[Cursor]
+            AI2[Claude Code]
+            AI3[OpenCode]
+        end
+
+        subgraph "Remote AI Tools (HTTP)"
+            AI4[Remote Client]
+            AI5[Browser-based IDE]
+        end
+
         subgraph "CLI Users"
             Dev[Developer]
             CI[CI/CD Pipeline]
         end
-        
+
         subgraph "Web UI Users"
             Browser[Browser]
         end
     end
-    
-    AI1 -->|MCP Protocol| KG
-    AI2 -->|MCP Protocol| KG
-    AI3 -->|MCP Protocol| KG
-    AI4 -->|MCP Protocol| KG
-    
+
+    AI1 -->|stdio| KG
+    AI2 -->|stdio| KG
+    AI3 -->|stdio| KG
+
+    AI4 -->|HTTP+SSE| KG
+    AI5 -->|HTTP+SSE| KG
+
     Dev -->|CLI Commands| KG
     CI -->|CLI Commands| KG
-    
+
     Browser -->|HTTP| KG
-    
+
     subgraph "External Services (Optional)"
         LLM[Cloud LLM API]
     end
-    
+
     KG -.->|Optional API Calls| LLM
 ```
 
 **Mô tả:**
 - **LeanKG System:** Hệ thống chính chạy trên máy người dùng
-- **AI Tools:** Cursor, OpenCode, Claude Code và các AI coding tools khác tương tác qua MCP protocol
+- **Local AI Tools (stdio):** Cursor, Claude Code, OpenCode kết nối qua stdio transport (1 client tại một thời điểm)
+- **Remote AI Tools (HTTP):** Remote clients và browser-based IDEs kết nối qua HTTP + SSE transport (nhiều clients)
 - **Developer:** Sử dụng CLI để index, query, và generate documentation
 - **CI/CD Pipeline:** Tự động hóa indexing trong quá trình build
 - **Browser:** Truy cập lightweight web UI
 - **Cloud LLM API:** Optional - cho future semantic search features
+
+**MCP Transport Modes:**
+
+| Mode | CLI Command | Transport | Port | Max Clients | Use Case |
+|------|-------------|-----------|------|-------------|----------|
+| Stdio | `leankg mcp-stdio` | stdin/stdout | N/A | 1 | Local AI tools (Cursor, Claude Code) |
+| HTTP | `leankg mcp-http` | HTTP + SSE | 9699 | Many | Remote access, browser clients |
 
 ### 2.2 Container Diagram (C4-2)
 
@@ -925,6 +960,8 @@ erDiagram
 | `leankg install` | Auto-generate MCP config for AI tools |
 | `leankg export` | Export graph as self-contained HTML |
 | `leankg quality` | Show code quality metrics (large functions) |
+| `leankg mcp-stdio [--watch]` | Start MCP server with stdio transport (local AI tools) |
+| `leankg mcp-http [--port N] [--auth TOKEN] [--watch]` | Start MCP server with HTTP transport (remote clients) |
 | `leankg pipeline [file]` | Show pipelines affected by a file change (Phase 2) |
 | `leankg pipeline --list` | List all indexed pipelines and their stages (Phase 2) |
 | `leankg docs --tree` | Show documentation directory structure (Phase 2) |
@@ -1000,6 +1037,69 @@ External Agent writes to CozoDB → TrackingDb sets dirty flag → MCP tool call
 - File polling: wastes CPU, ~5s latency from polling interval
 - DB triggers: CozoSQLite doesn't support triggers reliably
 - Write Tracker: zero-latency detection at write time, deferred reindex only when needed
+
+### 5.2.1 MCP HTTP Transport (Remote MCP Server)
+
+The MCP HTTP transport implements the [MCP Streamable HTTP transport specification](https://modelcontextprotocol.io/docs/learn/architecture), enabling LeanKG to serve multiple concurrent MCP clients over HTTP with Server-Sent Events (SSE) for streaming responses.
+
+#### Transport Architecture
+
+| Component | Description |
+|----------|-------------|
+| **HTTP Endpoint** | `POST /mcp` - Receives JSON-RPC requests |
+| **SSE Endpoint** | `GET /mcp/stream` - Streams server-to-client events |
+| **CORS Headers** | Enabled for browser-based clients |
+| **Auth** | Bearer token authentication |
+
+#### Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/mcp` | POST | JSON-RPC request endpoint |
+| `/mcp/stream` | GET | SSE stream for server-to-client messages |
+| `/health` | GET | Health check (no auth required) |
+
+#### Request Flow
+
+```
+Client → POST /mcp (JSON-RPC request)
+       ← 200 OK + JSON-RPC response (or start SSE stream)
+
+Client → GET /mcp/stream (SSE connection)
+       ← SSE stream (server-initiated messages, tool results)
+```
+
+#### CLI Command
+
+```bash
+# Start HTTP MCP server on default port 9699
+leankg mcp-http
+
+# Start with custom port and auth token
+leankg mcp-http --port 8080 --auth my-secret-token
+
+# Start with watch mode (auto-reindex on file changes)
+leankg mcp-http --watch
+```
+
+#### Configuration (leankg.yaml)
+
+```yaml
+mcp:
+  http:
+    enabled: true
+    port: 9699
+    auth_token: "your-bearer-token"  # Optional
+    cors_enabled: true
+```
+
+#### Multi-Client Session Management
+
+Each HTTP connection gets its own session state:
+- Session ID generated per connection
+- Client capabilities stored in session
+- Tool handlers receive session context
+- Multiple clients can connect simultaneously
 
 ### 5.3 Web UI Routes
 
