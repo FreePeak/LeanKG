@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::RwLock as TokioRwLock;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -992,14 +993,8 @@ mod json_rpc_code {
     pub const INTERNAL_ERROR: i32 = -32603;
 }
 
-/// SSE event types for MCP protocol
-#[derive(Debug, Clone, Copy)]
-enum SseEventType {
-    Message,
-    Endpoint,
-}
-
-/// Extract bearer token from Authorization header
+/// Extract bearer token from Authorization header using constant-time comparison
+/// to prevent timing attacks on bearer tokens.
 fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bool {
     if token.is_none() {
         return true; // No auth required
@@ -1008,7 +1003,8 @@ fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bo
 
     if let Some(auth) = auth_header {
         if let Some(stripped) = auth.strip_prefix("Bearer ") {
-            return stripped == token.as_str();
+            // Use constant-time comparison to prevent timing attacks
+            return stripped.as_bytes().ct_eq(token.as_bytes()).into();
         }
     }
     false
