@@ -5,7 +5,7 @@
 # LeanKG
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![crates.io](https://img.shields.io/badge/crates.io-latest-orange)](https://crates.io/crates/leankg)
 [![SafeSkill 77/100](https://img.shields.io/badge/SafeSkill-77%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/freepeak-leankg)
 
@@ -80,6 +80,22 @@ leankg impact src/main.rs --depth 3       # Calculate blast radius
 leankg status                             # Check index status
 leankg metrics                            # View token savings
 leankg web                                # Start Web UI at http://localhost:8080
+leankg export --format mermaid            # Export graph as Mermaid, DOT, or JSON
+leankg quality --min-lines 50             # Find oversized functions
+leankg detect-clusters                    # Identify functional code communities
+leankg trace --all                        # Show feature-to-code traceability
+leankg annotate src/main.rs::main -d "Entry point"  # Annotate code elements
+
+# Run shell commands with RTK compression
+leankg run -- cargo test -- --compress
+
+# REST API server with auth
+leankg api-serve --port 8081 --auth
+leankg api-key create --name my-key
+
+# Process management
+leankg proc status                        # Show running LeanKG/Vite processes
+leankg proc kill                          # Kill all LeanKG/Vite processes
 
 # Obsidian vault sync
 leankg obsidian init                      # Initialize Obsidian vault structure
@@ -91,6 +107,11 @@ leankg obsidian status                    # Show vault status
 # Microservice call graph (via Web UI)
 leankg web                                # Start Web UI at http://localhost:8080
                                           # Then visit http://localhost:8080/services
+
+# Multi-repo registry
+leankg register my-project                # Register a repository
+leankg list                               # List all registered repos
+leankg setup                              # Configure MCP for all repos + install Claude hooks
 ```
 
 See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
@@ -148,10 +169,18 @@ graph LR
 - **Auto-Trigger** -- Session hooks inject LeanKG context into every AI tool session
 - **Token Optimized** -- Targeted subgraph retrieval vs full file scanning
 - **Impact Radius** -- Compute blast radius before making changes
+- **Pre-Commit Risk Analysis** -- `detect_changes` classifies risk as critical/high/medium/low
 - **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, `TESTED_BY` edges
-- **MCP Server** -- Expose graph via MCP protocol for AI tool integration
-- **Multi-Language** -- Index Go, TypeScript, Python, Rust, Java, Kotlin with tree-sitter
-- **Android** -- Extract XML layouts, resources, and manifest relationships
+- **MCP Server** -- Expose graph via MCP protocol for AI tool integration (40 tools)
+- **Orchestration** -- Smart context routing with caching via natural language intent
+- **Community Detection** -- Auto-detect functional clusters in your codebase
+- **Multi-Language** -- Index Go, TypeScript, Python, Rust, Java, Kotlin, Ruby, PHP, Perl, R, Elixir, Bash with tree-sitter
+- **Android** -- Extract XML layouts, resources, manifest relationships, and navigation graphs
+- **Service Topology** -- Microservice call graph visualization
+- **Annotation Search** -- Search code by `@Entity`, `@HiltViewModel`, and other annotations
+- **Graph Export** -- Export as JSON, DOT, or Mermaid formats
+- **REST API** -- Full REST API with auth and API key management
+- **RTK Compression** -- Run shell commands with token-saving compression
 
 See [docs/architecture.md](docs/architecture.md) for system design and data model details.
 
@@ -277,7 +306,7 @@ See [tests/benchmark/results/clean-benchmark-2026-04-21.md](tests/benchmark/resu
 
 ## Requirements
 
-- Rust 1.70+
+- Rust 1.75+
 - macOS or Linux
 
 ---
