@@ -1389,6 +1389,7 @@ dependencies = [
  "glob",
  "ignore",
  "notify",
+ "once_cell",
  "parking_lot",
  "pulldown-cmark",
  "rayon",
