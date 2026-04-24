@@ -42,10 +42,12 @@ cargo run -- serve
 
 ## Key Commands
 
+**IMPORTANT: Always use `--release` flag for builds. Debug builds are disabled.**
+
 ```bash
-cargo build      # Build project
-cargo test       # Run tests
-cargo run -- <cmd>  # Run CLI commands
+cargo build --release  # Build project (release)
+cargo test             # Run tests
+cargo run --release -- <cmd>  # Run CLI commands
 ```
 
 ## Important Files
@@ -95,4 +97,4 @@ Before ANY codebase search/navigation, use LeanKG tools:
 
 ---
 
-*Last updated: 2026-03-26*
+*Last updated: 2026-04-24*
