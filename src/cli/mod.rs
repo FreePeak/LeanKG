@@ -58,6 +58,18 @@ pub enum CLICommand {
         #[arg(long)]
         watch: bool,
     },
+    /// Start MCP server with HTTP transport (for remote clients)
+    McpHttp {
+        /// Port to listen on (default: 9699)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Bearer token for authentication (optional)
+        #[arg(long)]
+        auth: Option<String>,
+        /// Enable auto-indexing with file watcher
+        #[arg(long)]
+        watch: bool,
+    },
     /// Calculate impact radius
     Impact {
         /// File to analyze

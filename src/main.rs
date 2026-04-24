@@ -137,6 +137,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("MCP stdio server error: {}", e);
             }
         }
+        cli::CLICommand::McpHttp { port, auth, watch } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            let port = port.unwrap_or_else(|| {
+                std::env::var("MCP_HTTP_PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(9699)
+            });
+            let auth_token = auth.or_else(|| std::env::var("MCP_HTTP_AUTH").ok());
+
+            tokio::fs::create_dir_all(&db_path).await.ok();
+
+            let mcp_server = if watch {
+                mcp::MCPServer::new_with_watch(db_path.clone(), project_path.clone())
+            } else {
+                mcp::MCPServer::new(db_path.clone())
+            };
+
+            println!("╔═══════════════════════════════════════════════════════════════╗");
+            println!("║  LeanKG MCP HTTP Server (Remote Mode)                      ║");
+            println!("╚═══════════════════════════════════════════════════════════════╝");
+            println!();
+            println!("🚀 Starting MCP HTTP server on http://localhost:{}", port);
+            if auth_token.is_some() {
+                println!("🔒 Authentication: enabled");
+            } else {
+                println!("🔓 Authentication: disabled (not recommended for production)");
+            }
+            println!();
+
+            if let Err(e) = mcp_server.serve_http(port, auth_token).await {
+                eprintln!("MCP HTTP server error: {}", e);
+            }
+        }
         cli::CLICommand::Impact { file, depth } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
