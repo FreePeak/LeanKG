@@ -84,7 +84,7 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "File name or pattern to search"},
-                        "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module"], "description": "Optional filter by element type"},
+                        "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module", "activity", "fragment", "service", "receiver", "provider", "hilt_module", "room_entity", "room_dao", "room_database", "nav_destination", "android_widget", "annotation"], "description": "Optional filter by element type"},
                         "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": []

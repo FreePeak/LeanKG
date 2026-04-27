@@ -1,5 +1,15 @@
 use crate::db::models::{CodeElement, Relationship};
-use regex;
+use regex::Regex;
+use std::sync::OnceLock;
+
+static COMPOSABLE_RE: OnceLock<Regex> = OnceLock::new();
+static NAV_RE: OnceLock<Regex> = OnceLock::new();
+#[allow(dead_code)]
+static ARG_RE: OnceLock<Regex> = OnceLock::new();
+#[allow(dead_code)]
+static NAVIGATE_RE: OnceLock<Regex> = OnceLock::new();
+#[allow(clippy::regex_creation_in_loops)]
+static ARG_SCOPE_RE: OnceLock<Regex> = OnceLock::new();
 
 pub struct JetpackNavExtractor<'a> {
     source: &'a [u8],
@@ -231,8 +241,12 @@ impl<'a> JetpackNavExtractor<'a> {
             element_type: "nav_graph".to_string(),
             name: graph_id.clone(),
             file_path: self.file_path.to_string(),
-            line_start: 0,
-            line_end: 0,
+            line_start: 1,
+            line_end: content
+                .lines()
+                .last()
+                .map(|l| l.len() as u32 + 1)
+                .unwrap_or(1),
             language: "kotlin".to_string(),
             metadata: serde_json::json!({
                 "graph_id": graph_id,
@@ -241,24 +255,80 @@ impl<'a> JetpackNavExtractor<'a> {
             ..Default::default()
         });
 
-        // Extract composable() route definitions: composable(route = "...")
-        // Regex: composable\s*\(\s*route\s*=\s*"([^"]+)"
-        let composable_re = regex::Regex::new(r#"composable\s*\(\s*route\s*=\s*"([^"]+)"#)
-            .unwrap_or_else(|_| regex::Regex::new(r"^\x00$").unwrap());
+        // First pass: identify all composable/navigation blocks with their line ranges and arguments
+        #[derive(Clone)]
+        struct BlockInfo {
+            dest_qn: String,
+            #[allow(dead_code)]
+            dest_type: &'static str,
+            start_line: u32,
+            end_line: u32,
+            #[allow(dead_code)]
+            args: Vec<(String, u32)>,
+        }
 
+        let mut blocks: Vec<BlockInfo> = Vec::new();
+
+        let composable_re = COMPOSABLE_RE.get_or_init(|| {
+            Regex::new(r#"composable\s*\(\s*route\s*=\s*"([^"]+)"#).unwrap()
+        });
         for cap in composable_re.captures_iter(content) {
             if let Some(route_match) = cap.get(1) {
                 let route = route_match.as_str();
                 let dest_id = route.to_string();
                 let dest_qn = format!("{}::{}", graph_qn, dest_id);
 
+                // Calculate line number from byte offset
+                let start_byte = cap.get(0).unwrap().start();
+                let start_line = content[..start_byte].lines().count() as u32;
+
+                // Find the closing brace of this composable block
+                let after_match = &content[start_byte..];
+                let mut depth = 1i32;
+                let mut end_pos = start_byte;
+                for (i, ch) in after_match.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_pos = start_byte + i + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let end_line = content[..end_pos].lines().count() as u32;
+
+                // Extract arguments within this block
+                let block_content = &content[start_byte..end_pos];
+                let arg_re = regex::Regex::new(r#"argument\s*\(\s*name\s*=\s*"([^"]+)"#).unwrap();
+                let mut args: Vec<(String, u32)> = Vec::new();
+                for arg_cap in arg_re.captures_iter(block_content) {
+                    if let Some(arg_match) = arg_cap.get(1) {
+                        // Calculate line relative to block start
+                        let arg_byte_offset = arg_cap.get(0).unwrap().start();
+                        let rel_line = block_content[..arg_byte_offset].lines().count() as u32;
+                        args.push((arg_match.as_str().to_string(), start_line + rel_line));
+                    }
+                }
+
+                blocks.push(BlockInfo {
+                    dest_qn: dest_qn.clone(),
+                    dest_type: "composable",
+                    start_line,
+                    end_line,
+                    args,
+                });
+
                 elements.push(CodeElement {
                     qualified_name: dest_qn.clone(),
                     element_type: "nav_destination".to_string(),
                     name: dest_id.clone(),
                     file_path: self.file_path.to_string(),
-                    line_start: 0,
-                    line_end: 0,
+                    line_start: start_line,
+                    line_end: end_line,
                     language: "kotlin".to_string(),
                     parent_qualified: Some(graph_qn.clone()),
                     metadata: serde_json::json!({
@@ -268,14 +338,16 @@ impl<'a> JetpackNavExtractor<'a> {
                     }),
                     ..Default::default()
                 });
+
             }
         }
 
-        // Extract navigation() blocks: navigation(route = "...", startDestination = "...")
-        let nav_re = regex::Regex::new(
-            r#"navigation\s*\(\s*route\s*=\s*"([^"]+)"\s*,\s*startDestination\s*=\s*"([^"]+)""#,
-        )
-        .unwrap_or_else(|_| regex::Regex::new(r"^\x00$").unwrap());
+        let nav_re = NAV_RE.get_or_init(|| {
+            Regex::new(
+                r#"navigation\s*\(\s*route\s*=\s*"([^"]+)"\s*,\s*startDestination\s*=\s*"([^"]+)""#,
+            )
+            .unwrap()
+        });
 
         for cap in nav_re.captures_iter(content) {
             if let (Some(route_match), Some(start_match)) = (cap.get(1), cap.get(2)) {
@@ -284,13 +356,55 @@ impl<'a> JetpackNavExtractor<'a> {
                 let dest_id = route.to_string();
                 let dest_qn = format!("{}::{}", graph_qn, dest_id);
 
+                let start_byte = cap.get(0).unwrap().start();
+                let start_line = content[..start_byte].lines().count() as u32;
+
+                // Find the closing brace of this navigation block
+                let after_match = &content[start_byte..];
+                let mut depth = 1i32;
+                let mut end_pos = start_byte;
+                for (i, ch) in after_match.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_pos = start_byte + i + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let end_line = content[..end_pos].lines().count() as u32;
+
+                // Extract arguments within this block
+                let block_content = &content[start_byte..end_pos];
+                let arg_re = regex::Regex::new(r#"argument\s*\(\s*name\s*=\s*"([^"]+)"#).unwrap();
+                let mut args: Vec<(String, u32)> = Vec::new();
+                for arg_cap in arg_re.captures_iter(block_content) {
+                    if let Some(arg_match) = arg_cap.get(1) {
+                        let arg_byte_offset = arg_cap.get(0).unwrap().start();
+                        let rel_line = block_content[..arg_byte_offset].lines().count() as u32;
+                        args.push((arg_match.as_str().to_string(), start_line + rel_line));
+                    }
+                }
+
+                blocks.push(BlockInfo {
+                    dest_qn: dest_qn.clone(),
+                    dest_type: "navigation",
+                    start_line,
+                    end_line,
+                    args,
+                });
+
                 elements.push(CodeElement {
                     qualified_name: dest_qn.clone(),
                     element_type: "nav_destination".to_string(),
                     name: dest_id.clone(),
                     file_path: self.file_path.to_string(),
-                    line_start: 0,
-                    line_end: 0,
+                    line_start: start_line,
+                    line_end: end_line,
                     language: "kotlin".to_string(),
                     parent_qualified: Some(graph_qn.clone()),
                     metadata: serde_json::json!({
@@ -301,36 +415,33 @@ impl<'a> JetpackNavExtractor<'a> {
                     }),
                     ..Default::default()
                 });
+
             }
         }
 
-        // Extract argument definitions: argument(name = "...")
-        // Regex: argument\s*\(\s*name\s*=\s*"([^"]+)"
-        let arg_re = regex::Regex::new(r#"argument\s*\(\s*name\s*=\s*"([^"]+)"#)
-            .unwrap_or_else(|_| regex::Regex::new(r"^\x00$").unwrap());
-
-        for cap in arg_re.captures_iter(content) {
+        // Second pass: assign arguments to their correct blocks by line number proximity
+        let arg_re_global = regex::Regex::new(r#"argument\s*\(\s*name\s*=\s*"([^"]+)"#).unwrap();
+        for cap in arg_re_global.captures_iter(content) {
             if let Some(arg_match) = cap.get(1) {
-                let arg_name = arg_match.as_str();
-                // For simplicity, assume argument belongs to the first composable found
-                if let Some(first_dest_qn) = elements
-                    .iter()
-                    .find(|e| e.element_type == "nav_destination")
-                    .map(|e| e.qualified_name.clone())
-                {
-                    let arg_qn = format!("{}::arg::{}", first_dest_qn, arg_name);
+                let arg_name = arg_match.as_str().to_string();
+                let arg_line = content[..cap.get(0).unwrap().start()].lines().count() as u32;
+
+                // Find the closest block that ends after this argument line
+                let best_block = blocks.iter().rev().find(|b| b.end_line > arg_line);
+                if let Some(block) = best_block {
+                    let arg_qn = format!("{}::arg::{}", block.dest_qn, arg_name);
                     let arg_type = "string".to_string();
                     let nullable = false;
 
                     elements.push(CodeElement {
                         qualified_name: arg_qn.clone(),
                         element_type: "nav_argument".to_string(),
-                        name: arg_name.to_string(),
+                        name: arg_name.clone(),
                         file_path: self.file_path.to_string(),
-                        line_start: 0,
-                        line_end: 0,
+                        line_start: arg_line,
+                        line_end: arg_line,
                         language: "kotlin".to_string(),
-                        parent_qualified: Some(first_dest_qn.clone()),
+                        parent_qualified: Some(block.dest_qn.clone()),
                         metadata: serde_json::json!({
                             "arg_type": arg_type,
                             "nullable": nullable,
@@ -340,7 +451,7 @@ impl<'a> JetpackNavExtractor<'a> {
 
                     relationships.push(Relationship {
                         id: None,
-                        source_qualified: first_dest_qn.clone(),
+                        source_qualified: block.dest_qn.clone(),
                         target_qualified: arg_qn,
                         rel_type: "requires_arg".to_string(),
                         confidence: 0.85,
@@ -352,23 +463,38 @@ impl<'a> JetpackNavExtractor<'a> {
             }
         }
 
-        // Extract navigate() calls to infer navigation actions
-        // Regex: navigate\s*\(\s*"([^"]+)"
-        let navigate_re = regex::Regex::new(r#"navigate\s*\(\s*"([^"]+)""#)
-            .unwrap_or_else(|_| regex::Regex::new(r"^\x00$").unwrap());
+        // Extract navigate() calls to infer navigation actions with line numbers
+        let navigate_re = regex::Regex::new(r#"navigate\s*\(\s*"([^"]+)""#).unwrap();
 
         let mut seen_nav = std::collections::HashSet::new();
         for cap in navigate_re.captures_iter(content) {
             if let Some(dest_match) = cap.get(1) {
                 let target_route = dest_match.as_str();
                 let key = target_route.to_string();
-                if !seen_nav.contains(&key) && !elements.is_empty() {
+                if !seen_nav.contains(&key) && !blocks.is_empty() {
                     seen_nav.insert(key);
-                    // Create implicit action from first destination to the target
-                    if let Some(source_dest) = elements
-                        .iter()
-                        .find(|e| e.element_type == "nav_destination")
-                    {
+
+                    // Find the block closest before this navigate call
+                    let nav_line = content[..cap.get(0).unwrap().start()].lines().count() as u32;
+                    let source_block = blocks.iter().rev().find(|b| b.end_line < nav_line);
+
+                    if let Some(source) = source_block {
+                        let target_qn = format!("{}::{}", graph_qn, target_route);
+                        relationships.push(Relationship {
+                            id: None,
+                            source_qualified: source.dest_qn.clone(),
+                            target_qualified: target_qn,
+                            rel_type: "nav_action".to_string(),
+                            confidence: 0.75,
+                            metadata: serde_json::json!({
+                                "action_id": None::<String>,
+                                "source_line": source.start_line,
+                                "target_route": target_route,
+                            }),
+                        });
+                    } else if !elements.is_empty() {
+                        // Fallback: use first destination as source
+                        let source_dest = &elements[0];
                         let target_qn = format!("{}::{}", graph_qn, target_route);
                         relationships.push(Relationship {
                             id: None,
@@ -378,6 +504,7 @@ impl<'a> JetpackNavExtractor<'a> {
                             confidence: 0.75,
                             metadata: serde_json::json!({
                                 "action_id": None::<String>,
+                                "target_route": target_route,
                             }),
                         });
                     }

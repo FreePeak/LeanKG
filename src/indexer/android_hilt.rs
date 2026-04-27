@@ -101,10 +101,8 @@ impl<'a> AndroidHiltExtractor<'a> {
             .collect();
 
         let provides_re = PROVIDES_RE.get_or_init(|| {
-            Regex::new(
-                r"@Provides\s*\n?(?:@Singleton\s*\n?)?\s*fun\s+(\w+)\s*\([^)]*\)\s*:\s*(\w+)",
-            )
-            .unwrap()
+            Regex::new(r"@Provides\s*\n?(?:@Singleton\s*\n?)?\s*fun\s+(\w+)\s*\([^)]*\)\s*:\s*([^={\n]+)")
+                .unwrap()
         });
 
         for cap in provides_re.captures_iter(content) {
@@ -117,6 +115,15 @@ impl<'a> AndroidHiltExtractor<'a> {
 
                 let qualified_name = format!("{}::HiltProvider:{}", self.file_path, provider_name);
 
+                let clean_type = return_type_name
+                    .trim()
+                    .trim_end_matches('{')
+                    .trim_end()
+                    .split('=')
+                    .next()
+                    .unwrap_or(return_type_name)
+                    .trim();
+
                 providers.push(CodeElement {
                     qualified_name: qualified_name.clone(),
                     element_type: "hilt_provider".to_string(),
@@ -125,7 +132,7 @@ impl<'a> AndroidHiltExtractor<'a> {
                     language: "kotlin".to_string(),
                     metadata: serde_json::json!({
                         "method_name": provider_name,
-                        "provides_type": return_type_name,
+                        "provides_type": clean_type,
                     }),
                     ..Default::default()
                 });

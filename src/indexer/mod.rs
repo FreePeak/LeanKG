@@ -17,14 +17,17 @@ pub mod android_resource_linker;
 pub mod android_resource_refs;
 pub mod android_resources;
 pub mod android_room;
+pub mod android_workmanager;
 pub mod call_graph;
 pub mod config_extractor;
+pub mod coroutine_dispatcher;
 pub mod framework_detector;
 pub mod gradle_extractor;
 pub mod gradle_module_extractor;
 pub mod kotlin_annotations;
 pub mod kotlin_utils;
 pub mod maven_extractor;
+pub mod viewmodel_repository;
 pub mod xml_generic;
 pub mod xml_layout;
 
@@ -37,10 +40,12 @@ pub use android_resource_linker::AndroidResourceLinker;
 pub use android_resource_refs::AndroidResourceRefExtractor;
 pub use android_resources::*;
 pub use android_room::AndroidRoomExtractor;
+pub use android_workmanager::AndroidWorkManagerExtractor;
 #[allow(unused_imports)]
 pub use call_graph::{extract_calls_with_resolution, CallGraphBuilder};
 pub use cicd::*;
 pub use config_extractor::*;
+pub use coroutine_dispatcher::CoroutineDispatcherExtractor;
 pub use extractor::*;
 pub use framework_detector::*;
 pub use git::*;
@@ -52,6 +57,7 @@ pub use microservice::*;
 pub use parser::*;
 pub use process_processor::*;
 pub use terraform::*;
+pub use viewmodel_repository::ViewModelRepositoryExtractor;
 pub use xml_generic::GenericXmlExtractor;
 pub use xml_layout::*;
 
@@ -325,6 +331,12 @@ fn extract_elements_for_file(
     let mut resource_link_rels = Vec::new();
     let mut nav_elements = Vec::new();
     let mut nav_relationships = Vec::new();
+    let mut workmanager_elements = Vec::new();
+    let mut workmanager_relationships = Vec::new();
+    let mut coroutine_dispatcher_elements = Vec::new();
+    let mut coroutine_dispatcher_relationships = Vec::new();
+    let mut vm_repo_elements = Vec::new();
+    let mut vm_repo_relationships = Vec::new();
     if language == "kotlin" {
         let room_extractor = crate::indexer::AndroidRoomExtractor::new(source, file_path);
         let (re, rr) = room_extractor.extract();
@@ -375,6 +387,27 @@ fn extract_elements_for_file(
             nav_elements.extend(ne);
             nav_relationships.extend(nr);
         }
+
+        // Extract WorkManager patterns
+        let workmanager_extractor =
+            crate::indexer::AndroidWorkManagerExtractor::new(source, file_path);
+        let (we, wr) = workmanager_extractor.extract();
+        workmanager_elements = we;
+        workmanager_relationships = wr;
+
+        // Extract coroutine dispatcher usage
+        let coroutine_extractor =
+            crate::indexer::CoroutineDispatcherExtractor::new(source, file_path);
+        let (cde, cdr) = coroutine_extractor.extract();
+        coroutine_dispatcher_elements = cde;
+        coroutine_dispatcher_relationships = cdr;
+
+        // Extract ViewModel/Repository patterns
+        let vm_repo_extractor =
+            crate::indexer::ViewModelRepositoryExtractor::new(source, file_path);
+        let (vre, vrr) = vm_repo_extractor.extract();
+        vm_repo_elements = vre;
+        vm_repo_relationships = vrr;
     }
 
     let extractor = crate::indexer::EntityExtractor::new(source, file_path, language);
@@ -396,6 +429,12 @@ fn extract_elements_for_file(
     relationships.extend(resource_link_rels);
     elements.extend(nav_elements);
     relationships.extend(nav_relationships);
+    elements.extend(workmanager_elements);
+    relationships.extend(workmanager_relationships);
+    elements.extend(coroutine_dispatcher_elements);
+    relationships.extend(coroutine_dispatcher_relationships);
+    elements.extend(vm_repo_elements);
+    relationships.extend(vm_repo_relationships);
 
     Ok(ParsedFile {
         element_count: elements.len(),
@@ -707,6 +746,27 @@ pub fn index_file_sync(
             elements.extend(nav_elements);
             relationships.extend(nav_relationships);
         }
+
+        // Extract WorkManager patterns
+        let workmanager_extractor =
+            crate::indexer::AndroidWorkManagerExtractor::new(source, file_path);
+        let (workmanager_elements, workmanager_relationships) = workmanager_extractor.extract();
+        elements.extend(workmanager_elements);
+        relationships.extend(workmanager_relationships);
+
+        // Extract coroutine dispatcher usage
+        let coroutine_extractor =
+            crate::indexer::CoroutineDispatcherExtractor::new(source, file_path);
+        let (coroutine_elements, coroutine_rels) = coroutine_extractor.extract();
+        elements.extend(coroutine_elements);
+        relationships.extend(coroutine_rels);
+
+        // Extract ViewModel/Repository patterns
+        let vm_repo_extractor =
+            crate::indexer::ViewModelRepositoryExtractor::new(source, file_path);
+        let (vm_repo_elements, vm_repo_relationships) = vm_repo_extractor.extract();
+        elements.extend(vm_repo_elements);
+        relationships.extend(vm_repo_relationships);
     }
 
     if elements.is_empty() && relationships.is_empty() {

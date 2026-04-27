@@ -52,6 +52,13 @@ pub enum RelationshipType {
     RequiresArg,
     DeepLink,
     Presents,
+    HiltBindsInterface,
+    ViewModelOwnsRepository,
+    UsesDispatcher,
+    WorkManagerWorksOn,
+    LifecycleObserves,
+    RoomDaoMethod,
+    ViewbindingUsed,
 }
 
 impl RelationshipType {
@@ -105,6 +112,13 @@ impl RelationshipType {
             RelationshipType::RequiresArg => "requires_arg",
             RelationshipType::DeepLink => "deep_link",
             RelationshipType::Presents => "presents",
+            RelationshipType::HiltBindsInterface => "hilt_binds_interface",
+            RelationshipType::ViewModelOwnsRepository => "viewmodel_owns_repository",
+            RelationshipType::UsesDispatcher => "uses_dispatcher",
+            RelationshipType::WorkManagerWorksOn => "workmanager_works_on",
+            RelationshipType::LifecycleObserves => "lifecycle_observes",
+            RelationshipType::RoomDaoMethod => "room_dao_method",
+            RelationshipType::ViewbindingUsed => "viewbinding_used",
         }
     }
 
@@ -160,6 +174,13 @@ impl RelationshipType {
             "requires_arg" => Some(RelationshipType::RequiresArg),
             "deep_link" => Some(RelationshipType::DeepLink),
             "presents" => Some(RelationshipType::Presents),
+            "hilt_binds_interface" => Some(RelationshipType::HiltBindsInterface),
+            "viewmodel_owns_repository" => Some(RelationshipType::ViewModelOwnsRepository),
+            "uses_dispatcher" => Some(RelationshipType::UsesDispatcher),
+            "workmanager_works_on" => Some(RelationshipType::WorkManagerWorksOn),
+            "lifecycle_observes" => Some(RelationshipType::LifecycleObserves),
+            "room_dao_method" => Some(RelationshipType::RoomDaoMethod),
+            "viewbinding_used" => Some(RelationshipType::ViewbindingUsed),
             _ => None,
         }
     }
