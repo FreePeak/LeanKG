@@ -8,105 +8,101 @@ use serde_json::{json, Value};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-const INSTRUCTIONS_CONTENT: &str = r#"# LeanKG Tools - Usage Instructions
+const INSTRUCTIONS_CONTENT: &str = r#"# LeanKG MCP Tools - Agent Guide
 
-## For AI Coding Agents (Cursor, OpenCode, etc.)
+## Core Principle
 
-Use LeanKG tools **first** before performing any codebase search, navigation, or impact analysis.
-
----
-
-## When to Use Each Tool
-
-### Code Discovery & Search
-
-| Task | Use This Tool |
-|------|--------------|
-| Find a file by name | `query_file` |
-| Find a function definition | `find_function` |
-| Search code by name/type | `search_code` |
-| Get full codebase structure | `get_code_tree` |
-
-### Dependency Analysis
-
-| Task | Use This Tool |
-|------|--------------|
-| Get direct imports of a file | `get_dependencies` |
-| Get files that import/use a file | `get_dependents` |
-| Get function call chain (full depth) | `get_call_graph` |
-| Get direct callers (who calls this) | `get_callers` |
-| Calculate what breaks if file changes | `get_impact_radius` |
-
-### Review & Context
-
-| Task | Use This Tool |
-|------|--------------|
-| Generate focused review context | `get_review_context` |
-| Get minimal AI context (token-optimized) | `get_context` |
-| Find oversized functions | `find_large_functions` |
-
-### Testing & Documentation
-
-| Task | Use This Tool |
-|------|--------------|
-| Get test coverage for a function | `get_tested_by` |
-| Get docs that reference a file | `get_doc_for_file` |
-| Get code elements in a doc | `get_files_for_doc` |
-| Get doc directory structure | `get_doc_structure` |
-| Find docs related to a change | `find_related_docs` |
-
-### Traceability & Requirements
-
-| Task | Use This Tool |
-|------|--------------|
-| Get full traceability chain | `get_traceability` |
-| Find code for a requirement | `search_by_requirement` |
-| Get doc tree with hierarchy | `get_doc_tree` |
+LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first — never grep/ripgrep unless the tool returns no results.
 
 ---
 
-## Decision Flow
+## Tool Selection Flowchart
 
 ```
-User asks about codebase →
-  First check if LeanKG is initialized (mcp_status) →
-    If not, use mcp_init first (CRITICAL: pass the absolute path to the project's .leankg directory, e.g. path: "/full/path/to/project/.leankg") →
-    Then use appropriate LeanKG tool →
-      NEVER fall back to naive grep/search until LeanKG is exhausted
+User asks about codebase → mcp_status (check initialized)
+  │
+  ├─ "Where is X?" / "Find Y" ───────────────► search_code or find_function
+  │   ├─ by name/type ─────────────────────────► search_code(query="X")
+  │   └─ exact function ───────────────────────► find_function(name="parseJson")
+  │                                              scope to file: find_function(name="foo", file="src/bar.rs")
+  │
+  ├─ "What breaks if I change X?" ────────────► get_impact_radius(file="X", depth=2)
+  │   └─ use depth<=2 for token budgets (depth=3 returns hundreds of nodes)
+  │
+  ├─ "How does X work?" / call chain ─────────► get_call_graph(function="X")
+  │   └─ keep depth≤2, avoid depth>3 (neighbor explosion)
+  │
+  ├─ "Who calls X?" / callers ────────────────► get_callers(function="X")
+  │
+  ├─ "What does X import/use?" ───────────────► get_dependencies(file="X")
+  ├─ "What uses X?" ──────────────────────────► get_dependents(file="X")
+  │
+  ├─ "Show me file context" / read large file ─► ctx_read(file="X", mode=adaptive)
+  │   └─ modes: adaptive, signatures (smallest), full, map, diff, lines("1-20,30-40")
+  │
+  ├─ "Get minimal AI context for prompt" ─────► get_context(file="X", signature_only=true)
+  │
+  ├─ "What tests cover X?" ───────────────────► get_tested_by(file="X")
+  │
+  ├─ "Show me all files/folders" ─────────────► get_code_tree(limit=50)
+  │
+  ├─ "Find oversized functions" ──────────────► find_large_functions(min_lines=50, limit=20)
+  │
+  ├─ Natural language query (any of the above) ─► orchestrate(intent="...")
+  │   └─ file param is OPTIONAL — only needed for impact/dependency queries
+  │      e.g. orchestrate(intent="show me impact of changing src/lib.rs", file="src/lib.rs")
+  │
+  ├─ "What docs reference X?" ─────────────────► get_doc_for_file(file="X")
+  ├─ "What code is in this doc?" ─────────────► get_files_for_doc(doc="docs/X.md")
+  │
+  └─ Pre-commit risk check ───────────────────► detect_changes(scope="staged"|"all")
 ```
 
 ---
 
-## Example Usage Patterns
+## Smart Shortcut: `orchestrate`
 
-**"Where is the auth function?"**
-```
-search_code("auth") or find_function("auth")
-```
+Use when you want LeanKG to pick the best tool automatically. Only requires `intent`:
 
-**"What tests cover this file?"**
-```
-get_tested_by({ file: "src/auth.rs" })
-```
+| Intent Pattern | What It Does |
+|----------------|-------------|
+| "show me impact of changing X" | Impact radius analysis |
+| "get context for file X" | Token-optimized file context |
+| "find function named X" | Function location search |
+| "what does module X do?" | Cluster + dependency summary |
 
-**"What would break if I change this file?"**
-```
-get_impact_radius({ file: "src/main.rs", depth: 3 })
-```
-
-**"How does X work end-to-end?"**
-```
-get_call_graph({ function: "src/auth.rs::authenticate" })
-```
+**Parameters:** `intent` (required), `file` (optional — only needed when intent references a specific file for impact/dependency queries), `mode` (adaptive/full/map/signatures), `fresh` (bypass cache)
 
 ---
 
-## Important Notes
+## Token Optimization Tips
 
-- LeanKG maintains a **knowledge graph** of your codebase - use it instead of text search
-- `get_impact_radius` calculates blast radius - always check before making changes
-- `get_context` returns token-optimized output - use it for AI prompts
-- Tools are pre-indexed and **much faster** than runtime grep/search
+| Scenario | Tool + Params |
+|----------|--------------|
+| Read large file (>50 lines) | `ctx_read(file="X", mode=signatures)` — 80-90% token savings |
+| Impact analysis | `get_impact_radius(file="X", depth=2, compress_response=true)` |
+| Call graph | `get_call_graph(function="X", max_results=30)` |
+| File context for prompt | `get_context(file="X", signature_only=true, max_tokens=4000)` |
+
+---
+
+## Anti-Patterns (Don't Do These)
+
+- **grep before LeanKG** — The graph is pre-built and faster
+- **depth>2 on get_impact_radius** — Returns hundreds of nodes, wastes tokens
+- **depth>3 on get_call_graph** — Neighbor explosion
+- **Reading full files with ctx_read mode=full** — Use signatures or adaptive for large files
+- **Calling orchestrate without intent** — intent is the only required param
+
+---
+
+## Path Formats (All Equivalent)
+
+```
+src/main.rs      ./src/main.rs      src/lib.rs::parse_config
+```
+
+Works across all tools. No need to worry about `./` prefix or absolute paths.
 "#;
 
 pub struct ToolHandler {
