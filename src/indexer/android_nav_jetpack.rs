@@ -8,7 +8,7 @@ static NAV_RE: OnceLock<Regex> = OnceLock::new();
 static ARG_RE: OnceLock<Regex> = OnceLock::new();
 #[allow(dead_code)]
 static NAVIGATE_RE: OnceLock<Regex> = OnceLock::new();
-#[allow(clippy::regex_creation_in_loops)]
+#[allow(dead_code)]
 static ARG_SCOPE_RE: OnceLock<Regex> = OnceLock::new();
 
 pub struct JetpackNavExtractor<'a> {
@@ -223,6 +223,7 @@ impl<'a> JetpackNavExtractor<'a> {
     }
 
     /// Parse Compose Navigation DSL in Kotlin source files.
+    #[allow(clippy::regex_creation_in_loops)]
     pub fn extract_kotlin_dsl(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
         let content = match std::str::from_utf8(self.source) {
             Ok(s) => s,
@@ -269,9 +270,8 @@ impl<'a> JetpackNavExtractor<'a> {
 
         let mut blocks: Vec<BlockInfo> = Vec::new();
 
-        let composable_re = COMPOSABLE_RE.get_or_init(|| {
-            Regex::new(r#"composable\s*\(\s*route\s*=\s*"([^"]+)"#).unwrap()
-        });
+        let composable_re = COMPOSABLE_RE
+            .get_or_init(|| Regex::new(r#"composable\s*\(\s*route\s*=\s*"([^"]+)"#).unwrap());
         for cap in composable_re.captures_iter(content) {
             if let Some(route_match) = cap.get(1) {
                 let route = route_match.as_str();
@@ -338,7 +338,6 @@ impl<'a> JetpackNavExtractor<'a> {
                     }),
                     ..Default::default()
                 });
-
             }
         }
 
@@ -415,7 +414,6 @@ impl<'a> JetpackNavExtractor<'a> {
                     }),
                     ..Default::default()
                 });
-
             }
         }
 

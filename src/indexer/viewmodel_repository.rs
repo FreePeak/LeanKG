@@ -166,6 +166,7 @@ impl<'a> ViewModelRepositoryExtractor<'a> {
         repos
     }
 
+    #[allow(clippy::regex_creation_in_loops)]
     fn create_vm_repo_relationships(
         &self,
         viewmodels: &[CodeElement],
@@ -174,9 +175,8 @@ impl<'a> ViewModelRepositoryExtractor<'a> {
     ) -> Vec<Relationship> {
         let mut relationships = Vec::new();
 
-        let inject_re = INJECT_CONSTRUCTOR_RE.get_or_init(|| {
-            Regex::new(r"@Inject\s*\n?\s*constructor\s*\(([^)]+)\)").unwrap()
-        });
+        let inject_re = INJECT_CONSTRUCTOR_RE
+            .get_or_init(|| Regex::new(r"@Inject\s*\n?\s*constructor\s*\(([^)]+)\)").unwrap());
 
         for vm in viewmodels {
             let vm_name = &vm.name;

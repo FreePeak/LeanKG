@@ -67,18 +67,18 @@ impl<'a> CoroutineDispatcherExtractor<'a> {
         (elements, relationships)
     }
 
-fn extract_dispatcher_usages(&self, content: &str) -> Vec<CodeElement> {
+    fn extract_dispatcher_usages(&self, content: &str) -> Vec<CodeElement> {
         let mut elements = Vec::new();
-        let re = DISPATCHER_RE.get_or_init(|| Regex::new(r"Dispatchers\.(IO|Main|Default)").unwrap());
+        let re =
+            DISPATCHER_RE.get_or_init(|| Regex::new(r"Dispatchers\.(IO|Main|Default)").unwrap());
 
         struct FuncMarker {
             line: usize,
             text: String,
         }
         let mut func_markers: Vec<FuncMarker> = Vec::new();
-        let func_re = FUNC_CONTEXT_RE.get_or_init(|| {
-            Regex::new(r"(?m)^(fun |class |object )").unwrap()
-        });
+        let func_re =
+            FUNC_CONTEXT_RE.get_or_init(|| Regex::new(r"(?m)^(fun |class |object )").unwrap());
         for cap in func_re.captures_iter(content) {
             if let Some(m) = cap.get(0) {
                 let line_num = content[..m.start()].lines().count();
@@ -130,9 +130,8 @@ fn extract_dispatcher_usages(&self, content: &str) -> Vec<CodeElement> {
             Regex::new(r"withContext\s*\(\s*Dispatchers\.(IO|Main|Default)\s*\)").unwrap()
         });
 
-        let func_re = FUNC_CONTEXT_RE.get_or_init(|| {
-            Regex::new(r"(?m)^(fun |suspend fun )").unwrap()
-        });
+        let func_re =
+            FUNC_CONTEXT_RE.get_or_init(|| Regex::new(r"(?m)^(fun |suspend fun )").unwrap());
         let mut func_markers: Vec<(usize, String)> = Vec::new();
         for cap in func_re.captures_iter(content) {
             if let Some(m) = cap.get(0) {

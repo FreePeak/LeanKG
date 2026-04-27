@@ -101,8 +101,10 @@ impl<'a> AndroidHiltExtractor<'a> {
             .collect();
 
         let provides_re = PROVIDES_RE.get_or_init(|| {
-            Regex::new(r"@Provides\s*\n?(?:@Singleton\s*\n?)?\s*fun\s+(\w+)\s*\([^)]*\)\s*:\s*([^={\n]+)")
-                .unwrap()
+            Regex::new(
+                r"@Provides\s*\n?(?:@Singleton\s*\n?)?\s*fun\s+(\w+)\s*\([^)]*\)\s*:\s*([^={\n]+)",
+            )
+            .unwrap()
         });
 
         for cap in provides_re.captures_iter(content) {
