@@ -6,6 +6,11 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
+/// Maximum database size before triggering prune (500MB)
+const MAX_DB_SIZE_BYTES: u64 = 500 * 1024 * 1024;
+/// Check database size every N file changes
+const DB_SIZE_CHECK_INTERVAL: usize = 100;
+
 const IGNORED_PATH_SEGMENTS: &[&str] = &[
     ".git",
     ".leankg",
@@ -87,6 +92,7 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
     let debounce_interval = std::time::Duration::from_millis(500);
     let mut pending: HashSet<PathBuf> = HashSet::new();
     let mut debounce_timer = tokio::time::Instant::now() + debounce_interval;
+    let mut files_since_check: usize = 0;
 
     loop {
         tokio::select! {
@@ -128,11 +134,34 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
                             tracing::warn!("Failed to index {}: {}", path_str, e);
                         }
                     }
+                    files_since_check += 1;
+
+                    // Periodically check and enforce database size limit
+                    if files_since_check >= DB_SIZE_CHECK_INTERVAL {
+                        files_since_check = 0;
+                        check_and_enforce_db_size(&db_path);
+                    }
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(60)), if pending.is_empty() => {
                 tracing::debug!("Watcher still running for {}", watch_path.display());
             }
+        }
+    }
+}
+
+/// Check database size and trigger prune if over limit
+fn check_and_enforce_db_size(db_path: &Path) {
+    let db_file = db_path.join("leankg.db");
+    if let Ok(metadata) = std::fs::metadata(&db_file) {
+        let size = metadata.len();
+        if size > MAX_DB_SIZE_BYTES {
+            tracing::warn!(
+                "Database size {} bytes exceeds limit {} bytes, consider running vacuum or cleanup",
+                size,
+                MAX_DB_SIZE_BYTES
+            );
+            // Future: could trigger async vacuum or cleanup here
         }
     }
 }
