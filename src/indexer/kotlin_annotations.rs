@@ -117,10 +117,8 @@ impl<'a> KotlinAnnotationExtractor<'a> {
                                             if let Some(param_name) =
                                                 self.get_node_name(class_param)
                                             {
-                                                let param_qn = format!(
-                                                    "{}::{}",
-                                                    target_qn, param_name
-                                                );
+                                                let param_qn =
+                                                    format!("{}::{}", target_qn, param_name);
                                                 let param_anns = self
                                                     .collect_annotations_from_modifiers(
                                                         class_param,
@@ -584,7 +582,9 @@ mod tests {
 
         let annotates_rels: Vec<_> = relationships
             .iter()
-            .filter(|r| r.rel_type == "annotates" && r.source_qualified.contains("AndroidEntryPoint"))
+            .filter(|r| {
+                r.rel_type == "annotates" && r.source_qualified.contains("AndroidEntryPoint")
+            })
             .collect();
         assert!(
             !annotates_rels.is_empty(),
