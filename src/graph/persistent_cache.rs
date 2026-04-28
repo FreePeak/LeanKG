@@ -5,6 +5,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+/// Maximum number of entries in the persistent cache to prevent unbounded growth
+const MAX_CACHE_ENTRIES: usize = 10_000;
+/// Evict when approaching max entries
+const EVICTION_THRESHOLD: f64 = 0.9;
+
 #[derive(Clone)]
 struct CacheEntry {
     value_json: String,
@@ -33,6 +38,8 @@ pub struct PersistentCache {
     /// If true, only use memory storage (no DB persistence)
     /// Useful for reducing memory footprint when persistence isn't needed
     memory_only: bool,
+    /// Track entry count for size-based eviction
+    entry_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl PersistentCache {
@@ -42,6 +49,7 @@ impl PersistentCache {
             memory: Arc::new(RwLock::new(HashMap::new())),
             default_ttl,
             memory_only: false,
+            entry_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -53,6 +61,7 @@ impl PersistentCache {
             memory: Arc::new(RwLock::new(HashMap::new())),
             default_ttl,
             memory_only: true,
+            entry_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -89,20 +98,34 @@ impl PersistentCache {
 
     #[allow(clippy::extra_unused_type_parameters)]
     pub async fn insert<K: Serialize, V: Serialize>(&self, key: String, value: V) {
+        // Evict old entries if we're approaching the max
+        self.evict_if_needed().await;
+
         let value_json = serde_json::to_string(&value).unwrap_or_default();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        self.memory.write().await.insert(
-            key.clone(),
-            CacheEntry {
-                value_json: value_json.clone(),
-                created_at: now,
-                ttl_seconds: self.default_ttl as i64,
-            },
-        );
+        let was_new = {
+            let mut memory = self.memory.write().await;
+            let existed = memory.contains_key(&key);
+            memory.insert(
+                key.clone(),
+                CacheEntry {
+                    value_json: value_json.clone(),
+                    created_at: now,
+                    ttl_seconds: self.default_ttl as i64,
+                },
+            );
+            !existed
+        };
+
+        // Update entry count (only on new entries)
+        if was_new {
+            self.entry_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
 
         // Skip DB persistence if memory_only mode is enabled
         if !self.memory_only {
@@ -110,8 +133,67 @@ impl PersistentCache {
         }
     }
 
+    /// Evict oldest expired entries when approaching max capacity
+    async fn evict_if_needed(&self) {
+        let current = self.entry_count.load(std::sync::atomic::Ordering::Relaxed);
+        let threshold = (MAX_CACHE_ENTRIES as f64 * EVICTION_THRESHOLD) as usize;
+
+        if current >= threshold {
+            self.evict_oldest_expired(current - threshold + 100).await;
+        }
+    }
+
+    /// Evict the oldest entries (both expired in memory and from DB)
+    async fn evict_oldest_expired(&self, count: usize) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        // First, evict expired entries from memory
+        {
+            let mut memory = self.memory.write().await;
+            memory.retain(|_, entry| {
+                entry.ttl_seconds > 0 && (now - entry.created_at) <= entry.ttl_seconds
+            });
+        }
+
+        // Evict oldest entries from DB using a batch delete
+        if !self.memory_only {
+            self.evict_from_db(count).await.ok();
+        }
+
+        // Recount and update
+        let memory_count = self.memory.read().await.len();
+        self.entry_count
+            .store(memory_count, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    async fn evict_from_db(
+        &self,
+        count: usize,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Get oldest entries from DB and delete them
+        let query = r#"
+            :delete query_cache
+            where cache_key in (
+                select cache_key from query_cache
+                order by created_at asc
+                limit $count
+            )
+        "#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("count".to_string(), serde_json::Value::Number(count.into()));
+        self.db.run_script(query, params)?;
+        Ok(())
+    }
+
     pub async fn invalidate(&self, key: &str) {
-        self.memory.write().await.remove(key);
+        let existed = self.memory.write().await.remove(key).is_some();
+        if existed {
+            self.entry_count
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
         self.delete_from_db(key).await.ok();
     }
 
@@ -125,9 +207,14 @@ impl PersistentCache {
             .filter(|k| k.starts_with(&prefix_owned))
             .cloned()
             .collect();
+        let count = keys.len();
 
         for key in keys {
             self.invalidate(&key).await;
+        }
+        if count > 0 {
+            self.entry_count
+                .fetch_sub(count, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -215,6 +302,32 @@ impl PersistentCache {
 
     pub async fn is_empty(&self) -> bool {
         self.memory.read().await.is_empty()
+    }
+
+    /// Get approximate cache size (for monitoring)
+    pub async fn size(&self) -> usize {
+        self.entry_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Prune all expired entries and enforce max size limit
+    pub async fn prune(&self) -> usize {
+        let before = self.entry_count.load(std::sync::atomic::Ordering::Relaxed);
+        self.evict_oldest_expired(MAX_CACHE_ENTRIES / 2).await;
+        let after = self.entry_count.load(std::sync::atomic::Ordering::Relaxed);
+        before - after
+    }
+
+    /// Get database size in bytes (approximate, for monitoring)
+    pub fn database_size_approx(&self) -> Option<u64> {
+        self.db
+            .run_script("PRAGMA page_count", Default::default())
+            .ok()
+            .and_then(|result| {
+                result
+                    .rows
+                    .first()
+                    .and_then(|row| row.first()?.as_i64().map(|pages| (pages as u64) * 4096))
+            })
     }
 }
 
