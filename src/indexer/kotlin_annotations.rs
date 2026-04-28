@@ -97,6 +97,46 @@ impl<'a> KotlinAnnotationExtractor<'a> {
                     ann.target_type = t_type.to_string();
                     queue.push((ann, target_qn.clone()));
                 }
+                // Also collect annotations on the primary_constructor (e.g. @AssistedInject constructor(...))
+                if node_type == "class_declaration" {
+                    let mut pc_cursor = node.walk();
+                    for child in node.children(&mut pc_cursor) {
+                        if child.kind() == "primary_constructor" {
+                            let pc_annotations = self.collect_annotations_from_modifiers(child);
+                            for mut ann in pc_annotations {
+                                ann.target_type = "constructor".to_string();
+                                queue.push((ann, target_qn.clone()));
+                            }
+                            // Also collect annotations on constructor parameters (@Assisted)
+                            let mut param_cursor = child.walk();
+                            for param in child.children(&mut param_cursor) {
+                                if param.kind() == "class_parameters" {
+                                    let mut cp_cursor = param.walk();
+                                    for class_param in param.children(&mut cp_cursor) {
+                                        if class_param.kind() == "class_parameter" {
+                                            if let Some(param_name) =
+                                                self.get_node_name(class_param)
+                                            {
+                                                let param_qn = format!(
+                                                    "{}::{}",
+                                                    target_qn, param_name
+                                                );
+                                                let param_anns = self
+                                                    .collect_annotations_from_modifiers(
+                                                        class_param,
+                                                    );
+                                                for mut ann in param_anns {
+                                                    ann.target_type = "parameter".to_string();
+                                                    queue.push((ann, param_qn.clone()));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -473,5 +513,112 @@ mod tests {
         let dao_rel = relationships.iter().find(|r| r.rel_type == "annotates");
         assert!(dao_rel.is_some(), "Should create annotates relationship");
         assert!(dao_rel.unwrap().source_qualified.contains("@Dao"));
+    }
+
+    #[test]
+    fn test_extract_hilt_worker_annotations() {
+        let source = r#"
+            @HiltWorker
+            class SyncWorker @AssistedInject constructor(
+                @Assisted context: Context,
+                @Assisted params: WorkerParameters,
+                private val repo: DataRepository
+            ) : CoroutineWorker(context, params) {
+                override suspend fun doWork(): Result {
+                    return Result.success()
+                }
+            }
+        "#;
+        let tree = parse_kotlin(source);
+        let extractor = KotlinAnnotationExtractor::new(source.as_bytes(), "./worker/SyncWorker.kt");
+        let (elements, relationships) = extractor.extract(&tree);
+
+        let hilt_worker = elements.iter().find(|e| e.name == "HiltWorker");
+        assert!(
+            hilt_worker.is_some(),
+            "@HiltWorker annotation should be extracted from Worker class"
+        );
+
+        let assisted_inject = elements.iter().find(|e| e.name == "AssistedInject");
+        assert!(
+            assisted_inject.is_some(),
+            "@AssistedInject annotation should be extracted from constructor"
+        );
+
+        let annotates_rels: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "annotates")
+            .collect();
+        assert!(
+            !annotates_rels.is_empty(),
+            "Should create annotates relationships for Worker annotations"
+        );
+    }
+
+    #[test]
+    fn test_extract_intent_service_annotations() {
+        let source = r#"
+            @AndroidEntryPoint
+            class DownloadService : IntentService("DownloadService") {
+                @Inject
+                lateinit var fileRepository: FileRepository
+
+                override fun onHandleIntent(intent: Intent?) {
+                    // handle download
+                }
+            }
+        "#;
+        let tree = parse_kotlin(source);
+        let extractor =
+            KotlinAnnotationExtractor::new(source.as_bytes(), "./service/DownloadService.kt");
+        let (elements, relationships) = extractor.extract(&tree);
+
+        let entry_point = elements.iter().find(|e| e.name == "AndroidEntryPoint");
+        assert!(
+            entry_point.is_some(),
+            "@AndroidEntryPoint annotation should be extracted from IntentService class"
+        );
+
+        let entry_point_ann = entry_point.unwrap();
+        assert_eq!(entry_point_ann.element_type, "annotation");
+
+        let annotates_rels: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "annotates" && r.source_qualified.contains("AndroidEntryPoint"))
+            .collect();
+        assert!(
+            !annotates_rels.is_empty(),
+            "Should create annotates relationship for @AndroidEntryPoint on IntentService"
+        );
+    }
+
+    #[test]
+    fn test_extract_workmanager_assisted_params() {
+        let source = r#"
+            @HiltWorker
+            class BackupWorker @AssistedInject constructor(
+                @Assisted appContext: Context,
+                @Assisted workerParams: WorkerParameters
+            ) : Worker(appContext, workerParams) {
+                override fun doWork(): Result = Result.success()
+            }
+        "#;
+        let tree = parse_kotlin(source);
+        let extractor =
+            KotlinAnnotationExtractor::new(source.as_bytes(), "./worker/BackupWorker.kt");
+        let (elements, _) = extractor.extract(&tree);
+
+        assert!(
+            elements.iter().any(|e| e.name == "HiltWorker"),
+            "@HiltWorker must be detected on Worker subclass"
+        );
+        assert!(
+            elements.iter().any(|e| e.name == "AssistedInject"),
+            "@AssistedInject must be detected on Worker constructor"
+        );
+        assert!(
+            elements.iter().any(|e| e.name == "Assisted"),
+            "@Assisted must be detected on constructor parameters"
+        );
     }
 }
