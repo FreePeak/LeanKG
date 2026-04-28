@@ -710,6 +710,29 @@ impl MCPServer {
         Ok(current_dir)
     }
 
+    fn validate_required_params(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Option<String> {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools.iter().find(|t| t.name == tool_name)?;
+
+        let required_params = tool.input_schema.get("required")?.as_array()?;
+        for param in required_params {
+            let param_name = param.as_str()?;
+            if !arguments.contains_key(param_name)
+                || arguments.get(param_name).is_none_or(|v| v.is_null())
+            {
+                return Some(format!(
+                    "Missing required parameter '{}' for tool '{}'",
+                    param_name, tool_name
+                ));
+            }
+        }
+        None
+    }
+
     async fn execute_tool(
         &self,
         tool_name: &str,
@@ -721,6 +744,11 @@ impl MCPServer {
             project_root.display(),
             self.get_db_path().display()
         );
+
+        // Validate required parameters before dispatching to handler
+        if let Some(err) = self.validate_required_params(tool_name, &arguments) {
+            return Err(err);
+        }
 
         if tool_name == "mcp_init" {
             if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
