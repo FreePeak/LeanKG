@@ -4,6 +4,7 @@
 **Version:** v0.16.7
 **Branch:** main (commit d46cf79)
 **Tester:** Claude Code automated suite
+**Status:** All 4 bugs fixed in commit 4e0ad3a on branch `worktree-test-report`
 
 ---
 
@@ -153,38 +154,41 @@ The live MCP server holds the CozoDB/SQLite write lock, preventing the test harn
 
 ### Issues Found (4 tools)
 
-#### BUG-001: `get_call_graph` returns empty results
+#### BUG-001: `get_call_graph` returns empty results — FIXED
 
 - **Severity:** High
 - **Tool:** `get_call_graph`
 - **Input:** `function="index_codebase", depth=2`
 - **Expected:** Call graph with callees of `index_codebase`
 - **Actual:** `calls: []` (empty)
-- **Root cause:** Cross-file call edge resolution likely not working. The `resolve_call_edges` method may not be resolving calls from `main.rs::index_codebase` to functions in other modules.
+- **Root cause:** Function passed by short name, but relationships store full qualified names like `./src/main.rs::index_codebase`.
+- **Fix:** `get_call_graph_bounded` now resolves function names to qualified names via `find_element_by_name`, then performs BFS traversal for multi-depth call graphs.
 
-#### BUG-002: `generate_doc` produces duplicate entries
+#### BUG-002: `generate_doc` produces duplicate entries — FIXED
 
 - **Severity:** Medium
 - **Tool:** `generate_doc`
 - **Input:** `file="src/db/models.rs"`
 - **Actual:** Each function and class listed **3 times** (once per worktree copy)
 - **Root cause:** Worktree paths (`.claude/worktrees/`, `.worktrees/`) are indexed alongside the main source, causing triple results.
-- **Impact:** Documentation output is 3x larger than needed.
+- **Fix:** `generate_doc`, `find_large_functions`, and `get_review_context` now filter out paths containing `/.claude/worktrees/` and `/.worktrees/`.
 
-#### BUG-003: `run_raw_query` schema field mismatch
+#### BUG-003: `run_raw_query` schema field mismatch — FIXED
 
 - **Severity:** Medium
 - **Tool:** `run_raw_query`
 - **Input:** `?[file, name, type] := *code_elements {file_path: file, name, type: type}`
 - **Error:** `stored relation 'code_elements' does not have field 'type'`
-- **Root cause:** The field is named `element_type`, not `type`, in the CozoDB schema. Either the schema documentation is wrong or the error message should suggest the correct field name.
+- **Root cause:** The field is named `element_type`, not `type`, in the CozoDB schema.
+- **Fix:** `run_raw_query` now detects field-not-found errors and appends the full schema: `code_elements {qualified_name, element_type, name, ...}` and `relationships {source_qualified, target_qualified, ...}`.
 
-#### BUG-004: `get_screen_args` missing required parameter
+#### BUG-004: `get_screen_args` missing required parameter — FIXED
 
 - **Severity:** Low
 - **Tool:** `get_screen_args`
 - **Error:** `Missing 'destination' parameter`
-- **Root cause:** The tool requires a `destination` parameter but the schema may not clearly document it as required.
+- **Root cause:** The tool required a `destination` parameter with no default.
+- **Fix:** `destination` now defaults to empty string, allowing the tool to return all available destinations when no specific one is requested.
 
 ---
 
