@@ -26,7 +26,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use subtle::ConstantTimeEq;
 use tokio::sync::RwLock as TokioRwLock;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -1004,7 +1003,7 @@ fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bo
     if let Some(auth) = auth_header {
         if let Some(stripped) = auth.strip_prefix("Bearer ") {
             // Use constant-time comparison to prevent timing attacks
-            return stripped.as_bytes().ct_eq(token.as_bytes()).into();
+            return subtle::ConstantTimeEq::ct_eq(stripped.as_bytes(), token.as_bytes()).into();
         }
     }
     false
