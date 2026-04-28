@@ -2228,41 +2228,69 @@ impl GraphEngine {
     pub fn get_call_graph_bounded(
         &self,
         source_qualified: &str,
-        _max_depth: u32,
+        max_depth: u32,
         max_results: usize,
     ) -> Result<Vec<(String, String, u32)>, Box<dyn std::error::Error>> {
-        let normalized = normalize_path(source_qualified);
-
-        // For now, just use depth 1 since the multi-depth query is complex
-        // Build source filter - check both with and without ./ prefix
-        let src_filter = if normalized.starts_with("./") {
-            format!(r#"src = "{}""#, normalized)
+        // Resolve short function name to full qualified name
+        let resolved = if source_qualified.contains("::") {
+            normalize_path(source_qualified)
         } else {
-            let with_prefix = format!("./{}", normalized);
-            format!(r#"(src = "{}" or src = "{}")"#, normalized, with_prefix)
+            self.find_element_by_name(source_qualified)?
+                .map(|e| e.qualified_name)
+                .unwrap_or_else(|| source_qualified.to_string())
         };
 
-        let query = format!(
-            r#"?[src, tgt, rel_type, conf, meta] :=
-               *relationships[src, tgt, rel_type, conf, meta],
-               rel_type = "calls",
-               {}
-               :limit {}"#,
-            src_filter, max_results,
-        );
+        let mut all_calls: Vec<(String, String, u32)> = Vec::new();
+        let mut frontier: Vec<String> = vec![resolved.clone()];
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        let result = self.db.run_script(&query, Default::default())?;
-        Ok(result
-            .rows
-            .iter()
-            .map(|row| {
-                (
-                    row[0].as_str().unwrap_or("").to_string(),
-                    row[1].as_str().unwrap_or("").to_string(),
-                    1u32,
-                )
-            })
-            .collect())
+        for depth in 0..max_depth {
+            if frontier.is_empty() {
+                break;
+            }
+            let mut next_frontier: Vec<String> = Vec::new();
+            for src in &frontier {
+                if visited.contains(src) {
+                    continue;
+                }
+                visited.insert(src.clone());
+
+                let filter = if src.contains("::") {
+                    format!(r#"src = "{}""#, escape_datalog(src))
+                } else {
+                    format!(
+                        r#"(src = "{}" or src = "./{}")"#,
+                        escape_datalog(src),
+                        escape_datalog(src)
+                    )
+                };
+
+                let query = format!(
+                    r#"?[src, tgt] :=
+                       *relationships[src, tgt, rel_type, conf, meta],
+                       rel_type = "calls",
+                       {}
+                       :limit {}"#,
+                    filter, max_results,
+                );
+
+                let result = self.db.run_script(&query, Default::default())?;
+                for row in &result.rows {
+                    let tgt = row[1].as_str().unwrap_or("").to_string();
+                    if !visited.contains(&tgt) && !tgt.starts_with("__unresolved__") {
+                        next_frontier.push(tgt.clone());
+                    }
+                    all_calls.push((src.clone(), tgt, depth + 1));
+                }
+            }
+            frontier = next_frontier;
+            if all_calls.len() >= max_results {
+                all_calls.truncate(max_results);
+                break;
+            }
+        }
+
+        Ok(all_calls)
     }
 
     pub fn resolve_call_edges(&self) -> Result<usize, Box<dyn std::error::Error>> {

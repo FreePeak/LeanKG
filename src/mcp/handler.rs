@@ -984,7 +984,11 @@ impl ToolHandler {
                 if let Ok(elements) = self.graph_engine.all_elements() {
                     let file_elements: Vec<_> = elements
                         .into_iter()
-                        .filter(|e| e.file_path.contains(file_path))
+                        .filter(|e| {
+                            e.file_path.contains(file_path)
+                                && !e.file_path.contains("/.claude/worktrees/")
+                                && !e.file_path.contains("/.worktrees/")
+                        })
                         .collect();
                     context_elements.extend(file_elements);
                 }
@@ -1303,7 +1307,12 @@ impl ToolHandler {
 
         let file_elements: Vec<CodeElement> = elements
             .into_iter()
-            .filter(|e| e.file_path.contains(file))
+            .filter(|e| {
+                let fp = &e.file_path;
+                fp.contains(file)
+                    && !fp.contains("/.claude/worktrees/")
+                    && !fp.contains("/.worktrees/")
+            })
             .collect();
 
         let doc = generate_documentation(file, &file_elements);
@@ -1324,6 +1333,8 @@ impl ToolHandler {
             .filter(|e| {
                 e.element_type == "function"
                     && (e.line_end.saturating_sub(e.line_start)) >= min_lines
+                    && !e.file_path.contains("/.claude/worktrees/")
+                    && !e.file_path.contains("/.worktrees/")
             })
             .map(|e| {
                 json!({
@@ -1670,7 +1681,17 @@ impl ToolHandler {
         let result = self
             .graph_engine
             .run_raw_query(query, params)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("does not have field") {
+                    format!(
+                        "{}. Schema: *code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}. *relationships {{source_qualified, target_qualified, rel_type, confidence, metadata}}",
+                        msg
+                    )
+                } else {
+                    msg
+                }
+            })?;
 
         let value = serde_json::to_value(&result)
             .map_err(|e| format!("Failed to serialize result: {}", e))?;
@@ -1786,9 +1807,7 @@ impl ToolHandler {
     }
 
     fn get_screen_args(&self, args: &Value) -> Result<Value, String> {
-        let destination = args["destination"]
-            .as_str()
-            .ok_or("Missing 'destination' parameter")?;
+        let destination = args["destination"].as_str().unwrap_or("");
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
 
         let all_elements = self
