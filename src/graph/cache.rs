@@ -17,6 +17,9 @@ pub struct TimedCache<K, V> {
     data: HashMap<K, CacheEntry<V>>,
     ttl: Duration,
     max_entries: usize,
+    /// Optional memory limit in bytes (approximate)
+    max_memory_bytes: Option<usize>,
+    current_memory_bytes: usize,
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
@@ -25,7 +28,28 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
             data: HashMap::new(),
             ttl: Duration::from_secs(ttl_secs),
             max_entries,
+            max_memory_bytes: None,
+            current_memory_bytes: 0,
         }
+    }
+
+    /// Create a cache with memory-based eviction
+    /// max_memory_bytes is a soft limit - entries are evicted until under limit
+    /// Note: memory estimation is approximate; for String keys, actual memory may vary
+    pub fn with_memory_limit(ttl_secs: u64, max_entries: usize, max_memory_bytes: usize) -> Self {
+        Self {
+            data: HashMap::new(),
+            ttl: Duration::from_secs(ttl_secs),
+            max_entries,
+            max_memory_bytes: Some(max_memory_bytes),
+            current_memory_bytes: 0,
+        }
+    }
+
+    /// Returns approximate memory usage in bytes
+    #[allow(dead_code)]
+    pub fn memory_usage(&self) -> usize {
+        self.current_memory_bytes
     }
 
     #[allow(dead_code)]
@@ -40,6 +64,8 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
     }
 
     pub fn insert(&mut self, key: K, value: V) {
+        let entry_size = std::mem::size_of::<K>() + std::mem::size_of::<V>();
+
         if self.data.len() >= self.max_entries {
             self.evict_expired();
             if self.data.len() >= self.max_entries {
@@ -50,9 +76,31 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
                     .map(|(k, _)| k.clone())
                 {
                     self.data.remove(&oldest);
+                    self.current_memory_bytes =
+                        self.current_memory_bytes.saturating_sub(entry_size);
                 }
             }
         }
+
+        // Memory-based eviction if limit is set
+        if let Some(limit) = self.max_memory_bytes {
+            // Evict oldest entries until we're under limit
+            while self.current_memory_bytes + entry_size > limit && !self.data.is_empty() {
+                if let Some(oldest) = self
+                    .data
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.created_at)
+                    .map(|(k, _)| k.clone())
+                {
+                    let removed = self.data.remove(&oldest);
+                    if removed.is_some() {
+                        self.current_memory_bytes =
+                            self.current_memory_bytes.saturating_sub(entry_size);
+                    }
+                }
+            }
+        }
+
         self.data.insert(
             key,
             CacheEntry {
@@ -60,11 +108,15 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
                 created_at: Instant::now(),
             },
         );
+        self.current_memory_bytes += entry_size;
     }
 
     #[allow(dead_code)]
     pub fn invalidate(&mut self, key: &K) {
-        self.data.remove(key);
+        let entry_size = std::mem::size_of::<K>() + std::mem::size_of::<V>();
+        if self.data.remove(key).is_some() {
+            self.current_memory_bytes = self.current_memory_bytes.saturating_sub(entry_size);
+        }
     }
 
     pub fn invalidate_prefix(&mut self, prefix: &str)
@@ -82,6 +134,7 @@ impl<K: Eq + Hash + Clone, V: Clone> TimedCache<K, V> {
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.data.clear();
+        self.current_memory_bytes = 0;
     }
 
     #[allow(dead_code)]
