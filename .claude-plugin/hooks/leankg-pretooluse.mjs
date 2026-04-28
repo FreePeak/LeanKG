@@ -56,6 +56,9 @@ function isCodeSearchTool(toolName, toolInput) {
 
   if (toolName === "Bash") {
     const cmd = (toolInput.command || "").toLowerCase();
+    // Allow cargo/npm/etc build commands through - they're not code search
+    const isBuildCmd = /^(cargo|npm|pnpm|yarn|go|make|cmake|rustc)/.test(cmd);
+    if (isBuildCmd) return false;
     const isSearch = SEARCH_COMMANDS.some(c => cmd.includes(c));
     const isLeankgCmd = cmd.includes("leankg");
     return isSearch && !isLeankgCmd;
