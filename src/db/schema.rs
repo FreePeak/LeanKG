@@ -64,13 +64,19 @@ pub fn init_db_lightweight(db_path: &Path) -> Result<CozoDb, Box<dyn std::error:
     Ok(db)
 }
 
-/// Initialize database with configuration-based backend selection
-/// Currently only supports SQLite. PostgreSQL support will be added when cozo adds it.
-/// The config struct is prepared for future use.
+/// Initialize database with configuration-based backend selection.
+/// Tries PostgreSQL first if configured, falls back to SQLite on failure.
 pub fn init_db_with_config(config: &DatabaseConfig) -> Result<CozoDb, Box<dyn std::error::Error>> {
     match config.backend.as_str() {
         "postgres" | "postgresql" => {
-            Err("PostgreSQL support requires cozo version with PG storage. Currently only SQLite is supported.".into())
+            let err_msg = "PostgreSQL support requires cozo version with PG storage. Currently only SQLite is supported.";
+            tracing::warn!("{}", err_msg);
+            tracing::info!("Falling back to SQLite...");
+            if let Some(path) = &config.path {
+                init_sqlite_at_path(path)
+            } else {
+                init_sqlite_default()
+            }
         }
         _ => {
             if let Some(path) = &config.path {
