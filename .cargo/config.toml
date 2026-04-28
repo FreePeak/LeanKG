@@ -2,7 +2,6 @@
 # Only build release profile by default to save disk space
 
 [build]
-target = "aarch64-apple-darwin"
 
 [profile.dev]
 opt-level = 0

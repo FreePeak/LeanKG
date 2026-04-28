@@ -2550,6 +2550,52 @@ impl GraphEngine {
             total_connections,
         })
     }
+
+    pub fn count_elements(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(n)] := *code_elements[n, ...], n = n :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(n)] := *relationships[n, ...], n = n :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_business_logic(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(n)] := *business_logic[n, ...], n = n :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_files(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(file_path)] := *code_elements[file_path, ...] :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_by_element_type(
+        &self,
+        element_type: &str,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = format!(
+            r#"?[count(n)] := *code_elements[n, element_type, ...], element_type = "{}" :collect count"#,
+            element_type
+        );
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

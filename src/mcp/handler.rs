@@ -5,7 +5,6 @@ use crate::db::record_metric;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
 use crate::orchestrator::QueryOrchestrator;
 use serde_json::{json, Value};
-use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const INSTRUCTIONS_CONTENT: &str = r#"# LeanKG Tools - Usage Instructions
@@ -201,23 +200,14 @@ impl ToolHandler {
         let execution_time_ms = start_time.elapsed().as_millis() as i32;
         let input_tokens = arguments.to_string().len() as i32 / 4;
 
-        let (output_tokens, output_elements, baseline_tokens, baseline_lines, success) =
-            match &result {
-                Ok(response) => {
-                    let response_str = response.to_string();
-                    let output_tok = response_str.len() as i32 / 4;
-                    let out_elem = Self::count_response_elements(response);
-                    let (base_tok, base_lines) = self.estimate_baseline(tool_name, arguments);
-                    (output_tok, out_elem, base_tok, base_lines, true)
-                }
-                Err(_) => (0, 0, 0, 0, false),
-            };
-
-        let tokens_saved = baseline_tokens - output_tokens;
-        let savings_percent = if baseline_tokens > 0 {
-            (tokens_saved as f64 / baseline_tokens as f64) * 100.0
-        } else {
-            0.0
+        let (output_tokens, output_elements, success) = match &result {
+            Ok(response) => {
+                let response_str = response.to_string();
+                let output_tok = response_str.len() as i32 / 4;
+                let out_elem = Self::count_response_elements(response);
+                (output_tok, out_elem, true)
+            }
+            Err(_) => (0, 0, false),
         };
 
         let metric = ContextMetric {
@@ -231,10 +221,10 @@ impl ToolHandler {
             output_tokens,
             output_elements,
             execution_time_ms,
-            baseline_tokens,
-            baseline_lines_scanned: baseline_lines,
-            tokens_saved,
-            savings_percent,
+            baseline_tokens: 0,
+            baseline_lines_scanned: 0,
+            tokens_saved: 0,
+            savings_percent: 0.0,
             correct_elements: None,
             total_expected: None,
             f1_score: None,
@@ -250,91 +240,6 @@ impl ToolHandler {
         }
 
         result
-    }
-
-    fn estimate_baseline(&self, tool_name: &str, args: &Value) -> (i32, i32) {
-        let src_path = "./src";
-        match tool_name {
-            "search_code" => {
-                if let Some(query) = args["query"].as_str() {
-                    let output = Command::new("grep")
-                        .args(["-rn", "--include=*.rs", query, src_path])
-                        .output();
-                    if let Ok(out) = output {
-                        let lines = String::from_utf8_lossy(&out.stdout);
-                        let line_count = lines.lines().count();
-                        return (line_count as i32 * 4, line_count as i32);
-                    }
-                }
-                (0, 0)
-            }
-            "find_function" => {
-                if let Some(name) = args["name"].as_str() {
-                    let output = Command::new("grep")
-                        .args(["-rn", "--include=*.rs", name, src_path])
-                        .output();
-                    if let Ok(out) = output {
-                        let lines = String::from_utf8_lossy(&out.stdout);
-                        let line_count = lines.lines().count();
-                        return (line_count as i32 * 4, line_count as i32);
-                    }
-                }
-                (0, 0)
-            }
-            "query_file" => {
-                if let Some(pattern) = args["pattern"].as_str() {
-                    let output = Command::new("find")
-                        .args([src_path, "-name", pattern])
-                        .output();
-                    if let Ok(out) = output {
-                        let files = String::from_utf8_lossy(&out.stdout);
-                        let file_count = files.lines().count();
-                        return (file_count as i32 * 50, file_count as i32);
-                    }
-                }
-                (0, 0)
-            }
-            "get_dependencies" => {
-                if let Some(file) = args["file"].as_str() {
-                    let output = Command::new("grep")
-                        .args(["-n", "import\\|use\\|require", file])
-                        .output();
-                    if let Ok(out) = output {
-                        let lines = String::from_utf8_lossy(&out.stdout);
-                        let line_count = lines.lines().count();
-                        return (line_count as i32 * 4, line_count as i32);
-                    }
-                }
-                (0, 0)
-            }
-            "get_dependents" => {
-                if let Some(file) = args["file"].as_str() {
-                    let output = Command::new("grep")
-                        .args(["-rn", &format!("import.*{}", file), src_path])
-                        .output();
-                    if let Ok(out) = output {
-                        let lines = String::from_utf8_lossy(&out.stdout);
-                        let line_count = lines.lines().count();
-                        return (line_count as i32 * 4, line_count as i32);
-                    }
-                }
-                (0, 0)
-            }
-            "get_context" => {
-                if let Some(file) = args["file"].as_str() {
-                    if let Ok(content) = std::fs::read_to_string(file) {
-                        let chars = content.len() as i32;
-                        return (chars, chars / 80);
-                    }
-                }
-                (0, 0)
-            }
-            "get_impact_radius" => {
-                let depth = args["depth"].as_u64().unwrap_or(3) as i32;
-                (depth * 1000, depth * 100)
-            }
-            _ => (0, 0),
-        }
     }
 
     fn count_response_elements(response: &Value) -> i32 {
@@ -602,15 +507,9 @@ impl ToolHandler {
             }));
         }
 
-        let db = self.graph_engine.db();
-
         // Verify database is actually initialized with proper tables
-        let tables_exist = match self.graph_engine.all_elements() {
-            Ok(elements) => !elements.is_empty(),
-            Err(_) => false,
-        };
-
-        if !tables_exist {
+        let count = self.graph_engine.count_elements().unwrap_or_default();
+        if count == 0 {
             return Ok(json!({
                 "initialized": false,
                 "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
@@ -618,32 +517,24 @@ impl ToolHandler {
             }));
         }
 
-        let elements = self
+        let elements = count;
+        let relationships = self.graph_engine.count_relationships().unwrap_or(0);
+        let annotations = self.graph_engine.count_business_logic().unwrap_or(0);
+        let files = self.graph_engine.count_files().unwrap_or(0);
+        let functions = self
             .graph_engine
-            .all_elements()
-            .map_err(|e| e.to_string())?;
-        let relationships = self
+            .count_by_element_type("function")
+            .unwrap_or(0);
+        let classes = self
             .graph_engine
-            .all_relationships()
-            .map_err(|e| e.to_string())?;
-        let annotations = crate::db::all_business_logic(db).map_err(|e| e.to_string())?;
+            .count_by_element_type("class")
+            .unwrap_or(0)
+            + self
+                .graph_engine
+                .count_by_element_type("struct")
+                .unwrap_or(0);
 
-        let unique_files: std::collections::HashSet<_> =
-            elements.iter().map(|e| e.file_path.clone()).collect();
-        let files = unique_files.len();
-        let functions = elements
-            .iter()
-            .filter(|e| e.element_type == "function")
-            .count();
-        let classes = elements
-            .iter()
-            .filter(|e| e.element_type == "class" || e.element_type == "struct")
-            .count();
-
-        // Check if index is actually populated
-        let is_empty = elements.is_empty() && relationships.is_empty();
-
-        if is_empty {
+        if elements == 0 && relationships == 0 {
             return Ok(json!({
                 "initialized": true,
                 "index_populated": false,
@@ -656,12 +547,12 @@ impl ToolHandler {
             "initialized": true,
             "index_populated": true,
             "database": db_path.to_string_lossy(),
-            "elements": elements.len(),
-            "relationships": relationships.len(),
+            "elements": elements,
+            "relationships": relationships,
             "files": files,
             "functions": functions,
             "classes": classes,
-            "annotations": annotations.len()
+            "annotations": annotations
         }))
     }
 
