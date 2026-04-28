@@ -30,6 +30,9 @@ pub struct PersistentCache {
     db: Arc<CozoDb>,
     memory: Arc<RwLock<HashMap<String, CacheEntry>>>,
     default_ttl: u64,
+    /// If true, only use memory storage (no DB persistence)
+    /// Useful for reducing memory footprint when persistence isn't needed
+    memory_only: bool,
 }
 
 impl PersistentCache {
@@ -38,6 +41,18 @@ impl PersistentCache {
             db,
             memory: Arc::new(RwLock::new(HashMap::new())),
             default_ttl,
+            memory_only: false,
+        }
+    }
+
+    /// Create a memory-only cache that doesn't duplicate storage in SQLite
+    /// Reduces memory footprint by ~50% for transient caches
+    pub fn memory_only(db: Arc<CozoDb>, default_ttl: u64) -> Self {
+        Self {
+            db,
+            memory: Arc::new(RwLock::new(HashMap::new())),
+            default_ttl,
+            memory_only: true,
         }
     }
 
@@ -89,7 +104,10 @@ impl PersistentCache {
             },
         );
 
-        self.save_to_db(&key, &value_json, now).await.ok();
+        // Skip DB persistence if memory_only mode is enabled
+        if !self.memory_only {
+            self.save_to_db(&key, &value_json, now).await.ok();
+        }
     }
 
     pub async fn invalidate(&self, key: &str) {

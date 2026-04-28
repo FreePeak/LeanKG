@@ -23,6 +23,7 @@ use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
@@ -280,6 +281,19 @@ impl MCPServer {
             );
         }
 
+        // Ensure API server is running (starts it if not)
+        match self.ensure_api_server_running().await {
+            Ok(port) => {
+                tracing::info!("API server ready on port {}", port);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to ensure API server running: {}. Continuing anyway.",
+                    e
+                );
+            }
+        }
+
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.get_db_path();
             let watch_path = watch_path.clone();
@@ -355,6 +369,76 @@ impl MCPServer {
         axum::serve(listener, app).await?;
 
         Ok(())
+    }
+
+    /// Check if the API server is running on the given port by connecting to it
+    async fn is_api_server_running(port: u16) -> bool {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        tokio::net::TcpStream::connect(addr).await.is_ok()
+    }
+
+    /// Ensure the API server is running, starting it if not
+    async fn ensure_api_server_running(
+        &self,
+    ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
+        let requested_port = std::env::var("LEANKG_API_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(9699);
+
+        if Self::is_api_server_running(requested_port).await {
+            tracing::info!("API server already running on port {}", requested_port);
+            return Ok(requested_port);
+        }
+
+        let port = Self::find_available_port(requested_port);
+
+        if Self::is_api_server_running(port).await {
+            tracing::info!("API server already running on port {}", port);
+            return Ok(port);
+        }
+
+        let exe_path = std::env::current_exe()?;
+        tracing::info!("Starting API server on port {} (exe: {:?})", port, exe_path);
+
+        let child = std::process::Command::new(&exe_path)
+            .args(["api-serve", "--port", &port.to_string()])
+            .env("LEANKG_API_PORT", port.to_string())
+            .spawn();
+
+        match child {
+            Ok(_child) => {
+                tracing::info!("Spawned API server process");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to spawn API server: {}. Continuing anyway.", e);
+                return Ok(port);
+            }
+        }
+
+        for _ in 0..50 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            if Self::is_api_server_running(port).await {
+                tracing::info!("API server started on port {}", port);
+                return Ok(port);
+            }
+        }
+
+        tracing::warn!("API server may not be fully started yet on port {}", port);
+        Ok(port)
+    }
+
+    /// Find an available port starting from the given port, incrementing if taken
+    fn find_available_port(start_port: u16) -> u16 {
+        let mut port = start_port;
+        while port < start_port + 100 {
+            let addr = SocketAddr::from(([0, 0, 0, 0], port));
+            if std::net::TcpListener::bind(addr).is_ok() {
+                return port;
+            }
+            port += 1;
+        }
+        start_port
     }
 
     async fn auto_init_if_needed(&self) -> Result<(), String> {

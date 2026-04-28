@@ -128,6 +128,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tokio::fs::create_dir_all(&db_path).await.ok();
 
+            if watch {
+                let lockfile = db_path.join("leankg.pid");
+                if let Ok(pid_str) = std::fs::read_to_string(&lockfile) {
+                    if let Ok(old_pid) = pid_str.trim().parse::<u32>() {
+                        let alive = std::process::Command::new("kill")
+                            .args(["-0", &old_pid.to_string()])
+                            .output()
+                            .map(|o| o.status.success())
+                            .unwrap_or(false);
+                        if alive {
+                            tracing::warn!(
+                                "Another LeanKG watcher (PID {}) is already running for this project. Disabling --watch for this instance.",
+                                old_pid
+                            );
+                            let mcp_server = mcp::MCPServer::new(db_path);
+                            if let Err(e) = mcp_server.serve_stdio().await {
+                                eprintln!("MCP stdio server error: {}", e);
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
+                let _ = std::fs::write(&lockfile, std::process::id().to_string());
+            }
+
             let mcp_server = if watch {
                 mcp::MCPServer::new_with_watch(db_path, project_path.clone())
             } else {
@@ -2409,24 +2434,25 @@ fn kill_old_processes() -> Result<(), Box<dyn std::error::Error>> {
 
     let patterns = ["leankg", "vite"];
     let max_retries = 3;
+    let current_pid = std::process::id();
 
     for pattern in patterns {
         let mut retries = 0;
         loop {
-            // Get all processes matching the pattern
+            // Get all processes matching the pattern, excluding self
             let matching_pids: Vec<u32> = {
                 let mut sys = System::new_all();
                 sys.refresh_all();
                 sys.processes()
                     .iter()
-                    .filter(|(_pid, process)| {
+                    .filter(|(pid, process)| {
                         let cmd: String = process
                             .cmd()
                             .iter()
                             .map(|s| s.to_string_lossy().into_owned())
                             .collect::<Vec<_>>()
                             .join(" ");
-                        cmd.contains(pattern)
+                        pid.as_u32() != current_pid && cmd.contains(pattern)
                     })
                     .map(|(pid, _)| pid.as_u32())
                     .collect()
@@ -2481,14 +2507,14 @@ fn kill_old_processes() -> Result<(), Box<dyn std::error::Error>> {
         let remaining: Vec<_> = sys
             .processes()
             .iter()
-            .filter(|(_pid, process)| {
+            .filter(|(pid, process)| {
                 let cmd: String = process
                     .cmd()
                     .iter()
                     .map(|s| s.to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join(" ");
-                cmd.contains("leankg") || cmd.contains("vite")
+                pid.as_u32() != current_pid && (cmd.contains("leankg") || cmd.contains("vite"))
             })
             .collect();
 

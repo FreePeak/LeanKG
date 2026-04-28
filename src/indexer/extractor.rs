@@ -1,4 +1,5 @@
 use crate::db::models::{CodeElement, Relationship};
+use crate::indexer::regex_cache::{KOTLIN_SYNTHETIC_IMPORT, VIEWBINDING_VAR};
 use regex::Regex;
 use std::path::Path;
 use tree_sitter::{Node, Tree};
@@ -262,9 +263,7 @@ impl<'a> EntityExtractor<'a> {
         source_path: &str,
         relationships: &mut Vec<Relationship>,
     ) {
-        let synthetic_re = Regex::new(r#"import\s+kotlin\.android\.synthetic\.(\w+)\.\*"#).unwrap();
-
-        for cap in synthetic_re.captures_iter(content) {
+        for cap in KOTLIN_SYNTHETIC_IMPORT.captures_iter(content) {
             if let Some(layout_name) = cap.get(1) {
                 let layout_file = format!("res/layout/{}.xml", layout_name.as_str());
                 relationships.push(Relationship {
@@ -331,13 +330,11 @@ impl<'a> EntityExtractor<'a> {
         source_path: &str,
         relationships: &mut Vec<Relationship>,
     ) {
-        let binding_var_re = Regex::new(r#"(\w+Binding)\s+(\w+)\s*="#).unwrap();
-        let binding_class_names: std::collections::HashSet<String> = binding_var_re
+        let binding_class_names: std::collections::HashSet<String> = VIEWBINDING_VAR
             .captures_iter(content)
             .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
             .collect();
 
-        let _dot_access_re = Regex::new(r#"(\w+)\.(\w+)"#).unwrap();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for binding_name in binding_class_names {

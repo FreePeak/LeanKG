@@ -1,13 +1,24 @@
 {
+  "description": "LeanKG hooks - enforces LeanKG usage for code search",
   "hooks": {
-    "SessionStart": [
+    "PreToolUse": [
       {
-        "matcher": "startup|clear|compact",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start",
-            "async": false
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-pretooluse.mjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__leankg__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-posttooluse.mjs\""
           }
         ]
       }

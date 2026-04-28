@@ -5,6 +5,12 @@
 **Dua tren:** PRD v1.22
 **Trang thai:** Ban nhap
 **Changelog:**
+- v1.23 - Knowns-Inspired Enhancements (FUTURE):
+  - Hybrid search with Reciprocal Rank Fusion (semantic + keyword)
+  - Reference system (`@doc/`, `@task-` syntax) for traversable links
+  - Local ONNX embeddings for zero-API semantic search
+  - Memory layers: project/session/global context persistence
+  - AST-enriched searchable content with relationship metadata
 - v1.22 - MCP HTTP Transport (Remote MCP Server):
   - Add `mcp-http` CLI command for HTTP-based MCP server
   - Implement Streamable HTTP transport per MCP spec
@@ -14,15 +20,17 @@
   - CORS headers for browser-based clients
   - Support multiple concurrent MCP clients
   - Default port 9699 (consolidated with MCP watch mode)
+  - Database configuration structure added (PostgreSQL support pending cozo update)
 - v1.21 - CPU Optimization Phase 1:
   - Reduced cache TTL from 300s to 60s, max entries from 1000 to 100
   - Removed unbounded `elements_cache` and `relationships_cache`
   - Reduced SQLite memory: cache 64MB→16MB, mmap 256MB→64MB
   - Lazy parser initialization (TODO)
-  - Cached regex patterns (TODO)
+  - Cached regex patterns (COMPLETED)
   - Connection reuse in watcher (TODO)
   - Cursor-based relationship iteration (TODO)
   - File→relationships index for dependent lookup (TODO)
+  - Removed busy-loop sleep from AsyncFileWatcher (COMPLETED)
   - Target: Reduce idle CPU from 61% to <5%
 - v1.20 - Stats API + Adaptive Loading:
   - Add `GET /api/graph/stats` endpoint returning full DB histogram (nodes_by_type, edges_by_type, nodes_by_depth, folders, services)
@@ -1275,9 +1283,110 @@ documentation:
 
 ---
 
-## 10. Future Considerations
+## 10. Knowns-Inspired Enhancements
 
-### 10.1 Phase 2 Features
+LeanKG can learn from [Knowns](https://github.com/knowns-dev/knowns) to become a more complete AI context layer.
+
+### 10.1 Hybrid Search with Reciprocal Rank Fusion (RRF)
+
+Knowns combines semantic (vector embeddings) + keyword search using RRF with sophisticated scoring.
+
+| Feature | Knowns | LeanKG Current | LeanKG Future |
+|---------|--------|----------------|---------------|
+| Search type | Hybrid semantic + keyword | Keyword + graph traversal | Hybrid both |
+| Ranking | RRF with recency/tag boosts | Graph-based | RRF + graph |
+| Embeddings | Local ONNX models | None | ONNX Runtime |
+
+**Implementation approach:**
+- Add vector embeddings for code symbols using ONNX Runtime (`multilingual-e5-small` or `gte-small`)
+- Store embeddings in SQLite with binary float32 vectors
+- Merge semantic and keyword results using RRF: `score = 60.0 / (rank_semantic + 60.0) + keyword_score`
+- Add keyword density, recency (7-day boost), and tag overlap to ranking
+
+### 10.2 Reference System (`@doc/`, `@task-` syntax)
+
+Knowns has traversable links between tasks, docs, and code via `@doc/path` and `@task-id` syntax.
+
+| Feature | Knowns | LeanKG Current | LeanKG Future |
+|---------|--------|----------------|---------------|
+| Cross-entity links | `@doc/`, `@task-` syntax | `documented_by`, `references` edges | Both |
+| Resolution | AI follows references automatically | Manual graph traversal | Auto-resolution in MCP tools |
+| Link types | Memory, Task, Doc, Code | Code→Doc only | All entity types |
+
+**Implementation approach:**
+- Extend `Document` model with reference syntax parsing
+- Add MCP tools: `mcp_resolve_ref`, `mcp_follow_link`
+- Resolve `@doc/path` to document content, `@task-id` to task details
+- Index reference syntax in searchable content
+
+### 10.3 Local ONNX Embeddings (Zero API Dependency)
+
+Knowns uses local ONNX models for embeddings — no API keys, fully offline.
+
+| Model | Dimensions | Max Tokens | Use Case |
+|-------|-----------|------------|----------|
+| `multilingual-e5-small` | 384 | 512 | Default, multilingual |
+| `gte-small` | 384 | 512 | English-focused |
+| `gte-base` | 768 | 512 | Higher quality English |
+| `nomic-embed-text-v1.5` | 768 | 8192 | Long context |
+
+**Storage:**
+- ONNX runtime: `~/.leankg/lib/`
+- Models: `~/.leankg/models/` (auto-downloaded)
+- Search index: `.leankg/.search/` (per-project SQLite)
+
+### 10.4 Memory Layers
+
+Knowns separates project/session/global memory for persisting decisions across sessions.
+
+| Layer | Knowns | LeanKG Future |
+|-------|--------|---------------|
+| Global | Audit logs, model cache | `.leankg/audit.jsonl` |
+| Project | `.knowns/` files | Already `.leankg/` |
+| Session | In-memory context | Per-MCP-call context |
+
+**LeanKG current state:**
+- `BusinessLogic` annotations are project-level persistent context
+- No session/global layers yet
+- Future: Add session memory for AI conversation context
+
+### 10.5 AST-Enriched Searchable Content
+
+Knowns extracts symbols with signatures and enriches searchable content with dependency relationships.
+
+**Knowns approach:**
+```go
+type CodeSymbol struct {
+    Name      string
+    Kind      string  // function/method/class/interface/file
+    DocPath   string
+    Signature string
+    Content   string  // source code
+}
+// Content enrichment: "calls: foo, bar, implements: MyInterface"
+```
+
+**LeanKG current:** `metadata` JSON field stores signature, but not relationship context
+**LeanKG future:** Append relationship metadata to indexed content for better search
+
+### 10.6 Deeper MCP Tool Surface
+
+Knowns MCP tools: tasks, docs, search, code, memory, validation
+
+| Category | Knowns Tools | LeanKG Tools | Gap |
+|----------|-------------|--------------|-----|
+| Tasks | `tasks_*`, `create_task` | None | Memory/task tracking |
+| Docs | `doc_*`, `get_doc` | `get_doc_*` | Parity |
+| Search | `search`, `retrieve` | `search_code` | Hybrid search |
+| Memory | `memory_*`, `remember` | None | Session context |
+| Code | `code_*`, `index_code` | Many | Parity |
+| Validation | `validate_*` | None | Code quality |
+
+---
+
+## 11. Future Considerations
+
+### 11.1 Phase 2 Features
 
 - Pipeline information extraction (US-09)
   - Pipeline Detector: auto-detect CI/CD config files by path convention
@@ -1314,18 +1423,27 @@ documentation:
 - Additional language support (Rust, Java, C#)
 - Incremental indexing optimization
 
-### 10.2 Phase 3 Features
+### 11.2 Phase 3 Features
 
 - Vector embeddings cho semantic search
 - Cloud sync option
 - Team features (shared knowledge graphs)
 - Plugin system
 
+### 11.3 Knowns-Inspired Features (Future)
+
+- [ ] Hybrid search with RRF
+- [ ] Reference system (`@doc/`, `@task-`)
+- [ ] Local ONNX embeddings
+- [ ] Memory layers (project/session/global)
+- [ ] AST-enriched searchable content
+- [ ] Expanded MCP tool surface (tasks, memory, validation)
+
 ---
 
-## 11. Dependencies
+## 13. Dependencies
 
-### 11.1 Direct Dependencies (Rust + CozoDB)
+### 13.1 Direct Dependencies (Rust + CozoDB)
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
@@ -1337,7 +1455,7 @@ documentation:
 | tokio | 1 | Async runtime |
 | serde | 1 | Serialization |
 
-### 11.2 Build Dependencies
+### 13.2 Build Dependencies
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
@@ -1346,9 +1464,9 @@ documentation:
 
 ---
 
-## 12. Appendix
+## 14. Appendix
 
-### 12.1 Glossary
+### 14.1 Glossary
 
 | Term | Definition |
 |------|-------------|
@@ -1372,7 +1490,7 @@ documentation:
 | Traceability | Chain linking requirements -> documentation -> code elements |
 | Qualified Name Normalizer | Component that converts bare function names to qualified names for accurate matching |
 
-### 12.2 References
+### 14.2 References
 
 - C4 Model: https://c4model.com/
 - CozoDB: https://github.com/cozodb/cozo (Embedded relational-graph database with Datalog queries)

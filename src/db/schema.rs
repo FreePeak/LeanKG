@@ -36,6 +36,34 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     Ok(db)
 }
 
+/// Lightweight DB init for the file watcher — reduced memory footprint.
+pub fn init_db_lightweight(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
+    let db_file_path = if db_path.is_dir() {
+        db_path.join("leankg.db")
+    } else {
+        db_path.to_path_buf()
+    };
+
+    let path_str = db_file_path.to_string_lossy().to_string();
+    let db = cozo::new_cozo_sqlite(path_str)?;
+
+    let pragmas = [
+        "PRAGMA cache_size = -8000",
+        "PRAGMA mmap_size = 0",
+        "PRAGMA temp_store = MEMORY",
+        "PRAGMA synchronous = NORMAL",
+        "PRAGMA journal_mode = WAL",
+        "PRAGMA wal_autocheckpoint = 100",
+    ];
+    for pragma in pragmas {
+        if let Err(e) = db.run_script(pragma, Default::default()) {
+            tracing::debug!("Pragma '{}' failed (may not be supported): {}", pragma, e);
+        }
+    }
+
+    Ok(db)
+}
+
 /// Initialize database with configuration-based backend selection
 /// Currently only supports SQLite. PostgreSQL support will be added when cozo adds it.
 /// The config struct is prepared for future use.
@@ -45,11 +73,9 @@ pub fn init_db_with_config(config: &DatabaseConfig) -> Result<CozoDb, Box<dyn st
             Err("PostgreSQL support requires cozo version with PG storage. Currently only SQLite is supported.".into())
         }
         _ => {
-            // Default to SQLite if path is provided, otherwise use default location
             if let Some(path) = &config.path {
                 init_sqlite_at_path(path)
             } else {
-                // Use default path in current directory
                 init_sqlite_default()
             }
         }
@@ -59,7 +85,6 @@ pub fn init_db_with_config(config: &DatabaseConfig) -> Result<CozoDb, Box<dyn st
 fn init_sqlite_at_path(path_str: &str) -> Result<CozoDb, Box<dyn std::error::Error>> {
     let db = cozo::new_cozo_sqlite(path_str.to_string())?;
 
-    // Set memory limits for SQLite (CozoDB backend)
     let pragmas = [
         "PRAGMA cache_size = -64000",
         "PRAGMA mmap_size = 268435456",
