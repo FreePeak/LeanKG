@@ -378,11 +378,171 @@ impl GraphEngine {
         })
     }
 
+    /// Get elements with pagination - memory efficient alternative to all_elements()
+    /// Avoids loading entire database into memory at once
+    pub fn get_elements_paginated(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<CodeElement>, usize), Box<dyn std::error::Error>> {
+        let limit = limit.min(1000); // Cap to prevent excessive memory
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit {} :offset {}"#,
+            limit, offset
+        );
+
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
+
+        let elements: Vec<CodeElement> = result
+            .rows
+            .iter()
+            .map(|row| {
+                let parent_qualified = row[7].as_str().map(String::from);
+                let cluster_id = row[8].as_str().map(String::from);
+                let cluster_label = row[9].as_str().map(String::from);
+                let metadata_str = row[10].as_str().unwrap_or("{}");
+                CodeElement {
+                    qualified_name: row[0].as_str().unwrap_or("").to_string(),
+                    element_type: row[1].as_str().unwrap_or("").to_string(),
+                    name: row[2].as_str().unwrap_or("").to_string(),
+                    file_path: row[3].as_str().unwrap_or("").to_string(),
+                    line_start: row[4].as_i64().unwrap_or(0) as u32,
+                    line_end: row[5].as_i64().unwrap_or(0) as u32,
+                    language: row[6].as_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                }
+            })
+            .collect();
+
+        // Total count for pagination (approximate, actual would need count query)
+        let total_count = elements.len() + offset;
+        Ok((elements, total_count))
+    }
+
+    /// Get relationships with pagination - memory efficient alternative to all_relationships()
+    /// Avoids loading entire relationship set + building secondary index in memory
+    pub fn get_relationships_paginated(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<Relationship>, usize), Box<dyn std::error::Error>> {
+        let limit = limit.min(1000); // Cap to prevent excessive memory
+        let query = format!(
+            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata] :limit {} :offset {}"#,
+            limit, offset
+        );
+
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
+
+        let relationships: Vec<Relationship> = result
+            .rows
+            .iter()
+            .map(|row| {
+                let metadata_str = row[4].as_str().unwrap_or("{}");
+                Relationship {
+                    id: None,
+                    source_qualified: row[0].as_str().unwrap_or("").to_string(),
+                    target_qualified: row[1].as_str().unwrap_or("").to_string(),
+                    rel_type: row[2].as_str().unwrap_or("").to_string(),
+                    confidence: row[3].as_f64().unwrap_or(1.0),
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                }
+            })
+            .collect();
+
+        let total_count = relationships.len() + offset;
+        Ok((relationships, total_count))
+    }
+
+    /// Get relationships for specific elements without loading all relationships into memory
+    /// Uses database-level filtering instead of secondary index
+    pub fn get_relationships_for_elements_paginated(
+        &self,
+        element_ids: &[String],
+        rel_types: Option<&[&str]>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<Relationship>, usize), Box<dyn std::error::Error>> {
+        if element_ids.is_empty() {
+            return Ok((vec![], 0));
+        }
+
+        let limit = limit.min(1000);
+        let rel_types_filter: std::collections::HashSet<&str> = rel_types
+            .map(|types| types.iter().copied().collect())
+            .unwrap_or_default();
+
+        // Build query with element filter at database level
+        let element_patterns: Vec<String> = element_ids
+            .iter()
+            .map(|id| format!(r#"source_qualified = "{}""#, escape_datalog(id)))
+            .collect();
+        let source_filter = element_patterns.join(" or ");
+
+        let (query, params) = if rel_types_filter.is_empty() {
+            let q = format!(
+                r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                    *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+                    ({})
+                    :limit {} :offset {}"#,
+                source_filter, limit, offset
+            );
+            (q, std::collections::BTreeMap::new())
+        } else {
+            let types_str = rel_types_filter
+                .iter()
+                .map(|t| format!(r#""{}""#, t))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let q = format!(
+                r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                    *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+                    ({}),
+                    rel_type in [{}]
+                    :limit {} :offset {}"#,
+                source_filter, types_str, limit, offset
+            );
+            (q, std::collections::BTreeMap::new())
+        };
+
+        let result = self.db.run_script(&query, params)?;
+
+        let relationships: Vec<Relationship> = result
+            .rows
+            .iter()
+            .map(|row| {
+                let metadata_str = row[4].as_str().unwrap_or("{}");
+                Relationship {
+                    id: None,
+                    source_qualified: row[0].as_str().unwrap_or("").to_string(),
+                    target_qualified: row[1].as_str().unwrap_or("").to_string(),
+                    rel_type: row[2].as_str().unwrap_or("").to_string(),
+                    confidence: row[3].as_f64().unwrap_or(1.0),
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                }
+            })
+            .collect();
+
+        let total_count = relationships.len() + offset;
+        Ok((relationships, total_count))
+    }
+
     pub fn all_elements(&self) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
         // Check cache first
         if let Some(cached) = self.elements_cache.read().as_ref() {
             return Ok(cached.clone());
         }
+
+        // DEPRECATED: Use get_elements_paginated() instead for memory efficiency
+        // This method loads ALL elements into memory - problematic for large codebases
+        tracing::warn!("all_elements() is deprecated - use get_elements_paginated() instead");
 
         let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]"#;
 
@@ -760,11 +920,85 @@ impl GraphEngine {
         Ok(relationships)
     }
 
+    /// Memory-efficient version of get_relationships_for_elements
+    /// Filters at database level instead of loading all relationships + building index
+    pub fn get_relationships_for_elements_fast(
+        &self,
+        element_ids: &[String],
+        rel_types: Option<&[&str]>,
+    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        if element_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Build query with element filter at database level
+        let element_patterns: Vec<String> = element_ids
+            .iter()
+            .map(|id| format!(r#"source_qualified = "{}""#, escape_datalog(id)))
+            .collect();
+        let source_filter = element_patterns.join(" or ");
+
+        let rel_types_filter: std::collections::HashSet<&str> = rel_types
+            .map(|types| types.iter().copied().collect())
+            .unwrap_or_default();
+
+        let (query, params) = if rel_types_filter.is_empty() {
+            let q = format!(
+                r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                    *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+                    ({})
+                    :limit 5000"#,
+                source_filter
+            );
+            (q, std::collections::BTreeMap::new())
+        } else {
+            let types_str = rel_types_filter
+                .iter()
+                .map(|t| format!(r#""{}""#, t))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let q = format!(
+                r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                    *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+                    ({}),
+                    rel_type in [{}]
+                    :limit 5000"#,
+                source_filter, types_str
+            );
+            (q, std::collections::BTreeMap::new())
+        };
+
+        let result = self.db.run_script(&query, params)?;
+
+        let relationships: Vec<Relationship> = result
+            .rows
+            .iter()
+            .map(|row| {
+                let metadata_str = row[4].as_str().unwrap_or("{}");
+                Relationship {
+                    id: None,
+                    source_qualified: row[0].as_str().unwrap_or("").to_string(),
+                    target_qualified: row[1].as_str().unwrap_or("").to_string(),
+                    rel_type: row[2].as_str().unwrap_or("").to_string(),
+                    confidence: row[3].as_f64().unwrap_or(1.0),
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                }
+            })
+            .collect();
+
+        Ok(relationships)
+    }
+
     pub fn all_relationships(&self) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
         // Check cache first
         if let Some(cached) = self.relationships_cache.read().as_ref() {
             return Ok(cached.clone());
         }
+
+        // DEPRECATED: Use get_relationships_paginated() or get_relationships_for_elements_paginated() instead
+        // This method loads ALL relationships into memory AND builds a secondary index HashMap
+        // For large codebases (52K+ relationships), this causes significant memory pressure
+        tracing::warn!("all_relationships() is deprecated - use get_relationships_paginated() or get_relationships_for_elements_paginated() instead");
 
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata]"#;
 
@@ -789,6 +1023,7 @@ impl GraphEngine {
             .collect();
 
         // Build secondary index: element_id -> relationship indices
+        // This HashMap alone can consume significant memory for large relationship sets
         let mut index: std::collections::HashMap<String, Vec<usize>> =
             std::collections::HashMap::new();
         for (idx, rel) in relationships.iter().enumerate() {
@@ -1993,41 +2228,69 @@ impl GraphEngine {
     pub fn get_call_graph_bounded(
         &self,
         source_qualified: &str,
-        _max_depth: u32,
+        max_depth: u32,
         max_results: usize,
     ) -> Result<Vec<(String, String, u32)>, Box<dyn std::error::Error>> {
-        let normalized = normalize_path(source_qualified);
-
-        // For now, just use depth 1 since the multi-depth query is complex
-        // Build source filter - check both with and without ./ prefix
-        let src_filter = if normalized.starts_with("./") {
-            format!(r#"src = "{}""#, normalized)
+        // Resolve short function name to full qualified name
+        let resolved = if source_qualified.contains("::") {
+            normalize_path(source_qualified)
         } else {
-            let with_prefix = format!("./{}", normalized);
-            format!(r#"(src = "{}" or src = "{}")"#, normalized, with_prefix)
+            self.find_element_by_name(source_qualified)?
+                .map(|e| e.qualified_name)
+                .unwrap_or_else(|| source_qualified.to_string())
         };
 
-        let query = format!(
-            r#"?[src, tgt, rel_type, conf, meta] :=
-               *relationships[src, tgt, rel_type, conf, meta],
-               rel_type = "calls",
-               {}
-               :limit {}"#,
-            src_filter, max_results,
-        );
+        let mut all_calls: Vec<(String, String, u32)> = Vec::new();
+        let mut frontier: Vec<String> = vec![resolved.clone()];
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        let result = self.db.run_script(&query, Default::default())?;
-        Ok(result
-            .rows
-            .iter()
-            .map(|row| {
-                (
-                    row[0].as_str().unwrap_or("").to_string(),
-                    row[1].as_str().unwrap_or("").to_string(),
-                    1u32,
-                )
-            })
-            .collect())
+        for depth in 0..max_depth {
+            if frontier.is_empty() {
+                break;
+            }
+            let mut next_frontier: Vec<String> = Vec::new();
+            for src in &frontier {
+                if visited.contains(src) {
+                    continue;
+                }
+                visited.insert(src.clone());
+
+                let filter = if src.contains("::") {
+                    format!(r#"src = "{}""#, escape_datalog(src))
+                } else {
+                    format!(
+                        r#"(src = "{}" or src = "./{}")"#,
+                        escape_datalog(src),
+                        escape_datalog(src)
+                    )
+                };
+
+                let query = format!(
+                    r#"?[src, tgt] :=
+                       *relationships[src, tgt, rel_type, conf, meta],
+                       rel_type = "calls",
+                       {}
+                       :limit {}"#,
+                    filter, max_results,
+                );
+
+                let result = self.db.run_script(&query, Default::default())?;
+                for row in &result.rows {
+                    let tgt = row[1].as_str().unwrap_or("").to_string();
+                    if !visited.contains(&tgt) && !tgt.starts_with("__unresolved__") {
+                        next_frontier.push(tgt.clone());
+                    }
+                    all_calls.push((src.clone(), tgt, depth + 1));
+                }
+            }
+            frontier = next_frontier;
+            if all_calls.len() >= max_results {
+                all_calls.truncate(max_results);
+                break;
+            }
+        }
+
+        Ok(all_calls)
     }
 
     pub fn resolve_call_edges(&self) -> Result<usize, Box<dyn std::error::Error>> {
@@ -2314,6 +2577,52 @@ impl GraphEngine {
             total_services: all_services.len(),
             total_connections,
         })
+    }
+
+    pub fn count_elements(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(n)] := *code_elements[n, ...], n = n :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(n)] := *relationships[n, ...], n = n :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_business_logic(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(n)] := *business_logic[n, ...], n = n :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_files(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(file_path)] := *code_elements[file_path, ...] :collect count"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+    }
+
+    pub fn count_by_element_type(
+        &self,
+        element_type: &str,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = format!(
+            r#"?[count(n)] := *code_elements[n, element_type, ...], element_type = "{}" :collect count"#,
+            element_type
+        );
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
     }
 }
 

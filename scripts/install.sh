@@ -475,12 +475,9 @@ HOOKEOF
 #!/usr/bin/env node
 /**
  * LeanKG PreToolUse Hook
- * Intercepts code search/navigation tools and routes to LeanKG MCP tools.
- * ENFORCES LeanKG usage by denying raw tools when LeanKG is available.
+ * Provides LeanKG context when code search is detected.
+ * Only blocks Bash commands that use raw grep/find.
  */
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 // ─── LeanKG Tools Mapping ───
@@ -497,20 +494,27 @@ const LEANKG_TOOLS = {
   get_callers: "Get who calls a function",
 };
 
-async function readStdin() {
-  return new Promise((resolve) => {
+// ─── Read stdin ───
+function readStdin() {
+  return new Promise((resolve, reject) => {
     let data = "";
-    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("readable", () => {
+      let chunk;
+      while ((chunk = process.stdin.read()) !== null) {
+        data += chunk;
+      }
+    });
     process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
   });
 }
 
-// ─── Check if LeanKG MCP is available ───
+// ─── Check if LeanKG is available ───
 function isLeanKGMCPReady() {
   try {
-    const leankgBin = process.env.LEANKG_BINARY || "leankg";
-    const result = spawnSync(leankgBin, ["status"], {
-      timeout: 3000,
+    const result = spawnSync("cargo", ["run", "--release", "--", "status"], {
+      cwd: process.cwd(),
+      timeout: 5000,
     });
     return result.status === 0;
   } catch {
@@ -518,99 +522,70 @@ function isLeanKGMCPReady() {
   }
 }
 
-// ─── Detect code search tools ───
-const CODE_SEARCH_TOOLS = ["Grep", "Glob", "Read", "Bash", "Search"];
-const SEARCH_COMMANDS = ["grep", "rg", "find", "fd", "fzf", "cat"];
+// ─── Only block Bash with grep/find - allow other tools ───
+function shouldBlockTool(toolName, toolInput) {
+  if (toolName !== "Bash") return false;
 
-function isCodeSearchTool(tool, toolInput) {
-  if (!CODE_SEARCH_TOOLS.includes(tool)) return false;
+  const cmd = (toolInput.command || "").toLowerCase();
 
-  if (tool === "Bash") {
-    const cmd = (toolInput.command || "").toLowerCase();
-    const isSearch = SEARCH_COMMANDS.some(c => cmd.includes(c));
-    const isLeankgCmd = cmd.includes("leankg");
-    return isSearch && !isLeankgCmd;
-  }
+  // Build commands always allowed
+  const isBuildCmd = /^(cargo|npm|pnpm|yarn|go|make|cmake|rustc)/.test(cmd);
+  if (isBuildCmd) return false;
 
-  return true;
+  // Only block if using raw grep/find in bash
+  const hasRawSearch = /\b(grep|rg|ag|ack|find|fd|fzf)\b/.test(cmd);
+  const isLeankgCmd = cmd.includes("leankg");
+
+  return hasRawSearch && !isLeankgCmd;
 }
 
-function buildToolGuidance(toolName, toolInput) {
+function buildGuidance(toolInput) {
+  const cmd = toolInput.command || "";
+  const match = cmd.match(/['"]([^'"]+)['"]/);
+  const query = match ? match[1] : "";
+
   const toolsList = Object.entries(LEANKG_TOOLS)
     .map(([name, desc]) => `  - mcp__leankg__${name}: ${desc}`)
     .join("\n");
 
-  let query = "";
-  if (toolName === "Grep") query = toolInput?.pattern || "";
-  else if (toolName === "Glob") query = toolInput?.pattern || "";
-  else if (toolName === "Read") query = toolInput?.file_path || "";
-  else if (toolName === "Bash") {
-    const cmd = toolInput?.command || "";
-    const match = cmd.match(/['"]([^'"]+)['"]/);
-    query = match ? match[1] : cmd.split(" ").pop() || "";
-  }
+  return `LEANKG ENFORCEMENT: Raw search via Bash is blocked.
 
-  return `LEANKG ENFORCEMENT: Raw tool ${toolName} is blocked for code search.
-
-Use LeanKG MCP tools INSTEAD:
+Use LeanKG MCP tools instead:
 ${toolsList}
 
 REQUIRED WORKFLOW:
 1. mcp__leankg__mcp_status → confirm LeanKG is ready
-2. For code search: mcp__leankg__search_code("${query}")
-   or mcp__leankg__find_function("${query}")
-3. For file content: mcp__leankg__get_context("<file_path>")
-4. For tests: mcp__leankg__get_tested_by("<file_path>")
+2. For code search: mcp__leankg__search_code("${query}") or mcp__leankg__find_function("${query}")
 
-DENIAL REASON: Code search must use LeanKG for accurate, fast results.
-The original tool call: ${toolName}(${JSON.stringify(toolInput)})`;
+The original tool call: Bash(${JSON.stringify(toolInput)})`;
 }
 
 async function main() {
   try {
     const raw = await readStdin();
-    if (!raw.trim()) {
-      process.exit(0);
-    }
+    if (!raw.trim()) process.exit(0);
 
     const input = JSON.parse(raw);
     const toolName = input.tool_name || "";
     const toolInput = input.tool_input || {};
 
-    // Check if this is a code search tool
-    if (!isCodeSearchTool(toolName, toolInput)) {
+    if (!shouldBlockTool(toolName, toolInput)) {
       process.exit(0);
     }
 
-    // Check if LeanKG is ready
     const leanKGReady = isLeanKGMCPReady();
+    if (!leanKGReady) process.exit(0);
 
-    if (!leanKGReady) {
-      // LeanKG not ready, allow through with context
-      const guidance = `LeanKG is not ready. Initialize with: mcp__leankg__mcp_init path:"${join(homedir(), ".leankg")}"
-Then use LeanKG tools for code search.`;
-      console.log(JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "allow",
-          additionalContext: guidance,
-        },
-      }) + "\n");
-      process.exit(0);
-    }
-
-    // LeanKG ready - DENY raw tool and require LeanKG usage
-    const guidance = buildToolGuidance(toolName, toolInput);
+    // LeanKG ready - block Bash search commands
     console.log(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: guidance,
+        permissionDecisionReason: buildGuidance(toolInput),
       },
     }) + "\n");
     process.exit(0);
   } catch {
-    // On error, allow tool through
     process.exit(0);
   }
 }

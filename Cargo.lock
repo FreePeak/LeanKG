@@ -1404,6 +1404,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "similar",
+ "subtle",
  "sysinfo",
  "tar",
  "tempfile",

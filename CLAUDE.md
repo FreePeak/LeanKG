@@ -81,19 +81,36 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ## LeanKG Tools Usage
 
-### MANDATORY: Use LeanKG First
+### MANDATORY: Use LeanKG First, Fallback to Raw Tools
 
-Before ANY codebase search/navigation, use LeanKG tools:
-1. `mcp_status` - check if ready. If not initialized, you MUST run `mcp_init` passing the absolute path to the project's `.leankg` directory (e.g. `path: "/full/workspace/path/.leankg"`).
-2. Use tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
-3. Only fallback to grep/read if LeanKG fails
+**This is a MANDATORY workflow - not optional guidance.**
 
-| Task | Use |
-|------|-----|
-| Where is X? | `search_code` or `find_function` |
-| What breaks if I change Y? | `get_impact_radius` |
-| What tests cover Y? | `get_tested_by` |
-| How does X work? | `get_context` |
+#### Step 1: Always Try LeanKG First
+1. Call `mcp_status` to check if LeanKG is ready
+2. If not ready, call `mcp_init` with path: "/Users/linh.doan/work/harvey/freepeak/leankg/.leankg"
+3. Use appropriate LeanKG tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+
+#### Step 2: Fallback Only If LeanKG Fails
+- LeanKG returns empty results OR
+- LeanKG returns error AND you need the data
+- THEN you may use `Glob`, `Grep`, `Read` as fallback
+
+#### Step 3: Never Skip LeanKG for Code Search
+- NEVER say "I'll just use grep" without trying LeanKG first
+- NEVER claim "LeanKG doesn't have this" without actually checking
+
+| Task | LeanKG First | Fallback |
+|------|--------------|----------|
+| Where is X? | `search_code("X")` | `Grep("X")` |
+| Find function | `find_function("name")` | `Grep("fn name")` |
+| What breaks? | `get_impact_radius(file)` | Manual trace |
+| What tests? | `get_tested_by(file)` | `Grep("test.*file")` |
+| Read content | `get_context(file)` | `Read(file)` |
+
+### Why This Matters
+- LeanKG is 10-100x faster than raw grep on large codebases
+- LeanKG understands code relationships (imports, calls, tests)
+- Raw tools should be emergency fallback only
 
 ---
 

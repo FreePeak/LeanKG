@@ -7,15 +7,27 @@ use crate::mcp::tools::ToolRegistry;
 use crate::mcp::tracker::WriteTracker;
 use crate::mcp::watcher::start_watcher;
 use crate::orchestrator::intent::IntentParser;
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header, HeaderMap, Method, StatusCode},
+    response::Response,
+    routing::{get, post},
+    Router,
+};
+// use futures_util::StreamExt;  // Reserved for future streaming support
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
+use tower_http::cors::{Any, CorsLayer};
 
 pub struct MCPServer {
     auth_config: Arc<TokioRwLock<AuthConfig>>,
@@ -269,6 +281,19 @@ impl MCPServer {
             );
         }
 
+        // Ensure API server is running (starts it if not)
+        match self.ensure_api_server_running().await {
+            Ok(port) => {
+                tracing::info!("API server ready on port {}", port);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to ensure API server running: {}. Continuing anyway.",
+                    e
+                );
+            }
+        }
+
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.get_db_path();
             let watch_path = watch_path.clone();
@@ -288,6 +313,142 @@ impl MCPServer {
         let transport = stdio();
         let _running = serve_server(self.clone(), transport).await?;
         futures_util::future::pending().await
+    }
+
+    /// Check if the API server is running on the given port by connecting to it
+    async fn is_api_server_running(port: u16) -> bool {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        tokio::net::TcpStream::connect(addr).await.is_ok()
+    }
+
+    /// Ensure the API server is running, starting it if not
+    async fn ensure_api_server_running(
+        &self,
+    ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
+        // Get port from environment or use default 9699
+        let requested_port = std::env::var("LEANKG_API_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(9699);
+
+        // First check if API server is already running on the requested/default port
+        if Self::is_api_server_running(requested_port).await {
+            tracing::info!("API server already running on port {}", requested_port);
+            return Ok(requested_port);
+        }
+
+        // Find an available port starting from the requested port
+        let port = Self::find_available_port(requested_port);
+
+        // Check again if API server is running on the available port
+        // (it might have started between our first check and find_available_port)
+        if Self::is_api_server_running(port).await {
+            tracing::info!("API server already running on port {}", port);
+            return Ok(port);
+        }
+
+        // Find the current executable path
+        let exe_path = std::env::current_exe()?;
+        tracing::info!("Starting API server on port {} (exe: {:?})", port, exe_path);
+
+        // Start API server as a background process
+        // Run with LEANKG_API_PORT set to communicate the port
+        let child = std::process::Command::new(&exe_path)
+            .args(["api-serve", "--port", &port.to_string()])
+            .env("LEANKG_API_PORT", port.to_string())
+            .spawn();
+
+        match child {
+            Ok(_child) => {
+                tracing::info!("Spawned API server process");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to spawn API server: {}. Continuing anyway.", e);
+                return Ok(port);
+            }
+        }
+
+        // Wait for server to start (check every 100ms for up to 5 seconds)
+        for _ in 0..50 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            if Self::is_api_server_running(port).await {
+                tracing::info!("API server started on port {}", port);
+                return Ok(port);
+            }
+        }
+
+        tracing::warn!("API server may not be fully started yet on port {}", port);
+        Ok(port)
+    }
+
+    /// Find an available port starting from the given port, incrementing if taken
+    fn find_available_port(start_port: u16) -> u16 {
+        let mut port = start_port;
+        while port < start_port + 100 {
+            // Try to bind to check if port is available
+            let addr = SocketAddr::from(([0, 0, 0, 0], port));
+            if std::net::TcpListener::bind(addr).is_ok() {
+                return port;
+            }
+            port += 1;
+        }
+        start_port
+    }
+
+    pub async fn serve_http(
+        &self,
+        port: u16,
+        auth_token: Option<String>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Err(e) = self.auto_init_if_needed().await {
+            tracing::warn!(
+                "Auto-init skipped: {}. Server will operate in uninitialized state.",
+                e
+            );
+        }
+
+        if let Some(ref watch_path) = self.watch_path {
+            let db_path = self.get_db_path();
+            let watch_path = watch_path.clone();
+            tokio::spawn(async move {
+                let (tx, rx) = tokio::sync::mpsc::channel(100);
+                start_watcher(db_path, watch_path, rx).await;
+                let _ = tx; // silence unused warning
+            });
+            tracing::info!(
+                "Auto-indexing enabled for {}",
+                self.watch_path
+                    .as_ref()
+                    .unwrap_or(&std::path::PathBuf::from("?"))
+                    .display()
+            );
+        }
+
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: self.clone(),
+            auth_token,
+        });
+
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers(Any)
+            .expose_headers([header::CONTENT_TYPE]);
+
+        let app = Router::new()
+            .route("/mcp", post(handle_mcp_request))
+            .route("/mcp/stream", get(handle_sse_stream))
+            .route("/health", get(health_check))
+            .layer(cors)
+            .with_state(server);
+
+        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!("MCP HTTP server listening on http://{}", addr);
+
+        axum::serve(listener, app).await?;
+
+        Ok(())
     }
 
     async fn auto_init_if_needed(&self) -> Result<(), String> {
@@ -616,6 +777,29 @@ impl MCPServer {
         Ok(current_dir)
     }
 
+    fn validate_required_params(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Option<String> {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools.iter().find(|t| t.name == tool_name)?;
+
+        let required_params = tool.input_schema.get("required")?.as_array()?;
+        for param in required_params {
+            let param_name = param.as_str()?;
+            if !arguments.contains_key(param_name)
+                || arguments.get(param_name).is_none_or(|v| v.is_null())
+            {
+                return Some(format!(
+                    "Missing required parameter '{}' for tool '{}'",
+                    param_name, tool_name
+                ));
+            }
+        }
+        None
+    }
+
     async fn execute_tool(
         &self,
         tool_name: &str,
@@ -627,6 +811,11 @@ impl MCPServer {
             project_root.display(),
             self.get_db_path().display()
         );
+
+        // Validate required parameters before dispatching to handler
+        if let Some(err) = self.validate_required_params(tool_name, &arguments) {
+            return Err(err);
+        }
 
         if tool_name == "mcp_init" {
             if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
@@ -756,6 +945,255 @@ impl ServerHandler for MCPServer {
             ))])),
         }
     }
+}
+
+// ============================================================================
+// HTTP Transport for Remote MCP Server
+// ============================================================================
+
+/// HTTP MCP Server state shared across requests
+struct HttpMcpServer {
+    mcp_server: MCPServer,
+    auth_token: Option<String>,
+}
+
+/// MCP JSON-RPC request envelope
+#[derive(Debug, Serialize, Deserialize)]
+struct JsonRpcRequest {
+    jsonrpc: String,
+    id: serde_json::Value,
+    method: String,
+    params: Option<serde_json::Value>,
+}
+
+/// MCP JSON-RPC response envelope
+#[derive(Debug, Serialize)]
+struct JsonRpcResponse {
+    jsonrpc: String,
+    id: serde_json::Value,
+    result: Option<serde_json::Value>,
+    error: Option<JsonRpcError>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonRpcError {
+    code: i32,
+    message: String,
+    data: Option<serde_json::Value>,
+}
+
+/// MCP JSON-RPC error codes
+mod json_rpc_code {
+    pub const PARSE_ERROR: i32 = -32700;
+    pub const INVALID_REQUEST: i32 = -32600;
+    pub const METHOD_NOT_FOUND: i32 = -32601;
+    pub const INVALID_PARAMS: i32 = -32602;
+    pub const INTERNAL_ERROR: i32 = -32603;
+}
+
+/// Extract bearer token from Authorization header using constant-time comparison
+/// to prevent timing attacks on bearer tokens.
+fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bool {
+    if token.is_none() {
+        return true; // No auth required
+    }
+    let token = token.as_ref().unwrap();
+
+    if let Some(auth) = auth_header {
+        if let Some(stripped) = auth.strip_prefix("Bearer ") {
+            // Use constant-time comparison to prevent timing attacks
+            return subtle::ConstantTimeEq::ct_eq(stripped.as_bytes(), token.as_bytes()).into();
+        }
+    }
+    false
+}
+
+/// Handle POST /mcp - JSON-RPC request endpoint
+async fn handle_mcp_request(
+    State(server): State<Arc<HttpMcpServer>>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    // Extract Authorization header
+    let auth_value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    // Check authentication
+    if !extract_bearer_token(auth_value, &server.auth_token) {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from(r#"{"error": "Unauthorized"}"#))
+            .unwrap();
+    }
+
+    // Parse JSON-RPC request
+    let request: JsonRpcRequest = match serde_json::from_str(&body) {
+        Ok(req) => req,
+        Err(e) => {
+            let response = JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: serde_json::Value::Null,
+                result: None,
+                error: Some(JsonRpcError {
+                    code: json_rpc_code::PARSE_ERROR,
+                    message: format!("Parse error: {}", e),
+                    data: None,
+                }),
+            };
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_string(&response).unwrap()))
+                .unwrap();
+        }
+    };
+
+    // Process the request
+    let result = process_jsonrpc_request(&server.mcp_server, &request).await;
+
+    // Build response
+    let response = match result {
+        Ok(result) => JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: None,
+            error: Some(JsonRpcError {
+                code: json_rpc_code::INTERNAL_ERROR,
+                message: e,
+                data: None,
+            }),
+        },
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_string(&response).unwrap()))
+        .unwrap()
+}
+
+/// Process a JSON-RPC request and return the result
+async fn process_jsonrpc_request(
+    mcp_server: &MCPServer,
+    request: &JsonRpcRequest,
+) -> Result<serde_json::Value, String> {
+    let method = &request.method;
+    let params = request.params.as_ref();
+
+    match method.as_str() {
+        "initialize" => Ok(serde_json::json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {
+                "tools": { "listChanged": true },
+                "resources": {}
+            },
+            "serverInfo": {
+                "name": "leankg",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        })),
+        "notifications/initialized" => {
+            // Client is done initializing, no response needed
+            Ok(serde_json::Value::Null)
+        }
+        "tools/list" => {
+            let tools = ToolRegistry::list_tools();
+            let rmcp_tools: Vec<serde_json::Value> = tools
+                .into_iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "inputSchema": t.input_schema
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({ "tools": rmcp_tools }))
+        }
+        "tools/call" => {
+            let params_obj = params
+                .and_then(|p| p.as_object())
+                .ok_or("Missing params for tools/call")?;
+
+            let tool_name = params_obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing tool name")?;
+
+            let arguments = params_obj
+                .get("arguments")
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+
+            let result = mcp_server
+                .execute_tool(tool_name, arguments)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            // Format as MCP tool result
+            // Tool results are either plain strings (as_str()) or structured JSON
+            // that needs to be wrapped in MCP response format
+            let content_str = if let Some(s) = result.as_str() {
+                s.to_string()
+            } else {
+                crate::mcp::toon::wrap_response(tool_name, &result, true)
+            };
+
+            Ok(serde_json::json!({
+                "content": [{ "type": "text", "text": content_str }]
+            }))
+        }
+        _ => Err(format!("Method not found: {}", method)),
+    }
+}
+
+/// Handle GET /mcp/stream - SSE endpoint for server-initiated messages
+async fn handle_sse_stream(
+    State(server): State<Arc<HttpMcpServer>>,
+    headers: HeaderMap,
+) -> Response {
+    // Extract Authorization header
+    let auth_value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    // Check authentication
+    if !extract_bearer_token(auth_value, &server.auth_token) {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from(r#"event: error\ndata: Unauthorized\n\n"#))
+            .unwrap();
+    }
+
+    // For now, return an SSE stream that sends an endpoint message
+    // In a full implementation, this would maintain a persistent connection
+    // for server-initiated notifications
+    let sse_data = "event: endpoint\ndata: /mcp\n\n";
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .body(Body::from(sse_data))
+        .unwrap()
+}
+
+/// Health check endpoint
+async fn health_check() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"status": "ok"}"#))
+        .unwrap()
 }
 
 #[cfg(test)]
