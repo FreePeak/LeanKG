@@ -445,10 +445,19 @@ Document:
 - [PENDING] Token savings summary report
 
 ### Phase 4: Advanced (v0.4.0) - FUTURE
-- Vector embeddings
-- Semantic search
+- Vector embeddings (local ONNX, zero API dependency)
+- Semantic search (hybrid keyword + semantic with RRF)
 - Cloud sync (optional)
 - Team features
+
+### Phase 4.5: Knowns-Inspired Features (v0.4.5) - FUTURE
+Inspired by [Knowns](https://github.com/knowns-dev/knowns):
+- [ ] Hybrid search with Reciprocal Rank Fusion (semantic + keyword)
+- [ ] Reference system (`@doc/`, `@task-` syntax) for traversable links
+- [ ] Local ONNX embeddings for zero-API semantic search
+- [ ] Memory layers: project/session/global context persistence
+- [ ] AST-enriched searchable content with relationship metadata
+- [ ] Expanded MCP tool surface (tasks, memory, validation)
 
 ---
 
@@ -510,6 +519,11 @@ The following features are explicitly out of scope:
 | RTK (Rust Token Killer) | CLI proxy that reduces LLM token consumption by 60-90% |
 | LeanKGCompressor | Internal compression module for LeanKG CLI commands |
 | Command Compression | Reducing CLI output tokens via regex patterns, grouping, truncation |
+| Hybrid Search | Search combining semantic (vector) + keyword matching |
+| RRF (Reciprocal Rank Fusion) | Ranking algorithm merging multiple result sets |
+| ONNX Runtime | Local neural network inference engine (no API keys needed) |
+| Memory Layers | Project/session/global context persistence across AI sessions |
+| Reference Syntax | `@doc/`, `@task-` syntax for traversable cross-entity links |
 
 ---
 
@@ -520,6 +534,7 @@ The following features are explicitly out of scope:
 - MCP Protocol: https://modelcontextprotocol.io/
 - GitNexus: https://github.com/abhigyanpatwari/GitNexus
 - Leiden Algorithm: https://en.wikipedia.org/wiki/Leiden_algorithm
+- Knowns: https://github.com/knowns-dev/knowns (local-first AI context layer, inspiration for hybrid search and memory layers)
 
 ---
 
