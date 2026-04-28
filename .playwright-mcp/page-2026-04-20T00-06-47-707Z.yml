@@ -1,0 +1,217 @@
+- generic [ref=e5]:
+  - generic [ref=e6]:
+    - link "Threads" [ref=e8] [cursor=pointer]:
+      - /url: /
+      - img "Threads" [ref=e10]
+    - generic [ref=e12]:
+      - link "Home" [ref=e14] [cursor=pointer]:
+        - /url: /
+        - img "Home" [ref=e18]
+      - link "Search" [ref=e21] [cursor=pointer]:
+        - /url: /search
+        - img "Search" [ref=e25]
+      - button "Create" [ref=e28] [cursor=pointer]:
+        - img "Create" [ref=e32]
+      - link "Notifications" [ref=e35] [cursor=pointer]:
+        - /url: /activity
+        - img "Notifications" [ref=e39]
+      - link "Profile" [ref=e42] [cursor=pointer]:
+        - /url: /@freepeak_life
+        - img "Profile" [ref=e46]
+    - button "More More" [ref=e50] [cursor=pointer]:
+      - generic [ref=e51]:
+        - img "More" [ref=e53]
+        - img "More" [ref=e57]
+  - generic [ref=e65]:
+    - generic [ref=e68]:
+      - generic [ref=e78]:
+        - link "Column title" [ref=e79] [cursor=pointer]:
+          - /url: /for_you
+          - heading "For you" [level=1] [ref=e80]:
+            - generic [ref=e81]: For you
+        - button "More" [ref=e82] [cursor=pointer]:
+          - button "More" [ref=e83]:
+            - img "More" [ref=e87]
+      - region "Column body" [ref=e91]:
+        - generic [ref=e92]:
+          - generic [ref=e94]:
+            - link "freepeak_life's profile picture" [ref=e95] [cursor=pointer]:
+              - /url: /@freepeak_life
+              - img "freepeak_life's profile picture" [ref=e97]
+            - button "Empty text field. Type to compose a new post." [ref=e98]:
+              - generic [ref=e99]: What's new?
+            - button "Post" [ref=e101] [cursor=pointer]:
+              - generic [ref=e102]: Post
+          - separator [ref=e103]
+          - generic [ref=e105]:
+            - generic [ref=e111] [cursor=pointer]:
+              - button "xnohat's profile picture Follow" [ref=e113]:
+                - img "xnohat's profile picture" [ref=e116]
+                - button "Follow" [ref=e117]:
+                  - img "Follow" [ref=e120]
+              - generic [ref=e123]:
+                - generic [ref=e124]:
+                  - link "xnohat" [ref=e129]:
+                    - /url: /@xnohat
+                    - generic [ref=e131]: xnohat
+                  - link "6 hours ago" [ref=e135]:
+                    - /url: /@xnohat/post/DXUkotWgaxO
+                    - time [ref=e136]:
+                      - generic "6 hours ago" [ref=e138]: 6h
+                - button "More" [ref=e141]:
+                  - img "More" [ref=e143]
+              - generic [ref=e146]:
+                - generic [ref=e149]:
+                  - text: Nghiêm trọng, Vercel dịch vụ hosting mà các Dev, các Vibe Coder và cả AI Agent đang dùng rất thông dụng để chạy các web app của mình, Vercel xác nhận bị hack, và Hacker đang rao bán full database và access key vào “tất cả” các project đang host trên Vercel 🥺 Vụ này nó nát bét luôn 😞 giờ phải đi reset key pass gấp không thì rất nhiều web app có thể sẽ bị hack và phục vụ chuỗi tấn công lớn hơn (supply chain attack).
+                  - button "Translate" [ref=e151]:
+                    - generic [ref=e152]: Translate
+                - generic [ref=e157]:
+                  - button "May be a cartoon of text" [ref=e160]:
+                    - generic [ref=e163]:
+                      - generic:
+                        - img "May be a cartoon of text"
+                  - button "May be a Twitter screenshot of text" [ref=e165]:
+                    - generic [ref=e168]:
+                      - generic:
+                        - img "May be a Twitter screenshot of text"
+                - generic [ref=e170]:
+                  - button "Like 55" [ref=e172]:
+                    - generic [ref=e174]:
+                      - img "Like" [ref=e175]
+                      - generic [ref=e179]: "55"
+                  - button "Reply 3" [ref=e181]:
+                    - generic [ref=e183]:
+                      - img "Reply" [ref=e184]
+                      - generic [ref=e188]: "3"
+                  - button "Repost 3" [ref=e190]:
+                    - generic [ref=e192]:
+                      - img "Repost" [ref=e193]
+                      - generic [ref=e198]: "3"
+                  - button "Share 15" [ref=e200]:
+                    - generic [ref=e202]:
+                      - img "Share" [ref=e203]
+                      - generic [ref=e207]: "15"
+            - generic [ref=e213] [cursor=pointer]:
+              - link "alekseipetrov.me's profile picture" [ref=e216]:
+                - /url: /@alekseipetrov.me
+                - img "alekseipetrov.me's profile picture" [ref=e218]
+              - generic [ref=e220]:
+                - generic [ref=e221]:
+                  - link "alekseipetrov.me" [ref=e226]:
+                    - /url: /@alekseipetrov.me
+                    - generic [ref=e228]: alekseipetrov.me
+                  - link "9 hours ago" [ref=e232]:
+                    - /url: /@alekseipetrov.me/post/DXUUw4XjKJ0
+                    - time [ref=e233]:
+                      - generic "9 hours ago" [ref=e235]: 9h
+                - button "More" [ref=e238]:
+                  - img "More" [ref=e240]
+              - generic [ref=e243]:
+                - generic [ref=e244]:
+                  - generic [ref=e246]: ClaudeCode desktop + Opus 4.7 + MAX plan
+                  - generic [ref=e248]: 3rd day of usage – weekly limit hit. Looks like a bug 🐞
+                  - generic [ref=e250]:
+                    - text: "Tokens usage metrics:"
+                    - link "threads.com/@alek…" [ref=e251]:
+                      - /url: /@alekseipetrov.me/post/DXTqFbaDeh2?xmt=AQF0ZbjaxbwMsUY0e0v3hVyOCbRkX5pCCU6bLFjgOZU3Bw
+                - 'link "May be an image of text that says ''Plan usage Planusagelimits limits Currentsession Current session Resetsi Resetsin4hr4min 4mir Weekly limits Lear Learnmoreaboutusagelimits more abou usage imits Max Max(20x) (20x) Allmodels All Resets ResetsThu11:00PM Thu 11:00PM 11% 11%used sed Sonnet only ResetsFri10:00 Claude Design ClaudeDesign 1 ResetsFr ResetsFri7:00PM Fri7:00PM 99%used Lastupdated: astupdated:lesthanaminuteago minute 8%used 8% 87%Used''" [ref=e254]':
+                  - /url: /@alekseipetrov.me/post/DXUUw4XjKJ0/media
+                  - generic [ref=e258]:
+                    - 'img "May be an image of text that says ''Plan usage Planusagelimits limits Currentsession Current session Resetsi Resetsin4hr4min 4mir Weekly limits Lear Learnmoreaboutusagelimits more abou usage imits Max Max(20x) (20x) Allmodels All Resets ResetsThu11:00PM Thu 11:00PM 11% 11%used sed Sonnet only ResetsFri10:00 Claude Design ClaudeDesign 1 ResetsFr ResetsFri7:00PM Fri7:00PM 99%used Lastupdated: astupdated:lesthanaminuteago minute 8%used 8% 87%Used''"'
+                - generic [ref=e260]:
+                  - button "Like 9" [ref=e262]:
+                    - generic [ref=e264]:
+                      - img "Like" [ref=e265]
+                      - generic [ref=e269]: "9"
+                  - button "Reply" [ref=e271]:
+                    - img "Reply" [ref=e274]
+                  - button "Repost" [ref=e277]:
+                    - img "Repost" [ref=e280]
+                  - button "Share" [ref=e284]:
+                    - img "Share" [ref=e287]
+            - generic [ref=e294] [cursor=pointer]:
+              - link "codewitholga's profile picture" [ref=e297]:
+                - /url: /@codewitholga
+                - img "codewitholga's profile picture" [ref=e299]
+              - generic [ref=e301]:
+                - generic [ref=e302]:
+                  - link "codewitholga" [ref=e307]:
+                    - /url: /@codewitholga
+                    - generic [ref=e309]: codewitholga
+                  - link "13 hours ago" [ref=e313]:
+                    - /url: /@codewitholga/post/DXTz-cIjNCD
+                    - time [ref=e314]:
+                      - generic "13 hours ago" [ref=e316]: 13h
+                - button "More" [ref=e319]:
+                  - img "More" [ref=e321]
+              - generic [ref=e324]:
+                - generic [ref=e325]:
+                  - generic [ref=e327]: I am back now
+                  - generic [ref=e329]: Let’s threads seriously this time and delete X
+                - generic [ref=e331]:
+                  - button "Like 5" [ref=e333]:
+                    - generic [ref=e335]:
+                      - img "Like" [ref=e336]
+                      - generic [ref=e340]: "5"
+                  - button "Reply" [ref=e342]:
+                    - img "Reply" [ref=e345]
+                  - button "Repost 1" [ref=e348]:
+                    - generic [ref=e350]:
+                      - img "Repost" [ref=e351]
+                      - generic [ref=e356]: "1"
+                  - button "Share" [ref=e358]:
+                    - img "Share" [ref=e361]
+            - generic [ref=e368] [cursor=pointer]:
+              - button "ko_ngo_yu's profile picture Follow" [ref=e370]:
+                - img "ko_ngo_yu's profile picture" [ref=e373]
+                - button "Follow" [ref=e374]:
+                  - img "Follow" [ref=e377]
+              - generic [ref=e380]:
+                - generic [ref=e381]:
+                  - link "ko_ngo_yu" [ref=e386]:
+                    - /url: /@ko_ngo_yu
+                    - generic [ref=e388]: ko_ngo_yu
+                  - generic [ref=e389]:
+                    - generic [ref=e390]:
+                      - img [ref=e393]
+                      - link "ClaudeCode" [ref=e396]:
+                        - /url: /search?q=ClaudeCode&serp_type=tags&tag_id=18329040076089525
+                        - generic [ref=e399]: ClaudeCode
+                    - link "9 hours ago" [ref=e402]:
+                      - /url: /@ko_ngo_yu/post/DXUPJXIlyVG
+                      - time [ref=e403]:
+                        - generic "9 hours ago" [ref=e405]: 9h
+                - button "More" [ref=e408]:
+                  - img "More" [ref=e410]
+              - generic [ref=e413]:
+                - generic [ref=e416]:
+                  - text: Playwright is the secret to agent harness
+                  - generic [ref=e418]:
+                    - generic [ref=e419]: "1"
+                    - generic [ref=e421]: /
+                    - generic [ref=e422]: "2"
+                - link "May be an image of text that says 'Instal InstalPaywrightPython.package Playw rightPythonpackage bash pip install --break-system-packages playwright 2>&1 I tail playwright playwright.sync_api .sync api import sync_playwright; sync_ print( print('ok') ok')\" 2>&1 I tail Output -3 & python3 -c \"from -3 warning, Consider adding this directory use --no-warn-script-location. location. to PATH or, if you prefer to suppress this'" [ref=e425]:
+                  - /url: /@ko_ngo_yu/post/DXUPJXIlyVG/media
+                  - generic [ref=e429]:
+                    - img "May be an image of text that says 'Instal InstalPaywrightPython.package Playw rightPythonpackage bash pip install --break-system-packages playwright 2>&1 I tail playwright playwright.sync_api .sync api import sync_playwright; sync_ print( print('ok') ok')\" 2>&1 I tail Output -3 & python3 -c \"from -3 warning, Consider adding this directory use --no-warn-script-location. location. to PATH or, if you prefer to suppress this'"
+                - generic [ref=e431]:
+                  - button "Like 32" [ref=e433]:
+                    - generic [ref=e435]:
+                      - img "Like" [ref=e436]
+                      - generic [ref=e440]: "32"
+                  - button "Reply 1" [ref=e442]:
+                    - generic [ref=e444]:
+                      - img "Reply" [ref=e445]
+                      - generic [ref=e449]: "1"
+                  - button "Repost" [ref=e451]:
+                    - img "Repost" [ref=e454]
+                  - button "Share 10" [ref=e458]:
+                    - generic [ref=e460]:
+                      - img "Share" [ref=e461]
+                      - generic [ref=e465]: "10"
+            - status "Loading..." [ref=e469]:
+              - img "Loading..." [ref=e470]
+    - button "Add a column" [ref=e481] [cursor=pointer]:
+      - img "Add a column" [ref=e482]
+  - button "Create" [ref=e485] [cursor=pointer]:
+    - img "Create" [ref=e486]

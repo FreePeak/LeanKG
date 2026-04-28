@@ -1,0 +1,15 @@
+[Unit]
+Description=LeanKG Automated Ship
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/app/LeanKG
+ExecStart=/root/app/LeanKG/ship.sh
+Restart=always
+RestartSec=10
+StandardOutput=append:/root/app/LeanKG/logs/ship.log
+StandardError=append:/root/app/LeanKG/logs/ship.log
+
+[Install]
+WantedBy=multi-user.target

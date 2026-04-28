@@ -30,3 +30,58 @@ python3 benchmark.py
 ```
 
 See [go-api-service/README.md](go-api-service/README.md) for details.
+
+## Java API Service
+
+A simple Java microservice demonstrating LeanKG's Java language support.
+
+**Location**: `java-api-service/`
+
+**Features Verified**:
+- Class and interface extraction
+- Method and constructor extraction
+- Enum extraction (Java 16+ records supported)
+- Import relationship tracking (fully-qualified)
+- Call graph: controller → service → model
+- Java annotation extraction (`@Override`)
+- Test file detection (`*Test.java`)
+- `tested_by` relationship mapping
+
+**Quick Start**:
+```bash
+cd examples/java-api-service
+../../target/release/leankg init
+../../target/release/leankg index ./src --lang java
+../../target/release/leankg status
+../../target/release/leankg query UserService --kind name
+```
+
+See [java-api-service/README.md](java-api-service/README.md) for details.
+
+## Kotlin API Service
+
+A simple Kotlin microservice demonstrating LeanKG's Kotlin language support.
+
+**Location**: `kotlin-api-service/`
+
+**Features Verified**:
+- Class and data class extraction
+- Object declaration extraction (singletons)
+- Companion object extraction
+- Function and secondary constructor extraction
+- Enum class extraction
+- Import relationship tracking
+- Call graph: controller → service → model
+- Test file detection (`*Test.kt`)
+- `tested_by` relationship mapping
+
+**Quick Start**:
+```bash
+cd examples/kotlin-api-service
+../../target/release/leankg init
+../../target/release/leankg index ./src --lang kotlin
+../../target/release/leankg status
+../../target/release/leankg query UserService --kind name
+```
+
+See [kotlin-api-service/README.md](kotlin-api-service/README.md) for details.

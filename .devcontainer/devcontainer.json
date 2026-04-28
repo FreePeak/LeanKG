@@ -1,0 +1,17 @@
+{
+  "name": "LeanKG Demo",
+  "image": "mcr.microsoft.com/devcontainers/rust:latest",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "LeanKG Web UI",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    }
+  }
+}

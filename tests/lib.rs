@@ -104,8 +104,8 @@ mod parser_tests {
     fn test_get_parser_for_language_unsupported_returns_none() {
         if let Some(mut pm) = init_parser_manager() {
             assert!(
-                pm.get_parser_for_language("java").is_none(),
-                "Should return None for 'java'"
+                pm.get_parser_for_language("cobol").is_none(),
+                "Should return None for 'cobol'"
             );
             assert!(
                 pm.get_parser_for_language("c").is_none(),

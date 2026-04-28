@@ -1,0 +1,49 @@
+{
+  "overhead": {
+    "time_delta": 0.0,
+    "token_delta": 18589,
+    "token_delta_percent": 0.0
+  },
+  "task": "impl-search-enhance",
+  "with_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 0,
+    "context": {
+      "files_referenced": [
+        "src/mcp/handler.rs",
+        "src/auth.rs",
+        "src/main.rs",
+        "src/graph/query.rs",
+        "src/mcp/tools.rs"
+      ]
+    },
+    "input_tokens": 61616,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 61982
+  },
+  "without_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 42808,
+    "context": {
+      "files_referenced": [
+        "src/mcp/server.rs",
+        "src/mcp/tools.rs",
+        "src/mcp/watcher.rs",
+        "src/mcp/tracking_db.rs",
+        "src/mcp/tracker.rs",
+        "src/mcp/toon.rs",
+        "src/mcp/mod.rs",
+        "src/mcp/handler.rs",
+        "src/mcp/auth.rs",
+        "src/auth.rs",
+        "src/main.rs",
+        "src/graph/query.rs"
+      ]
+    },
+    "input_tokens": 409,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 43393
+  }
+}

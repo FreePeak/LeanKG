@@ -1,0 +1,21 @@
+name: "Impact Analysis Tasks"
+description: "Find what breaks if X changes"
+
+tasks:
+  - id: "impact-models-change"
+    prompt: "If I change the CodeElement struct, what other code would need updating?"
+    expected:
+      - "src/graph/"
+      - "src/indexer/"
+    expected_files:
+      - "src/graph/query.rs"
+      - "src/graph/context.rs"
+      - "src/indexer/extractor.rs"
+
+  - id: "impact-db-change"
+    prompt: "What happens to dependents if I modify src/db/models.rs?"
+    expected:
+      - "db/models.rs"
+    expected_files:
+      - "src/db/mod.rs"
+      - "src/graph/query.rs"

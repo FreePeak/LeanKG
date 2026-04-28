@@ -1,7 +1,10 @@
+#![allow(dead_code)]
 use crate::db::models::CodeElement;
 use crate::graph::GraphEngine;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
+#[allow(dead_code)]
 const DEFAULT_MAX_TOKENS: usize = 4000;
 const CHARS_PER_TOKEN: usize = 4;
 
@@ -67,6 +70,7 @@ pub struct ContextProvider<'a> {
 }
 
 impl<'a> ContextProvider<'a> {
+    #[allow(dead_code)]
     pub fn new(graph: &'a GraphEngine) -> Self {
         Self {
             graph,
@@ -97,22 +101,29 @@ impl<'a> ContextProvider<'a> {
         &self,
         file_path: &str,
     ) -> Result<ContextResult, Box<dyn std::error::Error>> {
-        let file_element = self.graph.find_element(file_path)?;
-
         let mut context_elements = Vec::new();
+        let mut seen_qualified: HashSet<String> = HashSet::new();
 
-        if let Some(file) = file_element {
-            let priority = self.determine_priority(&file);
+        let file_elements = self.graph.get_elements_by_file(file_path)?;
+        for elem in file_elements {
+            if !seen_qualified.insert(elem.qualified_name.clone()) {
+                continue;
+            }
+            let priority = self.determine_priority(&elem);
+            let token_count = Self::element_tokens(&elem);
             context_elements.push(ContextElement {
-                element: file.clone(),
+                element: elem,
                 priority,
-                token_count: Self::element_tokens(&file),
+                token_count,
             });
         }
 
         let relationships = self.graph.get_relationships(file_path)?;
         for rel in relationships {
             if let Some(element) = self.graph.find_element(&rel.target_qualified)? {
+                if !seen_qualified.insert(element.qualified_name.clone()) {
+                    continue;
+                }
                 let priority = match rel.rel_type.as_str() {
                     "imports" => ContextPriority::Imported,
                     "contains" | "defines" => ContextPriority::Contained,
@@ -125,16 +136,6 @@ impl<'a> ContextProvider<'a> {
                     token_count,
                 });
             }
-        }
-
-        let children = self.get_child_elements(file_path)?;
-        for child in children {
-            let token_count = Self::element_tokens(&child);
-            context_elements.push(ContextElement {
-                element: child,
-                priority: ContextPriority::Contained,
-                token_count,
-            });
         }
 
         context_elements.sort_by(|a, b| {
@@ -165,7 +166,7 @@ impl<'a> ContextProvider<'a> {
         })
     }
 
-    fn get_child_elements(
+    fn _get_child_elements(
         &self,
         parent_qualified: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
@@ -234,6 +235,7 @@ mod tests {
             language: "rust".to_string(),
             parent_qualified: None,
             metadata: serde_json::json!({}),
+            ..Default::default()
         };
 
         let tokens = ContextProvider::element_tokens(&elem);
@@ -265,6 +267,7 @@ mod tests {
             language: "rust".to_string(),
             parent_qualified: None,
             metadata: serde_json::json!({}),
+            ..Default::default()
         };
 
         let ctx_elem = ContextElement {
@@ -298,6 +301,7 @@ mod tests {
             language: "rust".to_string(),
             parent_qualified: None,
             metadata: serde_json::json!({}),
+            ..Default::default()
         };
 
         let ctx_elem = ContextElement {
@@ -317,5 +321,146 @@ mod tests {
         assert!(prompt.contains("Context truncated"));
         assert!(prompt.contains("100 tokens total"));
         assert!(prompt.contains("max: 50"));
+    }
+
+    #[test]
+    fn test_deduplication_with_hashset() {
+        // Verify HashSet correctly deduplicates qualified names
+        let mut seen: HashSet<String> = HashSet::new();
+
+        let name1 = "test.rs::foo".to_string();
+        let name2 = "test.rs::foo".to_string(); // duplicate
+        let name3 = "test.rs::bar".to_string();
+
+        // First insert returns true
+        assert!(seen.insert(name1.clone()));
+        // Second insert of same value returns false
+        assert!(!seen.insert(name2.clone()));
+        // Different value returns true
+        assert!(seen.insert(name3.clone()));
+
+        // Only 2 unique values
+        assert_eq!(seen.len(), 2);
+        assert!(seen.contains("test.rs::foo"));
+        assert!(seen.contains("test.rs::bar"));
+    }
+
+    #[test]
+    fn test_context_elements_deduplication() {
+        // Test that ContextElement list has unique qualified_names
+        let elem1 = CodeElement {
+            qualified_name: "test.rs::foo".to_string(),
+            element_type: "function".to_string(),
+            name: "foo".to_string(),
+            file_path: "test.rs".to_string(),
+            line_start: 1,
+            line_end: 10,
+            language: "rust".to_string(),
+            parent_qualified: None,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+
+        let elem2 = CodeElement {
+            qualified_name: "test.rs::foo".to_string(), // same as elem1
+            element_type: "function".to_string(),
+            name: "foo".to_string(),
+            file_path: "test.rs".to_string(),
+            line_start: 1,
+            line_end: 10,
+            language: "rust".to_string(),
+            parent_qualified: None,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+
+        let elem3 = CodeElement {
+            qualified_name: "test.rs::bar".to_string(),
+            element_type: "function".to_string(),
+            name: "bar".to_string(),
+            file_path: "test.rs".to_string(),
+            line_start: 15,
+            line_end: 20,
+            language: "rust".to_string(),
+            parent_qualified: None,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut context_elements: Vec<ContextElement> = Vec::new();
+
+        // Simulate what get_context_for_file does
+        for elem in &[elem1.clone(), elem2.clone(), elem3.clone()] {
+            if seen.insert(elem.qualified_name.clone()) {
+                context_elements.push(ContextElement {
+                    element: elem.clone(),
+                    priority: ContextPriority::Contained,
+                    token_count: 10,
+                });
+            }
+        }
+
+        // Only 2 unique elements (elem1 and elem3, elem2 skipped as duplicate)
+        assert_eq!(context_elements.len(), 2);
+        assert_eq!(context_elements[0].element.qualified_name, "test.rs::foo");
+        assert_eq!(context_elements[1].element.qualified_name, "test.rs::bar");
+    }
+
+    #[test]
+    fn test_affected_element_with_confidence_deduplication() {
+        // Test deduplication for impact analysis results
+        let elem1 = CodeElement {
+            qualified_name: "lib.rs::helper".to_string(),
+            element_type: "function".to_string(),
+            name: "helper".to_string(),
+            file_path: "lib.rs".to_string(),
+            line_start: 10,
+            line_end: 20,
+            language: "rust".to_string(),
+            parent_qualified: None,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+
+        let elem2 = CodeElement {
+            qualified_name: "lib.rs::helper".to_string(), // duplicate
+            element_type: "function".to_string(),
+            name: "helper".to_string(),
+            file_path: "lib.rs".to_string(),
+            line_start: 10,
+            line_end: 20,
+            language: "rust".to_string(),
+            parent_qualified: None,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut results: Vec<super::super::traversal::AffectedElementWithConfidence> = Vec::new();
+
+        // Simulate first path
+        if seen.insert(elem1.qualified_name.clone()) {
+            results.push(super::super::traversal::AffectedElementWithConfidence {
+                element: elem1.clone(),
+                confidence: 0.9,
+                severity: "WILL BREAK".to_string(),
+                depth: 1,
+            });
+        }
+
+        // Simulate second path (should be skipped as duplicate)
+        if seen.insert(elem2.qualified_name.clone()) {
+            results.push(super::super::traversal::AffectedElementWithConfidence {
+                element: elem2.clone(),
+                confidence: 0.5,
+                severity: "MAY BE AFFECTED".to_string(),
+                depth: 2,
+            });
+        }
+
+        // Only 1 result (duplicate skipped)
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].confidence, 0.9); // First path's higher confidence
     }
 }

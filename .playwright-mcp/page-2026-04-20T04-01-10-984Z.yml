@@ -1,0 +1,411 @@
+- generic [ref=e1]:
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - generic [ref=e6]:
+            - link "Threads" [ref=e8] [cursor=pointer]:
+              - /url: /
+              - img "Threads" [ref=e10]
+            - generic [ref=e12]:
+              - link "Home" [ref=e14] [cursor=pointer]:
+                - /url: /
+                - img "Home" [ref=e18]
+              - link "Search" [ref=e21] [cursor=pointer]:
+                - /url: /search
+                - img "Search" [ref=e25]
+              - button "Create" [ref=e28] [cursor=pointer]:
+                - img "Create" [ref=e32]
+              - link "Notifications" [ref=e35] [cursor=pointer]:
+                - /url: /activity
+                - img "Notifications" [ref=e39]
+              - link "Profile" [ref=e43] [cursor=pointer]:
+                - /url: /@freepeak_life
+                - img "Profile" [ref=e47]
+            - button "More More" [ref=e51] [cursor=pointer]:
+              - generic [ref=e52]:
+                - img "More" [ref=e54]
+                - img "More" [ref=e58]
+          - generic [ref=e66]:
+            - generic [ref=e69]:
+              - generic [ref=e79]:
+                - link [ref=e826] [cursor=pointer]:
+                  - /url: /for_you
+                  - heading [level=1] [ref=e827]:
+                    - generic [ref=e82]: For you
+                - button [ref=e828] [cursor=pointer]:
+                  - button [ref=e829]:
+                    - img [ref=e830]
+              - region [ref=e831]:
+                - generic [ref=e93]:
+                  - generic [ref=e95]:
+                    - link [ref=e832] [cursor=pointer]:
+                      - /url: /@freepeak_life
+                      - img [ref=e833]
+                    - button [ref=e834]:
+                      - generic [ref=e100]: What's new?
+                    - button [ref=e835] [cursor=pointer]:
+                      - generic [ref=e103]: Post
+                  - separator [ref=e104]
+                  - generic [ref=e106]:
+                    - generic [ref=e112] [cursor=pointer]:
+                      - button [ref=e836]:
+                        - img [ref=e837]
+                        - button [ref=e838]:
+                          - img [ref=e839]
+                      - generic [ref=e124]:
+                        - generic [ref=e125]:
+                          - link [ref=e840]:
+                            - /url: /@roman_bun
+                            - generic [ref=e132]: roman_bun
+                          - generic [ref=e133]:
+                            - generic [ref=e134]:
+                              - img [ref=e137]
+                              - link [ref=e841]:
+                                - /url: /search?q=buildinpublic&serp_type=tags&tag_id=18399440476027527
+                                - generic [ref=e143]: buildinpublic
+                            - link [ref=e842]:
+                              - /url: /@roman_bun/post/DXVhnZPFEMG
+                              - time [ref=e147]:
+                                - generic [ref=e843]: 1h
+                        - button [ref=e844]:
+                          - img [ref=e845]
+                      - generic [ref=e157]:
+                        - generic [ref=e158]:
+                          - generic [ref=e160]: 520 minutes this weekend.
+                          - generic [ref=e162]:
+                            - link [ref=e846]:
+                              - /url: https://l.threads.com/?u=http%3A%2F%2Fgetorla.app%2F&e=AT5K5o6rgG6ylxB1XWqMfQtNUGKjPdoqOf3YaVlO6gPg4DK20eXzZds5wnUboPtUxn9Z-yG5maeOPjff1qd1JLtwf6iJaNQCSi2-8TzYmp2PD03SjAjLB5rdxnj5Sbj_Ai1S6rVCCguj
+                              - text: getorla.app
+                            - text: 1.2 → waiting for review
+                        - link [ref=e847]:
+                          - /url: /@roman_bun/post/DXVhnZPFEMG/media
+                          - generic [ref=e170]:
+                            - img
+                        - generic [ref=e172]:
+                          - button [ref=e848]:
+                            - generic [ref=e176]:
+                              - img [ref=e849]
+                              - generic [ref=e181]: "5"
+                          - button [ref=e850]:
+                            - img [ref=e851]
+                          - button [ref=e852]:
+                            - img [ref=e853]
+                          - button [ref=e854]:
+                            - img [ref=e855]
+                    - generic [ref=e206] [cursor=pointer]:
+                      - button [ref=e856]:
+                        - img [ref=e857]
+                        - button [ref=e858]:
+                          - img [ref=e859]
+                      - generic [ref=e218]:
+                        - generic [ref=e219]:
+                          - link [ref=e860]:
+                            - /url: /@ubuntu_os
+                            - generic [ref=e226]: ubuntu_os
+                          - generic [ref=e227]:
+                            - generic [ref=e228]:
+                              - img [ref=e231]
+                              - link [ref=e861]:
+                                - /url: /search?q=Linux&serp_type=tags&tag_id=18399591316039869
+                                - generic [ref=e237]: Linux
+                            - link [ref=e862]:
+                              - /url: /@ubuntu_os/post/DXUU1k3DLxz
+                              - time [ref=e241]:
+                                - generic [ref=e863]: 12h
+                        - button [ref=e864]:
+                          - img [ref=e865]
+                      - generic [ref=e251]:
+                        - generic [ref=e252]:
+                          - generic [ref=e254]: Ubuntu 26.04 LTS, code named Resolute Raccoon, lands on April 23 2026.
+                          - generic [ref=e256]: Stay tuned.
+                        - generic [ref=e261]:
+                          - button [ref=e866]:
+                            - generic [ref=e267]:
+                              - img
+                          - button [ref=e867]:
+                            - generic [ref=e272]:
+                              - img
+                          - button [ref=e868]:
+                            - generic [ref=e277]:
+                              - img
+                          - button [ref=e869]:
+                            - generic [ref=e282]:
+                              - img
+                          - button [ref=e870]:
+                            - generic [ref=e287]:
+                              - img
+                        - generic [ref=e289]:
+                          - button [ref=e871]:
+                            - generic [ref=e293]:
+                              - img [ref=e872]
+                              - generic [ref=e298]: "218"
+                          - button [ref=e873]:
+                            - generic [ref=e302]:
+                              - img [ref=e874]
+                              - generic [ref=e307]: "5"
+                          - button [ref=e875]:
+                            - generic [ref=e311]:
+                              - img [ref=e876]
+                              - generic [ref=e317]: "12"
+                          - button [ref=e877]:
+                            - generic [ref=e321]:
+                              - img [ref=e878]
+                              - generic [ref=e326]: "2"
+                    - generic [ref=e332] [cursor=pointer]:
+                      - button [ref=e879]:
+                        - img [ref=e880]
+                        - button [ref=e881]:
+                          - img [ref=e882]
+                      - generic [ref=e344]:
+                        - generic [ref=e345]:
+                          - link [ref=e883]:
+                            - /url: /@simplewealthdad
+                            - generic [ref=e352]: simplewealthdad
+                          - generic [ref=e353]:
+                            - generic [ref=e354]:
+                              - img [ref=e357]
+                              - link [ref=e884]:
+                                - /url: /search?q=businessthreads&serp_type=tags&tag_id=18295687789125939
+                                - generic [ref=e361]:
+                                  - img [ref=e362]
+                                  - generic [ref=e367]: Business Threads
+                            - link [ref=e885]:
+                              - /url: /@simplewealthdad/post/DXU_a4IAI20
+                              - time [ref=e371]:
+                                - generic [ref=e886]: 6h
+                        - button [ref=e887]:
+                          - img [ref=e888]
+                      - generic [ref=e381]:
+                        - generic [ref=e382]:
+                          - generic [ref=e384]: Would love to connect with
+                          - generic [ref=e386]: "- solo entrepreneurs - makers instead of overthinkers - dads who build after bedtime"
+                          - generic [ref=e388]: drop a follow if that’s you
+                        - generic [ref=e390]:
+                          - button [ref=e889]:
+                            - generic [ref=e394]:
+                              - img [ref=e890]
+                              - generic [ref=e399]: "19"
+                          - button [ref=e891]:
+                            - generic [ref=e403]:
+                              - img [ref=e892]
+                              - generic [ref=e408]: "4"
+                          - button [ref=e893]:
+                            - img [ref=e894]
+                          - button [ref=e895]:
+                            - img [ref=e896]
+                    - generic [ref=e427] [cursor=pointer]:
+                      - button [ref=e897]:
+                        - img [ref=e898]
+                        - button [ref=e899]:
+                          - img [ref=e900]
+                      - generic [ref=e439]:
+                        - generic [ref=e440]:
+                          - link [ref=e901]:
+                            - /url: /@sysadminriley
+                            - generic [ref=e447]: sysadminriley
+                          - link [ref=e902]:
+                            - /url: /@sysadminriley/post/DXUVX7gjfj4
+                            - time [ref=e452]:
+                              - generic [ref=e903]: 12h
+                        - button [ref=e904]:
+                          - img [ref=e905]
+                      - generic [ref=e462]:
+                        - generic [ref=e465]: Turns out your email can't contain the word "admin" when signing up for a Samsung account... 🙃
+                        - link [ref=e906]:
+                          - /url: /@sysadminriley/post/DXUVX7gjfj4/media
+                          - generic [ref=e472]:
+                            - img
+                        - generic [ref=e474]:
+                          - button [ref=e907]:
+                            - generic [ref=e478]:
+                              - img [ref=e908]
+                              - generic [ref=e483]: "346"
+                          - button [ref=e909]:
+                            - generic [ref=e487]:
+                              - img [ref=e910]
+                              - generic [ref=e492]: "12"
+                          - button [ref=e911]:
+                            - generic [ref=e496]:
+                              - img [ref=e912]
+                              - generic [ref=e502]: "1"
+                          - button [ref=e913]:
+                            - generic [ref=e506]:
+                              - img [ref=e914]
+                              - generic [ref=e511]: "2"
+                    - generic [ref=e517] [cursor=pointer]:
+                      - button [ref=e915]:
+                        - img [ref=e916]
+                        - button [ref=e917]:
+                          - img [ref=e918]
+                      - generic [ref=e529]:
+                        - generic [ref=e530]:
+                          - link [ref=e919]:
+                            - /url: /@cuthuynh159
+                            - generic [ref=e537]: cuthuynh159
+                          - generic [ref=e538]:
+                            - generic [ref=e539]:
+                              - img [ref=e542]
+                              - link [ref=e920]:
+                                - /url: /search?q=thi%C3%AAn%20%C4%91%C6%B0%E1%BB%9Dng%20b%E1%BA%A3o%20s%C6%A1n&serp_type=tags&tag_id=18472644475030674
+                                - generic [ref=e548]: thiên đường bảo sơn
+                            - link [ref=e921]:
+                              - /url: /@cuthuynh159/post/DXVtl-Nk44h
+                              - time [ref=e552]:
+                                - generic [ref=e922]: 1m
+                        - button [ref=e923]:
+                          - img [ref=e924]
+                      - generic [ref=e562]:
+                        - generic [ref=e565]:
+                          - text: Công viên mát lạnh giữa mùa hè này wow quá mấy bà. 📍thiên đường bảo sơn, Hà Nội
+                          - button [ref=e925]:
+                            - generic [ref=e568]: Translate
+                        - generic [ref=e573]:
+                          - button [ref=e576]
+                          - button [ref=e926]:
+                            - generic [ref=e584]:
+                              - img
+                          - button [ref=e927]:
+                            - generic [ref=e589]:
+                              - img
+                          - button [ref=e928]:
+                            - generic [ref=e594]:
+                              - img
+                          - button [ref=e929]:
+                            - generic [ref=e599]:
+                              - img
+                          - button [ref=e930]:
+                            - generic [ref=e604]:
+                              - img
+                          - button [ref=e931]:
+                            - generic [ref=e609]:
+                              - img
+                          - button [ref=e932]:
+                            - generic [ref=e614]:
+                              - img
+                          - button [ref=e933]:
+                            - generic [ref=e619]:
+                              - img
+                          - button [ref=e934]:
+                            - generic [ref=e624]:
+                              - img
+                          - button [ref=e935]:
+                            - generic [ref=e629]:
+                              - img
+                          - button [ref=e936]:
+                            - generic [ref=e634]:
+                              - img
+                          - button [ref=e937]:
+                            - generic [ref=e639]:
+                              - img
+                          - button [ref=e938]:
+                            - generic [ref=e644]:
+                              - img
+                        - generic [ref=e646]:
+                          - button [ref=e939]:
+                            - img [ref=e940]
+                          - button [ref=e941]:
+                            - img [ref=e942]
+                          - button [ref=e943]:
+                            - img [ref=e944]
+                          - button [ref=e945]:
+                            - img [ref=e946]
+                    - generic [ref=e677] [cursor=pointer]:
+                      - link [ref=e947]:
+                        - /url: /@hridoyreh
+                        - img [ref=e948]
+                      - generic [ref=e684]:
+                        - generic [ref=e685]:
+                          - link [ref=e949]:
+                            - /url: /@hridoyreh
+                            - generic [ref=e692]: hridoyreh
+                          - button [ref=e950]:
+                            - img [ref=e951]
+                          - link [ref=e952]:
+                            - /url: /@hridoyreh/post/DXUl-8nklZA
+                            - time [ref=e704]:
+                              - generic [ref=e953]: 10h
+                        - button [ref=e954]:
+                          - img [ref=e955]
+                      - generic [ref=e714]:
+                        - generic [ref=e715]:
+                          - generic [ref=e717]: Vercel has been hacked.
+                          - generic [ref=e719]: A hacker has listed their customers’ data, source code, databases, and keys for sale...
+                        - link [ref=e956]:
+                          - /url: /@hridoyreh/post/DXUl-8nklZA/media
+                          - generic [ref=e726]:
+                            - img
+                        - generic [ref=e728]:
+                          - button [ref=e957]:
+                            - generic [ref=e732]:
+                              - img [ref=e958]
+                              - generic [ref=e737]: "208"
+                          - button [ref=e959]:
+                            - generic [ref=e741]:
+                              - img [ref=e960]
+                              - generic [ref=e746]: "14"
+                          - button [ref=e961]:
+                            - generic [ref=e750]:
+                              - img [ref=e962]
+                              - generic [ref=e756]: "26"
+                          - button [ref=e963]:
+                            - generic [ref=e760]:
+                              - img [ref=e964]
+                              - generic [ref=e765]: "52"
+                    - status [ref=e965]:
+                      - img [ref=e966]
+            - button [ref=e967] [cursor=pointer]:
+              - img [ref=e968]
+          - button "Create" [ref=e795] [cursor=pointer]:
+            - img "Create" [ref=e796]
+  - dialog [ref=e975]:
+    - generic [ref=e980]:
+      - generic [ref=e981]:
+        - button "Cancel" [ref=e983] [cursor=pointer]:
+          - generic [ref=e984]: Cancel
+        - heading "New thread" [level=1] [ref=e986]:
+          - generic [ref=e987]: New thread
+        - generic [ref=e988]:
+          - button "Drafts" [ref=e991] [cursor=pointer]:
+            - img "Drafts" [ref=e993]
+          - button "More" [ref=e996] [cursor=pointer]:
+            - img "More" [ref=e998]
+      - generic [ref=e1005]:
+        - generic [ref=e1006]:
+          - img "freepeak_life's profile picture" [ref=e1010]
+          - generic [ref=e1013]:
+            - generic [ref=e1016]:
+              - generic [ref=e1018]: freepeak_life
+              - img [ref=e1020]
+              - generic [ref=e1026]:
+                - img [ref=e1029]
+                - searchbox "Add a topic" [ref=e1036]
+            - generic [ref=e1037]:
+              - textbox "Empty text field. Type to compose a new post." [ref=e1038]:
+                - paragraph [ref=e1039]
+              - generic:
+                - generic: What's new?
+            - generic [ref=e1102]:
+              - button "Remove" [active] [ref=e1106] [cursor=pointer]:
+                - img "Remove" [ref=e1108]
+              - button "Attachment actions" [ref=e1112] [cursor=pointer]:
+                - img "Attachment actions" [ref=e1114]
+            - generic [ref=e1040]:
+              - button "Attach media Add" [ref=e1116] [cursor=pointer]:
+                - img "Attach media" [ref=e1117]
+                - generic [ref=e1120]: Add
+              - button "Add an emoji" [ref=e1053] [cursor=pointer]:
+                - img "Add an emoji" [ref=e1055]
+              - button "Add a location" [ref=e1073] [cursor=pointer]:
+                - img "Add a location" [ref=e1075]
+        - generic [ref=e1078]:
+          - img "freepeak_life's profile picture" [ref=e1081]
+          - button "Add to thread" [ref=e1082] [cursor=pointer]:
+            - generic [ref=e1083]: Add to thread
+      - generic [ref=e1085]:
+        - button "Post" [ref=e1087] [cursor=pointer]:
+          - generic [ref=e1088]: Post
+        - button "Reply options" [ref=e1090] [cursor=pointer]:
+          - generic [ref=e1091]:
+            - img [ref=e1093]
+            - generic [ref=e1098]: Reply options

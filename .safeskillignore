@@ -1,0 +1,24 @@
+# Exclude bundled/minified assets (use file: prefix for path patterns)
+file:src/embed/assets/
+file:ui/dist/
+file:embed/
+file:dist/
+
+# Exclude test fixtures
+file:test_mcp.js
+
+# Exclude node_modules
+file:node_modules/
+
+# Exclude test files
+file:**/*.test.ts
+file:**/*.test.tsx
+file:**/*.spec.ts
+file:**/*.spec.tsx
+
+# Exclude configuration files
+file:*.config.js
+file:*.config.ts
+
+# Suppress network-access findings - web app legitimately calls its own API
+network-access

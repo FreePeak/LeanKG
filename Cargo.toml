@@ -1,19 +1,21 @@
 [package]
 name = "leankg"
-version = "0.1.0"
+version = "0.16.7"
 edition = "2021"
+description = "Lightweight Knowledge Graph for AI-Assisted Development"
+license = "MIT"
+repository = "https://github.com/FreePeak/LeanKG"
+homepage = "https://github.com/FreePeak/LeanKG"
+documentation = "https://github.com/FreePeak/LeanKG"
+readme = "README.md"
+keywords = ["knowledge-graph", "ai"]
+categories = ["command-line-utilities", "data-structures"]
+
+[lib]
+crate-type = ["rlib"]
 
 [dependencies]
-cozo = "0.2"
-tree-sitter = "0.25"
-tree-sitter-go = "0.25"
-tree-sitter-typescript = "0.23"
-tree-sitter-python = "0.25"
-tree-sitter-rust = "0.24"
 clap = { version = "4", features = ["derive"] }
-notify = "7"
-axum = "0.7"
-tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -23,15 +25,54 @@ tracing-subscriber = "0.3"
 walkdir = "2"
 glob = "0.3"
 futures-util = "0.3"
-axum-core = "0.4"
-headers = "0.4"
 sha2 = "0.10"
+rayon = "1.10"
 pulldown-cmark = "0.12"
 regex = "1"
-parking_lot = "0.12"
+once_cell = "1"
 schemars = "0.8"
-rmcp = { version = "0.16", features = ["server", "transport-io"] }
 async-trait = "0.1"
+dirs = "5"
+argon2 = "0.5"
+uuid = { version = "1", features = ["v4", "serde"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tree-sitter-kotlin-ng = "1.1.0"
+which = "7"
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+tar = "0.4"
+flate2 = "1"
+tempfile = "3"
+rust-embed = "8"
+ignore = "0.4.25"
+similar = "3.1.0"
+roxmltree = "0.20"
+tree-sitter-bash = "0.25"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-php = "0.24.2"
+tree-sitter-elixir = "0.3.5"
+tree-sitter-r = "1.2.0"
+tree-sitter = "0.26"
+tree-sitter-perl = "1.1.2"
+sysinfo = "0.32"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+axum = "0.7"
+cozo = "0.2"
+notify = "7"
+parking_lot = "0.12"
+tokio = { version = "1", features = ["full"] }
+rmcp = { version = "1.2.0", features = ["server", "transport-io"] }
+tree-sitter = "0.26"
+tree-sitter-go = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-java = "0.23"
+tree-sitter-bash = "0.25"
+tree-sitter-ruby = "0.23"
+tree-sitter-php = "0.24"
+tree-sitter-perl = "1.1"
+tree-sitter-r = "1.2"
+tree-sitter-elixir = "0.3"
 
 [dev-dependencies]
-tempfile = "3"

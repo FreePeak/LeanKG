@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::db::models::{CodeElement, Relationship};
 use crate::db::schema::CozoDb;
 use crate::graph::GraphEngine;
@@ -13,12 +14,12 @@ pub struct DocIndexResult {
 }
 
 pub struct DocIndexer {
-    db: CozoDb,
+    _db: CozoDb,
 }
 
 impl DocIndexer {
     pub fn new(db: CozoDb) -> Self {
-        Self { db }
+        Self { _db: db }
     }
 
     pub fn index_docs(
@@ -77,6 +78,7 @@ impl DocIndexer {
                     source_qualified: parent_name,
                     target_qualified: child_name,
                     rel_type: "contains".to_string(),
+                    confidence: 1.0,
                     metadata: serde_json::json!({}),
                 });
             }
@@ -89,6 +91,7 @@ impl DocIndexer {
         })
     }
 
+    #[allow(clippy::type_complexity)]
     fn parse_doc_file(
         &self,
         path: &Path,
@@ -117,6 +120,7 @@ impl DocIndexer {
                 .to_string()
         });
 
+        let headings = self.extract_headings(&content);
         let doc = CodeElement {
             qualified_name: qualified_name.clone(),
             element_type: "document".to_string(),
@@ -126,7 +130,12 @@ impl DocIndexer {
             line_end: content.lines().count() as u32,
             language: "markdown".to_string(),
             parent_qualified: None,
-            metadata: serde_json::json!({}),
+            metadata: serde_json::json!({
+                "category": category,
+                "title": title,
+                "headings": headings,
+            }),
+            ..Default::default()
         };
 
         let (sections, heading_rels) = self.extract_sections(&content, &qualified_name, path);
@@ -134,13 +143,14 @@ impl DocIndexer {
         let code_refs = self.extract_code_references(&content);
         let mut relationships = heading_rels;
 
-        for (target, context) in code_refs {
+        for (target, _context) in code_refs {
             let target_clone = target.clone();
             relationships.push(Relationship {
                 id: None,
                 source_qualified: qualified_name.clone(),
                 target_qualified: target,
                 rel_type: "references".to_string(),
+                confidence: 1.0,
                 metadata: serde_json::json!({}),
             });
 
@@ -149,6 +159,7 @@ impl DocIndexer {
                 source_qualified: target_clone,
                 target_qualified: qualified_name.clone(),
                 rel_type: "documented_by".to_string(),
+                confidence: 1.0,
                 metadata: serde_json::json!({}),
             });
         }
@@ -169,8 +180,8 @@ impl DocIndexer {
     fn extract_title(&self, content: &str) -> Option<String> {
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("# ") {
-                return Some(trimmed[2..].trim().to_string());
+            if let Some(stripped) = trimmed.strip_prefix("# ") {
+                return Some(stripped.trim().to_string());
             }
         }
         None
@@ -215,6 +226,7 @@ impl DocIndexer {
                         language: "markdown".to_string(),
                         parent_qualified: Some(doc_qualified.to_string()),
                         metadata: serde_json::json!({}),
+                        ..Default::default()
                     });
 
                     relationships.push(Relationship {
@@ -222,6 +234,7 @@ impl DocIndexer {
                         source_qualified: doc_qualified.to_string(),
                         target_qualified: section_qualified,
                         rel_type: "contains".to_string(),
+                        confidence: 1.0,
                         metadata: serde_json::json!({}),
                     });
                 }
@@ -243,6 +256,7 @@ impl DocIndexer {
                 language: "markdown".to_string(),
                 parent_qualified: Some(doc_qualified.to_string()),
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
 
             relationships.push(Relationship {
@@ -250,6 +264,7 @@ impl DocIndexer {
                 source_qualified: doc_qualified.to_string(),
                 target_qualified: section_qualified,
                 rel_type: "contains".to_string(),
+                confidence: 1.0,
                 metadata: serde_json::json!({}),
             });
         }
@@ -257,35 +272,26 @@ impl DocIndexer {
         (sections, relationships)
     }
 
-    fn extract_code_references<'a>(&self, content: &'a str) -> Vec<(String, String)> {
+    fn extract_code_references(&self, content: &str) -> Vec<(String, String)> {
         let mut refs = Vec::new();
-        let code_path_pattern =
-            regex::Regex::new(r"(?:src/|lib/|\./)([\w\-\./]+\.(?:go|rs|ts|tsx|js|jsx|py))")
-                .unwrap();
-        let qualified_pattern = regex::Regex::new(r"([\w\.]+(?:::\w+)+)").unwrap();
+        let file_pattern =
+            regex::Regex::new(r"\b([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py))\b").unwrap();
+        let mut in_code_block = false;
 
         for line in content.lines() {
             let trimmed = line.trim();
-
-            if trimmed.starts_with("```") || trimmed.starts_with("`") && trimmed.ends_with("`") {
+            if trimmed.starts_with("```") {
+                in_code_block = !in_code_block;
+                continue;
+            }
+            if in_code_block {
                 continue;
             }
 
-            for cap in code_path_pattern.captures_iter(trimmed) {
-                if let Some(m) = cap.get(0) {
+            for cap in file_pattern.captures_iter(trimmed) {
+                if let Some(m) = cap.get(1) {
                     let target = m.as_str().to_string();
-                    let context = trimmed.chars().take(100).collect::<String>();
-                    refs.push((target, context));
-                }
-            }
-
-            for cap in qualified_pattern.captures_iter(trimmed) {
-                if let Some(m) = cap.get(0) {
-                    let target = m.as_str().to_string();
-                    if target.contains("::")
-                        && !target.starts_with("src/")
-                        && !target.starts_with("lib/")
-                    {
+                    if target.len() >= 5 {
                         let context = trimmed.chars().take(100).collect::<String>();
                         refs.push((target, context));
                     }
@@ -296,6 +302,7 @@ impl DocIndexer {
         refs
     }
 
+    #[allow(dead_code)]
     pub fn get_doc_structure(
         &self,
         docs_path: &Path,
@@ -350,6 +357,7 @@ impl DocIndexer {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DocTreeNode {
     pub name: String,
@@ -358,6 +366,7 @@ pub struct DocTreeNode {
 }
 
 impl DocTreeNode {
+    #[allow(dead_code)]
     pub fn new(name: String, node_type: String) -> Self {
         Self {
             name,
@@ -394,19 +403,22 @@ pub fn index_docs_directory(
     docs_path: &Path,
     graph: &GraphEngine,
 ) -> Result<DocIndexResult, Box<dyn std::error::Error>> {
-    let indexer = DocIndexer::new(graph.db().clone());
-    let result = indexer.index_docs(docs_path)?;
+    let result = {
+        let db = graph.db();
+        let indexer = DocIndexer::new(db.clone());
+        indexer.index_docs(docs_path)?
+    };
 
-    for doc in &result.documents {
-        graph.insert_element(doc)?;
+    if !result.documents.is_empty() {
+        graph.insert_elements(&result.documents)?;
     }
 
-    for section in &result.sections {
-        graph.insert_element(section)?;
+    if !result.sections.is_empty() {
+        graph.insert_elements(&result.sections)?;
     }
 
-    for rel in &result.relationships {
-        graph.insert_relationship(rel)?;
+    if !result.relationships.is_empty() {
+        graph.insert_relationships(&result.relationships)?;
     }
 
     Ok(result)

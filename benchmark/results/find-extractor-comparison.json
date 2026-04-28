@@ -1,0 +1,38 @@
+{
+  "overhead": {
+    "time_delta": 0.0,
+    "token_delta": -16256,
+    "token_delta_percent": 0.0
+  },
+  "task": "find-extractor",
+  "with_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 17720,
+    "context": {
+      "files_referenced": [
+        "src/indexer/mod.rs",
+        "src/indexer/extractor.rs",
+        "src/indexer/parser.rs",
+        "src/indexer/microservice.rs",
+        "src/indexer/config_extractor.rs"
+      ]
+    },
+    "input_tokens": 1050,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 18991
+  },
+  "without_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 0,
+    "context": {
+      "files_referenced": [
+        "src/indexer/extractor.rs"
+      ]
+    },
+    "input_tokens": 34784,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 35247
+  }
+}

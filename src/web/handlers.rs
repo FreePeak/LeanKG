@@ -1,24 +1,25 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 
-use crate::db;
-use crate::db::schema::CozoDb;
+use crate::db::{self};
 
 use super::{ApiResponse, AppState};
 
 #[derive(Deserialize, Serialize)]
 pub struct QueryRequest {
     pub query: String,
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]
 pub struct QueryResponse {
-    pub result: Vec<serde_json::Value>,
+    pub result: serde_json::Value,
 }
 
 #[derive(Deserialize)]
@@ -39,22 +40,55 @@ pub struct AnnotationRequest {
 #[derive(Serialize, Clone)]
 pub struct GraphData {
     pub nodes: Vec<GraphNode>,
-    pub edges: Vec<GraphEdge>,
+    pub relationships: Vec<GraphRelationship>,
+    pub filtered: Option<GraphFilterInfo>,
+    #[serde(rename = "hasMore")]
+    pub has_more: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct GraphFilterInfo {
+    pub tests_filtered: usize,
+    pub message: String,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct NodeProperties {
+    pub name: String,
+    #[serde(rename = "filePath")]
+    pub file_path: String,
+    #[serde(rename = "elementType")]
+    pub element_type: String,
 }
 
 #[derive(Serialize, Clone)]
 pub struct GraphNode {
     pub id: String,
     pub label: String,
-    pub element_type: String,
-    pub file_path: String,
+    pub properties: NodeProperties,
 }
 
 #[derive(Serialize, Clone)]
-pub struct GraphEdge {
-    pub source: String,
-    pub target: String,
+pub struct GraphRelationship {
+    pub id: String,
+    #[serde(rename = "sourceId")]
+    pub source_id: String,
+    #[serde(rename = "targetId")]
+    pub target_id: String,
+    #[serde(rename = "type")]
     pub rel_type: String,
+}
+
+#[allow(dead_code)]
+fn is_test_element(element: &crate::db::models::CodeElement) -> bool {
+    let qn = &element.qualified_name;
+    let fp = &element.file_path;
+    qn.contains("test_")
+        || qn.contains("_test.")
+        || qn.ends_with("_test")
+        || fp.contains("_test.")
+        || fp.contains("/test/")
+        || fp.contains("\\test\\")
 }
 
 fn build_nav_html() -> String {
@@ -62,6 +96,7 @@ fn build_nav_html() -> String {
         <nav style="margin-bottom: 20px; padding: 10px; background: #f5f5f5; border-radius: 8px;">
             <a href="/" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Dashboard</a>
             <a href="/graph" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Graph</a>
+            <a href="/services" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Services</a>
             <a href="/browse" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Browse</a>
             <a href="/docs" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Docs</a>
             <a href="/annotate" style="margin-right: 15px; text-decoration: none; color: #333; font-weight: 500;">Annotate</a>
@@ -80,7 +115,6 @@ fn base_html(title: &str, content: &str) -> String {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>LeanKG - {}</title>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #fafafa; }}
@@ -106,11 +140,7 @@ fn base_html(title: &str, content: &str) -> String {
         .badge-class {{ background: #f3e5f5; color: #7b1fa2; }}
         .badge-file {{ background: #e8f5e9; color: #2e7d32; }}
         .badge-module {{ background: #fff3e0; color: #e65100; }}
-        #graph-container {{ width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px; background: #fff; }}
-        .node {{ cursor: pointer; }}
-        .link {{ stroke: #999; stroke-opacity: 0.6; }}
-        .node circle {{ stroke: #fff; stroke-width: 2px; }}
-        .node text {{ font-size: 11px; pointer-events: none; }}
+        #graph-container {{ width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px; background: #fff; position: relative; }}
         .loading {{ text-align: center; padding: 40px; color: #666; }}
         .error {{ background: #ffebee; color: #c62828; padding: 15px; border-radius: 6px; margin-bottom: 15px; }}
         .success {{ background: #e8f5e9; color: #2e7d32; padding: 15px; border-radius: 6px; margin-bottom: 15px; }}
@@ -119,9 +149,9 @@ fn base_html(title: &str, content: &str) -> String {
     </style>
 </head>
 <body>
-{}
-<h1>{}</h1>
-{}
+    {}
+    <h1>{}</h1>
+    {}
 </body>
 </html>"#,
         title,
@@ -139,11 +169,15 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
     let mut files_count = 0usize;
     let mut functions_count = 0usize;
     let mut classes_count = 0usize;
+    let mut has_project = false;
 
     if let Ok(graph) = state.get_graph_engine().await {
         if let Ok(elements) = graph.all_elements() {
+            has_project = !elements.is_empty();
             element_count = elements.len();
-            files_count = elements.iter().filter(|x| x.element_type == "file").count();
+            let unique_files: std::collections::HashSet<_> =
+                elements.iter().map(|e| e.file_path.clone()).collect();
+            files_count = unique_files.len();
             functions_count = elements
                 .iter()
                 .filter(|x| x.element_type == "function")
@@ -161,6 +195,10 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
         }
     }
 
+    if !has_project {
+        return project_selector(State(state)).await;
+    }
+
     let content = format!(
         r#"
         <div class="stats">
@@ -174,11 +212,13 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
             <div class="stat-box"><div class="value">{}</div><div class="label">Classes</div></div>
         </div>
         <div class="card">
-            <h2>Getting Started</h2>
-            <p style="color: #666; margin-bottom: 10px;">Use the CLI to index your codebase:</p>
-            <code style="display: block; background: #f5f5f5; padding: 15px; border-radius: 6px; margin-bottom: 15px;">leankg init && leankg index ./src</code>
-            <p style="color: #666;">Then start the server with:</p>
-            <code style="display: block; background: #f5f5f5; padding: 15px; border-radius: 6px;">leankg serve</code>
+            <h2>Current Project</h2>
+            <p style="color: #666; margin-bottom: 10px;">
+                <code>{}</code>
+            </p>
+            <p style="color: #666; margin-bottom: 15px;">
+                <a href="/project" style="color: #0066cc;">Switch Project</a>
+            </p>
         </div>
         <div class="card">
             <h2>Quick Actions</h2>
@@ -194,7 +234,8 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
         annotation_count,
         files_count,
         functions_count,
-        classes_count
+        classes_count,
+        state.current_project_path.read().await.display()
     );
 
     axum::response::Html(base_html("Dashboard", &content))
@@ -203,65 +244,882 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
 #[allow(dead_code)]
 pub async fn graph() -> axum::response::Html<String> {
     let content = r#"
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/sigma.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/plugins/sigma.parsers.json.min.js"></script>
         <div class="card">
             <h2>Code Dependency Graph</h2>
             <p style="color: #666; margin-bottom: 15px;">Interactive visualization of code elements and their relationships.</p>
+            <div id="graph-filter" style="margin-bottom: 15px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+                <button class="filter-btn" data-filter="document" onclick="setFilter('document')">Document</button>
+                <button class="filter-btn" data-filter="function" onclick="setFilter('function')">Function</button>
+            </div>
             <div id="graph-container"><div class="loading">Loading graph data...</div></div>
+            <div id="node-tooltip" style="position: fixed;">
+                <div class="tooltip-header">
+                    <span class="tooltip-name" id="tooltip-name"></span>
+                    <span class="tooltip-type" id="tooltip-type"></span>
+                </div>
+                <div class="tooltip-related" id="tooltip-related" style="display: none;">
+                    <div class="tooltip-related-title">Related Nodes</div>
+                    <ul class="tooltip-related-list" id="tooltip-related-list"></ul>
+                </div>
+            </div>
         </div>
         <div class="card">
             <h3>Graph Controls</h3>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
                 <button onclick="zoomIn()">Zoom In</button>
                 <button onclick="zoomOut()">Zoom Out</button>
                 <button onclick="resetZoom()">Reset</button>
-                <button onclick="toggleLabels()">Toggle Labels</button>
+                <select id="layout-select" onchange="applyLayout(this.value)" style="padding: 8px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px; cursor: pointer;">
+                    <option value="force">Force Atlas 2</option>
+                    <option value="circular">Circular</option>
+                    <option value="grid">Grid</option>
+                    <option value="hierarchical">Hierarchical</option>
+                    <option value="random">Random</option>
+                </select>
+                <button onclick="applyLayout(document.getElementById('layout-select').value)">Apply Layout</button>
             </div>
         </div>
+        <style>
+            .filter-btn { background: #e0e0e0; color: #333; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+            .filter-btn:hover { background: #d0d0d0; }
+            .filter-btn.active { background: #0066cc; color: #fff; }
+            #graph-container { width: 100%; height: 600px; }
+            #graph-container canvas { width: 100% !important; height: 100% !important; }
+            #node-tooltip {
+                position: fixed;
+                background: #fff;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                padding: 12px 16px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 1000;
+                max-width: 300px;
+                pointer-events: none;
+                opacity: 0;
+                transition: opacity 0.15s ease-in;
+                visibility: hidden;
+            }
+            #node-tooltip.visible {
+                opacity: 1;
+                visibility: visible;
+            }
+            #node-tooltip .tooltip-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            #node-tooltip .tooltip-name {
+                font-weight: 600;
+                font-size: 14px;
+                color: #333;
+                word-break: break-word;
+            }
+            #node-tooltip .tooltip-type {
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            .tooltip-type-function { background: #e3f2fd; color: #1565c0; }
+            .tooltip-type-class { background: #f3e5f5; color: #7b1fa2; }
+            .tooltip-type-file { background: #e8f5e9; color: #2e7d32; }
+            .tooltip-type-module { background: #fff3e0; color: #e65100; }
+            .tooltip-type-document { background: #fff3e0; color: #e65100; }
+            .tooltip-type-struct { background: #e3f2fd; color: #1565c0; }
+            .tooltip-type-default { background: #f5f5f5; color: #666; }
+            #node-tooltip .tooltip-related {
+                border-top: 1px solid #eee;
+                padding-top: 8px;
+                margin-top: 4px;
+            }
+            #node-tooltip .tooltip-related-title {
+                font-size: 11px;
+                color: #888;
+                margin-bottom: 4px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            #node-tooltip .tooltip-related-list {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+            }
+            #node-tooltip .tooltip-related-list li {
+                font-size: 12px;
+                color: #555;
+                padding: 2px 0;
+                display: flex;
+                align-items: flex-start;
+                gap: 4px;
+            }
+            #node-tooltip .tooltip-related-list .rel-arrow {
+                color: #888;
+                flex-shrink: 0;
+            }
+            #node-tooltip .tooltip-related-list .rel-type {
+                color: #999;
+                font-size: 11px;
+            }
+        </style>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
         <script>
-            let svg, g, zoom, nodes, labelsVisible = true;
-            const width = 1400, height = 600;
+            const Graph = graphology.Graph;
+            let sig = null;
+            window.sig = null;
+            let graphDataCache = null;
+            let currentFilter = 'all';
+            const docTypes = ['document', 'doc_section'];
+            const funcTypes = ['function', 'class', 'struct'];
+            const nodePositionCache = {};
+            let mouseX = 0, mouseY = 0;
+            
+            document.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            });
+            
+            function isTestElement(node) {
+                const qn = node.id.toLowerCase();
+                const fp = node.file_path ? node.file_path.toLowerCase() : '';
+                return qn.includes('test_') || qn.includes('_test.') || qn.endsWith('_test') 
+                    || fp.includes('_test.') || fp.includes('/test/') || fp.includes('\\test\\')
+                    || fp.includes('benchmark');
+            }
+            
+            function filterTestElements(data) {
+                const nodeIds = new Set();
+                data.nodes.forEach(n => { if (!isTestElement(n)) nodeIds.add(n.id); });
+                const filteredNodes = data.nodes.filter(n => nodeIds.has(n.id));
+                const filteredEdges = data.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+                return { nodes: filteredNodes.map(n => ({...n})), edges: filteredEdges.map(e => ({...e})) };
+            }
+            
             async function loadGraph() {
                 try {
                     const response = await fetch('/api/graph/data');
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                    }
                     const data = await response.json();
-                    if (data.success && data.data) initGraph(data.data);
-                    else document.getElementById('graph-container').innerHTML = '<div class="error">No graph data available. Index your codebase first.</div>';
+                    if (data.success && data.data) { 
+                        graphDataCache = filterTestElements(data.data); 
+                        initGraph(graphDataCache); 
+                    } else {
+                        document.getElementById('graph-container').innerHTML = '<div class="error">No graph data available. Index your codebase first.</div>';
+                    }
                 } catch (e) {
-                    document.getElementById('graph-container').innerHTML = '<div class="error">Failed to load graph: ' + e.message + '</div>';
+                    console.error('Graph load error:', e);
+                    document.getElementById('graph-container').innerHTML = '<div class="error">Failed to load graph: ' + (e.message || String(e)) + '</div>';
                 }
             }
-            function initGraph(graphData) {
+            
+            function setFilter(filter) {
+                currentFilter = filter;
+                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelector('.filter-btn[data-filter="' + filter + '"]').classList.add('active');
+                if (graphDataCache) initGraph(graphDataCache);
+            }
+            
+            function getFilteredData(data) {
+                const filteredNodes = [];
+                const filteredEdges = [];
+                const nodeIds = new Set();
+                
+                if (currentFilter === 'all') {
+                    data.nodes.forEach(n => { filteredNodes.push({...n}); nodeIds.add(n.id); });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) { filteredEdges.push({...e}); } });
+                    return { nodes: filteredNodes, edges: filteredEdges };
+                } else if (currentFilter === 'document') {
+                    data.nodes.forEach(n => { if (docTypes.includes(n.element_type)) { filteredNodes.push({...n}); nodeIds.add(n.id); } });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) { filteredEdges.push({...e}); } });
+                    return { nodes: filteredNodes, edges: filteredEdges };
+                } else if (currentFilter === 'function') {
+                    data.nodes.forEach(n => { if (funcTypes.includes(n.element_type)) { filteredNodes.push({...n}); nodeIds.add(n.id); } });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) { filteredEdges.push({...e}); } });
+                    return { nodes: filteredNodes, edges: filteredEdges };
+                }
+                return { nodes: filteredNodes.map(n => ({...n})), edges: filteredEdges.map(e => ({...e})) };
+            }
+            
+            function applyLimitAndOrphan(data) {
+                if (data.nodes.length <= 500 && data.edges.length <= 1000) {
+                    return { nodes: data.nodes.map(n => ({...n})), edges: data.edges.map(e => ({...e})) };
+                }
+                const nodeConnectCount = {};
+                data.edges.forEach(e => { 
+                    nodeConnectCount[e.source] = (nodeConnectCount[e.source] || 0) + 1; 
+                    nodeConnectCount[e.target] = (nodeConnectCount[e.target] || 0) + 1; 
+                });
+                const sortedNodes = [...data.nodes].sort((a, b) => 
+                    (nodeConnectCount[b.id] || 0) - (nodeConnectCount[a.id] || 0)
+                );
+                const topNodeIds = new Set(sortedNodes.slice(0, 500).map(n => n.id));
+                const filteredNodes = data.nodes.filter(n => topNodeIds.has(n.id));
+                const filteredEdges = data.edges.filter(e => topNodeIds.has(e.source) && topNodeIds.has(e.target)).slice(0, 1000);
+                return { nodes: filteredNodes.map(n => ({...n})), edges: filteredEdges.map(e => ({...e})) };
+            }
+            
+            function initGraph(fullData) {
+                if (!fullData || !fullData.nodes || !fullData.edges) {
+                    document.getElementById('graph-container').innerHTML = '<div class="error">Invalid graph data.</div>';
+                    return;
+                }
+                
+                if (sig) {
+                    try { sig.kill(); } catch(e) { /* ignore */ }
+                    sig = null;
+                }
+                
+                const filtered = getFilteredData(fullData);
+                const data = applyLimitAndOrphan(filtered);
                 const container = document.getElementById('graph-container');
                 container.innerHTML = '';
-                svg = d3.select('#graph-container').append('svg').attr('width', '100%').attr('height', height);
-                zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (e) => g.attr('transform', e.transform));
-                svg.call(zoom);
-                g = svg.append('g');
-                const simulation = d3.forceSimulation(graphData.nodes)
-                    .force('link', d3.forceLink(graphData.edges).id(d => d.id).distance(100))
-                    .force('charge', d3.forceManyBody().strength(-300))
-                    .force('center', d3.forceCenter(width / 2, height / 2))
-                    .force('collision', d3.forceCollide().radius(30));
-                const link = g.append('g').selectAll('line').data(graphData.edges).join('line').attr('class', 'link').attr('stroke-width', 1.5);
-                const node = g.append('g').selectAll('g').data(graphData.nodes).join('g').attr('class', 'node')
-                    .call(d3.drag().on('start', dragstarted).on('drag', dragged).on('end', dragended));
-                const colors = {'file': '#2e7d32', 'function': '#1565c0', 'class': '#7b1fa2', 'module': '#e65100'};
-                node.append('circle').attr('r', 15).attr('fill', d => colors[d.element_type] || '#666');
-                node.append('text').text(d => d.label).attr('x', 20).attr('y', 5).style('display', labelsVisible ? 'block' : 'none');
-                node.on('click', (e, d) => { alert('Element: ' + d.label + '\nType: ' + d.element_type + '\nFile: ' + d.file_path); });
-                simulation.on('tick', () => {
-                    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-                    node.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
+                
+                if (data.nodes.length === 0) {
+                    container.innerHTML = '<div class="error">No nodes match this filter.</div>';
+                    return;
+                }
+                
+                const colors = {
+                    'file': '#2e7d32', 
+                    'function': '#1565c0', 
+                    'class': '#7b1fa2', 
+                    'module': '#e65100', 
+                    'document': '#e65100', 
+                    'doc_section': '#ff9800', 
+                    'struct': '#1565c0'
+                };
+                
+                const nodeCount = data.nodes.length;
+                const maxDim = Math.max(100, Math.sqrt(nodeCount) * 8);
+                
+                const edgeNodeIds = new Set();
+                data.edges.forEach(e => {
+                    edgeNodeIds.add(e.source);
+                    edgeNodeIds.add(e.target);
                 });
-                nodes = node;
+                
+                const nodeSeen = new Set();
+                const connectedNodes = [];
+                data.nodes.forEach(n => {
+                    if (!nodeSeen.has(n.id)) {
+                        nodeSeen.add(n.id);
+                        connectedNodes.push(n);
+                    }
+                });
+                const connectedNodeIds = new Set(connectedNodes.map(n => n.id));
+                
+                const finalEdges = data.edges.filter(e => 
+                    connectedNodeIds.has(e.source) && connectedNodeIds.has(e.target)
+                );
+                
+                const connectedNodeIndexMap = {};
+                connectedNodes.forEach((n, idx) => { connectedNodeIndexMap[n.id] = idx; });
+                
+                const parentMapConnected = {};
+                const childMapConnected = {};
+                finalEdges.forEach(e => {
+                    if (connectedNodeIds.has(e.source) && connectedNodeIds.has(e.target)) {
+                        if (!childMapConnected[e.source]) childMapConnected[e.source] = [];
+                        childMapConnected[e.source].push(e.target);
+                        parentMapConnected[e.target] = e.source;
+                    }
+                });
+                
+                const connectedRootNodes = connectedNodes.filter(n => !parentMapConnected[n.id]).map(n => n.id);
+                const positioned = {};
+                const inProgress = {};
+                
+                const getOrPosition = (nodeId, depth) => {
+                    if (positioned[nodeId]) return positioned[nodeId];
+                    if (inProgress[nodeId]) return { x: (Math.random() - 0.5) * maxDim, y: (Math.random() - 0.5) * maxDim };
+                    
+                    const idx = connectedNodeIndexMap[nodeId];
+                    if (idx === undefined) return { x: (Math.random() - 0.5) * maxDim, y: (Math.random() - 0.5) * maxDim };
+                    
+                    const cachedPos = nodePositionCache[nodeId];
+                    if (cachedPos && typeof cachedPos.x === 'number' && typeof cachedPos.y === 'number') {
+                        positioned[nodeId] = cachedPos;
+                        return cachedPos;
+                    }
+                    
+                    inProgress[nodeId] = true;
+                    
+                    const children = childMapConnected[nodeId] || [];
+                    let cx = 0, cy = 0, childCount = 0;
+                    children.forEach(c => {
+                        if (!inProgress[c] && positioned[c]) {
+                            cx += positioned[c].x;
+                            cy += positioned[c].y;
+                            childCount++;
+                        }
+                    });
+                    
+                    const parentId = parentMapConnected[nodeId];
+                    let px = (Math.random() - 0.5) * maxDim;
+                    let py = (Math.random() - 0.5) * maxDim;
+                    
+                    if (parentId && positioned[parentId]) {
+                        px = positioned[parentId].x;
+                        py = positioned[parentId].y;
+                    } else {
+                        const rootIdx = connectedRootNodes.indexOf(nodeId);
+                        if (rootIdx >= 0) {
+                            const angle = (2 * Math.PI * rootIdx) / Math.max(connectedRootNodes.length, 1);
+                            px = Math.cos(angle) * maxDim * 0.7;
+                            py = Math.sin(angle) * maxDim * 0.7;
+                        }
+                    }
+                    
+                    let x = px + (Math.random() - 0.5) * maxDim * 0.2;
+                    let y = py + (Math.random() - 0.5) * maxDim * 0.2;
+                    
+                    if (childCount > 0) {
+                        x = px * 0.3 + (cx / childCount) * 0.7;
+                        y = py * 0.3 + (cy / childCount) * 0.7;
+                    }
+                    
+                    if (isNaN(x) || isNaN(y)) {
+                        x = (Math.random() - 0.5) * maxDim;
+                        y = (Math.random() - 0.5) * maxDim;
+                    }
+                    
+                    delete inProgress[nodeId];
+                    positioned[nodeId] = { x, y };
+                    return { x, y };
+                };
+                
+                connectedNodes.forEach(n => {
+                    if (!positioned[n.id]) {
+                        getOrPosition(n.id, 0);
+                    }
+                });
+                
+                const nodeDegrees = {};
+                connectedNodes.forEach(n => nodeDegrees[n.id] = 0);
+                finalEdges.forEach(e => {
+                    if (nodeDegrees[e.source] !== undefined) nodeDegrees[e.source]++;
+                    if (nodeDegrees[e.target] !== undefined) nodeDegrees[e.target]++;
+                });
+                
+                const maxDegree = Math.max(...Object.values(nodeDegrees), 1);
+                const MIN_NODE_SIZE = 3;
+                const MAX_NODE_SIZE = 20;
+                
+                const graphData = {
+                    nodes: connectedNodes.map(n => {
+                        const pos = positioned[n.id] || { x: (Math.random() - 0.5) * maxDim, y: (Math.random() - 0.5) * maxDim };
+                        if (isNaN(pos.x) || isNaN(pos.y)) {
+                            pos.x = (Math.random() - 0.5) * maxDim;
+                            pos.y = (Math.random() - 0.5) * maxDim;
+                        }
+                        const degree = nodeDegrees[n.id] || 0;
+                        const size = MIN_NODE_SIZE + ((degree / maxDegree) * (MAX_NODE_SIZE - MIN_NODE_SIZE));
+                        return {
+                            id: n.id,
+                            label: n.label,
+                            x: pos.x,
+                            y: pos.y,
+                            size: nodeCount > 500 ? Math.min(size, 8) : (nodeCount > 300 ? Math.min(size, 6) : size),
+                            color: colors[n.element_type] || '#666',
+                            elementType: n.element_type,
+                            degree: degree
+                        };
+                    }),
+                    edges: finalEdges.map(e => ({
+                        ...e,
+                        size: nodeCount > 500 ? 0.3 : 0.5
+                    }))
+                };
+                
+                connectedNodes.forEach(n => {
+                    const pos = positioned[n.id];
+                    if (pos) nodePositionCache[n.id] = pos;
+                });
+                
+                const graph = new Graph();
+                graphData.nodes.forEach(n => {
+                    graph.addNode(n.id, {
+                        label: n.label || n.id.split('::').pop() || n.id,
+                        x: n.x,
+                        y: n.y,
+                        size: n.size,
+                        color: n.color,
+                        elementType: n.elementType,
+                        degree: n.degree
+                    });
+                });
+                graphData.edges.forEach(e => {
+                    if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
+                        graph.addEdge(e.source, e.target, {
+                            size: e.size || 1,
+                            color: 'rgba(100,100,100,0.6)',
+                            relType: e.rel_type
+                        });
+                    }
+                });
+                
+                if (sig) {
+                    sig.kill();
+                }
+                
+                let hoveredNode = null;
+                const NODE_FADE_COLOR = '#ccc';
+                const EDGE_FADE_COLOR = 'rgba(200,200,200,0.3)';
+                
+                const tooltip = document.getElementById('node-tooltip');
+                const tooltipName = document.getElementById('tooltip-name');
+                const tooltipType = document.getElementById('tooltip-type');
+                const tooltipRelated = document.getElementById('tooltip-related');
+                const tooltipRelatedList = document.getElementById('tooltip-related-list');
+                
+                if (!tooltip || !tooltipName || !tooltipType) {
+                    console.error('Tooltip elements not found');
+                    return;
+                }
+                
+                sig = new Sigma(graph, container, {
+                    renderLabels: true,
+                    labelFont: 'Arial',
+                    labelSize: 12,
+                    labelColor: '#333333',
+                    labelRenderedSizeThreshold: 8,
+                    defaultNodeColor: '#666',
+                    defaultEdgeColor: 'rgba(150,150,150,0.6)',
+                    defaultNodeType: 'circle',
+                    defaultEdgeType: 'arrow',
+                    minCameraRatio: 0.01,
+                    maxCameraRatio: 100,
+                    hideEdgesOnMove: false,
+                    hideLabelsOnMove: false,
+                    enableEdgeClickEvents: false,
+                    enableNodeClickEvents: true,
+                    nodeReducer: (node, data) => {
+                        if (hoveredNode) {
+                            const isConnected = node === hoveredNode || graph.hasEdge(node, hoveredNode) || graph.hasEdge(hoveredNode, node);
+                            return isConnected ? { ...data, zIndex: 1 } : { ...data, zIndex: 0, label: '', color: NODE_FADE_COLOR, hidden: false };
+                        }
+                        return data;
+                    },
+                    edgeReducer: (edge, data) => {
+                        if (hoveredNode) {
+                            const [src, tgt] = graph.extremities(edge);
+                            const isConnected = src === hoveredNode || tgt === hoveredNode;
+                            return isConnected ? { ...data, color: '#666', size: Math.min(data.size * 2, 4), zIndex: 1 } : { ...data, color: EDGE_FADE_COLOR, hidden: true };
+                        }
+                        return data;
+                    }
+                });
+                
+                window.sig = sig;
+                
+                sig.getGraph().forEachNode((node) => {
+                    const edges = graph.edges().filter(eid => {
+                        const [src, tgt] = graph.extremities(eid);
+                        return src === node || tgt === node;
+                    });
+                    graph.setNodeAttribute(node, 'connectionCount', edges.length);
+                });
+                
+                sig.on('enterNode', ({ node }) => {
+                    hoveredNode = node;
+                    sig.refresh();
+                    
+                    if (!graph || !tooltip || !tooltipName || !tooltipType) return;
+                    
+                    const attrs = graph.getNodeAttributes(node);
+                    const nodeLabel = (attrs && attrs.label) ? String(attrs.label) : String(node);
+                    const nodeType = (attrs && attrs.elementType) ? String(attrs.elementType) : 'unknown';
+                    
+                    tooltipName.textContent = nodeLabel;
+                    tooltipType.textContent = nodeType;
+                    tooltipType.className = 'tooltip-type tooltip-type-' + nodeType.toLowerCase();
+                    
+                    const edges = graph.edges();
+                    const connectedEdges = edges.filter(eid => {
+                        const [src, tgt] = graph.extremities(eid);
+                        return src === node || tgt === node;
+                    });
+                    
+                    if (tooltipRelatedList) tooltipRelatedList.innerHTML = '';
+                    if (connectedEdges.length > 0) {
+                        if (tooltipRelated) tooltipRelated.style.display = 'block';
+                        connectedEdges.slice(0, 5).forEach(eid => {
+                            const [src, tgt] = graph.extremities(eid);
+                            const other = src === node ? tgt : src;
+                            const otherAttrs = graph.getNodeAttributes(other);
+                            const otherLabel = (otherAttrs && otherAttrs.label) ? String(otherAttrs.label) : String(other);
+                            const relType = graph.getEdgeAttribute(eid, 'relType') || 'related';
+                            const direction = src === node ? '->' : '<-';
+                            
+                            if (tooltipRelatedList) {
+                                const li = document.createElement('li');
+                                li.innerHTML = '<span class="rel-arrow">' + direction + '</span><span>' + otherLabel + '</span> <span class="rel-type">(' + relType + ')</span>';
+                                tooltipRelatedList.appendChild(li);
+                            }
+                        });
+                    } else {
+                        if (tooltipRelated) tooltipRelated.style.display = 'none';
+                    }
+                    
+                    const container = document.getElementById('graph-container');
+                    if (!container) return;
+                    const containerRect = container.getBoundingClientRect();
+                    let tooltipX = mouseX + 15;
+                    let tooltipY = mouseY + 15;
+                    
+                    const viewWidth = window.innerWidth;
+                    const viewHeight = window.innerHeight;
+                    
+                    if (tooltipX + 300 > viewWidth) {
+                        tooltipX = mouseX - 315;
+                    }
+                    if (tooltipY + 200 > viewHeight) {
+                        tooltipY = mouseY - 200;
+                    }
+                    
+                    if (tooltipX < 0) tooltipX = 15;
+                    if (tooltipY < 0) tooltipY = 15;
+                    
+                    tooltip.style.left = tooltipX + 'px';
+                    tooltip.style.top = tooltipY + 'px';
+                    tooltip.classList.add('visible');
+                });
+                
+                sig.on('leaveNode', () => {
+                    hoveredNode = null;
+                    sig.refresh();
+                    if (tooltip) tooltip.classList.remove('visible');
+                });
+                
+                sig.on('clickNode', function(e) {
+                    const node = e.node;
+                    const attrs = graph.getNodeAttributes(node);
+                    const edges = graph.edges();
+                    const connectedEdges = edges.filter(eid => {
+                        const [src, tgt] = graph.extremities(eid);
+                        return src === node || tgt === node;
+                    });
+                    let edgeInfo = '';
+                    connectedEdges.slice(0, 5).forEach(eid => {
+                        const [src, tgt] = graph.extremities(eid);
+                        const other = src === node ? tgt : src;
+                        const otherAttrs = graph.getNodeAttributes(other);
+                        const otherLabel = typeof otherAttrs.label === 'string' ? otherAttrs.label : other;
+                        edgeInfo += '\n- ' + (src === node ? '-> ' : '<- ') + otherLabel;
+                    });
+                    alert('Element: ' + attrs.label + '\nType: ' + attrs.elementType + '\nConnections:' + (edgeInfo || '\n(none)') + '\n\nID: ' + node);
+                });
             }
-            function dragstarted(e) { if (!e.active) simulation.alphaTarget(0.3).restart(); e.subject.fx = e.subject.x; e.subject.fy = e.subject.y; }
-            function dragged(e) { e.subject.fx = e.x; e.subject.fy = e.y; }
-            function dragended(e) { if (!e.active) simulation.alphaTarget(0); e.subject.fx = null; e.subject.fy = null; }
-            function zoomIn() { svg.transition().call(zoom.scaleBy, 1.3); }
-            function zoomOut() { svg.transition().call(zoom.scaleBy, 0.7); }
-            function resetZoom() { svg.transition().call(zoom.transform, d3.zoomIdentity); }
-            function toggleLabels() { labelsVisible = !labelsVisible; if (nodes) nodes.select('text').style('display', labelsVisible ? 'block' : 'none'); }
+            
+            function startLayout() {
+                if (!sig) return;
+                
+                const graph = sig.graph;
+                const nodes = graph.nodes();
+                const edges = graph.edges();
+                const nodeCount = nodes.length;
+                
+                if (nodeCount === 0) return;
+                
+                const iterations = 150;
+                const springLength = nodeCount > 300 ? 60 : 80;
+                const springStrength = 0.08;
+                const repulsionStrength = nodeCount > 300 ? 300 : 500;
+                const damping = 0.9;
+                const BarnesHutTheta = 0.6;
+                
+                const velocities = {};
+                const oldDelta = {};
+                nodes.forEach(n => { 
+                    velocities[n] = { x: 0, y: 0 }; 
+                    oldDelta[n] = { x: 0, y: 0 };
+                });
+                
+                const nodeMass = {};
+                nodes.forEach(n => {
+                    const type = graph.getNodeAttribute(n, 'type');
+                    if (type === 'file' || type === 'module') nodeMass[n] = 3;
+                    else if (type === 'class' || type === 'struct') nodeMass[n] = 2;
+                    else nodeMass[n] = 1;
+                });
+                
+                const nodesArray = nodes.slice();
+                const n = nodesArray.length;
+                const xPos = nodesArray.map(n => graph.getNodeAttribute(n, 'x'));
+                const yPos = nodesArray.map(n => graph.getNodeAttribute(n, 'y'));
+                
+                function getCenterOfMass(nodeIndex) {
+                    let cx = 0, cy = 0, mass = 0;
+                    for (let i = 0; i < n; i++) {
+                        if (i === nodeIndex) continue;
+                        const dx = xPos[i] - xPos[nodeIndex];
+                        const dy = yPos[i] - yPos[nodeIndex];
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist > BarnesHutTheta * 100) continue;
+                        const m = nodeMass[nodesArray[i]] || 1;
+                        cx += xPos[i] * m;
+                        cy += yPos[i] * m;
+                        mass += m;
+                    }
+                    return mass > 0 ? { x: cx / mass, y: cy / mass } : { x: xPos[nodeIndex], y: yPos[nodeIndex] };
+                }
+                
+                for (let iter = 0; iter < iterations; iter++) {
+                    for (let i = 0; i < n; i++) {
+                        const n1 = nodesArray[i];
+                        const n1Type = graph.getNodeAttribute(n1, 'type');
+                        let fx = 0, fy = 0;
+                        
+                        const center = getCenterOfMass(i);
+                        const dx = xPos[i] - center.x;
+                        const dy = yPos[i] - center.y;
+                        const distToCenter = Math.sqrt(dx * dx + dy * dy) || 1;
+                        const clusterForce = repulsionStrength * 0.3 / (distToCenter + 1);
+                        fx += (dx / distToCenter) * clusterForce;
+                        fy += (dy / distToCenter) * clusterForce;
+                        
+                        for (let j = 0; j < n; j++) {
+                            if (i === j) continue;
+                            const ddx = xPos[i] - xPos[j];
+                            const ddy = yPos[i] - yPos[j];
+                            const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.1;
+                            
+                            if (ddist > BarnesHutTheta * 100) continue;
+                            
+                            const m1 = nodeMass[n1] || 1;
+                            const m2 = nodeMass[nodesArray[j]] || 1;
+                            const force = repulsionStrength * m1 * m2 / (ddist * ddist);
+                            fx += (ddx / ddist) * force;
+                            fy += (ddy / ddist) * force;
+                        }
+                        
+                        edges.forEach(e => {
+                            const [src, tgt] = graph.extremities(e);
+                            if (src !== n1 && tgt !== n1) return;
+                            const other = src === n1 ? tgt : src;
+                            let otherIdx = -1;
+                            for (let k = 0; k < n; k++) {
+                                if (nodesArray[k] === other) { otherIdx = k; break; }
+                            }
+                            if (otherIdx < 0) return;
+                            
+                            const ddx = xPos[i] - xPos[otherIdx];
+                            const ddy = yPos[i] - yPos[otherIdx];
+                            const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+                            const displacement = ddist - springLength;
+                            const force = springStrength * displacement;
+                            fx -= (ddx / ddist) * force;
+                            fy -= (ddy / ddist) * force;
+                        });
+                        
+                        const d1 = damping;
+                        const d2 = 1 - damping;
+                        velocities[n1].x = velocities[n1].x * d1 + fx * d2 + oldDelta[n1].x * 0.2;
+                        velocities[n1].y = velocities[n1].y * d1 + fy * d2 + oldDelta[n1].y * 0.2;
+                        oldDelta[n1].x = velocities[n1].x;
+                        oldDelta[n1].y = velocities[n1].y;
+                    }
+                    
+                    for (let i = 0; i < n; i++) {
+                        const n1 = nodesArray[i];
+                        const maxMove = 10;
+                        const vx = Math.max(-maxMove, Math.min(maxMove, velocities[n1].x));
+                        const vy = Math.max(-maxMove, Math.min(maxMove, velocities[n1].y));
+                        xPos[i] += vx;
+                        yPos[i] += vy;
+                        graph.setNodeAttribute(n1, 'x', xPos[i]);
+                        graph.setNodeAttribute(n1, 'y', yPos[i]);
+                    }
+                }
+                 
+                 sig.refresh();
+             }
+              
+            function zoomIn() { 
+                if (!sig) return;
+                const camera = sig.getCamera();
+                if (camera) camera.goTo({ ratio: camera.ratio * 0.7 }); 
+            }
+            function zoomOut() { 
+                if (!sig) return;
+                const camera = sig.getCamera();
+                if (camera) camera.goTo({ ratio: camera.ratio * 1.3 }); 
+            }
+            function resetZoom() { 
+                if (!sig) return;
+                const camera = sig.getCamera();
+                if (camera) camera.goTo({ x: 0, y: 0, ratio: 1 }); 
+            }
+            
+            function applyLayout(layoutType) {
+                if (!sig) return;
+                
+                const graph = sig.graph;
+                const nodes = graph.nodes();
+                const nodeCount = nodes.length;
+                
+                if (nodeCount === 0) return;
+                
+                const nodesArray = nodes.slice();
+                const n = nodesArray.length;
+                
+                const centerX = 0;
+                const centerY = 0;
+                const spread = Math.max(100, Math.sqrt(nodeCount) * 5);
+                
+                if (layoutType === 'force') {
+                    const iterations = 100;
+                    const springLength = spread * 0.3;
+                    const springStrength = 0.05;
+                    const repulsionStrength = spread * spread * 0.1;
+                    const damping = 0.85;
+                    
+                    const velocities = {};
+                    nodes.forEach(n => { velocities[n] = { x: 0, y: 0 }; });
+                    
+                    const xPos = nodesArray.map(n => graph.getNodeAttribute(n, 'x'));
+                    const yPos = nodesArray.map(n => graph.getNodeAttribute(n, 'y'));
+                    
+                    for (let iter = 0; iter < iterations; iter++) {
+                        for (let i = 0; i < n; i++) {
+                            const n1 = nodesArray[i];
+                            let fx = 0, fy = 0;
+                            
+                            for (let j = 0; j < n; j++) {
+                                if (i === j) continue;
+                                const dx = xPos[i] - xPos[j];
+                                const dy = yPos[i] - yPos[j];
+                                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                                const force = repulsionStrength / (dist * dist);
+                                fx += (dx / dist) * force;
+                                fy += (dy / dist) * force;
+                            }
+                            
+                            graph.forEachEdge(n1, (e) => {
+                                const [src, tgt] = graph.extremities(e);
+                                const other = src === n1 ? tgt : src;
+                                let otherIdx = -1;
+                                for (let k = 0; k < n; k++) {
+                                    if (nodesArray[k] === other) { otherIdx = k; break; }
+                                }
+                                if (otherIdx < 0) return;
+                                
+                                const dx = xPos[i] - xPos[otherIdx];
+                                const dy = yPos[i] - yPos[otherIdx];
+                                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                                const displacement = dist - springLength;
+                                const force = springStrength * displacement;
+                                fx -= (dx / dist) * force;
+                                fy -= (dy / dist) * force;
+                            });
+                            
+                            velocities[n1].x = velocities[n1].x * damping + fx * (1 - damping);
+                            velocities[n1].y = velocities[n1].y * damping + fy * (1 - damping);
+                        }
+                        
+                        for (let i = 0; i < n; i++) {
+                            const n1 = nodesArray[i];
+                            const maxMove = spread * 0.2;
+                            const vx = Math.max(-maxMove, Math.min(maxMove, velocities[n1].x));
+                            const vy = Math.max(-maxMove, Math.min(maxMove, velocities[n1].y));
+                            xPos[i] += vx;
+                            yPos[i] += vy;
+                            graph.setNodeAttribute(n1, 'x', xPos[i]);
+                            graph.setNodeAttribute(n1, 'y', yPos[i]);
+                        }
+                    }
+                } else if (layoutType === 'circular') {
+                    const angleStep = (2 * Math.PI) / n;
+                    const radius = spread;
+                    nodesArray.forEach((node, i) => {
+                        const angle = i * angleStep;
+                        const x = centerX + radius * Math.cos(angle);
+                        const y = centerY + radius * Math.sin(angle);
+                        graph.setNodeAttribute(node, 'x', x);
+                        graph.setNodeAttribute(node, 'y', y);
+                    });
+                } else if (layoutType === 'grid') {
+                    const cols = Math.ceil(Math.sqrt(n));
+                    const cellSize = spread * 2 / cols;
+                    nodesArray.forEach((node, i) => {
+                        const row = Math.floor(i / cols);
+                        const col = i % cols;
+                        const x = centerX - (cols * cellSize) / 2 + col * cellSize;
+                        const y = centerY - (Math.ceil(n / cols) * cellSize) / 2 + row * cellSize;
+                        graph.setNodeAttribute(node, 'x', x);
+                        graph.setNodeAttribute(node, 'y', y);
+                    });
+                } else if (layoutType === 'hierarchical') {
+                    const parentMap = {};
+                    const childMap = {};
+                    graph.forEachEdge((e, attrs, src, tgt) => {
+                        if (!childMap[src]) childMap[src] = [];
+                        childMap[src].push(tgt);
+                        parentMap[tgt] = src;
+                    });
+                    
+                    const rootNodes = nodesArray.filter(n => !parentMap[n]);
+                    const positioned = {};
+                    const getDepth = (nodeId, depth = 0) => {
+                        const children = childMap[nodeId] || [];
+                        if (children.length === 0) return depth;
+                        return Math.max(...children.map(c => getDepth(c, depth + 1)));
+                    };
+                    
+                    const maxDepth = Math.max(...rootNodes.map(n => getDepth(n)));
+                    const levelHeight = spread * 1.5 / Math.max(maxDepth, 1);
+                    
+                    const positionLevel = (nodeId, depth, levelNodes) => {
+                        if (positioned[nodeId]) return;
+                        const levelWidth = spread * 2 / (levelNodes.length + 1);
+                        const levelIndex = levelNodes.indexOf(nodeId);
+                        const x = centerX - spread + (levelIndex + 1) * levelWidth;
+                        const y = centerY - spread * 0.7 + depth * levelHeight;
+                        positioned[nodeId] = { x, y };
+                        graph.setNodeAttribute(nodeId, 'x', x);
+                        graph.setNodeAttribute(nodeId, 'y', y);
+                        
+                        const children = childMap[nodeId] || [];
+                        children.forEach(c => positionLevel(c, depth + 1, childMap[nodeId] || []));
+                    };
+                    
+                    rootNodes.forEach((n, i) => {
+                        const angle = (2 * Math.PI * i) / Math.max(rootNodes.length, 1);
+                        const x = centerX + spread * 0.5 * Math.cos(angle);
+                        const y = centerY + spread * 0.5 * Math.sin(angle);
+                        positioned[n] = { x, y };
+                        graph.setNodeAttribute(n, 'x', x);
+                        graph.setNodeAttribute(n, 'y', y);
+                        const children = childMap[n] || [];
+                        children.forEach(c => positionLevel(c, 1, children));
+                    });
+                    
+                    nodesArray.forEach(n => {
+                        if (!positioned[n]) {
+                            positioned[n] = { x: centerX + (Math.random() - 0.5) * spread, y: centerY + (Math.random() - 0.5) * spread };
+                            graph.setNodeAttribute(n, 'x', positioned[n].x);
+                            graph.setNodeAttribute(n, 'y', positioned[n].y);
+                        }
+                    });
+                } else {
+                    nodesArray.forEach((node, i) => {
+                        const x = centerX + (Math.random() - 0.5) * spread * 2;
+                        const y = centerY + (Math.random() - 0.5) * spread * 2;
+                        graph.setNodeAttribute(node, 'x', x);
+                        graph.setNodeAttribute(node, 'y', y);
+                    });
+                }
+                
+                sig.refresh();
+            }
+             
             loadGraph();
         </script>"#;
 
@@ -276,10 +1134,6 @@ pub async fn browse(State(state): State<AppState>) -> axum::response::Html<Strin
         vec![]
     };
 
-    let mut files: Vec<_> = elements
-        .iter()
-        .filter(|e| e.element_type == "file")
-        .collect();
     let mut functions: Vec<_> = elements
         .iter()
         .filter(|e| e.element_type == "function")
@@ -289,11 +1143,21 @@ pub async fn browse(State(state): State<AppState>) -> axum::response::Html<Strin
         .filter(|e| e.element_type == "class")
         .collect();
 
-    files.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
+    let mut file_paths: std::collections::HashSet<_> =
+        elements.iter().map(|e| e.file_path.clone()).collect();
+    let mut files: Vec<_> = file_paths
+        .drain()
+        .map(|fp| {
+            let count = elements.iter().filter(|e| e.file_path == fp).count();
+            (fp, count)
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
     functions.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
     classes.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
 
-    let files_html: String = files.iter().map(|e| format!(r#"<tr><td><span class="badge badge-file">file</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, e.qualified_name, e.file_path, e.line_end - e.line_start + 1)).collect();
+    let files_html: String = files.iter().map(|(fp, count)| format!(r#"<tr><td><span class="badge badge-file">file</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, fp, fp, count)).collect();
     let functions_html: String = functions.iter().take(100).map(|e| format!(r#"<tr><td><span class="badge badge-function">function</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, e.qualified_name, e.file_path, e.line_end - e.line_start + 1)).collect();
     let classes_html: String = classes.iter().map(|e| format!(r#"<tr><td><span class="badge badge-class">class</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, e.qualified_name, e.file_path, e.line_end - e.line_start + 1)).collect();
 
@@ -501,6 +1365,963 @@ pub async fn settings() -> axum::response::Html<String> {
     axum::response::Html(base_html("Settings", content))
 }
 
+#[derive(Deserialize)]
+pub struct ServiceQueryParams {
+    pub service: Option<String>,
+}
+
+#[allow(dead_code)]
+pub async fn services_page(State(state): State<AppState>) -> axum::response::Html<String> {
+    let current_service = state.current_project_path.read().await;
+    let service_name = current_service
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    drop(current_service);
+
+    let content = format!(
+        r#"
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
+        <div class="card">
+            <h2>Microservice Call Graph</h2>
+            <p style="color: #666; margin-bottom: 15px;">Service-to-service gRPC call topology. Current service <strong>{service_name}</strong> is the largest node.</p>
+            <div id="graph-container" style="width:100%; height:650px; border:1px solid #ddd; border-radius:8px; background:#fff; position:relative;">
+                <div class="loading">Loading service graph...</div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>Legend</h3>
+            <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:center;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="width:20px;height:20px;border-radius:50%;background:#0066cc;"></div>
+                    <span>Current Service (biggest)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="width:14px;height:14px;border-radius:50%;background:#66bb6a;"></div>
+                    <span>External Service</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="color:#888;">Arrow = gRPC call direction</span>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>Services Table</h3>
+            <table id="services-table">
+                <thead><tr><th>Service</th><th>Role</th><th>Connections</th><th>Outbound Calls</th><th>Inbound Calls</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <style>
+            .svc-tooltip {{
+                position:fixed;background:#fff;border:1px solid #ddd;border-radius:8px;
+                padding:12px 16px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;
+                max-width:320px;pointer-events:none;opacity:0;transition:opacity 0.15s;
+            }}
+            .svc-tooltip.visible {{ opacity:1; }}
+        </style>
+        <script>
+        (async function() {{
+            let sig = null;
+            let mouseX = 0, mouseY = 0;
+            document.addEventListener('mousemove', e => {{ mouseX = e.clientX; mouseY = e.clientY; }});
+
+            try {{
+                const resp = await fetch('/api/graph/services?service=' + encodeURIComponent('{service_name}'));
+                const data = await resp.json();
+                if (!data.success || !data.data) {{
+                    document.getElementById('graph-container').innerHTML = '<div class="error">No service call data found. Index a Go microservice project with gRPC clients first.</div>';
+                    return;
+                }}
+                const sg = data.data;
+                const nodes = sg.nodes || [];
+                const edges = sg.edges || [];
+                if (nodes.length === 0) {{
+                    document.getElementById('graph-container').innerHTML = '<div class="error">No service relationships detected.</div>';
+                    return;
+                }}
+
+                // Build table
+                const tbody = document.querySelector('#services-table tbody');
+                const outbound = {{}}, inbound = {{}};
+                edges.forEach(e => {{
+                    outbound[e.source_id] = (outbound[e.source_id]||0) + e.call_count;
+                    inbound[e.target_id] = (inbound[e.target_id]||0) + e.call_count;
+                }});
+                nodes.sort((a,b) => b.weight - a.weight);
+                nodes.forEach(n => {{
+                    const role = n.is_current_service ? 'Current Service' : 'External';
+                    const conns = n.connection_count;
+                    const out = outbound[n.id] || 0;
+                    const inb = inbound[n.id] || 0;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td><strong>${{n.label}}</strong></td><td>${{role}}</td><td>${{conns}}</td><td>${{out}}</td><td>${{inb}}</td>`;
+                    tbody.appendChild(tr);
+                }});
+
+                // Build graphology graph
+                const graph = new Graph({{ type: 'directed' }});
+                const maxWeight = Math.max(...nodes.map(n => n.weight), 1);
+
+                nodes.forEach(n => {{
+                    const normSize = 8 + (n.weight / maxWeight) * 30;
+                    const color = n.is_current_service ? '#0066cc' : '#66bb6a';
+                    const angle = Math.random() * 2 * Math.PI;
+                    const spread = nodes.length <= 5 ? 150 : nodes.length <= 15 ? 250 : 400;
+                    graph.addNode(n.id, {{
+                        label: n.label,
+                        x: Math.cos(angle) * spread * (0.5 + Math.random()),
+                        y: Math.sin(angle) * spread * (0.5 + Math.random()),
+                        size: normSize,
+                        color: color,
+                        isCurrent: n.is_current_service,
+                        weight: n.weight
+                    }});
+                }});
+
+                edges.forEach(e => {{
+                    if (graph.hasNode(e.source_id) && graph.hasNode(e.target_id)) {{
+                        if (!graph.hasEdge(e.source_id, e.target_id)) {{
+                            graph.addEdge(e.source_id, e.target_id, {{
+                                size: Math.min(1 + e.call_count * 0.3, 5),
+                                color: 'rgba(100,100,100,0.5)',
+                                callCount: e.call_count,
+                                protocols: e.protocols
+                            }});
+                        }}
+                    }}
+                }});
+
+                const container = document.getElementById('graph-container');
+                container.innerHTML = '';
+
+                let hovered = null;
+                const tooltip = document.createElement('div');
+                tooltip.className = 'svc-tooltip';
+                document.body.appendChild(tooltip);
+
+                sig = new Sigma(graph, container, {{
+                    renderLabels: true,
+                    labelFont: 'Arial',
+                    labelSize: 14,
+                    labelColor: '#333',
+                    labelRenderedSizeThreshold: 6,
+                    defaultEdgeType: 'arrow',
+                    defaultEdgeColor: 'rgba(150,150,150,0.5)',
+                    nodeReducer: (node, data) => {{
+                        if (hovered) {{
+                            const isConnected = node === hovered || graph.hasEdge(node, hovered) || graph.hasEdge(hovered, node);
+                            return isConnected ? {{ ...data, zIndex: 1 }} : {{ ...data, zIndex: 0, label: '', color: '#ddd', hidden: false }};
+                        }}
+                        return data;
+                    }},
+                    edgeReducer: (edge, data) => {{
+                        if (hovered) {{
+                            const [src, tgt] = graph.extremities(edge);
+                            const isConnected = src === hovered || tgt === hovered;
+                            return isConnected ? {{ ...data, color: '#333', size: Math.min(data.size * 2, 6), zIndex: 1 }} : {{ ...data, color: 'rgba(200,200,200,0.2)', hidden: true }};
+                        }}
+                        return data;
+                    }}
+                }});
+
+                sig.on('enterNode', ({{ node }}) => {{
+                    hovered = node;
+                    sig.refresh();
+                    const attrs = graph.getNodeAttributes(node);
+                    const outEdges = graph.outEdges(node);
+                    const inEdges = graph.inEdges(node);
+                    let html = `<strong>${{attrs.label}}</strong>`;
+                    if (attrs.isCurrent) html += ` <span style="background:#0066cc;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">CURRENT</span>`;
+                    html += `<br><span style="color:#888;font-size:12px;">Outbound: ${{outEdges.length}} · Inbound: ${{inEdges.length}}</span>`;
+                    if (outEdges.length > 0) {{
+                        html += `<br><span style="color:#666;font-size:12px;">Calls → ${{outEdges.map(e => {{ const [,t] = graph.extremities(e); return graph.getNodeAttributes(t).label; }}).join(', ')}}</span>`;
+                    }}
+                    tooltip.innerHTML = html;
+                    tooltip.style.left = (mouseX + 15) + 'px';
+                    tooltip.style.top = (mouseY + 15) + 'px';
+                    tooltip.classList.add('visible');
+                }});
+
+                sig.on('leaveNode', () => {{
+                    hovered = null;
+                    sig.refresh();
+                    tooltip.classList.remove('visible');
+                }});
+
+                // Force layout
+                const iterations = 120;
+                const springLen = 120;
+                const springStr = 0.06;
+                const repulsion = nodes.length > 10 ? 800 : 500;
+                const damp = 0.85;
+                const vels = {{}};
+                graph.forEachNode(n => {{ vels[n] = {{x:0, y:0}}; }});
+                const nArr = graph.nodes();
+                const xPos = nArr.map(n => graph.getNodeAttribute(n, 'x'));
+                const yPos = nArr.map(n => graph.getNodeAttribute(n, 'y'));
+
+                for (let iter = 0; iter < iterations; iter++) {{
+                    for (let i = 0; i < nArr.length; i++) {{
+                        let fx = 0, fy = 0;
+                        for (let j = 0; j < nArr.length; j++) {{
+                            if (i===j) continue;
+                            const dx = xPos[i]-xPos[j], dy = yPos[i]-yPos[j];
+                            const d = Math.sqrt(dx*dx+dy*dy)||1;
+                            fx += (dx/d)*repulsion/(d*d);
+                            fy += (dy/d)*repulsion/(d*d);
+                        }}
+                        graph.forEachEdge(nArr[i], e => {{
+                            const [s,t] = graph.extremities(e);
+                            const o = s===nArr[i]?t:s;
+                            const oi = nArr.indexOf(o);
+                            if (oi<0) return;
+                            const dx=xPos[i]-xPos[oi], dy=yPos[i]-yPos[oi];
+                            const d=Math.sqrt(dx*dx+dy*dy)||1;
+                            const f = springStr*(d-springLen);
+                            fx -= (dx/d)*f;
+                            fy -= (dy/d)*f;
+                        }});
+                        vels[nArr[i]].x = vels[nArr[i]].x*damp + fx*(1-damp);
+                        vels[nArr[i]].y = vels[nArr[i]].y*damp + fy*(1-damp);
+                    }}
+                    for (let i = 0; i < nArr.length; i++) {{
+                        xPos[i] += Math.max(-8, Math.min(8, vels[nArr[i]].x));
+                        yPos[i] += Math.max(-8, Math.min(8, vels[nArr[i]].y));
+                        graph.setNodeAttribute(nArr[i], 'x', xPos[i]);
+                        graph.setNodeAttribute(nArr[i], 'y', yPos[i]);
+                    }}
+                }}
+                sig.refresh();
+
+            }} catch(e) {{
+                document.getElementById('graph-container').innerHTML = '<div class="error">Failed to load service graph: ' + (e.message||String(e)) + '</div>';
+            }}
+        }})();
+        </script>"#,
+        service_name = service_name
+    );
+
+    axum::response::Html(base_html("Microservice Calls", &content))
+}
+
+#[allow(dead_code)]
+pub async fn api_service_graph(
+    State(state): State<AppState>,
+    Query(params): Query<ServiceQueryParams>,
+) -> impl IntoResponse {
+    let service_name = params.service.unwrap_or_else(|| {
+        crate::runtime::run_blocking(async {
+            let path = state.current_project_path.read().await;
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+    });
+
+    let result = match state.get_graph_engine().await {
+        Ok(g) => g
+            .get_service_graph(&service_name)
+            .map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+
+    match result {
+        Ok(sg) => ApiResponse {
+            success: true,
+            data: Some(sg),
+            error: None,
+        },
+        Err(e) => ApiResponse::<crate::graph::query::ServiceGraph> {
+            success: false,
+            data: None,
+            error: Some(e),
+        },
+    }
+}
+
+// Service topology types
+#[derive(Serialize)]
+struct ServiceTopology {
+    nodes: Vec<ServiceNode>,
+    relationships: Vec<ServiceRelationship>,
+    #[serde(rename = "projectType")]
+    project_type: String,
+}
+
+#[derive(Serialize)]
+struct ServiceNode {
+    id: String,
+    label: String,
+    properties: NodeProperties,
+}
+
+#[derive(Serialize)]
+struct ServiceRelationship {
+    id: String,
+    source_id: String,
+    target_id: String,
+    rel_type: String,
+}
+
+/// Extract service topology from config files (dns:/// patterns)
+/// Returns service nodes and their gRPC/HTTP calls to each other
+#[allow(dead_code)]
+pub async fn api_service_topology(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let project_path = {
+        let path = state.current_project_path.read().await;
+        path.to_string_lossy().to_string()
+    };
+
+    let show_orphans = params
+        .get("show_orphans")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(false);
+
+    let depth = params
+        .get("depth")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1);
+
+    let db_engine = state.get_graph_engine().await;
+
+    let project_path_clone = project_path.clone();
+    let topology_result = tokio::task::spawn_blocking(move || {
+        extract_service_topology(&project_path_clone, show_orphans)
+    })
+    .await;
+
+    match topology_result {
+        Ok(Ok(mut topology)) => {
+            if topology.nodes.is_empty() {
+                topology.project_type = "single_repo".to_string();
+                if let Ok(engine) = db_engine {
+                    let project_name = std::path::Path::new(&project_path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("project")
+                        .to_string();
+
+                    let service_node = ServiceNode {
+                        id: format!("service:{}", project_name),
+                        label: project_name.clone(),
+                        properties: NodeProperties {
+                            name: project_name.clone(),
+                            file_path: project_path.clone(),
+                            element_type: "Service".to_string(),
+                        },
+                    };
+                    topology.nodes.push(service_node);
+
+                    if let Ok(dirs) = engine.get_top_level_directories("") {
+                        let mut folder_nodes = Vec::new();
+                        let mut relationships = Vec::new();
+
+                        for dir in dirs {
+                            let folder_id = format!("folder:{}", dir);
+                            let folder_node = ServiceNode {
+                                id: folder_id.clone(),
+                                label: dir.clone(),
+                                properties: NodeProperties {
+                                    name: dir.clone(),
+                                    file_path: format!("{}/", dir),
+                                    element_type: "Folder".to_string(),
+                                },
+                            };
+                            folder_nodes.push(folder_node);
+
+                            if depth >= 1 {
+                                relationships.push(ServiceRelationship {
+                                    id: format!("{}_CONTAINS_{}", project_name, dir),
+                                    source_id: format!("service:{}", project_name),
+                                    target_id: folder_id,
+                                    rel_type: "CONTAINS".to_string(),
+                                });
+                            }
+                        }
+
+                        topology.nodes.extend(folder_nodes);
+                        topology.relationships.extend(relationships);
+                    }
+                }
+            } else {
+                topology.project_type = "multi_repo".to_string();
+            }
+
+            ApiResponse {
+                success: true,
+                data: Some(topology),
+                error: None,
+            }
+        }
+        Ok(Err(e)) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e),
+        },
+        Err(e) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+fn extract_service_topology(
+    project_path: &str,
+    show_orphans: bool,
+) -> Result<ServiceTopology, String> {
+    use std::collections::HashMap;
+    use walkdir::WalkDir;
+
+    // DNS pattern to extract service reference from dns:/// URIs
+    let dns_pattern = regex::Regex::new(r"dns://[/]{0,2}([a-zA-Z0-9][-a-zA-Z0-9_]*)").unwrap();
+
+    // Step 1: Discover service folders
+    // A service = any top-level directory (or immediate subdir of platform/*) that has .git/
+    let mut services: HashMap<String, String> = HashMap::new();
+
+    let root_path = std::path::Path::new(project_path);
+
+    // First, scan for directories directly under project root that have .git
+    if let Ok(entries) = std::fs::read_dir(root_path) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() && path.join(".git").exists() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    services.insert(name.to_string(), path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    // Also scan platform/*/ subdirectories for .git repos
+    if let Ok(entries) = std::fs::read_dir(root_path) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let platform_path = entry.path();
+            if platform_path.is_dir() {
+                let platform_name = platform_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                // Skip hidden directories
+                if platform_name.starts_with('.') {
+                    continue;
+                }
+
+                // Scan contents of platform directories
+                if let Ok(sub_entries) = std::fs::read_dir(&platform_path) {
+                    for sub_entry in sub_entries.filter_map(|e| e.ok()) {
+                        let sub_path = sub_entry.path();
+                        if sub_path.is_dir() && sub_path.join(".git").exists() {
+                            if let Some(name) = sub_path.file_name().and_then(|n| n.to_str()) {
+                                // Use platform/name format for disambiguation
+                                let full_name = format!("{}_{}", platform_name, name);
+                                let full_path = sub_path.to_string_lossy().to_string();
+                                services.insert(full_name, full_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 2: Scan config files to build call relationships
+    // File containing dns:///SERVICE_NAME indicates this repo calls that service
+    let mut caller_to_callee: HashMap<(String, String), String> = HashMap::new();
+
+    for entry in WalkDir::new(project_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let path_str = e.path().to_string_lossy();
+            !path_str.contains("/vendor/") && !path_str.contains("/node_modules/")
+        })
+        .filter(|e| {
+            let ext = e.path().extension().and_then(|s| s.to_str()).unwrap_or("");
+            ext == "go" || ext == "yaml" || ext == "yml" || ext == "json" || ext == "tmpl"
+        })
+    {
+        let file_path = entry.path();
+        let file_path_str = file_path.to_string_lossy();
+
+        // Determine which service this file belongs to
+        let caller_service = services
+            .iter()
+            .find(|(_, folder_path)| file_path_str.starts_with(*folder_path))
+            .map(|(name, _)| name.clone());
+
+        if let Ok(content) = std::fs::read_to_string(file_path) {
+            for cap in dns_pattern.captures_iter(&content) {
+                if let Some(callee_match) = cap.get(1) {
+                    let callee = callee_match.as_str().to_string();
+
+                    if let Some(ref caller) = caller_service {
+                        // Find the actual service name (with platform prefix) for the callee
+                        let callee_qualified = services
+                            .keys()
+                            .find(|k| {
+                                let key: &str = k;
+                                key.ends_with(&callee)
+                                    || *key == callee
+                                    || callee.ends_with(key)
+                                    || callee == key
+                            })
+                            .cloned();
+
+                        if let Some(qualified_callee) = callee_qualified {
+                            // Only insert if caller and callee are different services
+                            if caller != &qualified_callee {
+                                caller_to_callee.insert(
+                                    (caller.clone(), qualified_callee),
+                                    "SERVICE_CALLS".to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 3: Build relationships list first
+    let relationships: Vec<ServiceRelationship> = if caller_to_callee.is_empty() {
+        // No call data found - create complete graph for visualization
+        let service_names: Vec<&String> = services.keys().collect();
+        let mut rels = Vec::new();
+        for (i, caller) in service_names.iter().enumerate() {
+            for callee in service_names.iter().skip(i + 1) {
+                rels.push(ServiceRelationship {
+                    id: format!("{}_SERVICE_CALLS_{}", caller, callee),
+                    source_id: format!("service:{}", caller),
+                    target_id: format!("service:{}", callee),
+                    rel_type: "SERVICE_CALLS".to_string(),
+                });
+                rels.push(ServiceRelationship {
+                    id: format!("{}_SERVICE_CALLS_{}", callee, caller),
+                    source_id: format!("service:{}", callee),
+                    target_id: format!("service:{}", caller),
+                    rel_type: "SERVICE_CALLS".to_string(),
+                });
+            }
+        }
+        rels
+    } else {
+        caller_to_callee
+            .iter()
+            .map(|((src, tgt), rel_type)| ServiceRelationship {
+                id: format!("{}_{}_{}", src, rel_type, tgt),
+                source_id: format!("service:{}", src),
+                target_id: format!("service:{}", tgt),
+                rel_type: rel_type.clone(),
+            })
+            .collect()
+    };
+
+    // Determine which nodes have relationships
+    let connected_services: std::collections::HashSet<String> = relationships
+        .iter()
+        .map(|r| {
+            // Extract service name from "service:name" format
+            r.source_id
+                .strip_prefix("service:")
+                .unwrap_or(&r.source_id)
+                .to_string()
+        })
+        .chain(relationships.iter().map(|r| {
+            r.target_id
+                .strip_prefix("service:")
+                .unwrap_or(&r.target_id)
+                .to_string()
+        }))
+        .collect();
+
+    // Step 4: Build nodes - filter orphans unless show_orphans is true
+    let nodes: Vec<ServiceNode> = services
+        .iter()
+        .filter(|(name, _)| show_orphans || connected_services.contains(*name))
+        .map(|(name, folder_path)| ServiceNode {
+            id: format!("service:{}", name),
+            label: name.to_string(),
+            properties: NodeProperties {
+                name: name.to_string(),
+                file_path: folder_path.clone(),
+                element_type: "Service".to_string(),
+            },
+        })
+        .collect();
+
+    Ok(ServiceTopology {
+        nodes,
+        relationships,
+        project_type: String::new(),
+    })
+}
+
+/// Expand a single service to show its child nodes (Folder, File, Class, Function, Method, etc.)
+/// Accepts `?path=<file-path>` where path is the service's folder path from node properties
+/// Also accepts `?limit=` and `?offset=` for pagination
+#[allow(dead_code)]
+pub async fn api_graph_expand_service(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    // Accept "path" param (direct from node props) or "service" param (legacy)
+    let folder_path: Option<String> = if let Some(p) = params.get("path") {
+        Some(p.clone())
+    } else if let Some(s) = params.get("service") {
+        let stripped = s.strip_prefix("service:").unwrap_or(s as &str);
+        Some(stripped.to_string())
+    } else {
+        None
+    };
+
+    let folder_path = match folder_path {
+        Some(s) => s,
+        None => {
+            return ApiResponse::<GraphData> {
+                success: false,
+                data: None,
+                error: Some("Missing 'path' or 'service' query parameter".to_string()),
+            };
+        }
+    };
+
+    // Parse pagination parameters
+    let limit: Option<usize> = params.get("limit").and_then(|s| s.parse().ok());
+    let offset: Option<usize> = params.get("offset").and_then(|s| s.parse().ok());
+    // When all=true, load ALL content under the folder (not just direct children)
+    let all_content: bool = params
+        .get("all")
+        .map(|s| s == "true" || s == "1")
+        .unwrap_or(false);
+
+    // Get project path for resolving relative DB paths
+    let project_path = {
+        let path = state.current_project_path.read().await;
+        path.to_string_lossy().to_string()
+    };
+
+    let relative_folder = if let Some(remainder) = folder_path.strip_prefix(&project_path) {
+        if let Some(stripped) = remainder.strip_prefix('/') {
+            format!("./{}", stripped)
+        } else {
+            format!("./{}", remainder)
+        }
+    } else {
+        folder_path.clone()
+    };
+
+    let graph_engine = match state.get_graph_engine().await {
+        Ok(g) => g,
+        Err(e) => {
+            return ApiResponse::<GraphData> {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    // Get elements in folder with pagination
+    // For empty path, this returns root-level elements only (not ALL elements)
+    // When all_content=true, returns all nested content (for service node expansion)
+    let result =
+        match graph_engine.get_elements_in_folder(&relative_folder, limit, offset, all_content) {
+            Ok(result) => result,
+            Err(e) => {
+                return ApiResponse::<GraphData> {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                };
+            }
+        };
+
+    let nodes: Vec<GraphNode> = result
+        .elements
+        .iter()
+        .map(|e| {
+            let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+            if let Some(first) = capitalized.first_mut() {
+                *first = first.to_ascii_uppercase();
+            }
+            GraphNode {
+                id: e.qualified_name.clone(),
+                label: e.name.clone(),
+                properties: NodeProperties {
+                    name: e.name.clone(),
+                    file_path: e.file_path.clone(),
+                    element_type: e.element_type.clone(),
+                },
+            }
+        })
+        .collect();
+
+    let graph_relationships: Vec<GraphRelationship> = result
+        .relationships
+        .iter()
+        .map(|r| GraphRelationship {
+            id: format!(
+                "{}_{}_{}",
+                r.source_qualified, r.rel_type, r.target_qualified
+            ),
+            source_id: r.source_qualified.clone(),
+            target_id: r.target_qualified.clone(),
+            rel_type: r.rel_type.clone(),
+        })
+        .collect();
+
+    let nodes_count = nodes.len();
+    let relationships_count = graph_relationships.len();
+
+    ApiResponse {
+        success: true,
+        data: Some(GraphData {
+            nodes,
+            relationships: graph_relationships,
+            filtered: Some(GraphFilterInfo {
+                tests_filtered: 0,
+                message: format!(
+                    "Expanded service '{}' with {} elements and {} relationships",
+                    folder_path.split('/').next_back().unwrap_or(&folder_path),
+                    nodes_count,
+                    relationships_count
+                ),
+            }),
+            has_more: result.has_more,
+        }),
+        error: None,
+    }
+}
+
+/// Find the folder path for a given service name
+fn find_service_folder(project_path: &str, service_name: &str) -> Option<String> {
+    let root_path = std::path::Path::new(project_path);
+
+    // Check direct subdirectory with .git
+    let direct = root_path.join(service_name);
+    if direct.join(".git").exists() {
+        return Some(direct.to_string_lossy().to_string());
+    }
+
+    // Check platform/*/service_name pattern
+    if let Ok(entries) = std::fs::read_dir(root_path) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let platform_path = entry.path();
+            if platform_path.is_dir() {
+                let platform_name = platform_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if platform_name.starts_with('.') {
+                    continue;
+                }
+
+                // Pattern 1: platform_name + "_" + rest matches platform/rest
+                // e.g. "platform-core_be-anywhere" -> platform-core/be-anywhere
+                if let Some(underscore_pos) = service_name.find('_') {
+                    let prefix = &service_name[..underscore_pos];
+                    let rest = &service_name[underscore_pos + 1..];
+                    if prefix == platform_name {
+                        let slash_path = platform_path.join(rest);
+                        if slash_path.join(".git").exists() {
+                            return Some(slash_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+
+                // Pattern 2: Try the full service name as-is under the platform
+                let service_path = platform_path.join(service_name);
+                if service_path.join(".git").exists() {
+                    return Some(service_path.to_string_lossy().to_string());
+                }
+
+                // Pattern 3: Try just the last segment of the service name (after last _)
+                // e.g. "platform-core_be-anywhere" -> try "be-anywhere"
+                if let Some(last_underscore) = service_name.rfind('_') {
+                    let last_segment = &service_name[last_underscore + 1..];
+                    if last_segment != platform_name {
+                        let alt_path = platform_path.join(last_segment);
+                        if alt_path.join(".git").exists() {
+                            return Some(alt_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Expand a cluster to show its child nodes (Folders, Files, Classes, Functions)
+/// Accepts `?path=<file-path>` (direct from node props) or `?cluster=<cluster-id>` (legacy)
+#[allow(dead_code)]
+pub async fn api_graph_expand_cluster(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    // Accept "path" param (direct from node props) or "cluster" param (legacy)
+    let folder_path: Option<String> = if let Some(p) = params.get("path") {
+        Some(p.clone())
+    } else if let Some(c) = params.get("cluster") {
+        let stripped = c.strip_prefix("cluster:").unwrap_or(c as &str);
+        Some(stripped.to_string())
+    } else {
+        None
+    };
+
+    let folder_path = match folder_path {
+        Some(s) => s,
+        None => {
+            return ApiResponse::<GraphData> {
+                success: false,
+                data: None,
+                error: Some("Missing 'path' or 'cluster' query parameter".to_string()),
+            };
+        }
+    };
+
+    // Get project path for resolving relative DB paths
+    let project_path = {
+        let path = state.current_project_path.read().await;
+        path.to_string_lossy().to_string()
+    };
+
+    let prefix = format!("{}/", folder_path);
+    let _project_prefix = format!("{}/", project_path);
+
+    let (elements_result, relationships_result) = match state.get_graph_engine().await {
+        Ok(g) => (
+            g.all_elements().map_err(|e| e.to_string()),
+            g.all_relationships().map_err(|e| e.to_string()),
+        ),
+        Err(e) => (Err(e.to_string()), Err(e.to_string())),
+    };
+
+    match (elements_result, relationships_result) {
+        (Ok(all_elements), Ok(all_relationships)) => {
+            // Filter elements that belong to this cluster's folder path (depth <= 2)
+            // depth-1: main.py (no slash in remainder)
+            // depth-2: src/main.py (one slash in remainder)
+            let filtered_elements: Vec<&crate::db::models::CodeElement> = all_elements
+                .iter()
+                .filter(|e| {
+                    let is_within_depth = |remainder: &str| -> bool {
+                        !remainder.contains('/')
+                            || (remainder.matches('/').count() == 1 && !remainder.ends_with('/'))
+                    };
+                    let fp = &e.file_path;
+                    if fp.starts_with(&prefix) {
+                        let remainder = &fp[prefix.len()..];
+                        return is_within_depth(remainder);
+                    }
+                    if fp.starts_with("./") {
+                        let resolved = format!("{}{}", project_path, &fp[1..]);
+                        if resolved.starts_with(&prefix) {
+                            let remainder = &resolved[prefix.len()..];
+                            return is_within_depth(remainder);
+                        }
+                    }
+                    if !fp.starts_with('/') && !fp.starts_with("./") {
+                        let resolved = format!("{}/{}", project_path, fp);
+                        if resolved.starts_with(&prefix) {
+                            let remainder = &resolved[prefix.len()..];
+                            return is_within_depth(remainder);
+                        }
+                    }
+                    false
+                })
+                .collect();
+
+            // Get all element IDs in this cluster
+            let cluster_element_ids: std::collections::HashSet<String> = filtered_elements
+                .iter()
+                .map(|e| e.qualified_name.clone())
+                .collect();
+
+            // Filter relationships where source is in this cluster (include orphan targets)
+            // Only include structural relationships (CONTAINS, DEFINES, DECLARES, IMPORTS)
+            let filtered_relationships: Vec<_> = all_relationships
+                .iter()
+                .filter(|r| {
+                    cluster_element_ids.contains(&r.source_qualified)
+                        && matches!(
+                            r.rel_type.as_str(),
+                            "contains" | "defines" | "imports" | "declares"
+                        )
+                })
+                .collect();
+
+            // Build GraphNode list
+            let nodes: Vec<GraphNode> = filtered_elements
+                .iter()
+                .map(|e| {
+                    let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+                    if let Some(first) = capitalized.first_mut() {
+                        *first = first.to_ascii_uppercase();
+                    }
+                    GraphNode {
+                        id: e.qualified_name.clone(),
+                        label: e.name.clone(),
+                        properties: NodeProperties {
+                            name: e.name.clone(),
+                            file_path: e.file_path.clone(),
+                            element_type: e.element_type.clone(),
+                        },
+                    }
+                })
+                .collect();
+
+            let relationships: Vec<GraphRelationship> = filtered_relationships
+                .iter()
+                .map(|r| GraphRelationship {
+                    id: format!(
+                        "{}_{}_{}",
+                        r.source_qualified, r.rel_type, r.target_qualified
+                    ),
+                    source_id: r.source_qualified.clone(),
+                    target_id: r.target_qualified.clone(),
+                    rel_type: r.rel_type.clone(),
+                })
+                .collect();
+
+            let nodes_count = nodes.len();
+            let relationships_count = relationships.len();
+
+            ApiResponse {
+                success: true,
+                data: Some(GraphData {
+                    nodes,
+                    relationships,
+                    filtered: Some(GraphFilterInfo {
+                        tests_filtered: 0,
+                        message: format!(
+                            "Expanded cluster '{}' with {} elements and {} relationships",
+                            folder_path.split('/').next_back().unwrap_or(&folder_path),
+                            nodes_count,
+                            relationships_count
+                        ),
+                    }),
+                    has_more: false,
+                }),
+                error: None,
+            }
+        }
+        (Err(e), _) | (_, Err(e)) => ApiResponse::<GraphData> {
+            success: false,
+            data: None,
+            error: Some(e),
+        },
+    }
+}
+
 #[allow(dead_code)]
 pub async fn api_elements(State(state): State<AppState>) -> impl IntoResponse {
     let result: Result<Vec<_>, String> = match state.get_graph_engine().await {
@@ -705,32 +2526,107 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
         Ok(g) => g.all_elements().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
+
     let relationships_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
         Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
+
+    let initial_elements = elements_result.unwrap_or_default();
+    let elements_result: Result<Vec<_>, String> = Ok(initial_elements);
+
     match (elements_result, relationships_result) {
         (Ok(elements), Ok(relationships)) => {
-            let nodes: Vec<GraphNode> = elements
+            let mut nodes: Vec<GraphNode> = elements
                 .iter()
-                .map(|e| GraphNode {
-                    id: e.qualified_name.clone(),
-                    label: e.name.clone(),
-                    element_type: e.element_type.clone(),
-                    file_path: e.file_path.clone(),
+                .map(|e| {
+                    let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+                    if let Some(first) = capitalized.first_mut() {
+                        *first = first.to_ascii_uppercase();
+                    }
+                    GraphNode {
+                        id: e.qualified_name.clone(),
+                        label: capitalized.into_iter().collect(),
+                        properties: NodeProperties {
+                            name: e.name.clone(),
+                            file_path: e.file_path.clone(),
+                            element_type: e.element_type.clone(),
+                        },
+                    }
                 })
                 .collect();
-            let edges: Vec<GraphEdge> = relationships
+
+            let node_ids: std::collections::HashSet<_> =
+                nodes.iter().map(|n| n.id.clone()).collect();
+            let mut service_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for r in &relationships {
+                if r.rel_type == "service_calls" {
+                    service_names.insert(r.source_qualified.clone());
+                    service_names.insert(r.target_qualified.clone());
+                }
+            }
+            for svc in &service_names {
+                if !node_ids.contains(svc) {
+                    nodes.push(GraphNode {
+                        id: svc.clone(),
+                        label: "Service".to_string(),
+                        properties: NodeProperties {
+                            name: svc.clone(),
+                            file_path: String::new(),
+                            element_type: "service".to_string(),
+                        },
+                    });
+                }
+            }
+
+            let node_ids: std::collections::HashSet<_> =
+                nodes.iter().map(|n| n.id.clone()).collect();
+            let mut seen_edges: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
+
+            let relationships: Vec<GraphRelationship> = relationships
                 .iter()
-                .map(|r| GraphEdge {
-                    source: r.source_qualified.clone(),
-                    target: r.target_qualified.clone(),
-                    rel_type: r.rel_type.clone(),
+                .filter_map(|r| {
+                    let resolve_id = |qn: &str| -> Option<String> {
+                        if node_ids.contains(qn) {
+                            return Some(qn.to_string());
+                        }
+                        let stripped = qn.strip_prefix("./").unwrap_or(qn);
+                        if node_ids.contains(stripped) {
+                            return Some(stripped.to_string());
+                        }
+                        None
+                    };
+
+                    let src_id = resolve_id(&r.source_qualified)?;
+                    let tgt_id = resolve_id(&r.target_qualified)?;
+
+                    let edge_key = (src_id.clone(), tgt_id.clone());
+                    if seen_edges.contains(&edge_key) {
+                        return None;
+                    }
+                    seen_edges.insert(edge_key);
+
+                    let normalized_type = r.rel_type.to_uppercase();
+
+                    Some(GraphRelationship {
+                        id: format!("{}_{}_{}", src_id, normalized_type, tgt_id),
+                        source_id: src_id,
+                        target_id: tgt_id,
+                        rel_type: normalized_type,
+                    })
                 })
                 .collect();
+
             ApiResponse {
                 success: true,
-                data: Some(GraphData { nodes, edges }),
+                data: Some(GraphData {
+                    nodes,
+                    relationships,
+                    filtered: None,
+                    has_more: false,
+                }),
                 error: None,
             }
         }
@@ -756,24 +2652,367 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
         (Ok(elements), Ok(relationships)) => {
             let nodes: Vec<GraphNode> = elements
                 .iter()
-                .map(|e| GraphNode {
-                    id: e.qualified_name.clone(),
-                    label: e.name.clone(),
-                    element_type: e.element_type.clone(),
-                    file_path: e.file_path.clone(),
+                .map(|e| {
+                    let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+                    if let Some(first) = capitalized.first_mut() {
+                        *first = first.to_ascii_uppercase();
+                    }
+                    GraphNode {
+                        id: e.qualified_name.clone(),
+                        label: capitalized.into_iter().collect(),
+                        properties: NodeProperties {
+                            name: e.name.clone(),
+                            file_path: e.file_path.clone(),
+                            element_type: e.element_type.clone(),
+                        },
+                    }
                 })
                 .collect();
-            let edges: Vec<GraphEdge> = relationships
+            let node_ids: std::collections::HashSet<_> =
+                nodes.iter().map(|n| n.id.clone()).collect();
+            let relationships: Vec<GraphRelationship> = relationships
                 .iter()
-                .map(|r| GraphEdge {
-                    source: r.source_qualified.clone(),
-                    target: r.target_qualified.clone(),
+                .filter(|r| {
+                    node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified)
+                })
+                .map(|r| GraphRelationship {
+                    id: format!(
+                        "{}_{}_{}",
+                        r.source_qualified, r.rel_type, r.target_qualified
+                    ),
+                    source_id: r.source_qualified.clone(),
+                    target_id: r.target_qualified.clone(),
                     rel_type: r.rel_type.clone(),
                 })
                 .collect();
             ApiResponse {
                 success: true,
-                data: Some(GraphData { nodes, edges }),
+                data: Some(GraphData {
+                    nodes,
+                    relationships,
+                    filtered: None,
+                    has_more: false,
+                }),
+                error: None,
+            }
+        }
+        (Err(e), _) | (_, Err(e)) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e),
+        },
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SubgraphParams {
+    pub root: Option<String>,
+    #[serde(default = "default_depth")]
+    pub depth: usize,
+    #[serde(default)]
+    pub types: Option<String>,
+}
+
+fn default_depth() -> usize {
+    3
+}
+
+/// Get subgraph around a root node with configurable BFS depth
+/// This enables the "Targeted Subgraph" approach for massive graphs:
+/// Instead of loading the entire graph, we fetch only N-hop neighborhood
+#[allow(dead_code)]
+pub async fn api_graph_subgraph(
+    State(state): State<AppState>,
+    Query(params): Query<SubgraphParams>,
+) -> impl IntoResponse {
+    let root = match params.root {
+        Some(ref r) if !r.is_empty() => r.clone(),
+        _ => {
+            return ApiResponse::<GraphData> {
+                success: false,
+                data: None,
+                error: Some("Missing required parameter: root node ID".to_string()),
+            }
+        }
+    };
+
+    let depth = params.depth.min(10); // Cap at 10 levels
+    let allowed_types: Option<std::collections::HashSet<String>> = params
+        .types
+        .as_ref()
+        .map(|t| t.split(',').map(|s| s.trim().to_uppercase()).collect());
+
+    let elements_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
+        Ok(g) => g.all_elements().map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+
+    let relationships_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+
+    match (elements_result, relationships_result) {
+        (Ok(elements), Ok(relationships)) => {
+            // Build adjacency map for BFS
+            let mut adjacency: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+
+            for rel in &relationships {
+                let normalized_type = rel.rel_type.to_uppercase();
+                if let Some(ref allowed) = allowed_types {
+                    if !allowed.contains(&normalized_type) {
+                        continue;
+                    }
+                }
+
+                adjacency
+                    .entry(rel.source_qualified.clone())
+                    .or_default()
+                    .push(rel.target_qualified.clone());
+                // For undirected traversal, also add reverse
+                adjacency
+                    .entry(rel.target_qualified.clone())
+                    .or_default()
+                    .push(rel.source_qualified.clone());
+            }
+
+            // BFS to find nodes within depth
+            let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut queue: Vec<(String, usize)> = vec![(root.clone(), 0)];
+            visited.insert(root.clone());
+
+            while let Some((node_id, current_depth)) = queue.pop() {
+                if current_depth >= depth {
+                    continue;
+                }
+                if let Some(neighbors) = adjacency.get(&node_id) {
+                    for neighbor in neighbors {
+                        if !visited.contains(neighbor) {
+                            visited.insert(neighbor.clone());
+                            queue.push((neighbor.clone(), current_depth + 1));
+                        }
+                    }
+                }
+            }
+
+            // Filter nodes to only those in the visited set
+            let visited_nodes: std::collections::HashSet<String> = visited.clone();
+            let nodes: Vec<GraphNode> = elements
+                .iter()
+                .filter(|e| {
+                    visited.contains(&e.qualified_name)
+                        || visited.contains(&format!("./{}", e.qualified_name))
+                })
+                .map(|e| {
+                    let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+                    if let Some(first) = capitalized.first_mut() {
+                        *first = first.to_ascii_uppercase();
+                    }
+                    GraphNode {
+                        id: e.qualified_name.clone(),
+                        label: capitalized.into_iter().collect(),
+                        properties: NodeProperties {
+                            name: e.name.clone(),
+                            file_path: e.file_path.clone(),
+                            element_type: e.element_type.clone(),
+                        },
+                    }
+                })
+                .collect();
+
+            // Filter edges to only those connecting visited nodes
+            let mut seen_edges: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
+            let edges: Vec<GraphRelationship> = relationships
+                .iter()
+                .filter(|r| {
+                    visited_nodes.contains(&r.source_qualified)
+                        || visited_nodes.contains(&format!("./{}", r.source_qualified))
+                })
+                .filter_map(|r| {
+                    let src_id = if visited_nodes.contains(&r.source_qualified) {
+                        r.source_qualified.clone()
+                    } else if visited_nodes.contains(&format!("./{}", r.source_qualified)) {
+                        r.source_qualified
+                            .strip_prefix("./")
+                            .unwrap_or(&r.source_qualified)
+                            .to_string()
+                    } else {
+                        return None;
+                    };
+
+                    let tgt_id = if visited_nodes.contains(&r.target_qualified) {
+                        r.target_qualified.clone()
+                    } else if visited_nodes.contains(&format!("./{}", r.target_qualified)) {
+                        r.target_qualified
+                            .strip_prefix("./")
+                            .unwrap_or(&r.target_qualified)
+                            .to_string()
+                    } else {
+                        return None;
+                    };
+
+                    let edge_key = (src_id.clone(), tgt_id.clone());
+                    if seen_edges.contains(&edge_key) {
+                        return None;
+                    }
+                    seen_edges.insert(edge_key);
+
+                    let normalized_type = r.rel_type.to_uppercase();
+                    Some(GraphRelationship {
+                        id: format!("{}_{}_{}", src_id, normalized_type, tgt_id),
+                        source_id: src_id,
+                        target_id: tgt_id,
+                        rel_type: normalized_type,
+                    })
+                })
+                .collect();
+
+            let nodes_count = nodes.len();
+            let edges_count = edges.len();
+
+            ApiResponse {
+                success: true,
+                data: Some(GraphData {
+                    nodes,
+                    relationships: edges,
+                    filtered: Some(GraphFilterInfo {
+                        tests_filtered: 0,
+                        message: format!(
+                            "Subgraph: {} nodes, {} edges within {} hops of '{}'",
+                            nodes_count, edges_count, depth, root
+                        ),
+                    }),
+                    has_more: false,
+                }),
+                error: None,
+            }
+        }
+        (Err(e), _) | (_, Err(e)) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e),
+        },
+    }
+}
+
+/// Get cluster overview for semantic zooming (Zoom Level 0)
+/// Returns top-level clusters instead of all individual nodes
+#[allow(dead_code)]
+pub async fn api_graph_clusters(State(state): State<AppState>) -> impl IntoResponse {
+    let elements_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
+        Ok(g) => g.all_elements().map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+
+    let relationships_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+
+    match (elements_result, relationships_result) {
+        (Ok(elements), Ok(relationships)) => {
+            // Group elements by parent directory / cluster
+            let mut clusters: std::collections::HashMap<
+                String,
+                Vec<&crate::db::models::CodeElement>,
+            > = std::collections::HashMap::new();
+
+            for elem in &elements {
+                let cluster_key = if let Some(last_slash) = elem.file_path.rfind('/') {
+                    elem.file_path[..last_slash].to_string()
+                } else {
+                    "root".to_string()
+                };
+                clusters.entry(cluster_key).or_default().push(elem);
+            }
+
+            // Convert to cluster nodes
+            let nodes: Vec<GraphNode> = clusters
+                .iter()
+                .map(|(cluster_key, members)| {
+                    let file_count = members.len();
+                    let _type_dist: std::collections::HashMap<String, usize> =
+                        members
+                            .iter()
+                            .fold(std::collections::HashMap::new(), |mut acc, e| {
+                                *acc.entry(e.element_type.clone()).or_insert(0) += 1;
+                                acc
+                            });
+
+                    GraphNode {
+                        id: format!("cluster:{}", cluster_key),
+                        label: format!(
+                            "{} ({})",
+                            cluster_key.split('/').next_back().unwrap_or(cluster_key),
+                            file_count
+                        ),
+                        properties: NodeProperties {
+                            name: cluster_key.clone(),
+                            file_path: cluster_key.clone(),
+                            element_type: format!("Cluster[{} files]", file_count),
+                        },
+                    }
+                })
+                .collect();
+
+            // Build cluster-level edges
+            let mut cluster_edges: std::collections::HashSet<(String, String, String)> =
+                std::collections::HashSet::new();
+
+            for rel in &relationships {
+                let src_cluster = if let Some(last_slash) = rel.source_qualified.rfind('/') {
+                    rel.source_qualified[..last_slash].to_string()
+                } else {
+                    "root".to_string()
+                };
+                let tgt_cluster = if let Some(last_slash) = rel.target_qualified.rfind('/') {
+                    rel.target_qualified[..last_slash].to_string()
+                } else {
+                    "root".to_string()
+                };
+
+                if src_cluster != tgt_cluster {
+                    let edge_key = (
+                        src_cluster.clone(),
+                        tgt_cluster.clone(),
+                        rel.rel_type.clone(),
+                    );
+                    cluster_edges.insert(edge_key);
+                }
+            }
+
+            let relationships: Vec<GraphRelationship> = cluster_edges
+                .iter()
+                .map(|(src, tgt, rel_type)| {
+                    let normalized = rel_type.to_uppercase();
+                    GraphRelationship {
+                        id: format!("cluster_edge:{}_{}_{}", src, normalized, tgt),
+                        source_id: format!("cluster:{}", src),
+                        target_id: format!("cluster:{}", tgt),
+                        rel_type: normalized,
+                    }
+                })
+                .collect();
+
+            let nodes_count = nodes.len();
+            let edges_count = relationships.len();
+
+            ApiResponse {
+                success: true,
+                data: Some(GraphData {
+                    nodes,
+                    relationships,
+                    filtered: Some(GraphFilterInfo {
+                        tests_filtered: 0,
+                        message: format!(
+                            "Cluster overview: {} clusters, {} inter-cluster edges",
+                            nodes_count, edges_count
+                        ),
+                    }),
+                    has_more: false,
+                }),
                 error: None,
             }
         }
@@ -787,7 +3026,1036 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
 
 #[allow(dead_code)]
 pub async fn api_query(
-    axum::extract::Json(_req): axum::extract::Json<QueryRequest>,
-) -> Result<axum::extract::Json<QueryResponse>, (StatusCode, &'static str)> {
-    Ok(axum::extract::Json(QueryResponse { result: vec![] }))
+    State(state): State<AppState>,
+    Json(req): Json<QueryRequest>,
+) -> impl IntoResponse {
+    match state.get_graph_engine().await {
+        Ok(engine) => match engine.run_raw_query(&req.query, req.params.clone()) {
+            Ok(res) => {
+                let val = serde_json::to_value(&res).unwrap_or(serde_json::json!({}));
+                ApiResponse {
+                    success: true,
+                    data: Some(QueryResponse { result: val }),
+                    error: None,
+                }
+            }
+            Err(e) => ApiResponse {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            },
+        },
+        Err(e) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Get pre-calculated layout for graph visualization
+/// This offloads expensive force-directed layout computation to the server
+#[derive(Deserialize)]
+pub struct LayoutParams {
+    #[serde(default = "default_layout_iterations")]
+    pub iterations: usize,
+    #[serde(default = "default_layout_width")]
+    pub width: f64,
+    #[serde(default = "default_layout_height")]
+    pub height: f64,
+}
+
+fn default_layout_iterations() -> usize {
+    50
+}
+fn default_layout_width() -> f64 {
+    2000.0
+}
+fn default_layout_height() -> f64 {
+    2000.0
+}
+
+#[derive(Serialize)]
+pub struct LayoutResponse {
+    pub nodes: Vec<LayoutNode>,
+    pub bounds: LayoutBounds,
+}
+
+#[derive(Serialize)]
+pub struct LayoutNode {
+    pub node_id: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Serialize)]
+pub struct LayoutBounds {
+    pub min_x: f64,
+    pub max_x: f64,
+    pub min_y: f64,
+    pub max_y: f64,
+}
+
+#[allow(dead_code)]
+pub async fn api_graph_layout(
+    State(state): State<AppState>,
+    Query(params): Query<LayoutParams>,
+) -> impl IntoResponse {
+    use crate::graph::layout::LayoutEngine;
+
+    let iterations = params.iterations.min(100); // Cap at 100 iterations
+    let width = params.width.clamp(100.0, 10000.0);
+    let height = params.height.clamp(100.0, 10000.0);
+
+    match state.get_db() {
+        Ok(db) => {
+            let engine = LayoutEngine::new(&db);
+            match engine.calculate_layout(iterations, width, height) {
+                Ok(layout) => ApiResponse {
+                    success: true,
+                    data: Some(LayoutResponse {
+                        nodes: layout
+                            .nodes
+                            .into_iter()
+                            .map(|n| LayoutNode {
+                                node_id: n.node_id,
+                                x: n.x,
+                                y: n.y,
+                            })
+                            .collect(),
+                        bounds: LayoutBounds {
+                            min_x: layout.bounds.min_x,
+                            max_x: layout.bounds.max_x,
+                            min_y: layout.bounds.min_y,
+                            max_y: layout.bounds.max_y,
+                        },
+                    }),
+                    error: None,
+                },
+                Err(e) => ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        Err(e) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PathSwitchRequest {
+    pub path: Option<String>,
+    pub github_url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct PathSwitchResponse {
+    pub is_directory: bool,
+    pub has_database: bool,
+    pub needs_indexing: bool,
+    pub is_github: bool,
+    pub project_path: String,
+}
+
+#[allow(dead_code)]
+pub async fn api_switch_path(
+    State(state): State<AppState>,
+    Json(req): Json<PathSwitchRequest>,
+) -> impl IntoResponse {
+    let project_path: String;
+
+    if let Some(ref github_url) = req.github_url {
+        let url = github_url.trim();
+
+        if !url.contains("github.com") {
+            return ApiResponse::<PathSwitchResponse> {
+                success: false,
+                data: None,
+                error: Some("Only GitHub URLs are supported".to_string()),
+            };
+        }
+
+        let repo_name = url
+            .split('/')
+            .rfind(|s| !s.is_empty())
+            .unwrap_or("repo")
+            .replace(".git", "");
+
+        let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let clone_base = home_dir.join(".leankg").join("clones");
+
+        if let Err(e) = std::fs::create_dir_all(&clone_base) {
+            return ApiResponse::<PathSwitchResponse> {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to create clones directory: {}", e)),
+            };
+        }
+
+        let clone_path = clone_base.join(&repo_name);
+
+        if !clone_path.exists() {
+            let output = Command::new("git")
+                .args(["clone", url, clone_path.to_str().unwrap_or(&repo_name)])
+                .output();
+
+            match output {
+                Ok(output) if !output.status.success() => {
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    return ApiResponse::<PathSwitchResponse> {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Git clone failed: {}", err)),
+                    };
+                }
+                Err(e) => {
+                    return ApiResponse::<PathSwitchResponse> {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Failed to execute git: {}", e)),
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        project_path = clone_path.to_string_lossy().to_string();
+    } else if let Some(ref path) = req.path {
+        project_path = path.trim().to_string();
+    } else {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some("Either path or github_url must be provided".to_string()),
+        };
+    }
+
+    let path_obj = std::path::Path::new(&project_path);
+
+    if !path_obj.exists() {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some("Directory not found. Please check the path and try again.".to_string()),
+        };
+    }
+
+    if !path_obj.is_dir() {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some("Path is not a directory".to_string()),
+        };
+    }
+
+    let absolute_path = path_obj.to_string_lossy().to_string();
+    let db_path = path_obj.join(".leankg");
+
+    if let Err(e) = std::fs::create_dir_all(&db_path) {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to create .leankg directory: {}", e)),
+        };
+    }
+
+    let has_database = db_path.exists();
+
+    let new_state = state.clone();
+    let absolute_path_clone = absolute_path.clone();
+    let project_path_for_response = absolute_path.clone();
+    let path_obj_clone = path_obj.to_path_buf();
+
+    let indexing_state = new_state.indexing_state.clone();
+    let rt = tokio::runtime::Handle::current();
+
+    std::thread::spawn(move || {
+        let _enter = rt.enter();
+
+        let init_err = {
+            let result = rt.block_on(new_state.switch_project(path_obj_clone.clone()));
+            result.err().map(|e| e.to_string())
+        };
+        if let Some(err_msg) = init_err {
+            tracing::error!("Failed to switch project: {}", err_msg);
+            rt.block_on(new_state.set_indexing_error(err_msg));
+            return;
+        }
+
+        let files = crate::indexer::find_files_sync(&absolute_path_clone);
+        let files = match files {
+            Ok(f) => f,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!("Failed to find files: {}", err_msg);
+                rt.block_on(new_state.set_indexing_error(err_msg));
+                return;
+            }
+        };
+
+        rt.block_on(new_state.set_indexing_started(files.len()));
+
+        let graph = match rt.block_on(new_state.get_graph_engine()) {
+            Ok(g) => g,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!("Failed to get graph engine: {}", err_msg);
+                rt.block_on(new_state.set_indexing_error(err_msg));
+                return;
+            }
+        };
+
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        if let Err(e) = parser_manager.init_parsers() {
+            let err_msg = e.to_string();
+            tracing::error!("Failed to init parsers: {}", err_msg);
+            rt.block_on(new_state.set_indexing_error(err_msg));
+            return;
+        }
+
+        let total = files.len();
+
+        for (idx, file_path) in files.iter().enumerate() {
+            {
+                let mut state_guard = rt.block_on(indexing_state.write());
+                state_guard.indexed_files = idx + 1;
+                state_guard.current_file = file_path.clone();
+                if total > 0 {
+                    state_guard.progress_percent =
+                        ((idx + 1) * 100).checked_div(total).unwrap_or(0);
+                }
+            }
+
+            if let Err(e) = crate::indexer::index_file_sync(&graph, &mut parser_manager, file_path)
+            {
+                tracing::warn!("Failed to index {}: {}", file_path, e);
+            }
+        }
+
+        if let Err(e) = graph.resolve_call_edges() {
+            tracing::warn!("Failed to resolve call edges: {}", e);
+        }
+
+        rt.block_on(new_state.set_indexing_complete());
+        tracing::info!("Indexing complete for {}", absolute_path_clone);
+    });
+
+    ApiResponse::<PathSwitchResponse> {
+        success: true,
+        data: Some(PathSwitchResponse {
+            is_directory: true,
+            has_database,
+            needs_indexing: true,
+            is_github: req.github_url.is_some(),
+            project_path: project_path_for_response,
+        }),
+        error: None,
+    }
+}
+
+#[derive(Serialize)]
+pub struct IndexStatusResponse {
+    pub is_indexing: bool,
+    pub progress_percent: usize,
+    pub current_file: String,
+    pub total_files: usize,
+    pub indexed_files: usize,
+}
+
+#[allow(dead_code)]
+pub async fn api_index_status(State(state): State<AppState>) -> impl IntoResponse {
+    let indexing_state = state.indexing_state.read().await;
+
+    ApiResponse {
+        success: true,
+        data: Some(IndexStatusResponse {
+            is_indexing: indexing_state.is_indexing,
+            progress_percent: indexing_state.progress_percent,
+            current_file: indexing_state.current_file.clone(),
+            total_files: indexing_state.total_files,
+            indexed_files: indexing_state.indexed_files,
+        }),
+        error: indexing_state.error.clone(),
+    }
+}
+
+/// Invalidate all caches - call this after indexing or data changes
+pub async fn api_invalidate_cache(State(state): State<AppState>) -> impl IntoResponse {
+    state.invalidate_graph_cache().await;
+
+    ApiResponse::<&'static str> {
+        success: true,
+        data: Some("Cache invalidated"),
+        error: None,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GitHubCloneRequest {
+    pub url: String,
+}
+
+#[derive(Serialize)]
+pub struct GitHubCloneResponse {
+    pub clone_path: String,
+    pub is_indexing: bool,
+}
+
+pub async fn project_selector(State(state): State<AppState>) -> axum::response::Html<String> {
+    let indexing_state = state.indexing_state.read().await;
+
+    let progress_html = if indexing_state.is_indexing {
+        format!(
+            r#"
+            <div class="card" id="progress-card">
+                <h2>Indexing in Progress</h2>
+                <div style="margin: 20px 0;">
+                    <div style="background: #e0e0e0; border-radius: 8px; height: 24px; overflow: hidden;">
+                        <div id="progress-bar" style="background: #0066cc; height: 100%; width: {}%; transition: width 0.3s;"></div>
+                    </div>
+                    <p style="margin-top: 10px; color: #666;">
+                        Indexing: {} of {} files
+                    </p>
+                    <p style="color: #888; font-size: 14px;">
+                        Current: <code id="current-file">{}</code>
+                    </p>
+                </div>
+            </div>
+            <script>
+                async function pollStatus() {{
+                    try {{
+                        const res = await fetch('/api/index/status');
+                        const data = await res.json();
+                        if (data.success && data.data) {{
+                            const progressBar = document.getElementById('progress-bar');
+                            const currentFile = document.getElementById('current-file');
+                            if (progressBar) progressBar.style.width = data.data.progress_percent + '%';
+                            if (currentFile) currentFile.textContent = data.data.current_file || 'Processing...';
+                            
+                            if (!data.data.is_indexing) {{
+                                if (data.data.error) {{
+                                    document.getElementById('progress-card').innerHTML = 
+                                        '<div class="error"><p>Indexing failed: ' + data.data.error + '</p><button onclick="location.reload()">Try Again</button></div>';
+                                }} else {{
+                                    window.location.href = '/';
+                                }}
+                            }} else {{
+                                setTimeout(pollStatus, 2000);
+                            }}
+                        }}
+                    }} catch (e) {{
+                        console.error('Poll error:', e);
+                        setTimeout(pollStatus, 5000);
+                    }}
+                }}
+                pollStatus();
+            </script>"#,
+            indexing_state.progress_percent,
+            indexing_state.indexed_files,
+            indexing_state.total_files,
+            indexing_state.current_file
+        )
+    } else {
+        String::new()
+    };
+
+    let error_html = if let Some(ref error) = indexing_state.error {
+        format!(r#"<div class="error"><p>{}</p></div>"#, error)
+    } else {
+        String::new()
+    };
+
+    let content = format!(
+        r#"
+        <div class="card">
+            <h2>Welcome to LeanKG</h2>
+            <p style="color: #666; margin-bottom: 20px;">
+                Enter a local path or GitHub URL to start analyzing a codebase.
+            </p>
+            <form id="project-form" onsubmit="handleSubmit(event)">
+                <div class="form-group">
+                    <label for="path-input">Project Path or GitHub URL</label>
+                    <input 
+                        type="text" 
+                        id="path-input" 
+                        name="path" 
+                        placeholder="e.g., /Users/name/project or https://github.com/user/repo"
+                        required
+                        style="font-size: 16px; padding: 12px;"
+                    >
+                </div>
+                <button type="submit" id="submit-btn" style="font-size: 16px; padding: 12px 24px;">
+                    Load Project
+                </button>
+            </form>
+            <div id="message" style="margin-top: 15px;"></div>
+        </div>
+        {}
+        {}
+        <div class="card">
+            <h3>Quick Examples</h3>
+            <p style="color: #666; margin-bottom: 10px;">Try with a public GitHub repository:</p>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button onclick="document.getElementById('path-input').value='https://github.com/FreePeak/LeanKG'" style="background: #666;">
+                    LeanKG
+                </button>
+                <button onclick="document.getElementById('path-input').value='https://github.com/tokio-rs/tokio'" style="background: #666;">
+                    Tokio
+                </button>
+                <button onclick="document.getElementById('path-input').value='https://github.com/serde-rs/serde'" style="background: #666;">
+                    Serde
+                </button>
+            </div>
+        </div>
+        <style>
+            #project-form {{
+                margin-bottom: 20px;
+            }}
+            #message {{
+                margin-top: 15px;
+            }}
+            #message .error {{
+                background: #ffebee;
+                color: #c62828;
+                padding: 15px;
+                border-radius: 6px;
+            }}
+            #message .success {{
+                background: #e8f5e9;
+                color: #2e7d32;
+                padding: 15px;
+                border-radius: 6px;
+            }}
+        </style>
+        <script>
+            async function handleSubmit(e) {{
+                e.preventDefault();
+                const input = document.getElementById('path-input');
+                const btn = document.getElementById('submit-btn');
+                const message = document.getElementById('message');
+                const value = input.value.trim();
+                
+                if (!value) return;
+                
+                btn.disabled = true;
+                btn.textContent = 'Loading...';
+                message.innerHTML = '';
+                
+                try {{
+                    let body;
+                    if (value.startsWith('http://') || value.startsWith('https://')) {{
+                        if (!value.includes('github.com')) {{
+                            message.innerHTML = '<div class="error">Only GitHub URLs are supported currently.</div>';
+                            btn.disabled = false;
+                            btn.textContent = 'Load Project';
+                            return;
+                        }}
+                        body = JSON.stringify({{ github_url: value }});
+                    }} else {{
+                        body = JSON.stringify({{ path: value }});
+                    }}
+                    
+                    const response = await fetch('/api/project/switch', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: body
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        message.innerHTML = '<div class="success">Project loaded! Starting indexing...</div>';
+                        setTimeout(() => {{ window.location.href = '/'; }}, 500);
+                    }} else {{
+                        message.innerHTML = '<div class="error">' + (data.error || 'Failed to load project') + '</div>';
+                        btn.disabled = false;
+                        btn.textContent = 'Load Project';
+                    }}
+                }} catch (err) {{
+                    message.innerHTML = '<div class="error">Error: ' + err.message + '</div>';
+                    btn.disabled = false;
+                    btn.textContent = 'Load Project';
+                }}
+            }}
+        </script>"#,
+        progress_html, error_html
+    );
+
+    axum::response::Html(base_html("Welcome", &content))
+}
+
+#[allow(dead_code)]
+pub async fn api_github_clone(
+    State(_state): State<AppState>,
+    Json(req): Json<GitHubCloneRequest>,
+) -> impl IntoResponse {
+    let url = req.url.trim();
+
+    if !url.contains("github.com") {
+        return ApiResponse::<GitHubCloneResponse> {
+            success: false,
+            data: None,
+            error: Some("Only GitHub URLs are supported".to_string()),
+        };
+    }
+
+    let repo_name = url
+        .split('/')
+        .rfind(|s| !s.is_empty())
+        .unwrap_or("repo")
+        .replace(".git", "");
+
+    let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let clone_base = home_dir.join(".leankg").join("clones");
+
+    if let Err(e) = std::fs::create_dir_all(&clone_base) {
+        return ApiResponse::<GitHubCloneResponse> {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to create clones directory: {}", e)),
+        };
+    }
+
+    let clone_path = clone_base.join(&repo_name);
+
+    if clone_path.exists() {
+        return ApiResponse::<GitHubCloneResponse> {
+            success: true,
+            data: Some(GitHubCloneResponse {
+                clone_path: clone_path.to_string_lossy().to_string(),
+                is_indexing: false,
+            }),
+            error: None,
+        };
+    }
+
+    let output = Command::new("git")
+        .args(["clone", url, clone_path.to_str().unwrap_or(&repo_name)])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => ApiResponse::<GitHubCloneResponse> {
+            success: true,
+            data: Some(GitHubCloneResponse {
+                clone_path: clone_path.to_string_lossy().to_string(),
+                is_indexing: true,
+            }),
+            error: None,
+        },
+        Ok(output) => {
+            let err = String::from_utf8_lossy(&output.stderr);
+            ApiResponse::<GitHubCloneResponse> {
+                success: false,
+                data: None,
+                error: Some(format!("Git clone failed: {}", err)),
+            }
+        }
+        Err(e) => ApiResponse::<GitHubCloneResponse> {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to execute git: {}", e)),
+        },
+    }
+}
+
+#[derive(Deserialize)]
+pub struct FileQuery {
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+pub struct ChildrenParams {
+    pub parent: String,
+    #[serde(default)]
+    pub element_types: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
+}
+
+fn default_limit() -> usize {
+    200
+}
+
+#[derive(Serialize)]
+pub struct ChildrenResponse {
+    pub nodes: Vec<GraphNode>,
+    pub relationships: Vec<GraphRelationship>,
+    #[serde(rename = "totalCount")]
+    pub total_count: usize,
+    #[serde(rename = "hasMore")]
+    pub has_more: bool,
+}
+
+pub async fn api_graph_children(
+    State(state): State<AppState>,
+    Query(params): Query<ChildrenParams>,
+) -> impl IntoResponse {
+    let element_types: Option<Vec<String>> = params
+        .element_types
+        .as_ref()
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).collect());
+
+    let limit = params.limit.min(500);
+    let offset = params.offset;
+
+    let result = state.get_graph_engine().await;
+
+    match result {
+        Ok(engine) => {
+            let project_path = state.current_project_path.read().await;
+            let project_path_str = project_path.to_string_lossy();
+            let effective_parent = if params.parent.starts_with('/')
+                && params.parent.starts_with(&*project_path_str)
+            {
+                String::new()
+            } else {
+                params.parent.clone()
+            };
+
+            let children_result = engine.get_children_filtered(
+                &effective_parent,
+                element_types.as_deref(),
+                Some(limit),
+                Some(offset),
+            );
+
+            match children_result {
+                Ok(cr) => {
+                    let mut nodes: Vec<GraphNode> = Vec::new();
+                    let mut synthesized_dir_names: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut existing_folder_names: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+
+                    for elem in &cr.elements {
+                        let mut capitalized = elem.element_type.chars().collect::<Vec<_>>();
+                        if let Some(first) = capitalized.first_mut() {
+                            *first = first.to_ascii_uppercase();
+                        }
+                        nodes.push(GraphNode {
+                            id: elem.qualified_name.clone(),
+                            label: elem.name.clone(),
+                            properties: NodeProperties {
+                                name: elem.name.clone(),
+                                file_path: elem.file_path.clone(),
+                                element_type: elem.element_type.clone(),
+                            },
+                        });
+                        if elem.element_type == "Folder" {
+                            let folder_name =
+                                elem.file_path.strip_prefix("./").unwrap_or(&elem.file_path);
+                            if let Some(last_part) = folder_name.rsplit('/').next() {
+                                existing_folder_names.insert(last_part.to_string());
+                            }
+                        }
+                    }
+
+                    let parent_path = effective_parent
+                        .strip_suffix('/')
+                        .unwrap_or(&effective_parent);
+                    let prefix_for_dirs = if parent_path.is_empty() || parent_path == "." {
+                        String::new()
+                    } else {
+                        format!("{}/", parent_path)
+                    };
+
+                    let file_elements: Vec<&crate::db::models::CodeElement> = cr
+                        .elements
+                        .iter()
+                        .filter(|e| e.element_type == "File" || e.element_type == "Document")
+                        .collect();
+
+                    for elem in &file_elements {
+                        let fp = elem.file_path.strip_prefix("./").unwrap_or(&elem.file_path);
+                        if let Some(rel) = fp.strip_prefix(&prefix_for_dirs) {
+                            if let Some(first_slash) = rel.find('/') {
+                                synthesized_dir_names.insert(rel[..first_slash].to_string());
+                            }
+                        }
+                    }
+
+                    let mut dir_nodes: Vec<GraphNode> = synthesized_dir_names
+                        .iter()
+                        .filter(|dir| {
+                            if **dir == "." {
+                                return false;
+                            }
+                            if existing_folder_names.contains(*dir) {
+                                return false;
+                            }
+                            true
+                        })
+                        .map(|dir| {
+                            let folder_id = format!(
+                                "{}folder:{}",
+                                if effective_parent.is_empty() {
+                                    ""
+                                } else {
+                                    &prefix_for_dirs
+                                },
+                                dir
+                            );
+                            GraphNode {
+                                id: folder_id.clone(),
+                                label: dir.clone(),
+                                properties: NodeProperties {
+                                    name: dir.clone(),
+                                    file_path: format!("{}{}/", prefix_for_dirs, dir),
+                                    element_type: "Directory".to_string(),
+                                },
+                            }
+                        })
+                        .collect();
+
+                    nodes.append(&mut dir_nodes);
+
+                    let relationships: Vec<GraphRelationship> = cr
+                        .relationships
+                        .iter()
+                        .map(|r| GraphRelationship {
+                            id: format!(
+                                "{}_{}_{}",
+                                r.source_qualified, r.rel_type, r.target_qualified
+                            ),
+                            source_id: r.source_qualified.clone(),
+                            target_id: r.target_qualified.clone(),
+                            rel_type: r.rel_type.clone(),
+                        })
+                        .collect();
+
+                    ApiResponse {
+                        success: true,
+                        data: Some(ChildrenResponse {
+                            nodes,
+                            relationships,
+                            total_count: cr.total_count,
+                            has_more: cr.has_more,
+                        }),
+                        error: None,
+                    }
+                }
+                Err(e) => ApiResponse::<ChildrenResponse> {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        Err(e) => ApiResponse::<ChildrenResponse> {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ExpandNodeParams {
+    #[serde(rename = "nodeId")]
+    pub node_id: String,
+    #[serde(rename = "nodeType")]
+    pub node_type: String,
+    #[serde(default)]
+    pub element_types: Option<String>,
+    #[serde(default = "default_expand_depth")]
+    pub depth: usize,
+    #[serde(default = "default_expand_limit")]
+    pub limit: usize,
+}
+
+fn default_expand_depth() -> usize {
+    1
+}
+fn default_expand_limit() -> usize {
+    200
+}
+
+pub async fn api_graph_expand_node(
+    State(state): State<AppState>,
+    Query(params): Query<ExpandNodeParams>,
+) -> impl IntoResponse {
+    let element_types: Option<Vec<String>> = params
+        .element_types
+        .as_ref()
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).collect());
+
+    let limit = params.limit.min(500);
+    let _depth = params.depth.min(2);
+
+    let result = state.get_graph_engine().await;
+
+    match result {
+        Ok(engine) => {
+            let parent_path = if params.node_type == "directory" || params.node_type == "folder" {
+                params
+                    .node_id
+                    .strip_prefix("folder:")
+                    .unwrap_or(&params.node_id)
+                    .trim_end_matches('/')
+                    .to_string()
+            } else {
+                params.node_id.clone()
+            };
+
+            let children_result = engine.get_children_filtered(
+                &parent_path,
+                element_types.as_deref(),
+                Some(limit),
+                Some(0),
+            );
+
+            match children_result {
+                Ok(cr) => {
+                    let mut nodes: Vec<GraphNode> = cr
+                        .elements
+                        .iter()
+                        .map(|e| {
+                            let mut capitalized = e.element_type.chars().collect::<Vec<_>>();
+                            if let Some(first) = capitalized.first_mut() {
+                                *first = first.to_ascii_uppercase();
+                            }
+                            GraphNode {
+                                id: e.qualified_name.clone(),
+                                label: e.name.clone(),
+                                properties: NodeProperties {
+                                    name: e.name.clone(),
+                                    file_path: e.file_path.clone(),
+                                    element_type: e.element_type.clone(),
+                                },
+                            }
+                        })
+                        .collect();
+
+                    let prefix_for_dirs = format!("{}/", parent_path);
+                    let mut synthesized_dirs: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+
+                    for elem in &cr.elements {
+                        if let Some(rel) = elem.file_path.strip_prefix(&prefix_for_dirs) {
+                            if let Some(first_slash) = rel.find('/') {
+                                synthesized_dirs.insert(rel[..first_slash].to_string());
+                            }
+                        }
+                    }
+
+                    let mut dir_nodes: Vec<GraphNode> = synthesized_dirs
+                        .iter()
+                        .map(|dir| {
+                            let folder_id = format!(
+                                "{}folder:{}",
+                                if parent_path.is_empty() {
+                                    ""
+                                } else {
+                                    &prefix_for_dirs
+                                },
+                                dir
+                            );
+                            GraphNode {
+                                id: folder_id.clone(),
+                                label: dir.clone(),
+                                properties: NodeProperties {
+                                    name: dir.clone(),
+                                    file_path: format!("{}{}/", prefix_for_dirs, dir),
+                                    element_type: "Directory".to_string(),
+                                },
+                            }
+                        })
+                        .collect();
+
+                    nodes.append(&mut dir_nodes);
+
+                    let relationships: Vec<GraphRelationship> = cr
+                        .relationships
+                        .iter()
+                        .map(|r| GraphRelationship {
+                            id: format!(
+                                "{}_{}_{}",
+                                r.source_qualified, r.rel_type, r.target_qualified
+                            ),
+                            source_id: r.source_qualified.clone(),
+                            target_id: r.target_qualified.clone(),
+                            rel_type: r.rel_type.clone(),
+                        })
+                        .collect();
+
+                    ApiResponse {
+                        success: true,
+                        data: Some(ChildrenResponse {
+                            nodes,
+                            relationships,
+                            total_count: cr.total_count,
+                            has_more: cr.has_more,
+                        }),
+                        error: None,
+                    }
+                }
+                Err(e) => ApiResponse::<ChildrenResponse> {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        Err(e) => ApiResponse::<ChildrenResponse> {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+#[derive(Serialize)]
+pub struct FileResponse {
+    pub content: String,
+}
+
+pub async fn api_get_file(
+    State(state): State<AppState>,
+    Query(query): Query<FileQuery>,
+) -> impl IntoResponse {
+    let proj_path = state.current_project_path.read().await.clone();
+
+    // Normalize: strip leading "./" prefix that the indexer stores
+    let clean_path = query.path.strip_prefix("./").unwrap_or(&query.path);
+    let target_path = proj_path.join(clean_path);
+
+    // Security: canonicalize and verify the resolved path is within the project root
+    let canonical_proj = proj_path
+        .canonicalize()
+        .unwrap_or_else(|_| proj_path.clone());
+    let canonical_target = target_path.canonicalize();
+
+    match canonical_target {
+        Ok(ref resolved) if resolved.starts_with(&canonical_proj) => {
+            match tokio::fs::read_to_string(resolved).await {
+                Ok(content) => ApiResponse::<FileResponse> {
+                    success: true,
+                    data: Some(FileResponse { content }),
+                    error: None,
+                },
+                Err(e) => ApiResponse::<FileResponse> {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Failed to read file '{}': {}", clean_path, e)),
+                },
+            }
+        }
+        Ok(_) => ApiResponse::<FileResponse> {
+            success: false,
+            data: None,
+            error: Some("Access denied: path is outside project directory".to_string()),
+        },
+        Err(e) => ApiResponse::<FileResponse> {
+            success: false,
+            data: None,
+            error: Some(format!("File not found '{}': {}", clean_path, e)),
+        },
+    }
 }

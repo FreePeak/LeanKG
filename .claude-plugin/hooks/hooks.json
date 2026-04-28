@@ -1,0 +1,27 @@
+{
+  "description": "LeanKG hooks - enforces LeanKG usage for code search",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-pretooluse.mjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__leankg__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-posttooluse.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

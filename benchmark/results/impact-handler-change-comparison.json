@@ -1,0 +1,24 @@
+{
+  "overhead": {
+    "time_delta": 0.0,
+    "token_delta": 9015,
+    "token_delta_percent": 0.0
+  },
+  "task": "impact-handler-change",
+  "with_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 33472,
+    "input_tokens": 2155,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 36112
+  },
+  "without_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 26048,
+    "input_tokens": 463,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 27097
+  }
+}

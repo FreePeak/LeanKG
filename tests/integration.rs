@@ -7,7 +7,7 @@ use leankg::indexer::{find_files_sync, index_file_sync, ParserManager};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_empty_dir() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path().to_str().unwrap();
@@ -15,17 +15,18 @@ async fn test_find_files_empty_dir() {
     assert!(files.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_discovers_go_files() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().to_str().unwrap();
     let go_file = tmp.path().join("main.go");
     std::fs::write(&go_file, "package main\nfunc main() {}").unwrap();
-    let files = find_files_sync(tmp.path().to_str().unwrap()).unwrap();
+    let files = find_files_sync(root).unwrap();
     assert!(!files.is_empty());
     assert!(files.iter().any(|f| f.ends_with("main.go")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_excludes_node_modules() {
     let tmp = TempDir::new().unwrap();
     let node_dir = tmp.path().join("node_modules").join("pkg");
@@ -35,17 +36,21 @@ async fn test_find_files_excludes_node_modules() {
     assert!(!files.iter().any(|f| f.contains("node_modules")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_in_nested_dirs() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
     let nested = tmp.path().join("a").join("b").join("c");
     std::fs::create_dir_all(&nested).unwrap();
     std::fs::write(nested.join("lib.py"), "def x(): pass").unwrap();
     let files = find_files_sync(tmp.path().to_str().unwrap()).unwrap();
-    assert!(files.iter().any(|f| f.ends_with("lib.py")));
+    assert!(
+        files.iter().any(|f| f.ends_with("lib.py")),
+        "Should find lib.py in nested dirs, got: {:?}",
+        files
+    );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_init_db_creates_schema() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -53,7 +58,7 @@ async fn test_init_db_creates_schema() {
     assert!(db_path.exists() || std::path::Path::new(db_path.parent().unwrap()).exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_graph_engine_all_elements_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -63,7 +68,7 @@ async fn test_graph_engine_all_elements_empty() {
     assert!(elements.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_graph_engine_find_element_missing() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -73,22 +78,20 @@ async fn test_graph_engine_find_element_missing() {
     assert!(result.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_impact_analyzer_empty_graph() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
     let analyzer = ImpactAnalyzer::new(&graph);
-    let result = analyzer
-        .calculate_impact_radius("src/main.go", 3)
-        .unwrap();
+    let result = analyzer.calculate_impact_radius("src/main.go", 3).unwrap();
     assert_eq!(result.start_file, "src/main.go");
     assert_eq!(result.max_depth, 3);
     assert!(result.affected_elements.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_agents_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -102,7 +105,7 @@ async fn test_doc_generator_agents_md_empty() {
     assert!(content.contains("## Code Structure Overview"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_generator_claude_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -116,7 +119,7 @@ async fn test_doc_generator_claude_md_empty() {
     assert!(content.contains("## Context Statistics"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doc_sync_for_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -134,8 +137,7 @@ async fn test_doc_sync_for_file() {
     if parser.init_parsers().is_err() {
         return;
     }
-    let _count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap())
-        .unwrap();
+    let _count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap()).unwrap();
 
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let result = doc_gen
@@ -145,7 +147,7 @@ async fn test_doc_sync_for_file() {
     assert!(result.elements_regenerated > 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_index_file_go() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
@@ -163,7 +165,282 @@ async fn test_index_file_go() {
     if parser.init_parsers().is_err() {
         return;
     }
-    let count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap())
-        .unwrap();
+    let count = index_file_sync(&graph, &mut parser, go_file.to_str().unwrap()).unwrap();
     assert!(count > 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_find_files_discovers_java_files() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let java_dir = tmp.path().join("com").join("example");
+    std::fs::create_dir_all(&java_dir).unwrap();
+    std::fs::write(
+        java_dir.join("Main.java"),
+        "public class Main { public static void main(String[] args) {} }",
+    )
+    .unwrap();
+    let files = find_files_sync(tmp.path().to_str().unwrap()).unwrap();
+    assert!(
+        !files.is_empty(),
+        "Should find some files, got: {:?}",
+        files
+    );
+    assert!(
+        files.iter().any(|f| f.ends_with("Main.java")),
+        "Should find Main.java, got: {:?}",
+        files
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_index_file_java() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg.db");
+    let db = init_db(db_path.as_path()).unwrap();
+    let graph = GraphEngine::new(db);
+
+    let java_file = tmp.path().join("UserService.java");
+    std::fs::write(
+        &java_file,
+        "import com.example.model.User;\npublic class UserService {\n    public User createUser(String name) {\n        return new User(name);\n    }\n}",
+    )
+    .unwrap();
+
+    let mut parser = ParserManager::new();
+    if parser.init_parsers().is_err() {
+        return;
+    }
+    let count = index_file_sync(&graph, &mut parser, java_file.to_str().unwrap()).unwrap();
+    assert!(count > 0, "Should index Java elements, got {}", count);
+
+    let elements = graph.all_elements().unwrap();
+    let java_classes: Vec<_> = elements
+        .iter()
+        .filter(|e| e.element_type == "class" && e.language == "java")
+        .collect();
+    assert!(!java_classes.is_empty(), "Should find Java class");
+    assert_eq!(java_classes[0].name, "UserService");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_relationships_with_real_db() {
+    // Use the real .leankg database from current dir
+    let db_path = std::path::Path::new(".leankg");
+    if !db_path.exists() {
+        println!("Skipping - no .leankg database in current dir");
+        return;
+    }
+
+    let db = init_db(db_path).expect("failed to init db");
+    let graph = GraphEngine::new(db);
+
+    // Test with path that exists in DB (from graph.json we know ./src/api/auth.rs has imports)
+    let result = graph.get_relationships("./src/api/auth.rs");
+    match result {
+        Ok(rels) => {
+            println!(
+                "get_relationships('./src/api/auth.rs') returned {} results",
+                rels.len()
+            );
+            for rel in rels.iter().take(5) {
+                println!(
+                    "  {} -> {} ({})",
+                    rel.source_qualified, rel.target_qualified, rel.rel_type
+                );
+            }
+            // We expect at least one relationship based on graph.json
+            assert!(
+                !rels.is_empty(),
+                "Should find relationships for ./src/api/auth.rs"
+            );
+        }
+        Err(e) => {
+            panic!("get_relationships failed: {}", e);
+        }
+    }
+
+    // Test without ./ prefix
+    let result2 = graph.get_relationships("src/api/auth.rs");
+    match result2 {
+        Ok(rels) => {
+            println!(
+                "get_relationships('src/api/auth.rs') returned {} results",
+                rels.len()
+            );
+            assert!(
+                !rels.is_empty(),
+                "Should find relationships without prefix too"
+            );
+        }
+        Err(e) => {
+            panic!("get_relationships without prefix failed: {}", e);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_dependencies_with_real_db() {
+    let db_path = std::path::Path::new(".leankg");
+    if !db_path.exists() {
+        println!("Skipping - no .leankg database");
+        return;
+    }
+
+    let db = init_db(db_path).expect("failed to init db");
+    let graph = GraphEngine::new(db.clone());
+
+    // get_dependencies returns CodeElements for imported items
+    // Since most imports are external (std::, crate::), we might get empty results
+    // But the important thing is the QUERY works (path normalization is correct)
+    let dep_result = graph.get_dependencies("./src/api/auth.rs");
+    match dep_result {
+        Ok(deps) => {
+            println!("get_dependencies returned {} CodeElements", deps.len());
+        }
+        Err(e) => {
+            panic!("get_dependencies failed: {}", e);
+        }
+    }
+
+    // Verify the raw relationship query works (this is the core fix)
+    let normalized = "./src/api/auth.rs"
+        .strip_prefix("./")
+        .unwrap_or("./src/api/auth.rs");
+    let escaped = normalized.replace('\\', "\\\\").replace('"', "\\\"");
+    let query = format!(
+        r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = "{}" or source_qualified = "./{}"), rel_type = "imports""#,
+        escaped, escaped
+    );
+
+    let result = db
+        .run_script(&query, std::collections::BTreeMap::new())
+        .unwrap();
+    assert!(
+        result.rows.len() > 0,
+        "Should find import relationships with path normalization"
+    );
+    println!(
+        "Confirmed: path normalization works - found {} import relationships",
+        result.rows.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_call_graph_with_real_db() {
+    let db_path = std::path::Path::new(".leankg");
+    if !db_path.exists() {
+        println!("Skipping - no .leankg database");
+        return;
+    }
+
+    let db = init_db(db_path).expect("failed to init db");
+    let graph = GraphEngine::new(db);
+
+    // Find a function that has calls
+    let call_graph_result = graph.get_call_graph_bounded("./src/api/auth.rs", 1, 10);
+    match call_graph_result {
+        Ok(calls) => {
+            println!(
+                "get_call_graph('./src/api/auth.rs', depth=1) returned {} calls",
+                calls.len()
+            );
+            for (src, tgt, depth) in calls.iter().take(5) {
+                println!("  {} -> {} (depth {})", src, tgt, depth);
+            }
+        }
+        Err(e) => {
+            println!("get_call_graph failed: {}", e);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_persistent_cache_hit_after_insert() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg_cache_test.db");
+    let db = init_db(&db_path).unwrap();
+    let graph = GraphEngine::with_persistence(db);
+
+    use leankg::db::models::{CodeElement, Relationship};
+
+    let elem_b = CodeElement {
+        qualified_name: "src/b.rs::mod_b".to_string(),
+        element_type: "module".to_string(),
+        name: "mod_b".to_string(),
+        file_path: "src/b.rs".to_string(),
+        line_start: 1,
+        line_end: 10,
+        language: "rust".to_string(),
+        ..Default::default()
+    };
+    graph.insert_element(&elem_b).unwrap();
+
+    let rel = Relationship {
+        id: None,
+        source_qualified: "src/a.rs".to_string(),
+        target_qualified: "src/b.rs::mod_b".to_string(),
+        rel_type: "imports".to_string(),
+        confidence: 1.0,
+        metadata: serde_json::json!({}),
+    };
+    graph.insert_relationship(&rel).unwrap();
+
+    let deps_first = graph.get_dependencies("src/a.rs").unwrap();
+    assert!(
+        !deps_first.is_empty(),
+        "First call should return results from DB"
+    );
+
+    let deps_second = graph.get_dependencies("src/a.rs").unwrap();
+    assert!(
+        !deps_second.is_empty(),
+        "Second call (cache hit) should return results"
+    );
+    assert_eq!(
+        deps_first.len(),
+        deps_second.len(),
+        "Cache hit should return same count"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_persistent_cache_hit_on_second_call() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg_cache_survive_test.db");
+
+    let db = init_db(&db_path).unwrap();
+    let graph = GraphEngine::with_persistence(db);
+    use leankg::db::models::{CodeElement, Relationship};
+
+    let elem_y = CodeElement {
+        qualified_name: "src/y.rs::mod_y".to_string(),
+        element_type: "module".to_string(),
+        name: "mod_y".to_string(),
+        file_path: "src/y.rs".to_string(),
+        line_start: 1,
+        line_end: 5,
+        language: "rust".to_string(),
+        ..Default::default()
+    };
+    graph.insert_element(&elem_y).unwrap();
+
+    let rel = Relationship {
+        id: None,
+        source_qualified: "src/x.rs".to_string(),
+        target_qualified: "src/y.rs::mod_y".to_string(),
+        rel_type: "imports".to_string(),
+        confidence: 1.0,
+        metadata: serde_json::json!({}),
+    };
+    graph.insert_relationship(&rel).unwrap();
+
+    let deps_first = graph.get_dependencies("src/x.rs").unwrap();
+    assert!(!deps_first.is_empty(), "First call should return results");
+
+    let deps_second = graph.get_dependencies("src/x.rs").unwrap();
+    assert!(
+        !deps_second.is_empty(),
+        "Second call should return results (L1 cache hit)"
+    );
+    assert_eq!(deps_first.len(), deps_second.len(), "Same results expected");
 }

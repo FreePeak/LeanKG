@@ -72,9 +72,49 @@ mod tool_registry_tests {
             let has_doc = props.get("doc").is_some();
             let has_element = props.get("element").is_some();
             let has_requirement_id = props.get("requirement_id").is_some();
+            let has_path = props.get("path").is_some();
+            let has_incremental = props.get("incremental").is_some();
+            let has_lang = props.get("lang").is_some();
+            let has_exclude = props.get("exclude").is_some();
+            let has_mcp_config_path = props.get("mcp_config_path").is_some();
+            let has_depth = props.get("depth").is_some();
+            let has_scope = props.get("scope").is_some();
+            let has_min_confidence = props.get("min_confidence").is_some();
+            let has_cluster_id = props.get("cluster_id").is_some();
+            let has_cluster_label = props.get("cluster_label").is_some();
+            let has_service = props.get("service").is_some();
+            let has_limit = props.get("limit").is_some();
+            let has_offset = props.get("offset").is_some();
+            let has_route = props.get("route").is_some();
+            let has_destination = props.get("destination").is_some();
 
             assert!(
-                is_empty || has_file || has_files || has_query || has_pattern || has_name || has_function || has_min_lines || has_doc || has_element || has_requirement_id,
+                is_empty
+                    || has_file
+                    || has_files
+                    || has_query
+                    || has_pattern
+                    || has_name
+                    || has_function
+                    || has_min_lines
+                    || has_doc
+                    || has_element
+                    || has_requirement_id
+                    || has_path
+                    || has_incremental
+                    || has_lang
+                    || has_exclude
+                    || has_mcp_config_path
+                    || has_depth
+                    || has_scope
+                    || has_min_confidence
+                    || has_cluster_id
+                    || has_cluster_label
+                    || has_service
+                    || has_limit
+                    || has_offset
+                    || has_route
+                    || has_destination,
                 "Tool {} should have at least one parameter or empty properties",
                 tool.name
             );
@@ -148,10 +188,10 @@ mod handler_tests {
         let db_path = tmp.path().join("leankg.db");
         let db = init_db(db_path.as_path()).unwrap();
         let graph = GraphEngine::new(db);
-        (ToolHandler::new(graph), tmp)
+        (ToolHandler::new(graph, db_path), tmp)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_query_file_empty() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -164,7 +204,7 @@ mod handler_tests {
         assert!(value.get("files").is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_query_file_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -174,7 +214,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("pattern"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_dependencies_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -184,7 +224,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_dependents_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -194,7 +234,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_impact_radius_missing_params() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -203,7 +243,7 @@ mod handler_tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_review_context_missing_params() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -213,7 +253,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("files"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_find_function_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -223,7 +263,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("name"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_call_graph_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -233,7 +273,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("function"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_search_code_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -243,7 +283,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("query"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_unknown_tool() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -253,7 +293,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("Unknown tool"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_context_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -263,7 +303,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_generate_doc_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -273,7 +313,7 @@ mod handler_tests {
         assert!(result.unwrap_err().contains("file"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_find_large_functions_default() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -286,7 +326,7 @@ mod handler_tests {
         assert!(value.get("large_functions").is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_tested_by_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -295,13 +335,97 @@ mod handler_tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("file"));
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_handler_ctx_read_string_output_and_caching() {
+        use std::io::Write;
+        let (handler, tmp_dir) = create_test_handler().await;
+
+        // 1. Create a dummy file
+        let file_path = tmp_dir.path().join("dummy.rs");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        writeln!(file, "fn main() {{}}").unwrap();
+
+        // 2. Perform ctx_read natively
+        let args = json!({
+            "file": file_path.to_str().unwrap(),
+            "mode": "full"
+        });
+
+        let result1 = handler.execute_tool("ctx_read", &args).await;
+        assert!(result1.is_ok());
+        let val1 = result1.unwrap();
+
+        // Ensure the value is a pure JSON String scalar and NOT an Object!
+        assert!(
+            val1.is_string(),
+            "Phase 1: Output must be pure TOON string!"
+        );
+        let output_str = val1.as_str().unwrap();
+        assert!(output_str.contains("fn main() {}"));
+
+        // 3. Perform second read to verify Phase 2 SessionCache hits
+        let result2 = handler.execute_tool("ctx_read", &args).await;
+        let val2 = result2.unwrap();
+        let output_str_2 = val2.as_str().unwrap();
+        assert!(output_str_2.contains("[File unchanged in SessionCache"));
+
+        // 4. Force Invalidation by deleting file and reading
+        std::fs::remove_file(&file_path).unwrap();
+        let result3 = handler.execute_tool("ctx_read", &args).await;
+        assert!(result3.is_err());
+
+        // The cache should be invalidated now.
+        // Let's create it anew and ensure cache doesn't return cache hit.
+        let mut file2 = std::fs::File::create(&file_path).unwrap();
+        writeln!(file2, "fn after_invalidate() {{}}").unwrap();
+
+        let result4 = handler.execute_tool("ctx_read", &args).await;
+        let val4 = result4.unwrap();
+        assert!(!val4.as_str().unwrap().contains("[File unchanged"));
+        assert!(val4.as_str().unwrap().contains("after_invalidate"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_handler_ctx_read_diff_mode() {
+        use std::io::Write;
+        let (handler, tmp_dir) = create_test_handler().await;
+
+        let file_path = tmp_dir.path().join("diff_target.rs");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        writeln!(file, "fn main() {{\n    println!(\"Hello\");\n}}").unwrap();
+
+        let args = json!({
+            "file": file_path.to_str().unwrap(),
+            "mode": "diff"
+        });
+
+        let result1 = handler.execute_tool("ctx_read", &args).await;
+        let output1 = result1.unwrap().as_str().unwrap().to_string();
+
+        // On first read with mode=diff, it should fallback to full output
+        assert!(output1.contains("[New in Cache => Showing Full"));
+        assert!(output1.contains("println!(\"Hello\");"));
+
+        // 2. Modify file
+        let mut file2 = std::fs::File::create(&file_path).unwrap();
+        writeln!(file2, "fn main() {{\n    println!(\"Goodbye\");\n}}").unwrap();
+
+        // 3. Read again
+        let result2 = handler.execute_tool("ctx_read", &args).await;
+        let output2 = result2.unwrap().as_str().unwrap().to_string();
+
+        assert!(output2.contains("[auto-delta]"));
+        assert!(output2.contains("-    println!(\"Hello\");"));
+        assert!(output2.contains("+    println!(\"Goodbye\");"));
+    }
 }
 
 #[cfg(test)]
 mod server_tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mcp_server_creation() {
         let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
         let _guard = server.auth_config_read().await;
@@ -311,6 +435,77 @@ mod server_tests {
     fn test_mcp_server_with_custom_db_path() {
         let db_path = std::path::PathBuf::from("/custom/path/.leankg");
         let server = MCPServer::new(db_path.clone());
-        assert_eq!(server.db_path(), &db_path);
+        let binding = server.db_path();
+        let guard = binding.read();
+        let server_path = &*guard;
+        assert_eq!(server_path, &db_path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_multiple_mcp_servers_same_db_path() {
+        // Test that multiple MCPServers can be created with the same db_path
+        // This verifies multi-session support works (no single-instance lock blocking)
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        // Initialize database first
+        let _db = init_db(&db_path).expect("Database init should succeed");
+
+        // Create first server
+        let server1 = MCPServer::new(db_path.clone());
+        let binding1 = server1.db_path();
+        let guard1 = binding1.read();
+        assert_eq!(&*guard1, &db_path);
+
+        // Create second server with same db_path - should NOT fail
+        let server2 = MCPServer::new(db_path.clone());
+        let binding2 = server2.db_path();
+        let guard2 = binding2.read();
+        assert_eq!(&*guard2, &db_path);
+
+        // Both servers should be different instances
+        let ptr1 = &*guard1 as *const std::path::PathBuf;
+        let ptr2 = &*guard2 as *const std::path::PathBuf;
+        assert_ne!(ptr1, ptr2, "Servers should be separate instances");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_concurrent_reads_from_multiple_servers() {
+        // Test that multiple MCP servers can perform concurrent reads
+        // This simulates multiple Cursor/Claude Code sessions querying simultaneously
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        // Initialize database
+        let _db = init_db(&db_path).expect("Database init should succeed");
+
+        // Create 3 servers concurrently using tokio::join!
+        let (r1, r2, r3) = tokio::join! {
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                1
+            },
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                2
+            },
+            async {
+                let server = MCPServer::new(db_path.clone());
+                let binding = server.db_path();
+                let _guard = binding.read();
+                3
+            }
+        };
+
+        // All 3 concurrent operations should succeed
+        assert_eq!(r1, 1);
+        assert_eq!(r2, 2);
+        assert_eq!(r3, 3);
     }
 }

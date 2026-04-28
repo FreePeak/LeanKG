@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::path::Path;
 use std::process::Command;
 
@@ -11,6 +12,7 @@ pub struct GitChangedFiles {
 pub struct GitAnalyzer;
 
 impl GitAnalyzer {
+    #[allow(dead_code)]
     pub fn get_changed_files(since: &str) -> Result<GitChangedFiles, Box<dyn std::error::Error>> {
         let output = Command::new("git")
             .args(["diff", "--name-status", &format!("{}...HEAD", since)])
@@ -146,6 +148,21 @@ impl GitAnalyzer {
         } else {
             None
         }
+    }
+
+    pub fn get_last_commit_time() -> Result<i64, Box<dyn std::error::Error>> {
+        let output = Command::new("git")
+            .args(["log", "-1", "--format=%ct", "HEAD"])
+            .output()?;
+
+        if !output.status.success() {
+            return Err("Failed to get last commit time".into());
+        }
+
+        let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        timestamp_str
+            .parse::<i64>()
+            .map_err(|e| format!("Failed to parse timestamp: {}", e).into())
     }
 }
 

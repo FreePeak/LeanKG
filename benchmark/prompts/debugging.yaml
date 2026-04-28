@@ -1,0 +1,28 @@
+name: "Debugging Tasks"
+description: "Trace bugs through code"
+
+tasks:
+  - id: "debug-status-tool"
+    prompt: "Debug: The mcp_status tool sometimes returns empty results. Trace through the code to find why."
+    expected:
+      - "src/mcp/handler.rs"
+      - "mcp_status"
+    expected_files:
+      - "src/mcp/handler.rs"
+      - "src/mcp/tools.rs"
+
+  - id: "debug-indexing-failure"
+    prompt: "Debug: Indexing fails silently for some files. Find where the error handling might be missing."
+    expected:
+      - "src/indexer/"
+    expected_files:
+      - "src/indexer/mod.rs"
+      - "src/indexer/extractor.rs"
+
+  - id: "debug-query-edge"
+    prompt: "Debug: get_dependencies returns incorrect results for nested imports. Trace the query flow."
+    expected:
+      - "src/graph/query.rs"
+    expected_files:
+      - "src/graph/query.rs"
+      - "src/graph/traversal.rs"

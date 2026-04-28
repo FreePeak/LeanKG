@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- App name and branding -->
+    <string name="app_name">TV Stream</string>
+    <string name="app_description">IPTV streaming application</string>
+
+    <!-- Navigation -->
+    <string name="browse_title">Browse</string>
+    <string name="settings_title">Settings</string>
+    <string name="search_title">Search</string>
+    <string name="favorites_title">Favorites</string>
+
+    <!-- Settings categories -->
+    <string name="category_playback">Playback</string>
+    <string name="category_network">Network</string>
+    <string name="category_advanced">Advanced</string>
+    <string name="category_about">About</string>
+
+    <!-- Preferences -->
+    <string name="pref_buffer_size">Buffer Size</string>
+    <string name="pref_auto_play">Auto-play next</string>
+    <string name="pref_auto_play_summary">Automatically play next episode</string>
+    <string name="pref_subtitles">Show Subtitles</string>
+    <string name="pref_playlist_url">Playlist URL</string>
+    <string name="pref_playlist_url_summary">Enter M3U playlist URL</string>
+    <string name="pref_quality">Stream Quality</string>
+    <string name="pref_clear_cache">Clear Cache</string>
+    <string name="pref_clear_cache_summary">Remove all cached data</string>
+
+    <!-- Format strings -->
+    <string name="channel_count_format">%1$d channels</string>
+    <string name="duration_format">%1$d min</string>
+    <string name="video_quality_format">%1$dp</string>
+
+    <!-- Search -->
+    <string name="search_hint">Search channels or movies…</string>
+    <string name="search_no_results">No results found</string>
+
+    <!-- Player -->
+    <string name="player_error">Error playing video</string>
+    <string name="player_buffering">Buffering…</string>
+    <string name="player_live">LIVE</string>
+    <string name="player_duration_separator">/</string>
+
+    <!-- Error messages -->
+    <string name="error_network">Network error. Check connection.</string>
+    <string name="error_playlist_load">Failed to load playlist</string>
+    <string name="error_invalid_url">Invalid URL format</string>
+
+    <!-- Arrays -->
+    <string-array name="buffer_size_entries">
+        <item>Small (1x)</item>
+        <item>Medium (3x)</item>
+        <item>Large (5x)</item>
+    </string-array>
+
+    <string-array name="buffer_size_values">
+        <item>1</item>
+        <item>3</item>
+        <item>5</item>
+    </string-array>
+
+    <string-array name="quality_entries">
+        <item>Auto</item>
+        <item>High (1080p)</item>
+        <item>Medium (720p)</item>
+        <item>Low (480p)</item>
+    </string-array>
+
+    <plurals name="channels_count">
+        <item quantity="one">%d channel</item>
+        <item quantity="other">%d channels</item>
+    </plurals>
+
+</resources>

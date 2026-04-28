@@ -1,0 +1,30 @@
+project:
+  name: .leankg
+  root: ./src
+  languages:
+  - javascript
+  - rust
+indexer:
+  exclude:
+  - '**/node_modules/**'
+  - '**/vendor/**'
+  include:
+  - '*.go'
+  - '*.ts'
+  - '*.py'
+  - '*.java'
+  - '*.kt'
+  - '*.xml'
+mcp:
+  enabled: true
+  port: 3000
+  auth_token: ''
+  auto_index_on_start: true
+  auto_index_threshold_minutes: 5
+  auto_index_on_db_write: true
+documentation:
+  output: ./docs
+  templates:
+  - agents
+  - claude
+microservice: null

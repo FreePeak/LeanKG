@@ -1,8 +1,10 @@
+#![allow(dead_code)]
 use crate::db::models::{BusinessLogic, CodeElement, Relationship};
 use crate::graph::GraphEngine;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum DocError {
     #[error("Element not found: {0}")]
@@ -22,6 +24,7 @@ pub struct DocGenerator {
     templates_path: PathBuf,
 }
 
+#[allow(dead_code)]
 impl DocGenerator {
     pub fn new(graph: GraphEngine, output_path: PathBuf) -> Self {
         Self {
@@ -441,6 +444,7 @@ impl DocGenerator {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DocSyncResult {
     pub file_path: String,
@@ -449,6 +453,7 @@ pub struct DocSyncResult {
     pub regenerated_elements: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DocTrackingInfo {
     pub element: CodeElement,

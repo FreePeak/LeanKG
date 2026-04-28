@@ -1,0 +1,211 @@
+- generic [ref=e1]:
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - link "Threads" [ref=e8] [cursor=pointer]:
+        - /url: /
+        - img "Threads" [ref=e10]
+      - generic [ref=e12]:
+        - link "Home" [ref=e14] [cursor=pointer]:
+          - /url: /
+          - img "Home" [ref=e18]
+        - link "Search" [ref=e21] [cursor=pointer]:
+          - /url: /search
+          - img "Search" [ref=e25]
+        - button "Create" [ref=e28] [cursor=pointer]:
+          - img "Create" [ref=e32]
+        - link "Notifications" [ref=e35] [cursor=pointer]:
+          - /url: /activity
+          - img "Notifications" [ref=e39]
+        - link "Profile" [ref=e42] [cursor=pointer]:
+          - /url: /@freepeak_life
+          - img "Profile" [ref=e46]
+      - button "More More" [ref=e50] [cursor=pointer]:
+        - generic [ref=e51]:
+          - img "More" [ref=e53]
+          - img "More" [ref=e57]
+    - generic [ref=e65]:
+      - generic [ref=e68]:
+        - generic [ref=e78]:
+          - link "Column title" [ref=e752] [cursor=pointer]:
+            - /url: /for_you
+            - heading "For you" [level=1] [ref=e753]:
+              - generic [ref=e81]: For you
+          - button "More" [ref=e754] [cursor=pointer]:
+            - button "More" [ref=e755]:
+              - img "More" [ref=e756]
+        - region "Column body" [ref=e757]:
+          - generic [ref=e92]:
+            - generic [ref=e94]:
+              - link "freepeak_life's profile picture" [ref=e758] [cursor=pointer]:
+                - /url: /@freepeak_life
+                - img "freepeak_life's profile picture" [ref=e759]
+              - button "Empty text field. Type to compose a new post." [active] [ref=e760]:
+                - generic [ref=e99]: What's new?
+              - button "Post" [ref=e761] [cursor=pointer]:
+                - generic [ref=e102]: Post
+            - separator [ref=e103]
+            - generic [ref=e105]:
+              - generic [ref=e111] [cursor=pointer]:
+                - button "realpython's profile picture Follow" [ref=e762]:
+                  - img "realpython's profile picture" [ref=e763]
+                  - button "Follow" [ref=e764]:
+                    - img "Follow" [ref=e765]
+                - generic [ref=e123]:
+                  - generic [ref=e124]:
+                    - link "realpython" [ref=e766]:
+                      - /url: /@realpython
+                      - generic [ref=e131]: realpython
+                    - link "6 hours ago" [ref=e767]:
+                      - /url: /@realpython/post/DXU_rpHElNE
+                      - time [ref=e136]:
+                        - generic "6 hours ago" [ref=e768]: 6h
+                  - button "More" [ref=e769]:
+                    - img "More" [ref=e770]
+                - generic [ref=e146]:
+                  - generic [ref=e147]:
+                    - generic [ref=e149]: "🐍📰 Variables in Python: Usage and Best Practices"
+                    - generic [ref=e151]: Explore Python variables from creation to best practices, covering naming conventions, dynamic typing, variable scope, and type hints with examples.
+                    - link "realpython.com/pytho…" [ref=e771]:
+                      - /url: https://l.threads.com/?u=https%3A%2F%2Frealpython.com%2Fpython-variables%2F&e=AT4u2jeL9puAC4D36_t9e779nMO305CCJqAMmNLkGBliuPL2o-scuiC6prpBodKANaT2hr2vDMk1mEtd75Nydu9MljRiIJl_fsqpjYnct1btHPid-j_sa-Wu0_rDeASky2X7lNudGL19
+                  - link "May be a graphic of ‎text that says '‎number VARIABLES L CANEOS 42 word س = \"Python\" .87 Real Python‎'‎" [ref=e772]:
+                    - /url: /@realpython/post/DXU_rpHElNE/media
+                    - generic [ref=e161]:
+                      - img "May be a graphic of ‎text that says '‎number VARIABLES L CANEOS 42 word س = \"Python\" .87 Real Python‎'‎"
+                  - generic [ref=e163]:
+                    - button "Like 13" [ref=e773]:
+                      - generic [ref=e167]:
+                        - img "Like" [ref=e774]
+                        - generic [ref=e775]: "13"
+                    - button "Reply" [ref=e776]:
+                      - img "Reply" [ref=e777]
+                    - button "Repost 1" [ref=e778]:
+                      - generic [ref=e182]:
+                        - img "Repost" [ref=e779]
+                        - generic [ref=e188]: "1"
+                    - button "Share 1" [ref=e780]:
+                      - generic [ref=e192]:
+                        - img "Share" [ref=e781]
+                        - generic [ref=e197]: "1"
+              - generic [ref=e203] [cursor=pointer]:
+                - button "freecodecamp's profile picture Follow" [ref=e782]:
+                  - img "freecodecamp's profile picture" [ref=e783]
+                  - button "Follow" [ref=e784]:
+                    - img "Follow" [ref=e785]
+                - generic [ref=e215]:
+                  - generic [ref=e216]:
+                    - link "freecodecamp" [ref=e786]:
+                      - /url: /@freecodecamp
+                      - generic [ref=e223]: freecodecamp
+                    - link "11 hours ago" [ref=e787]:
+                      - /url: /@freecodecamp/post/DXUcF4plJT-
+                      - time [ref=e228]:
+                        - generic "11 hours ago" [ref=e788]: 11h
+                  - button "More" [ref=e789]:
+                    - img "More" [ref=e790]
+                - generic [ref=e238]:
+                  - generic [ref=e241]:
+                    - text: Machine Learning and Artificial Intelligence are hot topics right now. And this course will give you a solid foundation in ML & AI skills. You'll learn key concepts like overfitting & regularization, common algorithms, & you'll build some projects, too.
+                    - link "freecodecamp.org/news…" [ref=e791]:
+                      - /url: https://l.threads.com/?u=https%3A%2F%2Fwww.freecodecamp.org%2Fnews%2Flearn-the-foundations-of-machine-learning-and-artificial-intelligence%2F&e=AT4u2jeL9puAC4D36_t9e779nMO305CCJqAMmNLkGBliuPL2o-scuiC6prpBodKANaT2hr2vDMk1mEtd75Nydu9MljRiIJl_fsqpjYnct1btHPid-j_sa-Wu0_rDeASky2X7lNudGL19
+                  - link "May be a graphic of one or more people, makeup, poster and text" [ref=e792]:
+                    - /url: /@freecodecamp/post/DXUcF4plJT-/media
+                    - generic [ref=e249]:
+                      - img "May be a graphic of one or more people, makeup, poster and text"
+                  - generic [ref=e251]:
+                    - button "Like 69" [ref=e793]:
+                      - generic [ref=e255]:
+                        - img "Like" [ref=e794]
+                        - generic [ref=e260]: "69"
+                    - button "Reply" [ref=e795]:
+                      - img "Reply" [ref=e796]
+                    - button "Repost 9" [ref=e797]:
+                      - generic [ref=e270]:
+                        - img "Repost" [ref=e798]
+                        - generic [ref=e276]: "9"
+                    - button "Share 17" [ref=e799]:
+                      - generic [ref=e280]:
+                        - img "Share" [ref=e800]
+                        - generic [ref=e285]: "17"
+              - generic [ref=e291] [cursor=pointer]:
+                - button "liftytubbs's profile picture Follow" [ref=e801]:
+                  - img "liftytubbs's profile picture" [ref=e802]
+                  - button "Follow" [ref=e803]:
+                    - img "Follow" [ref=e804]
+                - generic [ref=e303]:
+                  - generic [ref=e304]:
+                    - link "liftytubbs" [ref=e805]:
+                      - /url: /@liftytubbs
+                      - generic [ref=e311]: liftytubbs
+                    - link "22 hours ago" [ref=e806]:
+                      - /url: /@liftytubbs/post/DXTO0SglVXH
+                      - time [ref=e316]:
+                        - generic "22 hours ago" [ref=e807]: 22h
+                  - button "More" [ref=e808]:
+                    - img "More" [ref=e809]
+                - generic [ref=e326]:
+                  - generic [ref=e329]: My local inference name for Claude is "Clud". He's not too smart but he's doing his best
+                  - 'link "May be a graphic of poster and text that says ''CLAUDE CODE (LOCAL) CLUD Model: qwen/qwen3.6-35b-a3b qwen/qwen3. 6-35b-a3b Proxy: http://localhost:1234 Claude Code v2.1.114 v2. qwen/ qwen/qwen3.6-35b-a3b qwen3 6-35b-a3b /Users/dustyn /dustyn > API Usage Billing ? for shortcuts shortcuts''" [ref=e810]':
+                    - /url: /@liftytubbs/post/DXTO0SglVXH/media
+                    - generic [ref=e336]:
+                      - 'img "May be a graphic of poster and text that says ''CLAUDE CODE (LOCAL) CLUD Model: qwen/qwen3.6-35b-a3b qwen/qwen3. 6-35b-a3b Proxy: http://localhost:1234 Claude Code v2.1.114 v2. qwen/ qwen/qwen3.6-35b-a3b qwen3 6-35b-a3b /Users/dustyn /dustyn > API Usage Billing ? for shortcuts shortcuts''"'
+                  - generic [ref=e338]:
+                    - button "Like 131" [ref=e811]:
+                      - generic [ref=e342]:
+                        - img "Like" [ref=e812]
+                        - generic [ref=e347]: "131"
+                    - button "Reply 39" [ref=e813]:
+                      - generic [ref=e351]:
+                        - img "Reply" [ref=e814]
+                        - generic [ref=e356]: "39"
+                    - button "Repost 1" [ref=e815]:
+                      - generic [ref=e360]:
+                        - img "Repost" [ref=e816]
+                        - generic [ref=e366]: "1"
+                    - button "Share 4" [ref=e817]:
+                      - generic [ref=e370]:
+                        - img "Share" [ref=e818]
+                        - generic [ref=e375]: "4"
+              - generic [ref=e381] [cursor=pointer]:
+                - button "pyramidskeme.exe's profile picture Follow" [ref=e819]:
+                  - img "pyramidskeme.exe's profile picture" [ref=e820]
+                  - button "Follow" [ref=e821]:
+                    - img "Follow" [ref=e822]
+                - generic [ref=e393]:
+                  - generic [ref=e394]:
+                    - link "pyramidskeme.exe" [ref=e823]:
+                      - /url: /@pyramidskeme.exe
+                      - generic [ref=e401]: pyramidskeme.exe
+                    - link "about an hour ago" [ref=e824]:
+                      - /url: /@pyramidskeme.exe/post/DXVjZruFSdp
+                      - time [ref=e406]:
+                        - generic "about an hour ago" [ref=e825]: 1h
+                  - button "More" [ref=e826]:
+                    - img "More" [ref=e827]
+                - generic [ref=e416]:
+                  - generic [ref=e419]: About to write an algorithm that runs in O(1/n)
+                  - generic [ref=e421]:
+                    - button "Like 6" [ref=e828]:
+                      - generic [ref=e425]:
+                        - img "Like" [ref=e829]
+                        - generic [ref=e430]: "6"
+                    - button "Reply" [ref=e830]:
+                      - img "Reply" [ref=e831]
+                    - button "Repost" [ref=e832]:
+                      - img "Repost" [ref=e833]
+                    - button "Share" [ref=e834]:
+                      - img "Share" [ref=e835]
+              - status "Loading..." [ref=e836]:
+                - img "Loading..." [ref=e837]
+      - button "Add a column" [ref=e838] [cursor=pointer]:
+        - img "Add a column" [ref=e839]
+    - button "Create" [ref=e497] [cursor=pointer]:
+      - img "Create" [ref=e498]
+  - generic:
+    - list:
+      - listitem [ref=e840]:
+        - status [ref=e841]:
+          - generic [ref=e842]:
+            - status "Loading..." [ref=e844]:
+              - img "Loading..." [ref=e845]
+            - alert [ref=e855]:
+              - generic [ref=e856]: Posting...

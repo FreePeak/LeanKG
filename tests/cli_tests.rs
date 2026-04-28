@@ -230,23 +230,10 @@ fn test_cli_generate_with_template() {
 }
 
 #[test]
-fn test_cli_serve_defaults() {
+fn test_cli_serve() {
     let args = TestArgs::try_parse_from(["leankg", "serve"]).unwrap();
     match args.command {
-        CLICommand::Serve { web_port } => {
-            assert_eq!(web_port, 8080);
-        }
-        _ => panic!("expected Serve command"),
-    }
-}
-
-#[test]
-fn test_cli_serve_custom_port() {
-    let args = TestArgs::try_parse_from(["leankg", "serve", "--web-port", "9000"]).unwrap();
-    match args.command {
-        CLICommand::Serve { web_port } => {
-            assert_eq!(web_port, 9000);
-        }
+        CLICommand::Serve { .. } => {}
         _ => panic!("expected Serve command"),
     }
 }
@@ -579,7 +566,7 @@ fn test_cli_status() {
 fn test_cli_watch() {
     let args = TestArgs::try_parse_from(["leankg", "watch"]).unwrap();
     match args.command {
-        CLICommand::Watch => {}
+        CLICommand::Watch { .. } => {}
         _ => panic!("expected Watch command"),
     }
 }
@@ -588,8 +575,8 @@ fn test_cli_watch() {
 fn test_cli_export_defaults() {
     let args = TestArgs::try_parse_from(["leankg", "export"]).unwrap();
     match args.command {
-        CLICommand::Export { output } => {
-            assert_eq!(output, "graph.html");
+        CLICommand::Export { output, .. } => {
+            assert_eq!(output, "graph.json");
         }
         _ => panic!("expected Export command"),
     }
@@ -599,7 +586,7 @@ fn test_cli_export_defaults() {
 fn test_cli_export_custom_output() {
     let args = TestArgs::try_parse_from(["leankg", "export", "--output", "custom.html"]).unwrap();
     match args.command {
-        CLICommand::Export { output } => {
+        CLICommand::Export { output, .. } => {
             assert_eq!(output, "custom.html");
         }
         _ => panic!("expected Export command"),

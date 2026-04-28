@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Focused state (TV navigation) -->
+    <item 
+        android:state_focused="true"
+        android:state_pressed="false">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/button_focused" />
+            <stroke 
+                android:width="3dp"
+                android:color="@color/accent" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+    <!-- Pressed state -->
+    <item 
+        android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/button_pressed" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+    <!-- Selected/active state -->
+    <item 
+        android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/button_selected" />
+            <stroke 
+                android:width="2dp"
+                android:color="@color/primary" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+    <!-- Default state -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/button_normal" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+</selector>

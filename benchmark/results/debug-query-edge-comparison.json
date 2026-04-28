@@ -1,0 +1,30 @@
+{
+  "overhead": {
+    "time_delta": 0.0,
+    "token_delta": 0,
+    "token_delta_percent": 0.0
+  },
+  "task": "debug-query-edge",
+  "with_leankg": {
+    "build_time_seconds": 120.0,
+    "cached_tokens": 0,
+    "context": {
+      "files_referenced": []
+    },
+    "input_tokens": 0,
+    "success": false,
+    "token_percent": 0.0,
+    "total_tokens": 0
+  },
+  "without_leankg": {
+    "build_time_seconds": 120.0,
+    "cached_tokens": 0,
+    "context": {
+      "files_referenced": []
+    },
+    "input_tokens": 0,
+    "success": false,
+    "token_percent": 0.0,
+    "total_tokens": 0
+  }
+}

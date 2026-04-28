@@ -1,10 +1,109 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.4  
-**Ngay:** 2026-03-25  
-**Dua tren:** PRD v1.5  
-**Trang thai:** Ban nhap  
-**Changelog:** 
+**Phien ban:** 1.22
+**Ngay:** 2026-04-24
+**Dua tren:** PRD v1.22
+**Trang thai:** Ban nhap
+**Changelog:**
+- v1.23 - Knowns-Inspired Enhancements (FUTURE):
+  - Hybrid search with Reciprocal Rank Fusion (semantic + keyword)
+  - Reference system (`@doc/`, `@task-` syntax) for traversable links
+  - Local ONNX embeddings for zero-API semantic search
+  - Memory layers: project/session/global context persistence
+  - AST-enriched searchable content with relationship metadata
+- v1.22 - MCP HTTP Transport (Remote MCP Server):
+  - Add `mcp-http` CLI command for HTTP-based MCP server
+  - Implement Streamable HTTP transport per MCP spec
+  - HTTP POST endpoint for JSON-RPC requests
+  - Server-Sent Events (SSE) for server-to-client streaming responses
+  - Bearer token authentication
+  - CORS headers for browser-based clients
+  - Support multiple concurrent MCP clients
+  - Default port 9699 (consolidated with MCP watch mode)
+  - Database configuration structure added (PostgreSQL support pending cozo update)
+- v1.21 - CPU Optimization Phase 1:
+  - Reduced cache TTL from 300s to 60s, max entries from 1000 to 100
+  - Removed unbounded `elements_cache` and `relationships_cache`
+  - Reduced SQLite memory: cache 64MB→16MB, mmap 256MB→64MB
+  - Lazy parser initialization (TODO)
+  - Cached regex patterns (COMPLETED)
+  - Connection reuse in watcher (TODO)
+  - Cursor-based relationship iteration (TODO)
+  - File→relationships index for dependent lookup (TODO)
+  - Removed busy-loop sleep from AsyncFileWatcher (COMPLETED)
+  - Target: Reduce idle CPU from 61% to <5%
+- v1.20 - Stats API + Adaptive Loading:
+  - Add `GET /api/graph/stats` endpoint returning full DB histogram (nodes_by_type, edges_by_type, nodes_by_depth, folders, services)
+  - Add adaptive loading strategy: small DB (< 2000 nodes) loads all, large DB loads by depth layers, multi-repo loads per-service
+  - Add `depth` query parameter to `GET /api/graph/data` for layer-based loading
+  - Stats result cached with 60s TTL, invalidated on project switch and after indexing
+  - Frontend decides loading strategy based on stats before fetching graph data
+- v1.19 - Auto-Index on DB Write:
+  - Add WriteTracker with atomic dirty flag for external CozoDB writes
+  - Add TrackingDb wrapper to intercept :put/:delete operations
+  - Lazy reindex on MCP tool call when dirty flag is set
+  - Config option `auto_index_on_db_write: true` (default true)
+- v1.18 - RTK Integration:
+  - Add LeanKGCompressor for internal command compression
+  - Add CargoTestCompressor with failures-only mode (85%+ savings)
+  - Add GitDiffCompressor with stats extraction (70%+ savings)
+  - Extend ShellCompressor with leankg-specific patterns
+  - RTK A/B test: 54% token reduction on common dev commands
+- v1.17 - AB Testing Context Correctness:
+  - File path regex validation for improved correctness
+  - Enhanced quality metrics output
+- v1.15 - Performance Optimizations:
+  - Add parallel file parsing using rayon for multi-core indexing
+  - Batch relationship inserts (1000 rows/batch) instead of individual inserts
+  - Optimize resolve_call_edges: filter at DB level, only process unresolved edges
+  - Thread-local parser reuse to avoid re-creating tree-sitter parsers
+- v1.14 - Web UI Orphan Node Filtering Fix:
+  - Fixed orphan nodes appearing in webui graph view
+  - `filterOrphanedNodes` now applies to ALL filter types (all, document, function, mapping), not just 'all'
+  - Fixed 'mapping' filter bug where `e.target` was not added to nodeIds
+- v1.13 - Terraform and CI/CD YAML Indexing:
+  - Add Terraform extractor for .tf files (HCL parsing)
+  - Add CI/CD YAML extractor for GitHub Actions, GitLab CI, Azure Pipelines
+  - Add terraform and cicd element types
+  - Update ParserManager and indexer to handle new file types
+- v1.12 - P2 MCP Tool Improvements:
+  - Add `required` arrays to all MCP tools for proper schema validation
+  - Add `depth` param (default 2) and `max_results` param (default 30) to `get_call_graph`
+  - Add `file` optional param to `find_function` for scoping
+  - Lower default `limit` for `search_code` from 100 to 20, add `max: 50` cap
+  - Add `element_type` filter enum to `search_code` and `query_file`
+  - Add warning to `get_impact_radius` description about depth explosion risk
+- v1.11 - Depth-limited get_call_graph_bounded
+  - Add `get_call_graph_bounded` to prevent neighbor explosion
+  - Unroll recursion manually for depth <= 3 with `:limit` clause to cap results
+  - Add `depth` and `max_results` parameters to `get_call_graph` MCP tool
+- v1.10 - P2 Token Efficiency - signature_only Mode
+  - Add `signature_only` mode to `get_context` tool: returns only function signatures (default) instead of full body metadata
+  - Add `max_tokens` parameter to cap context size (default: 4000)
+  - Update `extract_function` to capture signature in metadata for token-efficient context retrieval
+  - Add `find_body_start_line` helper to identify function body start position
+- v1.9 - P1 AST Extraction Fixes
+  - Fix `is_noise_call` filter: add missing noise calls, change single-char filter from `== 1` to `>= 2`
+  - Fix Go `implements` detection: only emit for embedded (anonymous) fields, skip named fields
+  - Add `resolve_call_edges` post-index resolution pass to resolve `__unresolved__` prefixed call targets to actual qualified names
+- v1.8 - P0 Documentation Indexing Fixes
+  - Add `mcp_index_docs` MCP tool to index documentation directory and populate documented_by/references relationships
+  - Fix doc regex to match any filename with known source extension (not just `src/`, `lib/`, `./` prefixed)
+  - Fix code-block skipping to properly skip content inside triple backtick blocks
+  - Fix `parse_doc_file` to extract and store headings in document metadata
+- v1.8 - Query Push-down Optimization
+  - Add `search_by_name_typed` and `find_elements_by_name_exact` pushed-down predicate queries to GraphEngine
+  - Add `run_element_query` helper to deduplicate CodeElement row mapping
+  - Update MCP handlers to use pushed-down queries instead of fetching all elements and filtering in Rust
+  - Query optimization reduces data transfer between CozoDB and application by filtering at database level
+- v1.6 - Auto-Indexing on MCP Server Start
+  - Added auto-indexing on startup when index is stale (git-based detection)
+  - Added configuration options for auto-indexing behavior
+  - Added index staleness detection (git HEAD vs DB file timestamp)
+- v1.5 - MCP Server Self-Initialization
+  - Added MCP tools mirroring CLI: mcp_init, mcp_index, mcp_install, mcp_status, mcp_impact
+  - Added auto-init behavior on MCP server startup
+  - MCP server auto-detects uninitialized projects and runs init + index
 - v1.4 - Phase 2 Features: Documentation-Structure Mapping, Enhanced Business Logic, Impact Fixes
   - Added Doc Indexer component for indexing docs/ directory
   - Added documentation node types (document, doc_section) to data model
@@ -57,46 +156,62 @@ graph TB
             DB[(CozoDB<br/>Database)]
             KG --- DB
         end
-        
-        AI1[Cursor]
-        AI2[OpenCode]
-        AI3[Claude Code]
-        AI4[Other AI Tools]
-        
+
+        subgraph "Local AI Tools (stdio)"
+            AI1[Cursor]
+            AI2[Claude Code]
+            AI3[OpenCode]
+        end
+
+        subgraph "Remote AI Tools (HTTP)"
+            AI4[Remote Client]
+            AI5[Browser-based IDE]
+        end
+
         subgraph "CLI Users"
             Dev[Developer]
             CI[CI/CD Pipeline]
         end
-        
+
         subgraph "Web UI Users"
             Browser[Browser]
         end
     end
-    
-    AI1 -->|MCP Protocol| KG
-    AI2 -->|MCP Protocol| KG
-    AI3 -->|MCP Protocol| KG
-    AI4 -->|MCP Protocol| KG
-    
+
+    AI1 -->|stdio| KG
+    AI2 -->|stdio| KG
+    AI3 -->|stdio| KG
+
+    AI4 -->|HTTP+SSE| KG
+    AI5 -->|HTTP+SSE| KG
+
     Dev -->|CLI Commands| KG
     CI -->|CLI Commands| KG
-    
+
     Browser -->|HTTP| KG
-    
+
     subgraph "External Services (Optional)"
         LLM[Cloud LLM API]
     end
-    
+
     KG -.->|Optional API Calls| LLM
 ```
 
 **Mô tả:**
 - **LeanKG System:** Hệ thống chính chạy trên máy người dùng
-- **AI Tools:** Cursor, OpenCode, Claude Code và các AI coding tools khác tương tác qua MCP protocol
+- **Local AI Tools (stdio):** Cursor, Claude Code, OpenCode kết nối qua stdio transport (1 client tại một thời điểm)
+- **Remote AI Tools (HTTP):** Remote clients và browser-based IDEs kết nối qua HTTP + SSE transport (nhiều clients)
 - **Developer:** Sử dụng CLI để index, query, và generate documentation
 - **CI/CD Pipeline:** Tự động hóa indexing trong quá trình build
 - **Browser:** Truy cập lightweight web UI
 - **Cloud LLM API:** Optional - cho future semantic search features
+
+**MCP Transport Modes:**
+
+| Mode | CLI Command | Transport | Port | Max Clients | Use Case |
+|------|-------------|-----------|------|-------------|----------|
+| Stdio | `leankg mcp-stdio` | stdin/stdout | N/A | 1 | Local AI tools (Cursor, Claude Code) |
+| HTTP | `leankg mcp-http` | HTTP + SSE | 9699 | Many | Remote access, browser clients |
 
 ### 2.2 Container Diagram (C4-2)
 
@@ -116,9 +231,10 @@ graph TB
         Impact[Impact Analyzer<br/>Blast Radius]
         Trace[Traceability<br/>Analyzer]
         Qual[Code Quality<br/>Metrics]
-        
+        Compress[Compress<br/>RTK-style]
+
         DB[(CozoDB<br/>Database)]
-        
+
         CLI --> Indexer
         CLI --> PipeIdx
         CLI --> DocIdx
@@ -127,6 +243,10 @@ graph TB
         CLI --> Impact
         CLI --> Trace
         CLI --> Qual
+        CLI --> Compress
+
+        Indexer --> Compress
+        Compress --> DB
         
         MCP --> Graph
         MCP --> DocGen
@@ -180,6 +300,7 @@ graph TB
 | Impact Analyzer | Calculate blast radius / impact radius | Rust (BFS traversal) |
 | Traceability Analyzer | Trace requirements to code via documentation | Rust |
 | Code Quality | Detect large functions, code metrics | Rust |
+| Compress | Token compression for CLI output, RTK-style filtering | Rust |
 | CozoDB | Persistent storage (per-project) | CozoDB (embedded SQLite-backed) |
 | NPM Installer | Download and install pre-built binaries | Node.js (npm package) |
 
@@ -342,6 +463,11 @@ graph TB
 | Go Parser | Parse Go source files |
 | TS/JS Parser | Parse TypeScript/JavaScript files |
 | Python Parser | Parse Python files |
+| Ruby Parser | Parse Ruby files |
+| PHP Parser | Parse PHP files |
+| Perl Parser | Parse Perl files |
+| R Parser | Parse R files |
+| Elixir Parser | Parse Elixir files |
 | Entity Extractor | Extract functions, classes, imports, TESTED_BY |
 | Graph Builder | Build relationships va store to DB |
 | Pipeline Detector | Auto-detect CI/CD config files by path and naming convention |
@@ -361,6 +487,7 @@ graph TB
 | Search Engine | Search code elements |
 | Relationship Engine | Traverse graph relationships |
 | Query Cache | Cache frequent queries |
+| Call Edge Resolver | Resolve `__unresolved__` prefixed call targets to actual qualified names post-indexing |
 | BFS Traversal | Breadth-first search for blast radius |
 | Qualified Name Normalizer | Normalize function names to qualified names for accurate matching |
 | Radius Calculator | Calculate impact radius in N hops |
@@ -477,12 +604,27 @@ sequenceDiagram
     Extract->>Build: Build relationships
     Build->>DB: Store elements
     
+    Note over Extract,Build: Call Edge Resolution Pass
+    Build->>DB: resolve_call_edges() resolves __unresolved__ call targets
+    
     Note over Watch: File change detected
     Watch->>Parse: Re-parse changed file
     Parse->>Extract: Extract entities
     Extract->>Build: Update graph
     Build->>DB: Upsert elements
 ```
+
+#### Call Edge Resolution
+
+The `extract_call` function in the Entity Extractor creates call edges with `__unresolved__` prefixed target qualified names (e.g., `__unresolved__foo`) because it cannot know the full path at extraction time. After all files are indexed, `resolve_call_edges()` is called as a post-index resolution pass to resolve these placeholders:
+
+1. Query all relationships with `target_qualified` starting with `__unresolved__`
+2. Extract the bare callee name from the placeholder
+3. Look up the function by bare name in the same file (preferred) or any file
+4. Replace the unresolved placeholder with the actual qualified name
+5. Delete the unresolved relationship and insert the resolved one
+
+The resolution query uses the `callee_file_hint` stored in metadata to prefer functions in the same file first.
 
 ### 3.2 Query Flow
 
@@ -787,6 +929,25 @@ erDiagram
 | `depends_on` | `pipeline_stage` | `pipeline_stage` | Stage execution ordering | `{condition, artifact_dependency}` |
 | `deploys_to` | `pipeline_stage` | (environment name in metadata) | Stage deploys to an environment | `{environment, strategy, region}` |
 
+### 4.6 Terraform-Specific Node Types (v1.13)
+
+| Element Type | qualified_name Format | Description | Metadata Fields |
+|-------------|----------------------|-------------|-----------------|
+| `terraform` | `path/to/file.tf` | A Terraform configuration file | `{provider_count, resource_count}` |
+| `terraform_resource` | `path/to/file.tf::resource_type.name` | A Terraform resource block | `{resource_type, name}` |
+| `terraform_data` | `path/to/file.tf::data_type.name` | A Terraform data source | `{data_type, name}` |
+| `terraform_variable` | `path/to/file.tf::var.name` | A Terraform variable | `{name, type, default}` |
+| `terraform_output` | `path/to/file.tf::output.name` | A Terraform output | `{name, value}` |
+| `terraform_module` | `path/to/file.tf::module.name` | A Terraform module block | `{name, source}` |
+
+### 4.7 CI/CD YAML-Specific Node Types (v1.13)
+
+| Element Type | qualified_name Format | Description | Metadata Fields |
+|-------------|----------------------|-------------|-----------------|
+| `cicd` | `path/to/ci.yml` | A CI/CD pipeline YAML file | `{ci_platform, trigger_events}` |
+| `cicd_job` | `path/to/ci.yml::job_name` | A CI/CD job/stage | `{name, runner, stage}` |
+| `cicd_step` | `path/to/ci.yml::job_name::step_name` | A CI/CD step within a job | `{name, command, image}` |
+
 ---
 
 ## 5. Interface Specifications
@@ -807,6 +968,8 @@ erDiagram
 | `leankg install` | Auto-generate MCP config for AI tools |
 | `leankg export` | Export graph as self-contained HTML |
 | `leankg quality` | Show code quality metrics (large functions) |
+| `leankg mcp-stdio [--watch]` | Start MCP server with stdio transport (local AI tools) |
+| `leankg mcp-http [--port N] [--auth TOKEN] [--watch]` | Start MCP server with HTTP transport (remote clients) |
 | `leankg pipeline [file]` | Show pipelines affected by a file change (Phase 2) |
 | `leankg pipeline --list` | List all indexed pipelines and their stages (Phase 2) |
 | `leankg docs --tree` | Show documentation directory structure (Phase 2) |
@@ -819,13 +982,19 @@ erDiagram
 
 | Tool | Description |
 |------|-------------|
+| `mcp_init` | Initialize LeanKG project (creates .leankg/, leankg.yaml) |
+| `mcp_index` | Index codebase (path, incremental, lang, exclude options) |
+| `mcp_index_docs` | Index documentation directory to create code-doc traceability edges |
+| `mcp_install` | Create .mcp.json for MCP client configuration |
+| `mcp_status` | Show index statistics and status |
+| `mcp_impact` | Calculate blast radius for a file |
 | `query_file` | Find file by name or pattern |
 | `get_dependencies` | Get file dependencies (direct imports) |
 | `get_dependents` | Get files depending on target |
 | `get_impact_radius` | Get all files affected by change within N hops |
 | `get_review_context` | Generate focused subgraph + structured review prompt |
 | `find_function` | Locate function definition |
-| `get_call_graph` | Get function call chain (full depth) |
+| `get_call_graph` | Get function call chain with bounded depth and result limit |
 | `search_code` | Search code elements by name/type |
 | `get_context` | Get AI context for file (minimal, token-optimized) |
 | `generate_doc` | Generate documentation for file |
@@ -844,6 +1013,102 @@ erDiagram
 | `get_code_tree` | Get codebase structure (Phase 2) |
 | `find_related_docs` | Find documentation related to a code change (Phase 2) |
 
+**Auto-Initialization Behavior:**
+When the MCP server starts via `mcp-stdio` and detects no `.leankg/` or `leankg.yaml` exists in the working directory, it automatically:
+1. Runs init (creates .leankg/ and leankg.yaml)
+2. Runs index on the current directory (indexes source code)
+3. Serves normally
+
+This provides a "plug and play" experience where AI tools can use LeanKG immediately after connecting.
+
+**Auto-Indexing on Startup:**
+When the MCP server starts with an existing LeanKG project:
+1. Checks if index is stale by comparing git HEAD commit time vs database file modification time
+2. If git has newer commits than the database, runs incremental indexing automatically
+3. This ensures AI tools always have up-to-date context without manual re-indexing
+4. Staleness check can be configured via `mcp.auto_index_on_start` and `mcp.auto_index_threshold_minutes`
+
+**Auto-Indexing on DB Write:**
+When external agents write directly to CozoDB (via SQL insert/update/delete), LeanKG automatically detects and triggers reindexing:
+
+1. **Write Tracker** - In-memory `Arc<AtomicBool>` dirty flag + `Arc<RwLock<Instant>>` last_write_time
+2. **TrackingDb Wrapper** - Wraps `CozoDb` to intercept `:put` and `:delete` operations
+3. **Lazy Reindex** - On any MCP tool call, checks dirty flag; if set, triggers incremental reindex before execution
+4. **Config Option** - `mcp.auto_index_on_db_write: true` (default: true)
+
+**Flow:**
+```
+External Agent writes to CozoDB → TrackingDb sets dirty flag → MCP tool call → detects dirty → triggers incremental reindex → clears dirty flag
+```
+
+**Why not file polling or DB triggers:**
+- File polling: wastes CPU, ~5s latency from polling interval
+- DB triggers: CozoSQLite doesn't support triggers reliably
+- Write Tracker: zero-latency detection at write time, deferred reindex only when needed
+
+### 5.2.1 MCP HTTP Transport (Remote MCP Server)
+
+The MCP HTTP transport implements the [MCP Streamable HTTP transport specification](https://modelcontextprotocol.io/docs/learn/architecture), enabling LeanKG to serve multiple concurrent MCP clients over HTTP with Server-Sent Events (SSE) for streaming responses.
+
+#### Transport Architecture
+
+| Component | Description |
+|----------|-------------|
+| **HTTP Endpoint** | `POST /mcp` - Receives JSON-RPC requests |
+| **SSE Endpoint** | `GET /mcp/stream` - Streams server-to-client events |
+| **CORS Headers** | Enabled for browser-based clients |
+| **Auth** | Bearer token authentication |
+
+#### Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/mcp` | POST | JSON-RPC request endpoint |
+| `/mcp/stream` | GET | SSE stream for server-to-client messages |
+| `/health` | GET | Health check (no auth required) |
+
+#### Request Flow
+
+```
+Client → POST /mcp (JSON-RPC request)
+       ← 200 OK + JSON-RPC response (or start SSE stream)
+
+Client → GET /mcp/stream (SSE connection)
+       ← SSE stream (server-initiated messages, tool results)
+```
+
+#### CLI Command
+
+```bash
+# Start HTTP MCP server on default port 9699
+leankg mcp-http
+
+# Start with custom port and auth token
+leankg mcp-http --port 8080 --auth my-secret-token
+
+# Start with watch mode (auto-reindex on file changes)
+leankg mcp-http --watch
+```
+
+#### Configuration (leankg.yaml)
+
+```yaml
+mcp:
+  http:
+    enabled: true
+    port: 9699
+    auth_token: "your-bearer-token"  # Optional
+    cors_enabled: true
+```
+
+#### Multi-Client Session Management
+
+Each HTTP connection gets its own session state:
+- Session ID generated per connection
+- Client capabilities stored in session
+- Tool handlers receive session context
+- Multiple clients can connect simultaneously
+
 ### 5.3 Web UI Routes
 
 | Route | Description |
@@ -857,11 +1122,62 @@ erDiagram
 | `/export` | Generate self-contained HTML graph |
 | `/settings` | Configuration |
 
+### 5.4 Graph API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/graph/stats` | GET | Returns full DB histogram (nodes_by_type, edges_by_type, depth distribution, folders, services). Cached 60s. Used by UI to decide loading strategy. |
+| `/api/graph/data` | GET | Returns graph nodes + relationships. Optional `depth` param for layer-based loading (e.g., `?depth=0,1`). |
+| `/api/graph/service-topology` | GET | Returns service nodes for multi-repo or folder nodes for single-repo. Detects project type. |
+| `/api/graph/children` | GET | Returns direct children of a node. DB-level filtering with pagination. |
+| `/api/graph/expand-node` | GET | Unified expand for any node type. |
+| `/api/graph/stats` caching | — | Stats cached in AppState with 60s TTL. Invalidated on project switch and after indexing. |
+
+### 5.5 Adaptive Loading Strategy
+
+The UI fetches stats first, then decides how to load graph data:
+
+| Condition | Strategy | Initial API Call |
+|-----------|----------|-----------------|
+| Single repo, < 2000 nodes | Load all | `GET /api/graph/data` |
+| Single repo, >= 2000 nodes | Depth layers | `GET /api/graph/data?depth=0,1` |
+| Multi repo | Per-service | `GET /api/graph/service-topology` |
+
+Threshold configurable via `leankg.yaml` `web.stats_threshold` (default 2000).
+
 ---
 
 ## 6. Security Considerations
 
-### 6.1 Local Security
+### 6.1 Write Tracking Architecture
+
+| Component | Responsibility |
+|----------|----------------|
+| `WriteTracker` | `Arc<AtomicBool>` dirty flag + `Arc<RwLock<Instant>>` last_write_time |
+| `TrackingDb` | Wraps `CozoDb`, intercepts `:put`/`:delete` → sets dirty flag |
+| `MCPServer` | On tool call, checks dirty flag → triggers reindex if needed |
+
+**Key design principles:**
+- Non-blocking writes: dirty flag is atomic, no locks during write operations
+- Lazy reindex: reindex only when MCP tool actually called (not on every write)
+- Zero overhead during reads: dirty flag only affects write operations
+- Configurable: can disable via `auto_index_on_db_write: false`
+
+### 6.2 Datalog String Escaping
+
+All user-provided strings in Datalog queries MUST be escaped using the `escape_datalog` helper function:
+
+```rust
+/// Escape a string value for safe inline Datalog string literals.
+/// CozoDB does not yet support parameterized queries, so we must escape manually.
+fn escape_datalog(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+```
+
+This prevents Datalog injection attacks where malicious string values could break out of string literals and modify query structure.
+
+### 6.2 Local Security
 
 | Concern | Mitigation |
 |---------|------------|
@@ -930,6 +1246,10 @@ mcp:
   enabled: true
   port: 3000
   auth_token: generated
+  auto_index_on_start: true
+  auto_index_threshold_minutes: 5
+  auto_index_on_db_write: true
+  index_on_first_call: true
 
 web:
   enabled: true
@@ -963,9 +1283,110 @@ documentation:
 
 ---
 
-## 10. Future Considerations
+## 10. Knowns-Inspired Enhancements
 
-### 10.1 Phase 2 Features
+LeanKG can learn from [Knowns](https://github.com/knowns-dev/knowns) to become a more complete AI context layer.
+
+### 10.1 Hybrid Search with Reciprocal Rank Fusion (RRF)
+
+Knowns combines semantic (vector embeddings) + keyword search using RRF with sophisticated scoring.
+
+| Feature | Knowns | LeanKG Current | LeanKG Future |
+|---------|--------|----------------|---------------|
+| Search type | Hybrid semantic + keyword | Keyword + graph traversal | Hybrid both |
+| Ranking | RRF with recency/tag boosts | Graph-based | RRF + graph |
+| Embeddings | Local ONNX models | None | ONNX Runtime |
+
+**Implementation approach:**
+- Add vector embeddings for code symbols using ONNX Runtime (`multilingual-e5-small` or `gte-small`)
+- Store embeddings in SQLite with binary float32 vectors
+- Merge semantic and keyword results using RRF: `score = 60.0 / (rank_semantic + 60.0) + keyword_score`
+- Add keyword density, recency (7-day boost), and tag overlap to ranking
+
+### 10.2 Reference System (`@doc/`, `@task-` syntax)
+
+Knowns has traversable links between tasks, docs, and code via `@doc/path` and `@task-id` syntax.
+
+| Feature | Knowns | LeanKG Current | LeanKG Future |
+|---------|--------|----------------|---------------|
+| Cross-entity links | `@doc/`, `@task-` syntax | `documented_by`, `references` edges | Both |
+| Resolution | AI follows references automatically | Manual graph traversal | Auto-resolution in MCP tools |
+| Link types | Memory, Task, Doc, Code | Code→Doc only | All entity types |
+
+**Implementation approach:**
+- Extend `Document` model with reference syntax parsing
+- Add MCP tools: `mcp_resolve_ref`, `mcp_follow_link`
+- Resolve `@doc/path` to document content, `@task-id` to task details
+- Index reference syntax in searchable content
+
+### 10.3 Local ONNX Embeddings (Zero API Dependency)
+
+Knowns uses local ONNX models for embeddings — no API keys, fully offline.
+
+| Model | Dimensions | Max Tokens | Use Case |
+|-------|-----------|------------|----------|
+| `multilingual-e5-small` | 384 | 512 | Default, multilingual |
+| `gte-small` | 384 | 512 | English-focused |
+| `gte-base` | 768 | 512 | Higher quality English |
+| `nomic-embed-text-v1.5` | 768 | 8192 | Long context |
+
+**Storage:**
+- ONNX runtime: `~/.leankg/lib/`
+- Models: `~/.leankg/models/` (auto-downloaded)
+- Search index: `.leankg/.search/` (per-project SQLite)
+
+### 10.4 Memory Layers
+
+Knowns separates project/session/global memory for persisting decisions across sessions.
+
+| Layer | Knowns | LeanKG Future |
+|-------|--------|---------------|
+| Global | Audit logs, model cache | `.leankg/audit.jsonl` |
+| Project | `.knowns/` files | Already `.leankg/` |
+| Session | In-memory context | Per-MCP-call context |
+
+**LeanKG current state:**
+- `BusinessLogic` annotations are project-level persistent context
+- No session/global layers yet
+- Future: Add session memory for AI conversation context
+
+### 10.5 AST-Enriched Searchable Content
+
+Knowns extracts symbols with signatures and enriches searchable content with dependency relationships.
+
+**Knowns approach:**
+```go
+type CodeSymbol struct {
+    Name      string
+    Kind      string  // function/method/class/interface/file
+    DocPath   string
+    Signature string
+    Content   string  // source code
+}
+// Content enrichment: "calls: foo, bar, implements: MyInterface"
+```
+
+**LeanKG current:** `metadata` JSON field stores signature, but not relationship context
+**LeanKG future:** Append relationship metadata to indexed content for better search
+
+### 10.6 Deeper MCP Tool Surface
+
+Knowns MCP tools: tasks, docs, search, code, memory, validation
+
+| Category | Knowns Tools | LeanKG Tools | Gap |
+|----------|-------------|--------------|-----|
+| Tasks | `tasks_*`, `create_task` | None | Memory/task tracking |
+| Docs | `doc_*`, `get_doc` | `get_doc_*` | Parity |
+| Search | `search`, `retrieve` | `search_code` | Hybrid search |
+| Memory | `memory_*`, `remember` | None | Session context |
+| Code | `code_*`, `index_code` | Many | Parity |
+| Validation | `validate_*` | None | Code quality |
+
+---
+
+## 11. Future Considerations
+
+### 11.1 Phase 2 Features
 
 - Pipeline information extraction (US-09)
   - Pipeline Detector: auto-detect CI/CD config files by path convention
@@ -1002,18 +1423,27 @@ documentation:
 - Additional language support (Rust, Java, C#)
 - Incremental indexing optimization
 
-### 10.2 Phase 3 Features
+### 11.2 Phase 3 Features
 
 - Vector embeddings cho semantic search
 - Cloud sync option
 - Team features (shared knowledge graphs)
 - Plugin system
 
+### 11.3 Knowns-Inspired Features (Future)
+
+- [ ] Hybrid search with RRF
+- [ ] Reference system (`@doc/`, `@task-`)
+- [ ] Local ONNX embeddings
+- [ ] Memory layers (project/session/global)
+- [ ] AST-enriched searchable content
+- [ ] Expanded MCP tool surface (tasks, memory, validation)
+
 ---
 
-## 11. Dependencies
+## 13. Dependencies
 
-### 11.1 Direct Dependencies (Rust + CozoDB)
+### 13.1 Direct Dependencies (Rust + CozoDB)
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
@@ -1025,7 +1455,7 @@ documentation:
 | tokio | 1 | Async runtime |
 | serde | 1 | Serialization |
 
-### 11.2 Build Dependencies
+### 13.2 Build Dependencies
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
@@ -1034,9 +1464,9 @@ documentation:
 
 ---
 
-## 12. Appendix
+## 14. Appendix
 
-### 12.1 Glossary
+### 14.1 Glossary
 
 | Term | Definition |
 |------|-------------|
@@ -1060,7 +1490,7 @@ documentation:
 | Traceability | Chain linking requirements -> documentation -> code elements |
 | Qualified Name Normalizer | Component that converts bare function names to qualified names for accurate matching |
 
-### 12.2 References
+### 14.2 References
 
 - C4 Model: https://c4model.com/
 - CozoDB: https://github.com/cozodb/cozo (Embedded relational-graph database with Datalog queries)

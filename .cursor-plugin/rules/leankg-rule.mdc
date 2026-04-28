@@ -1,0 +1,45 @@
+---
+description: LeanKG is the DEFAULT search for code navigation and logic finding
+globs: '**'
+trigger: >
+  ALWAYS use LeanKG for code search when:
+  - "where is", "find", "locate", "search for"
+  - "how does", "what is", "explain", "show me"
+  - "who calls", "what calls", "who uses", "imports"
+  - "function", "method", "class", "struct", "interface"
+  - "implementation", "definition", "file containing"
+  - "impact", "depends on", "what breaks"
+  - "debug", "trace", "understand flow"
+  - "review code", "check implementation"
+priority: 10
+---
+
+# LeanKG Mandatory Rule
+
+## MANDATORY 4-Tier Search Fallback Chain
+
+```
+Tier 1: LeanKG MCP (mcp_status → search_code / find_function / query_file)
+Tier 2: leankg CLI (leankg query "X" --kind name)
+Tier 3: rtk (rtk grep "X" --path .)
+Tier 4: grep/rg (LAST RESORT)
+```
+
+## LeanKG MCP Tools
+
+1. `mcp_status` - Check readiness first
+2. `search_code("X")` - Find by name/type
+3. `find_function("X")` - Function definitions
+4. `query_file("*X*")` - Files by name
+5. `get_impact_radius(file)` - Change impact
+6. `get_context(file)` - Read content
+7. `get_dependencies(file)` - Imports
+8. `get_dependents(file)` - Reverse deps
+9. `get_callers("func")` - Who calls
+10. `get_call_graph("func")` - Full graph
+
+## ABSOLUTE BANS
+
+- NEVER skip to grep when LeanKG available
+- NEVER use Glob before LeanKG for code
+- ONLY exception: non-code files (config, docs)

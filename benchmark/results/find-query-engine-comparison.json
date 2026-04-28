@@ -1,0 +1,63 @@
+{
+  "overhead": {
+    "time_delta": 0.0,
+    "token_delta": -3149,
+    "token_delta_percent": 0.0
+  },
+  "task": "find-query-engine",
+  "with_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 16952,
+    "context": {
+      "files_referenced": [
+        "src/graph/query.rs",
+        "src/mcp/handler.rs"
+      ]
+    },
+    "input_tokens": 1279,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 18494
+  },
+  "without_leankg": {
+    "build_time_seconds": 0.0,
+    "cached_tokens": 0,
+    "context": {
+      "files_referenced": [
+        "src/main.rs",
+        "src/victim.rs",
+        "src/bystander.rs",
+        "src/mcp/tools.rs",
+        "src/api/auth.rs",
+        "src/api/mod.rs",
+        "src/lib.rs",
+        "src/a.rs",
+        "src/x.rs",
+        "src/handlers/mod.rs",
+        "src/file1.rs",
+        "src/file2.rs",
+        "src/orchestrator/mod.rs",
+        "src/mcp/handler.rs",
+        "src/graph/query.rs",
+        "src/graph/nl_query.rs",
+        "src/graph/cache.rs",
+        "src/doc/wiki.rs",
+        "src/compress/response.rs",
+        "tests/mcp_tests.rs",
+        "tests/batched_insert_tests.rs",
+        "tests/test_diagnose_empty4.rs",
+        "tests/test_tools.rs",
+        "tests/test_diagnose_empty.rs",
+        "tests/test_diagnose_empty2.rs",
+        "tests/test_all_tools_return_data.rs",
+        "tests/mcp_tools_full_tests.rs",
+        "tests/integration.rs",
+        "tests/graph_cache_tests.rs"
+      ]
+    },
+    "input_tokens": 21472,
+    "success": true,
+    "token_percent": 0.0,
+    "total_tokens": 21643
+  }
+}

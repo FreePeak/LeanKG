@@ -1,27 +1,180 @@
+use crate::compress::{FileReader, ReadMode, ResponseCompressor};
+use crate::db::models::ContextMetric;
 use crate::db::models::{CodeElement, Relationship};
+use crate::db::record_metric;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
+use crate::orchestrator::QueryOrchestrator;
 use serde_json::{json, Value};
+use std::process::Command;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+const INSTRUCTIONS_CONTENT: &str = r#"# LeanKG Tools - Usage Instructions
+
+## For AI Coding Agents (Cursor, OpenCode, etc.)
+
+Use LeanKG tools **first** before performing any codebase search, navigation, or impact analysis.
+
+---
+
+## When to Use Each Tool
+
+### Code Discovery & Search
+
+| Task | Use This Tool |
+|------|--------------|
+| Find a file by name | `query_file` |
+| Find a function definition | `find_function` |
+| Search code by name/type | `search_code` |
+| Get full codebase structure | `get_code_tree` |
+
+### Dependency Analysis
+
+| Task | Use This Tool |
+|------|--------------|
+| Get direct imports of a file | `get_dependencies` |
+| Get files that import/use a file | `get_dependents` |
+| Get function call chain (full depth) | `get_call_graph` |
+| Get direct callers (who calls this) | `get_callers` |
+| Calculate what breaks if file changes | `get_impact_radius` |
+
+### Review & Context
+
+| Task | Use This Tool |
+|------|--------------|
+| Generate focused review context | `get_review_context` |
+| Get minimal AI context (token-optimized) | `get_context` |
+| Find oversized functions | `find_large_functions` |
+
+### Testing & Documentation
+
+| Task | Use This Tool |
+|------|--------------|
+| Get test coverage for a function | `get_tested_by` |
+| Get docs that reference a file | `get_doc_for_file` |
+| Get code elements in a doc | `get_files_for_doc` |
+| Get doc directory structure | `get_doc_structure` |
+| Find docs related to a change | `find_related_docs` |
+
+### Traceability & Requirements
+
+| Task | Use This Tool |
+|------|--------------|
+| Get full traceability chain | `get_traceability` |
+| Find code for a requirement | `search_by_requirement` |
+| Get doc tree with hierarchy | `get_doc_tree` |
+
+---
+
+## Decision Flow
+
+```
+User asks about codebase →
+  First check if LeanKG is initialized (mcp_status) →
+    If not, use mcp_init first (CRITICAL: pass the absolute path to the project's .leankg directory, e.g. path: "/full/path/to/project/.leankg") →
+    Then use appropriate LeanKG tool →
+      NEVER fall back to naive grep/search until LeanKG is exhausted
+```
+
+---
+
+## Example Usage Patterns
+
+**"Where is the auth function?"**
+```
+search_code("auth") or find_function("auth")
+```
+
+**"What tests cover this file?"**
+```
+get_tested_by({ file: "src/auth.rs" })
+```
+
+**"What would break if I change this file?"**
+```
+get_impact_radius({ file: "src/main.rs", depth: 3 })
+```
+
+**"How does X work end-to-end?"**
+```
+get_call_graph({ function: "src/auth.rs::authenticate" })
+```
+
+---
+
+## Important Notes
+
+- LeanKG maintains a **knowledge graph** of your codebase - use it instead of text search
+- `get_impact_radius` calculates blast radius - always check before making changes
+- `get_context` returns token-optimized output - use it for AI prompts
+- Tools are pre-indexed and **much faster** than runtime grep/search
+"#;
 
 pub struct ToolHandler {
     graph_engine: GraphEngine,
+    db_path: std::path::PathBuf,
+    orchestrator: QueryOrchestrator,
+    session_cache: std::sync::Arc<parking_lot::RwLock<crate::compress::SessionCache>>,
 }
 
 impl ToolHandler {
-    pub fn new(graph_engine: GraphEngine) -> Self {
-        Self { graph_engine }
+    pub fn new(graph_engine: GraphEngine, db_path: std::path::PathBuf) -> Self {
+        Self {
+            graph_engine: graph_engine.clone(),
+            db_path,
+            orchestrator: QueryOrchestrator::with_persistence(graph_engine),
+            session_cache: std::sync::Arc::new(parking_lot::RwLock::new(
+                crate::compress::SessionCache::new(),
+            )),
+        }
+    }
+
+    fn maybe_compress(&self, response: Value, args: &Value, tool_name: &str) -> Value {
+        let compress = args["compress_response"].as_bool().unwrap_or(false);
+        if !compress {
+            return response;
+        }
+
+        let compressor = ResponseCompressor::new();
+        match tool_name {
+            "get_impact_radius" => compressor.compress_impact_radius(&response),
+            "get_call_graph" => compressor.compress_call_graph(&response),
+            "search_code" => compressor.compress_search_code(&response),
+            "search_annotations" => compressor.compress_search_annotations(&response),
+            "get_nav_graph" => compressor.compress_nav_graph(&response),
+            "get_dependencies" => compressor.compress_dependencies(&response),
+            "get_dependents" => compressor.compress_dependents(&response),
+            "get_context" => compressor.compress_context(&response),
+            _ => response,
+        }
     }
 
     pub async fn execute_tool(&self, tool_name: &str, arguments: &Value) -> Result<Value, String> {
-        match tool_name {
+        let start_time = Instant::now();
+        let project_path = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let result = match tool_name {
+            "mcp_init" => self.mcp_init(arguments),
+            "mcp_index" => self.mcp_index(arguments).await,
+            "mcp_index_docs" => self.mcp_index_docs(arguments),
+            "mcp_install" => self.mcp_install(arguments),
+            "mcp_status" => self.mcp_status(arguments),
+            "mcp_impact" => self.mcp_impact(arguments),
+            "detect_changes" => self.detect_changes(arguments),
             "query_file" => self.query_file(arguments),
             "get_dependencies" => self.get_dependencies(arguments),
             "get_dependents" => self.get_dependents(arguments),
             "get_impact_radius" => self.get_impact_radius(arguments),
             "get_review_context" => self.get_review_context(arguments),
             "get_context" => self.get_context(arguments),
+            "ctx_read" => self.ctx_read(arguments),
+            "orchestrate" => self.orchestrate_tool(arguments),
             "find_function" => self.find_function(arguments),
+            "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
+            "search_annotations" => self.search_annotations(arguments),
             "generate_doc" => self.generate_doc(arguments),
             "find_large_functions" => self.find_large_functions(arguments),
             "get_tested_by" => self.get_tested_by(arguments),
@@ -33,14 +186,682 @@ impl ToolHandler {
             "get_doc_tree" => self.get_doc_tree(arguments),
             "get_code_tree" => self.get_code_tree(arguments),
             "find_related_docs" => self.find_related_docs(arguments),
+            "mcp_hello" => self.mcp_hello(arguments),
+            "get_clusters" => self.get_clusters(arguments),
+            "get_cluster_context" => self.get_cluster_context(arguments),
+            "run_raw_query" => self.run_raw_query(arguments),
+            "get_service_graph" => self.get_service_graph(arguments),
+            "get_nav_graph" => self.get_nav_graph(arguments),
+            "find_route" => self.find_route(arguments),
+            "get_screen_args" => self.get_screen_args(arguments),
+            "get_nav_callers" => self.get_nav_callers(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
+        };
+
+        let execution_time_ms = start_time.elapsed().as_millis() as i32;
+        let input_tokens = arguments.to_string().len() as i32 / 4;
+
+        let (output_tokens, output_elements, baseline_tokens, baseline_lines, success) =
+            match &result {
+                Ok(response) => {
+                    let response_str = response.to_string();
+                    let output_tok = response_str.len() as i32 / 4;
+                    let out_elem = Self::count_response_elements(response);
+                    let (base_tok, base_lines) = self.estimate_baseline(tool_name, arguments);
+                    (output_tok, out_elem, base_tok, base_lines, true)
+                }
+                Err(_) => (0, 0, 0, 0, false),
+            };
+
+        let tokens_saved = baseline_tokens - output_tokens;
+        let savings_percent = if baseline_tokens > 0 {
+            (tokens_saved as f64 / baseline_tokens as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let metric = ContextMetric {
+            tool_name: tool_name.to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            project_path,
+            input_tokens,
+            output_tokens,
+            output_elements,
+            execution_time_ms,
+            baseline_tokens,
+            baseline_lines_scanned: baseline_lines,
+            tokens_saved,
+            savings_percent,
+            correct_elements: None,
+            total_expected: None,
+            f1_score: None,
+            query_pattern: arguments["query"].as_str().map(String::from),
+            query_file: arguments["file"].as_str().map(String::from),
+            query_depth: arguments["depth"].as_i64().map(|d| d as i32),
+            success,
+            is_deleted: false,
+        };
+
+        if let Err(e) = record_metric(self.graph_engine.db(), &metric) {
+            eprintln!("Failed to record metric: {}", e);
         }
+
+        result
+    }
+
+    fn estimate_baseline(&self, tool_name: &str, args: &Value) -> (i32, i32) {
+        let src_path = "./src";
+        match tool_name {
+            "search_code" => {
+                if let Some(query) = args["query"].as_str() {
+                    let output = Command::new("grep")
+                        .args(["-rn", "--include=*.rs", query, src_path])
+                        .output();
+                    if let Ok(out) = output {
+                        let lines = String::from_utf8_lossy(&out.stdout);
+                        let line_count = lines.lines().count();
+                        return (line_count as i32 * 4, line_count as i32);
+                    }
+                }
+                (0, 0)
+            }
+            "find_function" => {
+                if let Some(name) = args["name"].as_str() {
+                    let output = Command::new("grep")
+                        .args(["-rn", "--include=*.rs", name, src_path])
+                        .output();
+                    if let Ok(out) = output {
+                        let lines = String::from_utf8_lossy(&out.stdout);
+                        let line_count = lines.lines().count();
+                        return (line_count as i32 * 4, line_count as i32);
+                    }
+                }
+                (0, 0)
+            }
+            "query_file" => {
+                if let Some(pattern) = args["pattern"].as_str() {
+                    let output = Command::new("find")
+                        .args([src_path, "-name", pattern])
+                        .output();
+                    if let Ok(out) = output {
+                        let files = String::from_utf8_lossy(&out.stdout);
+                        let file_count = files.lines().count();
+                        return (file_count as i32 * 50, file_count as i32);
+                    }
+                }
+                (0, 0)
+            }
+            "get_dependencies" => {
+                if let Some(file) = args["file"].as_str() {
+                    let output = Command::new("grep")
+                        .args(["-n", "import\\|use\\|require", file])
+                        .output();
+                    if let Ok(out) = output {
+                        let lines = String::from_utf8_lossy(&out.stdout);
+                        let line_count = lines.lines().count();
+                        return (line_count as i32 * 4, line_count as i32);
+                    }
+                }
+                (0, 0)
+            }
+            "get_dependents" => {
+                if let Some(file) = args["file"].as_str() {
+                    let output = Command::new("grep")
+                        .args(["-rn", &format!("import.*{}", file), src_path])
+                        .output();
+                    if let Ok(out) = output {
+                        let lines = String::from_utf8_lossy(&out.stdout);
+                        let line_count = lines.lines().count();
+                        return (line_count as i32 * 4, line_count as i32);
+                    }
+                }
+                (0, 0)
+            }
+            "get_context" => {
+                if let Some(file) = args["file"].as_str() {
+                    if let Ok(content) = std::fs::read_to_string(file) {
+                        let chars = content.len() as i32;
+                        return (chars, chars / 80);
+                    }
+                }
+                (0, 0)
+            }
+            "get_impact_radius" => {
+                let depth = args["depth"].as_u64().unwrap_or(3) as i32;
+                (depth * 1000, depth * 100)
+            }
+            _ => (0, 0),
+        }
+    }
+
+    fn count_response_elements(response: &Value) -> i32 {
+        match response {
+            Value::Array(arr) => arr.len() as i32,
+            Value::Object(obj) => {
+                let mut count = 0;
+                for (_, v) in obj {
+                    count += Self::count_response_elements(v);
+                }
+                count
+            }
+            _ => 1,
+        }
+    }
+
+    fn ctx_read(&self, args: &Value) -> Result<Value, String> {
+        let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
+        let mode_str = args["mode"].as_str().unwrap_or("adaptive");
+        let lines_spec = args["lines"].as_str();
+
+        let requested_mode = ReadMode::from_str(mode_str)
+            .ok_or_else(|| format!("Invalid mode: {}. Valid modes: adaptive, full, map, signatures, diff, aggressive, entropy, lines", mode_str))?;
+
+        let mut reader = FileReader::new(self.session_cache.clone());
+        let fresh = args["fresh"].as_bool().unwrap_or(false);
+
+        let result = if requested_mode == ReadMode::Adaptive {
+            let content = std::fs::read_to_string(file)
+                .map_err(|e| format!("Failed to read file {}: {}", file, e))?;
+            let lines: Vec<&str> = content.lines().collect();
+            let lines_count = lines.len();
+            let file_size = content.len();
+
+            let selected_mode = ReadMode::select_adaptive(file, file_size, lines_count);
+            reader
+                .read(file, selected_mode, lines_spec, fresh)
+                .map_err(|e| e.to_string())?
+        } else {
+            reader
+                .read(file, requested_mode, lines_spec, fresh)
+                .map_err(|e| e.to_string())?
+        };
+
+        let file_name = std::path::Path::new(file)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+
+        let header = format!(
+            "{} [{}L] mode={}",
+            file_name, result.output_lines, result.mode
+        );
+        let footer = format!(
+            "---\noriginal: {} tokens | sent: {} tokens ({:.1}% saved)",
+            result.total_tokens, result.tokens, result.savings_percent
+        );
+
+        let final_string = format!("{}\n{}\n{}", header, result.content, footer);
+        Ok(Value::String(final_string))
+    }
+
+    fn orchestrate_tool(&self, args: &Value) -> Result<Value, String> {
+        let intent = args["intent"]
+            .as_str()
+            .ok_or("Missing 'intent' parameter")?;
+        let file = args["file"].as_str();
+        let mode = args["mode"].as_str();
+        let fresh = args["fresh"].as_bool().unwrap_or(false);
+
+        let result = self.orchestrator.orchestrate(intent, file, mode, fresh)?;
+
+        Ok(json!({
+            "intent": result.intent,
+            "query_type": result.query_type,
+            "content": result.content,
+            "mode": result.mode,
+            "tokens": result.tokens,
+            "total_tokens": result.total_tokens,
+            "savings_percent": result.savings_percent,
+            "is_cached": result.is_cached,
+            "cache_key": result.cache_key,
+            "elements_count": result.elements_count
+        }))
+    }
+
+    fn mcp_init(&self, args: &Value) -> Result<Value, String> {
+        let path = args["path"].as_str().unwrap_or(".leankg");
+
+        std::fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))?;
+
+        let config = crate::config::ProjectConfig::default();
+        let config_yaml = serde_yaml::to_string(&config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)
+            .map_err(|e| format!("Failed to write config: {}", e))?;
+
+        Ok(json!({
+            "success": true,
+            "message": format!("Initialized LeanKG project at {}", path),
+            "path": path
+        }))
+    }
+
+    fn mcp_install(&self, args: &Value) -> Result<Value, String> {
+        let mcp_config_path = args["mcp_config_path"].as_str().unwrap_or(".mcp.json");
+
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get current exe path: {}", e))?;
+
+        let mcp_config = serde_json::json!({
+            "mcpServers": {
+                "leankg": {
+                    "command": exe_path.to_string_lossy().as_ref(),
+                    "args": ["mcp-stdio", "--watch"]
+                }
+            }
+        });
+
+        std::fs::write(
+            mcp_config_path,
+            serde_json::to_string_pretty(&mcp_config).unwrap(),
+        )
+        .map_err(|e| format!("Failed to write .mcp.json: {}", e))?;
+
+        let instructions_dir = "instructions";
+        let instructions_path = format!("{}/leankg-tools.md", instructions_dir);
+        std::fs::create_dir_all(instructions_dir)
+            .map_err(|e| format!("Failed to create instructions directory: {}", e))?;
+        std::fs::write(&instructions_path, INSTRUCTIONS_CONTENT)
+            .map_err(|e| format!("Failed to write instructions: {}", e))?;
+
+        let opencode_config_path = ".opencode.json";
+        let opencode_config = serde_json::json!({
+            "$schema": "https://opencode.ai/config.json",
+            "plugins": ["leankg"],
+            "instructions": [instructions_path]
+        });
+
+        std::fs::write(
+            opencode_config_path,
+            serde_json::to_string_pretty(&opencode_config).unwrap(),
+        )
+        .map_err(|e| format!("Failed to write opencode.json: {}", e))?;
+
+        Ok(json!({
+            "success": true,
+            "message": format!("Created MCP config at {}, opencode.json, and instructions at {}. Copy instructions to ~/.config/opencode/ for AI agents to auto-load them.", mcp_config_path, instructions_path),
+            "mcp_path": mcp_config_path,
+            "opencode_path": opencode_config_path,
+            "instructions_path": instructions_path
+        }))
+    }
+
+    async fn mcp_index(&self, args: &Value) -> Result<Value, String> {
+        let path = args["path"].as_str().unwrap_or(".");
+        let _incremental = args["incremental"].as_bool().unwrap_or(false);
+        let lang = args["lang"].as_str();
+        let exclude = args["exclude"].as_str();
+
+        let db_path = self.db_path.clone();
+        tokio::fs::create_dir_all(&db_path)
+            .await
+            .map_err(|e| format!("Failed to create .leankg: {}", e))?;
+
+        let exclude_patterns: Vec<String> = exclude
+            .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
+
+        let files = crate::indexer::find_files_sync(path)
+            .map_err(|e| format!("Find files error: {}", e))?;
+
+        let mut indexed = 0;
+        let mut skipped = 0;
+
+        for file_path in &files {
+            if let Some(lang_filter) = lang {
+                let allowed_langs: Vec<&str> = lang_filter.split(',').map(|s| s.trim()).collect();
+                if let Some(ext) = std::path::Path::new(file_path).extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    let lang_map: std::collections::HashMap<&str, &str> = [
+                        ("go", "go"),
+                        ("rs", "rust"),
+                        ("ts", "typescript"),
+                        ("js", "javascript"),
+                        ("py", "python"),
+                    ]
+                    .iter()
+                    .cloned()
+                    .collect();
+                    if let Some(lang_name) = lang_map.get(ext_str.as_str()) {
+                        if !allowed_langs.iter().any(|l| l.to_lowercase() == *lang_name) {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if !exclude_patterns.is_empty()
+                && exclude_patterns.iter().any(|pat| file_path.contains(pat))
+            {
+                continue;
+            }
+
+            match crate::indexer::index_file_sync(
+                &self.graph_engine,
+                &mut parser_manager,
+                file_path,
+            ) {
+                Ok(_) => indexed += 1,
+                Err(_) => skipped += 1,
+            }
+        }
+
+        let resolved = self.graph_engine.resolve_call_edges().unwrap_or(0);
+
+        Ok(json!({
+            "success": true,
+            "message": format!("Indexed {} files, {} skipped, {} call edges resolved", indexed, skipped, resolved),
+            "indexed": indexed,
+            "skipped": skipped,
+            "resolved": resolved,
+            "path": path
+        }))
+    }
+
+    fn mcp_index_docs(&self, args: &Value) -> Result<Value, String> {
+        let docs_path = args["path"].as_str().unwrap_or("./docs");
+        let path = std::path::Path::new(docs_path);
+
+        if !path.exists() {
+            return Err(format!("Docs path does not exist: {}", docs_path));
+        }
+
+        let result = crate::doc_indexer::index_docs_directory(path, &self.graph_engine)
+            .map_err(|e| e.to_string())?;
+
+        Ok(json!({
+            "success": true,
+            "documents": result.documents.len(),
+            "sections": result.sections.len(),
+            "relationships": result.relationships.len(),
+            "path": docs_path,
+            "message": format!(
+                "Indexed {} documents, {} sections, {} relationships",
+                result.documents.len(),
+                result.sections.len(),
+                result.relationships.len()
+            )
+        }))
+    }
+
+    fn mcp_status(&self, _args: &Value) -> Result<Value, String> {
+        let db_path = &self.db_path;
+
+        if !db_path.exists() {
+            return Ok(json!({
+                "initialized": false,
+                "message": "LeanKG not initialized. Run mcp_init first."
+            }));
+        }
+
+        let db = self.graph_engine.db();
+
+        // Verify database is actually initialized with proper tables
+        let tables_exist = match self.graph_engine.all_elements() {
+            Ok(elements) => !elements.is_empty(),
+            Err(_) => false,
+        };
+
+        if !tables_exist {
+            return Ok(json!({
+                "initialized": false,
+                "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
+                "database_exists": false
+            }));
+        }
+
+        let elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let relationships = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+        let annotations = crate::db::all_business_logic(db).map_err(|e| e.to_string())?;
+
+        let unique_files: std::collections::HashSet<_> =
+            elements.iter().map(|e| e.file_path.clone()).collect();
+        let files = unique_files.len();
+        let functions = elements
+            .iter()
+            .filter(|e| e.element_type == "function")
+            .count();
+        let classes = elements
+            .iter()
+            .filter(|e| e.element_type == "class" || e.element_type == "struct")
+            .count();
+
+        // Check if index is actually populated
+        let is_empty = elements.is_empty() && relationships.is_empty();
+
+        if is_empty {
+            return Ok(json!({
+                "initialized": true,
+                "index_populated": false,
+                "message": "Database exists but is empty. Run mcp_index to index codebase.",
+                "database": db_path.to_string_lossy()
+            }));
+        }
+
+        Ok(json!({
+            "initialized": true,
+            "index_populated": true,
+            "database": db_path.to_string_lossy(),
+            "elements": elements.len(),
+            "relationships": relationships.len(),
+            "files": files,
+            "functions": functions,
+            "classes": classes,
+            "annotations": annotations.len()
+        }))
+    }
+
+    fn mcp_hello(&self, _args: &Value) -> Result<Value, String> {
+        Ok(json!({
+            "message": "Hello, World!"
+        }))
+    }
+
+    fn mcp_impact(&self, args: &Value) -> Result<Value, String> {
+        let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
+        let depth = args["depth"].as_u64().unwrap_or(3) as u32;
+
+        let analyzer = crate::graph::ImpactAnalyzer::new(&self.graph_engine);
+
+        let result = analyzer
+            .calculate_impact_radius(file, depth)
+            .map_err(|e| e.to_string())?;
+
+        Ok(json!({
+            "start_file": result.start_file,
+            "max_depth": result.max_depth,
+            "affected_count": result.affected_elements.len(),
+            "elements": result.affected_elements.iter().map(|e| json!({
+                "qualified_name": e.qualified_name,
+                "name": e.name,
+                "type": e.element_type,
+                "file": e.file_path
+            })).collect::<Vec<_>>()
+        }))
+    }
+
+    fn detect_changes(&self, args: &Value) -> Result<Value, String> {
+        let scope = args["scope"].as_str().unwrap_or("all");
+        let min_confidence = args["min_confidence"].as_f64().unwrap_or(0.0);
+
+        let changed_files = match scope {
+            "staged" => {
+                crate::indexer::GitAnalyzer::get_staged_files().unwrap_or_else(|_| Vec::new())
+            }
+            "unstaged" => {
+                let changed = crate::indexer::GitAnalyzer::get_changed_files_since_last_commit()
+                    .unwrap_or_else(|_| crate::indexer::GitChangedFiles {
+                        modified: Vec::new(),
+                        added: Vec::new(),
+                        deleted: Vec::new(),
+                    });
+                let mut files = changed.modified;
+                files.extend(changed.added);
+                files.extend(changed.deleted);
+                files
+            }
+            _ => {
+                let changed = crate::indexer::GitAnalyzer::get_changed_files_since_last_commit()
+                    .unwrap_or_else(|_| crate::indexer::GitChangedFiles {
+                        modified: Vec::new(),
+                        added: Vec::new(),
+                        deleted: Vec::new(),
+                    });
+                let mut files = changed.modified;
+                files.extend(changed.added);
+                files.extend(changed.deleted);
+                files.extend(
+                    crate::indexer::GitAnalyzer::get_untracked_files()
+                        .unwrap_or_else(|_| Vec::new()),
+                );
+                files
+            }
+        };
+
+        let mut changed_symbols = Vec::new();
+        let mut affected_symbols = Vec::new();
+        let mut risk_reasons = Vec::new();
+        let mut max_dependents_at_depth1 = 0;
+        let mut has_public_api_change = false;
+
+        let all_elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let all_relationships = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+
+        for file in &changed_files {
+            let file_elements: Vec<_> = all_elements
+                .iter()
+                .filter(|e| &e.file_path == file)
+                .collect();
+
+            for elem in file_elements {
+                changed_symbols.push(json!({
+                    "qualified_name": elem.qualified_name,
+                    "name": elem.name,
+                    "type": elem.element_type,
+                    "file": elem.file_path
+                }));
+
+                let dependents: Vec<_> = all_relationships
+                    .iter()
+                    .filter(|r| r.target_qualified == elem.qualified_name && r.rel_type == "calls")
+                    .collect();
+
+                let depth1_count = dependents.len();
+                max_dependents_at_depth1 = max_dependents_at_depth1.max(depth1_count);
+
+                if depth1_count >= 10 {
+                    risk_reasons.push(format!(
+                        "{} has {} direct callers (>=10)",
+                        elem.name, depth1_count
+                    ));
+                } else if depth1_count >= 5 {
+                    risk_reasons.push(format!(
+                        "{} has {} direct callers (>=5)",
+                        elem.name, depth1_count
+                    ));
+                }
+
+                if elem.element_type == "function"
+                    && (elem.name.starts_with("pub_")
+                        || elem.name.starts_with("export_")
+                        || elem.name == "main")
+                {
+                    has_public_api_change = true;
+                    risk_reasons.push(format!("Public API change detected: {}", elem.name));
+                }
+            }
+        }
+
+        let min_confidence_filter = if min_confidence > 0.0 {
+            min_confidence
+        } else {
+            0.0
+        };
+
+        for file in &changed_files {
+            let dependents = crate::indexer::find_dependents(
+                file,
+                &all_relationships
+                    .iter()
+                    .map(|r| (r.source_qualified.clone(), r.target_qualified.clone()))
+                    .collect::<Vec<_>>(),
+            );
+
+            for dep_file in dependents {
+                if let Ok(Some(elem)) = self.graph_engine.find_element(&dep_file) {
+                    let rels: Vec<_> = all_relationships
+                        .iter()
+                        .filter(|r| {
+                            r.target_qualified == elem.qualified_name && r.rel_type == "calls"
+                        })
+                        .filter(|r| r.confidence >= min_confidence_filter)
+                        .collect();
+
+                    if !rels.is_empty() {
+                        affected_symbols.push(json!({
+                            "qualified_name": elem.qualified_name,
+                            "name": elem.name,
+                            "type": elem.element_type,
+                            "file": elem.file_path,
+                            "confidence": rels.first().map(|r| r.confidence).unwrap_or(1.0)
+                        }));
+                    }
+                }
+            }
+        }
+
+        let risk_level = if max_dependents_at_depth1 >= 10
+            || (has_public_api_change && max_dependents_at_depth1 >= 5)
+        {
+            "critical"
+        } else if max_dependents_at_depth1 >= 5 || has_public_api_change {
+            "high"
+        } else if max_dependents_at_depth1 >= 2 || affected_symbols.len() > 5 {
+            "medium"
+        } else {
+            "low"
+        };
+
+        Ok(json!({
+            "summary": {
+                "changed_files": changed_files.len(),
+                "changed_symbols": changed_symbols.len(),
+                "affected_symbols": affected_symbols.len(),
+                "risk_level": risk_level
+            },
+            "changed_files": changed_files,
+            "changed_symbols": changed_symbols,
+            "affected_symbols": affected_symbols,
+            "risk_reasons": risk_reasons
+        }))
     }
 
     fn query_file(&self, args: &Value) -> Result<Value, String> {
         let pattern = args["pattern"]
             .as_str()
             .ok_or("Missing 'pattern' parameter")?;
+
+        let element_type_filter = args["element_type"].as_str().map(String::from);
 
         let elements = self
             .graph_engine
@@ -49,7 +870,15 @@ impl ToolHandler {
 
         let matches: Vec<_> = elements
             .iter()
-            .filter(|e| e.file_path.contains(pattern) || e.qualified_name.contains(pattern))
+            .filter(|e| {
+                let pattern_match =
+                    e.file_path.contains(pattern) || e.qualified_name.contains(pattern);
+                let type_match = element_type_filter
+                    .as_ref()
+                    .map(|et| &e.element_type == et)
+                    .unwrap_or(true);
+                pattern_match && type_match
+            })
             .take(50)
             .map(|e| {
                 json!({
@@ -68,22 +897,23 @@ impl ToolHandler {
     fn get_dependencies(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
-        let relationships = self
+        let deps = self
             .graph_engine
-            .get_relationships(file)
+            .get_dependencies(file)
             .map_err(|e| e.to_string())?;
 
-        let deps: Vec<_> = relationships
+        let dependencies: Vec<_> = deps
             .iter()
-            .map(|r| {
+            .map(|d| {
                 json!({
-                    "target": r.target_qualified,
-                    "type": r.rel_type
+                    "target": d.target_qualified,
+                    "confidence": d.confidence,
+                    "type": "imports"
                 })
             })
             .collect();
 
-        Ok(json!({ "dependencies": deps }))
+        Ok(json!({ "dependencies": dependencies }))
     }
 
     fn get_dependents(&self, args: &Value) -> Result<Value, String> {
@@ -110,13 +940,14 @@ impl ToolHandler {
     fn get_impact_radius(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
         let depth = args["depth"].as_u64().unwrap_or(3) as u32;
+        let min_confidence = args["min_confidence"].as_f64().unwrap_or(0.0);
 
         let analyzer = ImpactAnalyzer::new(&self.graph_engine);
         let result = analyzer
-            .calculate_impact_radius(file, depth)
+            .calculate_impact_radius_with_confidence(file, depth, min_confidence)
             .map_err(|e| e.to_string())?;
 
-        Ok(json!({
+        let response = json!({
             "start_file": result.start_file,
             "max_depth": result.max_depth,
             "affected": result.affected_elements.len(),
@@ -125,8 +956,19 @@ impl ToolHandler {
                 "name": e.name,
                 "type": e.element_type,
                 "file": e.file_path
+            })).collect::<Vec<_>>(),
+            "elements_with_confidence": result.affected_with_confidence.iter().map(|a| json!({
+                "qualified_name": a.element.qualified_name,
+                "name": a.element.name,
+                "type": a.element.element_type,
+                "file": a.element.file_path,
+                "confidence": a.confidence,
+                "severity": a.severity,
+                "depth": a.depth
             })).collect::<Vec<_>>()
-        }))
+        });
+
+        Ok(self.maybe_compress(response, args, "get_impact_radius"))
     }
 
     fn get_review_context(&self, args: &Value) -> Result<Value, String> {
@@ -174,7 +1016,7 @@ impl ToolHandler {
 
     fn get_context(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
-
+        let signature_only = args["signature_only"].as_bool().unwrap_or(true);
         let max_tokens = args["max_tokens"].as_u64().unwrap_or(4000) as usize;
 
         let result = self
@@ -192,25 +1034,84 @@ impl ToolHandler {
                     crate::graph::ContextPriority::Imported => "imported",
                     crate::graph::ContextPriority::Contained => "contained",
                 };
-                json!({
-                    "qualified_name": elem.qualified_name,
-                    "name": elem.name,
-                    "type": elem.element_type,
-                    "file": elem.file_path,
-                    "line_start": elem.line_start,
-                    "line_end": elem.line_end,
-                    "priority": priority_str,
-                    "token_count": ctx_elem.token_count
-                })
+
+                if signature_only {
+                    let signature = elem
+                        .metadata
+                        .get("signature")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    json!({
+                        "qualified_name": elem.qualified_name,
+                        "name": elem.name,
+                        "type": elem.element_type,
+                        "file": elem.file_path,
+                        "line": elem.line_start,
+                        "signature": signature,
+                        "priority": priority_str,
+                        "token_count": ctx_elem.token_count,
+                        "cluster_id": elem.cluster_id,
+                        "cluster_label": elem.cluster_label
+                    })
+                } else {
+                    json!({
+                        "qualified_name": elem.qualified_name,
+                        "name": elem.name,
+                        "type": elem.element_type,
+                        "file": elem.file_path,
+                        "line_start": elem.line_start,
+                        "line_end": elem.line_end,
+                        "priority": priority_str,
+                        "token_count": ctx_elem.token_count,
+                        "cluster_id": elem.cluster_id,
+                        "cluster_label": elem.cluster_label
+                    })
+                }
             })
             .collect();
 
+        let file_element = self
+            .graph_engine
+            .find_element(file)
+            .map_err(|e| e.to_string())?;
+        let cluster_info = file_element.as_ref().map(|elem| {
+            json!({
+                "id": elem.cluster_id,
+                "label": elem.cluster_label
+            })
+        });
+
+        let dependents_count = file_element
+            .as_ref()
+            .map(|elem| {
+                self.graph_engine
+                    .get_dependents(elem.qualified_name.as_str())
+                    .map(|d| d.len())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
+        let dependencies_count = file_element
+            .as_ref()
+            .map(|elem| {
+                self.graph_engine
+                    .get_dependencies(elem.qualified_name.as_str())
+                    .map(|d| d.len())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
         Ok(json!({
             "file": file,
+            "cluster": cluster_info,
+            "dependents_count": dependents_count,
+            "dependencies_count": dependencies_count,
             "elements": elements_json,
             "total_tokens": result.total_tokens,
             "max_tokens": result.max_tokens,
             "truncated": result.truncated,
+            "signature_only": signature_only,
             "prompt": result.to_prompt()
         }))
     }
@@ -220,12 +1121,12 @@ impl ToolHandler {
 
         let elements = self
             .graph_engine
-            .all_elements()
+            .search_by_name_typed(name, Some("function"), 50)
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements
             .iter()
-            .filter(|e| e.element_type == "function" && e.name.contains(name))
+            .filter(|e| e.name.contains(name))
             .map(|e| {
                 json!({
                     "qualified_name": e.qualified_name,
@@ -240,23 +1141,52 @@ impl ToolHandler {
         Ok(json!({ "functions": matches }))
     }
 
+    fn get_callers(&self, args: &Value) -> Result<Value, String> {
+        let function = args["function"]
+            .as_str()
+            .ok_or("Missing 'function' parameter")?;
+        let file_scope = args["file"].as_str();
+
+        let callers = self
+            .graph_engine
+            .get_callers(function, file_scope)
+            .map_err(|e| e.to_string())?;
+
+        let matches: Vec<_> = callers
+            .iter()
+            .map(|e| {
+                json!({
+                    "name": e.name,
+                    "qualified_name": e.qualified_name,
+                    "file": e.file_path,
+                    "line_start": e.line_start,
+                    "line_end": e.line_end,
+                })
+            })
+            .collect();
+
+        Ok(json!({ "callers": matches }))
+    }
+
     fn get_call_graph(&self, args: &Value) -> Result<Value, String> {
         let function = args["function"]
             .as_str()
             .ok_or("Missing 'function' parameter")?;
+        let depth = args["depth"].as_u64().unwrap_or(2) as u32;
+        let max_results = args["max_results"].as_u64().unwrap_or(30) as usize;
 
-        let relationships = self
+        let call_graph = self
             .graph_engine
-            .get_relationships(function)
+            .get_call_graph_bounded(function, depth, max_results)
             .map_err(|e| e.to_string())?;
 
-        let calls: Vec<_> = relationships
+        let calls: Vec<_> = call_graph
             .iter()
-            .filter(|r| r.rel_type == "calls" || r.rel_type == "imports")
-            .map(|r| {
+            .map(|(src, tgt, d)| {
                 json!({
-                    "target": r.target_qualified,
-                    "type": r.rel_type
+                    "source": src,
+                    "target": tgt,
+                    "depth": d
                 })
             })
             .collect();
@@ -266,33 +1196,101 @@ impl ToolHandler {
 
     fn search_code(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
+        let limit = args["limit"].as_i64().unwrap_or(20).min(50) as usize;
+        let element_type = args["element_type"].as_str();
 
         let elements = self
             .graph_engine
-            .all_elements()
+            .search_by_name_typed(query, element_type, limit)
             .map_err(|e| e.to_string())?;
 
-        let query_lower = query.to_lowercase();
         let matches: Vec<_> = elements
             .iter()
-            .filter(|e| {
-                e.name.to_lowercase().contains(&query_lower)
-                    || e.qualified_name.to_lowercase().contains(&query_lower)
-                    || e.element_type.to_lowercase().contains(&query_lower)
-            })
-            .take(100)
             .map(|e| {
                 json!({
                     "qualified_name": e.qualified_name,
                     "name": e.name,
                     "type": e.element_type,
                     "file": e.file_path,
-                    "line": e.line_start
+                    "line": e.line_start,
+                    "cluster_id": e.cluster_id,
+                    "cluster_label": e.cluster_label
                 })
             })
             .collect();
 
         Ok(json!({ "results": matches }))
+    }
+
+    fn search_annotations(&self, args: &Value) -> Result<Value, String> {
+        let annotation_name = args["annotation_name"]
+            .as_str()
+            .ok_or("Missing 'annotation_name' parameter")?;
+        let target_type = args["target_type"].as_str();
+        let file_pattern = args["file_pattern"].as_str();
+        let limit = args["limit"].as_i64().unwrap_or(20) as usize;
+
+        let all_elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+
+        let all_relationships = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+
+        let element_by_qn: std::collections::HashMap<&str, &CodeElement> = all_elements
+            .iter()
+            .map(|e| (e.qualified_name.as_str(), e))
+            .collect();
+
+        let annotates_by_src: std::collections::HashMap<&str, &Relationship> = all_relationships
+            .iter()
+            .filter(|r| r.rel_type == "annotates")
+            .map(|r| (r.source_qualified.as_str(), r))
+            .collect();
+
+        let annotations = all_elements
+            .iter()
+            .filter(|e| e.element_type == "annotation" && e.name == annotation_name)
+            .filter(|e| file_pattern.is_none_or(|p| e.file_path.contains(p)));
+
+        let results: Vec<_> = annotations
+            .filter_map(|ann| {
+                let target_rel = annotates_by_src.get(ann.qualified_name.as_str())?;
+                let target_elem = element_by_qn.get(target_rel.target_qualified.as_str())?;
+
+                if let Some(tt) = target_type {
+                    let actual_type = ann
+                        .metadata
+                        .get("target_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&target_elem.element_type);
+                    if actual_type != tt && tt != "all" {
+                        return None;
+                    }
+                }
+
+                Some(json!({
+                    "annotation_name": ann.name,
+                    "target_qualified": target_elem.qualified_name,
+                    "target_name": target_elem.name,
+                    "target_type": ann.metadata.get("target_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&target_elem.element_type),
+                    "file_path": ann.file_path,
+                    "line": ann.line_start,
+                    "arguments": ann.metadata.get("arguments").cloned().unwrap_or(json!({}))
+                }))
+            })
+            .take(limit)
+            .collect();
+
+        Ok(json!({
+            "annotations": results,
+            "count": results.len()
+        }))
     }
 
     fn generate_doc(&self, args: &Value) -> Result<Value, String> {
@@ -382,7 +1380,7 @@ impl ToolHandler {
             .filter(|r| r.rel_type == "documented_by")
             .map(|r| {
                 json!({
-                    "doc": r.source_qualified,
+                    "doc": r.target_qualified,
                     "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or("")
                 })
             })
@@ -570,10 +1568,16 @@ impl ToolHandler {
             .all_elements()
             .map_err(|e| e.to_string())?;
 
-        let mut tree = serde_json::Map::new();
+        // Group elements by file, keeping file_path with each group
+        let mut files_map: std::collections::BTreeMap<String, (String, Vec<Value>)> =
+            std::collections::BTreeMap::new();
 
         for elem in &elements {
-            if elem.element_type == "file" || elem.qualified_name.contains("::") {
+            let is_code_element = matches!(
+                elem.element_type.as_str(),
+                "function" | "struct" | "class" | "module" | "interface" | "enum" | "trait"
+            );
+            if !is_code_element {
                 continue;
             }
 
@@ -584,34 +1588,32 @@ impl ToolHandler {
 
             let file_name = parts.last().unwrap_or(&"");
 
-            if !tree.contains_key(*file_name) {
-                tree.insert(
-                    file_name.to_string(),
-                    json!({
-                        "file_path": elem.file_path,
-                        "elements": Vec::<Value>::new()
-                    }),
-                );
-            }
+            let entry = files_map
+                .entry(file_name.to_string())
+                .or_insert_with(|| (elem.file_path.clone(), Vec::new()));
 
-            if let Some(file_obj) = tree.get_mut(*file_name) {
-                if let Some(obj) = file_obj.as_object_mut() {
-                    if let Some(elems) = obj.get_mut("elements") {
-                        if let Some(arr) = elems.as_array_mut() {
-                            arr.push(json!({
-                                "qualified_name": elem.qualified_name,
-                                "name": elem.name,
-                                "type": elem.element_type,
-                                "line_start": elem.line_start,
-                                "line_end": elem.line_end
-                            }));
-                        }
-                    }
-                }
-            }
+            entry.1.push(json!({
+                "qualified_name": elem.qualified_name,
+                "name": elem.name,
+                "type": elem.element_type,
+                "line_start": elem.line_start,
+                "line_end": elem.line_end
+            }));
         }
 
-        Ok(json!({ "code_tree": tree }))
+        // Convert to array of {file, file_path, elements} objects for TOON optimization
+        let code_tree: Vec<Value> = files_map
+            .into_iter()
+            .map(|(file, (file_path, elems))| {
+                json!({
+                    "file": file,
+                    "file_path": file_path,
+                    "elements": elems
+                })
+            })
+            .collect();
+
+        Ok(json!({ "code_tree": code_tree }))
     }
 
     fn find_related_docs(&self, args: &Value) -> Result<Value, String> {
@@ -627,7 +1629,7 @@ impl ToolHandler {
             .filter(|r| r.rel_type == "documented_by" || r.rel_type == "references")
             .map(|r| {
                 json!({
-                    "doc": if r.rel_type == "documented_by" { r.source_qualified.clone() } else { r.target_qualified.clone() },
+                    "doc": if r.rel_type == "documented_by" { r.target_qualified.clone() } else { r.source_qualified.clone() },
                     "relationship": r.rel_type,
                     "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or("")
                 })
@@ -635,6 +1637,300 @@ impl ToolHandler {
             .collect();
 
         Ok(json!({ "related_docs": related }))
+    }
+
+    fn get_clusters(&self, _args: &Value) -> Result<Value, String> {
+        use crate::graph::clustering::{get_cluster_stats, Cluster, CommunityDetector};
+
+        let detector = CommunityDetector::new(self.graph_engine.db());
+        let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
+
+        let cluster_list: Vec<Cluster> = clusters.values().cloned().collect();
+        let stats = get_cluster_stats(&clusters);
+
+        Ok(json!({
+            "clusters": cluster_list,
+            "stats": {
+                "total_clusters": stats.total_clusters,
+                "total_members": stats.total_members,
+                "avg_cluster_size": stats.avg_cluster_size
+            }
+        }))
+    }
+
+    fn run_raw_query(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
+
+        let params: std::collections::BTreeMap<String, serde_json::Value> = args
+            .get("params")
+            .and_then(|p| p.as_object())
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+
+        let result = self
+            .graph_engine
+            .run_raw_query(query, params)
+            .map_err(|e| e.to_string())?;
+
+        let value = serde_json::to_value(&result)
+            .map_err(|e| format!("Failed to serialize result: {}", e))?;
+
+        Ok(value)
+    }
+
+    fn get_service_graph(&self, args: &Value) -> Result<Value, String> {
+        let service_name = args["service"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
+
+        let sg = self
+            .graph_engine
+            .get_service_graph(&service_name)
+            .map_err(|e| e.to_string())?;
+
+        serde_json::to_value(&sg).map_err(|e| format!("Failed to serialize service graph: {}", e))
+    }
+
+    fn get_nav_graph(&self, args: &Value) -> Result<Value, String> {
+        let file = args["file"].as_str();
+        let graph_id = args["graph_id"].as_str();
+
+        let all_elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+
+        let nav_elements: Vec<_> = all_elements
+            .iter()
+            .filter(|e| {
+                let is_nav = matches!(
+                    e.element_type.as_str(),
+                    "nav_graph"
+                        | "nav_destination"
+                        | "nav_action"
+                        | "nav_argument"
+                        | "nav_deep_link"
+                );
+                if let Some(f) = file {
+                    is_nav && e.file_path.contains(f)
+                } else {
+                    is_nav
+                }
+            })
+            .filter(|e| {
+                if let Some(gid) = graph_id {
+                    e.qualified_name.contains(gid)
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let nav_rels = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|r| {
+                matches!(
+                    r.rel_type.as_str(),
+                    "navigates_to"
+                        | "nav_action"
+                        | "provides_arg"
+                        | "requires_arg"
+                        | "deep_link"
+                        | "presents"
+                )
+            })
+            .collect::<Vec<_>>();
+
+        Ok(json!({
+            "elements": nav_elements,
+            "relationships": nav_rels
+        }))
+    }
+
+    fn find_route(&self, args: &Value) -> Result<Value, String> {
+        let route = args["route"].as_str().ok_or("Missing 'route' parameter")?;
+
+        let all_elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let all_rels = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+
+        let destinations: Vec<_> = all_elements
+            .iter()
+            .filter(|e| e.element_type == "nav_destination" && e.name.contains(route))
+            .collect();
+
+        let actions: Vec<_> = all_rels
+            .iter()
+            .filter(|r| r.rel_type == "nav_action" && r.target_qualified.contains(route))
+            .collect();
+
+        Ok(json!({
+            "route": route,
+            "destinations": destinations,
+            "actions": actions
+        }))
+    }
+
+    fn get_screen_args(&self, args: &Value) -> Result<Value, String> {
+        let destination = args["destination"]
+            .as_str()
+            .ok_or("Missing 'destination' parameter")?;
+        let limit = args["limit"].as_i64().unwrap_or(20) as usize;
+
+        let all_elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let _all_rels = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+
+        let dest_elem = all_elements
+            .iter()
+            .find(|e| e.element_type == "nav_destination" && e.name.contains(destination));
+
+        let args: Vec<_> = if let Some(d) = dest_elem {
+            all_elements
+                .iter()
+                .filter(|e| {
+                    e.element_type == "nav_argument"
+                        && e.parent_qualified.as_ref() == Some(&d.qualified_name)
+                })
+                .take(limit)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok(json!({
+            "destination": destination,
+            "arguments": args
+        }))
+    }
+
+    fn get_nav_callers(&self, args: &Value) -> Result<Value, String> {
+        let destination = args["destination"]
+            .as_str()
+            .ok_or("Missing 'destination' parameter")?;
+
+        let all_rels = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+
+        let callers: Vec<_> = all_rels
+            .iter()
+            .filter(|r| {
+                r.rel_type == "navigates_to"
+                    && (r.target_qualified.contains(destination)
+                        || r.target_qualified
+                            .contains(&format!("class:{}", destination)))
+            })
+            .map(|r| r.source_qualified.clone())
+            .collect();
+
+        Ok(json!({
+            "destination": destination,
+            "callers": callers
+        }))
+    }
+
+    fn get_cluster_context(&self, args: &Value) -> Result<Value, String> {
+        use crate::graph::clustering::CommunityDetector;
+
+        let cluster_id = args["cluster_id"].as_str();
+        let cluster_label = args["cluster_label"].as_str();
+
+        let detector = CommunityDetector::new(self.graph_engine.db());
+        let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
+
+        let target_cluster = if let Some(cid) = cluster_id {
+            clusters.get(cid).cloned()
+        } else if let Some(label) = cluster_label {
+            clusters.values().find(|c| c.label == label).cloned()
+        } else {
+            None
+        };
+
+        match target_cluster {
+            Some(cluster) => {
+                let elements = self
+                    .graph_engine
+                    .all_elements()
+                    .map_err(|e| e.to_string())?;
+                let relationships = self
+                    .graph_engine
+                    .all_relationships()
+                    .map_err(|e| e.to_string())?;
+
+                let cluster_elements: Vec<_> = elements
+                    .iter()
+                    .filter(|e| cluster.members.contains(&e.qualified_name))
+                    .map(|e| {
+                        json!({
+                            "qualified_name": e.qualified_name,
+                            "element_type": e.element_type,
+                            "name": e.name,
+                            "file_path": e.file_path
+                        })
+                    })
+                    .collect();
+
+                let member_set: std::collections::HashSet<_> = cluster.members.iter().collect();
+                let inter_cluster: Vec<_> = relationships
+                    .iter()
+                    .filter(|r| {
+                        let src_in_cluster = member_set.contains(&r.source_qualified);
+                        let tgt_in_cluster = member_set.contains(&r.target_qualified);
+                        src_in_cluster != tgt_in_cluster
+                    })
+                    .map(|r| {
+                        json!({
+                            "source": r.source_qualified,
+                            "target": r.target_qualified,
+                            "type": r.rel_type
+                        })
+                    })
+                    .collect();
+
+                let entry_points: Vec<_> = cluster_elements
+                    .iter()
+                    .filter(|e| {
+                        relationships.iter().any(|r| {
+                            r.target_qualified == e["qualified_name"]
+                                && !member_set.contains(&r.source_qualified)
+                        })
+                    })
+                    .collect();
+
+                Ok(json!({
+                    "cluster_id": cluster.id,
+                    "cluster_label": cluster.label,
+                    "members": cluster_elements,
+                    "member_count": cluster.members.len(),
+                    "representative_files": cluster.representative_files,
+                    "entry_points": entry_points,
+                    "inter_cluster_dependencies": inter_cluster
+                }))
+            }
+            None => Err("Cluster not found".to_string()),
+        }
     }
 }
 
@@ -739,6 +2035,7 @@ mod tests {
             language: "rust".to_string(),
             parent_qualified: None,
             metadata: json!({}),
+            ..Default::default()
         }];
         let prompt = generate_review_prompt(&elements, &[]);
         assert!(prompt.contains("main"));
@@ -757,6 +2054,7 @@ mod tests {
             language: "rust".to_string(),
             parent_qualified: None,
             metadata: json!({}),
+            ..Default::default()
         }];
         let doc = generate_documentation("src/main.rs", &elements);
         assert!(doc.contains("src/main.rs"));
