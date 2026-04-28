@@ -34,6 +34,34 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     Ok(db)
 }
 
+/// Lightweight DB init for the file watcher — reduced memory footprint.
+pub fn init_db_lightweight(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
+    let db_file_path = if db_path.is_dir() {
+        db_path.join("leankg.db")
+    } else {
+        db_path.to_path_buf()
+    };
+
+    let path_str = db_file_path.to_string_lossy().to_string();
+    let db = cozo::new_cozo_sqlite(path_str)?;
+
+    let pragmas = [
+        "PRAGMA cache_size = -8000",
+        "PRAGMA mmap_size = 0",
+        "PRAGMA temp_store = MEMORY",
+        "PRAGMA synchronous = NORMAL",
+        "PRAGMA journal_mode = WAL",
+        "PRAGMA wal_autocheckpoint = 100",
+    ];
+    for pragma in pragmas {
+        if let Err(e) = db.run_script(pragma, Default::default()) {
+            tracing::debug!("Pragma '{}' failed (may not be supported): {}", pragma, e);
+        }
+    }
+
+    Ok(db)
+}
+
 fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     let check_relations = r#"::relations"#;
     let relations_result = db.run_script(check_relations, Default::default())?;
