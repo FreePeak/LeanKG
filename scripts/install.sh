@@ -370,18 +370,41 @@ setup_claude_hooks() {
 
     mkdir -p "$plugin_dir/hooks"
 
-    # Write hooks.json with PreToolUse, PostToolUse, and SessionStart
-    # Using "*" matcher for PreToolUse to intercept ALL tools (context-mode pattern)
+    # Write hooks.json with all Claude-Mem-equivalent hooks
+    # Setup, SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop
     cat > "$plugin_dir/hooks/hooks.json" <<'EOF'
 {
+  "description": "LeanKG hooks - enforces LeanKG usage and provides Claude-Mem-like session management",
   "hooks": {
+    "Setup": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/version-check.mjs\""
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
-        "matcher": "startup|clear|compact",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sessionstart.mjs\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-init.mjs\""
           }
         ]
       }
@@ -392,18 +415,29 @@ setup_claude_hooks() {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-pretooluse.mjs\""
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__leankg__",
+        "matcher": "mcp__leankg__*",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-posttooluse.mjs\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/summarize.mjs\""
           }
         ]
       }
@@ -667,7 +701,307 @@ async function main() {
 main();
 HOOKEOF
 
-    chmod +x "$plugin_dir/hooks/sessionstart.mjs" "$plugin_dir/hooks/pretooluse.mjs" "$plugin_dir/hooks/posttooluse.mjs"
+    cat > "$plugin_dir/hooks/version-check.mjs" <<'HOOKEOF'
+#!/usr/bin/env node
+/**
+ * Setup hook for LeanKG - version check
+ * Runs at plugin startup to verify version requirements
+ */
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || __dirname;
+const MIN_VERSION = "0.16.0";
+
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.on("readable", () => {
+      let chunk;
+      while ((chunk = process.stdin.read()) !== null) {
+        data += chunk;
+      }
+    });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
+  });
+}
+
+function getInstalledVersion() {
+  try {
+    const cargoPath = join(PLUGIN_ROOT, "..", "..", "Cargo.toml");
+    const content = readFileSync(cargoPath, "utf-8");
+    const match = content.match(/version\s*=\s*"([^"]+)"/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function compareVersions(a, b) {
+  const partsA = a.split(".").map(Number);
+  const partsB = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const pA = partsA[i] || 0;
+    const pB = partsB[i] || 0;
+    if (pA > pB) return 1;
+    if (pA < pB) return -1;
+  }
+  return 0;
+}
+
+async function main() {
+  try {
+    const raw = await readStdin();
+    if (!raw.trim()) process.exit(0);
+
+    const input = JSON.parse(raw);
+    const hookName = input.hookName || input.hook_event_name || "Setup";
+    if (hookName !== "Setup") process.exit(0);
+
+    const installedVersion = getInstalledVersion();
+    if (!installedVersion) {
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "Setup",
+          versionCheck: "warning",
+          message: "Could not determine LeanKG version. Version gating skipped.",
+        },
+      }));
+      process.exit(0);
+    }
+
+    const versionOk = compareVersions(installedVersion, MIN_VERSION) >= 0;
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "Setup",
+        versionCheck: versionOk ? "pass" : "fail",
+        installedVersion,
+        minimumVersion: MIN_VERSION,
+        message: versionOk ? `LeanKG v${installedVersion} ready` : `LeanKG v${installedVersion} does not meet minimum v${MIN_VERSION}`,
+      },
+    }) + "\n");
+  } catch (err) {
+    console.error("Version check error:", err.message);
+    process.exit(0);
+  }
+}
+
+main();
+HOOKEOF
+
+    cat > "$plugin_dir/hooks/session-init.mjs" <<'HOOKEOF'
+#!/usr/bin/env node
+/**
+ * UserPromptSubmit hook for LeanKG (session-init)
+ * Initializes session context and injects LeanKG usage patterns
+ */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.on("readable", () => {
+      let chunk;
+      while ((chunk = process.stdin.read()) !== null) {
+        data += chunk;
+      }
+    });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
+  });
+}
+
+function detectProjectType(cwd) {
+  const indicators = [
+    { pattern: "Cargo.toml", type: "rust", weight: 10 },
+    { pattern: "package.json", type: "node", weight: 8 },
+    { pattern: "go.mod", type: "go", weight: 9 },
+    { pattern: "pyproject.toml", type: "python", weight: 7 },
+    { pattern: "pom.xml", type: "java", weight: 7 },
+  ];
+  let bestType = "unknown";
+  let bestScore = 0;
+  for (const { pattern, type, weight } of indicators) {
+    if (existsSync(join(cwd, pattern))) {
+      if (weight > bestScore) {
+        bestScore = weight;
+        bestType = type;
+      }
+    }
+  }
+  return bestType;
+}
+
+function buildSessionContext(input) {
+  const cwd = input.cwd || process.cwd();
+  const projectType = detectProjectType(cwd);
+
+  const context = `<tool_selection_hierarchy>
+  1. ORCHESTRATE: mcp__leankg__orchestrate(intent)
+  2. CODE DISCOVERY: mcp__leankg__search_code(query, element_type)
+  3. IMPACT ANALYSIS: mcp__leankg__get_impact_radius(file, depth)
+  4. CONTEXT: mcp__leankg__get_context(file)
+  5. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
+  6. CALLERS: mcp__leankg__get_callers(function) | mcp__leankg__find_function(name)
+  7. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
+  8. TESTING: mcp__leankg__get_tested_by(file) | mcp__leankg__detect_changes(scope)
+</tool_selection_hierarchy>
+
+<forbidden_actions>
+  - DO NOT use Grep for code search (use mcp__leankg__search_code instead)
+  - DO NOT use Bash find/grep for file search (use mcp__leankg__query_file instead)
+</forbidden_actions>
+
+<project_context>
+Project type detected: ${projectType}
+</project_context>
+
+<leankg_reminder>
+- Run: mcp__leankg__mcp_status to verify LeanKG is ready
+- Run: mcp__leankg__mcp_index to index code if needed
+</leankg_reminder>`;
+
+  return context;
+}
+
+async function main() {
+  try {
+    const raw = await readStdin();
+    if (!raw.trim()) process.exit(0);
+
+    const input = JSON.parse(raw);
+    if (!input.prompt && !input.user_prompt) process.exit(0);
+
+    const sessionContext = buildSessionContext(input);
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: sessionContext,
+      },
+    }) + "\n");
+  } catch (err) {
+    console.error("SessionInit error:", err.message);
+    process.exit(0);
+  }
+}
+
+main();
+HOOKEOF
+
+    cat > "$plugin_dir/hooks/summarize.mjs" <<'HOOKEOF'
+#!/usr/bin/env node
+/**
+ * Stop hook for LeanKG (summarize)
+ * Captures session summary and stores for future context injection
+ */
+import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.on("readable", () => {
+      let chunk;
+      while ((chunk = process.stdin.read()) !== null) {
+        data += chunk;
+      }
+    });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
+  });
+}
+
+function extractToolUsage(input) {
+  const tools = [];
+  if (input.tool_calls) {
+    for (const call of input.tool_calls) {
+      tools.push({ name: call.name || call.tool_name || "unknown" });
+    }
+  }
+  if (input.tools_used) tools.push(...input.tools_used);
+  if (input.mcp_tools) tools.push(...input.mcp_tools.map(t => ({ name: t })));
+  return tools;
+}
+
+function generateSummary(input) {
+  const timestamp = new Date().toISOString();
+  const cwd = input.cwd || process.cwd() || "unknown";
+  const tools = extractToolUsage(input);
+  const mcpTools = tools.filter(t => t.name.startsWith("mcp__leankg__")).map(t => t.name.replace("mcp__leankg__", ""));
+  const bashCommands = tools.filter(t => t.name === "Bash").length;
+
+  return {
+    timestamp,
+    cwd,
+    tools_used: { total: tools.length, mcp_leankg: mcpTools.length, bash_commands: bashCommands },
+    leankg_tools: [...new Set(mcpTools)],
+    session_duration_ms: input.duration_ms || 0,
+  };
+}
+
+function saveSessionSummary(summary) {
+  try {
+    const SESSION_DIR = join(process.env.HOME || "~", ".cache", "leankg-hooks", "sessions");
+    if (!existsSync(SESSION_DIR)) mkdirSync(SESSION_DIR, { recursive: true });
+    const ts = new Date().getTime();
+    const filepath = join(SESSION_DIR, `session-${ts}.json`);
+    writeFileSync(filepath, JSON.stringify(summary, null, 2));
+    const latestPath = join(SESSION_DIR, "latest.json");
+    writeFileSync(latestPath, JSON.stringify(summary, null, 2));
+    return filepath;
+  } catch (err) {
+    console.error("Failed to save session summary:", err.message);
+    return null;
+  }
+}
+
+async function main() {
+  try {
+    const raw = await readStdin();
+    if (!raw.trim()) process.exit(0);
+
+    const input = JSON.parse(raw);
+    const hookName = input.hook_name || input.hook_event_name || "";
+    if (hookName !== "Stop") process.exit(0);
+
+    const summary = generateSummary(input);
+    const savedPath = saveSessionSummary(summary);
+
+    const toolList = summary.leankg_tools.length > 0
+      ? summary.leankg_tools.map(t => `  - ${t}`).join("\n")
+      : "none";
+
+    const summaryText = `Session Summary:
+- Working directory: ${summary.cwd}
+- Total tools used: ${summary.tools_used.total}
+- LeanKG MCP calls: ${summary.tools_used.mcp_leankg}
+- Bash commands: ${summary.tools_used.bash_commands}
+- LeanKG tools used: ${summary.leankg_tools.join(", ") || "none"}
+- Saved to: ${savedPath}`;
+
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "Stop",
+        sessionSummary: summary,
+        summaryText,
+        savedTo: savedPath,
+      },
+    }) + "\n");
+  } catch (err) {
+    console.error("Summarize error:", err.message);
+    process.exit(0);
+  }
+}
+
+main();
+HOOKEOF
+
+    chmod +x "$plugin_dir/hooks/sessionstart.mjs" "$plugin_dir/hooks/pretooluse.mjs" "$plugin_dir/hooks/posttooluse.mjs" "$plugin_dir/hooks/version-check.mjs" "$plugin_dir/hooks/session-init.mjs" "$plugin_dir/hooks/summarize.mjs"
     
     if [ ! -f "$plugin_dir/leankg-bootstrap.md" ]; then
         cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
