@@ -58,6 +58,15 @@ pub enum CLICommand {
         #[arg(long)]
         watch: bool,
     },
+    /// Start MCP HTTP server for remote clients (multi-session)
+    McpHttp {
+        /// Port to listen on (default: from MCP_HTTP_PORT env var or 3000)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Auth token for API authentication
+        #[arg(long)]
+        auth: Option<String>,
+    },
     /// Calculate impact radius
     Impact {
         /// File to analyze

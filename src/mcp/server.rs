@@ -6,15 +6,106 @@ use crate::mcp::handler::ToolHandler;
 use crate::mcp::tools::ToolRegistry;
 use crate::mcp::tracker::WriteTracker;
 use crate::mcp::watcher::start_watcher;
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header, HeaderMap, Method, StatusCode},
+    response::Response,
+    routing::{get, post},
+    Router,
+};
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
+use tower_http::cors::{Any, CorsLayer};
+
+/// Session manager for multi-session MCP HTTP server.
+/// Routes requests to per-project MCPServer instances based on X-LeanKG-Project-Path header.
+#[derive(Clone)]
+pub struct SessionManager {
+    servers: Arc<RwLock<HashMap<PathBuf, MCPServer>>>,
+}
+
+impl SessionManager {
+    pub fn new() -> Self {
+        Self {
+            servers: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Get or create MCPServer for a given .leankg path
+    pub fn get_or_create_server(&self, leankg_path: &PathBuf) -> MCPServer {
+        // Check cache first
+        {
+            let servers = self.servers.read();
+            if let Some(server) = servers.get(leankg_path) {
+                return server.clone();
+            }
+        }
+
+        // Create new server
+        let server = MCPServer::new(leankg_path.clone());
+
+        // Cache it
+        {
+            let mut servers = self.servers.write();
+            servers.insert(leankg_path.clone(), server.clone());
+        }
+
+        server
+    }
+
+    /// Get server for explicit project path from header
+    pub fn get_server_for_project_path(&self, project_path: &str) -> Option<MCPServer> {
+        let project_path = PathBuf::from(project_path);
+        let leankg_path = project_path.join(".leankg");
+        if !leankg_path.exists() {
+            return None;
+        }
+        Some(self.get_or_create_server(&leankg_path))
+    }
+
+    /// Get default server based on current working directory
+    pub fn get_default_server(&self) -> Option<MCPServer> {
+        let cwd = std::env::current_dir().ok()?;
+        Self::find_leankg_in_ancestors(&cwd)
+            .map(|leankg_path| self.get_or_create_server(&leankg_path))
+    }
+
+    /// Walk up directory tree looking for .leankg
+    fn find_leankg_in_ancestors(dir: &Path) -> Option<PathBuf> {
+        for ancestor in dir.ancestors() {
+            let leankg_path = ancestor.join(".leankg");
+            if leankg_path.is_dir() {
+                return Some(leankg_path);
+            }
+            if ancestor.join("leankg.yaml").exists() {
+                return Some(leankg_path);
+            }
+        }
+        None
+    }
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for SessionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionManager").finish()
+    }
+}
 
 pub struct MCPServer {
     auth_config: Arc<TokioRwLock<AuthConfig>>,
@@ -654,6 +745,322 @@ impl ServerHandler for MCPServer {
                 e
             ))])),
         }
+    }
+}
+
+// ============================================================================
+// HTTP Transport for Remote MCP Server (Multi-Session)
+// ============================================================================
+
+/// HTTP MCP Server state shared across requests
+#[derive(Clone)]
+struct HttpMcpServer {
+    session_manager: SessionManager,
+    auth_token: Option<String>,
+}
+
+/// MCP JSON-RPC request envelope
+#[derive(Debug, Serialize, Deserialize)]
+struct JsonRpcRequest {
+    jsonrpc: String,
+    id: serde_json::Value,
+    method: String,
+    params: Option<serde_json::Value>,
+}
+
+/// MCP JSON-RPC response envelope
+#[derive(Debug, Serialize)]
+struct JsonRpcResponse {
+    jsonrpc: String,
+    id: serde_json::Value,
+    result: Option<serde_json::Value>,
+    error: Option<JsonRpcError>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonRpcError {
+    code: i32,
+    message: String,
+    data: Option<serde_json::Value>,
+}
+
+/// MCP JSON-RPC error codes
+mod json_rpc_code {
+    pub const PARSE_ERROR: i32 = -32700;
+    pub const INVALID_REQUEST: i32 = -32600;
+    pub const METHOD_NOT_FOUND: i32 = -32601;
+    pub const INVALID_PARAMS: i32 = -32602;
+    pub const INTERNAL_ERROR: i32 = -32603;
+}
+
+/// Extract bearer token from Authorization header
+fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bool {
+    if token.is_none() {
+        return true;
+    }
+    let token = token.as_ref().unwrap();
+
+    if let Some(auth) = auth_header {
+        if let Some(stripped) = auth.strip_prefix("Bearer ") {
+            return stripped.as_bytes() == token.as_bytes();
+        }
+    }
+    false
+}
+
+/// Handle POST /mcp - JSON-RPC request endpoint
+async fn handle_mcp_request(
+    State(server): State<Arc<HttpMcpServer>>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    // Extract Authorization header
+    let auth_value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    // Check authentication
+    if !extract_bearer_token(auth_value, &server.auth_token) {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from(r#"{"error": "Unauthorized"}"#))
+            .unwrap();
+    }
+
+    // Extract session identification from X-LeanKG-Project-Path header
+    let mcp_server = if let Some(path_header) = headers.get("X-LeanKG-Project-Path") {
+        let project_path = path_header.to_str().unwrap_or("");
+        match server
+            .session_manager
+            .get_server_for_project_path(project_path)
+        {
+            Some(s) => s,
+            None => {
+                let response = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Null,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: json_rpc_code::INVALID_REQUEST,
+                        message: format!("Project path not found: {}", project_path),
+                        data: None,
+                    }),
+                };
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&response).unwrap()))
+                    .unwrap();
+            }
+        }
+    } else {
+        // Fallback to default (cwd-based)
+        match server.session_manager.get_default_server() {
+            Some(s) => s,
+            None => {
+                let response = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Null,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: json_rpc_code::INVALID_REQUEST,
+                        message: "X-LeanKG-Project-Path header required. No .leankg found in current directory.".to_string(),
+                        data: None,
+                    }),
+                };
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&response).unwrap()))
+                    .unwrap();
+            }
+        }
+    };
+
+    // Parse JSON-RPC request
+    let request: JsonRpcRequest = match serde_json::from_str(&body) {
+        Ok(req) => req,
+        Err(e) => {
+            let response = JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: serde_json::Value::Null,
+                result: None,
+                error: Some(JsonRpcError {
+                    code: json_rpc_code::PARSE_ERROR,
+                    message: format!("Parse error: {}", e),
+                    data: None,
+                }),
+            };
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_string(&response).unwrap()))
+                .unwrap();
+        }
+    };
+
+    // Process the request
+    let result = process_jsonrpc_request(&mcp_server, &request).await;
+
+    // Build response
+    let response = match result {
+        Ok(result) => JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: Some(result),
+            error: None,
+        },
+        Err(e) => JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: None,
+            error: Some(JsonRpcError {
+                code: json_rpc_code::INTERNAL_ERROR,
+                message: e,
+                data: None,
+            }),
+        },
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_string(&response).unwrap()))
+        .unwrap()
+}
+
+/// Process a JSON-RPC request and return the result
+async fn process_jsonrpc_request(
+    mcp_server: &MCPServer,
+    request: &JsonRpcRequest,
+) -> Result<serde_json::Value, String> {
+    let method = &request.method;
+    let params = request.params.as_ref();
+
+    match method.as_str() {
+        "initialize" => Ok(serde_json::json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {
+                "tools": { "listChanged": true },
+                "resources": {}
+            },
+            "serverInfo": {
+                "name": "leankg",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        })),
+        "notifications/initialized" => Ok(serde_json::Value::Null),
+        "tools/list" => {
+            let tools = ToolRegistry::list_tools();
+            let rmcp_tools: Vec<serde_json::Value> = tools
+                .into_iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "inputSchema": t.input_schema
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({ "tools": rmcp_tools }))
+        }
+        "tools/call" => {
+            let params_obj = params
+                .and_then(|p| p.as_object())
+                .ok_or("Missing params for tools/call")?;
+
+            let tool_name = params_obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing tool name")?;
+
+            let arguments = params_obj
+                .get("arguments")
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+
+            let result = mcp_server
+                .execute_tool(tool_name, arguments)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let content_str = if let Some(s) = result.as_str() {
+                s.to_string()
+            } else {
+                crate::mcp::toon::wrap_response(tool_name, &result, true)
+            };
+
+            Ok(serde_json::json!({
+                "content": [{ "type": "text", "text": content_str }]
+            }))
+        }
+        _ => Err(format!("Method not found: {}", method)),
+    }
+}
+
+/// Handle GET /mcp/stream - SSE endpoint
+async fn handle_sse_stream(
+    State(_server): State<Arc<HttpMcpServer>>,
+    _headers: HeaderMap,
+) -> Response {
+    let sse_data = "event: endpoint\ndata: /mcp\n\n";
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .body(Body::from(sse_data))
+        .unwrap()
+}
+
+/// Health check endpoint
+async fn health_check() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"status": "ok"}"#))
+        .unwrap()
+}
+
+impl MCPServer {
+    /// Start HTTP server for remote MCP clients (multi-session)
+    pub async fn serve_http(
+        &self,
+        port: u16,
+        auth_token: Option<String>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let session_manager = SessionManager::new();
+
+        let server = Arc::new(HttpMcpServer {
+            session_manager,
+            auth_token,
+        });
+
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers(Any)
+            .expose_headers([header::CONTENT_TYPE]);
+
+        let app = Router::new()
+            .route("/mcp", post(handle_mcp_request))
+            .route("/mcp/stream", get(handle_sse_stream))
+            .route("/health", get(health_check))
+            .layer(cors)
+            .with_state(server);
+
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!(
+            "MCP HTTP server (multi-session) listening on http://{}",
+            addr
+        );
+
+        axum::serve(listener, app).await?;
+
+        Ok(())
     }
 }
 

@@ -137,6 +137,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("MCP stdio server error: {}", e);
             }
         }
+        cli::CLICommand::McpHttp { port, auth } => {
+            let port = port.unwrap_or_else(|| {
+                std::env::var("MCP_HTTP_PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(3000)
+            });
+            let auth_token = auth.or_else(|| std::env::var("MCP_HTTP_AUTH").ok());
+
+            println!("╔═══════════════════════════════════════════════════════════════╗");
+            println!("║  LeanKG MCP HTTP Server (Multi-Session)                    ║");
+            println!("╚═══════════════════════════════════════════════════════════════╝");
+            println!();
+            println!("🚀 Starting MCP HTTP server on http://localhost:{}", port);
+            println!("📋 Sessions identified by X-LeanKG-Project-Path header");
+            println!();
+
+            let mcp_server = mcp::MCPServer::new(std::path::PathBuf::from("."));
+            if let Err(e) = mcp_server.serve_http(port, auth_token).await {
+                eprintln!("MCP HTTP server error: {}", e);
+            }
+        }
         cli::CLICommand::Impact { file, depth } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
