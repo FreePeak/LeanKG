@@ -120,7 +120,7 @@ See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
 
 ## Claude Code Setup
 
-LeanKG auto-triggers in Claude Code sessions via PreToolUse hooks that route search intents to LeanKG tools instead of native tools.
+LeanKG auto-triggers in Claude Code sessions via lifecycle hooks that route search intents to LeanKG tools instead of native tools.
 
 ```bash
 # Install LeanKG with Claude Code hooks and plugin
@@ -132,13 +132,16 @@ leankg setup
 
 **What `leankg setup` installs:**
 - `.claude-plugin/` - Plugin manifest for Claude Code validation
-- `hooks/` - PreToolUse, SessionStart, PostToolUse hooks
+- `hooks/` - Full lifecycle hooks: Setup, SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop
 - Adds `leankg@local` to `enabledPlugins` in `~/.claude/settings.json`
 
-**Auto-trigger behavior:**
-- `SessionStart` hook injects tool selection hierarchy into every session
-- `PreToolUse` hook nudges toward LeanKG when you use Grep/Read/Bash for code analysis
-- LeanKG returns token-optimized context instead of scanning entire files
+**Hook lifecycle:**
+- `Setup` - Version gating on startup
+- `SessionStart` - Injects tool selection hierarchy into every session
+- `UserPromptSubmit` - Initializes session context with LeanKG patterns
+- `PreToolUse` - Nudges toward LeanKG when you use Grep/Read/Bash for code analysis
+- `PostToolUse` - Logs LeanKG MCP tool usage for analytics
+- `Stop` - Captures session summary for future context retrieval
 
 ---
 
@@ -188,15 +191,15 @@ See [docs/architecture.md](docs/architecture.md) for system design and data mode
 
 ## Supported AI Tools
 
-| Tool | Auto-Setup | Session Hook | Plugin |
-|------|------------|--------------|--------|
-| Cursor | Yes | session-start | - |
-| Claude Code | Yes | session-start | Yes |
-| OpenCode | Yes | - | Yes |
-| Kilo Code | Yes | - | - |
-| Gemini CLI | Yes | - | - |
-| Google Antigravity | Yes | - | - |
-| Codex | Yes | - | - |
+| Tool | Auto-Setup | Session Hook | Plugin | Full Lifecycle Hooks |
+|------|------------|--------------|--------|---------------------|
+| Cursor | Yes | session-start | - | - |
+| Claude Code | Yes | session-start | Yes | Setup, SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop |
+| OpenCode | Yes | - | Yes | - |
+| Kilo Code | Yes | - | - | - |
+| Gemini CLI | Yes | - | - | - |
+| Google Antigravity | Yes | - | - | - |
+| Codex | Yes | - | - | - |
 
 > **Note:** Cursor requires per-project installation. The AI features work on a per-workspace basis, so LeanKG should be installed in each project directory where you want AI context injection.
 
