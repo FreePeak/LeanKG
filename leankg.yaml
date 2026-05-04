@@ -27,4 +27,9 @@ documentation:
   templates:
   - agents
   - claude
+database:
+  backend: sqlite
+  path: null
+  pool_size: 10
+  ssl_enabled: false
 microservice: null
