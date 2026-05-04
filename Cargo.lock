@@ -1376,7 +1376,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "leankg"
-version = "0.16.8"
+version = "0.15.3"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1389,14 +1389,12 @@ dependencies = [
  "glob",
  "ignore",
  "notify",
- "once_cell",
  "parking_lot",
  "pulldown-cmark",
  "rayon",
  "regex",
  "reqwest",
  "rmcp",
- "roxmltree",
  "rust-embed",
  "schemars 0.8.22",
  "serde",
@@ -1404,7 +1402,6 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "similar",
- "subtle",
  "sysinfo",
  "tar",
  "tempfile",
@@ -2328,12 +2325,6 @@ checksum = "7a4e1d4b9b938a26d2996af33229f0ca0956c652c1375067f0b45291c1df8417"
 dependencies = [
  "rmp",
 ]
-
-[[package]]
-name = "roxmltree"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rust-embed"

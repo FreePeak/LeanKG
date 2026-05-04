@@ -6,7 +6,6 @@ use crate::mcp::handler::ToolHandler;
 use crate::mcp::tools::ToolRegistry;
 use crate::mcp::tracker::WriteTracker;
 use crate::mcp::watcher::start_watcher;
-use crate::orchestrator::intent::IntentParser;
 use axum::{
     body::Body,
     extract::State,
@@ -15,7 +14,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-// use futures_util::StreamExt;  // Reserved for future streaming support
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
@@ -24,10 +22,90 @@ use rmcp::transport::stdio;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 use tower_http::cors::{Any, CorsLayer};
+
+/// Session manager for multi-session MCP HTTP server.
+/// Routes requests to per-project MCPServer instances based on X-LeanKG-Project-Path header.
+#[derive(Clone)]
+pub struct SessionManager {
+    servers: Arc<RwLock<HashMap<PathBuf, MCPServer>>>,
+}
+
+impl SessionManager {
+    pub fn new() -> Self {
+        Self {
+            servers: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Get or create MCPServer for a given .leankg path
+    pub fn get_or_create_server(&self, leankg_path: &PathBuf) -> MCPServer {
+        // Check cache first
+        {
+            let servers = self.servers.read();
+            if let Some(server) = servers.get(leankg_path) {
+                return server.clone();
+            }
+        }
+
+        // Create new server
+        let server = MCPServer::new(leankg_path.clone());
+
+        // Cache it
+        {
+            let mut servers = self.servers.write();
+            servers.insert(leankg_path.clone(), server.clone());
+        }
+
+        server
+    }
+
+    /// Get server for explicit project path from header
+    pub fn get_server_for_project_path(&self, project_path: &str) -> Option<MCPServer> {
+        let project_path = PathBuf::from(project_path);
+        let leankg_path = project_path.join(".leankg");
+        if !leankg_path.exists() {
+            return None;
+        }
+        Some(self.get_or_create_server(&leankg_path))
+    }
+
+    /// Get default server based on current working directory
+    pub fn get_default_server(&self) -> Option<MCPServer> {
+        let cwd = std::env::current_dir().ok()?;
+        Self::find_leankg_in_ancestors(&cwd)
+            .map(|leankg_path| self.get_or_create_server(&leankg_path))
+    }
+
+    /// Walk up directory tree looking for .leankg
+    fn find_leankg_in_ancestors(dir: &Path) -> Option<PathBuf> {
+        for ancestor in dir.ancestors() {
+            let leankg_path = ancestor.join(".leankg");
+            if leankg_path.is_dir() {
+                return Some(leankg_path);
+            }
+            if ancestor.join("leankg.yaml").exists() {
+                return Some(leankg_path);
+            }
+        }
+        None
+    }
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for SessionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionManager").finish()
+    }
+}
 
 pub struct MCPServer {
     auth_config: Arc<TokioRwLock<AuthConfig>>,
@@ -36,7 +114,6 @@ pub struct MCPServer {
     graph_engine_cache: Arc<RwLock<HashMap<PathBuf, GraphEngine>>>,
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
-    intent_parser: IntentParser,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -56,112 +133,31 @@ impl Clone for MCPServer {
             graph_engine_cache: self.graph_engine_cache.clone(),
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
-            intent_parser: IntentParser::new(),
         }
     }
 }
 
 impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
-        let effective_db_path = Self::resolve_project_root(db_path);
         Self {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
-            db_path: Arc::new(RwLock::new(effective_db_path)),
+            db_path: Arc::new(RwLock::new(db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
-            intent_parser: IntentParser::new(),
         }
     }
 
     pub fn new_with_watch(db_path: std::path::PathBuf, watch_path: std::path::PathBuf) -> Self {
-        let effective_db_path = Self::resolve_project_root(db_path);
         Self {
             auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
-            db_path: Arc::new(RwLock::new(effective_db_path)),
+            db_path: Arc::new(RwLock::new(db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             watch_path: Some(watch_path),
             write_tracker: Arc::new(WriteTracker::new()),
-            intent_parser: IntentParser::new(),
         }
-    }
-
-    /// Read leankg.yaml and resolve project root with fallback chain:
-    /// 1. project_path from config (if exists and valid)
-    /// 2. project.root relative path resolution
-    /// 3. Original db_path as fallback
-    fn resolve_project_root(db_path: std::path::PathBuf) -> std::path::PathBuf {
-        let config_path = db_path.join("leankg.yaml");
-        if !config_path.exists() {
-            return db_path;
-        }
-
-        let content = match std::fs::read_to_string(&config_path) {
-            Ok(c) => c,
-            Err(_) => return db_path,
-        };
-
-        let config: crate::config::ProjectConfig = match serde_yaml::from_str(&content) {
-            Ok(c) => c,
-            Err(_) => return db_path,
-        };
-
-        // 1. Check project_path first (absolute path stored at init time)
-        if let Some(project_path) = config.project.project_path {
-            let db_at_path = project_path.join(".leankg");
-            if db_at_path.is_dir() {
-                tracing::info!(
-                    "Using project_path from leankg.yaml: {}",
-                    db_at_path.display()
-                );
-                return db_at_path;
-            } else {
-                tracing::warn!(
-                    "project_path in leankg.yaml points to non-existent directory: {}. Searching for project...",
-                    project_path.display()
-                );
-            }
-        }
-
-        // 2. If root is not ".", check if that directory has its own .leankg
-        let root = &config.project.root;
-        if root.as_os_str() != "." && root.as_os_str() != "" {
-            // Resolve root relative to db_path's parent (project root)
-            let project_root = db_path.parent().unwrap_or(&db_path);
-            let resolved_root = if root.is_absolute() {
-                root.clone()
-            } else {
-                project_root.join(root)
-            };
-
-            // Check if root or its parent has .leankg
-            let alternative_db = resolved_root.join(".leankg");
-            if alternative_db.is_dir() && alternative_db != db_path {
-                tracing::info!(
-                    "Using project root from leankg.yaml: {}",
-                    alternative_db.display()
-                );
-                return alternative_db;
-            }
-
-            // Check parent of resolved root
-            if let Some(parent) = resolved_root.parent() {
-                let parent_db = parent.join(".leankg");
-                if parent_db.is_dir() && parent_db != db_path {
-                    tracing::info!(
-                        "Using parent project from leankg.yaml: {}",
-                        parent_db.display()
-                    );
-                    return parent_db;
-                }
-            }
-        }
-
-        // 3. Fall back to original db_path
-        tracing::debug!("Using default db_path: {}", db_path.display());
-        db_path
     }
 
     pub fn db_path(&self) -> std::sync::Arc<parking_lot::RwLock<std::path::PathBuf>> {
@@ -191,9 +187,9 @@ impl MCPServer {
         None
     }
 
-    fn get_graph_engine_for_path(&self, file_path: Option<&String>) -> Result<GraphEngine, String> {
+    fn get_graph_engine_for_path(&self, file_path: Option<&str>) -> Result<GraphEngine, String> {
         let project_db_path = if let Some(fp) = file_path {
-            if let Some(leankg_path) = Self::find_leankg_for_path(fp.as_str()) {
+            if let Some(leankg_path) = Self::find_leankg_for_path(fp) {
                 tracing::debug!(
                     "Routing query for '{}' to database at {}",
                     fp,
@@ -281,19 +277,6 @@ impl MCPServer {
             );
         }
 
-        // Ensure API server is running (starts it if not)
-        match self.ensure_api_server_running().await {
-            Ok(port) => {
-                tracing::info!("API server ready on port {}", port);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to ensure API server running: {}. Continuing anyway.",
-                    e
-                );
-            }
-        }
-
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.get_db_path();
             let watch_path = watch_path.clone();
@@ -313,142 +296,6 @@ impl MCPServer {
         let transport = stdio();
         let _running = serve_server(self.clone(), transport).await?;
         futures_util::future::pending().await
-    }
-
-    /// Check if the API server is running on the given port by connecting to it
-    async fn is_api_server_running(port: u16) -> bool {
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        tokio::net::TcpStream::connect(addr).await.is_ok()
-    }
-
-    /// Ensure the API server is running, starting it if not
-    async fn ensure_api_server_running(
-        &self,
-    ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
-        // Get port from environment or use default 9699
-        let requested_port = std::env::var("LEANKG_API_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(9699);
-
-        // First check if API server is already running on the requested/default port
-        if Self::is_api_server_running(requested_port).await {
-            tracing::info!("API server already running on port {}", requested_port);
-            return Ok(requested_port);
-        }
-
-        // Find an available port starting from the requested port
-        let port = Self::find_available_port(requested_port);
-
-        // Check again if API server is running on the available port
-        // (it might have started between our first check and find_available_port)
-        if Self::is_api_server_running(port).await {
-            tracing::info!("API server already running on port {}", port);
-            return Ok(port);
-        }
-
-        // Find the current executable path
-        let exe_path = std::env::current_exe()?;
-        tracing::info!("Starting API server on port {} (exe: {:?})", port, exe_path);
-
-        // Start API server as a background process
-        // Run with LEANKG_API_PORT set to communicate the port
-        let child = std::process::Command::new(&exe_path)
-            .args(["api-serve", "--port", &port.to_string()])
-            .env("LEANKG_API_PORT", port.to_string())
-            .spawn();
-
-        match child {
-            Ok(_child) => {
-                tracing::info!("Spawned API server process");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to spawn API server: {}. Continuing anyway.", e);
-                return Ok(port);
-            }
-        }
-
-        // Wait for server to start (check every 100ms for up to 5 seconds)
-        for _ in 0..50 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            if Self::is_api_server_running(port).await {
-                tracing::info!("API server started on port {}", port);
-                return Ok(port);
-            }
-        }
-
-        tracing::warn!("API server may not be fully started yet on port {}", port);
-        Ok(port)
-    }
-
-    /// Find an available port starting from the given port, incrementing if taken
-    fn find_available_port(start_port: u16) -> u16 {
-        let mut port = start_port;
-        while port < start_port + 100 {
-            // Try to bind to check if port is available
-            let addr = SocketAddr::from(([0, 0, 0, 0], port));
-            if std::net::TcpListener::bind(addr).is_ok() {
-                return port;
-            }
-            port += 1;
-        }
-        start_port
-    }
-
-    pub async fn serve_http(
-        &self,
-        port: u16,
-        auth_token: Option<String>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Err(e) = self.auto_init_if_needed().await {
-            tracing::warn!(
-                "Auto-init skipped: {}. Server will operate in uninitialized state.",
-                e
-            );
-        }
-
-        if let Some(ref watch_path) = self.watch_path {
-            let db_path = self.get_db_path();
-            let watch_path = watch_path.clone();
-            tokio::spawn(async move {
-                let (tx, rx) = tokio::sync::mpsc::channel(100);
-                start_watcher(db_path, watch_path, rx).await;
-                let _ = tx; // silence unused warning
-            });
-            tracing::info!(
-                "Auto-indexing enabled for {}",
-                self.watch_path
-                    .as_ref()
-                    .unwrap_or(&std::path::PathBuf::from("?"))
-                    .display()
-            );
-        }
-
-        let server = Arc::new(HttpMcpServer {
-            mcp_server: self.clone(),
-            auth_token,
-        });
-
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-            .allow_headers(Any)
-            .expose_headers([header::CONTENT_TYPE]);
-
-        let app = Router::new()
-            .route("/mcp", post(handle_mcp_request))
-            .route("/mcp/stream", get(handle_sse_stream))
-            .route("/health", get(health_check))
-            .layer(cors)
-            .with_state(server);
-
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        tracing::info!("MCP HTTP server listening on http://{}", addr);
-
-        axum::serve(listener, app).await?;
-
-        Ok(())
     }
 
     async fn auto_init_if_needed(&self) -> Result<(), String> {
@@ -777,29 +624,6 @@ impl MCPServer {
         Ok(current_dir)
     }
 
-    fn validate_required_params(
-        &self,
-        tool_name: &str,
-        arguments: &serde_json::Map<String, serde_json::Value>,
-    ) -> Option<String> {
-        let tools = ToolRegistry::list_tools();
-        let tool = tools.iter().find(|t| t.name == tool_name)?;
-
-        let required_params = tool.input_schema.get("required")?.as_array()?;
-        for param in required_params {
-            let param_name = param.as_str()?;
-            if !arguments.contains_key(param_name)
-                || arguments.get(param_name).is_none_or(|v| v.is_null())
-            {
-                return Some(format!(
-                    "Missing required parameter '{}' for tool '{}'",
-                    param_name, tool_name
-                ));
-            }
-        }
-        None
-    }
-
     async fn execute_tool(
         &self,
         tool_name: &str,
@@ -811,11 +635,6 @@ impl MCPServer {
             project_root.display(),
             self.get_db_path().display()
         );
-
-        // Validate required parameters before dispatching to handler
-        if let Some(err) = self.validate_required_params(tool_name, &arguments) {
-            return Err(err);
-        }
 
         if tool_name == "mcp_init" {
             if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
@@ -841,31 +660,13 @@ impl MCPServer {
             }
         }
 
-        let file_path: Option<String> = if tool_name == "orchestrate" {
-            // For orchestrate, parse intent to extract target file
-            arguments
-                .get("intent")
-                .and_then(|v| v.as_str())
-                .and_then(|intent| {
-                    let parsed = self.intent_parser.parse(intent);
-                    parsed.target
-                })
-                .or_else(|| {
-                    arguments
-                        .get("file")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                })
-        } else {
-            arguments
-                .get("file")
-                .and_then(|v| v.as_str())
-                .or_else(|| arguments.get("path").and_then(|v| v.as_str()))
-                .or_else(|| arguments.get("project").and_then(|v| v.as_str()))
-                .map(String::from)
-        };
+        let file_path = arguments
+            .get("file")
+            .and_then(|v| v.as_str())
+            .or_else(|| arguments.get("path").and_then(|v| v.as_str()))
+            .or_else(|| arguments.get("project").and_then(|v| v.as_str()));
 
-        let graph_engine = self.get_graph_engine_for_path(file_path.as_ref())?;
+        let graph_engine = self.get_graph_engine_for_path(file_path)?;
         let handler = ToolHandler::new(graph_engine, self.get_db_path());
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;
@@ -948,12 +749,13 @@ impl ServerHandler for MCPServer {
 }
 
 // ============================================================================
-// HTTP Transport for Remote MCP Server
+// HTTP Transport for Remote MCP Server (Multi-Session)
 // ============================================================================
 
 /// HTTP MCP Server state shared across requests
+#[derive(Clone)]
 struct HttpMcpServer {
-    mcp_server: MCPServer,
+    session_manager: SessionManager,
     auth_token: Option<String>,
 }
 
@@ -991,18 +793,16 @@ mod json_rpc_code {
     pub const INTERNAL_ERROR: i32 = -32603;
 }
 
-/// Extract bearer token from Authorization header using constant-time comparison
-/// to prevent timing attacks on bearer tokens.
+/// Extract bearer token from Authorization header
 fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bool {
     if token.is_none() {
-        return true; // No auth required
+        return true;
     }
     let token = token.as_ref().unwrap();
 
     if let Some(auth) = auth_header {
         if let Some(stripped) = auth.strip_prefix("Bearer ") {
-            // Use constant-time comparison to prevent timing attacks
-            return subtle::ConstantTimeEq::ct_eq(stripped.as_bytes(), token.as_bytes()).into();
+            return stripped.as_bytes() == token.as_bytes();
         }
     }
     false
@@ -1027,6 +827,56 @@ async fn handle_mcp_request(
             .unwrap();
     }
 
+    // Extract session identification from X-LeanKG-Project-Path header
+    let mcp_server = if let Some(path_header) = headers.get("X-LeanKG-Project-Path") {
+        let project_path = path_header.to_str().unwrap_or("");
+        match server
+            .session_manager
+            .get_server_for_project_path(project_path)
+        {
+            Some(s) => s,
+            None => {
+                let response = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Null,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: json_rpc_code::INVALID_REQUEST,
+                        message: format!("Project path not found: {}", project_path),
+                        data: None,
+                    }),
+                };
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&response).unwrap()))
+                    .unwrap();
+            }
+        }
+    } else {
+        // Fallback to default (cwd-based)
+        match server.session_manager.get_default_server() {
+            Some(s) => s,
+            None => {
+                let response = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Null,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: json_rpc_code::INVALID_REQUEST,
+                        message: "X-LeanKG-Project-Path header required. No .leankg found in current directory.".to_string(),
+                        data: None,
+                    }),
+                };
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_string(&response).unwrap()))
+                    .unwrap();
+            }
+        }
+    };
+
     // Parse JSON-RPC request
     let request: JsonRpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
@@ -1050,7 +900,7 @@ async fn handle_mcp_request(
     };
 
     // Process the request
-    let result = process_jsonrpc_request(&server.mcp_server, &request).await;
+    let result = process_jsonrpc_request(&mcp_server, &request).await;
 
     // Build response
     let response = match result {
@@ -1099,10 +949,7 @@ async fn process_jsonrpc_request(
                 "version": env!("CARGO_PKG_VERSION")
             }
         })),
-        "notifications/initialized" => {
-            // Client is done initializing, no response needed
-            Ok(serde_json::Value::Null)
-        }
+        "notifications/initialized" => Ok(serde_json::Value::Null),
         "tools/list" => {
             let tools = ToolRegistry::list_tools();
             let rmcp_tools: Vec<serde_json::Value> = tools
@@ -1138,9 +985,6 @@ async fn process_jsonrpc_request(
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // Format as MCP tool result
-            // Tool results are either plain strings (as_str()) or structured JSON
-            // that needs to be wrapped in MCP response format
             let content_str = if let Some(s) = result.as_str() {
                 s.to_string()
             } else {
@@ -1155,27 +999,11 @@ async fn process_jsonrpc_request(
     }
 }
 
-/// Handle GET /mcp/stream - SSE endpoint for server-initiated messages
+/// Handle GET /mcp/stream - SSE endpoint
 async fn handle_sse_stream(
-    State(server): State<Arc<HttpMcpServer>>,
-    headers: HeaderMap,
+    State(_server): State<Arc<HttpMcpServer>>,
+    _headers: HeaderMap,
 ) -> Response {
-    // Extract Authorization header
-    let auth_value = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-
-    // Check authentication
-    if !extract_bearer_token(auth_value, &server.auth_token) {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::from(r#"event: error\ndata: Unauthorized\n\n"#))
-            .unwrap();
-    }
-
-    // For now, return an SSE stream that sends an endpoint message
-    // In a full implementation, this would maintain a persistent connection
-    // for server-initiated notifications
     let sse_data = "event: endpoint\ndata: /mcp\n\n";
 
     Response::builder()
@@ -1194,6 +1022,46 @@ async fn health_check() -> Response {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"status": "ok"}"#))
         .unwrap()
+}
+
+impl MCPServer {
+    /// Start HTTP server for remote MCP clients (multi-session)
+    pub async fn serve_http(
+        &self,
+        port: u16,
+        auth_token: Option<String>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let session_manager = SessionManager::new();
+
+        let server = Arc::new(HttpMcpServer {
+            session_manager,
+            auth_token,
+        });
+
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers(Any)
+            .expose_headers([header::CONTENT_TYPE]);
+
+        let app = Router::new()
+            .route("/mcp", post(handle_mcp_request))
+            .route("/mcp/stream", get(handle_sse_stream))
+            .route("/health", get(health_check))
+            .layer(cors)
+            .with_state(server);
+
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!(
+            "MCP HTTP server (multi-session) listening on http://{}",
+            addr
+        );
+
+        axum::serve(listener, app).await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

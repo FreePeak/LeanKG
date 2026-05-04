@@ -58,17 +58,14 @@ pub enum CLICommand {
         #[arg(long)]
         watch: bool,
     },
-    /// Start MCP server with HTTP transport (for remote clients)
+    /// Start MCP HTTP server for remote clients (multi-session)
     McpHttp {
-        /// Port to listen on (default: 9699)
+        /// Port to listen on (default: from MCP_HTTP_PORT env var or 3000)
         #[arg(long)]
         port: Option<u16>,
-        /// Bearer token for authentication (optional)
+        /// Auth token for API authentication
         #[arg(long)]
         auth: Option<String>,
-        /// Enable auto-indexing with file watcher
-        #[arg(long)]
-        watch: bool,
     },
     /// Calculate impact radius
     Impact {
@@ -189,7 +186,7 @@ pub enum CLICommand {
         /// Name of the repository
         name: String,
     },
-    /// Global setup: configure MCP for all registered repos at once, install Claude hooks and register plugin
+    /// Global setup: configure MCP for all registered repos at once
     Setup {},
     /// Run a shell command with optional RTK-style compression
     Run {
