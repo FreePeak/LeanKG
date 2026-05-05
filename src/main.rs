@@ -167,8 +167,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth,
             watch,
             reuse,
+            project,
         } => {
-            let project_path = find_project_root()?;
+            let project_path = if let Some(ref p) = project {
+                std::path::PathBuf::from(p)
+            } else {
+                find_project_root()?
+            };
             let db_path = project_path.join(".leankg");
             let port = port.unwrap_or_else(|| {
                 std::env::var("MCP_HTTP_PORT")

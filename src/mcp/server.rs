@@ -9,7 +9,7 @@ use crate::mcp::watcher::start_watcher;
 use crate::orchestrator::intent::IntentParser;
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Query, State},
     http::{header, HeaderMap, Method, StatusCode},
     response::Response,
     routing::{get, post},
@@ -462,9 +462,23 @@ impl MCPServer {
         if lock_path.exists() {
             if let Ok(contents) = fs::read_to_string(&lock_path) {
                 if let Ok(pid) = contents.trim().parse::<u32>() {
-                    // Check if process is still alive
+                    // Check if process is still alive AND actually responds as the MCP server
+                    // (PID recycling can cause false positives with kill -0 alone)
                     if Self::is_process_alive(pid) {
-                        return Ok(Some(pid));
+                        // Verify the server is actually running by checking health endpoint
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
+                        let alive = rt.block_on(Self::check_health_sync(port));
+                        if alive {
+                            return Ok(Some(pid));
+                        }
+                        tracing::warn!(
+                            "PID {} is alive but not our server on port {}, removing stale lock",
+                            pid,
+                            port
+                        );
                     }
                 }
             }
@@ -478,6 +492,18 @@ impl MCPServer {
             Ok(_) => Ok(None),
             Err(e) => Err(format!("Failed to create lock file: {}", e)),
         }
+    }
+
+    /// Synchronous health check for use in non-async contexts
+    async fn check_health_sync(port: u16) -> bool {
+        let url = format!("http://127.0.0.1:{}/health", port);
+        reqwest::Client::new()
+            .get(&url)
+            .timeout(Duration::from_millis(500))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
     }
 
     /// Check if a process is alive by sending signal 0
@@ -542,14 +568,28 @@ impl MCPServer {
             // Parse existing session
             if let Ok(contents) = fs::read_to_string(entry.path()) {
                 if let Ok(session) = serde_json::from_str::<SessionInfo>(&contents) {
-                    // Check if that session's server is still alive
-                    if session.port == port && self.is_session_alive(port).await {
-                        tracing::info!(
-                            "Existing session {} is alive on port {}, reusing it",
-                            session.pid,
-                            port
-                        );
-                        return Ok((false, Some(port)));
+                    if session.port == port {
+                        // Verify both PID liveness AND actual server health to avoid
+                        // false positives from PID recycling
+                        let pid_alive = Self::is_process_alive(session.pid);
+                        let server_alive = self.is_session_alive(port).await;
+                        if pid_alive && server_alive {
+                            tracing::info!(
+                                "Existing session {} is alive on port {}, reusing it",
+                                session.pid,
+                                port
+                            );
+                            return Ok((false, Some(port)));
+                        }
+                        if pid_alive && !server_alive {
+                            tracing::warn!(
+                                "Session PID {} alive but server not responding on port {}, cleaning stale session",
+                                session.pid, port
+                            );
+                            let _ = fs::remove_file(entry.path());
+                        } else {
+                            let _ = fs::remove_file(entry.path());
+                        }
                     }
                 }
             }
@@ -1253,8 +1293,37 @@ struct HttpMcpServer {
     auth_token: Option<String>,
 }
 
+/// Query parameters extracted from MCP HTTP requests
+#[derive(Debug, serde::Deserialize)]
+struct McpQueryParams {
+    /// Project root directory - overrides server's default db_path
+    project: Option<String>,
+}
+
+impl McpQueryParams {
+    fn resolve_db_path(&self, default_db_path: &std::path::Path) -> std::path::PathBuf {
+        if let Some(ref project) = self.project {
+            let path = std::path::PathBuf::from(project);
+            let db_path = if path.ends_with(".leankg") {
+                path
+            } else {
+                path.join(".leankg")
+            };
+            if db_path.is_dir() {
+                tracing::debug!("Using project from query param: {}", db_path.display());
+                return db_path;
+            }
+            tracing::warn!(
+                "Project path from query param not found: {}, using default",
+                db_path.display()
+            );
+        }
+        default_db_path.to_path_buf()
+    }
+}
+
 /// MCP JSON-RPC request envelope
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct JsonRpcRequest {
     jsonrpc: String,
     #[serde(default)]
@@ -1310,6 +1379,7 @@ fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bo
 /// Handle POST /mcp - JSON-RPC request endpoint
 async fn handle_mcp_request(
     State(server): State<Arc<HttpMcpServer>>,
+    Query(query): Query<McpQueryParams>,
     headers: HeaderMap,
     body: String,
 ) -> Response {
@@ -1350,8 +1420,61 @@ async fn handle_mcp_request(
 
     // Check if this is a notification (no id) - notifications must not receive a response
     let is_notification = request.id.is_none();
+
+    // Apply project override from query param:
+    // 1. Inject "project" into arguments for db routing
+    // 2. Resolve relative file/doc/element paths against the project root
+    //    (without this, relative paths resolve against server CWD → wrong database)
+    let request = if let Some(ref project) = query.project {
+        let project_path = std::path::PathBuf::from(project);
+        let db_path = if project_path.ends_with(".leankg") {
+            project_path.clone()
+        } else {
+            project_path.join(".leankg")
+        };
+        if db_path != server.mcp_server.get_db_path() {
+            let mut req = request.clone();
+            if let Some(ref mut params) = req.params {
+                if let Some(obj) = params.as_object_mut() {
+                    // Inject project param for routing
+                    if let Some(ref mut args) = obj.get_mut("arguments") {
+                        if let Some(args_obj) = args.as_object_mut() {
+                            args_obj
+                                .entry("project".to_string())
+                                .or_insert(serde_json::Value::String(project.clone()));
+                            // Resolve relative paths against project root
+                            for key in &["file", "doc", "path"] {
+                                if let Some(serde_json::Value::String(v)) = args_obj.get_mut(*key) {
+                                    if !v.starts_with('/') {
+                                        let resolved = project_path.join(&*v);
+                                        *v = resolved.to_string_lossy().to_string();
+                                    }
+                                }
+                            }
+                            // Resolve files array elements too
+                            if let Some(serde_json::Value::Array(arr)) = args_obj.get_mut("files") {
+                                for item in arr.iter_mut() {
+                                    if let serde_json::Value::String(v) = item {
+                                        if !v.starts_with('/') {
+                                            let resolved = project_path.join(&*v);
+                                            *v = resolved.to_string_lossy().to_string();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            req
+        } else {
+            request
+        }
+    } else {
+        request
+    };
+
     if is_notification {
-        // Process the notification but don't send a response
         let _ = process_jsonrpc_request(&server.mcp_server, &request).await;
         return Response::builder()
             .status(StatusCode::NO_CONTENT)
@@ -1414,6 +1537,12 @@ async fn process_jsonrpc_request(
             // Client is done initializing, no response needed
             Ok(serde_json::Value::Null)
         }
+        "resources/list" => {
+            // LeanKG exposes tools only, no resources
+            Ok(serde_json::json!({ "resources": [] }))
+        }
+        "resources/templates/list" => Ok(serde_json::json!({ "resourceTemplates": [] })),
+        "prompts/list" => Ok(serde_json::json!({ "prompts": [] })),
         "tools/list" => {
             let tools = ToolRegistry::list_tools();
             let rmcp_tools: Vec<serde_json::Value> = tools

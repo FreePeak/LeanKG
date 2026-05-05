@@ -51,7 +51,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "mcp_config_path": {"type": "string", "description": "Path for .mcp.json (default: .mcp.json)"}
+                        "mcp_config_path": {"type": "string", "description": "Path for .mcp.json (default: .mcp.json)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -61,7 +62,9 @@ impl ToolRegistry {
                 description: "Show LeanKG index status".to_string(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path to check status for (resolves to nearest .leankg directory)"}
+                    },
                     "required": []
                 }),
             },
@@ -136,7 +139,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "scope": {"type": "string", "enum": ["staged", "unstaged", "all"], "default": "all", "description": "Scope of changes to analyze: 'staged' (git staged), 'unstaged', or 'all' (default)"},
-                        "min_confidence": {"type": "number", "default": 0.0, "description": "Minimum confidence threshold for affected symbols."}
+                        "min_confidence": {"type": "number", "default": 0.0, "description": "Minimum confidence threshold for affected symbols."},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -298,7 +302,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string", "description": "File to get test coverage for"}
+                        "file": {"type": "string", "description": "File to get test coverage for"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -309,7 +314,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string", "description": "File to get documentation for"}
+                        "file": {"type": "string", "description": "File to get documentation for"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -320,7 +326,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "doc": {"type": "string", "description": "Documentation file path"}
+                        "doc": {"type": "string", "description": "Documentation file path"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["doc"]
                 }),
@@ -330,7 +337,9 @@ impl ToolRegistry {
                 description: "Get documentation directory structure".to_string(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
                     "required": []
                 }),
             },
@@ -340,7 +349,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "element": {"type": "string", "description": "Code element to trace"}
+                        "element": {"type": "string", "description": "Code element to trace"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["element"]
                 }),
@@ -351,7 +361,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "requirement_id": {"type": "string", "description": "Requirement ID to search for"}
+                        "requirement_id": {"type": "string", "description": "Requirement ID to search for"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["requirement_id"]
                 }),
@@ -363,7 +374,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "limit": {"type": "integer", "default": 50, "description": "Maximum number of categories (default: 50, max: 200)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of categories to skip (pagination offset)"}
+                        "offset": {"type": "integer", "default": 0, "description": "Number of categories to skip (pagination offset)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -375,7 +387,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "limit": {"type": "integer", "default": 50, "description": "Maximum number of files (default: 50, max: 200)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of files to skip (pagination offset)"}
+                        "offset": {"type": "integer", "default": 0, "description": "Number of files to skip (pagination offset)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -386,7 +399,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "file": {"type": "string", "description": "File that was changed"}
+                        "file": {"type": "string", "description": "File that was changed"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
                 }),
@@ -396,7 +410,9 @@ impl ToolRegistry {
                 description: "Returns 'Hello, World!'".to_string(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
                     "required": []
                 }),
             },
@@ -407,7 +423,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "limit": {"type": "integer", "default": 50, "description": "Maximum number of clusters (default: 50, max: 100)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of clusters to skip (pagination offset)"}
+                        "offset": {"type": "integer", "default": 0, "description": "Number of clusters to skip (pagination offset)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -419,7 +436,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "cluster_id": {"type": "string", "description": "Cluster ID to get context for"},
-                        "cluster_label": {"type": "string", "description": "Alternative: cluster label to search for"}
+                        "cluster_label": {"type": "string", "description": "Alternative: cluster label to search for"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -435,7 +453,8 @@ impl ToolRegistry {
                             "type": "object",
                             "description": "Optional parameters for the parameterized query",
                             "additionalProperties": true
-                        }
+                        },
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["query"]
                 }),
@@ -447,7 +466,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "file": {"type": "string", "description": "Nav XML file path or Kotlin DSL file path"},
-                        "graph_id": {"type": "string", "description": "Nav graph ID (alternative to file)"}
+                        "graph_id": {"type": "string", "description": "Nav graph ID (alternative to file)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),
@@ -458,7 +478,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "route": {"type": "string", "description": "Route string (e.g. 'profile/{userId}') or action ID (e.g. 'action_home_to_detail')"}
+                        "route": {"type": "string", "description": "Route string (e.g. 'profile/{userId}') or action ID (e.g. 'action_home_to_detail')"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["route"]
                 }),
@@ -470,7 +491,8 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "destination": {"type": "string", "description": "Destination name, route, or file path"},
-                        "limit": {"type": "integer", "default": 20, "description": "Maximum results"}
+                        "limit": {"type": "integer", "default": 20, "description": "Maximum results"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["destination"]
                 }),
@@ -481,7 +503,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "destination": {"type": "string", "description": "Destination name, route, fragment class, or activity class"}
+                        "destination": {"type": "string", "description": "Destination name, route, fragment class, or activity class"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["destination"]
                 }),
@@ -492,7 +515,8 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "service": {"type": "string", "description": "Current service name (defaults to project directory name)"}
+                        "service": {"type": "string", "description": "Current service name (defaults to project directory name)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
                 }),

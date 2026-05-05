@@ -72,6 +72,9 @@ pub enum CLICommand {
         /// Reuse existing server if already running (don't wait/start new)
         #[arg(long)]
         reuse: bool,
+        /// Project root directory (default: auto-detect from cwd)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Calculate impact radius
     Impact {

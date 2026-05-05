@@ -8,7 +8,6 @@ pub struct ProjectConfig {
     pub indexer: IndexerConfig,
     pub mcp: McpConfig,
     pub documentation: DocConfig,
-    pub database: DatabaseConfig,
     pub microservice: Option<MicroserviceExtractorConfig>,
 }
 
@@ -63,46 +62,6 @@ pub struct McpConfig {
     pub auto_index_on_db_write: bool,
 }
 
-/// Database configuration for LeanKG
-/// SQLite (CozoDB embedded) is the default, PostgreSQL can be used for
-/// multi-client HTTP server deployments
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseConfig {
-    /// Database backend: "sqlite" or "postgres"
-    #[serde(default = "default_backend")]
-    pub backend: String,
-    /// For SQLite: path to .leankg directory
-    /// For PostgreSQL: connection string (e.g., "postgres://user:pass@localhost:5432/leankg")
-    pub path: Option<String>,
-    /// PostgreSQL connection pool size (only for postgres backend)
-    /// Reserved for future PostgreSQL support - currently unused
-    #[serde(default = "default_pool_size")]
-    pub pool_size: u32,
-    /// Enable SSL for PostgreSQL connections
-    /// Reserved for future PostgreSQL support - currently unused
-    #[serde(default)]
-    pub ssl_enabled: bool,
-}
-
-fn default_backend() -> String {
-    "sqlite".to_string()
-}
-
-fn default_pool_size() -> u32 {
-    10
-}
-
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            backend: default_backend(),
-            path: None,
-            pool_size: default_pool_size(),
-            ssl_enabled: false,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocConfig {
     pub output: PathBuf,
@@ -147,7 +106,6 @@ impl Default for ProjectConfig {
                 output: PathBuf::from("./docs"),
                 templates: vec!["agents".to_string(), "claude".to_string()],
             },
-            database: DatabaseConfig::default(),
             microservice: None,
         }
     }

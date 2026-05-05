@@ -267,40 +267,67 @@ configure_cursor() {
     local config_dir="$HOME/.cursor"
     local config_file="$config_dir/mcp.json"
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
-    local needs_update=false
+    local mcp_port="${MCP_HTTP_PORT:-9699}"
 
     mkdir -p "$config_dir"
 
+    # SSE/HTTP mode: single server, project routed via ?project= query parameter.
+    # Each project's .cursor/mcp.json includes its project path in the URL.
+    # The server reads the query param and routes to the correct .leankg database.
+
+    # Remove leankg from global config (per-project config is used instead)
     if [ -f "$config_file" ]; then
-        local current_path
-        current_path=$(jq -r '.mcpServers.leankg.command // empty' "$config_file" 2>/dev/null)
-        local current_args
-        current_args=$(jq -r '.mcpServers.leankg.args // [] | join(" ")' "$config_file" 2>/dev/null)
-        
-        if [ -n "$current_path" ]; then
-            if [ "$current_path" != "$leankg_path" ]; then
-                echo "Updating LeanKG binary path for Cursor: $current_path -> $leankg_path"
-                needs_update=true
-            fi
-            if ! echo "$current_args" | grep -q "\-\-watch"; then
-                echo "Adding --watch flag to LeanKG for Cursor"
-                needs_update=true
-            fi
+        local has_leankg
+        has_leankg=$(jq -r '.mcpServers.leankg // empty' "$config_file" 2>/dev/null)
+        if [ -n "$has_leankg" ]; then
+            echo "Removing LeanKG from global Cursor config (per-project config preferred)"
+            local tmp_file
+            tmp_file=$(mktemp)
+            cat "$config_file" | jq 'del(.mcpServers.leankg)' > "$tmp_file"
+            mv "$tmp_file" "$config_file"
         fi
-        
-        if [ "$needs_update" = false ]; then
-            echo "LeanKG already properly configured in Cursor"
-            return
-        fi
-        
-        local tmp_file
-        tmp_file=$(mktemp)
-        cat "$config_file" | jq --arg leankg "$leankg_path" '.mcpServers.leankg = {"command": $leankg, "args": ["mcp-stdio", "--watch"]}' > "$tmp_file"
-        mv "$tmp_file" "$config_file"
-    else
-        echo "{\"mcpServers\": {\"leankg\": {\"command\": \"$leankg_path\", \"args\": [\"mcp-stdio\", \"--watch\"]}}}" > "$config_file"
     fi
-    echo "Configured LeanKG for Cursor at $config_file"
+
+    # Create per-project .cursor/mcp.json in current directory
+    local project_mcp_dir=".cursor"
+    local project_mcp_file="$project_mcp_dir/mcp.json"
+    local project_root
+    project_root="$(pwd)"
+    local mcp_url="http://localhost:${mcp_port}/mcp?project=${project_root}"
+
+    if [ -d ".cursor" ] || [ -f ".cursor/mcp.json" ]; then
+        mkdir -p "$project_mcp_dir"
+        if [ -f "$project_mcp_file" ]; then
+            local current_url
+            current_url=$(jq -r '.mcpServers.leankg.url // empty' "$project_mcp_file" 2>/dev/null)
+            if [ "$current_url" = "$mcp_url" ]; then
+                echo "LeanKG already configured in project .cursor/mcp.json"
+                return
+            fi
+            local tmp_file
+            tmp_file=$(mktemp)
+            cat "$project_mcp_file" | jq --arg url "$mcp_url" \
+                '.mcpServers.leankg = {"url": $url}' > "$tmp_file"
+            mv "$tmp_file" "$project_mcp_file"
+        else
+            cat > "$project_mcp_file" <<EOF
+{
+  "mcpServers": {
+    "leankg": {
+      "url": "$mcp_url"
+    }
+  }
+}
+EOF
+        fi
+        echo "Configured LeanKG for Cursor in project .cursor/mcp.json"
+        echo "  URL: $mcp_url"
+        echo "  Project database: ${project_root}/.leankg"
+    else
+        echo "No .cursor directory in project. Run this from a Cursor project root."
+        echo "Or add to .cursor/mcp.json manually:"
+        echo "{\"mcpServers\": {\"leankg\": {\"url\": \"$mcp_url\"}}}"
+    fi
 }
 
 configure_claude() {
@@ -1009,7 +1036,14 @@ HOOKEOF
 
 LeanKG is a lightweight knowledge graph for codebase understanding.
 
-**Auto-Activated Tools:**
+**Multi-Project Support:**
+LeanKG uses a single HTTP server that supports multiple projects. Each tool accepts a `project` parameter to specify the target project directory. The server routes queries to the correct `.leankg` database automatically.
+
+**IMPORTANT:** Always pass `project="/path/to/project/root"` when calling LeanKG tools. This ensures the server queries the correct project database.
+
+Example: `search_code(query="main", project="/Users/you/work/my-project")`
+
+**Auto-Activated Tools (all accept `project` parameter):**
 - `mcp_status` - Check if LeanKG is initialized
 - `mcp_init` - Initialize LeanKG for a project
 - `mcp_index` - Index codebase
@@ -1033,17 +1067,17 @@ LeanKG is a lightweight knowledge graph for codebase understanding.
 
 Before ANY codebase search/navigation, you MUST:
 
-1. Check if LeanKG is available via `mcp_status`
-2. If LeanKG is not initialized, run `mcp_init` first
-3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+1. Check if LeanKG is available via `mcp_status(project="/project/root")`
+2. If LeanKG is not initialized, run `mcp_init(path="/project/root/.leankg")` first
+3. Use LeanKG tools with `project="/project/root"`: `search_code`, `find_function`, `query_file`, etc.
 4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 
 | Instead of | Use LeanKG |
 |------------|------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
-| glob + content search for tests | `get_tested_by` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| Reading entire files | `get_context` (token-optimized) |
+| grep/ripgrep for "where is X?" | `search_code(query="X", project="/path")` or `find_function(name="X", project="/path")` |
+| glob + content search for tests | `get_tested_by(file="X", project="/path")` |
+| Manual dependency tracing | `get_impact_radius(file="X", project="/path")` or `get_dependencies(file="X", project="/path")` |
+| Reading entire files | `get_context(file="X", project="/path")` (token-optimized) |
 BOOTSTRAPEOF
         echo "Created leankg-bootstrap.md for Claude Code"
     fi
@@ -1106,7 +1140,14 @@ HOOKEOF
 
 LeanKG is a lightweight knowledge graph for codebase understanding.
 
-**Auto-Activated Tools:**
+**Multi-Project Support:**
+LeanKG uses a single HTTP server that supports multiple projects. Each tool accepts a `project` parameter to specify the target project directory. The server routes queries to the correct `.leankg` database automatically.
+
+**IMPORTANT:** Always pass `project="/path/to/project/root"` when calling LeanKG tools. This ensures the server queries the correct project database.
+
+Example: `search_code(query="main", project="/Users/you/work/my-project")`
+
+**Auto-Activated Tools (all accept `project` parameter):**
 - `mcp_status` - Check if LeanKG is initialized
 - `mcp_init` - Initialize LeanKG for a project
 - `mcp_index` - Index codebase
@@ -1130,17 +1171,17 @@ LeanKG is a lightweight knowledge graph for codebase understanding.
 
 Before ANY codebase search/navigation, you MUST:
 
-1. Check if LeanKG is available via `mcp_status`
-2. If LeanKG is not initialized, run `mcp_init` first
-3. Use LeanKG tools: `search_code`, `find_function`, `query_file`, `get_impact_radius`, etc.
+1. Check if LeanKG is available via `mcp_status(project="/project/root")`
+2. If LeanKG is not initialized, run `mcp_init(path="/project/root/.leankg")` first
+3. Use LeanKG tools with `project="/project/root"`: `search_code`, `find_function`, `query_file`, etc.
 4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 
 | Instead of | Use LeanKG |
 |------------|------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
-| glob + content search for tests | `get_tested_by` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| Reading entire files | `get_context` (token-optimized) |
+| grep/ripgrep for "where is X?" | `search_code(query="X", project="/path")` or `find_function(name="X", project="/path")` |
+| glob + content search for tests | `get_tested_by(file="X", project="/path")` |
+| Manual dependency tracing | `get_impact_radius(file="X", project="/path")` or `get_dependencies(file="X", project="/path")` |
+| Reading entire files | `get_context(file="X", project="/path")` (token-optimized) |
 BOOTSTRAPEOF
         echo "Created leankg-bootstrap.md for Cursor"
     fi
