@@ -14,7 +14,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__leankg__",
+        "matcher": "mcp__leankg__*",
         "hooks": [
           {
             "type": "command",
