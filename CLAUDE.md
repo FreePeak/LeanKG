@@ -114,4 +114,32 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ---
 
-*Last updated: 2026-04-24*
+## MCP Server Management
+
+### Known Issues
+- **MCP HTTP stability**: Zombie processes and stale locks can accumulate on restart. See `docs/analysis/mcp-http-stability-analysis-2026-05-05.md`
+
+### MCP HTTP Server Commands
+
+```bash
+# Check if running
+lsof -i :9699 2>/dev/null | grep LISTEN
+
+# Verify health
+curl http://localhost:9699/health
+
+# Verify SSE endpoint
+curl -I http://localhost:9699/mcp/stream
+
+# Clean restart (kill stale processes first)
+lsof -ti :9699 | xargs kill -9 2>/dev/null; sleep 1
+launchctl stop com.leankg.mcp-http 2>/dev/null; sleep 1
+launchctl start com.leankg.mcp-http
+
+# Watch for build changes
+./scripts/watch-leankg-build.sh
+```
+
+---
+
+*Last updated: 2026-05-05*

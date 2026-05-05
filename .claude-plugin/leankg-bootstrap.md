@@ -2,9 +2,13 @@
 
 LeanKG is a lightweight knowledge graph for codebase understanding. It indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.
 
-## MCP Tools
+## Multi-Project Support
 
-LeanKG provides these MCP tools for codebase navigation and analysis:
+LeanKG uses a single HTTP server supporting multiple projects. Each tool accepts a `project` parameter to route queries to the correct `.leankg` database.
+
+**Always pass `project="/path/to/project/root"`** to ensure the server queries the correct project database.
+
+## MCP Tools (all accept `project` parameter)
 
 | Tool | Purpose |
 |------|---------|
@@ -34,17 +38,17 @@ LeanKG provides these MCP tools for codebase navigation and analysis:
 
 Before ANY codebase search/navigation, you MUST:
 
-1. Check if LeanKG is available via `mcp_status`
-2. If LeanKG is not initialized, run `mcp_init` first
-3. Use the appropriate LeanKG tool for the task
+1. Check if LeanKG is available via `mcp_status(project="/project/root")`
+2. If LeanKG is not initialized, run `mcp_init(path="/project/root/.leankg")` first
+3. Use the appropriate LeanKG tool with `project="/project/root"` for the task
 4. **ONLY after LeanKG is exhausted (returns empty) may you fall back to grep/ripgrep**
 
 | Instead of | Use LeanKG | Grep Fallback |
 |------------|------------|---------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` | `grep -rn "X" --include="*.rs"` |
-| glob + content search for tests | `get_tested_by` | `grep -rn "X" tests/` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` | N/A |
-| Reading entire files | `get_context` (token-optimized) | `cat file.rs` |
+| grep/ripgrep for "where is X?" | `search_code(query="X", project="/path")` | `grep -rn "X" --include="*.rs"` |
+| glob + content search for tests | `get_tested_by(file="X", project="/path")` | `grep -rn "X" tests/` |
+| Manual dependency tracing | `get_impact_radius(file="X", project="/path")` | N/A |
+| Reading entire files | `get_context(file="X", project="/path")` | `cat file.rs` |
 
 ## Auto-Init Behavior
 
@@ -52,17 +56,3 @@ LeanKG automatically initializes on first use:
 - If `.leankg` does not exist, it creates one automatically
 - If index is stale (>5 min since last git commit), it re-indexes automatically
 - Set `auto_index_on_start: false` in `leankg.yaml` to disable
-
-## Quick Commands
-
-```bash
-# Index a codebase
-cargo run -- init
-cargo run -- index ./src
-
-# Calculate impact radius
-cargo run -- impact src/main.rs 3
-
-# Start MCP server
-cargo run -- serve
-```
