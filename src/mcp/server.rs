@@ -1519,10 +1519,40 @@ fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bo
 /// Handle POST /mcp - JSON-RPC request endpoint
 async fn handle_mcp_request(
     State(server): State<Arc<HttpMcpServer>>,
-    Query(query): Query<McpQueryParams>,
+    uri: axum::http::Uri,
     headers: HeaderMap,
     body: String,
 ) -> Response {
+    // Extract project from URL query param
+    let project_param = uri
+        .query()
+        .and_then(|q| q.split('&').find(|s| s.starts_with("project=")))
+        .and_then(|s| s.strip_prefix("project="))
+        .map(|s| {
+            // Simple percent-decode: %XX → byte
+            let mut result = String::new();
+            let mut chars = s.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '%' {
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if hex.len() == 2 {
+                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                            result.push(byte as char);
+                        } else {
+                            result.push('%');
+                            result.push_str(&hex);
+                        }
+                    } else {
+                        result.push('%');
+                        result.push_str(&hex);
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            result
+        });
+
     // Extract Authorization header
     let auth_value = headers
         .get(header::AUTHORIZATION)
@@ -1615,15 +1645,18 @@ async fn handle_mcp_request(
     };
 
     if is_notification {
-        let _ = process_jsonrpc_request(&server.mcp_server, &request).await;
+        // Process the notification but don't send a response
+        let _ =
+            process_jsonrpc_request(&server.mcp_server, &request, project_param.as_deref()).await;
         return Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
             .unwrap();
     }
 
-    // Process the request
-    let result = process_jsonrpc_request(&server.mcp_server, &request).await;
+    // Process the request, passing project param for routing
+    let result =
+        process_jsonrpc_request(&server.mcp_server, &request, project_param.as_deref()).await;
 
     // Build response
     // unwrap is safe because if id was None we already returned NO_CONTENT above
@@ -1657,6 +1690,7 @@ async fn handle_mcp_request(
 async fn process_jsonrpc_request(
     mcp_server: &MCPServer,
     request: &JsonRpcRequest,
+    project_param: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let method = &request.method;
     let params = request.params.as_ref();
@@ -1707,11 +1741,18 @@ async fn process_jsonrpc_request(
                 .and_then(|v| v.as_str())
                 .ok_or("Missing tool name")?;
 
-            let arguments = params_obj
+            let mut arguments = params_obj
                 .get("arguments")
                 .and_then(|v| v.as_object())
                 .cloned()
                 .unwrap_or_default();
+
+            // Inject project from URL query param if not already in arguments
+            if let Some(ref project) = project_param {
+                arguments
+                    .entry("project".to_string())
+                    .or_insert(serde_json::Value::String(project.to_string()));
+            }
 
             let result = mcp_server
                 .execute_tool(tool_name, arguments)
