@@ -9,7 +9,7 @@ use crate::mcp::watcher::start_watcher;
 use crate::orchestrator::intent::IntentParser;
 use axum::{
     body::Body,
-    extract::{Query, State},
+    extract::State,
     http::{header, HeaderMap, Method, StatusCode},
     response::Response,
     routing::{get, post},
@@ -1595,7 +1595,7 @@ async fn handle_mcp_request(
     // 1. Inject "project" into arguments for db routing
     // 2. Resolve relative file/doc/element paths against the project root
     //    (without this, relative paths resolve against server CWD → wrong database)
-    let request = if let Some(ref project) = query.project {
+    let request = if let Some(ref project) = project_param {
         let project_path = std::path::PathBuf::from(project);
         let db_path = if project_path.ends_with(".leankg") {
             project_path.clone()
