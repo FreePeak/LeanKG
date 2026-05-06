@@ -26,8 +26,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tokio::signal;
 use tokio::sync::RwLock as TokioRwLock;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -48,6 +50,12 @@ pub struct MCPServer {
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
     intent_parser: IntentParser,
+    /// Child API server processes managed by this instance (owned for proper cleanup)
+    child_processes: Arc<TokioRwLock<HashMap<u16, u32>>>,
+    /// Shutdown flag to signal when server should stop
+    shutdown_flag: Arc<AtomicBool>,
+    /// Port this server is bound to (for cleanup tracking)
+    bound_port: Arc<AtomicU32>,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -68,6 +76,9 @@ impl Clone for MCPServer {
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
             intent_parser: IntentParser::new(),
+            child_processes: self.child_processes.clone(),
+            shutdown_flag: self.shutdown_flag.clone(),
+            bound_port: self.bound_port.clone(),
         }
     }
 }
@@ -83,6 +94,9 @@ impl MCPServer {
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
+            child_processes: Arc::new(TokioRwLock::new(HashMap::new())),
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
+            bound_port: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -96,6 +110,9 @@ impl MCPServer {
             watch_path: Some(watch_path),
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
+            child_processes: Arc::new(TokioRwLock::new(HashMap::new())),
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
+            bound_port: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -321,6 +338,24 @@ impl MCPServer {
                     .display()
             );
         }
+
+        // Setup graceful shutdown for stdio mode
+        let shutdown_flag = self.shutdown_flag.clone();
+        let server = self.clone();
+        tokio::spawn(async move {
+            signal::ctrl_c().await.ok();
+            tracing::info!("Shutdown signal received in stdio mode");
+            shutdown_flag.store(true, Ordering::SeqCst);
+            // For stdio, we just cleanup child processes - the transport will close naturally
+            let mut children = server.child_processes.write().await;
+            for (port, pid) in children.drain() {
+                tracing::info!("Killing child API server on port {} (PID {})", port, pid);
+                if let Err(e) = MCPServer::kill_process_by_pid(pid) {
+                    tracing::warn!("Failed to kill child process {}: {}", pid, e);
+                }
+            }
+        });
+
         let transport = stdio();
         let _running = serve_server(self.clone(), transport).await?;
         futures_util::future::pending().await
@@ -333,6 +368,7 @@ impl MCPServer {
     }
 
     /// Ensure the API server is running, starting it if not
+    /// Tracks the child process for proper cleanup on shutdown
     async fn ensure_api_server_running(
         &self,
     ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
@@ -370,8 +406,11 @@ impl MCPServer {
             .spawn();
 
         match child {
-            Ok(_child) => {
-                tracing::info!("Spawned API server process");
+            Ok(child) => {
+                tracing::info!("Spawned API server process (PID: {})", child.id());
+                // Track child process for cleanup
+                let mut children = self.child_processes.write().await;
+                children.insert(port, child.id());
             }
             Err(e) => {
                 tracing::warn!("Failed to spawn API server: {}. Continuing anyway.", e);
@@ -513,6 +552,24 @@ impl MCPServer {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    }
+
+    /// Kill a process by PID
+    fn kill_process_by_pid(pid: u32) -> Result<(), String> {
+        std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .output()
+            .map_err(|e| format!("Failed to send TERM: {}", e))?;
+
+        // Wait briefly then check if it's dead, if not send SIGKILL
+        std::thread::sleep(Duration::from_millis(500));
+        if Self::is_process_alive(pid) {
+            std::process::Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .output()
+                .map_err(|e| format!("Failed to send KILL: {}", e))?;
+        }
+        Ok(())
     }
 
     /// Release the port lock if we own it
@@ -714,7 +771,7 @@ impl MCPServer {
                         port,
                         other_pid
                     );
-                    return Ok(());
+                    std::process::exit(0);
                 } else {
                     tracing::info!(
                         "Port {} locked by PID {}, waiting for release...",
@@ -766,9 +823,92 @@ impl MCPServer {
         let listener = tokio::net::TcpListener::from_std(std_listener)?;
         tracing::info!("MCP HTTP server listening on http://{}", addr);
 
-        axum::serve(listener, app).await?;
+        // Track bound port for cleanup
+        self.bound_port.store(port as u32, Ordering::SeqCst);
 
+        // Perform graceful shutdown on signal
+        let shutdown_flag = self.shutdown_flag.clone();
+        let server = self.clone();
+        let bound_port = port;
+
+        tokio::spawn(async move {
+            signal::ctrl_c().await.ok();
+            tracing::info!("Shutdown signal received, cleaning up...");
+            shutdown_flag.store(true, Ordering::SeqCst);
+            server.cleanup_on_shutdown(bound_port).await;
+        });
+
+        // Use graceful shutdown with axum
+        let shutdown_flag2 = self.shutdown_flag.clone();
+        let graceful = tokio::task::spawn(async move {
+            let mut interrupt_count = 0;
+            loop {
+                if shutdown_flag2.load(Ordering::SeqCst) {
+                    interrupt_count += 1;
+                    tracing::info!("Shutdown in progress... (signal {})", interrupt_count);
+                    if interrupt_count >= 2 {
+                        tracing::warn!("Forceful shutdown after {} interrupts", interrupt_count);
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+
+        tokio::select! {
+            result = axum::serve(listener, app) => {
+                match result {
+                    Ok(_) => tracing::info!("HTTP server shutdown complete"),
+                    Err(e) => tracing::error!("HTTP server error: {}", e),
+                }
+            }
+            _ = graceful => {
+                tracing::info!("Graceful shutdown triggered");
+            }
+        }
+
+        // Cleanup on shutdown
+        self.cleanup_on_shutdown(port).await;
         Ok(())
+    }
+
+    /// Cleanup resources on shutdown: release port lock, unregister session, kill child processes
+    async fn cleanup_on_shutdown(&self, port: u16) {
+        tracing::info!("Starting cleanup for port {}...", port);
+
+        // 1. Release port lock
+        self.release_port_lock(port);
+
+        // 2. Unregister session
+        self.unregister_session(port).await;
+
+        // 3. Kill child API server processes
+        let mut children = self.child_processes.write().await;
+        for (child_port, child_pid) in children.drain() {
+            tracing::info!(
+                "Killing child API server on port {} (PID {})",
+                child_port,
+                child_pid
+            );
+            if let Err(e) = Self::kill_process_by_pid(child_pid) {
+                tracing::warn!("Failed to kill child process {}: {}", child_pid, e);
+            }
+        }
+
+        // 4. Remove PID file if exists
+        let pid_file = self.get_db_path().join("leankg.pid");
+        if pid_file.exists() {
+            if let Ok(contents) = fs::read_to_string(&pid_file) {
+                if let Ok(pid) = contents.trim().parse::<u32>() {
+                    if pid == std::process::id() as u32 {
+                        let _ = fs::remove_file(&pid_file);
+                        tracing::info!("Removed PID file");
+                    }
+                }
+            }
+        }
+
+        tracing::info!("Cleanup complete for port {}", port);
     }
 
     async fn auto_init_if_needed(&self) -> Result<(), String> {
