@@ -4,6 +4,7 @@ use crate::db::models::{CodeElement, Relationship};
 use crate::db::record_metric;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
 use crate::orchestrator::QueryOrchestrator;
+use glob;
 use serde_json::{json, Value};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -743,6 +744,66 @@ impl ToolHandler {
         }))
     }
 
+    /// Glob matching using the glob crate (already a dependency).
+    /// Supports ** (any path), * (any chars), ? (single char), [abc] (char class).
+    fn glob_match(&self, pattern: &str, text: &str) -> bool {
+        if let Ok(g) = glob::Pattern::new(pattern) {
+            g.matches(text)
+        } else {
+            // Fall back to substring match for invalid patterns
+            text.contains(pattern)
+        }
+    }
+
+    /// Pre-process a user query string into valid Cozo Datalog syntax.
+    /// Handles common patterns like:
+    ///   "function[file ~ 'chat']"  →  full Cozo query
+    ///   "?[name] := *code_elements"  →  pass through
+    fn preprocess_datalog_query(query: &str) -> String {
+        let trimmed = query.trim();
+
+        // Already a valid Cozo query (starts with ? or :)
+        if trimmed.starts_with('?') || trimmed.starts_with(':') {
+            return trimmed.to_string();
+        }
+
+        // Pattern: relation[field ~ 'value'] or relation[field = 'value']
+        // e.g., "function[file ~ 'chat']" or "code_elements[name = 'foo']"
+        if let Some(cap) =
+            regex::Regex::new(r"^(\w+)\[(\w+)\s*(~|=)\s*'([^']+)'\](?::limit\s+(\d+))?")
+                .ok()
+                .and_then(|r| r.captures(trimmed))
+        {
+            let _relation = cap.get(1).map(|m| m.as_str()).unwrap_or("code_elements");
+            let _field = cap.get(2).map(|m| m.as_str()).unwrap_or("file_path");
+            let op = cap.get(3).map(|m| m.as_str()).unwrap_or("~");
+            let value = cap.get(4).map(|m| m.as_str()).unwrap_or("");
+            let limit = cap.get(5).map(|m| m.as_str()).unwrap_or("50");
+
+            let op_str = if op == "=" || op == "~" { "=~" } else { op };
+
+            return format!(
+                "?[qualified_name, element_type, name, file_path, line_start, line_end] \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end], \
+                 file_path {} \".*{}.*\" :limit {}",
+                op_str, value, limit
+            );
+        }
+
+        // Pattern: simple search "search term" → scan all elements
+        if !trimmed.contains('[') && !trimmed.contains('?') && !trimmed.contains(':') {
+            return format!(
+                "?[qualified_name, element_type, name, file_path, line_start, line_end] \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end], \
+                 name =~ \".*{}.*\" :limit 50",
+                trimmed.replace('\\', "\\\\").replace('"', "\\\"")
+            );
+        }
+
+        // Fall through - pass as-is and let Cozo report the error
+        trimmed.to_string()
+    }
+
     fn query_file(&self, args: &Value) -> Result<Value, String> {
         let pattern = args["pattern"]
             .as_str()
@@ -758,8 +819,12 @@ impl ToolHandler {
         let matches: Vec<_> = elements
             .iter()
             .filter(|e| {
-                let pattern_match =
-                    e.file_path.contains(pattern) || e.qualified_name.contains(pattern);
+                let pattern_match = if pattern.contains('*') || pattern.contains('?') {
+                    self.glob_match(pattern, &e.file_path)
+                        || self.glob_match(pattern, &e.qualified_name)
+                } else {
+                    e.file_path.contains(pattern) || e.qualified_name.contains(pattern)
+                };
                 let type_match = element_type_filter
                     .as_ref()
                     .map(|et| &e.element_type == et)
@@ -1209,11 +1274,22 @@ impl ToolHandler {
 
     fn find_large_functions(&self, args: &Value) -> Result<Value, String> {
         let min_lines = args["min_lines"].as_u64().unwrap_or(50) as u32;
+        let limit = args["limit"].as_i64().unwrap_or(50) as usize;
 
         let elements = self
             .graph_engine
             .all_elements()
             .map_err(|e| e.to_string())?;
+
+        let total: usize = elements
+            .iter()
+            .filter(|e| {
+                e.element_type == "function"
+                    && (e.line_end.saturating_sub(e.line_start)) >= min_lines
+                    && !e.file_path.contains("/.claude/worktrees/")
+                    && !e.file_path.contains("/.worktrees/")
+            })
+            .count();
 
         let large_functions: Vec<_> = elements
             .iter()
@@ -1233,9 +1309,10 @@ impl ToolHandler {
                     "line_end": e.line_end
                 })
             })
+            .take(limit)
             .collect();
 
-        Ok(json!({ "large_functions": large_functions }))
+        Ok(json!({ "large_functions": large_functions, "total": total, "limit": limit }))
     }
 
     fn get_tested_by(&self, args: &Value) -> Result<Value, String> {
@@ -1460,7 +1537,10 @@ impl ToolHandler {
         Ok(json!({ "tree": tree }))
     }
 
-    fn get_code_tree(&self, _args: &Value) -> Result<Value, String> {
+    fn get_code_tree(&self, args: &Value) -> Result<Value, String> {
+        let limit = args["limit"].as_i64().unwrap_or(100) as usize;
+        let offset = args["offset"].as_i64().unwrap_or(0) as usize;
+
         let elements = self
             .graph_engine
             .all_elements()
@@ -1500,8 +1580,11 @@ impl ToolHandler {
         }
 
         // Convert to array of {file, file_path, elements} objects for TOON optimization
+        let total = files_map.len();
         let code_tree: Vec<Value> = files_map
             .into_iter()
+            .skip(offset)
+            .take(limit)
             .map(|(file, (file_path, elems))| {
                 json!({
                     "file": file,
@@ -1511,7 +1594,7 @@ impl ToolHandler {
             })
             .collect();
 
-        Ok(json!({ "code_tree": code_tree }))
+        Ok(json!({ "code_tree": code_tree, "total": total, "offset": offset, "limit": limit }))
     }
 
     fn find_related_docs(&self, args: &Value) -> Result<Value, String> {
@@ -1537,27 +1620,63 @@ impl ToolHandler {
         Ok(json!({ "related_docs": related }))
     }
 
-    fn get_clusters(&self, _args: &Value) -> Result<Value, String> {
-        use crate::graph::clustering::{get_cluster_stats, Cluster, CommunityDetector};
+    fn get_clusters(&self, args: &Value) -> Result<Value, String> {
+        use crate::graph::clustering::{Cluster, CommunityDetector};
+
+        let limit = args["limit"].as_i64().unwrap_or(100) as usize;
 
         let detector = CommunityDetector::new(self.graph_engine.db());
-        let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
+        let clusters = match detector.detect_communities() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "detect_communities failed ({}), returning empty clusters",
+                    e
+                );
+                return Ok(json!({
+                    "clusters": [],
+                    "stats": { "total_clusters": 0, "total_members": 0, "avg_cluster_size": 0.0 }
+                }));
+            }
+        };
 
-        let cluster_list: Vec<Cluster> = clusters.values().cloned().collect();
-        let stats = get_cluster_stats(&clusters);
+        // Filter out noise clusters from build artifacts, worktrees, .next, etc.
+        let noise_patterns = ["target/", "build/", ".next/", ".worktrees/", "typenum"];
+        let filtered_clusters: Vec<Cluster> = clusters
+            .values()
+            .filter(|c| {
+                !noise_patterns
+                    .iter()
+                    .any(|p| c.representative_files.iter().any(|f| f.contains(p)))
+                    && !c.label.contains("typenum")
+            })
+            .cloned()
+            .collect();
+
+        // Compute stats directly from filtered clusters (get_cluster_stats needs HashMap)
+        let total_members: usize = filtered_clusters.iter().map(|c| c.members.len()).sum();
+        let total_clusters = filtered_clusters.len();
+        let avg_cluster_size = if total_clusters > 0 {
+            total_members as f64 / total_clusters as f64
+        } else {
+            0.0
+        };
 
         Ok(json!({
-            "clusters": cluster_list,
+            "clusters": filtered_clusters.iter().take(limit).cloned().collect::<Vec<_>>(),
             "stats": {
-                "total_clusters": stats.total_clusters,
-                "total_members": stats.total_members,
-                "avg_cluster_size": stats.avg_cluster_size
+                "total_clusters": total_clusters,
+                "total_members": total_members,
+                "avg_cluster_size": avg_cluster_size
             }
         }))
     }
 
     fn run_raw_query(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
+
+        // Pre-process common query patterns to valid Cozo Datalog
+        let processed_query = Self::preprocess_datalog_query(query);
 
         let params: std::collections::BTreeMap<String, serde_json::Value> = args
             .get("params")
@@ -1567,7 +1686,7 @@ impl ToolHandler {
 
         let result = self
             .graph_engine
-            .run_raw_query(query, params)
+            .run_raw_query(&processed_query, params)
             .map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("does not have field") {
@@ -1764,7 +1883,17 @@ impl ToolHandler {
         let cluster_label = args["cluster_label"].as_str();
 
         let detector = CommunityDetector::new(self.graph_engine.db());
-        let clusters = detector.detect_communities().map_err(|e| e.to_string())?;
+        let clusters = match detector.detect_communities() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "detect_communities failed in get_cluster_context ({}): {}",
+                    cluster_id.map(|s| s.to_string()).unwrap_or_default(),
+                    e
+                );
+                return Err(format!("Failed to load clusters: {}", e));
+            }
+        };
 
         let target_cluster = if let Some(cid) = cluster_id {
             clusters.get(cid).cloned()
@@ -1835,7 +1964,9 @@ impl ToolHandler {
                     "inter_cluster_dependencies": inter_cluster
                 }))
             }
-            None => Err("Cluster not found".to_string()),
+            None => {
+                Err("Cluster not found. Try get_clusters to see available cluster IDs.".to_string())
+            }
         }
     }
 }
