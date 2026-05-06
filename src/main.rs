@@ -2497,6 +2497,10 @@ fn kill_old_processes() -> Result<(), Box<dyn std::error::Error>> {
 
             // Kill each process directly
             for pid in &matching_pids {
+                // SAFETY: Never kill ourselves - double-check even though filter should catch this
+                if *pid == current_pid {
+                    continue;
+                }
                 let kill_output = std::process::Command::new("kill")
                     .args(["-9", &pid.to_string()])
                     .output();
