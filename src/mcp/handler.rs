@@ -626,22 +626,13 @@ impl ToolHandler {
         let mut max_dependents_at_depth1 = 0;
         let mut has_public_api_change = false;
 
-        let all_elements = self
-            .graph_engine
-            .all_elements()
-            .map_err(|e| e.to_string())?;
-        let all_relationships = self
-            .graph_engine
-            .all_relationships()
-            .map_err(|e| e.to_string())?;
-
         for file in &changed_files {
-            let file_elements: Vec<_> = all_elements
-                .iter()
-                .filter(|e| &e.file_path == file)
-                .collect();
+            let file_elements = self
+                .graph_engine
+                .get_elements_by_file(file)
+                .map_err(|e| e.to_string())?;
 
-            for elem in file_elements {
+            for elem in &file_elements {
                 changed_symbols.push(json!({
                     "qualified_name": elem.qualified_name,
                     "name": elem.name,
@@ -649,12 +640,15 @@ impl ToolHandler {
                     "file": elem.file_path
                 }));
 
-                let dependents: Vec<_> = all_relationships
-                    .iter()
-                    .filter(|r| r.target_qualified == elem.qualified_name && r.rel_type == "calls")
-                    .collect();
+                let deps = self
+                    .graph_engine
+                    .get_relationships_for_elements_fast(
+                        std::slice::from_ref(&elem.qualified_name),
+                        Some(&["calls"]),
+                    )
+                    .map_err(|e| e.to_string())?;
 
-                let depth1_count = dependents.len();
+                let depth1_count = deps.len();
                 max_dependents_at_depth1 = max_dependents_at_depth1.max(depth1_count);
 
                 if depth1_count >= 10 {
@@ -686,34 +680,27 @@ impl ToolHandler {
             0.0
         };
 
-        for file in &changed_files {
-            let dependents = crate::indexer::find_dependents(
-                file,
-                &all_relationships
-                    .iter()
-                    .map(|r| (r.source_qualified.clone(), r.target_qualified.clone()))
-                    .collect::<Vec<_>>(),
-            );
+        let all_deps = self
+            .graph_engine
+            .get_relationships_for_elements_fast(
+                &changed_files.to_vec(),
+                Some(&["imports", "calls", "references"]),
+            )
+            .map_err(|e| e.to_string())?;
 
-            for dep_file in dependents {
-                if let Ok(Some(elem)) = self.graph_engine.find_element(&dep_file) {
-                    let rels: Vec<_> = all_relationships
-                        .iter()
-                        .filter(|r| {
-                            r.target_qualified == elem.qualified_name && r.rel_type == "calls"
-                        })
-                        .filter(|r| r.confidence >= min_confidence_filter)
-                        .collect();
-
-                    if !rels.is_empty() {
-                        affected_symbols.push(json!({
-                            "qualified_name": elem.qualified_name,
-                            "name": elem.name,
-                            "type": elem.element_type,
-                            "file": elem.file_path,
-                            "confidence": rels.first().map(|r| r.confidence).unwrap_or(1.0)
-                        }));
-                    }
+        let mut seen_affected = std::collections::HashSet::new();
+        for rel in &all_deps {
+            if let Ok(Some(elem)) = self.graph_engine.find_element(&rel.target_qualified) {
+                if rel.confidence >= min_confidence_filter
+                    && seen_affected.insert(elem.qualified_name.clone())
+                {
+                    affected_symbols.push(json!({
+                        "qualified_name": elem.qualified_name,
+                        "name": elem.name,
+                        "type": elem.element_type,
+                        "file": elem.file_path,
+                        "confidence": rel.confidence
+                    }));
                 }
             }
         }
@@ -832,7 +819,7 @@ impl ToolHandler {
 
         let elements = self
             .graph_engine
-            .all_elements()
+            .search_by_name_typed(pattern, element_type_filter.as_deref(), 50)
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements
@@ -952,12 +939,11 @@ impl ToolHandler {
 
         for file_val in files {
             if let Some(file_path) = file_val.as_str() {
-                if let Ok(elements) = self.graph_engine.all_elements() {
+                if let Ok(elements) = self.graph_engine.get_elements_by_file(file_path) {
                     let file_elements: Vec<_> = elements
                         .into_iter()
                         .filter(|e| {
-                            e.file_path.contains(file_path)
-                                && !e.file_path.contains("/.claude/worktrees/")
+                            !e.file_path.contains("/.claude/worktrees/")
                                 && !e.file_path.contains("/.worktrees/")
                         })
                         .collect();

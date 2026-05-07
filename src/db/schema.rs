@@ -3,6 +3,13 @@ use std::path::Path;
 
 pub type CozoDb = Db<SqliteStorage>;
 
+fn get_env_mmap_size() -> u64 {
+    std::env::var("LEANKG_MMAP_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(268435456) // Default 256MB
+}
+
 pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     let db_file_path = if db_path.is_dir() {
         db_path.join("leankg.db")
@@ -14,19 +21,31 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
 
     let db = cozo::new_cozo_sqlite(path_str)?;
 
+    let mmap_size = get_env_mmap_size();
+    tracing::info!(
+        "SQLite mmap_size = {} (LEANKG_MMAP_SIZE={})",
+        mmap_size,
+        mmap_size
+    );
+
     // Set memory limits for SQLite (CozoDB backend) - run individually to avoid parsing issues
-    let pragmas = [
+    let static_pragmas: &[&str] = &[
         "PRAGMA cache_size = -64000",
-        "PRAGMA mmap_size = 268435456",
         "PRAGMA temp_store = MEMORY",
         "PRAGMA synchronous = NORMAL",
         "PRAGMA journal_mode = WAL",
         "PRAGMA wal_autocheckpoint = 100",
     ];
-    for pragma in pragmas {
+    for pragma in static_pragmas {
         if let Err(e) = db.run_script(pragma, Default::default()) {
             tracing::debug!("Pragma '{}' failed (may not be supported): {}", pragma, e);
         }
+    }
+
+    // mmap_size is dynamic based on env var
+    let mmap_pragma = format!("PRAGMA mmap_size = {}", mmap_size);
+    if let Err(e) = db.run_script(&mmap_pragma, Default::default()) {
+        tracing::debug!("mmap_size pragma failed: {}", e);
     }
 
     init_schema(&db)?;
