@@ -2580,49 +2580,80 @@ impl GraphEngine {
     }
 
     pub fn count_elements(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(n)] := *code_elements[n, ...], n = n :collect count"#;
+        // Note: Cozo :collect count syntax is not supported in this version
+        // Use a high limit query to count elements efficiently
+        const COUNT_LIMIT: usize = 100000;
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit {}"#,
+            COUNT_LIMIT
+        );
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.len())
     }
 
     pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(n)] := *relationships[n, ...], n = n :collect count"#;
+        // Note: Cozo :collect count syntax is not supported in this version
+        const COUNT_LIMIT: usize = 100000;
+        let query = format!(
+            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata] :limit {}"#,
+            COUNT_LIMIT
+        );
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.len())
     }
 
     pub fn count_business_logic(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(n)] := *business_logic[n, ...], n = n :collect count"#;
+        // Note: Cozo :collect count syntax is not supported in this version
+        const COUNT_LIMIT: usize = 100000;
+        let query = format!(
+            r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id] :limit {}"#,
+            COUNT_LIMIT
+        );
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        Ok(result.rows.len())
     }
 
     pub fn count_files(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(file_path)] := *code_elements[file_path, ...] :collect count"#;
+        // Note: Cozo :collect count syntax is not supported in this version
+        // Use distinct query to count unique files
+        const COUNT_LIMIT: usize = 100000;
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit {}"#,
+            COUNT_LIMIT
+        );
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        // Count unique file paths from results
+        let unique_files: std::collections::HashSet<_> = result
+            .rows
+            .iter()
+            .filter_map(|row| row.get(3).and_then(|v| v.as_str()))
+            .collect();
+        Ok(unique_files.len())
     }
 
     pub fn count_by_element_type(
         &self,
         element_type: &str,
     ) -> Result<usize, Box<dyn std::error::Error>> {
+        // Note: Cozo :collect count syntax is not supported in this version
+        // Use filter-based query to count by element type
+        const COUNT_LIMIT: usize = 100000;
         let query = format!(
-            r#"?[count(n)] := *code_elements[n, element_type, ...], element_type = "{}" :collect count"#,
-            element_type
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], element_type = "{}" :limit {}"#,
+            element_type, COUNT_LIMIT
         );
         let result = self
             .db
             .run_script(&query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
+        Ok(result.rows.len())
     }
 }
 
