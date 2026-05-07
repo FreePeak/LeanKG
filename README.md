@@ -261,6 +261,29 @@ leankg obsidian pull                      # Pull annotation edits from Obsidian
 
 ## Troubleshooting
 
+## Troubleshooting
+
+### High RAM Usage on macOS
+
+LeanKG uses memory-mapped I/O and in-memory caching which can consume significant RAM on macOS. Primary causes:
+
+| Cause | Location | Fix |
+|-------|----------|-----|
+| SQLite mmap_size=256MB | `src/db/schema.rs:20` | Set `LEANKG_MMAP_SIZE=134217728` (128MB) |
+| Deprecated `all_elements()` | `src/graph/query.rs:537` | Use `get_elements_paginated()` instead |
+| Deprecated `all_relationships()` | `src/graph/query.rs:992` | Use `get_relationships_paginated()` |
+| SessionCache 500K tokens | `src/compress/session_cache.rs:11` | Set `LEANKG_CACHE_MAX_TOKENS=100000` |
+| Multiple GraphEngine cached | `src/mcp/server.rs:48-49` | Cache eviction with TTL |
+| Multiple cache layers | Various | Enable `memory_only` mode for PersistentCache |
+
+**Quick fix - add to your shell profile:**
+```bash
+export LEANKG_MMAP_SIZE=134217728   # 128MB instead of 256MB
+export LEANKG_CACHE_MAX_TOKENS=100000  # 100K instead of 500K
+```
+
+See [INSTRUCTION.md](INSTRUCTION.md) for detailed memory tuning and MCP server setup.
+
 ### Database Lock Error
 
 If you see `database is locked (code 5)`, another LeanKG process is holding the database:
