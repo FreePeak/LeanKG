@@ -775,27 +775,46 @@ impl ToolHandler {
                 .and_then(|r| r.captures(trimmed))
         {
             let _relation = cap.get(1).map(|m| m.as_str()).unwrap_or("code_elements");
-            let _field = cap.get(2).map(|m| m.as_str()).unwrap_or("file_path");
-            let op = cap.get(3).map(|m| m.as_str()).unwrap_or("~");
+            let field_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("file_path");
+            let _op = cap.get(3).map(|m| m.as_str()).unwrap_or("~");
             let value = cap.get(4).map(|m| m.as_str()).unwrap_or("");
             let limit = cap.get(5).map(|m| m.as_str()).unwrap_or("50");
 
-            let op_str = if op == "=" || op == "~" { "=~" } else { op };
+            // Map short field names to actual column names
+            let field = match field_raw {
+                "file" | "path" => "file_path",
+                "qualified_name" | "qname" => "qualified_name",
+                "name" | "n" => "name",
+                "type" | "element_type" => "element_type",
+                "language" | "lang" => "language",
+                "parent" | "parent_qualified" => "parent_qualified",
+                "start" | "line_start" => "line_start",
+                "end" | "line_end" => "line_end",
+                "cluster" | "cluster_id" => "cluster_id",
+                "label" | "cluster_label" => "cluster_label",
+                "metadata" | "meta" => "metadata",
+                other => other,
+            };
 
+            // NOTE: Cozo requires all columns to be bound in the head when using
+            // a materialized relation (*relation[...]). The full schema is:
+            // qualified_name, element_type, name, file_path, line_start, line_end,
+            // language, parent_qualified, cluster_id, cluster_label, metadata
+            // Use regex_matches() for regex filtering in Cozo
             return format!(
-                "?[qualified_name, element_type, name, file_path, line_start, line_end] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end], \
-                 file_path {} \".*{}.*\" :limit {}",
-                op_str, value, limit
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 regex_matches({}, \"{}\") :limit {}",
+                field, value, limit
             );
         }
 
         // Pattern: simple search "search term" → scan all elements
         if !trimmed.contains('[') && !trimmed.contains('?') && !trimmed.contains(':') {
             return format!(
-                "?[qualified_name, element_type, name, file_path, line_start, line_end] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end], \
-                 name =~ \".*{}.*\" :limit 50",
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 regex_matches(name, \"{}\") :limit 50",
                 trimmed.replace('\\', "\\\\").replace('"', "\\\"")
             );
         }
