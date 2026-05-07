@@ -273,9 +273,19 @@ impl DocIndexer {
     }
 
     fn extract_code_references(&self, content: &str) -> Vec<(String, String)> {
+        use regex::Regex;
         let mut refs = Vec::new();
-        let file_pattern =
-            regex::Regex::new(r"\b([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py))\b").unwrap();
+
+        // Pattern 1: raw filenames in prose (e.g. "see handler.rs for details")
+        let file_pattern = Regex::new(r"\b([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py))\b").unwrap();
+
+        // Pattern 2: markdown links [text](path/to/file.rs)
+        let md_link_pattern =
+            Regex::new(r"\[([^\]]+)\]\(([\w\-/.]+\.(?:go|rs|ts|tsx|js|jsx|py))\)").unwrap();
+
+        // Pattern 3: backtick-enclosed code references `file.rs`
+        let code_ref_pattern = Regex::new(r"`([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py))`").unwrap();
+
         let mut in_code_block = false;
 
         for line in content.lines() {
@@ -288,6 +298,25 @@ impl DocIndexer {
                 continue;
             }
 
+            // Extract from markdown links
+            for cap in md_link_pattern.captures_iter(trimmed) {
+                if let Some(m) = cap.get(2) {
+                    let target = m.as_str().to_string();
+                    let context = trimmed.chars().take(100).collect::<String>();
+                    refs.push((target, context));
+                }
+            }
+
+            // Extract from backtick code references
+            for cap in code_ref_pattern.captures_iter(trimmed) {
+                if let Some(m) = cap.get(1) {
+                    let target = m.as_str().to_string();
+                    let context = trimmed.chars().take(100).collect::<String>();
+                    refs.push((target, context));
+                }
+            }
+
+            // Extract from bare filenames
             for cap in file_pattern.captures_iter(trimmed) {
                 if let Some(m) = cap.get(1) {
                     let target = m.as_str().to_string();

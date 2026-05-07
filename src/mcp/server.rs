@@ -9,7 +9,7 @@ use crate::mcp::watcher::start_watcher;
 use crate::orchestrator::intent::IntentParser;
 use axum::{
     body::Body,
-    extract::{Query, State},
+    extract::State,
     http::{header, HeaderMap, Method, StatusCode},
     response::Response,
     routing::{get, post},
@@ -1142,6 +1142,131 @@ impl MCPServer {
         Ok(())
     }
 
+    /// Ensure a specific project is indexed if needed (used for per-request auto-indexing)
+    async fn ensure_project_indexed(&self, project_path: &str) -> Result<(), String> {
+        let project_root = if project_path.starts_with('/') {
+            PathBuf::from(project_path)
+        } else {
+            std::env::current_dir()
+                .map_err(|e| format!("Failed to get current dir: {}", e))?
+                .join(project_path)
+        };
+
+        let config_path = project_root.join(".leankg/leankg.yaml");
+        let config = if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| format!("Failed to read config: {}", e))?;
+            serde_yaml::from_str::<crate::config::ProjectConfig>(&content)
+                .map_err(|e| format!("Failed to parse config: {}", e))?
+        } else {
+            crate::config::ProjectConfig::default()
+        };
+
+        if !config.mcp.auto_index_on_start {
+            return Ok(());
+        }
+
+        let db_path = project_root.join(".leankg");
+        let db_file = db_path.join("leankg.db");
+
+        if !db_file.exists() {
+            tracing::debug!(
+                "Database file does not exist at {}, skipping auto-index",
+                db_file.display()
+            );
+            return Ok(());
+        }
+
+        // Check git status to determine if indexing is needed
+        let last_commit_time = match Self::get_git_commit_time_for_path(&project_root) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::debug!(
+                    "Failed to get last commit time for {}: {}, skipping auto-index",
+                    project_root.display(),
+                    e
+                );
+                return Ok(());
+            }
+        };
+
+        let db_modified = std::fs::metadata(&db_file)
+            .and_then(|m| m.modified())
+            .map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
+        let threshold_seconds = (config.mcp.auto_index_threshold_minutes * 60) as i64;
+
+        if last_commit_time <= db_modified + threshold_seconds {
+            tracing::debug!(
+                "Project {} index is fresh (last commit: {}, db modified: {}), skipping auto-index",
+                project_root.display(),
+                last_commit_time,
+                db_modified
+            );
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Project {} index is stale, running incremental index...",
+            project_root.display()
+        );
+
+        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
+        let graph_engine = crate::graph::GraphEngine::new(db);
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
+
+        let root_str = project_root.to_string_lossy().to_string();
+        match crate::indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &root_str)
+            .await
+        {
+            Ok(result) => {
+                tracing::info!(
+                    "Auto-index for {}: Processed {} files ({} elements)",
+                    project_root.display(),
+                    result.total_files_processed,
+                    result.elements_indexed
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Auto-index for {} failed: {}", project_root.display(), e);
+                return Err(e.to_string());
+            }
+        }
+
+        if let Err(e) = graph_engine.resolve_call_edges() {
+            tracing::warn!("Auto-index: Failed to resolve call edges: {}", e);
+        }
+
+        tracing::debug!("Auto-index complete for {}", project_root.display());
+        Ok(())
+    }
+
+    /// Get last git commit timestamp for a specific path
+    fn get_git_commit_time_for_path(path: &PathBuf) -> Result<i64, String> {
+        let output = std::process::Command::new("git")
+            .current_dir(path)
+            .args(["log", "-1", "--format=%ct", "HEAD"])
+            .output()
+            .map_err(|e| format!("Failed to run git: {}", e))?;
+
+        if !output.status.success() {
+            return Err("Failed to get last commit time".to_string());
+        }
+
+        let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        timestamp_str
+            .parse::<i64>()
+            .map_err(|e| format!("Failed to parse timestamp: {}", e))
+    }
+
     async fn trigger_reindex(&self) -> Result<(), String> {
         let project_root = self.find_project_root()?;
         let db = init_db(&self.get_db_path()).map_err(|e| format!("Database error: {}", e))?;
@@ -1519,10 +1644,40 @@ fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bo
 /// Handle POST /mcp - JSON-RPC request endpoint
 async fn handle_mcp_request(
     State(server): State<Arc<HttpMcpServer>>,
-    Query(query): Query<McpQueryParams>,
+    uri: axum::http::Uri,
     headers: HeaderMap,
     body: String,
 ) -> Response {
+    // Extract project from URL query param
+    let project_param = uri
+        .query()
+        .and_then(|q| q.split('&').find(|s| s.starts_with("project=")))
+        .and_then(|s| s.strip_prefix("project="))
+        .map(|s| {
+            // Simple percent-decode: %XX → byte
+            let mut result = String::new();
+            let mut chars = s.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '%' {
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if hex.len() == 2 {
+                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                            result.push(byte as char);
+                        } else {
+                            result.push('%');
+                            result.push_str(&hex);
+                        }
+                    } else {
+                        result.push('%');
+                        result.push_str(&hex);
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            result
+        });
+
     // Extract Authorization header
     let auth_value = headers
         .get(header::AUTHORIZATION)
@@ -1565,7 +1720,7 @@ async fn handle_mcp_request(
     // 1. Inject "project" into arguments for db routing
     // 2. Resolve relative file/doc/element paths against the project root
     //    (without this, relative paths resolve against server CWD → wrong database)
-    let request = if let Some(ref project) = query.project {
+    let request = if let Some(ref project) = project_param {
         let project_path = std::path::PathBuf::from(project);
         let db_path = if project_path.ends_with(".leankg") {
             project_path.clone()
@@ -1615,15 +1770,18 @@ async fn handle_mcp_request(
     };
 
     if is_notification {
-        let _ = process_jsonrpc_request(&server.mcp_server, &request).await;
+        // Process the notification but don't send a response
+        let _ =
+            process_jsonrpc_request(&server.mcp_server, &request, project_param.as_deref()).await;
         return Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
             .unwrap();
     }
 
-    // Process the request
-    let result = process_jsonrpc_request(&server.mcp_server, &request).await;
+    // Process the request, passing project param for routing
+    let result =
+        process_jsonrpc_request(&server.mcp_server, &request, project_param.as_deref()).await;
 
     // Build response
     // unwrap is safe because if id was None we already returned NO_CONTENT above
@@ -1657,6 +1815,7 @@ async fn handle_mcp_request(
 async fn process_jsonrpc_request(
     mcp_server: &MCPServer,
     request: &JsonRpcRequest,
+    project_param: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let method = &request.method;
     let params = request.params.as_ref();
@@ -1707,11 +1866,26 @@ async fn process_jsonrpc_request(
                 .and_then(|v| v.as_str())
                 .ok_or("Missing tool name")?;
 
-            let arguments = params_obj
+            let mut arguments = params_obj
                 .get("arguments")
                 .and_then(|v| v.as_object())
                 .cloned()
                 .unwrap_or_default();
+
+            // Inject project from URL query param if not already in arguments
+            if let Some(ref project) = project_param {
+                arguments
+                    .entry("project".to_string())
+                    .or_insert(serde_json::Value::String(project.to_string()));
+            }
+
+            // Auto-index the project if needed (this ensures the database is fresh before tool execution)
+            if let Some(ref project) = project_param {
+                if let Err(e) = mcp_server.ensure_project_indexed(project).await {
+                    tracing::warn!("Auto-index check failed for {}: {}", project, e);
+                    // Continue with tool execution even if auto-index fails
+                }
+            }
 
             let result = mcp_server
                 .execute_tool(tool_name, arguments)
