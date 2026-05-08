@@ -550,7 +550,8 @@ fn has_code_files(dir: &std::path::Path) -> bool {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
             if [
-                "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "xml",
+                "go", "ts", "js", "py", "rs", "java", "kt", "kts", "cs", "tf",
+                "xml",
             ]
             .contains(&ext)
             {
@@ -580,6 +581,7 @@ fn detect_languages(root: &str, languages: &mut Vec<String>) {
         (".java", "java"),
         (".kt", "kotlin"),
         (".kts", "kotlin"),
+        (".cs", "csharp"),
     ];
 
     for (ext, lang) in ext_lang {
@@ -614,6 +616,35 @@ fn has_extension_recursive(dir: &std::path::Path, ext: &str, max_depth: u32) -> 
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_languages, has_code_files};
+
+    #[test]
+    fn test_has_code_files_detects_csharp() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("Program.cs"), "public class Program {}\n").unwrap();
+
+        assert!(has_code_files(&src_dir));
+    }
+
+    #[test]
+    fn test_detect_languages_discovers_csharp() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("Program.cs"), "public class Program {}\n").unwrap();
+
+        let mut languages = Vec::new();
+        let root = src_dir.to_string_lossy().to_string();
+        detect_languages(&root, &mut languages);
+
+        assert!(languages.contains(&"csharp".to_string()));
+    }
 }
 
 async fn index_codebase(

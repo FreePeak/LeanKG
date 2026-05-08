@@ -81,6 +81,7 @@ impl Default for ProjectConfig {
                     "python".to_string(),
                     "java".to_string(),
                     "kotlin".to_string(),
+                    "csharp".to_string(),
                 ],
             },
             indexer: IndexerConfig {
@@ -91,6 +92,7 @@ impl Default for ProjectConfig {
                     "*.py".to_string(),
                     "*.java".to_string(),
                     "*.kt".to_string(),
+                    "*.cs".to_string(),
                     "*.xml".to_string(),
                 ],
             },
@@ -129,7 +131,7 @@ mod tests {
         assert_eq!(config.project.root, PathBuf::from("."));
         assert_eq!(
             config.project.languages,
-            vec!["go", "typescript", "python", "java", "kotlin"]
+            vec!["go", "typescript", "python", "java", "kotlin", "csharp"]
         );
     }
 
@@ -143,6 +145,7 @@ mod tests {
         assert!(config.indexer.exclude.contains(&"**/vendor/**".to_string()));
         assert!(config.indexer.include.contains(&"*.go".to_string()));
         assert!(config.indexer.include.contains(&"*.java".to_string()));
+        assert!(config.indexer.include.contains(&"*.cs".to_string()));
     }
 
     #[test]
