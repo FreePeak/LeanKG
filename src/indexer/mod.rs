@@ -68,12 +68,89 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+pub(crate) struct LanguageSpec {
+    pub key: &'static str,
+    pub exts: &'static [&'static str],
+    pub aliases: &'static [&'static str],
+    pub bulk_parser_slot: Option<usize>,
+}
+
+impl LanguageSpec {
+    fn bulk_parser_language(&self) -> Option<tree_sitter::Language> {
+        match self.key {
+            "go" => Some(tree_sitter_go::LANGUAGE.into()),
+            "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            "python" => Some(tree_sitter_python::LANGUAGE.into()),
+            "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
+            "java" => Some(tree_sitter_java::LANGUAGE.into()),
+            "kotlin" => Some(tree_sitter_kotlin_ng::LANGUAGE.into()),
+            "csharp" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) const LANGUAGE_SPECS: &[LanguageSpec] = &[
+    LanguageSpec {
+        key: "go",
+        exts: &["go"],
+        aliases: &[],
+        bulk_parser_slot: Some(0),
+    },
+    LanguageSpec {
+        key: "typescript",
+        exts: &["ts", "js"],
+        aliases: &["javascript"],
+        bulk_parser_slot: Some(1),
+    },
+    LanguageSpec {
+        key: "python",
+        exts: &["py"],
+        aliases: &[],
+        bulk_parser_slot: Some(2),
+    },
+    LanguageSpec {
+        key: "rust",
+        exts: &["rs"],
+        aliases: &[],
+        bulk_parser_slot: Some(3),
+    },
+    LanguageSpec {
+        key: "java",
+        exts: &["java"],
+        aliases: &[],
+        bulk_parser_slot: Some(4),
+    },
+    LanguageSpec {
+        key: "kotlin",
+        exts: &["kt", "kts"],
+        aliases: &[],
+        bulk_parser_slot: Some(5),
+    },
+    LanguageSpec {
+        key: "csharp",
+        exts: &["cs"],
+        aliases: &["cs"],
+        bulk_parser_slot: Some(6),
+    },
+];
+
+pub(crate) fn get_registered_language_by_extension(ext: &str) -> Option<&'static str> {
+    LANGUAGE_SPECS
+        .iter()
+        .find(|spec| spec.exts.contains(&ext))
+        .map(|spec| spec.key)
+}
+
+pub(crate) fn get_registered_language_spec(language: &str) -> Option<&'static LanguageSpec> {
+    LANGUAGE_SPECS
+        .iter()
+        .find(|spec| spec.key == language || spec.aliases.contains(&language))
+}
+
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
-    let extensions = [
-        "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod", "xml",
-    ];
+    let extensions = ["tf", "yml", "yaml", "json", "toml", "mod", "xml"];
     let config_files = [
         "package.json",
         "tsconfig.json",
@@ -97,6 +174,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
 
         let is_valid_file = config_files.contains(&file_name)
             || (path.to_string_lossy().contains("/res/") && ext == "xml")
+            || get_registered_language_by_extension(ext).is_some()
             || extensions.contains(&ext)
             || is_cicd_yaml_file(path);
 
@@ -129,15 +207,7 @@ fn get_language(file_path: &str) -> Option<&'static str> {
     let ext = std::path::Path::new(file_path)
         .extension()
         .and_then(|e| e.to_str())?;
-    match ext {
-        "go" => Some("go"),
-        "ts" | "js" => Some("typescript"),
-        "py" => Some("python"),
-        "rs" => Some("rust"),
-        "java" => Some("java"),
-        "kt" => Some("kotlin"),
-        _ => None,
-    }
+    get_registered_language_by_extension(ext)
 }
 
 fn try_extract_android(
@@ -281,19 +351,24 @@ fn extract_elements_for_file(
             })
         }
     };
+    let language_spec = match get_registered_language_spec(language) {
+        Some(spec) => spec,
+        None => {
+            return Ok(ParsedFile {
+                element_count: 0,
+                elements: vec![],
+                relationships: vec![],
+            })
+        }
+    };
 
     thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None]);
+        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None]);
     }
 
-    let parser_idx = match language {
-        "go" => 0,
-        "typescript" => 1,
-        "python" => 2,
-        "rust" => 3,
-        "java" => 4,
-        "kotlin" => 5,
-        _ => {
+    let parser_idx = match language_spec.bulk_parser_slot {
+        Some(idx) => idx,
+        None => {
             return Ok(ParsedFile {
                 element_count: 0,
                 elements: vec![],
@@ -306,14 +381,9 @@ fn extract_elements_for_file(
         let mut parsers = parsers.borrow_mut();
         let parser = parsers[parser_idx].get_or_insert_with(|| {
             let mut p = tree_sitter::Parser::new();
-            let lang: tree_sitter::Language = match language {
-                "go" => tree_sitter_go::LANGUAGE.into(),
-                "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                "python" => tree_sitter_python::LANGUAGE.into(),
-                "rust" => tree_sitter_rust::LANGUAGE.into(),
-                "java" => tree_sitter_java::LANGUAGE.into(),
-                "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
-                _ => return p,
+            let lang = match language_spec.bulk_parser_language() {
+                Some(lang) => lang,
+                None => return p,
             };
             let _ = p.set_language(&lang);
             p
@@ -662,20 +732,9 @@ pub fn index_file_sync(
         return Ok(elements.len());
     }
 
-    let language = if file_path.ends_with(".go") {
-        "go"
-    } else if file_path.ends_with(".ts") || file_path.ends_with(".js") {
-        "typescript"
-    } else if file_path.ends_with(".py") {
-        "python"
-    } else if file_path.ends_with(".rs") {
-        "rust"
-    } else if file_path.ends_with(".java") {
-        "java"
-    } else if file_path.ends_with(".kt") || file_path.ends_with(".kts") {
-        "kotlin"
-    } else {
-        return Ok(0);
+    let language = match get_language(file_path) {
+        Some(language) => language,
+        None => return Ok(0),
     };
 
     let parser = parser_manager.get_parser_for_language(language);
@@ -1254,6 +1313,7 @@ pub fn extract_microservice_relationships(project_path: &str) -> Vec<Relationshi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::schema::init_db;
 
     #[test]
     fn test_detect_gradle_submodules() {
@@ -1278,5 +1338,116 @@ include("web-app")"#;
         let submodules = detect_maven_submodules(content);
         assert!(submodules.contains(&"api".to_string()));
         assert!(submodules.contains(&"core".to_string()));
+    }
+
+    #[test]
+    fn test_csharp_language_registration_consistency() {
+        let mut parser_manager = ParserManager::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let csharp_file = tmp.path().join("Calculator.cs");
+        std::fs::write(&csharp_file, "class Calculator { }\n").unwrap();
+
+        assert_eq!(get_language("foo.cs"), Some("csharp"));
+        assert_eq!(get_registered_language_by_extension("go"), Some("go"));
+        assert_eq!(get_registered_language_by_extension("js"), Some("typescript"));
+        assert_eq!(get_registered_language_by_extension("kts"), Some("kotlin"));
+        assert_eq!(get_registered_language_by_extension("cs"), Some("csharp"));
+        assert_eq!(get_registered_language_spec("cs").map(|spec| spec.key), Some("csharp"));
+        assert_eq!(ParserManager::canonical_language_name("cs"), Some("csharp"));
+        assert_eq!(ParserManager::canonical_language_name("csharp"), Some("csharp"));
+        let _ = parser_manager.init_parsers();
+        assert!(parser_manager.get_parser_for_language("cs").is_some());
+        assert!(parser_manager.get_parser_for_language("csharp").is_some());
+        assert!(
+            get_registered_language_spec("csharp")
+                .and_then(|spec| spec.bulk_parser_slot)
+                .is_some()
+        );
+        assert!(
+            get_registered_language_spec("kotlin")
+                .and_then(|spec| spec.bulk_parser_slot)
+                .is_some()
+        );
+        assert_eq!(
+            extract_elements_for_file(csharp_file.to_str().unwrap())
+                .unwrap()
+                .element_count,
+            1
+        );
+    }
+
+    #[test]
+    fn test_index_file_sync_csharp_fixture() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let csharp_file = root.join("examples/csharp/Calculator.cs");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_path = tmp.path().join("leankg.db");
+        let db = init_db(db_path.as_path()).unwrap();
+        let graph = GraphEngine::new(db);
+
+        let mut parser_manager = ParserManager::new();
+        parser_manager.init_parsers().unwrap();
+
+        let count = index_file_sync(&graph, &mut parser_manager, csharp_file.to_str().unwrap())
+            .expect("Should index C# fixture via single-file path");
+        assert!(count > 0, "C# fixture should index at least one element");
+
+        let elements = graph.all_elements().unwrap();
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.language == "csharp" && e.name == "Calculator"),
+            "Single-file path should persist C# elements"
+        );
+
+        let relationships = graph.all_relationships().unwrap();
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == csharp_file.to_string_lossy()
+                    && r.rel_type == "imports"
+                    && r.target_qualified == "System"
+            }),
+            "Single-file path should persist C# imports"
+        );
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified.contains("Calculator::Add")
+                    && r.rel_type == "calls"
+                    && r.target_qualified == "__unresolved__WriteLine"
+            }),
+            "Single-file path should persist C# call relationships"
+        );
+    }
+
+    #[test]
+    fn test_index_file_sync_csharp_test_fixture() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let csharp_test_file = root.join("examples/csharp/CalculatorTests.cs");
+        let expected_source_file = csharp_test_file.with_file_name("Calculator.cs");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_path = tmp.path().join("leankg.db");
+        let db = init_db(db_path.as_path()).unwrap();
+        let graph = GraphEngine::new(db);
+
+        let mut parser_manager = ParserManager::new();
+        parser_manager.init_parsers().unwrap();
+
+        let count = index_file_sync(
+            &graph,
+            &mut parser_manager,
+            csharp_test_file.to_str().unwrap(),
+        )
+        .expect("Should index C# test fixture via single-file path");
+        assert!(count > 0, "C# test fixture should index at least one element");
+
+        let relationships = graph.all_relationships().unwrap();
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == expected_source_file.to_string_lossy()
+                    && r.rel_type == "tested_by"
+                    && r.target_qualified == csharp_test_file.to_string_lossy()
+            }),
+            "Single-file path should persist C# tested_by relationships"
+        );
     }
 }

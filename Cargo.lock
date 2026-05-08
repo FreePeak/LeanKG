@@ -1376,7 +1376,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "leankg"
-version = "0.16.9"
+version = "0.17.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1416,6 +1416,7 @@ dependencies = [
  "tracing-subscriber",
  "tree-sitter",
  "tree-sitter-bash",
+ "tree-sitter-c-sharp",
  "tree-sitter-elixir",
  "tree-sitter-go",
  "tree-sitter-java",
@@ -3224,6 +3225,16 @@ name = "tree-sitter-bash"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5ec769279cc91b561d3df0d8a5deb26b0ad40d183127f409494d6d8fc53062"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-c-sharp"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1aac67f1ad71de1d6d39708d34811081c26dfa495658de6c14c34200849357c"
 dependencies = [
  "cc",
  "tree-sitter-language",
