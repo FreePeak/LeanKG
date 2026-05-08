@@ -2580,7 +2580,7 @@ impl GraphEngine {
     }
 
     pub fn count_elements(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(n)] := *code_elements[n, ...], n = n :collect count"#;
+        let query = r#"?[count(n)] := *code_elements[n, a, b, c, d, e, f, g, h, i, j]"#;
         let result = self
             .db
             .run_script(query, std::collections::BTreeMap::new())?;
@@ -2588,7 +2588,7 @@ impl GraphEngine {
     }
 
     pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(n)] := *relationships[n, ...], n = n :collect count"#;
+        let query = r#"?[count(n)] := *relationships[n, a, b, c, d]"#;
         let result = self
             .db
             .run_script(query, std::collections::BTreeMap::new())?;
@@ -2596,7 +2596,7 @@ impl GraphEngine {
     }
 
     pub fn count_business_logic(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(n)] := *business_logic[n, ...], n = n :collect count"#;
+        let query = r#"?[count(n)] := *business_logic[n, a, b, c]"#;
         let result = self
             .db
             .run_script(query, std::collections::BTreeMap::new())?;
@@ -2604,7 +2604,8 @@ impl GraphEngine {
     }
 
     pub fn count_files(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(file_path)] := *code_elements[file_path, ...] :collect count"#;
+        let query = r#"files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j]
+?[count(f)] := files[f]"#;
         let result = self
             .db
             .run_script(query, std::collections::BTreeMap::new())?;
@@ -2616,7 +2617,7 @@ impl GraphEngine {
         element_type: &str,
     ) -> Result<usize, Box<dyn std::error::Error>> {
         let query = format!(
-            r#"?[count(n)] := *code_elements[n, element_type, ...], element_type = "{}" :collect count"#,
+            r#"?[count(n)] := *code_elements[n, t, a, b, c, d, e, f, g, h, i], t = "{}""#,
             element_type
         );
         let result = self
