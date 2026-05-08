@@ -47,6 +47,10 @@ impl<'a> CallGraphBuilder<'a> {
         calls
     }
 
+    fn uses_strict_class_receiver_resolution(&self) -> bool {
+        self.file_path.ends_with(".cs")
+    }
+
     fn visit_for_definitions(&mut self, node: Node, current_class: Option<&str>) {
         let node_type = node.kind();
 
@@ -92,6 +96,9 @@ impl<'a> CallGraphBuilder<'a> {
         let new_class = if matches!(
             node_type,
             "class_declaration"
+                | "struct_declaration"
+                | "record_declaration"
+                | "interface_declaration"
                 | "type_declaration"
                 | "class_def"
                 | "class_definition"
@@ -120,7 +127,10 @@ impl<'a> CallGraphBuilder<'a> {
         let node_type = node.kind();
 
         // Process call expressions
-        if node_type == "call_expression" || node_type == "method_invocation" {
+        if matches!(
+            node_type,
+            "call_expression" | "method_invocation" | "invocation_expression"
+        ) {
             if let Some(call) = self.extract_call(node, current_function, current_class) {
                 calls.push(Relationship {
                     id: None,
@@ -141,6 +151,9 @@ impl<'a> CallGraphBuilder<'a> {
         let is_class = matches!(
             node_type,
             "class_declaration"
+                | "struct_declaration"
+                | "record_declaration"
+                | "interface_declaration"
                 | "type_declaration"
                 | "class_def"
                 | "class_definition"
@@ -186,7 +199,13 @@ impl<'a> CallGraphBuilder<'a> {
     ) -> Option<CallInfo> {
         let caller_qn = caller.map_or_else(
             || self.file_path.to_string(),
-            |f| format!("{}::{}", self.file_path, f),
+            |f| {
+                if let Some(class) = current_class {
+                    format!("{}::{}::{}", self.file_path, class, f)
+                } else {
+                    format!("{}::{}", self.file_path, f)
+                }
+            },
         );
 
         let line = node.start_position().row as u32 + 1;
@@ -236,7 +255,10 @@ impl<'a> CallGraphBuilder<'a> {
             }
 
             // Method call on receiver: obj.method()
-            if kind == "navigation_expression" || kind == "field_expression" {
+            if kind == "navigation_expression"
+                || kind == "field_expression"
+                || kind == "member_access_expression"
+            {
                 let (name, receiver) = self.extract_navigation_target(child)?;
                 return Some((name, Some(receiver), false));
             }
@@ -261,6 +283,20 @@ impl<'a> CallGraphBuilder<'a> {
     }
 
     fn extract_navigation_target(&self, node: Node) -> Option<(String, String)> {
+        if node.kind() == "member_access_expression" {
+            let receiver = node
+                .child_by_field_name("expression")
+                .and_then(|child| self.get_node_text(child));
+            let method = node
+                .child_by_field_name("name")
+                .and_then(|child| self.get_node_text(child));
+
+            return match (method, receiver) {
+                (Some(m), Some(r)) => Some((m, r)),
+                _ => None,
+            };
+        }
+
         let mut receiver = None;
         let mut method = None;
 
@@ -320,6 +356,11 @@ impl<'a> CallGraphBuilder<'a> {
                         return (qualified, 0.95, true, false);
                     }
                 }
+
+                if self.uses_strict_class_receiver_resolution() {
+                    let unresolved = format!("__unresolved__{}", target_name);
+                    return (unresolved, 0.50, false, false);
+                }
             }
         }
 
@@ -334,12 +375,24 @@ impl<'a> CallGraphBuilder<'a> {
             }
 
             if rec == "this" || rec == "self" {
-                for (class, methods) in &self.class_methods {
-                    if methods.contains(target_name) {
-                        let qualified = format!("{}::{}::{}", self.file_path, class, target_name);
-                        return (qualified, 0.95, true, false);
+                if let Some(cls) = current_class {
+                    if let Some(methods) = self.class_methods.get(cls) {
+                        if methods.contains(target_name) {
+                            let qualified = format!("{}::{}::{}", self.file_path, cls, target_name);
+                            return (qualified, 0.95, true, false);
+                        }
                     }
                 }
+
+                if self.uses_strict_class_receiver_resolution() {
+                    let unresolved = format!("__unresolved__{}", target_name);
+                    return (unresolved, 0.50, false, false);
+                }
+            }
+
+            if self.uses_strict_class_receiver_resolution() {
+                let unresolved = format!("__unresolved__{}", target_name);
+                return (unresolved, 0.50, false, false);
             }
         }
 
@@ -434,6 +487,13 @@ mod tests {
         parser.parse(source, None).unwrap()
     }
 
+    fn parse_csharp(source: &[u8]) -> tree_sitter::Tree {
+        let mut parser = tree_sitter::Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_c_sharp::LANGUAGE.into();
+        parser.set_language(&lang).unwrap();
+        parser.parse(source, None).unwrap()
+    }
+
     #[test]
     fn test_resolve_same_file_function() {
         let source = r#"
@@ -514,5 +574,161 @@ mod tests {
             builder.extension_functions.contains("extension"),
             "Should detect extension function"
         );
+    }
+
+    #[test]
+    fn test_csharp_call_graph_fixture_keeps_console_calls() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read(root.join("examples/csharp/Calculator.cs")).unwrap();
+        let tree = parse_csharp(&source);
+
+        let calls = extract_calls_with_resolution(
+            &tree,
+            &source,
+            "examples/csharp/Calculator.cs",
+            "csharp",
+        );
+
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.target_qualified == "__unresolved__WriteLine"),
+            "Console.WriteLine should remain visible as an unresolved call"
+        );
+    }
+
+    #[test]
+    fn test_csharp_foreign_receiver_does_not_resolve_to_local_method() {
+        let source = br#"
+            class Logger {
+                void WriteLine(string value) {}
+
+                void Run() {
+                    Console.WriteLine("x");
+                }
+            }
+        "#;
+        let tree = parse_csharp(source);
+
+        let calls = extract_calls_with_resolution(&tree, source, "./Logger.cs", "csharp");
+
+        let write_line_call = calls
+            .iter()
+            .find(|c| c.source_qualified == "./Logger.cs::Logger::Run")
+            .expect("Should extract Console.WriteLine invocation");
+        assert_eq!(write_line_call.target_qualified, "__unresolved__WriteLine");
+        assert!(!write_line_call.metadata["is_resolved"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_csharp_resolve_same_class_method_invocation() {
+        let source = br#"
+            class Calculator {
+                int Add(int a, int b) { return a + b; }
+
+                int Sum() {
+                    return Add(1, 2);
+                }
+            }
+        "#;
+        let tree = parse_csharp(source);
+
+        let calls = extract_calls_with_resolution(&tree, source, "./Calculator.cs", "csharp");
+
+        let add_call = calls
+            .iter()
+            .find(|c| c.target_qualified == "./Calculator.cs::Calculator::Add")
+            .expect("Should resolve same-class C# method invocation");
+        assert_eq!(
+            add_call.source_qualified,
+            "./Calculator.cs::Calculator::Sum"
+        );
+        assert!(
+            add_call.confidence >= 0.95,
+            "Resolved call should be high confidence"
+        );
+    }
+
+    #[test]
+    fn test_csharp_bare_call_does_not_resolve_to_other_class() {
+        let source = br#"
+            class Calculator {
+                int Sum() {
+                    return Add(1, 2);
+                }
+            }
+
+            class OtherCalculator {
+                int Add(int a, int b) { return a - b; }
+            }
+        "#;
+        let tree = parse_csharp(source);
+
+        let calls = extract_calls_with_resolution(&tree, source, "./Calculator.cs", "csharp");
+
+        let add_call = calls
+            .iter()
+            .find(|c| c.source_qualified == "./Calculator.cs::Calculator::Sum")
+            .expect("Should extract unresolved bare Add invocation");
+        assert_eq!(add_call.target_qualified, "__unresolved__Add");
+        assert!(!add_call.metadata["is_resolved"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_csharp_resolve_member_access_invocation() {
+        let source = br#"
+            class Calculator {
+                int Add(int a, int b) { return a + b; }
+
+                int Sum() {
+                    return this.Add(1, 2);
+                }
+            }
+
+            class OtherCalculator {
+                int Add(int a, int b) { return a - b; }
+            }
+        "#;
+        let tree = parse_csharp(source);
+
+        let calls = extract_calls_with_resolution(&tree, source, "./Calculator.cs", "csharp");
+
+        let add_call = calls
+            .iter()
+            .find(|c| c.target_qualified == "./Calculator.cs::Calculator::Add")
+            .expect("Should resolve C# member access invocation");
+        assert_eq!(
+            add_call.source_qualified,
+            "./Calculator.cs::Calculator::Sum"
+        );
+        assert!(
+            add_call.confidence >= 0.95,
+            "Resolved member access should be high confidence"
+        );
+    }
+
+    #[test]
+    fn test_csharp_this_does_not_resolve_to_other_class() {
+        let source = br#"
+            class Calculator {
+                int Sum() {
+                    return this.Add(1, 2);
+                }
+            }
+
+            class OtherCalculator {
+                int Add(int a, int b) { return a - b; }
+            }
+        "#;
+        let tree = parse_csharp(source);
+
+        let calls = extract_calls_with_resolution(&tree, source, "./Calculator.cs", "csharp");
+
+        let add_call = calls
+            .iter()
+            .find(|c| c.source_qualified == "./Calculator.cs::Calculator::Sum")
+            .expect("Should extract unresolved this.Add invocation");
+        assert_eq!(add_call.target_qualified, "__unresolved__Add");
+        assert!(!add_call.metadata["is_resolved"].as_bool().unwrap());
     }
 }

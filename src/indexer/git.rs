@@ -183,14 +183,12 @@ pub fn find_dependents(target_file: &str, all_relationships: &[(String, String)]
 }
 
 pub fn filter_indexable_files(files: &[String]) -> Vec<String> {
-    let extensions = ["go", "ts", "js", "py"];
-
     files
         .iter()
         .filter(|f| {
             if let Some(ext) = Path::new(f).extension() {
                 if let Some(ext_str) = ext.to_str() {
-                    return extensions.contains(&ext_str);
+                    return super::get_registered_language_by_extension(ext_str).is_some();
                 }
             }
             false
@@ -218,14 +216,16 @@ mod tests {
         let files = vec![
             "src/main.go".to_string(),
             "src/app.ts".to_string(),
+            "src/service.cs".to_string(),
             "readme.md".to_string(),
             "lib.py".to_string(),
         ];
 
         let filtered = filter_indexable_files(&files);
-        assert_eq!(filtered.len(), 3);
+        assert_eq!(filtered.len(), 4);
         assert!(filtered.contains(&"src/main.go".to_string()));
         assert!(filtered.contains(&"src/app.ts".to_string()));
+        assert!(filtered.contains(&"src/service.cs".to_string()));
         assert!(filtered.contains(&"lib.py".to_string()));
     }
 

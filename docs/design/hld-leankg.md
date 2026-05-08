@@ -1,10 +1,15 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.22
+**Phien ban:** 1.22.1
 **Ngay:** 2026-04-24
-**Dua tren:** PRD v1.22
+**Dua tren:** PRD v1.22.1
 **Trang thai:** Ban nhap
 **Changelog:**
+- v1.22.1 - C# Source Indexing MVP:
+  - Add parser support for `.cs` files via tree-sitter-c-sharp
+  - Use shared language registration across bulk and single-file indexing paths
+  - Add C# entity, import, inheritance, and basic call extraction
+  - Parse tests with the normal C# parser and classify them heuristically
 - v1.23 - Knowns-Inspired Enhancements (FUTURE):
   - Hybrid search with Reciprocal Rank Fusion (semantic + keyword)
   - Reference system (`@doc/`, `@task-` syntax) for traversable links
@@ -463,6 +468,7 @@ graph TB
 | Go Parser | Parse Go source files |
 | TS/JS Parser | Parse TypeScript/JavaScript files |
 | Python Parser | Parse Python files |
+| C# Parser | Parse C# source files |
 | Ruby Parser | Parse Ruby files |
 | PHP Parser | Parse PHP files |
 | Perl Parser | Parse Perl files |
@@ -1220,6 +1226,7 @@ project:
     - go
     - typescript
     - python
+    - csharp
 
 indexer:
   exclude:
@@ -1230,6 +1237,7 @@ indexer:
     - "*.go"
     - "*.ts"
     - "*.py"
+    - "*.cs"
 
 pipeline:
   enabled: true
@@ -1420,7 +1428,7 @@ Knowns MCP tools: tasks, docs, search, code, memory, validation
   - postinstall script handles binary extraction and PATH setup
   - Works without Rust toolchain on developer machine
 - Web UI improvements
-- Additional language support (Rust, Java, C#)
+- Additional language support (Rust, Java)
 - Incremental indexing optimization
 
 ### 11.2 Phase 3 Features

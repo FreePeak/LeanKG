@@ -177,7 +177,7 @@ graph LR
 - **MCP Server** -- Expose graph via MCP protocol for AI tool integration (40 tools)
 - **Orchestration** -- Smart context routing with caching via natural language intent
 - **Community Detection** -- Auto-detect functional clusters in your codebase
-- **Multi-Language** -- Index Go, TypeScript, Python, Rust, Java, Kotlin, Ruby, PHP, Perl, R, Elixir, Bash with tree-sitter
+- **Multi-Language** -- Default source discovery currently covers Go, TypeScript, Python, Rust, Java, Kotlin, and C#; additional parser modules also exist for Bash, Ruby, PHP, Perl, R, and Elixir
 - **Android** -- Extract XML layouts, resources, manifest relationships, and navigation graphs
 - **Service Topology** -- Microservice call graph visualization
 - **Annotation Search** -- Search code by `@Entity`, `@HiltViewModel`, and other annotations

@@ -38,6 +38,7 @@ pub fn is_test_file(file_path: &str) -> bool {
                 || file_name.ends_with("Test.kts")
                 || path.components().any(|c| c.as_os_str() == "test")
         }
+        "cs" => file_name.ends_with("Test.cs") || file_name.ends_with("Tests.cs"),
         "dart" => {
             file_name.ends_with("_test.dart")
                 || file_name.ends_with("_widget_test.dart")
@@ -182,6 +183,15 @@ pub fn get_tested_file_path(file_path: &str) -> Option<String> {
                 None
             }
         }
+        "cs" => {
+            if file_name.ends_with("Test.cs") {
+                Some(file_name.trim_end_matches("Test.cs").to_string() + ".cs")
+            } else if file_name.ends_with("Tests.cs") {
+                Some(file_name.trim_end_matches("Tests.cs").to_string() + ".cs")
+            } else {
+                None
+            }
+        }
         "dart" => {
             if file_name.ends_with("_test.dart") {
                 Some(file_name.trim_end_matches("_test.dart").to_string() + ".dart")
@@ -197,7 +207,12 @@ pub fn get_tested_file_path(file_path: &str) -> Option<String> {
     if parent.is_empty() || parent == "." {
         Some(tested_name)
     } else {
-        Some(format!("{}/{}", parent, tested_name))
+        Some(
+            Path::new(&parent)
+                .join(tested_name)
+                .to_string_lossy()
+                .to_string(),
+        )
     }
 }
 
@@ -440,6 +455,7 @@ impl<'a> EntityExtractor<'a> {
             | "class_def"
             | "struct_item"
             | "class_definition"
+            | "struct_declaration"
             | "enum_declaration"
             | "record_declaration"
             | "object_declaration"
@@ -467,6 +483,7 @@ impl<'a> EntityExtractor<'a> {
             | "import_statement"
             | "import_from_statement"
             | "use_declaration"
+            | "using_directive"
             | "library_import" => {
                 for source in self.get_import_sources(node, node_type) {
                     relationships.push(Relationship {
@@ -508,6 +525,7 @@ impl<'a> EntityExtractor<'a> {
                         | "class_definition"
                         | "type_spec"
                         | "struct_item"
+                        | "struct_declaration"
                         | "enum_declaration"
                         | "record_declaration"
                         | "constructor_declaration"
@@ -558,7 +576,17 @@ impl<'a> EntityExtractor<'a> {
         };
 
         if let Some(name) = name {
-            let qualified_name = format!("{}::{}", self.file_path, name);
+            let qualified_name = if self.language == "csharp" {
+                if let Some(p) = parent {
+                    format!("{}::{}::{}", self.file_path, p, name)
+                } else {
+                    format!("{}::{}", self.file_path, name)
+                }
+            } else if parent.is_some() {
+                format!("{}::{}", self.file_path, name)
+            } else {
+                format!("{}::{}", self.file_path, name)
+            };
             let (signature, sig_end) = self.extract_function_signature(node);
             elements.push(CodeElement {
                 qualified_name: qualified_name.clone(),
@@ -724,7 +752,15 @@ impl<'a> EntityExtractor<'a> {
         relationships: &mut Vec<Relationship>,
     ) {
         if let Some(name) = self.get_node_name(node) {
-            let qualified_name = format!("{}::{}", self.file_path, name);
+            let qualified_name = if self.language == "csharp" {
+                if let Some(p) = parent {
+                    format!("{}::{}::{}", self.file_path, p, name)
+                } else {
+                    format!("{}::{}", self.file_path, name)
+                }
+            } else {
+                format!("{}::{}", self.file_path, name)
+            };
             elements.push(CodeElement {
                 qualified_name: qualified_name.clone(),
                 element_type: "property".to_string(),
@@ -1049,6 +1085,36 @@ impl<'a> EntityExtractor<'a> {
                     relationships,
                 );
             }
+            // C#: class FastRunner : RunnerBase, IRunner
+            if kind == "base_list" {
+                let mut inner_cursor = child.walk();
+                let base_children: Vec<_> = child
+                    .children(&mut inner_cursor)
+                    .filter(|base_child| !matches!(base_child.kind(), "," | ":"))
+                    .collect();
+                let first_is_interface = node.kind() == "class_declaration"
+                    && base_children
+                        .first()
+                        .copied()
+                        .map(|base_child| self.is_csharp_interface_only_base(node, base_child))
+                        .unwrap_or(false);
+
+                for (base_index, base_child) in base_children.into_iter().enumerate() {
+                    let is_implements = if node.kind() == "interface_declaration" {
+                        false
+                    } else if base_index == 0 {
+                        first_is_interface
+                    } else {
+                        true
+                    };
+                    self.extract_heritage_types(
+                        base_child,
+                        class_qualified,
+                        is_implements,
+                        relationships,
+                    );
+                }
+            }
             // Kotlin: class AdminUser : User, Authenticatable
             // AST: (class_declaration (delegation_specifiers (delegation_specifier (user_type (identifier)))))
             // delegation_specifiers is the wrapper, delegation_specifier is the child
@@ -1088,6 +1154,43 @@ impl<'a> EntityExtractor<'a> {
         is_implements: bool,
         relationships: &mut Vec<Relationship>,
     ) {
+        let node_kind = node.kind();
+        if matches!(
+            node_kind,
+            "identifier" | "type_identifier" | "qualified_name" | "generic_name"
+        ) {
+            if let Some(bytes) = self.source.get(node.byte_range()) {
+                if let Ok(target_name) = std::str::from_utf8(bytes) {
+                    let target_name = target_name.split('<').next().unwrap_or(target_name).trim();
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: source_qualified.to_string(),
+                        target_qualified: format!("__unresolved__{}", target_name),
+                        rel_type: if is_implements {
+                            "implements".to_string()
+                        } else {
+                            "extends".to_string()
+                        },
+                        confidence: 0.8,
+                        metadata: serde_json::json!({ "heritage_name": target_name }),
+                    });
+                }
+            }
+            return;
+        }
+
+        if node_kind == "primary_constructor_base_type" {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                self.extract_heritage_types(
+                    type_node,
+                    source_qualified,
+                    is_implements,
+                    relationships,
+                );
+            }
+            return;
+        }
+
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             let kind = child.kind();
@@ -1117,6 +1220,67 @@ impl<'a> EntityExtractor<'a> {
                 );
             }
         }
+    }
+
+    fn is_csharp_interface_only_base(&self, class_node: Node, base_node: Node) -> bool {
+        let Some(target_name) = self.extract_heritage_name(base_node) else {
+            return false;
+        };
+
+        if self.interface_declared_in_tree(class_node, &target_name) {
+            return true;
+        }
+
+        let mut chars = target_name.chars();
+        matches!(chars.next(), Some('I')) && matches!(chars.next(), Some(c) if c.is_uppercase())
+    }
+
+    fn interface_declared_in_tree(&self, node: Node, target_name: &str) -> bool {
+        let mut root = node;
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+        self.node_contains_interface_named(root, target_name)
+    }
+
+    fn node_contains_interface_named(&self, node: Node, target_name: &str) -> bool {
+        if node.kind() == "interface_declaration"
+            && self.get_node_name(node).as_deref() == Some(target_name)
+        {
+            return true;
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if self.node_contains_interface_named(child, target_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn extract_heritage_name(&self, node: Node) -> Option<String> {
+        let node_kind = node.kind();
+        if matches!(
+            node_kind,
+            "identifier" | "type_identifier" | "qualified_name" | "generic_name"
+        ) {
+            let bytes = self.source.get(node.byte_range())?;
+            let text = std::str::from_utf8(bytes).ok()?;
+            let base = text.split('<').next().unwrap_or(text).trim();
+            let short = base.rsplit('.').next().unwrap_or(base).trim();
+            return Some(short.to_string());
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(name) = self.extract_heritage_name(child) {
+                return Some(name);
+            }
+        }
+
+        None
     }
 
     fn extract_type_spec(
@@ -1545,6 +1709,29 @@ impl<'a> EntityExtractor<'a> {
                                 .map(String::from);
                         }
                     }
+                } else if child.kind() == "variable_declaration" {
+                    let mut decl_cursor = child.walk();
+                    for decl_child in child.children(&mut decl_cursor) {
+                        if decl_child.kind() == "variable_declarator" {
+                            if let Some(name_node) = decl_child.child_by_field_name("name") {
+                                return std::str::from_utf8(
+                                    self.source.get(name_node.byte_range())?,
+                                )
+                                .ok()
+                                .map(String::from);
+                            }
+                            let mut inner_cursor = decl_child.walk();
+                            for inner in decl_child.children(&mut inner_cursor) {
+                                if inner.kind() == "identifier" {
+                                    return std::str::from_utf8(
+                                        self.source.get(inner.byte_range())?,
+                                    )
+                                    .ok()
+                                    .map(String::from);
+                                }
+                            }
+                        }
+                    }
                 } else if child.kind() == "property_identifier"
                     || child.kind() == "field_identifier"
                     || child.kind() == "identifier"
@@ -1618,6 +1805,32 @@ impl<'a> EntityExtractor<'a> {
                     return sources;
                 }
             }
+        }
+
+        // C#: simple using directives like `using System;`
+        if node_type == "using_directive" && self.language == "csharp" {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if let Some(bytes) = self.source.get(name_node.byte_range()) {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        sources.push(s.to_string());
+                        return sources;
+                    }
+                }
+            }
+
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "identifier" || child.kind() == "qualified_name" {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            sources.push(s.to_string());
+                            return sources;
+                        }
+                    }
+                }
+            }
+
+            return sources;
         }
 
         // Java: import com.example.Foo
@@ -1757,6 +1970,13 @@ mod tests {
     fn parse_kotlin(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_kotlin_ng::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_csharp(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_c_sharp::LANGUAGE.into();
         parser.set_language(&lang).ok()?;
         parser.parse(source, None)
     }
@@ -1985,7 +2205,12 @@ mod tests {
     fn test_get_tested_file_path_go() {
         assert_eq!(
             get_tested_file_path("pkg/math_test.go"),
-            Some("pkg/math.go".to_string())
+            Some(
+                Path::new("pkg")
+                    .join("math.go")
+                    .to_string_lossy()
+                    .to_string(),
+            )
         );
         assert_eq!(
             get_tested_file_path("math_test.go"),
@@ -2041,9 +2266,27 @@ mod tests {
         );
         assert_eq!(
             get_tested_file_path("pkg/math_test.rs"),
-            Some("pkg/math.rs".to_string())
+            Some(
+                Path::new("pkg")
+                    .join("math.rs")
+                    .to_string_lossy()
+                    .to_string(),
+            )
         );
         assert_eq!(get_tested_file_path("math.rs"), None);
+    }
+
+    #[test]
+    fn test_get_tested_file_path_csharp_fixture() {
+        assert_eq!(
+            get_tested_file_path("examples/csharp/CalculatorTests.cs"),
+            Some(
+                Path::new("examples/csharp")
+                    .join("Calculator.cs")
+                    .to_string_lossy()
+                    .to_string(),
+            )
+        );
     }
 
     #[test]
@@ -2054,6 +2297,12 @@ mod tests {
         assert!(is_test_file("src/tests/whatever_test.rs"));
         assert!(!is_test_file("math.rs"));
         assert!(!is_test_file("lib.rs"));
+    }
+
+    #[test]
+    fn test_is_test_file_csharp_fixture() {
+        assert!(is_test_file("examples/csharp/CalculatorTests.cs"));
+        assert!(!is_test_file("examples/csharp/Calculator.cs"));
     }
 
     #[test]
@@ -2068,7 +2317,10 @@ mod tests {
                 .filter(|r| r.rel_type == "tested_by")
                 .collect();
             assert_eq!(tested_by.len(), 1);
-            assert_eq!(tested_by[0].source_qualified, "pkg/math.go");
+            assert_eq!(
+                tested_by[0].source_qualified,
+                Path::new("pkg").join("math.go").to_string_lossy()
+            );
             assert_eq!(tested_by[0].target_qualified, "pkg/math_test.go");
         }
     }
@@ -2331,6 +2583,223 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_csharp_calculator_fixture() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read(root.join("examples/csharp/Calculator.cs")).unwrap();
+        let tree = parse_csharp(&source).expect("Should parse C# Calculator fixture");
+
+        let extractor = EntityExtractor::new(&source, "examples/csharp/Calculator.cs", "csharp");
+        let (elements, relationships) = extractor.extract(&tree);
+
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.element_type == "class" && e.name == "Calculator"),
+            "Should extract C# class Calculator"
+        );
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.element_type == "method" && e.name == "Add"),
+            "Should extract C# method Add"
+        );
+        assert!(
+            relationships.iter().any(|r| {
+                r.rel_type == "imports"
+                    && r.source_qualified == "examples/csharp/Calculator.cs"
+                    && r.target_qualified == "System"
+            }),
+            "Should extract C# using directive for System"
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_struct() {
+        let source = br#"
+            struct Counter {
+                int Value;
+                int Increment(int value) { return value + 1; }
+            }
+        "#;
+        let tree = parse_csharp(source).expect("Should parse C# struct fixture");
+
+        let extractor = EntityExtractor::new(source, "Counter.cs", "csharp");
+        let (elements, _) = extractor.extract(&tree);
+
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.element_type == "class" && e.name == "Counter"),
+            "Should extract C# struct as a class-like element"
+        );
+        assert!(
+            elements.iter().any(|e| e.element_type == "method"
+                && e.qualified_name == "Counter.cs::Counter::Increment"),
+            "Should class-qualify methods inside a C# struct"
+        );
+        assert!(
+            elements.iter().any(|e| e.element_type == "property"
+                && e.name == "Value"
+                && e.parent_qualified.as_deref() == Some("Counter")),
+            "Should class-qualify fields inside a C# struct"
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_base_list_relationships() {
+        let source = br#"
+            interface IRunner {}
+            class RunnerBase {}
+            class FastRunner : RunnerBase, IRunner {}
+        "#;
+        let tree = parse_csharp(source).expect("Should parse C# base list fixture");
+
+        let extractor = EntityExtractor::new(source, "FastRunner.cs", "csharp");
+        let (_, relationships) = extractor.extract(&tree);
+
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "extends"
+                    && r.target_qualified == "__unresolved__RunnerBase"
+            }),
+            "Should extract C# extends relationship from base_list"
+        );
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "implements"
+                    && r.target_qualified == "__unresolved__IRunner"
+            }),
+            "Should extract C# implements relationship from base_list"
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_interface_base_list_relationships() {
+        let source = br#"
+            interface IRunner {}
+            interface ILogger {}
+            interface IFastRunner : IRunner, ILogger {}
+        "#;
+        let tree = parse_csharp(source).expect("Should parse C# interface base list fixture");
+
+        let extractor = EntityExtractor::new(source, "IFastRunner.cs", "csharp");
+        let (_, relationships) = extractor.extract(&tree);
+
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "IFastRunner.cs::IFastRunner"
+                    && r.rel_type == "extends"
+                    && r.target_qualified == "__unresolved__IRunner"
+            }),
+            "Should extract first interface base as extends"
+        );
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "IFastRunner.cs::IFastRunner"
+                    && r.rel_type == "extends"
+                    && r.target_qualified == "__unresolved__ILogger"
+            }),
+            "Should extract later interface bases as extends, not implements"
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_class_with_interface_only_base_list_relationships() {
+        let source = br#"
+            interface IRunner {}
+            interface ILogger {}
+            class FastRunner : IRunner, ILogger {}
+        "#;
+        let tree = parse_csharp(source).expect("Should parse C# class interface-only base list");
+
+        let extractor = EntityExtractor::new(source, "FastRunner.cs", "csharp");
+        let (_, relationships) = extractor.extract(&tree);
+
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "implements"
+                    && r.target_qualified == "__unresolved__IRunner"
+            }),
+            "Should treat the first interface-only base as implements"
+        );
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "implements"
+                    && r.target_qualified == "__unresolved__ILogger"
+            }),
+            "Should treat the later interface-only base as implements"
+        );
+        assert!(
+            !relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "extends"
+                    && (r.target_qualified == "__unresolved__IRunner"
+                        || r.target_qualified == "__unresolved__ILogger")
+            }),
+            "Should not mark interface-only bases as extends"
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_generic_base_does_not_emit_type_argument_relationship() {
+        let source = br#"
+            class Bar {}
+            class Foo : Base<Bar> {}
+        "#;
+        let tree = parse_csharp(source).expect("Should parse C# generic base fixture");
+
+        let extractor = EntityExtractor::new(source, "Foo.cs", "csharp");
+        let (_, relationships) = extractor.extract(&tree);
+
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "Foo.cs::Foo"
+                    && r.rel_type == "extends"
+                    && r.target_qualified == "__unresolved__Base"
+            }),
+            "Should extract only the outer generic base type"
+        );
+        assert!(
+            !relationships
+                .iter()
+                .any(|r| r.target_qualified == "__unresolved__Bar"),
+            "Should not emit heritage edges for generic type arguments"
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_calculator_tests_fixture_creates_tested_by_relationship() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read(root.join("examples/csharp/CalculatorTests.cs")).unwrap();
+        let tree = parse_csharp(&source).expect("Should parse C# CalculatorTests fixture");
+
+        let extractor =
+            EntityExtractor::new(&source, "examples/csharp/CalculatorTests.cs", "csharp");
+        let (_elements, relationships) = extractor.extract(&tree);
+
+        let tested_by: Vec<_> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "tested_by")
+            .collect();
+
+        assert_eq!(tested_by.len(), 1);
+        assert_eq!(
+            tested_by[0].source_qualified,
+            Path::new("examples/csharp")
+                .join("Calculator.cs")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            tested_by[0].target_qualified,
+            "examples/csharp/CalculatorTests.cs"
+        );
+    }
+
+    #[test]
     fn test_extract_java_annotation() {
         let source =
             b"public class Service { @Override public String toString() { return \"\"; } }";
@@ -2389,7 +2858,12 @@ mod tests {
     fn test_get_tested_file_path_java() {
         assert_eq!(
             get_tested_file_path("service/UserServiceTest.java"),
-            Some("service/UserService.java".to_string())
+            Some(
+                Path::new("service")
+                    .join("UserService.java")
+                    .to_string_lossy()
+                    .to_string(),
+            )
         );
         assert_eq!(
             get_tested_file_path("UserServiceTests.java"),
@@ -2474,7 +2948,12 @@ mod tests {
                 .filter(|r| r.rel_type == "tested_by")
                 .collect();
             assert_eq!(tested_by.len(), 1);
-            assert_eq!(tested_by[0].source_qualified, "service/UserService.java");
+            assert_eq!(
+                tested_by[0].source_qualified,
+                Path::new("service")
+                    .join("UserService.java")
+                    .to_string_lossy()
+            );
             assert_eq!(
                 tested_by[0].target_qualified,
                 "service/UserServiceTest.java"
@@ -2565,7 +3044,12 @@ class UserServiceTest {
                 .filter(|r| r.rel_type == "tested_by")
                 .collect();
             assert_eq!(tested_by.len(), 1);
-            assert_eq!(tested_by[0].source_qualified, "service/UserService.kt");
+            assert_eq!(
+                tested_by[0].source_qualified,
+                Path::new("service")
+                    .join("UserService.kt")
+                    .to_string_lossy()
+            );
             assert_eq!(tested_by[0].target_qualified, "service/UserServiceTest.kt");
         }
     }
@@ -2745,11 +3229,21 @@ class OldService {
     fn test_get_tested_file_path_dart() {
         assert_eq!(
             get_tested_file_path("lib/foo_test.dart"),
-            Some("lib/foo.dart".to_string())
+            Some(
+                Path::new("lib")
+                    .join("foo.dart")
+                    .to_string_lossy()
+                    .to_string(),
+            )
         );
         assert_eq!(
             get_tested_file_path("test/widget_test.dart"),
-            Some("test/widget.dart".to_string())
+            Some(
+                Path::new("test")
+                    .join("widget.dart")
+                    .to_string_lossy()
+                    .to_string(),
+            )
         );
         assert_eq!(get_tested_file_path("lib/main.dart"), None);
     }

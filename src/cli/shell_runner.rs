@@ -97,8 +97,11 @@ mod tests {
     #[test]
     fn test_shell_runner_without_compress() {
         let runner = ShellRunner::new(false);
+        #[cfg(windows)]
+        let result = runner.run_with_stderr("cmd", &["/C", "echo hello"], "echo hello");
+        #[cfg(not(windows))]
         let result = runner.run_with_stderr("echo", &["hello"], "echo hello");
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{result:?}");
         let (stdout, _) = result.unwrap();
         assert!(stdout.contains("hello"));
     }

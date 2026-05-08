@@ -249,6 +249,22 @@ impl IntentParser {
             }
         }
 
+        // Try to extract identifier after function/class keywords
+        let func_markers = ["function ", "class ", "struct ", "enum ", "trait ", "impl "];
+        for marker in &func_markers {
+            if let Some(pos) = text.find(marker) {
+                let start = pos + marker.len();
+                let rest = &text[start..];
+                let first_token_end = rest
+                    .find(|c: char| c.is_whitespace() || c == '(' || c == '{')
+                    .unwrap_or(rest.len());
+                let first_token = &rest[..first_token_end];
+                if !first_token.is_empty() && first_token.len() > 1 {
+                    return Some(first_token.to_string());
+                }
+            }
+        }
+
         // Third priority: single lowercase words that might be module names (e.g., "orchestrator")
         for word in &words {
             let cleaned = word.trim_matches(|c: char| c.is_ascii_punctuation());
@@ -269,22 +285,6 @@ impl IntentParser {
                     || (cleaned.chars().all(|c| c.is_lowercase()) && cleaned.len() > 6)
                 {
                     return Some(cleaned.to_string());
-                }
-            }
-        }
-
-        // Try to extract identifier after function/class keywords
-        let func_markers = ["function ", "class ", "struct ", "enum ", "trait ", "impl "];
-        for marker in &func_markers {
-            if let Some(pos) = text.find(marker) {
-                let start = pos + marker.len();
-                let rest = &text[start..];
-                let first_token_end = rest
-                    .find(|c: char| c.is_whitespace() || c == '(' || c == '{')
-                    .unwrap_or(rest.len());
-                let first_token = &rest[..first_token_end];
-                if !first_token.is_empty() && first_token.len() > 1 {
-                    return Some(first_token.to_string());
                 }
             }
         }

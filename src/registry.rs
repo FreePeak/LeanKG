@@ -130,10 +130,9 @@ mod tests {
             .unwrap();
 
         assert!(registry.repos.contains_key("test-repo"));
-        assert_eq!(
-            registry.get_repo("test-repo").unwrap().path,
-            "/path/to/test"
-        );
+        let stored_path = PathBuf::from(&registry.get_repo("test-repo").unwrap().path);
+        assert!(stored_path.is_absolute());
+        assert!(stored_path.ends_with(PathBuf::from("path").join("to").join("test")));
 
         registry.unregister("test-repo").unwrap();
         assert!(!registry.repos.contains_key("test-repo"));

@@ -15,7 +15,27 @@
 - Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
 - Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
 
-<<<<<<< HEAD
+### v1.22.1 (IN PROGRESS) - C# Source Indexing MVP
+- Add `.cs` source indexing via tree-sitter-c-sharp
+- Parse both production and test `.cs` files with the same parser
+- Add heuristic test classification for `*Test.cs` and `*Tests.cs`
+- Reuse existing element and relationship types
+- Non-goals: `.csproj`, `.sln`, namespace-qualified symbol identities, framework-aware test semantics
+
+### v1.22 (IN PROGRESS) - MCP HTTP Transport (Remote MCP Server)
+- **US-22.1:** Add `mcp-http` CLI command for HTTP-based MCP server
+- **US-22.2:** Implement Streamable HTTP transport per MCP spec (HTTP POST + SSE)
+- **US-22.3:** Support multiple concurrent MCP clients (vs stdio's single client)
+- **US-22.4:** Bearer token authentication for HTTP endpoint
+- **US-22.5:** CORS headers for browser-based MCP clients
+- **Worktree:** `.worktrees/feat/mcp-http`
+
+**MCP Transport Modes:**
+| Mode | Transport | Use Case | Max Clients |
+|------|-----------|----------|-------------|
+| `mcp-stdio` | stdin/stdout | Local AI tools (Cursor, Claude Code) | 1 |
+| `mcp-http` | HTTP + SSE | Remote access, browser clients | Many |
+
 ### v1.21 (IN PROGRESS) - CPU Optimization
 - **US-21.1:** Reduce idle CPU from 61% to <5%
 - **US-21.2:** Cache TTL tuning (300s→60s, max entries 1000→100) - COMPLETED
@@ -36,20 +56,6 @@
   - File watcher reinitializes DB + parsers on every file change
 - **Analysis Document:** `docs/design/cpu-optimization.md`
 - **Worktree:** `.worktrees/feat/cpu-optimization`
-
-### v1.22 (IN PROGRESS) - MCP HTTP Transport (Remote MCP Server)
-- **US-22.1:** Add `mcp-http` CLI command for HTTP-based MCP server
-- **US-22.2:** Implement Streamable HTTP transport per MCP spec (HTTP POST + SSE)
-- **US-22.3:** Support multiple concurrent MCP clients (vs stdio's single client)
-- **US-22.4:** Bearer token authentication for HTTP endpoint
-- **US-22.5:** CORS headers for browser-based MCP clients
-- **Worktree:** `.worktrees/feat/mcp-http`
-
-**MCP Transport Modes:**
-| Mode | Transport | Use Case | Max Clients |
-|------|-----------|----------|-------------|
-| `mcp-stdio` | stdin/stdout | Local AI tools (Cursor, Claude Code) | 1 |
-| `mcp-http` | HTTP + SSE | Remote access, browser clients | Many |
 
 ### v1.20 (PENDING) - MCP Server Watch Mode
 - **US-20.1:** Add `--watch` flag to MCP server for auto-indexing on file changes
@@ -485,7 +491,7 @@ The following features are explicitly out of scope:
 4. **Advanced authentication** - Local token only
 5. **Plugin system** - Future consideration
 6. **Enterprise integrations** - Future consideration
-7. **14 language support** - MVP focused: Go, TS/JS, Python, Rust
+7. **Broad language-parity expansion** - Full multi-language parity beyond the MVP is out of scope; the approved MVP remains focused on Go, TS/JS, Python, Rust, plus `.cs` source indexing
 8. **Browser-based WebAssembly UI** - LeanKG targets CLI + MCP use case
 9. **Symbol rename tool** - High complexity; better handled by AI agent
 10. **Raw Datalog query passthrough** - Security risk

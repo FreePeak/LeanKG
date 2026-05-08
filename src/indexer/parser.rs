@@ -8,6 +8,7 @@ pub struct ParserManager {
     pub rust_parser: Parser,
     pub java_parser: Parser,
     pub kotlin_parser: Parser,
+    pub csharp_parser: Parser,
     pub bash_parser: Parser,
     pub ruby_parser: Parser,
     pub php_parser: Parser,
@@ -25,6 +26,7 @@ impl ParserManager {
             rust_parser: Parser::new(),
             java_parser: Parser::new(),
             kotlin_parser: Parser::new(),
+            csharp_parser: Parser::new(),
             bash_parser: Parser::new(),
             ruby_parser: Parser::new(),
             php_parser: Parser::new(),
@@ -41,6 +43,7 @@ impl ParserManager {
         let rust_lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
         let java_lang: tree_sitter::Language = tree_sitter_java::LANGUAGE.into();
         let kotlin_lang: tree_sitter::Language = tree_sitter_kotlin_ng::LANGUAGE.into();
+        let csharp_lang: tree_sitter::Language = tree_sitter_c_sharp::LANGUAGE.into();
         let bash_lang: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
         let ruby_lang: tree_sitter::Language = tree_sitter_ruby::LANGUAGE.into();
         let php_lang: tree_sitter::Language = tree_sitter_php::LANGUAGE_PHP.into();
@@ -54,6 +57,7 @@ impl ParserManager {
         self.rust_parser.set_language(&rust_lang)?;
         self.java_parser.set_language(&java_lang)?;
         self.kotlin_parser.set_language(&kotlin_lang)?;
+        self.csharp_parser.set_language(&csharp_lang)?;
         self.bash_parser.set_language(&bash_lang)?;
         self.ruby_parser.set_language(&ruby_lang)?;
         self.php_parser.set_language(&php_lang)?;
@@ -64,15 +68,35 @@ impl ParserManager {
         Ok(())
     }
 
-    pub fn get_parser_for_language(&mut self, language: &str) -> Option<&mut Parser> {
+    pub(crate) fn canonical_language_name(language: &str) -> Option<&'static str> {
+        if let Some(spec) = super::LANGUAGE_SPECS
+            .iter()
+            .find(|spec| spec.key == language || spec.aliases.contains(&language))
+        {
+            return Some(spec.key);
+        }
+
         match language {
+            "bash" | "shell" => Some("bash"),
+            "ruby" => Some("ruby"),
+            "php" => Some("php"),
+            "perl" => Some("perl"),
+            "r" => Some("r"),
+            "elixir" => Some("elixir"),
+            _ => None,
+        }
+    }
+
+    pub fn get_parser_for_language(&mut self, language: &str) -> Option<&mut Parser> {
+        match Self::canonical_language_name(language)? {
             "go" => Some(&mut self.go_parser),
-            "typescript" | "javascript" => Some(&mut self.ts_parser),
+            "typescript" => Some(&mut self.ts_parser),
             "python" => Some(&mut self.python_parser),
             "rust" => Some(&mut self.rust_parser),
             "java" => Some(&mut self.java_parser),
             "kotlin" => Some(&mut self.kotlin_parser),
-            "bash" | "shell" => Some(&mut self.bash_parser),
+            "csharp" => Some(&mut self.csharp_parser),
+            "bash" => Some(&mut self.bash_parser),
             "ruby" => Some(&mut self.ruby_parser),
             "php" => Some(&mut self.php_parser),
             "perl" => Some(&mut self.perl_parser),
@@ -142,6 +166,14 @@ mod tests {
     }
 
     #[test]
+    fn test_get_parser_for_csharp() {
+        if let Some(mut pm) = init_parsers_if_compatible() {
+            assert!(pm.get_parser_for_language("cs").is_some());
+            assert!(pm.get_parser_for_language("csharp").is_some());
+        }
+    }
+
+    #[test]
     fn test_get_parser_for_bash() {
         if let Some(mut pm) = init_parsers_if_compatible() {
             assert!(pm.get_parser_for_language("bash").is_some());
@@ -181,6 +213,16 @@ mod tests {
         if let Some(mut pm) = init_parsers_if_compatible() {
             let source = b"class Main { fun main(args: Array<String>) {} }";
             let parser = pm.get_parser_for_language("kotlin").unwrap();
+            let tree = parser.parse(source, None);
+            assert!(tree.is_some());
+        }
+    }
+
+    #[test]
+    fn test_parser_parse_csharp_code() {
+        if let Some(mut pm) = init_parsers_if_compatible() {
+            let source = b"class Program { static void Main() {} }";
+            let parser = pm.get_parser_for_language("csharp").unwrap();
             let tree = parser.parse(source, None);
             assert!(tree.is_some());
         }

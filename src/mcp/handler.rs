@@ -398,9 +398,17 @@ impl ToolHandler {
         let exclude = args["exclude"].as_str();
 
         let db_path = self.db_path.clone();
-        tokio::fs::create_dir_all(&db_path)
-            .await
-            .map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        if !db_path.exists() {
+            let target_dir = if db_path.extension().is_some() {
+                db_path.parent().unwrap_or(std::path::Path::new("."))
+            } else {
+                db_path.as_path()
+            };
+
+            tokio::fs::create_dir_all(target_dir)
+                .await
+                .map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        }
 
         let exclude_patterns: Vec<String> = exclude
             .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
@@ -819,7 +827,7 @@ impl ToolHandler {
 
         let elements = self
             .graph_engine
-            .search_by_name_typed(pattern, element_type_filter.as_deref(), 50)
+            .all_elements()
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements
