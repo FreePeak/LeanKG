@@ -4,6 +4,7 @@ use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
 use serde_json::json;
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_all_mcp_tools_return_data() {
@@ -11,6 +12,8 @@ async fn test_all_mcp_tools_return_data() {
     let db = init_db(db_path.as_path()).expect("Failed to init db");
     let graph = GraphEngine::new(db);
     let handler = ToolHandler::new(graph.clone(), db_path);
+    let tmp = TempDir::new().expect("Failed to create temp dir");
+    let init_path = tmp.path().join("fresh-leankg");
 
     let valid_file = "./src/main.rs".to_string();
     let valid_function = "./src/main.rs::main".to_string();
@@ -19,7 +22,7 @@ async fn test_all_mcp_tools_return_data() {
 
     // Core tools with valid params
     let tools_and_tests = vec![
-        ("mcp_init", json!({"path": ".leankg"})),
+        ("mcp_init", json!({"path": init_path.to_string_lossy()})),
         ("mcp_status", json!({})),
         ("mcp_index", json!({"path": "./src"})),
         ("query_file", json!({"file": &valid_file, "pattern": "fn"})),

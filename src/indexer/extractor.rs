@@ -1088,22 +1088,31 @@ impl<'a> EntityExtractor<'a> {
             // C#: class FastRunner : RunnerBase, IRunner
             if kind == "base_list" {
                 let mut inner_cursor = child.walk();
-                let mut base_index = 0usize;
-                for base_child in child.children(&mut inner_cursor) {
-                    if !matches!(base_child.kind(), "," | ":") {
-                        let is_first = base_index == 0;
-                        base_index += 1;
-                        self.extract_heritage_types(
-                            base_child,
-                            class_qualified,
-                            if node.kind() == "interface_declaration" {
-                                false
-                            } else {
-                                !is_first
-                            },
-                            relationships,
-                        );
-                    }
+                let base_children: Vec<_> = child
+                    .children(&mut inner_cursor)
+                    .filter(|base_child| !matches!(base_child.kind(), "," | ":"))
+                    .collect();
+                let first_is_interface = node.kind() == "class_declaration"
+                    && base_children
+                        .first()
+                        .copied()
+                        .map(|base_child| self.is_csharp_interface_only_base(node, base_child))
+                        .unwrap_or(false);
+
+                for (base_index, base_child) in base_children.into_iter().enumerate() {
+                    let is_implements = if node.kind() == "interface_declaration" {
+                        false
+                    } else if base_index == 0 {
+                        first_is_interface
+                    } else {
+                        true
+                    };
+                    self.extract_heritage_types(
+                        base_child,
+                        class_qualified,
+                        is_implements,
+                        relationships,
+                    );
                 }
             }
             // Kotlin: class AdminUser : User, Authenticatable
@@ -1211,6 +1220,67 @@ impl<'a> EntityExtractor<'a> {
                 );
             }
         }
+    }
+
+    fn is_csharp_interface_only_base(&self, class_node: Node, base_node: Node) -> bool {
+        let Some(target_name) = self.extract_heritage_name(base_node) else {
+            return false;
+        };
+
+        if self.interface_declared_in_tree(class_node, &target_name) {
+            return true;
+        }
+
+        let mut chars = target_name.chars();
+        matches!(chars.next(), Some('I')) && matches!(chars.next(), Some(c) if c.is_uppercase())
+    }
+
+    fn interface_declared_in_tree(&self, node: Node, target_name: &str) -> bool {
+        let mut root = node;
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+        self.node_contains_interface_named(root, target_name)
+    }
+
+    fn node_contains_interface_named(&self, node: Node, target_name: &str) -> bool {
+        if node.kind() == "interface_declaration"
+            && self.get_node_name(node).as_deref() == Some(target_name)
+        {
+            return true;
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if self.node_contains_interface_named(child, target_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn extract_heritage_name(&self, node: Node) -> Option<String> {
+        let node_kind = node.kind();
+        if matches!(
+            node_kind,
+            "identifier" | "type_identifier" | "qualified_name" | "generic_name"
+        ) {
+            let bytes = self.source.get(node.byte_range())?;
+            let text = std::str::from_utf8(bytes).ok()?;
+            let base = text.split('<').next().unwrap_or(text).trim();
+            let short = base.rsplit('.').next().unwrap_or(base).trim();
+            return Some(short.to_string());
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(name) = self.extract_heritage_name(child) {
+                return Some(name);
+            }
+        }
+
+        None
     }
 
     fn extract_type_spec(
@@ -2632,6 +2702,45 @@ mod tests {
                     && r.target_qualified == "__unresolved__ILogger"
             }),
             "Should extract later interface bases as extends, not implements"
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_class_with_interface_only_base_list_relationships() {
+        let source = br#"
+            interface IRunner {}
+            interface ILogger {}
+            class FastRunner : IRunner, ILogger {}
+        "#;
+        let tree = parse_csharp(source).expect("Should parse C# class interface-only base list");
+
+        let extractor = EntityExtractor::new(source, "FastRunner.cs", "csharp");
+        let (_, relationships) = extractor.extract(&tree);
+
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "implements"
+                    && r.target_qualified == "__unresolved__IRunner"
+            }),
+            "Should treat the first interface-only base as implements"
+        );
+        assert!(
+            relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "implements"
+                    && r.target_qualified == "__unresolved__ILogger"
+            }),
+            "Should treat the later interface-only base as implements"
+        );
+        assert!(
+            !relationships.iter().any(|r| {
+                r.source_qualified == "FastRunner.cs::FastRunner"
+                    && r.rel_type == "extends"
+                    && (r.target_qualified == "__unresolved__IRunner"
+                        || r.target_qualified == "__unresolved__ILogger")
+            }),
+            "Should not mark interface-only bases as extends"
         );
     }
 

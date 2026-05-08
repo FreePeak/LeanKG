@@ -234,24 +234,34 @@ async fn test_get_relationships_with_real_db() {
     let db = init_db(db_path).expect("failed to init db");
     let graph = GraphEngine::new(db);
 
-    // Test with path that exists in DB (from graph.json we know ./src/api/auth.rs has imports)
-    let result = graph.get_relationships("./src/api/auth.rs");
+    let sample_source = graph
+        .all_relationships()
+        .expect("failed to read relationships")
+        .into_iter()
+        .find(|rel| !rel.source_qualified.is_empty())
+        .map(|rel| rel.source_qualified)
+        .expect("Expected at least one relationship in real .leankg DB");
+    let normalized_source = sample_source.strip_prefix("./").unwrap_or(&sample_source);
+    let prefixed_source = if sample_source.starts_with("./") {
+        sample_source.clone()
+    } else {
+        format!("./{}", sample_source)
+    };
+
+    let result = graph.get_relationships(&prefixed_source);
     match result {
         Ok(rels) => {
-            println!(
-                "get_relationships('./src/api/auth.rs') returned {} results",
-                rels.len()
-            );
+            println!("get_relationships('{}') returned {} results", prefixed_source, rels.len());
             for rel in rels.iter().take(5) {
                 println!(
                     "  {} -> {} ({})",
                     rel.source_qualified, rel.target_qualified, rel.rel_type
                 );
             }
-            // We expect at least one relationship based on graph.json
             assert!(
                 !rels.is_empty(),
-                "Should find relationships for ./src/api/auth.rs"
+                "Should find relationships for {}",
+                prefixed_source
             );
         }
         Err(e) => {
@@ -259,13 +269,12 @@ async fn test_get_relationships_with_real_db() {
         }
     }
 
-    // Test without ./ prefix
-    let result2 = graph.get_relationships("src/api/auth.rs");
+    let result2 = graph.get_relationships(normalized_source);
     match result2 {
         Ok(rels) => {
             println!(
-                "get_relationships('src/api/auth.rs') returned {} results",
-                rels.len()
+                "get_relationships('{}') returned {} results",
+                normalized_source, rels.len()
             );
             assert!(
                 !rels.is_empty(),
@@ -280,33 +289,49 @@ async fn test_get_relationships_with_real_db() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_dependencies_with_real_db() {
-    let db_path = std::path::Path::new(".leankg");
-    if !db_path.exists() {
-        println!("Skipping - no .leankg database");
-        return;
-    }
-
-    let db = init_db(db_path).expect("failed to init db");
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg.db");
+    let db = init_db(db_path.as_path()).expect("failed to init db");
     let graph = GraphEngine::new(db.clone());
 
-    // get_dependencies returns CodeElements for imported items
-    // Since most imports are external (std::, crate::), we might get empty results
-    // But the important thing is the QUERY works (path normalization is correct)
-    let dep_result = graph.get_dependencies("./src/api/auth.rs");
+    let normalized_source = "src/api/auth.rs";
+    let prefixed_source = format!("./{}", normalized_source);
+    graph
+        .insert_relationships(&[leankg::db::models::Relationship {
+            id: None,
+            source_qualified: normalized_source.to_string(),
+            target_qualified: "serde".to_string(),
+            rel_type: "imports".to_string(),
+            confidence: 1.0,
+            metadata: serde_json::json!({}),
+        }])
+        .expect("failed to seed import relationship");
+
+    let dep_result = graph.get_dependencies(&prefixed_source);
     match dep_result {
         Ok(deps) => {
             println!("get_dependencies returned {} CodeElements", deps.len());
+            assert_eq!(deps.len(), 1, "Expected seeded import dependency to resolve");
         }
         Err(e) => {
             panic!("get_dependencies failed: {}", e);
         }
     }
 
-    // Verify the raw relationship query works (this is the core fix)
-    let normalized = "./src/api/auth.rs"
-        .strip_prefix("./")
-        .unwrap_or("./src/api/auth.rs");
-    let escaped = normalized.replace('\\', "\\\\").replace('"', "\\\"");
+    let dep_result_normalized = graph.get_dependencies(normalized_source);
+    match dep_result_normalized {
+        Ok(deps) => {
+            assert_eq!(
+                deps.len(), 1,
+                "Expected normalized path to resolve seeded import dependency"
+            );
+        }
+        Err(e) => {
+            panic!("get_dependencies without prefix failed: {}", e);
+        }
+    }
+
+    let escaped = normalized_source.replace('\\', "\\\\").replace('"', "\\\"");
     let query = format!(
         r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = "{}" or source_qualified = "./{}"), rel_type = "imports""#,
         escaped, escaped

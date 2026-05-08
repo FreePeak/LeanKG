@@ -185,7 +185,9 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
             || extensions.contains(&ext)
             || is_cicd_yaml_file(path);
 
-        if path.is_file() && is_valid_file && !path.to_string_lossy().contains("/node_modules/") {
+        let is_in_node_modules = path.components().any(|c| c.as_os_str() == "node_modules");
+
+        if path.is_file() && is_valid_file && !is_in_node_modules {
             files.push(path.to_string_lossy().to_string());
         }
     }

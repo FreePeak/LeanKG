@@ -23,7 +23,17 @@ async fn create_test_handler() -> (ToolHandler, TempDir) {
 /// Creates a test handler with the real .leankg database
 async fn create_real_handler() -> (ToolHandler, TempDir) {
     let tmp = TempDir::new().unwrap();
-    let db_path = std::path::PathBuf::from(".leankg");
+    let db_path = tmp.path().join(".leankg");
+    std::fs::create_dir_all(&db_path).unwrap();
+
+    let source_db_path = std::path::PathBuf::from(".leankg");
+    let source_db_file = if source_db_path.is_dir() {
+        source_db_path.join("leankg.db")
+    } else {
+        source_db_path
+    };
+    std::fs::copy(&source_db_file, db_path.join("leankg.db")).unwrap();
+
     let db = init_db(db_path.as_path()).unwrap();
     let graph = GraphEngine::new(db);
     (ToolHandler::new(graph, db_path), tmp)
@@ -38,9 +48,10 @@ mod mcp_core_tools {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_mcp_init() {
-        let (handler, _tmp) = create_real_handler().await;
+        let (handler, tmp) = create_real_handler().await;
+        let init_path = tmp.path().join("fresh-leankg");
         let result = handler
-            .execute_tool("mcp_init", &json!({"path": ".leankg"}))
+            .execute_tool("mcp_init", &json!({"path": init_path.to_string_lossy()}))
             .await;
         assert!(
             result.is_ok(),
