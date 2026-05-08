@@ -72,7 +72,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let mut files = Vec::new();
     let extensions = [
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod", "xml", "dart"
+        "mod", "xml", "dart",
     ];
     let config_files = [
         "package.json",

@@ -435,10 +435,18 @@ impl<'a> EntityExtractor<'a> {
             | "secondary_constructor" => {
                 self.extract_function(node, parent, elements, relationships);
             }
-            "class_declaration" | "type_declaration" | "class_def" | "struct_item"
-            | "class_definition" | "enum_declaration" | "record_declaration"
-            | "object_declaration" | "companion_object"
-            | "mixin_declaration" | "extension_declaration" | "type_alias" => {
+            "class_declaration"
+            | "type_declaration"
+            | "class_def"
+            | "struct_item"
+            | "class_definition"
+            | "enum_declaration"
+            | "record_declaration"
+            | "object_declaration"
+            | "companion_object"
+            | "mixin_declaration"
+            | "extension_declaration"
+            | "type_alias" => {
                 self.extract_class(node, parent, elements, relationships);
             }
             "decorated_definition" => {
