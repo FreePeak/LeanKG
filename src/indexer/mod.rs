@@ -85,6 +85,7 @@ impl LanguageSpec {
             "java" => Some(tree_sitter_java::LANGUAGE.into()),
             "kotlin" => Some(tree_sitter_kotlin_ng::LANGUAGE.into()),
             "csharp" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            "dart" => Some(tree_sitter_dart::LANGUAGE.into()),
             _ => None,
         }
     }
@@ -132,6 +133,12 @@ pub(crate) const LANGUAGE_SPECS: &[LanguageSpec] = &[
         exts: &["cs"],
         aliases: &["cs"],
         bulk_parser_slot: Some(6),
+    },
+    LanguageSpec {
+        key: "dart",
+        exts: &["dart"],
+        aliases: &[],
+        bulk_parser_slot: Some(7),
     },
 ];
 
@@ -363,7 +370,7 @@ fn extract_elements_for_file(
     };
 
     thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None]);
+        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None, None]);
     }
 
     let parser_idx = match language_spec.bulk_parser_slot {
