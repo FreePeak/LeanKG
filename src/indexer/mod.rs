@@ -284,7 +284,7 @@ fn extract_elements_for_file(
     };
 
     thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None]);
+        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None, None]);
     }
 
     let parser_idx = match language {
