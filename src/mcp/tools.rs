@@ -521,6 +521,153 @@ impl ToolRegistry {
                     "required": []
                 }),
             },
+
+            // Knowledge Contribution Tools
+            ToolDefinition {
+                name: "add_knowledge".to_string(),
+                description: "Add a knowledge entry to the knowledge base. Supports business knowledge, domain knowledge, architecture docs, PRD-code mapping, debugging notes, and general notes. Entries can optionally be linked to code elements, user stories, or features.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "knowledge_type": {"type": "string", "enum": ["business", "domain", "architecture", "prd_mapping", "debugging", "general"], "description": "Type of knowledge entry"},
+                        "title": {"type": "string", "description": "Title of the knowledge entry"},
+                        "content": {"type": "string", "description": "Content in markdown format"},
+                        "element_qualified": {"type": "string", "description": "Optional: qualified name of code element to link (e.g., src/main.rs::main)"},
+                        "user_story_id": {"type": "string", "description": "Optional: user story ID to link"},
+                        "feature_id": {"type": "string", "description": "Optional: feature ID to link"},
+                        "tags": {"type": "string", "description": "Comma-separated tags"},
+                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Environment tag (default: production)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["knowledge_type", "title", "content"]
+                }),
+            },
+            ToolDefinition {
+                name: "update_knowledge".to_string(),
+                description: "Update an existing knowledge entry by ID.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "ID of the knowledge entry to update"},
+                        "title": {"type": "string", "description": "New title"},
+                        "content": {"type": "string", "description": "New content in markdown"},
+                        "tags": {"type": "string", "description": "New comma-separated tags"},
+                        "environment": {"type": "string", "description": "New environment tag"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["id"]
+                }),
+            },
+            ToolDefinition {
+                name: "delete_knowledge".to_string(),
+                description: "Delete a knowledge entry by ID.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "ID of the knowledge entry to delete"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["id"]
+                }),
+            },
+            ToolDefinition {
+                name: "search_knowledge".to_string(),
+                description: "Search all knowledge entries by keyword. Filters by knowledge type and environment. Returns matching entries with titles, content snippets, and metadata.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query (keyword in title)"},
+                        "knowledge_type": {"type": "string", "enum": ["business", "domain", "architecture", "prd_mapping", "debugging", "general"], "description": "Optional: filter by knowledge type"},
+                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Optional: filter by environment"},
+                        "limit": {"type": "integer", "description": "Max results (default: 20, max: 50)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "add_annotation".to_string(),
+                description: "Add or update a business logic annotation for a code element. Links a description (and optionally a user story or feature) to a code element.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "element": {"type": "string", "description": "Qualified name of the code element (e.g., src/auth/login.rs::handle_login)"},
+                        "description": {"type": "string", "description": "Business logic description"},
+                        "user_story": {"type": "string", "description": "Optional: user story ID"},
+                        "feature": {"type": "string", "description": "Optional: feature ID"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["element", "description"]
+                }),
+            },
+            ToolDefinition {
+                name: "link_element".to_string(),
+                description: "Link a code element to a user story or feature ID.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "element": {"type": "string", "description": "Qualified name of the code element"},
+                        "id": {"type": "string", "description": "User story or feature ID"},
+                        "kind": {"type": "string", "enum": ["story", "feature"], "description": "Type of link: 'story' for user story, 'feature' for feature"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["element", "id", "kind"]
+                }),
+            },
+            ToolDefinition {
+                name: "add_documentation".to_string(),
+                description: "Index a single documentation file into the knowledge graph. Extracts code references and creates documented_by/references relationships.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "Path to the documentation file to index"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["file_path"]
+                }),
+            },
+
+            // Version/Branch Tagging Tools
+            ToolDefinition {
+                name: "search_by_environment".to_string(),
+                description: "Search code elements and knowledge entries filtered by environment (production, staging, dev, upcoming). Useful for seeing what's in production vs what's in development.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Environment to filter by"},
+                        "query": {"type": "string", "description": "Optional: search query to further filter results"},
+                        "limit": {"type": "integer", "description": "Max results (default: 20)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["environment"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_upcoming_changes".to_string(),
+                description: "Get knowledge entries and code elements tagged as 'upcoming' (feature branch changes not yet in main). Shows what's coming in the next release.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "branch": {"type": "string", "description": "Optional: filter by specific branch name"},
+                        "limit": {"type": "integer", "description": "Max results (default: 20)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "promote_environment".to_string(),
+                description: "Promote knowledge entries and code elements from one environment to another (e.g., upcoming -> production). Used when a feature branch merges to main.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "branch": {"type": "string", "description": "Branch name to promote entries from"},
+                        "target_environment": {"type": "string", "enum": ["production", "staging", "dev"], "description": "Target environment (default: production)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["branch"]
+                }),
+            },
         ]
     }
 }

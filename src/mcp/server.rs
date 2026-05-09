@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::db::schema::init_db;
 use crate::graph::GraphEngine;
-use crate::mcp::auth::AuthConfig;
+use crate::mcp::auth::AuthManager;
 use crate::mcp::handler::ToolHandler;
 use crate::mcp::tools::ToolRegistry;
 use crate::mcp::tracker::WriteTracker;
@@ -43,7 +43,7 @@ struct SessionInfo {
 }
 
 pub struct MCPServer {
-    auth_config: Arc<TokioRwLock<AuthConfig>>,
+    auth_manager: Arc<TokioRwLock<AuthManager>>,
     db_path: Arc<RwLock<PathBuf>>,
     graph_engine: Arc<parking_lot::Mutex<Option<GraphEngine>>>,
     graph_engine_cache: Arc<RwLock<HashMap<PathBuf, GraphEngine>>>,
@@ -69,7 +69,7 @@ impl std::fmt::Debug for MCPServer {
 impl Clone for MCPServer {
     fn clone(&self) -> Self {
         Self {
-            auth_config: self.auth_config.clone(),
+            auth_manager: self.auth_manager.clone(),
             db_path: self.db_path.clone(),
             graph_engine: self.graph_engine.clone(),
             graph_engine_cache: self.graph_engine_cache.clone(),
@@ -87,7 +87,7 @@ impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
         Self {
-            auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
+            auth_manager: Arc::new(TokioRwLock::new(AuthManager::with_default_token())),
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -103,7 +103,7 @@ impl MCPServer {
     pub fn new_with_watch(db_path: std::path::PathBuf, watch_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
         Self {
-            auth_config: Arc::new(TokioRwLock::new(AuthConfig::default())),
+            auth_manager: Arc::new(TokioRwLock::new(AuthManager::with_default_token())),
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -267,8 +267,8 @@ impl MCPServer {
         Ok(ge)
     }
 
-    pub async fn auth_config_read(&self) -> tokio::sync::RwLockReadGuard<'_, AuthConfig> {
-        self.auth_config.read().await
+    pub async fn auth_manager_read(&self) -> tokio::sync::RwLockReadGuard<'_, AuthManager> {
+        self.auth_manager.read().await
     }
 
     fn get_graph_engine(&self) -> Result<GraphEngine, String> {
@@ -745,6 +745,7 @@ impl MCPServer {
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),
             auth_token,
+            auth_manager: AuthManager::with_default_token(),
         });
 
         let cors = CorsLayer::new()
@@ -1476,6 +1477,20 @@ impl MCPServer {
             *guard = None;
         }
 
+        // Mark write tracker dirty for knowledge contribution tools
+        if matches!(
+            tool_name,
+            "add_knowledge"
+                | "update_knowledge"
+                | "delete_knowledge"
+                | "add_annotation"
+                | "link_element"
+                | "add_documentation"
+                | "promote_environment"
+        ) {
+            self.write_tracker.mark_dirty();
+        }
+
         result
     }
 }
@@ -1556,6 +1571,7 @@ impl ServerHandler for MCPServer {
 struct HttpMcpServer {
     mcp_server: MCPServer,
     auth_token: Option<String>,
+    auth_manager: AuthManager,
 }
 
 /// Query parameters extracted from MCP HTTP requests
@@ -1625,20 +1641,36 @@ mod json_rpc_code {
 }
 
 /// Extract bearer token from Authorization header using constant-time comparison
-/// to prevent timing attacks on bearer tokens.
-fn extract_bearer_token(auth_header: Option<&str>, token: &Option<String>) -> bool {
-    if token.is_none() {
-        return true; // No auth required
+/// to prevent timing attacks on bearer tokens. Returns an AuthContext with role.
+fn extract_auth_context(
+    auth_header: Option<&str>,
+    server: &HttpMcpServer,
+) -> Result<crate::db::models::AuthContext, StatusCode> {
+    if server.auth_token.is_none() {
+        // No auth configured — grant admin
+        return Ok(crate::db::models::AuthContext {
+            client_id: "anonymous".to_string(),
+            role: crate::db::models::Role::Admin,
+        });
     }
-    let token = token.as_ref().unwrap();
+
+    let expected_token = server.auth_token.as_ref().unwrap();
 
     if let Some(auth) = auth_header {
         if let Some(stripped) = auth.strip_prefix("Bearer ") {
             // Use constant-time comparison to prevent timing attacks
-            return subtle::ConstantTimeEq::ct_eq(stripped.as_bytes(), token.as_bytes()).into();
+            let matches: bool =
+                subtle::ConstantTimeEq::ct_eq(stripped.as_bytes(), expected_token.as_bytes())
+                    .into();
+            if matches {
+                return server
+                    .auth_manager
+                    .validate_token(stripped)
+                    .map_err(|_| StatusCode::UNAUTHORIZED);
+            }
         }
     }
-    false
+    Err(StatusCode::UNAUTHORIZED)
 }
 
 /// Handle POST /mcp - JSON-RPC request endpoint
@@ -1683,13 +1715,16 @@ async fn handle_mcp_request(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
 
-    // Check authentication
-    if !extract_bearer_token(auth_value, &server.auth_token) {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::from(r#"{"error": "Unauthorized"}"#))
-            .unwrap();
-    }
+    // Check authentication and get auth context
+    let auth_context = match extract_auth_context(auth_value, &server) {
+        Ok(ctx) => ctx,
+        Err(status) => {
+            return Response::builder()
+                .status(status)
+                .body(Body::from(r#"{"error": "Unauthorized"}"#))
+                .unwrap();
+        }
+    };
 
     // Parse JSON-RPC request
     let request: JsonRpcRequest = match serde_json::from_str(&body) {
@@ -1771,8 +1806,16 @@ async fn handle_mcp_request(
 
     if is_notification {
         // Process the notification but don't send a response
-        let _ =
-            process_jsonrpc_request(&server.mcp_server, &request, project_param.as_deref()).await;
+        let _ = process_jsonrpc_request(
+            &server.mcp_server,
+            &request,
+            project_param.as_deref(),
+            crate::db::models::AuthContext {
+                client_id: "anonymous".to_string(),
+                role: crate::db::models::Role::Admin,
+            },
+        )
+        .await;
         return Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
@@ -1780,8 +1823,13 @@ async fn handle_mcp_request(
     }
 
     // Process the request, passing project param for routing
-    let result =
-        process_jsonrpc_request(&server.mcp_server, &request, project_param.as_deref()).await;
+    let result = process_jsonrpc_request(
+        &server.mcp_server,
+        &request,
+        project_param.as_deref(),
+        auth_context,
+    )
+    .await;
 
     // Build response
     // unwrap is safe because if id was None we already returned NO_CONTENT above
@@ -1816,6 +1864,7 @@ async fn process_jsonrpc_request(
     mcp_server: &MCPServer,
     request: &JsonRpcRequest,
     project_param: Option<&str>,
+    auth_context: crate::db::models::AuthContext,
 ) -> Result<serde_json::Value, String> {
     let method = &request.method;
     let params = request.params.as_ref();
@@ -1865,6 +1914,16 @@ async fn process_jsonrpc_request(
                 .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing tool name")?;
+
+            // RBAC: Check if user has permission to call this tool
+            if let Err(e) = mcp_server
+                .auth_manager
+                .read()
+                .await
+                .check_permission(&auth_context, tool_name)
+            {
+                return Err(format!("Permission denied: {}", e));
+            }
 
             let mut arguments = params_obj
                 .get("arguments")
@@ -1919,13 +1978,16 @@ async fn handle_sse_stream(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
 
-    // Check authentication
-    if !extract_bearer_token(auth_value, &server.auth_token) {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::from(r#"event: error\ndata: Unauthorized\n\n"#))
-            .unwrap();
-    }
+    // Check authentication and get auth context
+    let _auth_context = match extract_auth_context(auth_value, &server) {
+        Ok(ctx) => ctx,
+        Err(status) => {
+            return Response::builder()
+                .status(status)
+                .body(Body::from(r#"event: error\ndata: Unauthorized\n\n"#))
+                .unwrap();
+        }
+    };
 
     // For now, return an SSE stream that sends an endpoint message
     // In a full implementation, this would maintain a persistent connection
@@ -1963,6 +2025,6 @@ mod tests {
     async fn test_mcp_server_new_with_custom_path() {
         let db_path = std::path::PathBuf::from("/custom/path/.leankg");
         let server = MCPServer::new(db_path.clone());
-        assert!(server.auth_config.try_read().is_ok());
+        assert!(server.auth_manager.try_read().is_ok());
     }
 }

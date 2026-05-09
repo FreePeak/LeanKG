@@ -1,6 +1,6 @@
 use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
-use leankg::mcp::auth::{hash_token, AuthConfig};
+use leankg::mcp::auth::{hash_token, AuthManager, LegacyAuthConfig};
 use leankg::mcp::handler::ToolHandler;
 use leankg::mcp::server::MCPServer;
 use leankg::mcp::tools::ToolRegistry;
@@ -130,13 +130,13 @@ mod auth_tests {
 
     #[test]
     fn test_auth_config_default_has_token() {
-        let config = AuthConfig::default();
+        let config = LegacyAuthConfig::default();
         assert!(!config.tokens.is_empty());
     }
 
     #[test]
     fn test_auth_config_add_and_validate_token() {
-        let mut config = AuthConfig::new();
+        let mut config = LegacyAuthConfig::new();
         let token = "test-token-123".to_string();
         let client_id = "test-client".to_string();
 
@@ -148,7 +148,7 @@ mod auth_tests {
 
     #[test]
     fn test_auth_config_multiple_tokens() {
-        let mut config = AuthConfig::new();
+        let mut config = LegacyAuthConfig::new();
         config.add_token("token1".to_string(), "client1".to_string());
         config.add_token("token2".to_string(), "client2".to_string());
 
@@ -430,7 +430,7 @@ mod server_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_mcp_server_creation() {
         let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
-        let _guard = server.auth_config_read().await;
+        let _guard = server.auth_manager_read().await;
     }
 
     #[test]

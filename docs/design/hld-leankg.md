@@ -1,10 +1,19 @@
 # LeanKG High Level Design
 
-**Phien ban:** 1.22
-**Ngay:** 2026-04-24
-**Dua tren:** PRD v1.22
+**Phien ban:** 1.24
+**Ngay:** 2026-05-08
+**Dua tren:** PRD v1.23
 **Trang thai:** Ban nhap
 **Changelog:**
+- v1.24 - Knowledge Contribution, Versioning & Multi-Team Access:
+  - New `knowledge_entries` CozoDB relation for standalone knowledge entries
+  - Schema migration system with `migrations` tracking table
+  - Version columns (`environment`, `branch`, `version_tag`) added to code_elements and business_logic
+  - Git branch auto-detection and environment inference
+  - 10 new MCP tools: add/update/delete/search_knowledge, add_annotation, link_element, add_documentation, search_by_environment, get_upcoming_changes, promote_environment
+  - RBAC with Admin/Contributor/Viewer roles
+  - OAuth2-compatible auth manager (static tokens, extensible to OIDC)
+  - Tool-level permission enforcement in MCP HTTP handler
 - v1.23 - Knowns-Inspired Enhancements (FUTURE):
   - Hybrid search with Reciprocal Rank Fusion (semantic + keyword)
   - Reference system (`@doc/`, `@task-` syntax) for traversable links
@@ -815,6 +824,9 @@ erDiagram
     CODE_ELEMENTS ||--o{ RELATIONSHIPS : has
     CODE_ELEMENTS ||--o| BUSINESS_LOGIC : describes
     CODE_ELEMENTS ||--o| DOCUMENTS : referenced_by
+    CODE_ELEMENTS ||--o| KNOWLEDGE_ENTRIES : linked_to
+    KNOWLEDGE_ENTRIES ||--o{ USER_STORIES : mapped_to
+    KNOWLEDGE_ENTRIES ||--o{ FEATURES : implements
     USER_STORIES ||--o{ BUSINESS_LOGIC : mapped_to
     FEATURES ||--o{ BUSINESS_LOGIC : implements
 
@@ -827,9 +839,11 @@ erDiagram
         int line_end
         string language
         string parent_qualified FK
+        string environment "production|staging|dev|upcoming"
+        string branch "git branch name"
+        string version_tag
         json metadata
-        timestamp created_at
-        timestamp updated_at
+        timestamp indexed_at
     }
 
     RELATIONSHIPS {
@@ -847,6 +861,24 @@ erDiagram
         string description
         string user_story_id FK
         string feature_id FK
+        string environment "production|staging|dev|upcoming"
+        string branch
+        string author
+        timestamp updated_at
+    }
+
+    KNOWLEDGE_ENTRIES {
+        string id PK
+        string knowledge_type "business|domain|architecture|prd_mapping|debugging|general"
+        string title
+        string content
+        string element_qualified FK (optional)
+        string user_story_id FK (optional)
+        string feature_id FK (optional)
+        string tags
+        string environment "production|staging|dev|upcoming"
+        string branch
+        string author
         timestamp created_at
         timestamp updated_at
     }
@@ -872,18 +904,40 @@ erDiagram
         string name
         string description
     }
+
+    MIGRATIONS {
+        string id PK
+        int applied_at
+    }
 ```
 
 ### 4.2 Schema Description
 
 | Table | Mo ta |
 |-------|-------|
-| CODE_ELEMENTS | Luu tru tat ca code elements (files, functions, classes, imports, exports) va pipeline elements (pipelines, stages, steps). PK = qualified_name (`file_path::parent::name`) |
+| CODE_ELEMENTS | Luu tru tat ca code elements (files, functions, classes, imports, exports) va pipeline elements (pipelines, stages, steps). PK = qualified_name (`file_path::parent::name`). Co them cac cot environment, branch, version_tag, indexed_at de ho tro phien ban. |
 | RELATIONSHIPS | Quan he giua cac elements: source code (imports, calls, implements, contains, tested_by) va pipeline (triggers, builds, depends_on) |
-| BUSINESS_LOGIC | Annotations mo ta business logic cua tung element |
+| BUSINESS_LOGIC | Annotations mo ta business logic cua tung element. Co them cac cot environment, branch, author, updated_at. |
+| KNOWLEDGE_ENTRIES | Bang moi lưu tru tri thức độc lập (business, domain, architecture, prd_mapping, debugging, general). Cho phép nhập tri thức từ MCP ma khong canrang buộc voi code element. |
 | DOCUMENTS | Generated documentation files |
 | USER_STORIES | User stories duoc map voi code |
 | FEATURES | Features duoc map voi code |
+| MIGRATIONS | Bang theo dõi schema migrations da chạy, đảm bảo idempotency. |
+
+### 4.2.1 Schema Migration System
+
+CozoDB khong ho tro ALTER TABLE. Schema evolution su dung `run_migrations()` function trong `init_schema()`:
+
+1. Tao bang `migrations` neu chua ton tai
+2. Doc danh sach migrations da ap dung
+3. Chay migration moi neu chua duoc ap dung
+4. Su dung `:replace` de them cot moi vào bang cu (chi them, khong xóa)
+5. Ghi lai migration da ap dung vào bang `migrations`
+
+Migrations hien tai:
+- `001_knowledge_entries`: Tao bang `knowledge_entries`
+- `002_code_elements_versioning`: Them cot `environment`, `branch`, `version_tag`, `indexed_at` vào `code_elements`
+- `003_business_logic_versioning`: Them cot `environment`, `branch`, `author`, `updated_at` vào `business_logic`
 
 ### 4.3 Documentation-Specific Node Types (Phase 2)
 
