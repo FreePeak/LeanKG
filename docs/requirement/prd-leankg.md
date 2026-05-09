@@ -51,6 +51,43 @@
 | `mcp-stdio` | stdin/stdout | Local AI tools (Cursor, Claude Code) | 1 |
 | `mcp-http` | HTTP + SSE | Remote access, browser clients | Many |
 
+### v1.23 (IN PROGRESS) - Knowledge Contribution, Versioning & Multi-Team Access
+
+**User Stories:**
+- **US-23.1:** As a developer, I want to add business knowledge entries via MCP so AI agents can contribute knowledge during code review.
+- **US-23.2:** As a developer, I want to annotate code elements via MCP so I don't have to switch to CLI.
+- **US-23.3:** As a developer, I want to search all knowledge entries so I can understand domain context.
+- **US-23.4:** As a team lead, I want to tag knowledge by environment (production/staging/dev/upcoming) so I can distinguish current state from in-development work.
+- **US-23.5:** As a team lead, I want to see upcoming changes (feature branch knowledge) so I can plan reviews.
+- **US-23.6:** As a PO, I want read-only access to the knowledge graph via HTTP so my team can query code context without modifying anything.
+- **US-23.7:** As an admin, I want role-based access control so different teams have appropriate permissions.
+- **US-23.8:** As an admin, I want OAuth2/static token authentication so external teams can access LeanKG securely.
+
+**Functional Requirements:**
+- **FR-23.1:** New `knowledge_entries` CozoDB table for standalone knowledge (business, domain, architecture, prd_mapping, debugging, general)
+- **FR-23.2:** Schema migration system for adding columns to existing tables
+- **FR-23.3:** New MCP tools: `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `add_annotation`, `link_element`, `add_documentation`
+- **FR-23.4:** Version/branch tagging: `environment`, `branch`, `version_tag` columns on code_elements and business_logic
+- **FR-23.5:** Git branch auto-detection and environment inference (main→production, release/→staging, develop→dev, feature/→upcoming)
+- **FR-23.6:** Version-aware MCP tools: `search_by_environment`, `get_upcoming_changes`, `promote_environment`
+- **FR-23.7:** RBAC with roles: Admin (full), Contributor (knowledge write), Viewer (read-only)
+- **FR-23.8:** OAuth2-compatible auth with static tokens (extensible to OIDC)
+- **FR-23.9:** Tool-level permission enforcement in MCP HTTP handler
+
+**New MCP Tools (10 total):**
+| Tool | Category | Role Required |
+|------|-----------|---------------|
+| `add_knowledge` | Knowledge | Contributor |
+| `update_knowledge` | Knowledge | Contributor |
+| `delete_knowledge` | Knowledge | Contributor |
+| `search_knowledge` | Knowledge | Viewer |
+| `add_annotation` | Knowledge | Contributor |
+| `link_element` | Knowledge | Contributor |
+| `add_documentation` | Knowledge | Contributor |
+| `search_by_environment` | Versioning | Viewer |
+| `get_upcoming_changes` | Versioning | Viewer |
+| `promote_environment` | Versioning | Admin |
+
 ### v1.20 (PENDING) - MCP Server Watch Mode
 - **US-20.1:** Add `--watch` flag to MCP server for auto-indexing on file changes
 - **US-20.2:** Port 8081→9699 consolidation
