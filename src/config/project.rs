@@ -9,6 +9,7 @@ pub struct ProjectConfig {
     pub mcp: McpConfig,
     pub documentation: DocConfig,
     pub microservice: Option<MicroserviceExtractorConfig>,
+    pub auth: AuthSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +69,30 @@ pub struct DocConfig {
     pub templates: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuthSettings {
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider: AuthProvider,
+    #[serde(default)]
+    pub tokens: Vec<TokenEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthProvider {
+    #[default]
+    Static,
+    // Future: Oidc,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenEntry {
+    pub token: String,
+    pub role: String,
+    pub client_id: String,
+}
+
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
@@ -107,6 +132,7 @@ impl Default for ProjectConfig {
                 templates: vec!["agents".to_string(), "claude".to_string()],
             },
             microservice: None,
+            auth: AuthSettings::default(),
         }
     }
 }

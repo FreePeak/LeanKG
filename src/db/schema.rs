@@ -165,6 +165,105 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Run migrations for schema evolution
+    run_migrations(db, &existing_relations)?;
+
+    Ok(())
+}
+
+fn run_migrations(
+    db: &CozoDb,
+    existing_relations: &std::collections::HashSet<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Create migrations tracking table if not exists
+    if !existing_relations.contains("migrations") {
+        let create_migrations = r#":create migrations {id: String, applied_at: Int}"#;
+        if let Err(e) = db.run_script(create_migrations, Default::default()) {
+            tracing::warn!("Failed to create migrations table: {:?}", e);
+        }
+    }
+
+    // Get already-applied migrations
+    let applied: std::collections::HashSet<String> = db
+        .run_script("?[id] := *migrations[id, _]", Default::default())
+        .map(|r| {
+            r.rows
+                .iter()
+                .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Migration 001: Create knowledge_entries table
+    if !applied.contains("001_knowledge_entries") {
+        tracing::info!("Running migration 001_knowledge_entries...");
+        let create_knowledge = r#":create knowledge_entries {id: String, knowledge_type: String, title: String, content: String, element_qualified: String?, user_story_id: String?, feature_id: String?, tags: String, environment: String, branch: String?, author: String, created_at: Int, updated_at: Int}"#;
+        if let Err(e) = db.run_script(create_knowledge, Default::default()) {
+            tracing::warn!("Migration 001 failed (may already exist): {:?}", e);
+        }
+
+        // Create indexes
+        let indexes = [
+            r#":create knowledge_entries::type_index {ref: (knowledge_type), compressed: true}"#,
+            r#":create knowledge_entries::element_index {ref: (element_qualified), compressed: true}"#,
+            r#":create knowledge_entries::env_index {ref: (environment), compressed: true}"#,
+            r#":create knowledge_entries::author_index {ref: (author), compressed: true}"#,
+        ];
+        for idx in &indexes {
+            if let Err(e) = db.run_script(idx, Default::default()) {
+                tracing::debug!("Index creation note: {:?}", e);
+            }
+        }
+
+        record_migration(db, "001_knowledge_entries", now)?;
+    }
+
+    // Migration 002: Add version columns to code_elements
+    if !applied.contains("002_code_elements_versioning") {
+        tracing::info!("Running migration 002_code_elements_versioning...");
+        // Only apply if the table already existed (new tables get these columns at creation)
+        if existing_relations.contains("code_elements") {
+            let replace_code_elements = r#":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, environment: String default 'production', branch: String? default null, version_tag: String? default null, indexed_at: Int default 0}"#;
+            if let Err(e) = db.run_script(replace_code_elements, Default::default()) {
+                tracing::warn!("Migration 002 code_elements replace failed: {:?}", e);
+            }
+        }
+        record_migration(db, "002_code_elements_versioning", now)?;
+    }
+
+    // Migration 003: Add version columns to business_logic
+    if !applied.contains("003_business_logic_versioning") {
+        tracing::info!("Running migration 003_business_logic_versioning...");
+        if existing_relations.contains("business_logic") {
+            let replace_bl = r#":replace business_logic {element_qualified: String, description: String, user_story_id: String?, feature_id: String?, environment: String default 'production', branch: String? default null, author: String default '', updated_at: Int default 0}"#;
+            if let Err(e) = db.run_script(replace_bl, Default::default()) {
+                tracing::warn!("Migration 003 business_logic replace failed: {:?}", e);
+            }
+        }
+        record_migration(db, "003_business_logic_versioning", now)?;
+    }
+
+    Ok(())
+}
+
+fn record_migration(
+    db: &CozoDb,
+    id: &str,
+    applied_at: i64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let query = r#"?[id, applied_at] <- [[$mid, $ts]] :put migrations {id, applied_at}"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("mid".to_string(), serde_json::Value::String(id.to_string()));
+    params.insert(
+        "ts".to_string(),
+        serde_json::Value::Number(applied_at.into()),
+    );
+    db.run_script(query, params)?;
     Ok(())
 }
 
@@ -173,7 +272,7 @@ fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
-            const EXPECTED_COLUMNS: usize = 11;
+            const EXPECTED_COLUMNS: usize = 15;
             if column_count != EXPECTED_COLUMNS {
                 eprintln!(
                     "WARNING: code_elements schema has {} columns, expected {}. \
@@ -194,7 +293,7 @@ fn validate_relationships_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
-            const EXPECTED_COLUMNS: usize = 5;
+            const EXPECTED_COLUMNS: usize = 8;
             if column_count != EXPECTED_COLUMNS {
                 eprintln!(
                     "WARNING: relationships schema has {} columns, expected {}. \

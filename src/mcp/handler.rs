@@ -1,6 +1,6 @@
 use crate::compress::{FileReader, ReadMode, ResponseCompressor};
-use crate::db::models::ContextMetric;
-use crate::db::models::{CodeElement, Relationship};
+use crate::db;
+use crate::db::models::{CodeElement, ContextMetric, KnowledgeEntry, Relationship};
 use crate::db::record_metric;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
 use crate::orchestrator::QueryOrchestrator;
@@ -191,6 +191,18 @@ impl ToolHandler {
             "find_route" => self.find_route(arguments),
             "get_screen_args" => self.get_screen_args(arguments),
             "get_nav_callers" => self.get_nav_callers(arguments),
+            // Knowledge contribution tools
+            "add_knowledge" => self.add_knowledge(arguments),
+            "update_knowledge" => self.update_knowledge(arguments),
+            "delete_knowledge" => self.delete_knowledge(arguments),
+            "search_knowledge" => self.search_knowledge_tool(arguments),
+            "add_annotation" => self.add_annotation(arguments),
+            "link_element" => self.link_element_tool(arguments),
+            "add_documentation" => self.add_documentation(arguments),
+            // Versioning tools
+            "search_by_environment" => self.search_by_environment(arguments),
+            "get_upcoming_changes" => self.get_upcoming_changes(arguments),
+            "promote_environment" => self.promote_environment(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
@@ -1973,6 +1985,369 @@ impl ToolHandler {
                 Err("Cluster not found. Try get_clusters to see available cluster IDs.".to_string())
             }
         }
+    }
+
+    // ========================================================================
+    // Knowledge Contribution Tools
+    // ========================================================================
+
+    fn add_knowledge(&self, args: &Value) -> Result<Value, String> {
+        let knowledge_type = args["knowledge_type"]
+            .as_str()
+            .ok_or("Missing knowledge_type")?;
+        let title = args["title"].as_str().ok_or("Missing title")?;
+        let content = args["content"].as_str().ok_or("Missing content")?;
+        let environment = args["environment"].as_str().unwrap_or("production");
+        let tags = args["tags"].as_str().unwrap_or("[]");
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let id = format!("k-{}-{}", knowledge_type, uuid_simple());
+
+        let entry = KnowledgeEntry {
+            id: id.clone(),
+            knowledge_type: knowledge_type.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            element_qualified: args["element_qualified"].as_str().map(String::from),
+            user_story_id: args["user_story_id"].as_str().map(String::from),
+            feature_id: args["feature_id"].as_str().map(String::from),
+            tags: tags.to_string(),
+            environment: environment.to_string(),
+            branch: args["branch"].as_str().map(String::from),
+            author: args["author"].as_str().unwrap_or("mcp-client").to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        db::create_knowledge_entry(self.graph_engine.db(), &entry)
+            .map_err(|e| format!("Failed to create knowledge entry: {}", e))?;
+
+        Ok(json!({
+            "id": entry.id,
+            "knowledge_type": entry.knowledge_type,
+            "title": entry.title,
+            "environment": entry.environment,
+            "status": "created"
+        }))
+    }
+
+    fn update_knowledge(&self, args: &Value) -> Result<Value, String> {
+        let id = args["id"].as_str().ok_or("Missing id")?;
+
+        let existing = db::get_knowledge_entry(self.graph_engine.db(), id)
+            .map_err(|e| format!("Failed to get knowledge entry: {}", e))?;
+
+        let mut entry = existing.ok_or("Knowledge entry not found")?;
+
+        if let Some(title) = args["title"].as_str() {
+            entry.title = title.to_string();
+        }
+        if let Some(content) = args["content"].as_str() {
+            entry.content = content.to_string();
+        }
+        if let Some(tags) = args["tags"].as_str() {
+            entry.tags = tags.to_string();
+        }
+        if let Some(env) = args["environment"].as_str() {
+            entry.environment = env.to_string();
+        }
+        entry.updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        db::update_knowledge_entry(self.graph_engine.db(), &entry)
+            .map_err(|e| format!("Failed to update knowledge entry: {}", e))?;
+
+        Ok(json!({
+            "id": entry.id,
+            "title": entry.title,
+            "environment": entry.environment,
+            "status": "updated"
+        }))
+    }
+
+    fn delete_knowledge(&self, args: &Value) -> Result<Value, String> {
+        let id = args["id"].as_str().ok_or("Missing id")?;
+
+        db::delete_knowledge_entry(self.graph_engine.db(), id)
+            .map_err(|e| format!("Failed to delete knowledge entry: {}", e))?;
+
+        Ok(json!({
+            "id": id,
+            "status": "deleted"
+        }))
+    }
+
+    fn search_knowledge_tool(&self, args: &Value) -> Result<Value, String> {
+        let query_str = args["query"].as_str().ok_or("Missing query")?;
+        let limit = args["limit"].as_u64().unwrap_or(20).min(50) as usize;
+        let knowledge_type = args["knowledge_type"].as_str();
+        let environment = args["environment"].as_str();
+
+        let entries = db::search_knowledge(
+            self.graph_engine.db(),
+            query_str,
+            knowledge_type,
+            environment,
+            limit,
+        )
+        .map_err(|e| format!("Failed to search knowledge: {}", e))?;
+
+        let results: Vec<Value> = entries
+            .iter()
+            .map(|e| {
+                json!({
+                    "id": e.id,
+                    "knowledge_type": e.knowledge_type,
+                    "title": e.title,
+                    "content_preview": truncate_str(&e.content, 200),
+                    "element_qualified": e.element_qualified,
+                    "tags": e.tags,
+                    "environment": e.environment,
+                    "branch": e.branch,
+                    "author": e.author,
+                    "created_at": e.created_at,
+                    "updated_at": e.updated_at
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "results": results,
+            "count": results.len()
+        }))
+    }
+
+    fn add_annotation(&self, args: &Value) -> Result<Value, String> {
+        let element = args["element"].as_str().ok_or("Missing element")?;
+        let description = args["description"].as_str().ok_or("Missing description")?;
+        let user_story = args["user_story"].as_str();
+        let feature = args["feature"].as_str();
+
+        let existing = db::get_business_logic(self.graph_engine.db(), element)
+            .map_err(|e| format!("DB error: {}", e))?;
+
+        if existing.is_some() {
+            db::update_business_logic(
+                self.graph_engine.db(),
+                element,
+                description,
+                user_story,
+                feature,
+            )
+            .map_err(|e| format!("Failed to update annotation: {}", e))?;
+        } else {
+            db::create_business_logic(
+                self.graph_engine.db(),
+                element,
+                description,
+                user_story,
+                feature,
+            )
+            .map_err(|e| format!("Failed to create annotation: {}", e))?;
+        }
+
+        Ok(json!({
+            "element": element,
+            "description": description,
+            "action": if existing.is_some() { "updated" } else { "created" }
+        }))
+    }
+
+    fn link_element_tool(&self, args: &Value) -> Result<Value, String> {
+        let element = args["element"].as_str().ok_or("Missing element")?;
+        let id = args["id"].as_str().ok_or("Missing id")?;
+        let kind = args["kind"].as_str().ok_or("Missing kind")?;
+
+        let existing = db::get_business_logic(self.graph_engine.db(), element)
+            .map_err(|e| format!("DB error: {}", e))?;
+
+        match existing {
+            Some(bl) => {
+                let new_desc = if bl.description.starts_with("Linked to") {
+                    bl.description.clone()
+                } else if kind == "story" {
+                    format!("{} | Linked to story {}", bl.description, id)
+                } else {
+                    format!("{} | Linked to feature {}", bl.description, id)
+                };
+                db::update_business_logic(
+                    self.graph_engine.db(),
+                    element,
+                    &new_desc,
+                    if kind == "story" {
+                        Some(id)
+                    } else {
+                        bl.user_story_id.as_deref()
+                    },
+                    if kind == "feature" {
+                        Some(id)
+                    } else {
+                        bl.feature_id.as_deref()
+                    },
+                )
+                .map_err(|e| format!("Failed to link: {}", e))?;
+            }
+            None => {
+                let description = format!("Linked to {} {}", kind, id);
+                db::create_business_logic(
+                    self.graph_engine.db(),
+                    element,
+                    &description,
+                    if kind == "story" { Some(id) } else { None },
+                    if kind == "feature" { Some(id) } else { None },
+                )
+                .map_err(|e| format!("Failed to create link: {}", e))?;
+            }
+        }
+
+        Ok(json!({
+            "element": element,
+            "linked_to": format!("{} {}", kind, id),
+            "status": "linked"
+        }))
+    }
+
+    fn add_documentation(&self, args: &Value) -> Result<Value, String> {
+        let file_path = args["file_path"].as_str().ok_or("Missing file_path")?;
+        let path = std::path::Path::new(file_path);
+        if !path.exists() {
+            return Err(format!("File not found: {}", file_path));
+        }
+
+        let parent = path.parent().unwrap_or(std::path::Path::new("."));
+        let result = crate::doc_indexer::index_docs_directory(parent, &self.graph_engine)
+            .map_err(|e| format!("Failed to index documentation: {}", e))?;
+
+        Ok(json!({
+            "file_indexed": file_path,
+            "documents_processed": result.documents.len(),
+            "total_references": result.relationships.len(),
+            "status": "indexed"
+        }))
+    }
+
+    // ========================================================================
+    // Version/Branch Tagging Tools
+    // ========================================================================
+
+    fn search_by_environment(&self, args: &Value) -> Result<Value, String> {
+        let environment = args["environment"].as_str().ok_or("Missing environment")?;
+        let limit = args["limit"].as_u64().unwrap_or(20).min(50) as usize;
+
+        let knowledge =
+            db::get_knowledge_by_environment(self.graph_engine.db(), environment, limit)
+                .map_err(|e| format!("Failed to search by environment: {}", e))?;
+
+        let results: Vec<Value> = knowledge
+            .iter()
+            .map(|e| {
+                json!({
+                    "id": e.id,
+                    "knowledge_type": e.knowledge_type,
+                    "title": e.title,
+                    "content_preview": truncate_str(&e.content, 200),
+                    "branch": e.branch,
+                    "author": e.author,
+                    "environment": e.environment,
+                    "created_at": e.created_at
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "environment": environment,
+            "results": results,
+            "count": results.len()
+        }))
+    }
+
+    fn get_upcoming_changes(&self, args: &Value) -> Result<Value, String> {
+        let limit = args["limit"].as_u64().unwrap_or(20).min(50) as usize;
+        let branch_filter = args["branch"].as_str();
+
+        let mut entries =
+            db::get_knowledge_by_environment(self.graph_engine.db(), "upcoming", limit)
+                .map_err(|e| format!("Failed to get upcoming changes: {}", e))?;
+
+        if let Some(branch) = branch_filter {
+            entries.retain(|e| e.branch.as_deref() == Some(branch));
+        }
+
+        let results: Vec<Value> = entries
+            .iter()
+            .map(|e| {
+                json!({
+                    "id": e.id,
+                    "knowledge_type": e.knowledge_type,
+                    "title": e.title,
+                    "content_preview": truncate_str(&e.content, 200),
+                    "branch": e.branch,
+                    "author": e.author,
+                    "created_at": e.created_at
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "environment": "upcoming",
+            "results": results,
+            "count": results.len()
+        }))
+    }
+
+    fn promote_environment(&self, args: &Value) -> Result<Value, String> {
+        let branch = args["branch"].as_str().ok_or("Missing branch")?;
+        let target_env = args["target_environment"].as_str().unwrap_or("production");
+
+        // Get all upcoming entries for this branch
+        let mut entries =
+            db::get_knowledge_by_environment(self.graph_engine.db(), "upcoming", 1000)
+                .map_err(|e| format!("Failed to query knowledge: {}", e))?;
+
+        entries.retain(|e| e.branch.as_deref() == Some(branch));
+
+        let mut promoted = 0;
+        for mut entry in entries {
+            entry.environment = target_env.to_string();
+            entry.updated_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+
+            db::update_knowledge_entry(self.graph_engine.db(), &entry)
+                .map_err(|e| format!("Failed to promote entry: {}", e))?;
+            promoted += 1;
+        }
+
+        Ok(json!({
+            "branch": branch,
+            "target_environment": target_env,
+            "promoted_count": promoted,
+            "status": "promoted"
+        }))
+    }
+}
+
+fn uuid_simple() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("{:x}", ts)
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len])
     }
 }
 

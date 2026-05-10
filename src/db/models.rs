@@ -346,6 +346,112 @@ pub struct DailyMetrics {
     pub correctness: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum KnowledgeType {
+    BusinessKnowledge,
+    DomainKnowledge,
+    ArchitectureDoc,
+    PrdMapping,
+    DebuggingNote,
+    General,
+}
+
+impl KnowledgeType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KnowledgeType::BusinessKnowledge => "business",
+            KnowledgeType::DomainKnowledge => "domain",
+            KnowledgeType::ArchitectureDoc => "architecture",
+            KnowledgeType::PrdMapping => "prd_mapping",
+            KnowledgeType::DebuggingNote => "debugging",
+            KnowledgeType::General => "general",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "business" => Some(KnowledgeType::BusinessKnowledge),
+            "domain" => Some(KnowledgeType::DomainKnowledge),
+            "architecture" => Some(KnowledgeType::ArchitectureDoc),
+            "prd_mapping" => Some(KnowledgeType::PrdMapping),
+            "debugging" => Some(KnowledgeType::DebuggingNote),
+            "general" => Some(KnowledgeType::General),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for KnowledgeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KnowledgeEntry {
+    pub id: String,
+    pub knowledge_type: String,
+    pub title: String,
+    pub content: String,
+    pub element_qualified: Option<String>,
+    pub user_story_id: Option<String>,
+    pub feature_id: Option<String>,
+    pub tags: String,
+    pub environment: String,
+    pub branch: Option<String>,
+    pub author: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Role {
+    Admin,
+    Contributor,
+    Viewer,
+}
+
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Contributor => "contributor",
+            Role::Viewer => "viewer",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "admin" => Some(Role::Admin),
+            "contributor" => Some(Role::Contributor),
+            "viewer" => Some(Role::Viewer),
+            _ => None,
+        }
+    }
+
+    pub fn can_write(&self) -> bool {
+        matches!(self, Role::Admin | Role::Contributor)
+    }
+
+    pub fn can_admin(&self) -> bool {
+        matches!(self, Role::Admin)
+    }
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthContext {
+    pub client_id: String,
+    pub role: Role,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +526,46 @@ mod tests {
             RelationshipType::from_str("presents"),
             Some(RelationshipType::Presents)
         );
+    }
+
+    #[test]
+    fn test_knowledge_type_roundtrip() {
+        assert_eq!(KnowledgeType::BusinessKnowledge.as_str(), "business");
+        assert_eq!(
+            KnowledgeType::from_str("domain"),
+            Some(KnowledgeType::DomainKnowledge)
+        );
+        assert_eq!(KnowledgeType::from_str("unknown"), None);
+        assert_eq!(format!("{}", KnowledgeType::PrdMapping), "prd_mapping");
+    }
+
+    #[test]
+    fn test_role_permissions() {
+        assert!(Role::Admin.can_write());
+        assert!(Role::Admin.can_admin());
+        assert!(Role::Contributor.can_write());
+        assert!(!Role::Contributor.can_admin());
+        assert!(!Role::Viewer.can_write());
+        assert!(!Role::Viewer.can_admin());
+        assert_eq!(Role::from_str("admin"), Some(Role::Admin));
+        assert_eq!(Role::from_str("viewer"), Some(Role::Viewer));
+    }
+
+    #[test]
+    fn test_knowledge_entry_creation() {
+        let entry = KnowledgeEntry {
+            id: "test-id".to_string(),
+            knowledge_type: "business".to_string(),
+            title: "Test".to_string(),
+            content: "Content".to_string(),
+            environment: "production".to_string(),
+            author: "test".to_string(),
+            created_at: 1000,
+            updated_at: 1000,
+            ..Default::default()
+        };
+        assert_eq!(entry.id, "test-id");
+        assert_eq!(entry.environment, "production");
+        assert!(entry.element_qualified.is_none());
     }
 }
