@@ -25,6 +25,7 @@ fn main() {
             rel_type: "imports".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         })
         .unwrap();
 
