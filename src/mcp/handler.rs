@@ -171,6 +171,7 @@ impl ToolHandler {
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
             "search_annotations" => self.search_annotations(arguments),
+            "semantic_search" => self.semantic_search(arguments),
             "generate_doc" => self.generate_doc(arguments),
             "find_large_functions" => self.find_large_functions(arguments),
             "get_tested_by" => self.get_tested_by(arguments),
@@ -1268,6 +1269,83 @@ impl ToolHandler {
             "annotations": results,
             "count": results.len()
         }))
+    }
+
+    fn semantic_search(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().ok_or("Missing 'query'")?;
+        let env = args["env"].as_str().unwrap_or("local");
+        let limit = args["limit"].as_i64().unwrap_or(5) as usize;
+
+        let results = self.perform_semantic_search(query, env, limit)?;
+
+        Ok(json!({
+            "query": query,
+            "env": env,
+            "results": results,
+            "count": results.len(),
+            "method": "keyword+fuzzy"
+        }))
+    }
+
+    fn perform_semantic_search(
+        &self,
+        query: &str,
+        env: &str,
+        limit: usize,
+    ) -> Result<Vec<Value>, String> {
+        let query_lower = query.to_lowercase();
+        let keywords: Vec<&str> = query_lower.split_whitespace().collect();
+
+        let elements = db::get_elements_by_env(self.graph_engine.db(), env, 1000)
+            .map_err(|e| format!("DB error: {}", e))?;
+
+        let mut scored: Vec<(f64, &db::models::CodeElement)> = elements
+            .iter()
+            .map(|elem| {
+                let name_lower = elem.name.to_lowercase();
+                let type_lower = elem.element_type.to_lowercase();
+                let qn_lower = elem.qualified_name.to_lowercase();
+
+                let mut score = 0.0;
+                for kw in &keywords {
+                    if name_lower.contains(kw) {
+                        score += 3.0;
+                    }
+                    if type_lower.contains(kw) {
+                        score += 2.0;
+                    }
+                    if qn_lower.contains(kw) {
+                        score += 1.0;
+                    }
+                }
+
+                if name_lower == query_lower {
+                    score += 10.0;
+                }
+
+                (-score, elem)
+            })
+            .filter(|(score, _)| *score < 0.0)
+            .collect();
+
+        scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        let results: Vec<Value> = scored
+            .into_iter()
+            .take(limit)
+            .map(|(score, elem)| {
+                json!({
+                    "qualified_name": elem.qualified_name,
+                    "name": elem.name,
+                    "element_type": elem.element_type,
+                    "file_path": elem.file_path,
+                    "score": -score,
+                    "env": elem.env,
+                })
+            })
+            .collect();
+
+        Ok(results)
     }
 
     fn generate_doc(&self, args: &Value) -> Result<Value, String> {
