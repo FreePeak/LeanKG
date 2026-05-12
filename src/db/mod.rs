@@ -1217,3 +1217,101 @@ fn row_to_incident(row: &[serde_json::Value]) -> models::Incident {
         linked_ticket: row[13].as_str().map(String::from),
     }
 }
+
+// ============================================================================
+// Environment-scoped element queries
+// ============================================================================
+
+pub fn get_elements_by_env(
+    db: &CozoDb,
+    env: &str,
+    limit: usize,
+) -> Result<Vec<models::CodeElement>, Box<dyn std::error::Error>> {
+    let query = format!(
+        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], env = $env :limit {}"#,
+        limit
+    );
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "env".to_string(),
+        serde_json::Value::String(env.to_string()),
+    );
+
+    let result = db.run_script(&query, params)?;
+    Ok(result.rows.iter().map(|r| row_to_code_element(r)).collect())
+}
+
+pub fn get_relationships_by_env(
+    db: &CozoDb,
+    env: &str,
+    limit: usize,
+) -> Result<Vec<models::Relationship>, Box<dyn std::error::Error>> {
+    let query = format!(
+        r#"?[source_qualified, target_qualified, rel_type, confidence, metadata, env] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], env = $env :limit {}"#,
+        limit
+    );
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "env".to_string(),
+        serde_json::Value::String(env.to_string()),
+    );
+
+    let result = db.run_script(&query, params)?;
+    Ok(result.rows.iter().map(|r| row_to_relationship(r)).collect())
+}
+
+pub fn get_element_across_envs(
+    db: &CozoDb,
+    qualified_name: &str,
+) -> Result<Vec<(String, models::CodeElement)>, Box<dyn std::error::Error>> {
+    let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = $qn"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "qn".to_string(),
+        serde_json::Value::String(qualified_name.to_string()),
+    );
+
+    let result = db.run_script(query, params)?;
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| {
+            let env = row[11].as_str().unwrap_or("local").to_string();
+            (env, row_to_code_element(row))
+        })
+        .collect())
+}
+
+fn row_to_code_element(row: &[serde_json::Value]) -> models::CodeElement {
+    let parent_qualified = row[7].as_str().map(String::from);
+    let cluster_id = row[8].as_str().map(String::from);
+    let cluster_label = row[9].as_str().map(String::from);
+    let metadata_str = row[10].as_str().unwrap_or("{}");
+    models::CodeElement {
+        qualified_name: row[0].as_str().unwrap_or("").to_string(),
+        element_type: row[1].as_str().unwrap_or("").to_string(),
+        name: row[2].as_str().unwrap_or("").to_string(),
+        file_path: row[3].as_str().unwrap_or("").to_string(),
+        line_start: row[4].as_i64().unwrap_or(0) as u32,
+        line_end: row[5].as_i64().unwrap_or(0) as u32,
+        language: row[6].as_str().unwrap_or("").to_string(),
+        parent_qualified,
+        cluster_id,
+        cluster_label,
+        metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+        env: row[11].as_str().unwrap_or("local").to_string(),
+    }
+}
+
+fn row_to_relationship(row: &[serde_json::Value]) -> models::Relationship {
+    let metadata_str = row[4].as_str().unwrap_or("{}");
+    models::Relationship {
+        id: None,
+        source_qualified: row[0].as_str().unwrap_or("").to_string(),
+        target_qualified: row[1].as_str().unwrap_or("").to_string(),
+        rel_type: row[2].as_str().unwrap_or("").to_string(),
+        confidence: row[3].as_f64().unwrap_or(1.0),
+        metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+        env: row[5].as_str().unwrap_or("local").to_string(),
+    }
+}

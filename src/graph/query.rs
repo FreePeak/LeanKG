@@ -1,5 +1,5 @@
 use crate::db::models::{
-    BusinessLogic, CodeElement, DependencyInfo, DocLink, Relationship, TraceabilityEntry,
+    BusinessLogic, CodeElement, DependencyInfo, DocLink, Incident, Relationship, TraceabilityEntry,
     TraceabilityReport,
 };
 use crate::db::schema::CozoDb;
@@ -2654,6 +2654,281 @@ impl GraphEngine {
             .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
     }
+
+    pub fn query_incidents(
+        &self,
+        service: Option<&str>,
+        pattern: Option<&str>,
+        env: &str,
+        limit: usize,
+    ) -> Result<Vec<Incident>, String> {
+        let mut conditions = vec![format!("env = \"{}\"", escape_datalog(env))];
+
+        if let Some(svc) = service {
+            conditions.push(format!(
+                "contains(lowercase(affected_services), \"{}\")",
+                escape_datalog(&svc.to_lowercase())
+            ));
+        }
+
+        if let Some(pat) = pattern {
+            let safe_pat = escape_datalog(&pat.to_lowercase());
+            conditions.push(format!(
+                "(contains(lowercase(title), \"{}\") or contains(lowercase(root_cause), \"{}\"))",
+                safe_pat, safe_pat
+            ));
+        }
+
+        let where_clause = conditions.join(", ");
+        let query = format!(
+            r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], {} :limit {}"#,
+            where_clause, limit
+        );
+
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
+
+        let mut incidents: Vec<Incident> = result
+            .rows
+            .iter()
+            .map(|r| {
+                let affected_services: Vec<String> =
+                    serde_json::from_str(r[8].as_str().unwrap_or("[]")).unwrap_or_default();
+                let tags: Vec<String> =
+                    serde_json::from_str(r[11].as_str().unwrap_or("[]")).unwrap_or_default();
+
+                Incident {
+                    id: r[0].as_str().unwrap_or("").to_string(),
+                    env: r[1].as_str().unwrap_or("local").to_string(),
+                    title: r[2].as_str().unwrap_or("").to_string(),
+                    severity: r[3].as_str().unwrap_or("").to_string(),
+                    occurred_at: r[4].as_i64().unwrap_or(0),
+                    resolved_at: r[5].as_i64(),
+                    root_cause: r[6].as_str().unwrap_or("").to_string(),
+                    resolution: r[7].as_str().unwrap_or("").to_string(),
+                    affected_services,
+                    trigger_pattern: r[9].as_str().map(String::from),
+                    prevention: r[10].as_str().map(String::from),
+                    tags,
+                    author: r[12].as_str().unwrap_or("").to_string(),
+                    linked_ticket: r[13].as_str().map(String::from),
+                }
+            })
+            .collect();
+
+        incidents.sort_by_key(|b| std::cmp::Reverse(b.occurred_at));
+        incidents.truncate(limit);
+        Ok(incidents)
+    }
+
+    pub fn get_service_context(&self, service: &str, env: &str) -> Result<ServiceContext, String> {
+        let safe_service = escape_datalog(service);
+        let safe_env = escape_datalog(env);
+
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = "{}", env = "{}""#,
+            safe_service, safe_env
+        );
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
+
+        let version = if let Some(row) = result.rows.first() {
+            let metadata_str = row[10].as_str().unwrap_or("{}");
+            let metadata: serde_json::Value =
+                serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({}));
+            metadata
+                .get("version")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        } else {
+            None
+        };
+
+        let outgoing_query = format!(
+            r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], source_qualified = "{}", env = "{}", (rel_type = "calls" or rel_type = "service_calls")"#,
+            safe_service, safe_env
+        );
+        let outgoing_result = self
+            .db
+            .run_script(&outgoing_query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
+        let calls: Vec<String> = outgoing_result
+            .rows
+            .iter()
+            .filter_map(|r| r[0].as_str().map(String::from))
+            .collect();
+
+        let incoming_query = format!(
+            r#"?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], target_qualified = "{}", env = "{}", (rel_type = "calls" or rel_type = "service_calls")"#,
+            safe_service, safe_env
+        );
+        let incoming_result = self
+            .db
+            .run_script(&incoming_query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
+        let called_by: Vec<String> = incoming_result
+            .rows
+            .iter()
+            .filter_map(|r| r[0].as_str().map(String::from))
+            .collect();
+
+        let incidents_query = format!(
+            r#"?[id, resolved_at, title, occurred_at] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], contains(lowercase(affected_services), "{}"), env = "{}""#,
+            escape_datalog(&service.to_lowercase()),
+            safe_env
+        );
+        let incidents_result = self
+            .db
+            .run_script(&incidents_query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
+
+        let open_incidents = incidents_result
+            .rows
+            .iter()
+            .filter(|r| r[1].is_null())
+            .count() as i64;
+
+        let mut recent: Vec<(i64, String)> = incidents_result
+            .rows
+            .iter()
+            .filter_map(|r| {
+                let title = r[2].as_str().map(String::from)?;
+                let occurred = r[3].as_i64()?;
+                Some((occurred, title))
+            })
+            .collect();
+        recent.sort_by_key(|b| std::cmp::Reverse(b.0));
+        let recent_incidents: Vec<String> = recent.into_iter().take(3).map(|(_, t)| t).collect();
+
+        Ok(ServiceContext {
+            service: service.to_string(),
+            env: env.to_string(),
+            version,
+            calls,
+            called_by,
+            open_incidents,
+            recent_incidents,
+        })
+    }
+
+    pub fn find_env_conflicts(&self, service: &str) -> Result<Vec<EnvConflict>, String> {
+        let envs = vec!["local", "staging", "production"];
+        let mut env_elements: std::collections::HashMap<String, Option<CodeElement>> =
+            std::collections::HashMap::new();
+
+        for env in &envs {
+            let query = format!(
+                r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = "{}", env = "{}""#,
+                escape_datalog(service),
+                escape_datalog(env)
+            );
+            let result = self
+                .db
+                .run_script(&query, std::collections::BTreeMap::new())
+                .map_err(|e| e.to_string())?;
+
+            let element = result.rows.first().map(|row| {
+                let parent_qualified = row[7].as_str().map(String::from);
+                let cluster_id = row[8].as_str().map(String::from);
+                let cluster_label = row[9].as_str().map(String::from);
+                let metadata_str = row[10].as_str().unwrap_or("{}");
+                CodeElement {
+                    qualified_name: row[0].as_str().unwrap_or("").to_string(),
+                    element_type: row[1].as_str().unwrap_or("").to_string(),
+                    name: row[2].as_str().unwrap_or("").to_string(),
+                    file_path: row[3].as_str().unwrap_or("").to_string(),
+                    line_start: row[4].as_i64().unwrap_or(0) as u32,
+                    line_end: row[5].as_i64().unwrap_or(0) as u32,
+                    language: row[6].as_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    env: row[11].as_str().unwrap_or("local").to_string(),
+                }
+            });
+            env_elements.insert(env.to_string(), element);
+        }
+
+        let mut conflicts = Vec::new();
+
+        for env in &envs {
+            if env_elements.get(*env).unwrap_or(&None).is_none() {
+                conflicts.push(EnvConflict {
+                    conflict_type: "missing_in_env".to_string(),
+                    detail: format!("Service '{}' is missing in {} environment", service, env),
+                    risk: if *env == "production" {
+                        "HIGH".to_string()
+                    } else {
+                        "MEDIUM".to_string()
+                    },
+                });
+            }
+        }
+
+        let present_envs: Vec<(String, &serde_json::Value)> = env_elements
+            .iter()
+            .filter_map(|(env, elem)| elem.as_ref().map(|e| (env.clone(), &e.metadata)))
+            .collect();
+
+        if present_envs.len() >= 2 {
+            let base = &present_envs[0];
+            for (env, metadata) in &present_envs[1..] {
+                if base.1 != *metadata {
+                    let base_version = base
+                        .1
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let env_version = metadata
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+
+                    if base_version != env_version {
+                        conflicts.push(EnvConflict {
+                            conflict_type: "schema_version".to_string(),
+                            detail: format!(
+                                "Version mismatch: {} has '{}', {} has '{}'",
+                                base.0, base_version, env, env_version
+                            ),
+                            risk: "HIGH".to_string(),
+                        });
+                    } else {
+                        conflicts.push(EnvConflict {
+                            conflict_type: "config_drift".to_string(),
+                            detail: format!("Metadata differs between {} and {}", base.0, env),
+                            risk: "MEDIUM".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(conflicts)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceContext {
+    pub service: String,
+    pub env: String,
+    pub version: Option<String>,
+    pub calls: Vec<String>,
+    pub called_by: Vec<String>,
+    pub open_incidents: i64,
+    pub recent_incidents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvConflict {
+    pub conflict_type: String,
+    pub detail: String,
+    pub risk: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
