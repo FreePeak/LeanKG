@@ -119,6 +119,31 @@ Local development, staging integration, and production have different service ve
 - Source commit to LeanKG updated: < 3 minutes.
 - Graph query reflects new data: immediate.
 
+### FR-07: Token Budget Enforcement
+- Every MCP tool response must enforce a maximum token budget.
+- Responses exceeding the budget are truncated with a "...truncated" indicator.
+- Budgets are configurable per-tool in `.cursor/leankg.toml`.
+
+| Tool | Max Token Budget | Strategy |
+|------|-----------------|---------|
+| `get_service_context` | 800 | Top 5 callers/callees, 3 recent incidents |
+| `impact_analysis` | 600 | Direct impact only by default |
+| `query_incidents` | 500 | Most recent 3 incidents, summary only |
+| `trace_call_chain` | 400 | Shortest path only |
+| `find_env_conflicts` | 400 | HIGH risk conflicts only by default |
+| `semantic_search` | 300 | Top 3 matches with 1-line descriptions |
+
+### FR-08: 3-Tier Retrieval
+- For every query, LeanKG tries retrieval in order, stopping at the first tier that returns results:
+  1. **Exact match** — name/ID match in CozoDB relations (< 2ms)
+  2. **Fuzzy match** — trigram index on names (< 5ms)
+  3. **Semantic embed** — keyword fallback on natural language queries (< 20ms)
+
+### FR-09: Team Map MCP Tool
+- `get_team_map` — Returns ownership + on-call contacts for any set of services.
+- Input: `{ "services": ["payment-service", "ledger-service"] }`
+- Output: `{ "teams": [{ "service": "...", "team": "...", "on_call": "..." }] }`
+
 ---
 
 ## 6. Data Model v2
@@ -193,11 +218,15 @@ Service {
 ## 8. Changelog
 
 - v2.0 - Environment Namespacing & Incident Knowledge Layer
-  - FR-01 to FR-06: New functional requirements for v2
+  - FR-01 to FR-09: New functional requirements for v2
   - Environment namespacing (production, staging, local)
   - Incident data model and knowledge workflow
   - Enhanced MCP tools with token budgets
   - CLI commands for incident and knowledge management
+  - 3-tier retrieval (exact → fuzzy → semantic)
+  - Token budget enforcement on all MCP tools
+  - CI/CD GitHub Actions workflow template
+  - Team map and ownership lookup
 
 ---
 
