@@ -364,6 +364,7 @@ mod graph_batched_insert_tests {
             cluster_id: None,
             cluster_label: None,
             metadata: serde_json::json!({}),
+            ..Default::default()
         }
     }
 
@@ -375,6 +376,7 @@ mod graph_batched_insert_tests {
             rel_type: "calls".to_string(),
             confidence: 0.9,
             metadata: serde_json::json!({}),
+            ..Default::default()
         }
     }
 

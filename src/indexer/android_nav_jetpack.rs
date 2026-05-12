@@ -143,6 +143,7 @@ impl<'a> JetpackNavExtractor<'a> {
                                     "action_id": action_id,
                                     "pop_up_to": pop_up_to,
                                 }),
+                                ..Default::default()
                             });
                         }
                     }
@@ -183,6 +184,7 @@ impl<'a> JetpackNavExtractor<'a> {
                             metadata: serde_json::json!({
                                 "arg_name": arg_name,
                             }),
+                            ..Default::default()
                         });
                     }
                     "deepLink" => {
@@ -212,6 +214,7 @@ impl<'a> JetpackNavExtractor<'a> {
                             rel_type: "deep_link".to_string(),
                             confidence: 1.0,
                             metadata: serde_json::Value::Object(serde_json::Map::new()),
+                            ..Default::default()
                         });
                     }
                     _ => {}
@@ -456,6 +459,7 @@ impl<'a> JetpackNavExtractor<'a> {
                         metadata: serde_json::json!({
                             "arg_name": arg_name,
                         }),
+                        ..Default::default()
                     });
                 }
             }
@@ -489,6 +493,7 @@ impl<'a> JetpackNavExtractor<'a> {
                                 "source_line": source.start_line,
                                 "target_route": target_route,
                             }),
+                            ..Default::default()
                         });
                     } else if !elements.is_empty() {
                         // Fallback: use first destination as source
@@ -504,6 +509,7 @@ impl<'a> JetpackNavExtractor<'a> {
                                 "action_id": None::<String>,
                                 "target_route": target_route,
                             }),
+                            ..Default::default()
                         });
                     }
                 }

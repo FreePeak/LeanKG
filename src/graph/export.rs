@@ -852,7 +852,7 @@ mod tests {
             cluster_id: None,
             cluster_label: Some("TestCluster".to_string()),
             metadata: serde_json::json!({}),
-        }];
+            ..Default::default()}];
         let relationships = vec![];
 
         let html = exporter.generate_html(&elements, &relationships);
@@ -878,7 +878,7 @@ mod tests {
             cluster_id: None,
             cluster_label: None,
             metadata: serde_json::json!({}),
-        }];
+            ..Default::default()}];
         let relationships = vec![];
 
         let svg = exporter.generate_svg(&elements, &relationships);
@@ -903,7 +903,7 @@ mod tests {
             cluster_id: None,
             cluster_label: None,
             metadata: serde_json::json!({}),
-        }];
+            ..Default::default()}];
         let relationships = vec![];
 
         let graphml = exporter.generate_graphml(&elements, &relationships);
@@ -929,7 +929,7 @@ mod tests {
             cluster_id: None,
             cluster_label: Some("TestCluster".to_string()),
             metadata: serde_json::json!({}),
-        }];
+            ..Default::default()}];
         let relationships = vec![];
 
         let cypher = exporter.generate_cypher(&elements, &relationships);

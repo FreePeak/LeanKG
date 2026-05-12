@@ -59,6 +59,7 @@ impl<'a> KotlinAnnotationExtractor<'a> {
                     "annotation_name": annotation.name,
                     "target_type": annotation.target_type,
                 }),
+                ..Default::default()
             });
         }
 

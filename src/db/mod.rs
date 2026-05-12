@@ -414,7 +414,7 @@ pub fn get_documented_by(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
-    let query = r#"?[target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, metadata, confidence], source_qualified = $sq, rel_type = "documented_by""#;
+    let query = r#"?[target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, metadata, confidence, _], source_qualified = $sq, rel_type = "documented_by""#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
         "sq".to_string(),
@@ -1021,5 +1021,199 @@ fn row_to_knowledge_entry(row: &[serde_json::Value]) -> models::KnowledgeEntry {
         author: row[10].as_str().unwrap_or("").to_string(),
         created_at: row[11].as_i64().unwrap_or(0),
         updated_at: row[12].as_i64().unwrap_or(0),
+    }
+}
+
+// ============================================================================
+// Incident CRUD
+// ============================================================================
+
+pub fn create_incident(
+    db: &CozoDb,
+    incident: &models::Incident,
+) -> Result<models::Incident, Box<dyn std::error::Error>> {
+    let query = r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] <- [[$id, $env, $title, $sev, $occ, $res_at, $rc, $res, $svc, $tp, $prev, $tags, $author, $tk]] :put incidents {id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket}"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "id".to_string(),
+        serde_json::Value::String(incident.id.clone()),
+    );
+    params.insert(
+        "env".to_string(),
+        serde_json::Value::String(incident.env.clone()),
+    );
+    params.insert(
+        "title".to_string(),
+        serde_json::Value::String(incident.title.clone()),
+    );
+    params.insert(
+        "sev".to_string(),
+        serde_json::Value::String(incident.severity.clone()),
+    );
+    params.insert(
+        "occ".to_string(),
+        serde_json::Value::Number(incident.occurred_at.into()),
+    );
+    params.insert(
+        "res_at".to_string(),
+        incident
+            .resolved_at
+            .map(|v| serde_json::Value::Number(v.into()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "rc".to_string(),
+        serde_json::Value::String(incident.root_cause.clone()),
+    );
+    params.insert(
+        "res".to_string(),
+        serde_json::Value::String(incident.resolution.clone()),
+    );
+    params.insert(
+        "svc".to_string(),
+        serde_json::Value::String(serde_json::to_string(&incident.affected_services)?),
+    );
+    params.insert(
+        "tp".to_string(),
+        incident
+            .trigger_pattern
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "prev".to_string(),
+        incident
+            .prevention
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "tags".to_string(),
+        serde_json::Value::String(serde_json::to_string(&incident.tags)?),
+    );
+    params.insert(
+        "author".to_string(),
+        serde_json::Value::String(incident.author.clone()),
+    );
+    params.insert(
+        "tk".to_string(),
+        incident
+            .linked_ticket
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+
+    db.run_script(query, params)?;
+    Ok(incident.clone())
+}
+
+pub fn get_incident(
+    db: &CozoDb,
+    id: &str,
+) -> Result<Option<models::Incident>, Box<dyn std::error::Error>> {
+    let query = r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], id = $id"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+
+    let result = db.run_script(query, params)?;
+    if result.rows.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(row_to_incident(&result.rows[0])))
+}
+
+pub fn update_incident(
+    db: &CozoDb,
+    incident: &models::Incident,
+) -> Result<models::Incident, Box<dyn std::error::Error>> {
+    create_incident(db, incident)
+}
+
+pub fn delete_incident(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let query = r#":delete incidents where id = $id"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+    db.run_script(query, params)?;
+    Ok(())
+}
+
+pub fn query_incidents(
+    db: &CozoDb,
+    service: Option<&str>,
+    pattern: Option<&str>,
+    env: Option<&str>,
+    limit: usize,
+) -> Result<Vec<models::Incident>, Box<dyn std::error::Error>> {
+    let mut conditions = vec![];
+    let mut params = std::collections::BTreeMap::new();
+
+    if let Some(svc) = service {
+        params.insert(
+            "svc".to_string(),
+            serde_json::Value::String(format!("%{}%", svc)),
+        );
+        conditions.push("contains(lowercase(affected_services), lowercase($svc))".to_string());
+    }
+    if let Some(pat) = pattern {
+        params.insert(
+            "pat".to_string(),
+            serde_json::Value::String(format!("%{}%", pat)),
+        );
+        conditions.push("contains(lowercase(title), lowercase($pat))".to_string());
+    }
+    if let Some(e) = env {
+        params.insert("env".to_string(), serde_json::Value::String(e.to_string()));
+        conditions.push("env = $env".to_string());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        "".to_string()
+    } else {
+        format!(", {}", conditions.join(", "))
+    };
+
+    let query = format!(
+        r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket]{} :limit {}"#,
+        where_clause, limit
+    );
+
+    let result = db.run_script(&query, params)?;
+    Ok(result.rows.iter().map(|r| row_to_incident(r)).collect())
+}
+
+pub fn get_incidents_by_service(
+    db: &CozoDb,
+    service: &str,
+    env: Option<&str>,
+    limit: usize,
+) -> Result<Vec<models::Incident>, Box<dyn std::error::Error>> {
+    query_incidents(db, Some(service), None, env, limit)
+}
+
+fn row_to_incident(row: &[serde_json::Value]) -> models::Incident {
+    let affected_services: Vec<String> =
+        serde_json::from_str(row[8].as_str().unwrap_or("[]")).unwrap_or_default();
+    let tags: Vec<String> =
+        serde_json::from_str(row[11].as_str().unwrap_or("[]")).unwrap_or_default();
+
+    models::Incident {
+        id: row[0].as_str().unwrap_or("").to_string(),
+        env: row[1].as_str().unwrap_or("local").to_string(),
+        title: row[2].as_str().unwrap_or("").to_string(),
+        severity: row[3].as_str().unwrap_or("").to_string(),
+        occurred_at: row[4].as_i64().unwrap_or(0),
+        resolved_at: row[5].as_i64(),
+        root_cause: row[6].as_str().unwrap_or("").to_string(),
+        resolution: row[7].as_str().unwrap_or("").to_string(),
+        affected_services,
+        trigger_pattern: row[9].as_str().map(String::from),
+        prevention: row[10].as_str().map(String::from),
+        tags,
+        author: row[12].as_str().unwrap_or("").to_string(),
+        linked_ticket: row[13].as_str().map(String::from),
     }
 }

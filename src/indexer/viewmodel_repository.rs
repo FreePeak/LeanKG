@@ -201,6 +201,7 @@ impl<'a> ViewModelRepositoryExtractor<'a> {
                                     "repo_name": &repo.name,
                                     "injection_type": "constructor",
                                 }),
+                                ..Default::default()
                             });
                         }
                     }
@@ -226,6 +227,7 @@ impl<'a> ViewModelRepositoryExtractor<'a> {
                                     "repo_name": &repo.name,
                                     "injection_type": "property",
                                 }),
+                                ..Default::default()
                             });
                         }
                     }
