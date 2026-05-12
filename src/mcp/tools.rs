@@ -708,6 +708,20 @@ impl ToolRegistry {
                     "required": ["service"]
                 }),
             },
+            ToolDefinition {
+                name: "semantic_search".to_string(),
+                description: "Natural language search for graph nodes. Falls back to keyword and fuzzy matching when exact names are unknown. Returns top matching nodes with similarity scores.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Natural language query (e.g., 'service that handles refunds')"},
+                        "env": {"type": "string", "enum": ["production", "staging", "local"], "default": "local", "description": "Environment to search"},
+                        "limit": {"type": "integer", "default": 5, "description": "Maximum results (default: 5)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["query"]
+                }),
+            },
         ]
     }
 }
@@ -774,5 +788,22 @@ mod tests {
                 assert!(schema.contains_key("required"));
             }
         }
+    }
+
+    #[test]
+    fn test_semantic_search_tool_exists() {
+        let tools = ToolRegistry::list_tools();
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"semantic_search"));
+
+        let tool = tools.iter().find(|t| t.name == "semantic_search").unwrap();
+        assert!(tool.description.contains("Natural language"));
+        assert!(tool.input_schema.is_object());
+        let schema = tool.input_schema.as_object().unwrap();
+        assert!(schema.contains_key("properties"));
+        let properties = schema["properties"].as_object().unwrap();
+        assert!(properties.contains_key("query"));
+        assert!(properties.contains_key("env"));
+        assert!(properties.contains_key("limit"));
     }
 }
