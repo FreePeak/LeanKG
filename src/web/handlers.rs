@@ -4059,3 +4059,41 @@ pub async fn api_get_file(
         },
     }
 }
+
+pub async fn api_incidents(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let service = params.get("service").cloned().unwrap_or_default();
+    let env = params
+        .get("env")
+        .cloned()
+        .unwrap_or_else(|| "local".to_string());
+
+    match state.get_graph_engine().await {
+        Ok(graph) => match graph.query_incidents(Some(&service), None, &env, 10) {
+            Ok(incidents) => ApiResponse::<serde_json::Value>::success(
+                serde_json::json!({ "incidents": incidents }),
+            ),
+            Err(e) => ApiResponse::<serde_json::Value>::error(&e),
+        },
+        Err(e) => ApiResponse::<serde_json::Value>::error(&e.to_string()),
+    }
+}
+
+pub async fn api_conflicts(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let service = params.get("service").cloned().unwrap_or_default();
+
+    match state.get_graph_engine().await {
+        Ok(graph) => match graph.find_env_conflicts(&service) {
+            Ok(conflicts) => ApiResponse::<serde_json::Value>::success(
+                serde_json::json!({ "conflicts": conflicts }),
+            ),
+            Err(e) => ApiResponse::<serde_json::Value>::error(&e),
+        },
+        Err(e) => ApiResponse::<serde_json::Value>::error(&e.to_string()),
+    }
+}
