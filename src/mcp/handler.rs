@@ -2385,13 +2385,25 @@ impl ToolHandler {
             .as_str()
             .ok_or("Missing 'service' parameter")?;
 
-        // TODO: Connect to graph_engine.find_env_conflicts when available
-        // For now, return a mock response with the expected schema
+        let conflicts = self
+            .graph_engine
+            .find_env_conflicts(service)
+            .map_err(|e| format!("Failed to find env conflicts: {}", e))?;
+
+        let conflicts_json: Vec<Value> = conflicts
+            .into_iter()
+            .map(|c| {
+                json!({
+                    "conflict_type": c.conflict_type,
+                    "detail": c.detail,
+                    "risk": c.risk,
+                })
+            })
+            .collect();
+
         Ok(json!({
+            "conflicts": conflicts_json,
             "service": service,
-            "conflicts": [],
-            "environments_checked": ["local", "staging", "production"],
-            "note": "Mock response. Connect to graph_engine.find_env_conflicts when available."
         }))
     }
 
@@ -2401,16 +2413,19 @@ impl ToolHandler {
             .ok_or("Missing 'service' parameter")?;
         let env = args["env"].as_str().unwrap_or("local");
 
-        // TODO: Connect to graph_engine.get_service_context when available
-        // For now, return a mock response with the expected schema
+        let context = self
+            .graph_engine
+            .get_service_context(service, env)
+            .map_err(|e| format!("Failed to get service context: {}", e))?;
+
         Ok(json!({
-            "service": service,
-            "env": env,
-            "dependencies": [],
-            "callers": [],
-            "open_incidents": [],
-            "recent_incidents": [],
-            "note": "Mock response. Connect to graph_engine.get_service_context when available."
+            "service": context.service,
+            "env": context.env,
+            "version": context.version,
+            "calls": context.calls,
+            "called_by": context.called_by,
+            "open_incidents": context.open_incidents,
+            "recent_incidents": context.recent_incidents,
         }))
     }
 }
