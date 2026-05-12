@@ -166,6 +166,7 @@ impl<'a> AndroidRoomExtractor<'a> {
                                 rel_type: "room_entity_has_foreign_key".to_string(),
                                 confidence: 0.9,
                                 metadata: serde_json::json!({}),
+                                ..Default::default()
                             });
                         }
                     }
@@ -206,6 +207,7 @@ impl<'a> AndroidRoomExtractor<'a> {
                                 rel_type: "room_database_contains_entity".to_string(),
                                 confidence: 1.0,
                                 metadata: serde_json::json!({}),
+                                ..Default::default()
                             });
                         }
                     }
@@ -227,6 +229,7 @@ impl<'a> AndroidRoomExtractor<'a> {
                         "heuristic": "same_file_presence",
                         "note": "DAO linked to Database by co-location; false positives possible"
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -252,6 +255,7 @@ impl<'a> AndroidRoomExtractor<'a> {
                                 rel_type: "room_dao_queries_entity".to_string(),
                                 confidence: 0.8,
                                 metadata: serde_json::json!({"query": query_str}),
+                                ..Default::default()
                             });
                         }
                     }

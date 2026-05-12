@@ -55,6 +55,7 @@ impl<'a> FragmentNavExtractor<'a> {
                         "fragment_name": fragment_name,
                         "backstack_tag": backstack_tag,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -77,6 +78,7 @@ impl<'a> FragmentNavExtractor<'a> {
                         "nav_type": "start_activity",
                         "activity_name": activity_name,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -103,6 +105,7 @@ impl<'a> FragmentNavExtractor<'a> {
                         "nav_type": "nav_controller",
                         "action_or_route": action_or_route,
                     }),
+                    ..Default::default()
                 });
             }
         }

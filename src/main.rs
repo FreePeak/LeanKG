@@ -439,6 +439,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 proc_kill()?;
             }
         },
+        cli::CLICommand::Incident { command } => {
+            handle_incident_command(command)?;
+        }
+        cli::CLICommand::Note {
+            target,
+            content,
+            env,
+        } => {
+            add_note(&target, &content, &env)?;
+        }
+        cli::CLICommand::Pattern {
+            title,
+            context,
+            solution,
+            env,
+        } => {
+            add_pattern(&title, &context, &solution, &env)?;
+        }
+        cli::CLICommand::EnvConflicts { service } => {
+            show_env_conflicts(&service)?;
+        }
     }
 
     Ok(())
@@ -2920,6 +2941,278 @@ fn add_to_enabled_plugins() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("  leankg@local already in enabledPlugins");
         }
+    }
+
+    Ok(())
+}
+
+fn handle_incident_command(
+    command: cli::IncidentCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+
+    match command {
+        cli::IncidentCommand::Add {
+            title,
+            severity,
+            affected,
+            root_cause,
+            resolution,
+            prevention,
+            env,
+            ticket,
+        } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let incident = db::models::Incident {
+                id: format!("INC-{}", uuid::Uuid::new_v4()),
+                env,
+                title,
+                severity,
+                occurred_at: now,
+                resolved_at: Some(now),
+                root_cause,
+                resolution,
+                affected_services: affected.split(',').map(|s| s.trim().to_string()).collect(),
+                trigger_pattern: None,
+                prevention,
+                tags: vec![],
+                author: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+                linked_ticket: ticket,
+            };
+            let db = db::schema::init_db(&db_path)?;
+            db::create_incident(&db, &incident)?;
+            println!("Created incident '{}' ({})", incident.id, incident.title);
+            println!("  Severity: {}", incident.severity);
+            println!("  Affected: {}", incident.affected_services.join(", "));
+        }
+        cli::IncidentCommand::List {
+            service,
+            env,
+            pattern,
+            limit,
+        } => {
+            let db = db::schema::init_db(&db_path)?;
+            let incidents =
+                db::query_incidents(&db, Some(&service), pattern.as_deref(), Some(&env), limit)?;
+            if incidents.is_empty() {
+                println!(
+                    "No incidents found for service '{}' in env '{}'",
+                    service, env
+                );
+            } else {
+                println!(
+                    "Found {} incident(s) for service '{}' (env: {}):",
+                    incidents.len(),
+                    service,
+                    env
+                );
+                for inc in incidents {
+                    println!("\n  ID:          {}", inc.id);
+                    println!("  Title:       {}", inc.title);
+                    println!("  Severity:    {}", inc.severity);
+                    println!("  Occurred:    {}", inc.occurred_at);
+                    println!("  Root Cause:  {}", inc.root_cause);
+                    println!("  Resolution:  {}", inc.resolution);
+                    if let Some(ref prev) = inc.prevention {
+                        println!("  Prevention:  {}", prev);
+                    }
+                    if let Some(ref tk) = inc.linked_ticket {
+                        println!("  Ticket:      {}", tk);
+                    }
+                }
+            }
+        }
+        cli::IncidentCommand::Show { id } => {
+            let db = db::schema::init_db(&db_path)?;
+            match db::get_incident(&db, &id)? {
+                Some(inc) => {
+                    println!("Incident Details:");
+                    println!("  ID:             {}", inc.id);
+                    println!("  Title:          {}", inc.title);
+                    println!("  Environment:    {}", inc.env);
+                    println!("  Severity:       {}", inc.severity);
+                    println!("  Occurred At:    {}", inc.occurred_at);
+                    if let Some(ref resolved) = inc.resolved_at {
+                        println!("  Resolved At:    {}", resolved);
+                    }
+                    println!("  Root Cause:     {}", inc.root_cause);
+                    println!("  Resolution:     {}", inc.resolution);
+                    println!("  Affected Svcs:  {}", inc.affected_services.join(", "));
+                    if let Some(ref tp) = inc.trigger_pattern {
+                        println!("  Trigger:        {}", tp);
+                    }
+                    if let Some(ref prev) = inc.prevention {
+                        println!("  Prevention:     {}", prev);
+                    }
+                    println!("  Tags:           {}", inc.tags.join(", "));
+                    println!("  Author:         {}", inc.author);
+                    if let Some(ref tk) = inc.linked_ticket {
+                        println!("  Ticket:         {}", tk);
+                    }
+                }
+                None => {
+                    println!("Incident '{}' not found", id);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn add_note(target: &str, content: &str, env: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    let db = db::schema::init_db(&db_path)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let entry = db::models::KnowledgeEntry {
+        id: format!("NOTE-{}", uuid::Uuid::new_v4()),
+        knowledge_type: "general".to_string(),
+        title: format!("Note for {}", target),
+        content: content.to_string(),
+        element_qualified: Some(target.to_string()),
+        user_story_id: None,
+        feature_id: None,
+        tags: "note".to_string(),
+        environment: env.to_string(),
+        branch: None,
+        author: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+        created_at: now,
+        updated_at: now,
+    };
+
+    db::create_knowledge_entry(&db, &entry)?;
+    println!("Added note to '{}' (env: {})", target, env);
+    println!("  Content: {}", content);
+
+    Ok(())
+}
+
+fn add_pattern(
+    title: &str,
+    context: &str,
+    solution: &str,
+    env: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    let db = db::schema::init_db(&db_path)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let content = format!("## Context\n{}\n\n## Solution\n{}", context, solution);
+
+    let entry = db::models::KnowledgeEntry {
+        id: format!("PATTERN-{}", uuid::Uuid::new_v4()),
+        knowledge_type: "debugging".to_string(),
+        title: title.to_string(),
+        content,
+        element_qualified: None,
+        user_story_id: None,
+        feature_id: None,
+        tags: "pattern,risk".to_string(),
+        environment: env.to_string(),
+        branch: None,
+        author: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+        created_at: now,
+        updated_at: now,
+    };
+
+    db::create_knowledge_entry(&db, &entry)?;
+    println!("Added risky pattern '{}' (env: {})", title, env);
+    println!("  Context:  {}", context);
+    println!("  Solution: {}", solution);
+
+    Ok(())
+}
+
+fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+
+    if !db_path.exists() {
+        println!("LeanKG not initialized. Run 'leankg init' and 'leankg index' first.");
+        return Ok(());
+    }
+
+    let db = db::schema::init_db(&db_path)?;
+    let graph_engine = graph::GraphEngine::new(db.clone());
+
+    // Find conflicts_with relationships involving this service
+    let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "conflicts_with", (contains(lowercase(source_qualified), lowercase($svc)) || contains(lowercase(target_qualified), lowercase($svc)))"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "svc".to_string(),
+        serde_json::Value::String(service.to_string()),
+    );
+
+    let mut found = false;
+    match graph_engine.db().run_script(query, params) {
+        Ok(result) => {
+            if !result.rows.is_empty() {
+                found = true;
+                println!("Environment conflicts for service '{}':", service);
+                for row in &result.rows {
+                    let source = row[0].as_str().unwrap_or("");
+                    let target = row[1].as_str().unwrap_or("");
+                    let conf = row[3].as_f64().unwrap_or(0.0);
+                    println!("  - {} <-> {} (confidence: {:.2})", source, target, conf);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Conflict query failed: {}", e);
+        }
+    }
+
+    // Also check for elements with same qualified_name but different env
+    let env_query = r#"?[qualified_name, env, count(n)] := *code_elements[n, a, b, qualified_name, c, d, e, f, g, h, env, _] :group [qualified_name, env] :order count(n) desc"#;
+    match graph_engine.db().run_script(env_query, Default::default()) {
+        Ok(result) => {
+            let mut env_map: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for row in &result.rows {
+                let qn = row[0].as_str().unwrap_or("").to_string();
+                let env = row[1].as_str().unwrap_or("").to_string();
+                env_map.entry(qn).or_default().push(env);
+            }
+
+            let conflicts: Vec<_> = env_map
+                .into_iter()
+                .filter(|(_, envs)| envs.len() > 1)
+                .filter(|(qn, _)| qn.to_lowercase().contains(&service.to_lowercase()))
+                .collect();
+
+            if !conflicts.is_empty() {
+                found = true;
+                println!("\nCross-environment element variants for '{}':", service);
+                for (qn, envs) in conflicts.iter().take(20) {
+                    println!("  - {} (envs: {})", qn, envs.join(", "));
+                }
+                if conflicts.len() > 20 {
+                    println!("  ... and {} more", conflicts.len() - 20);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Environment query failed: {}", e);
+        }
+    }
+
+    if !found {
+        println!("No environment conflicts found for service '{}'", service);
     }
 
     Ok(())

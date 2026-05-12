@@ -65,6 +65,7 @@ impl<'a> GradleModuleExtractor<'a> {
                         "module_name": module_name,
                         "dependency_type": "project",
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -94,6 +95,7 @@ impl<'a> GradleModuleExtractor<'a> {
                         "catalog_ref": format!("libs.{}", lib_ref),
                         "source": "version_catalog",
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -132,6 +134,7 @@ impl<'a> GradleModuleExtractor<'a> {
                             "full_coord": dep_string,
                             "source": "external",
                         }),
+                        ..Default::default()
                     });
                 }
             }

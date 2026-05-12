@@ -64,6 +64,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                 rel_type: "defines_view".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
         }
 
@@ -90,6 +91,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                 rel_type: "references_view".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
         }
 
@@ -105,6 +107,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                 metadata: serde_json::json!({
                     "tools_context": activity,
                 }),
+                ..Default::default()
             });
         }
 
@@ -116,6 +119,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                 rel_type: "references_class".to_string(),
                 confidence: 0.8,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
         }
 
@@ -224,6 +228,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                     metadata: serde_json::json!({
                         "widget_type": widget_type.0,
                     }),
+                    ..Default::default()
                 });
 
                 if !is_self_closing {
@@ -429,6 +434,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                         metadata: serde_json::json!({
                             "handler_name": handler_name,
                         }),
+                        ..Default::default()
                     });
                 }
             }
@@ -528,6 +534,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                         metadata: serde_json::json!({
                             "resource_type": resource_type,
                         }),
+                        ..Default::default()
                     });
                 }
             }
@@ -572,6 +579,7 @@ impl<'a> XmlLayoutExtractor<'a> {
                     rel_type: "uses_style".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }

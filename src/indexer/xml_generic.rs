@@ -60,6 +60,7 @@ impl<'a> GenericXmlExtractor<'a> {
                                 rel_type: "has_root".to_string(),
                                 confidence: 1.0,
                                 metadata: serde_json::json!({}),
+                                ..Default::default()
                             });
                         }
                     }

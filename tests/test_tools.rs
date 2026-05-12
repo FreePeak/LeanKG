@@ -68,7 +68,7 @@ async fn test_all_mcp_tools() {
         ("ctx_read", json!({"file": "src/main.rs", "mode": "full"})),
         (
             "run_raw_query",
-            json!({"query": "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit 3"}),
+            json!({"query": "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _] :limit 3"}),
         ),
         ("get_service_graph", json!({"service": "mcp"})),
     ];

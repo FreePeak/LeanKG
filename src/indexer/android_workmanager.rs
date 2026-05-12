@@ -172,6 +172,7 @@ impl<'a> AndroidWorkManagerExtractor<'a> {
                         "request_type": "OneTimeWorkRequest",
                         "worker_class": worker_name,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -201,6 +202,7 @@ impl<'a> AndroidWorkManagerExtractor<'a> {
                         "request_type": "PeriodicWorkRequest",
                         "worker_class": worker_name,
                     }),
+                    ..Default::default()
                 });
             }
         }

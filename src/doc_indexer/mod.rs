@@ -80,6 +80,7 @@ impl DocIndexer {
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }
@@ -152,6 +153,7 @@ impl DocIndexer {
                 rel_type: "references".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
 
             relationships.push(Relationship {
@@ -161,6 +163,7 @@ impl DocIndexer {
                 rel_type: "documented_by".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
         }
 
@@ -236,6 +239,7 @@ impl DocIndexer {
                         rel_type: "contains".to_string(),
                         confidence: 1.0,
                         metadata: serde_json::json!({}),
+                        ..Default::default()
                     });
                 }
 
@@ -266,6 +270,7 @@ impl DocIndexer {
                 rel_type: "contains".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
         }
 

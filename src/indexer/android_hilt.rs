@@ -151,6 +151,7 @@ impl<'a> AndroidHiltExtractor<'a> {
                         rel_type: "hilt_module_provides".to_string(),
                         confidence: 0.9,
                         metadata: serde_json::json!({}),
+                        ..Default::default()
                     });
                 }
 
@@ -161,6 +162,7 @@ impl<'a> AndroidHiltExtractor<'a> {
                     rel_type: "hilt_provides".to_string(),
                     confidence: 0.9,
                     metadata: serde_json::json!({"provided_type": return_type_name}),
+                    ..Default::default()
                 });
             }
         }
@@ -196,6 +198,7 @@ impl<'a> AndroidHiltExtractor<'a> {
                             rel_type: "hilt_injected".to_string(),
                             confidence: 0.8,
                             metadata: serde_json::json!({"injected_type": type_name}),
+                            ..Default::default()
                         });
                     }
                 }
@@ -220,6 +223,7 @@ impl<'a> AndroidHiltExtractor<'a> {
                         "field_name": field_name.as_str(),
                         "field_type": field_type.as_str(),
                     }),
+                    ..Default::default()
                 });
             }
         }
