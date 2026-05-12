@@ -3,6 +3,7 @@ use crate::db;
 use crate::db::models::{CodeElement, ContextMetric, KnowledgeEntry, Relationship};
 use crate::db::record_metric;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
+use crate::mcp::token_budget::TokenBudget;
 use crate::orchestrator::QueryOrchestrator;
 use glob;
 use serde_json::{json, Value};
@@ -210,6 +211,9 @@ impl ToolHandler {
             "get_service_context" => self.get_service_context(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
+
+        // Apply token budget enforcement
+        let result = result.map(|response| TokenBudget::apply(response, tool_name));
 
         let execution_time_ms = start_time.elapsed().as_millis() as i32;
         let input_tokens = arguments.to_string().len() as i32 / 4;
