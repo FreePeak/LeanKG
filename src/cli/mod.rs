@@ -267,6 +267,44 @@ pub enum CLICommand {
         #[command(subcommand)]
         command: ProcCommand,
     },
+    /// Manage incidents in the knowledge graph
+    Incident {
+        #[command(subcommand)]
+        command: IncidentCommand,
+    },
+    /// Add a team note to a service or element
+    Note {
+        /// Target service or element qualified name
+        #[arg(long)]
+        target: String,
+        /// Note content
+        #[arg(long)]
+        content: String,
+        /// Environment
+        #[arg(long, default_value = "local")]
+        env: String,
+    },
+    /// Add a known risky pattern annotation
+    Pattern {
+        /// Pattern title
+        #[arg(long)]
+        title: String,
+        /// Pattern context (code/config pattern description)
+        #[arg(long)]
+        context: String,
+        /// Solution or prevention
+        #[arg(long)]
+        solution: String,
+        /// Environment
+        #[arg(long, default_value = "local")]
+        env: String,
+    },
+    /// Show environment conflicts for a service
+    EnvConflicts {
+        /// Service name
+        #[arg(long)]
+        service: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -330,4 +368,55 @@ pub enum ProcCommand {
     Status,
     /// Kill all LeanKG and Vite processes
     Kill,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum IncidentCommand {
+    /// Add a new incident
+    Add {
+        /// Incident title
+        #[arg(long)]
+        title: String,
+        /// Severity: P0, P1, P2, P3
+        #[arg(long)]
+        severity: String,
+        /// Affected service(s), comma-separated
+        #[arg(long)]
+        affected: String,
+        /// Root cause description
+        #[arg(long)]
+        root_cause: String,
+        /// Resolution description
+        #[arg(long)]
+        resolution: String,
+        /// Prevention advice
+        #[arg(long)]
+        prevention: Option<String>,
+        /// Environment
+        #[arg(long, default_value = "production")]
+        env: String,
+        /// Linked ticket ID
+        #[arg(long)]
+        ticket: Option<String>,
+    },
+    /// List incidents for a service
+    List {
+        /// Service name
+        #[arg(long)]
+        service: String,
+        /// Environment
+        #[arg(long, default_value = "production")]
+        env: String,
+        /// Search pattern
+        #[arg(long)]
+        pattern: Option<String>,
+        /// Limit results
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Show a single incident
+    Show {
+        /// Incident ID
+        id: String,
+    },
 }
