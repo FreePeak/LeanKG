@@ -203,6 +203,10 @@ impl ToolHandler {
             "search_by_environment" => self.search_by_environment(arguments),
             "get_upcoming_changes" => self.get_upcoming_changes(arguments),
             "promote_environment" => self.promote_environment(arguments),
+            // Incident and environment tools
+            "query_incidents" => self.query_incidents(arguments),
+            "find_env_conflicts" => self.find_env_conflicts(arguments),
+            "get_service_context" => self.get_service_context(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
@@ -802,7 +806,7 @@ impl ToolHandler {
             // Use regex_matches() for regex filtering in Cozo
             return format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], \
                  regex_matches({}, \"{}\") :limit {}",
                 field, value, limit
             );
@@ -812,7 +816,7 @@ impl ToolHandler {
         if !trimmed.contains('[') && !trimmed.contains('?') && !trimmed.contains(':') {
             return format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], \
                  regex_matches(name, \"{}\") :limit 50",
                 trimmed.replace('\\', "\\\\").replace('"', "\\\"")
             );
@@ -2330,6 +2334,83 @@ impl ToolHandler {
             "target_environment": target_env,
             "promoted_count": promoted,
             "status": "promoted"
+        }))
+    }
+
+    fn query_incidents(&self, args: &Value) -> Result<Value, String> {
+        let service = args["service"].as_str();
+        let pattern = args["pattern"].as_str();
+        let env = args["env"].as_str().unwrap_or("local");
+        let limit = args["limit"].as_i64().unwrap_or(5) as usize;
+
+        let incidents =
+            db::query_incidents(self.graph_engine.db(), service, pattern, Some(env), limit)
+                .map_err(|e| format!("Failed to query incidents: {}", e))?;
+
+        let incidents_json: Vec<Value> = incidents
+            .iter()
+            .map(|i| {
+                json!({
+                    "id": i.id,
+                    "env": i.env,
+                    "title": i.title,
+                    "severity": i.severity,
+                    "occurred_at": i.occurred_at,
+                    "resolved_at": i.resolved_at,
+                    "root_cause": i.root_cause,
+                    "resolution": i.resolution,
+                    "affected_services": i.affected_services,
+                    "trigger_pattern": i.trigger_pattern,
+                    "prevention": i.prevention,
+                    "tags": i.tags,
+                    "author": i.author,
+                    "linked_ticket": i.linked_ticket
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "incidents": incidents_json,
+            "query": {
+                "service": service,
+                "pattern": pattern,
+                "env": env,
+                "limit": limit
+            }
+        }))
+    }
+
+    fn find_env_conflicts(&self, args: &Value) -> Result<Value, String> {
+        let service = args["service"]
+            .as_str()
+            .ok_or("Missing 'service' parameter")?;
+
+        // TODO: Connect to graph_engine.find_env_conflicts when available
+        // For now, return a mock response with the expected schema
+        Ok(json!({
+            "service": service,
+            "conflicts": [],
+            "environments_checked": ["local", "staging", "production"],
+            "note": "Mock response. Connect to graph_engine.find_env_conflicts when available."
+        }))
+    }
+
+    fn get_service_context(&self, args: &Value) -> Result<Value, String> {
+        let service = args["service"]
+            .as_str()
+            .ok_or("Missing 'service' parameter")?;
+        let env = args["env"].as_str().unwrap_or("local");
+
+        // TODO: Connect to graph_engine.get_service_context when available
+        // For now, return a mock response with the expected schema
+        Ok(json!({
+            "service": service,
+            "env": env,
+            "dependencies": [],
+            "callers": [],
+            "open_incidents": [],
+            "recent_incidents": [],
+            "note": "Mock response. Connect to graph_engine.get_service_context when available."
         }))
     }
 }

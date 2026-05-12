@@ -326,6 +326,7 @@ impl MicroserviceExtractor {
                 "source_file": source_file,
                 "line_number": line_number,
             }),
+            ..Default::default()
         }
     }
 

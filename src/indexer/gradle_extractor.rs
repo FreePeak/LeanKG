@@ -75,6 +75,7 @@ impl<'a> GradleExtractor<'a> {
                     metadata: serde_json::json!({
                         "scope": Self::extract_dependency_scope(trimmed),
                     }),
+                    ..Default::default()
                 });
             }
 
@@ -95,6 +96,7 @@ impl<'a> GradleExtractor<'a> {
                     rel_type: "uses_plugin".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }

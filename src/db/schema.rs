@@ -63,7 +63,7 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     if !existing_relations.contains("code_elements") {
-        let create_code_elements = r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#;
+        let create_code_elements = r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}"#;
         if let Err(e) = db.run_script(create_code_elements, Default::default()) {
             eprintln!("Failed to create code_elements: {:?}", e);
         }
@@ -94,7 +94,7 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if !existing_relations.contains("relationships") {
-        let create_relationships = r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#;
+        let create_relationships = r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#;
         if let Err(e) = db.run_script(create_relationships, Default::default()) {
             eprintln!("Failed to create relationships: {:?}", e);
         }
@@ -248,6 +248,40 @@ fn run_migrations(
         record_migration(db, "003_business_logic_versioning", now)?;
     }
 
+    // Migration 004: Add env column and incidents table
+    if !applied.contains("004_env_and_incidents") {
+        tracing::info!("Running migration 004_env_and_incidents...");
+        if existing_relations.contains("code_elements") {
+            let replace_code_elements = r#":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, environment: String default 'production', branch: String? default null, version_tag: String? default null, indexed_at: Int default 0, env: String default 'local'}"#;
+            if let Err(e) = db.run_script(replace_code_elements, Default::default()) {
+                tracing::warn!("Migration 004 code_elements replace failed: {:?}", e);
+            }
+        }
+        if existing_relations.contains("relationships") {
+            let replace_rel = r#":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#;
+            if let Err(e) = db.run_script(replace_rel, Default::default()) {
+                tracing::warn!("Migration 004 relationships replace failed: {:?}", e);
+            }
+        }
+        // Create incidents table
+        let create_incidents = r#":create incidents {id: String, env: String, title: String, severity: String, occurred_at: Int, resolved_at: Int?, root_cause: String, resolution: String, affected_services: String, trigger_pattern: String?, prevention: String?, tags: String, author: String, linked_ticket: String?}"#;
+        if let Err(e) = db.run_script(create_incidents, Default::default()) {
+            tracing::warn!("Migration 004 incidents create failed: {:?}", e);
+        }
+        // Create indexes
+        let incident_indexes = [
+            r#":create incidents::env_index {ref: (env), compressed: true}"#,
+            r#":create incidents::severity_index {ref: (severity), compressed: true}"#,
+            r#":create incidents::author_index {ref: (author), compressed: true}"#,
+        ];
+        for idx in &incident_indexes {
+            if let Err(e) = db.run_script(idx, Default::default()) {
+                tracing::debug!("Incident index creation note: {:?}", e);
+            }
+        }
+        record_migration(db, "004_env_and_incidents", now)?;
+    }
+
     Ok(())
 }
 
@@ -272,7 +306,7 @@ fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
-            const EXPECTED_COLUMNS: usize = 15;
+            const EXPECTED_COLUMNS: usize = 16;
             if column_count != EXPECTED_COLUMNS {
                 eprintln!(
                     "WARNING: code_elements schema has {} columns, expected {}. \
@@ -293,7 +327,7 @@ fn validate_relationships_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
-            const EXPECTED_COLUMNS: usize = 8;
+            const EXPECTED_COLUMNS: usize = 9;
             if column_count != EXPECTED_COLUMNS {
                 eprintln!(
                     "WARNING: relationships schema has {} columns, expected {}. \

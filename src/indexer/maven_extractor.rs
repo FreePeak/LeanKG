@@ -66,6 +66,7 @@ impl<'a> MavenExtractor<'a> {
                         "scope": dep_scope.unwrap_or_else(|| "compile".to_string()),
                         "version": dep_version,
                     }),
+                    ..Default::default()
                 });
             }
         }

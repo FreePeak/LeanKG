@@ -65,6 +65,7 @@ impl<'a> ConfigExtractor<'a> {
                                 "version": version_str,
                                 "type": key,
                             }),
+                            ..Default::default()
                         });
                     }
                 }
@@ -176,6 +177,7 @@ impl<'a> ConfigExtractor<'a> {
                             "type": current_dep_type,
                             "value": dep_val,
                         }),
+                        ..Default::default()
                     });
                 }
             }
@@ -229,6 +231,7 @@ impl<'a> ConfigExtractor<'a> {
                     metadata: serde_json::json!({
                         "version": version,
                     }),
+                    ..Default::default()
                 });
             } else if req_block_start.is_match(line) {
                 in_require_block = true;
@@ -248,6 +251,7 @@ impl<'a> ConfigExtractor<'a> {
                         metadata: serde_json::json!({
                             "version": version,
                         }),
+                        ..Default::default()
                     });
                 }
             }

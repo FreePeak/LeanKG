@@ -77,6 +77,7 @@ impl<'a> AndroidResourceRefExtractor<'a> {
                         "resource_type": res_type,
                         "resource_name": res_name,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -113,6 +114,7 @@ impl<'a> AndroidResourceRefExtractor<'a> {
                             "resource_name": res_name,
                             "via_method": true,
                         }),
+                        ..Default::default()
                     });
                 }
             }

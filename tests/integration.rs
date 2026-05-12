@@ -308,7 +308,7 @@ async fn test_get_dependencies_with_real_db() {
         .unwrap_or("./src/api/auth.rs");
     let escaped = normalized.replace('\\', "\\\\").replace('"', "\\\"");
     let query = format!(
-        r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = "{}" or source_qualified = "./{}"), rel_type = "imports""#,
+        r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], (source_qualified = "{}" or source_qualified = "./{}"), rel_type = "imports""#,
         escaped, escaped
     );
 
@@ -382,6 +382,7 @@ async fn test_persistent_cache_hit_after_insert() {
         rel_type: "imports".to_string(),
         confidence: 1.0,
         metadata: serde_json::json!({}),
+        ..Default::default()
     };
     graph.insert_relationship(&rel).unwrap();
 
@@ -431,6 +432,7 @@ async fn test_persistent_cache_hit_on_second_call() {
         rel_type: "imports".to_string(),
         confidence: 1.0,
         metadata: serde_json::json!({}),
+        ..Default::default()
     };
     graph.insert_relationship(&rel).unwrap();
 

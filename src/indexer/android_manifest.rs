@@ -69,6 +69,7 @@ impl<'a> AndroidManifestExtractor<'a> {
                         rel_type: "declares_component".to_string(),
                         confidence: 1.0,
                         metadata: serde_json::json!({}),
+                        ..Default::default()
                     });
                 }
             }
@@ -108,6 +109,7 @@ impl<'a> AndroidManifestExtractor<'a> {
                     rel_type: "requires_permission".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }
@@ -132,6 +134,7 @@ impl<'a> AndroidManifestExtractor<'a> {
                     rel_type: "declares_feature".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({"feature_name": name}),
+                    ..Default::default()
                 });
             }
         }
@@ -146,6 +149,7 @@ impl<'a> AndroidManifestExtractor<'a> {
                 rel_type: "has_application_class".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({"application_class": class_name}),
+                ..Default::default()
             });
         }
 
@@ -174,6 +178,7 @@ impl<'a> AndroidManifestExtractor<'a> {
                 rel_type: "declares_intent_filter".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
         }
 
@@ -202,6 +207,7 @@ impl<'a> AndroidManifestExtractor<'a> {
                 rel_type: "has_metadata".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({"metadata_name": name}),
+                ..Default::default()
             });
         }
 
