@@ -1,6 +1,9 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { GraphViewer } from './components/GraphViewer';
 import { FileDetailPanel } from './components/FileDetailPanel';
+import { EnvironmentSelector } from './components/EnvironmentSelector';
+import { IncidentPanel } from './components/IncidentPanel';
+import { ConflictView } from './components/ConflictView';
 import { Database, Search, ChevronRight, Home, Loader2 } from 'lucide-react';
 import { useGraphFilters } from './hooks/useGraphFilters';
 import { EDGE_STYLES, DEFAULT_NODE_TYPE_ORDER, NODE_COLORS } from './lib/constants';
@@ -17,6 +20,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([{ label: 'Root', path: '' }]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [currentEnv, setCurrentEnv] = useState<string>('local');
+  const [currentService, setCurrentService] = useState<string>('default');
 
   const {
     visibleEdgeTypes,
@@ -219,6 +224,13 @@ function App() {
     await loadChildren(crumb.path);
   }, [breadcrumbs, loadChildren]);
 
+  useEffect(() => {
+    const last = breadcrumbs[breadcrumbs.length - 1];
+    if (last.label !== 'Root') {
+      setCurrentService(last.label);
+    }
+  }, [breadcrumbs]);
+
   const handleCloseFileDetail = useCallback(() => {
     setSelectedFileId(null);
   }, []);
@@ -248,6 +260,11 @@ function App() {
             <span className="font-medium">Explorer</span>
           </button>
         </nav>
+
+        {/* Environment Selector */}
+        <div className="mt-2">
+          <EnvironmentSelector currentEnv={currentEnv} onEnvChange={setCurrentEnv} />
+        </div>
 
         {/* Breadcrumb Navigation */}
         <div className="flex flex-col gap-1 mt-2">
@@ -394,6 +411,14 @@ function App() {
               <p className="text-xs text-slate-500">Loading...</p>
             )}
           </div>
+        </div>
+
+        {/* Incident & Conflict Panels */}
+        <div className="mt-4">
+          <IncidentPanel service={currentService} env={currentEnv} />
+        </div>
+        <div className="mt-4 mb-4">
+          <ConflictView service={currentService} />
         </div>
       </aside>
 
