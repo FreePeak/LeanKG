@@ -802,7 +802,7 @@ impl ToolHandler {
             // Use regex_matches() for regex filtering in Cozo
             return format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], \
                  regex_matches({}, \"{}\") :limit {}",
                 field, value, limit
             );
@@ -812,7 +812,7 @@ impl ToolHandler {
         if !trimmed.contains('[') && !trimmed.contains('?') && !trimmed.contains(':') {
             return format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], \
                  regex_matches(name, \"{}\") :limit 50",
                 trimmed.replace('\\', "\\\\").replace('"', "\\\"")
             );

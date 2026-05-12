@@ -38,6 +38,7 @@ fn insert_elements_batched(engine: &GraphEngine, count: usize) -> std::time::Dur
             cluster_id: None,
             cluster_label: None,
             metadata: serde_json::json!({}),
+            ..Default::default()
         })
         .collect();
 
@@ -63,6 +64,7 @@ fn insert_relationships_batched(engine: &GraphEngine, count: usize) -> std::time
             },
             confidence: 0.5 + (i % 50) as f64 / 100.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         })
         .collect();
 

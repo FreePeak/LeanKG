@@ -63,6 +63,7 @@ impl<'a> AndroidResourceLinker<'a> {
                         "method": "setContentView",
                         "layout_name": layout_name,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -84,6 +85,7 @@ impl<'a> AndroidResourceLinker<'a> {
                         "method": "inflate",
                         "layout_name": layout_name,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -114,6 +116,7 @@ impl<'a> AndroidResourceLinker<'a> {
                         "binding_class": binding_name,
                         "method": method,
                     }),
+                    ..Default::default()
                 });
 
                 // Try to infer layout name from binding
@@ -129,6 +132,7 @@ impl<'a> AndroidResourceLinker<'a> {
                         "inferred_from_binding": binding_name,
                         "layout_name": layout_name,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -160,6 +164,7 @@ impl<'a> AndroidResourceLinker<'a> {
                         "handler_type": "lambda",
                         "handler_body_snippet": handler_body.chars().take(50).collect::<String>(),
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -184,6 +189,7 @@ impl<'a> AndroidResourceLinker<'a> {
                         "method": "findViewById",
                         "handler_type": "lambda",
                     }),
+                    ..Default::default()
                 });
             }
         }

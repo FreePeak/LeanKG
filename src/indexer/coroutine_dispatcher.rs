@@ -54,6 +54,7 @@ impl<'a> CoroutineDispatcherExtractor<'a> {
                             metadata: serde_json::json!({
                                 "dispatcher_type": disp_type,
                             }),
+                            ..Default::default()
                         });
                     }
                 }
@@ -174,6 +175,7 @@ impl<'a> CoroutineDispatcherExtractor<'a> {
                         "via": "withContext",
                         "context": func_context,
                     }),
+                    ..Default::default()
                 });
             }
         }

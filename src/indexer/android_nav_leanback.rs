@@ -70,6 +70,7 @@ impl<'a> LeanbackNavExtractor<'a> {
                                 "nav_type": "leanback_browse_to_details",
                                 "activity_name": activity_name,
                             }),
+                            ..Default::default()
                         });
                     }
                 }
@@ -95,6 +96,7 @@ impl<'a> LeanbackNavExtractor<'a> {
                                         "nav_type": "leanback_item_click",
                                         "fragment_name": frag_name,
                                     }),
+                                    ..Default::default()
                                 });
                             }
                         }

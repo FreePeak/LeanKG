@@ -63,7 +63,7 @@ async fn test_all_mcp_tools_return_data() {
         ("mcp_install", json!({})),
         (
             "run_raw_query",
-            json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _] :limit 5"}),
+            json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _, _] :limit 5"}),
         ),
         (
             "search_by_requirement",

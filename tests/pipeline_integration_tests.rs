@@ -185,6 +185,7 @@ async fn test_pipeline_execution_flow() {
             rel_type: "calls".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         },
         leankg::db::models::Relationship {
             id: None,
@@ -193,6 +194,7 @@ async fn test_pipeline_execution_flow() {
             rel_type: "calls".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         },
     ];
 

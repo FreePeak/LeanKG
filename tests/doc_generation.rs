@@ -88,6 +88,7 @@ async fn test_doc_tracking_info_structure() {
         rel_type: "imports".to_string(),
         confidence: 1.0,
         metadata: serde_json::json!({}),
+        ..Default::default()
     };
 
     let annotation = BusinessLogic {

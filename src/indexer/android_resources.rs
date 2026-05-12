@@ -99,6 +99,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     metadata: serde_json::json!({
                         "value": string_value,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -139,6 +140,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     metadata: serde_json::json!({
                         "value": color_value,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -179,6 +181,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     metadata: serde_json::json!({
                         "value": dimen_value,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -220,6 +223,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     rel_type: "defines_style".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
 
                 if let Some(parent_name) = parent {
@@ -233,6 +237,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                             metadata: serde_json::json!({
                                 "parent": parent_name,
                             }),
+                            ..Default::default()
                         });
                     }
                 }
@@ -271,6 +276,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     rel_type: "defines_theme".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }
@@ -311,6 +317,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     metadata: serde_json::json!({
                         "value": bool_value,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -351,6 +358,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     metadata: serde_json::json!({
                         "value": int_value,
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -388,6 +396,7 @@ impl<'a> AndroidResourcesExtractor<'a> {
                     rel_type: "defines_array".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }

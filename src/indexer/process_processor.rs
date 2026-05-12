@@ -285,6 +285,7 @@ pub fn detect_processes(
                 "terminalId": terminal_id,
                 "heuristicLabel": heuristic_label,
             }),
+            ..Default::default()
         });
 
         // Add relationships
@@ -298,6 +299,7 @@ pub fn detect_processes(
                 metadata: serde_json::json!({
                     "step": step_idx + 1,
                 }),
+                ..Default::default()
             });
         }
 
@@ -309,6 +311,7 @@ pub fn detect_processes(
             rel_type: "entry_point_of".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         });
     }
 
@@ -346,6 +349,7 @@ mod tests {
             rel_type: "calls".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         }
     }
 
@@ -366,6 +370,7 @@ mod tests {
             cluster_id: None,
             cluster_label: None,
             metadata: serde_json::json!({}),
+            ..Default::default()
         }
     }
 

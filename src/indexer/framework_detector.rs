@@ -109,6 +109,7 @@ impl FrameworkDetector {
                                 "detected_from": lib_name,
                                 "relation": rel.rel_type
                             }),
+                            ..Default::default()
                         });
                     }
                 }
