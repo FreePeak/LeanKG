@@ -263,6 +263,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "tested_by".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }
@@ -301,6 +302,7 @@ impl<'a> EntityExtractor<'a> {
                     metadata: serde_json::json!({
                         "layout_name": layout_name.as_str(),
                     }),
+                    ..Default::default()
                 });
             }
         }
@@ -344,6 +346,7 @@ impl<'a> EntityExtractor<'a> {
                             "view_id": view_id,
                             "method": "findViewById",
                         }),
+                        ..Default::default()
                     });
                 }
             }
@@ -395,6 +398,7 @@ impl<'a> EntityExtractor<'a> {
                             "property_name": prop_name,
                             "view_id": view_id,
                         }),
+                        ..Default::default()
                     });
                 }
             }
@@ -476,6 +480,7 @@ impl<'a> EntityExtractor<'a> {
                         rel_type: "imports".to_string(),
                         confidence: 1.0,
                         metadata: serde_json::json!({}),
+                        ..Default::default()
                     });
                 }
             }
@@ -582,6 +587,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
 
                 if element_type == "constructor" {
@@ -595,6 +601,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }
@@ -709,6 +716,7 @@ impl<'a> EntityExtractor<'a> {
                             rel_type: "has_property".to_string(),
                             confidence: 1.0,
                             metadata: serde_json::json!({}),
+                            ..Default::default()
                         });
                     }
                 }
@@ -746,6 +754,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "has_property".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
         }
@@ -933,6 +942,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             } else {
                 relationships.push(Relationship {
@@ -942,6 +952,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
 
@@ -1105,6 +1116,7 @@ impl<'a> EntityExtractor<'a> {
                             },
                             confidence: 0.8,
                             metadata: serde_json::json!({ "heritage_name": target_name }),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1208,6 +1220,7 @@ impl<'a> EntityExtractor<'a> {
                             rel_type: "implements".to_string(),
                             confidence: 1.0,
                             metadata: serde_json::json!({"embedded": true}),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1232,6 +1245,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             } else {
                 relationships.push(Relationship {
@@ -1241,6 +1255,7 @@ impl<'a> EntityExtractor<'a> {
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
+                    ..Default::default()
                 });
             }
 
@@ -1473,6 +1488,7 @@ impl<'a> EntityExtractor<'a> {
                             "callee_file_hint": self.file_path,
                             "is_method_call": is_method_call,
                         }),
+                        ..Default::default()
                     });
                     found_name = true;
                 }

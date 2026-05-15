@@ -15,7 +15,7 @@ async fn test_check_call_graph_query() {
     // Try depth 1 query
     let query = format!(
         r#"?[src, tgt, depth] :=
-           *relationships[src, tgt, "calls", _, _],
+           *relationships[src, tgt, "calls", _, _, _],
            (src = "{}" or src = "./{}"), depth = 1
            :limit 30"#,
         safe_src, safe_src
@@ -30,7 +30,7 @@ async fn test_check_call_graph_query() {
     }
 
     // Also check if the function exists in relationships at all
-    let all_calls_query = r#"?[src, tgt] := *relationships[src, tgt, "calls", _, _] :limit 10"#;
+    let all_calls_query = r#"?[src, tgt] := *relationships[src, tgt, "calls", _, _, _] :limit 10"#;
     let all_result = graph
         .db()
         .run_script(all_calls_query, Default::default())
@@ -42,7 +42,7 @@ async fn test_check_call_graph_query() {
 
     // Check if main exists as source
     let main_check = format!(
-        r#"?[tgt] := *relationships[src, tgt, "calls", _, _], src = "{}""#,
+        r#"?[tgt] := *relationships[src, tgt, "calls", _, _, _], src = "{}""#,
         safe_src
     );
     let main_result = graph

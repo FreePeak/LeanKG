@@ -668,6 +668,60 @@ impl ToolRegistry {
                     "required": ["branch"]
                 }),
             },
+            ToolDefinition {
+                name: "query_incidents".to_string(),
+                description: "Find past incidents matching a pattern or service. Returns structured incident records with root cause, resolution, and prevention advice.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "service": {"type": "string", "description": "Service name to filter incidents"},
+                        "pattern": {"type": "string", "description": "Text pattern to search in title or root cause"},
+                        "env": {"type": "string", "enum": ["production", "staging", "local"], "description": "Environment to query (default: local)"},
+                        "limit": {"type": "integer", "default": 5, "description": "Maximum number of incidents to return"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "find_env_conflicts".to_string(),
+                description: "Surface mismatches between local, staging, and production environments for a service. Detects schema version drift, config differences, and missing deployments.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "service": {"type": "string", "description": "Service name to check for conflicts"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["service"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_service_context".to_string(),
+                description: "Get a complete snapshot of a service in a given environment: dependencies, callers, open incidents, and recent incident history.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "service": {"type": "string", "description": "Service name"},
+                        "env": {"type": "string", "enum": ["production", "staging", "local"], "default": "local", "description": "Environment"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["service"]
+                }),
+            },
+            ToolDefinition {
+                name: "semantic_search".to_string(),
+                description: "Natural language search for graph nodes. Falls back to keyword and fuzzy matching when exact names are unknown. Returns top matching nodes with similarity scores.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Natural language query (e.g., 'service that handles refunds')"},
+                        "env": {"type": "string", "enum": ["production", "staging", "local"], "default": "local", "description": "Environment to search"},
+                        "limit": {"type": "integer", "default": 5, "description": "Maximum results (default: 5)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["query"]
+                }),
+            },
         ]
     }
 }
@@ -705,5 +759,51 @@ mod tests {
             assert!(!tool.description.is_empty());
             assert!(tool.input_schema.is_object());
         }
+    }
+
+    #[test]
+    fn test_list_tools_contains_v2_tools() {
+        let tools = ToolRegistry::list_tools();
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"query_incidents"));
+        assert!(names.contains(&"find_env_conflicts"));
+        assert!(names.contains(&"get_service_context"));
+    }
+
+    #[test]
+    fn test_v2_tool_schemas_are_valid() {
+        let tools = ToolRegistry::list_tools();
+        let v2_tools = [
+            "query_incidents",
+            "find_env_conflicts",
+            "get_service_context",
+        ];
+        for tool in &tools {
+            if v2_tools.contains(&tool.name.as_str()) {
+                assert!(!tool.description.is_empty());
+                assert!(tool.input_schema.is_object());
+                let schema = tool.input_schema.as_object().unwrap();
+                assert!(schema.contains_key("type"));
+                assert!(schema.contains_key("properties"));
+                assert!(schema.contains_key("required"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_semantic_search_tool_exists() {
+        let tools = ToolRegistry::list_tools();
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"semantic_search"));
+
+        let tool = tools.iter().find(|t| t.name == "semantic_search").unwrap();
+        assert!(tool.description.contains("Natural language"));
+        assert!(tool.input_schema.is_object());
+        let schema = tool.input_schema.as_object().unwrap();
+        assert!(schema.contains_key("properties"));
+        let properties = schema["properties"].as_object().unwrap();
+        assert!(properties.contains_key("query"));
+        assert!(properties.contains_key("env"));
+        assert!(properties.contains_key("limit"));
     }
 }

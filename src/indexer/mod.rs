@@ -1107,6 +1107,7 @@ pub fn generate_physical_structure(
                 rel_type: "contains".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
 
             let mut node_dir = parent;
@@ -1145,6 +1146,7 @@ pub fn generate_physical_structure(
                         rel_type: "contains".to_string(),
                         confidence: 1.0,
                         metadata: serde_json::json!({}),
+                        ..Default::default()
                     });
                 }
 
@@ -1166,6 +1168,7 @@ pub fn generate_physical_structure(
                 rel_type: "contains".to_string(),
                 confidence: 1.0,
                 metadata: serde_json::json!({}),
+                ..Default::default()
             });
         }
     }

@@ -23,10 +23,37 @@ async fn create_test_handler() -> (ToolHandler, TempDir) {
 /// Creates a test handler with the real .leankg database
 async fn create_real_handler() -> (ToolHandler, TempDir) {
     let tmp = TempDir::new().unwrap();
-    let db_path = std::path::PathBuf::from(".leankg");
+    let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
+    seed_test_data(&db);
     let graph = GraphEngine::new(db);
     (ToolHandler::new(graph, db_path), tmp)
+}
+
+fn seed_test_data(db: &leankg::db::schema::CozoDb) {
+    let elements = r#"
+    ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] <-
+    [
+        ["./src/main.rs", "file", "main.rs", "./src/main.rs", 1, 1, "rust", null, "1", "core", "{}", "local"],
+        ["./src/main.rs::main", "function", "main", "./src/main.rs", 1, 10, "rust", null, "1", "core", "{}", "local"],
+        ["./src/main.rs::validate_key", "function", "validate_key", "./src/main.rs", 20, 30, "rust", null, "1", "core", "{}", "local"],
+        ["./src/lib.rs::caller", "function", "caller", "./src/lib.rs", 1, 5, "rust", null, "1", "core", "{}", "local"]
+    ]
+    :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}
+    "#;
+    db.run_script(elements, Default::default()).unwrap();
+
+    let relationships = r#"
+    ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] <-
+    [
+        ["./src/main.rs", "./src/lib.rs", "imports", 1.0, "{}", "local"],
+        ["./src/main.rs::main", "./src/main.rs::validate_key", "calls", 1.0, "{}", "local"],
+        ["./src/lib.rs::caller", "./src/main.rs::validate_key", "calls", 1.0, "{}", "local"],
+        ["./src/main.rs::main", "docs/README.md", "documented_by", 1.0, "{}", "local"]
+    ]
+    :put relationships {source_qualified, target_qualified, rel_type, confidence, metadata, env}
+    "#;
+    db.run_script(relationships, Default::default()).unwrap();
 }
 
 // ============================================================================
@@ -38,9 +65,13 @@ mod mcp_core_tools {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_mcp_init() {
-        let (handler, _tmp) = create_real_handler().await;
+        let (handler, tmp) = create_real_handler().await;
+        let init_path = tmp.path().join("init");
         let result = handler
-            .execute_tool("mcp_init", &json!({"path": ".leankg"}))
+            .execute_tool(
+                "mcp_init",
+                &json!({"path": init_path.to_string_lossy().as_ref()}),
+            )
             .await;
         assert!(
             result.is_ok(),
@@ -781,7 +812,7 @@ mod utility_tools {
     async fn test_run_raw_query() {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler
-            .execute_tool("run_raw_query", &json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _] :limit 5"}))
+            .execute_tool("run_raw_query", &json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _, _] :limit 5"}))
             .await;
         assert!(
             result.is_ok(),

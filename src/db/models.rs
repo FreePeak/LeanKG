@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 
+fn default_env_local() -> String {
+    "local".to_string()
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RelationshipType {
@@ -59,6 +63,11 @@ pub enum RelationshipType {
     LifecycleObserves,
     RoomDaoMethod,
     ViewbindingUsed,
+    CausedIncident,
+    ResolvedBy,
+    ConflictsWith,
+    DeployedTo,
+    Supersedes,
 }
 
 impl RelationshipType {
@@ -119,6 +128,11 @@ impl RelationshipType {
             RelationshipType::LifecycleObserves => "lifecycle_observes",
             RelationshipType::RoomDaoMethod => "room_dao_method",
             RelationshipType::ViewbindingUsed => "viewbinding_used",
+            RelationshipType::CausedIncident => "caused_incident",
+            RelationshipType::ResolvedBy => "resolved_by",
+            RelationshipType::ConflictsWith => "conflicts_with",
+            RelationshipType::DeployedTo => "deployed_to",
+            RelationshipType::Supersedes => "supersedes",
         }
     }
 
@@ -181,6 +195,11 @@ impl RelationshipType {
             "lifecycle_observes" => Some(RelationshipType::LifecycleObserves),
             "room_dao_method" => Some(RelationshipType::RoomDaoMethod),
             "viewbinding_used" => Some(RelationshipType::ViewbindingUsed),
+            "caused_incident" => Some(RelationshipType::CausedIncident),
+            "resolved_by" => Some(RelationshipType::ResolvedBy),
+            "conflicts_with" => Some(RelationshipType::ConflictsWith),
+            "deployed_to" => Some(RelationshipType::DeployedTo),
+            "supersedes" | "supercedes" => Some(RelationshipType::Supersedes),
             _ => None,
         }
     }
@@ -208,9 +227,11 @@ pub struct CodeElement {
     pub cluster_label: Option<String>,
     #[serde(default)]
     pub metadata: serde_json::Value,
+    #[serde(default = "default_env_local")]
+    pub env: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Relationship {
     #[serde(skip)]
     #[allow(dead_code)]
@@ -220,6 +241,8 @@ pub struct Relationship {
     pub rel_type: String,
     pub confidence: f64,
     pub metadata: serde_json::Value,
+    #[serde(default = "default_env_local")]
+    pub env: String,
 }
 
 /// Information about a dependency (import)
@@ -292,6 +315,25 @@ pub struct Document {
     pub file_path: String,
     pub generated_from: Vec<String>,
     pub last_updated: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Incident {
+    pub id: String,
+    #[serde(default = "default_env_local")]
+    pub env: String,
+    pub title: String,
+    pub severity: String,
+    pub occurred_at: i64,
+    pub resolved_at: Option<i64>,
+    pub root_cause: String,
+    pub resolution: String,
+    pub affected_services: Vec<String>,
+    pub trigger_pattern: Option<String>,
+    pub prevention: Option<String>,
+    pub tags: Vec<String>,
+    pub author: String,
+    pub linked_ticket: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -482,9 +524,11 @@ mod tests {
             rel_type: "imports".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         };
         assert_eq!(rel.rel_type, "imports");
         assert_eq!(rel.confidence, 1.0);
+        assert_eq!(rel.env, "");
     }
 
     #[test]
@@ -526,6 +570,62 @@ mod tests {
             RelationshipType::from_str("presents"),
             Some(RelationshipType::Presents)
         );
+    }
+
+    #[test]
+    fn test_incident_relationship_types() {
+        assert_eq!(RelationshipType::CausedIncident.as_str(), "caused_incident");
+        assert_eq!(RelationshipType::ResolvedBy.as_str(), "resolved_by");
+        assert_eq!(RelationshipType::ConflictsWith.as_str(), "conflicts_with");
+        assert_eq!(RelationshipType::DeployedTo.as_str(), "deployed_to");
+        assert_eq!(RelationshipType::Supersedes.as_str(), "supersedes");
+        assert_eq!(
+            RelationshipType::from_str("caused_incident"),
+            Some(RelationshipType::CausedIncident)
+        );
+        assert_eq!(
+            RelationshipType::from_str("resolved_by"),
+            Some(RelationshipType::ResolvedBy)
+        );
+        assert_eq!(
+            RelationshipType::from_str("conflicts_with"),
+            Some(RelationshipType::ConflictsWith)
+        );
+        assert_eq!(
+            RelationshipType::from_str("deployed_to"),
+            Some(RelationshipType::DeployedTo)
+        );
+        assert_eq!(
+            RelationshipType::from_str("supersedes"),
+            Some(RelationshipType::Supersedes)
+        );
+        assert_eq!(
+            RelationshipType::from_str("supercedes"),
+            Some(RelationshipType::Supersedes)
+        );
+    }
+
+    #[test]
+    fn test_incident_creation() {
+        let incident = Incident {
+            id: "inc-1".to_string(),
+            env: "production".to_string(),
+            title: "DB outage".to_string(),
+            severity: "P0".to_string(),
+            occurred_at: 1000,
+            resolved_at: Some(2000),
+            root_cause: "Connection leak".to_string(),
+            resolution: "Restarted pool".to_string(),
+            affected_services: vec!["api".to_string(), "db".to_string()],
+            trigger_pattern: Some("connection timeout".to_string()),
+            prevention: Some("Add monitoring".to_string()),
+            tags: vec!["outage".to_string()],
+            author: "oncall".to_string(),
+            linked_ticket: Some("TICKET-123".to_string()),
+        };
+        assert_eq!(incident.id, "inc-1");
+        assert_eq!(incident.severity, "P0");
+        assert_eq!(incident.affected_services.len(), 2);
     }
 
     #[test]

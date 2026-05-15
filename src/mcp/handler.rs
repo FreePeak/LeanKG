@@ -3,6 +3,7 @@ use crate::db;
 use crate::db::models::{CodeElement, ContextMetric, KnowledgeEntry, Relationship};
 use crate::db::record_metric;
 use crate::graph::{GraphEngine, ImpactAnalyzer};
+use crate::mcp::token_budget::TokenBudget;
 use crate::orchestrator::QueryOrchestrator;
 use glob;
 use serde_json::{json, Value};
@@ -171,6 +172,7 @@ impl ToolHandler {
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
             "search_annotations" => self.search_annotations(arguments),
+            "semantic_search" => self.semantic_search(arguments),
             "generate_doc" => self.generate_doc(arguments),
             "find_large_functions" => self.find_large_functions(arguments),
             "get_tested_by" => self.get_tested_by(arguments),
@@ -203,8 +205,15 @@ impl ToolHandler {
             "search_by_environment" => self.search_by_environment(arguments),
             "get_upcoming_changes" => self.get_upcoming_changes(arguments),
             "promote_environment" => self.promote_environment(arguments),
+            // Incident and environment tools
+            "query_incidents" => self.query_incidents(arguments),
+            "find_env_conflicts" => self.find_env_conflicts(arguments),
+            "get_service_context" => self.get_service_context(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
+
+        // Apply token budget enforcement
+        let result = result.map(|response| TokenBudget::apply(response, tool_name));
 
         let execution_time_ms = start_time.elapsed().as_millis() as i32;
         let input_tokens = arguments.to_string().len() as i32 / 4;
@@ -337,13 +346,22 @@ impl ToolHandler {
 
     fn mcp_init(&self, args: &Value) -> Result<Value, String> {
         let path = args["path"].as_str().unwrap_or(".leankg");
+        let path_ref = std::path::Path::new(path);
 
-        std::fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))?;
+        if !path_ref.exists() || path_ref.is_dir() {
+            std::fs::create_dir_all(path_ref)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
 
         let config = crate::config::ProjectConfig::default();
         let config_yaml = serde_yaml::to_string(&config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)
+        let config_path = if path_ref.is_file() {
+            std::path::PathBuf::from("leankg.yaml")
+        } else {
+            path_ref.join("leankg.yaml")
+        };
+        std::fs::write(config_path, config_yaml)
             .map_err(|e| format!("Failed to write config: {}", e))?;
 
         Ok(json!({
@@ -410,9 +428,19 @@ impl ToolHandler {
         let exclude = args["exclude"].as_str();
 
         let db_path = self.db_path.clone();
-        tokio::fs::create_dir_all(&db_path)
-            .await
-            .map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        if !db_path.exists() {
+            if let Some(parent) = db_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .map_err(|e| format!("Failed to create .leankg parent: {}", e))?;
+                }
+            }
+        } else if db_path.is_dir() {
+            tokio::fs::create_dir_all(&db_path)
+                .await
+                .map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        }
 
         let exclude_patterns: Vec<String> = exclude
             .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
@@ -802,7 +830,7 @@ impl ToolHandler {
             // Use regex_matches() for regex filtering in Cozo
             return format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], \
                  regex_matches({}, \"{}\") :limit {}",
                 field, value, limit
             );
@@ -812,7 +840,7 @@ impl ToolHandler {
         if !trimmed.contains('[') && !trimmed.contains('?') && !trimmed.contains(':') {
             return format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
-                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], \
+                 := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], \
                  regex_matches(name, \"{}\") :limit 50",
                 trimmed.replace('\\', "\\\\").replace('"', "\\\"")
             );
@@ -831,7 +859,7 @@ impl ToolHandler {
 
         let elements = self
             .graph_engine
-            .search_by_name_typed(pattern, element_type_filter.as_deref(), 50)
+            .all_elements()
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements
@@ -1264,6 +1292,83 @@ impl ToolHandler {
             "annotations": results,
             "count": results.len()
         }))
+    }
+
+    fn semantic_search(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().ok_or("Missing 'query'")?;
+        let env = args["env"].as_str().unwrap_or("local");
+        let limit = args["limit"].as_i64().unwrap_or(5) as usize;
+
+        let results = self.perform_semantic_search(query, env, limit)?;
+
+        Ok(json!({
+            "query": query,
+            "env": env,
+            "results": results,
+            "count": results.len(),
+            "method": "keyword+fuzzy"
+        }))
+    }
+
+    fn perform_semantic_search(
+        &self,
+        query: &str,
+        env: &str,
+        limit: usize,
+    ) -> Result<Vec<Value>, String> {
+        let query_lower = query.to_lowercase();
+        let keywords: Vec<&str> = query_lower.split_whitespace().collect();
+
+        let elements = db::get_elements_by_env(self.graph_engine.db(), env, 1000)
+            .map_err(|e| format!("DB error: {}", e))?;
+
+        let mut scored: Vec<(f64, &db::models::CodeElement)> = elements
+            .iter()
+            .map(|elem| {
+                let name_lower = elem.name.to_lowercase();
+                let type_lower = elem.element_type.to_lowercase();
+                let qn_lower = elem.qualified_name.to_lowercase();
+
+                let mut score = 0.0;
+                for kw in &keywords {
+                    if name_lower.contains(kw) {
+                        score += 3.0;
+                    }
+                    if type_lower.contains(kw) {
+                        score += 2.0;
+                    }
+                    if qn_lower.contains(kw) {
+                        score += 1.0;
+                    }
+                }
+
+                if name_lower == query_lower {
+                    score += 10.0;
+                }
+
+                (-score, elem)
+            })
+            .filter(|(score, _)| *score < 0.0)
+            .collect();
+
+        scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        let results: Vec<Value> = scored
+            .into_iter()
+            .take(limit)
+            .map(|(score, elem)| {
+                json!({
+                    "qualified_name": elem.qualified_name,
+                    "name": elem.name,
+                    "element_type": elem.element_type,
+                    "file_path": elem.file_path,
+                    "score": -score,
+                    "env": elem.env,
+                })
+            })
+            .collect();
+
+        Ok(results)
     }
 
     fn generate_doc(&self, args: &Value) -> Result<Value, String> {
@@ -2330,6 +2435,98 @@ impl ToolHandler {
             "target_environment": target_env,
             "promoted_count": promoted,
             "status": "promoted"
+        }))
+    }
+
+    fn query_incidents(&self, args: &Value) -> Result<Value, String> {
+        let service = args["service"].as_str();
+        let pattern = args["pattern"].as_str();
+        let env = args["env"].as_str().unwrap_or("local");
+        let limit = args["limit"].as_i64().unwrap_or(5) as usize;
+
+        let incidents =
+            db::query_incidents(self.graph_engine.db(), service, pattern, Some(env), limit)
+                .map_err(|e| format!("Failed to query incidents: {}", e))?;
+
+        let incidents_json: Vec<Value> = incidents
+            .iter()
+            .map(|i| {
+                json!({
+                    "id": i.id,
+                    "env": i.env,
+                    "title": i.title,
+                    "severity": i.severity,
+                    "occurred_at": i.occurred_at,
+                    "resolved_at": i.resolved_at,
+                    "root_cause": i.root_cause,
+                    "resolution": i.resolution,
+                    "affected_services": i.affected_services,
+                    "trigger_pattern": i.trigger_pattern,
+                    "prevention": i.prevention,
+                    "tags": i.tags,
+                    "author": i.author,
+                    "linked_ticket": i.linked_ticket
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "incidents": incidents_json,
+            "query": {
+                "service": service,
+                "pattern": pattern,
+                "env": env,
+                "limit": limit
+            }
+        }))
+    }
+
+    fn find_env_conflicts(&self, args: &Value) -> Result<Value, String> {
+        let service = args["service"]
+            .as_str()
+            .ok_or("Missing 'service' parameter")?;
+
+        let conflicts = self
+            .graph_engine
+            .find_env_conflicts(service)
+            .map_err(|e| format!("Failed to find env conflicts: {}", e))?;
+
+        let conflicts_json: Vec<Value> = conflicts
+            .into_iter()
+            .map(|c| {
+                json!({
+                    "conflict_type": c.conflict_type,
+                    "detail": c.detail,
+                    "risk": c.risk,
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "conflicts": conflicts_json,
+            "service": service,
+        }))
+    }
+
+    fn get_service_context(&self, args: &Value) -> Result<Value, String> {
+        let service = args["service"]
+            .as_str()
+            .ok_or("Missing 'service' parameter")?;
+        let env = args["env"].as_str().unwrap_or("local");
+
+        let context = self
+            .graph_engine
+            .get_service_context(service, env)
+            .map_err(|e| format!("Failed to get service context: {}", e))?;
+
+        Ok(json!({
+            "service": context.service,
+            "env": context.env,
+            "version": context.version,
+            "calls": context.calls,
+            "called_by": context.called_by,
+            "open_incidents": context.open_incidents,
+            "recent_incidents": context.recent_incidents,
         }))
     }
 }

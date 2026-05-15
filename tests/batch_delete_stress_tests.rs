@@ -41,6 +41,7 @@ fn insert_unresolved_calls(engine: &leankg::graph::GraphEngine, count: usize) ->
             rel_type: "calls".to_string(),
             confidence: 0.5,
             metadata: serde_json::json!({}),
+            ..Default::default()
         });
     }
 

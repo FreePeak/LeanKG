@@ -27,6 +27,7 @@ fn create_code_element(name: &str, file_path: &str, element_type: &str, lines: u
         cluster_id: None,
         cluster_label: None,
         metadata: serde_json::json!({}),
+        ..Default::default()
     }
 }
 
@@ -104,6 +105,7 @@ fn test_search_by_relation_type() {
             rel_type: "calls".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         };
         let rel2 = Relationship {
             id: None,
@@ -112,6 +114,7 @@ fn test_search_by_relation_type() {
             rel_type: "implements".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({}),
+            ..Default::default()
         };
 
         graph.insert_relationships(&[rel1, rel2]).unwrap();

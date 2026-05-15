@@ -134,6 +134,7 @@ impl<'a> CallGraphBuilder<'a> {
                         "is_scope_function": call.is_scope_function,
                         "line": call.line,
                     }),
+                    ..Default::default()
                 });
             }
         }

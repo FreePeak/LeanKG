@@ -1,578 +1,233 @@
-# LeanKG PRD - Consolidated Tracking Document
+# LeanKG v2 — Product Requirements Document
+## From Local-First Tool to Team Knowledge Infrastructure
 
-**Version:** 2.0-consolidated
-**Date:** 2026-03-28
-**Status:** Active Development
-**Author:** Product Owner
-**Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)
-
----
-
-## Changelog (Merged)
-
-### v2.0-consolidated - Merged from 3 source PRDs
-- Source 1: `prd-leankg.md` (v1.7, 2026-03-27)
-- Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
-- Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
-
-<<<<<<< HEAD
-### v1.21 (IN PROGRESS) - CPU Optimization
-- **US-21.1:** Reduce idle CPU from 61% to <5%
-- **US-21.2:** Cache TTL tuning (300s→60s, max entries 1000→100) - COMPLETED
-- **US-21.3:** Remove unbounded `elements_cache` and `relationships_cache` - COMPLETED
-- **US-21.4:** SQLite memory reduction (cache 64MB→16MB, mmap 256MB→64MB) - COMPLETED
-- **US-21.5:** Lazy parser initialization - PENDING
-- **US-21.6:** Cached regex patterns - COMPLETED
-- **US-21.7:** Connection reuse in file watcher - PENDING
-- **US-21.8:** Cursor-based relationship iteration - PENDING
-- **US-21.9:** File→relationships index for dependent lookup - PENDING
-- **US-21.10:** Remove busy-loop sleep from AsyncFileWatcher - COMPLETED
-- **Root Causes:**
-  - Tree-sitter AST deep traversal (recursive on every node)
-  - `all_relationships()` loads entire graph into memory
-  - Incremental index O(n) dependent finding
-  - Regex recreation per-file
-  - All 12 parsers initialized even when only 1 needed
-  - File watcher reinitializes DB + parsers on every file change
-- **Analysis Document:** `docs/design/cpu-optimization.md`
-- **Worktree:** `.worktrees/feat/cpu-optimization`
-
-### v1.22 (IN PROGRESS) - MCP HTTP Transport (Remote MCP Server)
-- **US-22.1:** Add `mcp-http` CLI command for HTTP-based MCP server
-- **US-22.2:** Implement Streamable HTTP transport per MCP spec (HTTP POST + SSE)
-- **US-22.3:** Support multiple concurrent MCP clients (vs stdio's single client)
-- **US-22.4:** Bearer token authentication for HTTP endpoint
-- **US-22.5:** CORS headers for browser-based MCP clients
-- **Worktree:** `.worktrees/feat/mcp-http`
-
-**MCP Transport Modes:**
-| Mode | Transport | Use Case | Max Clients |
-|------|-----------|----------|-------------|
-| `mcp-stdio` | stdin/stdout | Local AI tools (Cursor, Claude Code) | 1 |
-| `mcp-http` | HTTP + SSE | Remote access, browser clients | Many |
-
-### v1.23 (IN PROGRESS) - Knowledge Contribution, Versioning & Multi-Team Access
-
-**User Stories:**
-- **US-23.1:** As a developer, I want to add business knowledge entries via MCP so AI agents can contribute knowledge during code review.
-- **US-23.2:** As a developer, I want to annotate code elements via MCP so I don't have to switch to CLI.
-- **US-23.3:** As a developer, I want to search all knowledge entries so I can understand domain context.
-- **US-23.4:** As a team lead, I want to tag knowledge by environment (production/staging/dev/upcoming) so I can distinguish current state from in-development work.
-- **US-23.5:** As a team lead, I want to see upcoming changes (feature branch knowledge) so I can plan reviews.
-- **US-23.6:** As a PO, I want read-only access to the knowledge graph via HTTP so my team can query code context without modifying anything.
-- **US-23.7:** As an admin, I want role-based access control so different teams have appropriate permissions.
-- **US-23.8:** As an admin, I want OAuth2/static token authentication so external teams can access LeanKG securely.
-
-**Functional Requirements:**
-- **FR-23.1:** New `knowledge_entries` CozoDB table for standalone knowledge (business, domain, architecture, prd_mapping, debugging, general)
-- **FR-23.2:** Schema migration system for adding columns to existing tables
-- **FR-23.3:** New MCP tools: `add_knowledge`, `update_knowledge`, `delete_knowledge`, `search_knowledge`, `add_annotation`, `link_element`, `add_documentation`
-- **FR-23.4:** Version/branch tagging: `environment`, `branch`, `version_tag` columns on code_elements and business_logic
-- **FR-23.5:** Git branch auto-detection and environment inference (main→production, release/→staging, develop→dev, feature/→upcoming)
-- **FR-23.6:** Version-aware MCP tools: `search_by_environment`, `get_upcoming_changes`, `promote_environment`
-- **FR-23.7:** RBAC with roles: Admin (full), Contributor (knowledge write), Viewer (read-only)
-- **FR-23.8:** OAuth2-compatible auth with static tokens (extensible to OIDC)
-- **FR-23.9:** Tool-level permission enforcement in MCP HTTP handler
-
-**New MCP Tools (10 total):**
-| Tool | Category | Role Required |
-|------|-----------|---------------|
-| `add_knowledge` | Knowledge | Contributor |
-| `update_knowledge` | Knowledge | Contributor |
-| `delete_knowledge` | Knowledge | Contributor |
-| `search_knowledge` | Knowledge | Viewer |
-| `add_annotation` | Knowledge | Contributor |
-| `link_element` | Knowledge | Contributor |
-| `add_documentation` | Knowledge | Contributor |
-| `search_by_environment` | Versioning | Viewer |
-| `get_upcoming_changes` | Versioning | Viewer |
-| `promote_environment` | Versioning | Admin |
-
-### v1.20 (PENDING) - MCP Server Watch Mode
-- **US-20.1:** Add `--watch` flag to MCP server for auto-indexing on file changes
-- **US-20.2:** Port 8081→9699 consolidation
-- **US-20.3:** PostToolUse audit hook for non-LeanKG tool warnings
-- **Worktree:** `.worktrees/feat/mcp-server-watch`
-
-### v1.16 (COMPLETED)
-- AB Testing & Validation: OpenCode token parsing, context correctness validation, data store tests, summary report
-
-### v1.17 (IN PROGRESS)
-- AB Testing Context Correctness: File path regex validation, enhanced quality metrics output
-
-### v1.18 (PENDING)
-- RTK Integration: 54% token reduction via RTK compression on dev commands; LeanKGCompressor for internal command compression; cargo test output compression; git diff compression
-
-### v1.15 (COMPLETED)
-- Web UI Orphan Node Filtering Fix: Fixed orphan nodes appearing in webui graph view; `filterOrphanedNodes` now applies to ALL filter types; Fixed 'mapping' filter bug where `e.target` was not added to nodeIds
-
-### v1.14 (COMPLETED)
-- Web UI Integration: REMOVED `tools/graph-viewer/` (Python HTTP server + HTML); Wire up `src/web/mod.rs` with all routes; Added `axum = "0.7"` dependency; Updated `Serve` command; Added new `Web` CLI command; All web UI pages served directly from LeanKG binary
-
-### v1.13 (COMPLETED)
-- Terraform and CI/CD YAML Indexing: Add Terraform (.tf) file indexing with HCL extraction; Add CI/CD YAML (.yml, .yaml) file indexing; Extract resource/data/variable/output blocks; Extract pipeline/stage/step structure; Add `terraform` and `cicd` element types
-
-### v1.12 (COMPLETED)
-- P2 MCP Tool Improvements: Add `required` arrays to all MCP tools; Add `depth` and `max_results` params to `get_call_graph`; Add optional `file` param to `find_function`; Lower default `limit` for `search_code` to 20, cap at 50; Add `element_type` filter enum; Add warning to `get_impact_radius` description
-
-### v1.11 (COMPLETED)
-- Depth-limited get_call_graph_bounded: Add `get_call_graph_bounded` to prevent neighbor explosion; Unroll recursion manually for depth <= 3; Add `depth` and `max_results` parameters
-
-### v1.10 (COMPLETED)
-- Token Efficiency - signature_only Mode: Add `signature_only` mode to `get_context`; Add `max_tokens` parameter (default 4000); Update `extract_function` to capture function signature in metadata; Add `find_body_start_line` helper
-
-### v1.9 (COMPLETED)
-- AST Extraction Fixes: Fix `is_noise_call` filter with missing noise calls; Fix Go `implements` detection for embedded fields only
-
-### v1.8 (COMPLETED)
-- Documentation Indexing Fixes: Add `mcp_index_docs` MCP tool; Fix doc regex for any source extension; Fix code-block skipping; Fix `parse_doc_file` to extract headings; Add `resolve_call_edges` post-index resolution pass
-
-### v1.7 (COMPLETED)
-- Query Push-down Optimization + Security + Correctness Fixes: Add `search_by_name_typed` and `find_elements_by_name_exact` pushed-down queries; Add `run_element_query` helper; Add `escape_datalog` helper
-
-### v1.6 (COMPLETED)
-- Auto-Indexing on MCP Server Start: US-17 MCP server auto-indexes when starting if index is stale; US-18 Configurable auto-indexing via leankg.yaml
-
-### v1.5 (COMPLETED)
-- Phase 2 Features: US-10 Documentation-structure mapping; US-11 Enhanced business logic tagging with doc links; US-12 Impact analysis improvements; US-13 Additional MCP tools
+**Project:** FreePeak/LeanKG
+**Version:** 2.0
+**Status:** In Progress
+**Target:** 200-service microservice system, multi-engineer team, Cursor-native
 
 ---
 
-## 1. Executive Summary
+## 1. Vision
 
-LeanKG is a lightweight, local-first knowledge graph solution designed for developers who use AI-assisted coding tools. The primary purpose is to provide AI models with accurate, concise codebase context without scanning unnecessary code, avoiding context window dilution, and ensuring documentation stays up-to-date with business logic mapping.
+LeanKG v1 is a local-first knowledge graph that gives a single developer accurate codebase context in Cursor. It works well for individual repos and small projects.
 
-Unlike heavy frameworks like Graphiti that require external databases (Neo4j) and cloud infrastructure, LeanKG runs entirely locally on macOS and Linux with minimal resource consumption. It automatically generates and maintains documentation while mapping business logic to the existing codebase.
-
----
-
-## 2. Problem Statement
-
-### 2.1 Current Pain Points
-
-| Pain Point | Description |
-|------------|-------------|
-| **Context Window Dilution** | AI tools scan entire codebases, including irrelevant files, wasting context window tokens |
-| **Outdated Documentation** | Manual docs quickly become stale; AI receives wrong context |
-| **Business Logic Disconnect** | No clear mapping between business requirements and code implementation |
-| **Token Waste** | Redundant code scanning generates unnecessary token costs |
-| **Poor Code Generation** | AI lacks accurate context, producing incorrect or suboptimal code |
-| **Feature Transfer Difficulty** | Onboarding new developers requires extensive code exploration |
-| **Impact radius lacks confidence grades** | `get_impact_radius` returns all edges at equal weight; LLM cannot distinguish "WILL BREAK" from "MIGHT BE AFFECTED" |
-| **No pre-commit risk signal** | No tool exists to assess change risk before commit |
-| **Flat search results** | `search_code` returns symbol matches with no grouping by functional area |
+LeanKG v2 evolves into the **shared knowledge backbone** for an engineering team operating 200 microservices across production, staging, and local environments. Every developer gets the same accurate, up-to-date context. Every incident becomes permanent knowledge. Every release automatically updates the graph. One MCP query returns concise, environment-aware, token-efficient context.
 
 ---
 
-## 3. User Stories
+## 2. Current State (v1 Baseline)
 
-### 3.1 Core MVP Stories (US-01 to US-18)
-
-| ID | User Story | Priority | Status |
-|----|------------|----------|--------|
-| US-01 | Auto-index codebase so AI tools have accurate context | Must Have | DONE |
-| US-02 | Generate and update documentation automatically | Must Have | DONE |
-| US-03 | Map business logic to code for AI understanding | Must Have | DONE |
-| US-04 | Expose MCP server for AI tool integration | Must Have | DONE |
-| US-05 | Full CLI interface with query and MCP server commands | Must Have | DONE |
-| US-06 | Minimal resource usage | Must Have | DONE |
-| US-07 | Lightweight Web UI for graph visualization | Should Have | DONE |
-| US-08 | Multi-language support (Go, TS, Python, Rust) | Must Have | DONE |
-| US-09 | Pipeline information extraction from CI/CD configs | Should Have | DONE |
-| US-10 | Documentation-structure mapping | Should Have | DONE |
-| US-11 | Enhanced business logic tagging with doc links | Should Have | DONE |
-| US-12 | Fix impact radius calculation for qualified names | Must Have | DONE |
-| US-13 | Additional MCP tools for docs and pipeline queries | Should Have | DONE |
-| US-14 | npm-based installation without Rust | Must Have | PENDING |
-| US-15 | MCP server expose init/index/install tools | Should Have | DONE |
-| US-16 | MCP server auto-initialize on startup | Should Have | DONE |
-| US-17 | MCP server auto-re-index when starting if stale | Should Have | DONE |
-| US-18 | Configurable auto-indexing via leankg.yaml | Should Have | DONE |
-
-### 3.2 v2.0 Enhancement Stories (US-19 to US-27)
-
-| ID | User Story | Priority | Status |
-|----|------------|----------|--------|
-| US-19 | Cross-file call edge resolution | Must Have | DONE |
-| US-20 | Go `implements` edge extraction fix | Must Have | DONE |
-| US-21 | Push-down Datalog queries + injection safety | Must Have | DONE |
-| US-22 | Token-efficient `signature_only` context mode | Must Have | DONE |
-| US-23 | Bounded depth call graph traversal | Should Have | DONE |
-| US-24 | Fix `get_doc_for_file` query direction bug | Must Have | DONE |
-| US-25 | Add `mcp_index_docs` MCP tool | Must Have | DONE |
-| US-26 | Fix doc-code reference extraction | Should Have | DONE |
-| US-27 | MCP tool definition quality improvements | Should Have | DONE |
-
-### 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09)
-
-| ID | User Story | Priority | Status |
-|----|------------|----------|--------|
-| US-GN-01 | Impact analysis with confidence scores and severity classifications | Must Have | DONE |
-| US-GN-02 | Pre-commit `detect_changes` tool | Must Have | DONE |
-| US-GN-03 | Multi-repo global registry | Should Have | PENDING |
-| US-GN-04 | Cluster-grouped search results | Should Have | DONE |
-| US-GN-05 | Auto-detect functional clusters | Should Have | DONE |
-| US-GN-06 | 360-degree context view in single tool call | Should Have | DONE |
-| US-GN-07 | Cluster-level SKILL.md generation | Could Have | PENDING |
-| US-GN-08 | MCP Resources for overview context | Could Have | PENDING |
-| US-GN-09 | Repository wiki generation | Won't Have | PENDING |
-
-### 3.4 AB Testing Stories (US-AB-01 to US-AB-04)
-
-| ID | User Story | Priority | Status |
-|----|------------|----------|--------|
-| US-AB-01 | OpenCode token parsing for benchmark comparison | Must Have | DONE |
-| US-AB-02 | Context correctness validation (precision/recall/F1) | Must Have | PENDING |
-| US-AB-03 | CozoDB data store correctness tests | Must Have | PENDING |
-| US-AB-04 | Token savings summary report with overall verdict | Should Have | PENDING |
-
-### 3.5 RTK Integration Stories (US-RTK-01 to US-RTK-04)
-
-| ID | User Story | Priority | Status |
-|----|------------|----------|--------|
-| US-RTK-01 | LeanKG CLI commands integrate with RTK for compressed output | Must Have | IN PROGRESS |
-| US-RTK-02 | LeanKG internal command compression via LeanKGCompressor | Must Have | IN PROGRESS |
-| US-RTK-03 | Cargo test output compression (failures only mode) | Must Have | IN PROGRESS |
-| US-RTK-04 | Git diff compression for indexer pipeline | Should Have | PENDING |
+| Capability | v1 Status |
+|---|---|
+| Single-repo indexing | ✅ |
+| Dependency graph (IMPORTS, CALLS, TESTED_BY) | ✅ |
+| Impact radius CLI | ✅ |
+| MCP server (stdio) | ✅ |
+| Cursor / Claude Code / OpenCode auto-trigger | ✅ |
+| Web UI (force-directed graph) | ✅ |
+| Obsidian vault sync | ✅ |
+| Multi-repo / shared backend | ❌ |
+| Environment namespacing (prod/staging/local) | ❌ |
+| Incident knowledge layer | ❌ |
+| Team contribution workflow | ❌ |
+| CI/CD auto-update on release | ❌ |
+| 200-service scale query engine | ❌ |
 
 ---
 
-## 4. Implementation Status Summary
+## 3. Problems to Solve
 
-### 4.1 Completed Features
+### P1 — Engineer context at 200-service scale
+A developer opens `payment-service` in Cursor. They need to know: what this service calls, what calls it, what schemas it owns, what events it publishes, which team maintains it, and what known issues exist in production. Today they piece this together from Confluence, Slack, and README files. This takes 30–60 minutes per unfamiliar service and produces stale, incomplete context.
 
-| Feature | Source PRD | Implemented |
-|---------|------------|-------------|
-| Core indexing (Go, TS/JS, Python, Rust) | prd-leankg.md | DONE |
-| Dependency graph with TESTED_BY edges | prd-leankg.md | DONE |
-| CLI interface (init, index, query, generate, install, impact) | prd-leankg.md | DONE |
-| MCP server with all required tools | prd-leankg.md | DONE |
-| Documentation generation | prd-leankg.md | DONE |
-| Business logic annotations | prd-leankg.md | DONE |
-| Impact radius analysis | prd-leankg.md | DONE |
-| Auto-install MCP config | prd-leankg.md | DONE |
-| Web UI embedded in LeanKG binary | prd-leankg.md | DONE |
-| Terraform (.tf) indexing | prd-leankg.md | DONE |
-| CI/CD YAML indexing | prd-leankg.md | DONE |
-| MCP tool schema improvements (required arrays, params) | prd-leankg-v2.0 | DONE |
-| Signature-only context mode | prd-leankg-v2.0 | DONE |
-| Cross-file call resolution | prd-leankg-v2.0 | DONE |
-| Go implements edge fix | prd-leankg-v2.0 | DONE |
-| Datalog injection prevention | prd-leankg-v2.0 | DONE |
-| Bounded call graph | prd-leankg-v2.0 | DONE |
-| get_doc_for_file fix | prd-leankg-v2.0 | DONE |
-| mcp_index_docs tool | prd-leankg-v2.0 | DONE |
-| Doc reference extraction fix | prd-leankg-v2.0 | DONE |
-| Confidence scoring on relationships | prd-leankg-gitnexus | DONE |
-| detect_changes tool | prd-leankg-gitnexus | DONE |
-| get_clusters tool | prd-leankg-gitnexus | DONE |
-| Cluster-grouped search | prd-leankg-gitnexus | DONE |
-| Enhanced get_context with cluster info | prd-leankg-gitnexus | DONE |
+**Goal:** One MCP query returns a complete, concise, live snapshot of any service's position in the system. Cursor uses this without any extra engineer action.
 
-### 4.2 Pending Features
+### P2 — Shared knowledge, not per-developer silos
+v1 runs locally, meaning each engineer builds their own graph from their own repos. When engineer A fixes a bug and documents the pattern, engineer B and Cursor never know about it.
 
-| Feature | Source PRD | Priority | Notes |
-|---------|------------|----------|-------|
-| npm-based installation (FR-69 to FR-72) | prd-leankg.md | Must Have | Binary distribution |
-| Global registry (FR-GN-08 to FR-GN-12) | prd-leankg-gitnexus | Should Have | Multi-repo support |
-| Cluster-level SKILL.md generation (US-GN-07) | prd-leankg-gitnexus | Could Have | Depends on stable cluster detection |
-| MCP Resources (FR-GN-20 to FR-GN-21) | prd-leankg-gitnexus | Could Have | Depends on multi-repo registry |
-| Repository wiki generation (US-GN-09) | prd-leankg-gitnexus | Won't Have | Future consideration |
+**Goal:** A central LeanKG backend that every team member reads from and writes to. One source of truth for the entire 200-service estate.
+
+### P3 — Incidents become permanent, actionable knowledge
+When an engineer resolves a production incident, the root cause, fix, affected services, and prevention pattern exist briefly in their brain and an incident ticket. Two months later, Cursor suggests the same broken pattern again.
+
+**Goal:** A structured incident knowledge layer in the graph. Engineers contribute incident nodes after resolution. Cursor queries this layer before suggesting any pattern that matches a known failure.
+
+### P4 — Environment conflicts slow down the team
+Local development, staging integration, and production have different service versions, configurations, and behaviors. Engineers waste time debugging issues caused by environment mismatch.
+
+**Goal:** The graph is partitioned into `local`, `staging`, and `production` namespaces. Queries are environment-scoped by default. Conflicts between environments are surfaced proactively.
+
+---
+
+## 4. User Stories
+
+### As a software engineer using Cursor:
+
+- When I open any service file, I get an automatic context snapshot: dependencies, owners, known incidents, environment-specific config.
+- When I write code that calls a deprecated API, Cursor tells me immediately, cites the replacement, and references the incident where the old API caused an outage.
+- When I add a new field to a shared schema, Cursor tells me which of the 200 services will break and need updates before I push.
+- When I search for "how does the refund flow work", I get a traced call chain across services with known failure points annotated.
+- When I debug a production incident, I query the graph for "similar past incidents in payment-service" and get structured resolution patterns.
+
+### As a team member contributing knowledge:
+
+- After resolving an incident, I run `leankg incident add` to document the root cause, fix, affected services, and prevention. This is stored in the graph and immediately available to all teammates and Cursor.
+- After releasing a new feature, CI/CD calls the LeanKG API to update the graph with new service relationships, schema changes, and endpoint additions automatically.
+- I can annotate any service, endpoint, or schema with team-specific notes that persist and are query-accessible.
+
+### As a team lead:
+
+- I can see which services have no incidents documented (knowledge gaps).
+- I can see which services are most queried by the team, indicating high complexity or poor documentation.
+- I can audit what context Cursor is using when generating code for my team.
 
 ---
 
 ## 5. Functional Requirements
 
-### 5.1 Core Features (DONE)
+### FR-01: Environment Namespacing
+- Every node and edge in the graph must carry an `env` field: `local | staging | production`.
+- Queries default to the engineer's active environment.
+- Cross-environment queries are opt-in.
 
-- [x] **FR-01 to FR-07**: Code Indexing and Dependency Graph
-- [x] **FR-08 to FR-12**: Auto Documentation Generation
-- [x] **FR-13 to FR-16**: Business Logic to Code Mapping
-- [x] **FR-17 to FR-22**: Context Provisioning
-- [x] **FR-23 to FR-27**: MCP Server Interface
-- [x] **FR-28 to FR-36**: CLI Interface
-- [x] **FR-37 to FR-41**: Lightweight Web UI
-- [x] **FR-42 to FR-50**: Pipeline Information Extraction
-- [x] **FR-51 to FR-56**: Documentation-Structure Mapping
-- [x] **FR-57 to FR-60**: Enhanced Business Logic Tagging
-- [x] **FR-61 to FR-64**: Impact Analysis Improvements
-- [x] **FR-65 to FR-68**: Additional MCP Tools
-- [x] **FR-73 to FR-76**: MCP Server Self-Initialization
-- [x] **FR-77 to FR-79**: Terraform Infrastructure Indexing
-- [x] **FR-80 to FR-82**: CI/CD YAML Indexing
+### FR-02: Incident Data Model
+- Support `Incident` nodes with fields: id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected services, trigger_pattern, prevention, tags, author, linked_ticket.
+- Support relationship types: `caused_incident`, `resolved_by`, `conflicts_with`, `deployed_to`, `supercedes`.
 
-### 5.2 GitNexus Enhancements
+### FR-03: Service Context Enhancement
+- Enhanced Service nodes with: version, deploy_env, slo_p99_ms, health_endpoint, on_call, incident_count, last_incident, tags.
 
-- [x] **FR-GN-01 to FR-GN-04**: Confidence Scoring on Relationships
-- [x] **FR-GN-05 to FR-GN-07**: Pre-Commit Change Detection Tool
-- [x] **FR-GN-08 to FR-GN-12**: Multi-Repo Global Registry (PARTIAL)
-- [x] **FR-GN-13 to FR-GN-17**: Community Detection and Cluster-Grouped Search
-- [x] **FR-GN-18 to FR-GN-19**: Enhanced 360-Degree Context Tool
-- [x] **FR-GN-20 to FR-GN-21**: MCP Resources (PARTIAL)
+### FR-04: MCP Tools v2
+- `get_service_context` — Enhanced with env scoping + incident summary (max 800 tokens).
+- `impact_analysis` — Env-aware, shows cross-environment divergence (max 600 tokens).
+- `trace_call_chain` — Trace request path across services (max 400 tokens).
+- `query_incidents` — Find past incidents matching a pattern or service (max 500 tokens).
+- `find_env_conflicts` — Surface mismatches between environments (max 400 tokens).
+- `contribute_knowledge` — Team members add knowledge entries via Cursor.
+- `get_team_map` — Returns ownership + on-call for any set of services.
+- `semantic_search` — Natural language to graph nodes (max 300 tokens).
 
-### 5.3 AB Testing & Validation
+### FR-05: CLI Commands
+- `leankg incident add` — Add an incident after resolution.
+- `leankg note add` — Add a team note to a service.
+- `leankg pattern add` — Annotate a known risky pattern.
+- `leankg env conflicts` — Show environment conflicts for a service.
 
-- [x] **FR-AB-01**: OpenCode token parsing for benchmark comparison
-- [x] **FR-AB-02**: Context correctness validation (precision/recall/F1 per task)
-- [x] **FR-AB-03**: CozoDB data store correctness tests (indexed elements, relationships, no duplicates)
-- [x] **FR-AB-04**: Prompt YAML format with `expected_files` field for ground truth
-- [x] **FR-AB-05**: Token savings summary report with overall verdict
+### FR-06: CI/CD Integration
+- GitHub Actions workflow to update LeanKG on release.
+- Source commit to LeanKG updated: < 3 minutes.
+- Graph query reflects new data: immediate.
 
-### 5.4 RTK Integration
+### FR-07: Token Budget Enforcement
+- Every MCP tool response must enforce a maximum token budget.
+- Responses exceeding the budget are truncated with a "...truncated" indicator.
+- Budgets are configurable per-tool in `.cursor/leankg.toml`.
 
-- [x] **FR-RTK-01**: LeanKGCompressor struct with compress_indexer_output(cmd, output) method
-- [x] **FR-RTK-02**: CommandCategory::LeanKG added with patterns for leankg, cargo, git commands
-- [x] **FR-RTK-03**: CargoTestCompressor with failures-only mode achieving 85%+ savings
-- [x] **FR-RTK-04**: GitDiffCompressor with stats extraction achieving 70%+ savings
-- [x] **FR-RTK-05**: ShellCompressor extended with leankg-specific patterns
-- [ ] **FR-RTK-06**: Integration with CLI indexer pipeline to compress git/cargo outputs
-- [ ] **FR-RTK-07**: RTK gain command shows compression statistics
+| Tool | Max Token Budget | Strategy |
+|------|-----------------|---------|
+| `get_service_context` | 800 | Top 5 callers/callees, 3 recent incidents |
+| `impact_analysis` | 600 | Direct impact only by default |
+| `query_incidents` | 500 | Most recent 3 incidents, summary only |
+| `trace_call_chain` | 400 | Shortest path only |
+| `find_env_conflicts` | 400 | HIGH risk conflicts only by default |
+| `semantic_search` | 300 | Top 3 matches with 1-line descriptions |
 
-### 5.5 RTK Integration Phase 2 (COMPLETED)
+### FR-08: 3-Tier Retrieval
+- For every query, LeanKG tries retrieval in order, stopping at the first tier that returns results:
+  1. **Exact match** — name/ID match in CozoDB relations (< 2ms)
+  2. **Fuzzy match** — trigram index on names (< 5ms)
+  3. **Semantic embed** — keyword fallback on natural language queries (< 20ms)
 
-- [x] **FR-RTK-08**: Add `--compress` flag to CLI for compressed output
-- [x] **FR-RTK-09**: LeanKGCompressor integration in CLI commands that run shell commands
-- [x] **FR-RTK-10**: Compressed output for `leankg status` showing git diff stats
-
-### 5.6 RTK Integration Phase 3 (In Progress)
-
-- [ ] **FR-RTK-11**: ResponseCompressor struct for MCP JSON response compression
-- [ ] **FR-RTK-12**: Compress `get_impact_radius` responses (summary + top N)
-- [ ] **FR-RTK-13**: Compress `get_call_graph` responses (bounded depth)
-- [ ] **FR-RTK-14**: Compress `search_code` responses (limit to top N)
-- [ ] **FR-RTK-15**: Add `compress_response` parameter to MCP tools
-
-**A/B Test Results (2026-04-06):**
-- RTK achieves 54% token reduction on common dev commands
-- Biggest wins: cargo test --no-run (84%), ls src/graph/ (75%), cargo test (74%)
-- Test methodology: Parallel subagent execution with/without RTK
-
-**Benchmark Results (2026-03-31):**
-- LeanKG saves tokens in 3/4 navigation tasks (up to -1,733 tokens)
-- find-codeelement achieves F1=1.00 (EXCELLENT) on both LeanKG and baseline
-- LeanKG provides better context quality (F1 > 0) vs baseline (F1 = 0 on 2 tasks)
-- 50 unit tests passing
+### FR-09: Team Map MCP Tool
+- `get_team_map` — Returns ownership + on-call contacts for any set of services.
+- Input: `{ "services": ["payment-service", "ledger-service"] }`
+- Output: `{ "teams": [{ "service": "...", "team": "...", "on_call": "..." }] }`
 
 ---
 
-## 6. Technical Architecture
+## 6. Data Model v2
 
-### 6.1 Technology Stack
+### 6.1 Environment Namespace
 
-| Component | Technology | Status |
-|-----------|------------|--------|
-| Core Language | Rust | Active |
-| Database | CozoDB (embedded SQLite) | Active |
-| Code Parsing | tree-sitter | Active |
-| MCP Server | Custom Rust | Active |
-| CLI | Clap | Active |
-| Web UI | Axum | Active |
+Every node and edge carries an `env` field: `local | staging | production`.
 
-### 6.2 Data Model
+### 6.2 Incident Node
 
 ```
-CodeElement:
-  - qualified_name: string (PK)
-  - type: file | function | class | import | export | pipeline | pipeline_stage | pipeline_step | terraform | cicd | document
-  - name: string
-  - file_path: string
-  - line_start: int
-  - line_end: int
-  - language: string
-  - parent_qualified: string (optional)
-  - cluster_id: string (nullable)
-  - cluster_label: string (nullable)
-  - metadata: JSON (includes signature, headings)
+Incident {
+  id:            uuid
+  env:           "production" | "staging"
+  title:         string
+  severity:      P0 | P1 | P2 | P3
+  occurred_at:   timestamp
+  resolved_at:   timestamp
+  root_cause:    string
+  resolution:    string
+  affected:      [ServiceId]
+  trigger_pattern: string
+  prevention:    string
+  tags:          [string]
+  author:        string
+  linked_ticket: string
+}
+```
 
-Relationship:
-  - id: integer (PK)
-  - source_qualified: string (FK)
-  - target_qualified: string (FK)
-  - type: imports | implements | calls | contains | exports | tested_by | triggers | builds | depends_on | documented_by | references
-  - confidence: float (0.0-1.0)
-  - metadata: JSON
+### 6.3 New Edges for v2
 
-BusinessLogic:
-  - id: integer (PK)
-  - element_qualified: string (FK)
-  - description: string
-  - user_story_id: string (optional)
-  - feature_id: string (optional)
+```
+:caused_incident  (from: Service | Schema | Config, to: Incident)
+:resolved_by      (from: Incident, to: KnowledgeEntry)
+:conflicts_with   (from: Node{env:local}, to: Node{env:staging})
+:deployed_to      (from: Service, to: Environment, at: timestamp, version: string)
+:supercedes       (from: APIEndpoint, to: APIEndpoint)
+```
 
-Document:
-  - id: integer (PK)
-  - title: string
-  - content: string
-  - file_path: string
-  - generated_from: string[]
-  - last_updated: timestamp
+### 6.4 Updated Service Node
+
+```
+Service {
+  id, name, lang, team, repo_url,
+  env:            "production" | "staging" | "local"
+  version:        string
+  deploy_env:     ["production", "staging"]
+  slo_p99_ms:     int
+  health_endpoint: string
+  on_call:        string
+  incident_count: int
+  last_incident:  timestamp
+  tags:           [string]
+}
 ```
 
 ---
 
-## 7. Release Criteria
+## 7. Success Metrics
 
-### 7.1 MVP (v1.x) - COMPLETED
-
-- [x] Code indexing works for Go, TypeScript, Python, Rust
-- [x] Dependency graph builds correctly with TESTED_BY edges
-- [x] CLI commands functional (init, index, query, generate, install, impact)
-- [x] MCP server exposes query tools including get_impact_radius and get_review_context
-- [x] Documentation generation produces valid markdown
-- [x] Business logic annotations can be created and queried
-- [x] Impact radius analysis works (blast radius within N hops)
-- [x] Auto-install MCP config works for Claude Code/OpenCode
-- [x] Web UI shows basic graph visualization
-- [x] Resource usage within targets
-- [x] Documentation complete
-
-### 7.2 v2.0 Release - COMPLETED
-
-- [x] Cross-file call edges resolved correctly
-- [x] Go implements edges only for embedded fields
-- [x] Datalog injection prevention via escape_datalog
-- [x] Push-down queries for search_code, find_function, query_file
-- [x] signature_only mode for get_context
-- [x] Bounded call graph with depth and max_results
-- [x] mcp_index_docs tool functional
-- [x] Doc reference extraction with code-block skipping
-
-### 7.3 GitNexus Enhancements - IN PROGRESS
-
-- [x] Confidence scoring on relationships
-- [x] detect_changes tool
-- [x] get_clusters tool
-- [x] Cluster-grouped search
-- [ ] Global registry (US-GN-03)
-- [ ] MCP Resources (US-GN-08)
+| Metric | Target |
+|---|---|
+| Time to get full service context in Cursor | < 5 seconds |
+| Token usage per Cursor session (context queries) | < 2,000 tokens per session |
+| Incident recurrence rate | -50% within 6 months |
+| Graph freshness (production namespace) | < 3 minutes from commit |
+| Environment conflict detection before staging push | > 80% of schema conflicts caught |
+| Team knowledge contributions per week | >= 1 incident/note per engineer |
 
 ---
 
-## 8. Roadmap
+## 8. Changelog
 
-### Phase 1: MVP (v0.1.0) - COMPLETED
-- Core indexing (Go, TS/JS, Python, Rust)
-- Basic dependency graph
-- CLI interface
-- MCP server (basic queries)
-- Documentation generation
-
-### Phase 2: Enhanced Features (v0.2.0) - COMPLETED
-- Pipeline information extraction
-- Documentation-structure mapping
-- Enhanced business logic tagging
-- Impact analysis improvements
-- Additional MCP tools
-- Web UI embedded
-- Terraform/CI-CD indexing
-
-### Phase 3: v2.0 Corrections + GitNexus (v0.3.0) - NEARLY COMPLETE
-- [DONE] Confidence scoring on relationships
-- [DONE] Pre-commit change detection
-- [DONE] Community detection
-- [DONE] Enhanced context tool
-- [PENDING] Multi-repo registry
-- [PENDING] MCP Resources
-- [PENDING] Cluster-level SKILL.md
-
-### Phase 3.5: AB Testing & Validation (v0.3.1) - IN PROGRESS
-- [IN PROGRESS] OpenCode token parsing for benchmark
-- [PENDING] Context correctness validation (precision/recall/F1)
-- [PENDING] CozoDB data store correctness tests
-- [PENDING] Token savings summary report
-
-### Phase 4: Advanced (v0.4.0) - FUTURE
-- Vector embeddings (local ONNX, zero API dependency)
-- Semantic search (hybrid keyword + semantic with RRF)
-- Cloud sync (optional)
-- Team features
-
-### Phase 4.5: Knowns-Inspired Features (v0.4.5) - FUTURE
-Inspired by [Knowns](https://github.com/knowns-dev/knowns):
-- [ ] Hybrid search with Reciprocal Rank Fusion (semantic + keyword)
-- [ ] Reference system (`@doc/`, `@task-` syntax) for traversable links
-- [ ] Local ONNX embeddings for zero-API semantic search
-- [ ] Memory layers: project/session/global context persistence
-- [ ] AST-enriched searchable content with relationship metadata
-- [ ] Expanded MCP tool surface (tasks, memory, validation)
+- v2.0 - Environment Namespacing & Incident Knowledge Layer
+  - FR-01 to FR-09: New functional requirements for v2
+  - Environment namespacing (production, staging, local)
+  - Incident data model and knowledge workflow
+  - Enhanced MCP tools with token budgets
+  - CLI commands for incident and knowledge management
+  - 3-tier retrieval (exact → fuzzy → semantic)
+  - Token budget enforcement on all MCP tools
+  - CI/CD GitHub Actions workflow template
+  - Team map and ownership lookup
 
 ---
 
-## 9. Non-Functional Requirements
-
-| Metric | Target | Status |
-|--------|--------|--------|
-| Cold start time | < 2 seconds | TBD |
-| Indexing speed | > 10,000 lines/second | TBD |
-| Query response time | < 100ms | TBD |
-| Memory usage (idle) | < 100MB | TBD |
-| Memory usage (indexing) | < 500MB | TBD |
-| detect_changes response time | < 2 seconds | TBD |
-| get_context enhanced response size | < 4000 tokens | TBD |
-
----
-
-## 10. Out of Scope
-
-The following features are explicitly out of scope:
-
-1. **Vector embeddings / semantic search** - Rule-based only (Phase 4)
-2. **Cloud sync** - Fully local
-3. **Multi-user / team features** - Single user only
-4. **Advanced authentication** - Local token only
-5. **Plugin system** - Future consideration
-6. **Enterprise integrations** - Future consideration
-7. **14 language support** - MVP focused: Go, TS/JS, Python, Rust
-8. **Browser-based WebAssembly UI** - LeanKG targets CLI + MCP use case
-9. **Symbol rename tool** - High complexity; better handled by AI agent
-10. **Raw Datalog query passthrough** - Security risk
-
----
-
-## 11. Glossary
-
-| Term | Definition |
-|------|------------|
-| Knowledge Graph | Graph structure storing entities and relationships from codebase |
-| Code Indexing | Process of parsing code and extracting structural information |
-| MCP Server | Model Context Protocol server for AI tool integration |
-| Context Window | AI model's input capacity; LeanKG minimizes tokens needed |
-| Business Logic Mapping | Linking code to business requirements |
-| Qualified Name | Natural node identifier: `file_path::parent::name` format |
-| Blast Radius | All files affected by a change within N hops |
-| Impact Radius | Same as blast radius |
-| Pipeline | CI/CD workflow definition parsed into knowledge graph |
-| Pipeline Stage | Named phase within a pipeline (build, test, deploy) |
-| Pipeline Step | Individual action within a stage |
-| Documentation Mapping | Linking documentation files to code elements |
-| Traceability | Chain linking requirements -> documentation -> code |
-| Confidence Score | Float 0.0-1.0 indicating edge reliability |
-| Severity Classification | WILL BREAK / LIKELY AFFECTED / MAY BE AFFECTED |
-| Cluster | Functional community of code elements |
-| Unresolved Call Edge | `calls` relationship with `__unresolved__` prefix |
-| Noise Call | Stdlib/trivial function excluded from graph |
-| Signature-Only Mode | Context output with only function signature line |
-| Datalog Injection | Security issue from unescaped user strings in queries |
-| RTK (Rust Token Killer) | CLI proxy that reduces LLM token consumption by 60-90% |
-| LeanKGCompressor | Internal compression module for LeanKG CLI commands |
-| Command Compression | Reducing CLI output tokens via regex patterns, grouping, truncation |
-| Hybrid Search | Search combining semantic (vector) + keyword matching |
-| RRF (Reciprocal Rank Fusion) | Ranking algorithm merging multiple result sets |
-| ONNX Runtime | Local neural network inference engine (no API keys needed) |
-| Memory Layers | Project/session/global context persistence across AI sessions |
-| Reference Syntax | `@doc/`, `@task-` syntax for traversable cross-entity links |
-
----
-
-## 12. References
-
-- CozoDB: https://github.com/cozodb/cozo
-- tree-sitter: https://tree-sitter.github.io/tree-sitter/
-- MCP Protocol: https://modelcontextprotocol.io/
-- GitNexus: https://github.com/abhigyanpatwari/GitNexus
-- Leiden Algorithm: https://en.wikipedia.org/wiki/Leiden_algorithm
-- Knowns: https://github.com/knowns-dev/knowns (local-first AI context layer, inspiration for hybrid search and memory layers)
-
----
-
-*Last updated: 2026-03-28*
+*Last updated: 2026-05-12*

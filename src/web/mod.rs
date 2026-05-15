@@ -187,6 +187,24 @@ pub struct ApiResponse<T> {
     pub error: Option<String>,
 }
 
+impl<T: serde::Serialize> ApiResponse<T> {
+    pub fn error(msg: &str) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(msg.to_string()),
+        }
+    }
+
+    pub fn success(data: T) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
+    }
+}
+
 impl<T: serde::Serialize> IntoResponse for ApiResponse<T> {
     fn into_response(self) -> Response {
         let status = if self.success {
@@ -318,6 +336,8 @@ pub async fn start_server(
         )
         .route("/api/github/clone", post(handlers::api_github_clone))
         .route("/api/file", get(handlers::api_get_file))
+        .route("/api/incidents", get(handlers::api_incidents))
+        .route("/api/conflicts", get(handlers::api_conflicts))
         .route("/services", get(handlers::services_page))
         .route("/*path", get(fallback_handler))
         .with_state(state);
