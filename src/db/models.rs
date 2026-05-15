@@ -132,7 +132,7 @@ impl RelationshipType {
             RelationshipType::ResolvedBy => "resolved_by",
             RelationshipType::ConflictsWith => "conflicts_with",
             RelationshipType::DeployedTo => "deployed_to",
-            RelationshipType::Supersedes => "supercedes",
+            RelationshipType::Supersedes => "supersedes",
         }
     }
 
@@ -199,7 +199,7 @@ impl RelationshipType {
             "resolved_by" => Some(RelationshipType::ResolvedBy),
             "conflicts_with" => Some(RelationshipType::ConflictsWith),
             "deployed_to" => Some(RelationshipType::DeployedTo),
-            "supercedes" => Some(RelationshipType::Supersedes),
+            "supersedes" | "supercedes" => Some(RelationshipType::Supersedes),
             _ => None,
         }
     }
@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(RelationshipType::ResolvedBy.as_str(), "resolved_by");
         assert_eq!(RelationshipType::ConflictsWith.as_str(), "conflicts_with");
         assert_eq!(RelationshipType::DeployedTo.as_str(), "deployed_to");
-        assert_eq!(RelationshipType::Supersedes.as_str(), "supercedes");
+        assert_eq!(RelationshipType::Supersedes.as_str(), "supersedes");
         assert_eq!(
             RelationshipType::from_str("caused_incident"),
             Some(RelationshipType::CausedIncident)
@@ -594,6 +594,10 @@ mod tests {
         assert_eq!(
             RelationshipType::from_str("deployed_to"),
             Some(RelationshipType::DeployedTo)
+        );
+        assert_eq!(
+            RelationshipType::from_str("supersedes"),
+            Some(RelationshipType::Supersedes)
         );
         assert_eq!(
             RelationshipType::from_str("supercedes"),

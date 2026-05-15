@@ -1412,7 +1412,7 @@ impl GraphEngine {
         element_qualified: &str,
     ) -> Result<Vec<DocLink>, Box<dyn std::error::Error>> {
         let normalized = normalize_path(element_qualified);
-        let query = r#"?[source_qualified, target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, metadata, confidence, _], (source_qualified = $sq1 or source_qualified = $sq2), rel_type = "documented_by""#;
+        let query = r#"?[source_qualified, target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], (source_qualified = $sq1 or source_qualified = $sq2), rel_type = "documented_by""#;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "sq1".to_string(),
@@ -1845,8 +1845,9 @@ impl GraphEngine {
         &self,
         name: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let safe_name = escape_datalog(&name.to_lowercase());
-        let cache_key = format!("search:name:{}", safe_name);
+        let lower_name = name.to_lowercase();
+        let safe_name = escape_datalog(&regex::escape(&lower_name));
+        let cache_key = format!("search:name:{}", lower_name);
 
         // Check cache first
         if let Some(cached) = self.cache.get_search(&cache_key) {
@@ -1939,7 +1940,7 @@ impl GraphEngine {
         pattern: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
         let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := 
-            *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], 
+            *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _],
             str_includes(lowercase(qualified_name), lowercase($pattern))"#;
 
         let mut params = std::collections::BTreeMap::new();
@@ -2144,7 +2145,8 @@ impl GraphEngine {
         element_type: Option<&str>,
         limit: usize,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let safe_name = escape_datalog(&name.to_lowercase());
+        let lower_name = name.to_lowercase();
+        let safe_name = escape_datalog(&regex::escape(&lower_name));
         let (filter_clause, has_type_filter) = match element_type {
             Some(t) => (format!(r#", element_type = "{}""#, escape_datalog(t)), true),
             None => (String::new(), false),
@@ -2665,16 +2667,17 @@ impl GraphEngine {
         let mut conditions = vec![format!("env = \"{}\"", escape_datalog(env))];
 
         if let Some(svc) = service {
+            let safe_svc = escape_datalog(&format!(".*{}.*", regex::escape(&svc.to_lowercase())));
             conditions.push(format!(
-                "contains(lowercase(affected_services), \"{}\")",
-                escape_datalog(&svc.to_lowercase())
+                "regex_matches(lowercase(affected_services), \"{}\")",
+                safe_svc
             ));
         }
 
         if let Some(pat) = pattern {
-            let safe_pat = escape_datalog(&pat.to_lowercase());
+            let safe_pat = escape_datalog(&format!(".*{}.*", regex::escape(&pat.to_lowercase())));
             conditions.push(format!(
-                "(contains(lowercase(title), \"{}\") or contains(lowercase(root_cause), \"{}\"))",
+                "(regex_matches(lowercase(title), \"{}\") or regex_matches(lowercase(root_cause), \"{}\"))",
                 safe_pat, safe_pat
             ));
         }
@@ -2777,8 +2780,8 @@ impl GraphEngine {
             .collect();
 
         let incidents_query = format!(
-            r#"?[id, resolved_at, title, occurred_at] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], contains(lowercase(affected_services), "{}"), env = "{}""#,
-            escape_datalog(&service.to_lowercase()),
+            r#"?[id, resolved_at, title, occurred_at] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], regex_matches(lowercase(affected_services), "{}"), env = "{}""#,
+            escape_datalog(&format!(".*{}.*", regex::escape(&service.to_lowercase()))),
             safe_env
         );
         let incidents_result = self

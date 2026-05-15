@@ -282,6 +282,29 @@ fn run_migrations(
         record_migration(db, "004_env_and_incidents", now)?;
     }
 
+    // Migration 005: Canonicalize graph schemas after experimental version columns.
+    //
+    // The Rust data model and query layer use env-scoped graph records with these
+    // arities. Some earlier migrations expanded code_elements with environment,
+    // branch, version_tag, and indexed_at columns, which makes existing query
+    // destructuring fail. Keep version/team metadata inside metadata JSON.
+    if !applied.contains("005_canonical_env_graph_schema") {
+        tracing::info!("Running migration 005_canonical_env_graph_schema...");
+        if existing_relations.contains("code_elements") {
+            let replace_code_elements = r#":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}"#;
+            if let Err(e) = db.run_script(replace_code_elements, Default::default()) {
+                tracing::warn!("Migration 005 code_elements replace failed: {:?}", e);
+            }
+        }
+        if existing_relations.contains("relationships") {
+            let replace_relationships = r#":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#;
+            if let Err(e) = db.run_script(replace_relationships, Default::default()) {
+                tracing::warn!("Migration 005 relationships replace failed: {:?}", e);
+            }
+        }
+        record_migration(db, "005_canonical_env_graph_schema", now)?;
+    }
+
     Ok(())
 }
 
@@ -306,7 +329,7 @@ fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
-            const EXPECTED_COLUMNS: usize = 16;
+            const EXPECTED_COLUMNS: usize = 12;
             if column_count != EXPECTED_COLUMNS {
                 eprintln!(
                     "WARNING: code_elements schema has {} columns, expected {}. \
@@ -327,7 +350,7 @@ fn validate_relationships_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
-            const EXPECTED_COLUMNS: usize = 9;
+            const EXPECTED_COLUMNS: usize = 6;
             if column_count != EXPECTED_COLUMNS {
                 eprintln!(
                     "WARNING: relationships schema has {} columns, expected {}. \

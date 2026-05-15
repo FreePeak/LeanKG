@@ -148,6 +148,14 @@ impl IntentParser {
             "affect",
             "affected",
             "affecting",
+            "where",
+            "defined",
+            "function",
+            "class",
+            "struct",
+            "enum",
+            "trait",
+            "impl",
             "file",
             "files",
         ];
@@ -222,6 +230,26 @@ impl IntentParser {
             }
         }
 
+        // Prefer explicit code-symbol phrases before generic module-name guesses.
+        let symbol_markers = ["function ", "class ", "struct ", "enum ", "trait ", "impl "];
+        for marker in &symbol_markers {
+            if let Some(pos) = text.find(marker) {
+                let start = pos + marker.len();
+                let rest = &text[start..];
+                let first_token_end = rest
+                    .find(|c: char| c.is_whitespace() || c == '(' || c == '{')
+                    .unwrap_or(rest.len());
+                let first_token =
+                    rest[..first_token_end].trim_matches(|c: char| c.is_ascii_punctuation());
+                if !first_token.is_empty()
+                    && first_token.len() > 1
+                    && !skip_words.contains(&first_token)
+                {
+                    return Some(first_token.to_string());
+                }
+            }
+        }
+
         // Try to find a module-like name (lowercase with underscores, e.g., "orchestrator", "cache_module")
         // This helps when user says "show me the orchestrator module" without a marker
         let words: Vec<&str> = text.split_whitespace().collect();
@@ -269,22 +297,6 @@ impl IntentParser {
                     || (cleaned.chars().all(|c| c.is_lowercase()) && cleaned.len() > 6)
                 {
                     return Some(cleaned.to_string());
-                }
-            }
-        }
-
-        // Try to extract identifier after function/class keywords
-        let func_markers = ["function ", "class ", "struct ", "enum ", "trait ", "impl "];
-        for marker in &func_markers {
-            if let Some(pos) = text.find(marker) {
-                let start = pos + marker.len();
-                let rest = &text[start..];
-                let first_token_end = rest
-                    .find(|c: char| c.is_whitespace() || c == '(' || c == '{')
-                    .unwrap_or(rest.len());
-                let first_token = &rest[..first_token_end];
-                if !first_token.is_empty() && first_token.len() > 1 {
-                    return Some(first_token.to_string());
                 }
             }
         }

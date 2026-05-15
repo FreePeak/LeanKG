@@ -346,13 +346,22 @@ impl ToolHandler {
 
     fn mcp_init(&self, args: &Value) -> Result<Value, String> {
         let path = args["path"].as_str().unwrap_or(".leankg");
+        let path_ref = std::path::Path::new(path);
 
-        std::fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))?;
+        if !path_ref.exists() || path_ref.is_dir() {
+            std::fs::create_dir_all(path_ref)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
 
         let config = crate::config::ProjectConfig::default();
         let config_yaml = serde_yaml::to_string(&config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        std::fs::write(std::path::Path::new(path).join("leankg.yaml"), config_yaml)
+        let config_path = if path_ref.is_file() {
+            std::path::PathBuf::from("leankg.yaml")
+        } else {
+            path_ref.join("leankg.yaml")
+        };
+        std::fs::write(config_path, config_yaml)
             .map_err(|e| format!("Failed to write config: {}", e))?;
 
         Ok(json!({
@@ -419,9 +428,19 @@ impl ToolHandler {
         let exclude = args["exclude"].as_str();
 
         let db_path = self.db_path.clone();
-        tokio::fs::create_dir_all(&db_path)
-            .await
-            .map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        if !db_path.exists() {
+            if let Some(parent) = db_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .map_err(|e| format!("Failed to create .leankg parent: {}", e))?;
+                }
+            }
+        } else if db_path.is_dir() {
+            tokio::fs::create_dir_all(&db_path)
+                .await
+                .map_err(|e| format!("Failed to create .leankg: {}", e))?;
+        }
 
         let exclude_patterns: Vec<String> = exclude
             .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
@@ -840,7 +859,7 @@ impl ToolHandler {
 
         let elements = self
             .graph_engine
-            .search_by_name_typed(pattern, element_type_filter.as_deref(), 50)
+            .all_elements()
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements

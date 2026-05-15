@@ -414,7 +414,7 @@ pub fn get_documented_by(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
-    let query = r#"?[target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, metadata, confidence, _], source_qualified = $sq, rel_type = "documented_by""#;
+    let query = r#"?[target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified = $sq, rel_type = "documented_by""#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
         "sq".to_string(),
@@ -1154,16 +1154,17 @@ pub fn query_incidents(
     if let Some(svc) = service {
         params.insert(
             "svc".to_string(),
-            serde_json::Value::String(format!("%{}%", svc)),
+            serde_json::Value::String(format!(".*{}.*", regex::escape(&svc.to_lowercase()))),
         );
-        conditions.push("contains(lowercase(affected_services), lowercase($svc))".to_string());
+        conditions.push("regex_matches(lowercase(affected_services), $svc)".to_string());
     }
     if let Some(pat) = pattern {
-        params.insert(
-            "pat".to_string(),
-            serde_json::Value::String(format!("%{}%", pat)),
+        let pattern = format!(".*{}.*", regex::escape(&pat.to_lowercase()));
+        params.insert("pat".to_string(), serde_json::Value::String(pattern));
+        conditions.push(
+            "(regex_matches(lowercase(title), $pat) or regex_matches(lowercase(root_cause), $pat))"
+                .to_string(),
         );
-        conditions.push("contains(lowercase(title), lowercase($pat))".to_string());
     }
     if let Some(e) = env {
         params.insert("env".to_string(), serde_json::Value::String(e.to_string()));

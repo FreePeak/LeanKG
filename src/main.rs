@@ -3151,11 +3151,11 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
     let graph_engine = graph::GraphEngine::new(db.clone());
 
     // Find conflicts_with relationships involving this service
-    let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "conflicts_with", (contains(lowercase(source_qualified), lowercase($svc)) || contains(lowercase(target_qualified), lowercase($svc)))"#;
+    let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "conflicts_with", (regex_matches(lowercase(source_qualified), $svc) or regex_matches(lowercase(target_qualified), $svc))"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
         "svc".to_string(),
-        serde_json::Value::String(service.to_string()),
+        serde_json::Value::String(format!(".*{}.*", regex::escape(&service.to_lowercase()))),
     );
 
     let mut found = false;

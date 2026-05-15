@@ -68,14 +68,34 @@ impl TokenBudget {
         }
 
         if value.is_object() {
-            // Take ownership of the object
             if let Value::Object(mut obj) = std::mem::replace(value, Value::Null) {
+                let mut truncated = false;
+                for child in obj.values_mut() {
+                    if child.is_array() || child.is_object() {
+                        truncated |= Self::truncate_value(child, max_tokens);
+                    }
+                }
+
                 let keys_to_remove: Vec<String> = obj
                     .keys()
                     .filter(|k| {
                         !matches!(
                             k.as_str(),
-                            "service" | "env" | "query" | "file" | "function" | "element" | "id"
+                            "service"
+                                | "env"
+                                | "query"
+                                | "file"
+                                | "function"
+                                | "element"
+                                | "id"
+                                | "results"
+                                | "incidents"
+                                | "conflicts"
+                                | "calls"
+                                | "called_by"
+                                | "open_incidents"
+                                | "recent_incidents"
+                                | "count"
                         )
                     })
                     .cloned()
@@ -86,9 +106,10 @@ impl TokenBudget {
                         break;
                     }
                     obj.remove(&key);
+                    truncated = true;
                 }
                 *value = Value::Object(obj);
-                return true;
+                return truncated;
             }
         }
 
@@ -129,5 +150,19 @@ mod tests {
         let result = TokenBudget::apply(v, "semantic_search");
         let budget = result.get("_token_budget").unwrap();
         assert!(budget.get("truncated").unwrap().as_bool().unwrap());
+        assert!(result.get("results").is_some());
+    }
+
+    #[test]
+    fn test_apply_preserves_primary_payload_key() {
+        let v = json!({
+            "query": "service lookup",
+            "results": vec![json!({"id": "1", "data": "x".repeat(500)}); 20],
+            "debug": "x".repeat(5000)
+        });
+        let result = TokenBudget::apply(v, "semantic_search");
+        assert!(result.get("query").is_some());
+        assert!(result.get("results").is_some());
+        assert!(result.get("debug").is_none());
     }
 }
