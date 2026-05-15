@@ -65,7 +65,7 @@ cozo = "0.2"
 notify = "7"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
-rmcp = { version = "1.2.0", features = ["server", "transport-io"] }
+rmcp = { version = "1.4.0", features = ["server", "transport-io"] }
 tree-sitter = "0.26"
 tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
