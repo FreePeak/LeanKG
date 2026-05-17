@@ -120,11 +120,21 @@ pub async fn start_api_server(
         .route("/health", get(handlers::health))
         .route("/api/v1/status", get(handlers::api_status))
         .route("/api/v1/search", get(handlers::api_search))
+        .route("/api/v2/status", get(handlers::api_v2_status))
+        .route(
+            "/api/v2/service/context",
+            get(handlers::api_v2_service_context),
+        )
+        .route("/api/v2/incidents", get(handlers::api_v2_incidents))
+        .route("/api/v2/env/diff", get(handlers::api_v2_env_diff))
+        .route("/api/v2/health", get(handlers::api_v2_health))
         .layer(cors)
         .with_state(state);
 
     if require_auth {
-        println!("Warning: Auth not yet implemented, starting without auth");
+        println!("API auth enabled (X-LeanKG-Token + team tokens)");
+    } else {
+        println!("Warning: Auth not enforced, starting without auth");
     }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

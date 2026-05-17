@@ -3,6 +3,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::api::{ApiResponse, ApiState};
 
@@ -125,4 +126,90 @@ pub async fn api_search(
         .collect();
 
     Ok(Json(ApiResponse::success(SearchResult { elements })))
+}
+
+pub async fn api_v2_status(State(state): State<ApiState>) -> Json<ApiResponse<Value>> {
+    let graph = match state.get_graph_engine().await {
+        Ok(g) => g,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+    };
+    let elements = graph.all_elements().unwrap_or_default();
+    let rels = graph.all_relationships().unwrap_or_default();
+    Json(ApiResponse::success(json!({
+        "total_elements": elements.len(),
+        "total_relationships": rels.len(),
+        "service": state.db_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+        "version": env!("CARGO_PKG_VERSION"),
+    })))
+}
+
+pub async fn api_v2_service_context(
+    State(state): State<ApiState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<ApiResponse<Value>> {
+    let graph = match state.get_graph_engine().await {
+        Ok(g) => g,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+    };
+    let service = params.get("service").map(|s| s.as_str()).unwrap_or("");
+    let env = params
+        .get("env")
+        .map(|s| s.as_str())
+        .unwrap_or("production");
+    match graph.get_service_context(service, env) {
+        Ok(ctx) => Json(ApiResponse::success(
+            serde_json::to_value(&ctx).unwrap_or_default(),
+        )),
+        Err(e) => Json(ApiResponse::error(&e)),
+    }
+}
+
+pub async fn api_v2_incidents(
+    State(state): State<ApiState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<ApiResponse<Value>> {
+    let db = match state.get_db() {
+        Ok(db) => db,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+    };
+    let service = params.get("service").map(|s| s.as_str());
+    let pattern = params.get("pattern").map(|s| s.as_str());
+    let env = params
+        .get("env")
+        .map(|s| s.as_str())
+        .unwrap_or("production");
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10);
+    match crate::db::query_incidents(&db, service, pattern, Some(env), limit) {
+        Ok(incidents) => Json(ApiResponse::success(
+            serde_json::to_value(&incidents).unwrap_or_default(),
+        )),
+        Err(e) => Json(ApiResponse::error(&e.to_string())),
+    }
+}
+
+pub async fn api_v2_env_diff(
+    State(state): State<ApiState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<ApiResponse<Value>> {
+    let graph = match state.get_graph_engine().await {
+        Ok(g) => g,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+    };
+    let service = params.get("service").map(|s| s.as_str()).unwrap_or("");
+    match graph.find_env_conflicts(service) {
+        Ok(conflicts) => Json(ApiResponse::success(
+            serde_json::to_value(&conflicts).unwrap_or_default(),
+        )),
+        Err(e) => Json(ApiResponse::error(&e)),
+    }
+}
+
+pub async fn api_v2_health(State(_state): State<ApiState>) -> Json<ApiResponse<Value>> {
+    Json(ApiResponse::success(json!({
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+    })))
 }

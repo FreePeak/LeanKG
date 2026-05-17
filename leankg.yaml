@@ -1,9 +1,12 @@
 project:
-  name: .leankg
-  root: ./src
+  name: my-project
+  root: .
   languages:
-  - javascript
-  - rust
+  - go
+  - typescript
+  - python
+  - java
+  - kotlin
 indexer:
   exclude:
   - '**/node_modules/**'
@@ -28,3 +31,7 @@ documentation:
   - agents
   - claude
 microservice: null
+auth:
+  enabled: false
+  provider: static
+  tokens: []

@@ -26,6 +26,15 @@ pub enum CLICommand {
         /// Verbose output
         #[arg(long, short)]
         verbose: bool,
+        /// Target environment (local, staging, production)
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// Service name for this index
+        #[arg(long)]
+        service_name: Option<String>,
+        /// Version tag for this index (semver or git sha)
+        #[arg(long)]
+        version: Option<String>,
     },
     /// Query the knowledge graph
     Query {
@@ -304,6 +313,30 @@ pub enum CLICommand {
         /// Service name
         #[arg(long)]
         service: String,
+    },
+    /// Push local graph deltas to a shared LeanKG server
+    Push {
+        /// Remote server URL (e.g., https://leankg.internal)
+        #[arg(long)]
+        remote: String,
+        /// Team token
+        #[arg(long)]
+        token: String,
+        /// Environment
+        #[arg(long, default_value = "local")]
+        env: String,
+    },
+    /// Pull latest graph state from a shared LeanKG server
+    Pull {
+        /// Remote server URL
+        #[arg(long)]
+        remote: String,
+        /// Team token
+        #[arg(long)]
+        token: String,
+        /// Environment to pull
+        #[arg(long, default_value = "production")]
+        env: String,
     },
 }
 

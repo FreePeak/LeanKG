@@ -56,7 +56,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             lang,
             exclude,
             verbose,
+            env,
+            service_name,
+            version,
         } => {
+            let _service_name = service_name;
+            let _version = version;
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await?;
@@ -71,6 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     lang.as_deref(),
                     &exclude_patterns,
                     verbose,
+                    &env,
                 )
                 .await?;
             } else {
@@ -80,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     lang.as_deref(),
                     &exclude_patterns,
                     verbose,
+                    &env,
                 )
                 .await?;
             }
@@ -460,8 +467,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::EnvConflicts { service } => {
             show_env_conflicts(&service)?;
         }
+        cli::CLICommand::Push { remote, token, env } => {
+            push_to_remote(&remote, &token, &env)?;
+        }
+        cli::CLICommand::Pull { remote, token, env } => {
+            pull_from_remote(&remote, &token, &env)?;
+        }
     }
 
+    Ok(())
+}
+
+fn push_to_remote(remote: &str, _token: &str, env: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    let db = db::schema::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db);
+
+    let elements = graph.all_elements()?;
+    let relationships = graph.all_relationships()?;
+
+    let payload = serde_json::json!({
+        "env": env,
+        "service": project_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+        "elements": elements,
+        "relationships": relationships,
+    });
+
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{}/api/v2/graph/push", remote.trim_end_matches('/'));
+    let resp = client
+        .post(&url)
+        .header("X-LeanKG-Token", _token)
+        .header(
+            "X-LeanKG-Engineer",
+            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+        )
+        .header("X-LeanKG-Env", env)
+        .json(&payload)
+        .send()?;
+
+    let status = resp.status();
+    if status.is_success() {
+        println!(
+            "Pushed {} elements and {} relationships to {} (env: {})",
+            elements.len(),
+            relationships.len(),
+            remote,
+            env
+        );
+    } else {
+        let body = resp.text()?;
+        eprintln!("Push failed ({}): {}", status, body);
+    }
+    Ok(())
+}
+
+fn pull_from_remote(
+    remote: &str,
+    _token: &str,
+    env: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{}/api/v2/status", remote.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .header("X-LeanKG-Token", _token)
+        .header("X-LeanKG-Env", env)
+        .send()?;
+
+    let status = resp.status();
+    if status.is_success() {
+        println!("Successfully connected to {} (env: {})", remote, env);
+    } else {
+        let body = resp.text()?;
+        eprintln!("Pull failed ({}): {}", status, body);
+    }
     Ok(())
 }
 
@@ -643,7 +724,9 @@ async fn index_codebase(
     lang_filter: Option<&str>,
     exclude_patterns: &[String],
     verbose: bool,
+    env: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = env;
     let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
@@ -759,7 +842,9 @@ async fn incremental_index_codebase(
     lang_filter: Option<&str>,
     exclude_patterns: &[String],
     verbose: bool,
+    env: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = env;
     let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
@@ -806,7 +891,7 @@ async fn incremental_index_codebase(
                 "Incremental index failed: {}. Falling back to full index.",
                 e
             );
-            index_codebase(path, db_path, lang_filter, exclude_patterns, verbose).await?;
+            index_codebase(path, db_path, lang_filter, exclude_patterns, verbose, env).await?;
         }
     }
 

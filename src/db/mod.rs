@@ -1032,6 +1032,7 @@ pub fn create_incident(
     db: &CozoDb,
     incident: &models::Incident,
 ) -> Result<models::Incident, Box<dyn std::error::Error>> {
+    validate_incident(incident)?;
     let query = r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] <- [[$id, $env, $title, $sev, $occ, $res_at, $rc, $res, $svc, $tp, $prev, $tags, $author, $tk]] :put incidents {id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket}"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
@@ -1108,6 +1109,51 @@ pub fn create_incident(
 
     db.run_script(query, params)?;
     Ok(incident.clone())
+}
+
+pub fn validate_incident(incident: &models::Incident) -> Result<(), Box<dyn std::error::Error>> {
+    if incident.title.trim().is_empty() {
+        return Err("Incident title is required".into());
+    }
+    if !matches!(incident.severity.as_str(), "P0" | "P1" | "P2" | "P3") {
+        return Err(format!(
+            "Invalid severity '{}': must be P0, P1, P2, or P3",
+            incident.severity
+        )
+        .into());
+    }
+    if incident.affected_services.is_empty() {
+        return Err("At least one affected service is required".into());
+    }
+    if incident.root_cause.trim().is_empty() {
+        return Err("Root cause is required".into());
+    }
+    if incident.resolution.trim().is_empty() {
+        return Err("Resolution is required".into());
+    }
+    if incident.occurred_at <= 0 {
+        return Err("occurred_at timestamp is required".into());
+    }
+    if incident.author.trim().is_empty() {
+        return Err("Author is required".into());
+    }
+    if let Some(ref ticket) = incident.linked_ticket {
+        if ticket.trim().is_empty() {
+            return Err("linked_ticket must not be empty if provided".into());
+        }
+        if !ticket.chars().any(|c| c == '-') && !ticket.starts_with('#') {
+            return Err("linked_ticket should include a project prefix (e.g., TICKET-123)".into());
+        }
+    }
+    if let Some(ref resolved_at) = incident.resolved_at {
+        if *resolved_at <= 0 {
+            return Err("resolved_at must be a positive timestamp".into());
+        }
+        if *resolved_at < incident.occurred_at {
+            return Err("resolved_at must be >= occurred_at".into());
+        }
+    }
+    Ok(())
 }
 
 pub fn get_incident(
@@ -1315,4 +1361,120 @@ fn row_to_relationship(row: &[serde_json::Value]) -> models::Relationship {
         metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
         env: row[5].as_str().unwrap_or("local").to_string(),
     }
+}
+
+pub fn upsert_service_metadata(db: &CozoDb, svc: &models::ServiceMetadata) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let query = r#"?[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at] <- [[$svc, $env, $team, $oncall, $repo, $lang, $health, $slo, $icount, $lastinc, $tags, $ver, $denvs, $cat, $uat]] :put service_metadata {service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at}"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "svc".into(),
+        serde_json::Value::String(svc.service_name.clone()),
+    );
+    params.insert("env".into(), serde_json::Value::String(svc.env.clone()));
+    params.insert(
+        "team".into(),
+        serde_json::Value::String(svc.team.clone().unwrap_or_default()),
+    );
+    params.insert(
+        "oncall".into(),
+        serde_json::Value::String(svc.on_call.clone().unwrap_or_default()),
+    );
+    params.insert(
+        "repo".into(),
+        serde_json::Value::String(svc.repo_url.clone().unwrap_or_default()),
+    );
+    params.insert(
+        "lang".into(),
+        serde_json::Value::String(svc.language.clone().unwrap_or_default()),
+    );
+    params.insert(
+        "health".into(),
+        serde_json::Value::String(svc.health_endpoint.clone().unwrap_or_default()),
+    );
+    params.insert(
+        "slo".into(),
+        serde_json::Value::Number((svc.slo_p99_ms.unwrap_or(0)).into()),
+    );
+    params.insert(
+        "icount".into(),
+        serde_json::Value::Number(svc.incident_count.into()),
+    );
+    params.insert(
+        "lastinc".into(),
+        serde_json::Value::Number(svc.last_incident.unwrap_or(0).into()),
+    );
+    params.insert("tags".into(), serde_json::Value::String(svc.tags.clone()));
+    params.insert(
+        "ver".into(),
+        serde_json::Value::String(svc.version.clone().unwrap_or_default()),
+    );
+    params.insert(
+        "denvs".into(),
+        serde_json::Value::String(svc.deploy_envs.clone()),
+    );
+    params.insert("cat".into(), serde_json::Value::Number(now.into()));
+    params.insert("uat".into(), serde_json::Value::Number(now.into()));
+    db.run_script(query, params)
+        .map_err(|e| format!("upsert_service_metadata: {}", e))?;
+    Ok(())
+}
+
+pub fn get_service_metadata(
+    db: &CozoDb,
+    service_name: &str,
+    env: &str,
+) -> Result<Option<models::ServiceMetadata>, String> {
+    let query = r#"?[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at] := *service_metadata{service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at}, service_name == $svc, env == $env"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "svc".into(),
+        serde_json::Value::String(service_name.to_string()),
+    );
+    params.insert("env".into(), serde_json::Value::String(env.to_string()));
+    let result = db
+        .run_script(query, params)
+        .map_err(|e| format!("get_service_metadata: {}", e))?;
+    if result.rows.is_empty() {
+        return Ok(None);
+    }
+    let row = &result.rows[0];
+    Ok(Some(models::ServiceMetadata {
+        service_name: row[0].as_str().unwrap_or("").to_string(),
+        env: row[1].as_str().unwrap_or("local").to_string(),
+        team: row[2]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        on_call: row[3]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        repo_url: row[4]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        language: row[5]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        health_endpoint: row[6]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        slo_p99_ms: row[7].as_i64().map(|v| v as i32),
+        incident_count: row[8].as_i64().unwrap_or(0) as i32,
+        last_incident: row[9].as_i64(),
+        tags: row[10].as_str().unwrap_or("").to_string(),
+        version: row[11]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        deploy_envs: row[12].as_str().unwrap_or("").to_string(),
+        created_at: row[13].as_i64().unwrap_or(0),
+        updated_at: row[14].as_i64().unwrap_or(0),
+    }))
 }

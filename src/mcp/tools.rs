@@ -27,7 +27,10 @@ impl ToolRegistry {
                         "path": {"type": "string", "description": "Path to index (default: current directory)"},
                         "incremental": {"type": "boolean", "description": "Only index changed files (git-based)"},
                         "lang": {"type": "string", "description": "Filter by language (e.g., go,ts,py,rs,kt)"},
-                        "exclude": {"type": "string", "description": "Exclude patterns (comma-separated)"}
+                        "exclude": {"type": "string", "description": "Exclude patterns (comma-separated)"},
+                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Target environment for this index"},
+                        "service_name": {"type": "string", "description": "Service name for this index"},
+                        "version": {"type": "string", "description": "Version tag (semver or git sha)"}
                     },
                     "required": []
                 }),
@@ -720,6 +723,17 @@ impl ToolRegistry {
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "wake_up".to_string(),
+                description: "Load minimal project context (~170 tokens) for session start. Returns project identity (L0: name, languages, top directories) and critical facts (L1: module map, critical dependencies, recent hotspots). Cached in .leankg/wake_up.txt and regenerated on re-index.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": []
                 }),
             },
         ]
