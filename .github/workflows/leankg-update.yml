@@ -1,0 +1,45 @@
+name: Update LeanKG on Release
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  update-graph:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build LeanKG
+        run: cargo build --release
+
+      - name: Index and push to LeanKG server
+        env:
+          LEANKG_TOKEN: ${{ secrets.LEANKG_TOKEN }}
+          LEANKG_HOST: ${{ vars.LEANKG_HOST || 'https://leankg.internal' }}
+          LEANKG_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+        run: |
+          SERVICE_NAME="${{ github.event.repository.name }}"
+          VERSION="${{ github.sha }}"
+
+          echo "Indexing $SERVICE_NAME (env: $LEANKG_ENV, version: $VERSION)"
+
+          ./target/release/leankg index ./src \
+            --env "$LEANKG_ENV" \
+            --service-name "$SERVICE_NAME" \
+            --version "$VERSION"
+
+          if [ -n "$LEANKG_TOKEN" ]; then
+            echo "Pushing to $LEANKG_HOST..."
+            ./target/release/leankg push \
+              --remote "$LEANKG_HOST" \
+              --token "$LEANKG_TOKEN" \
+              --env "$LEANKG_ENV"
+          else
+            echo "LEANKG_TOKEN not set, skipping push"
+          fi
