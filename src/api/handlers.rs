@@ -213,3 +213,98 @@ pub async fn api_v2_health(State(_state): State<ApiState>) -> Json<ApiResponse<V
         "version": env!("CARGO_PKG_VERSION"),
     })))
 }
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    pub element: Option<String>,
+    pub from: Option<i64>,
+    pub to: Option<i64>,
+    pub env: Option<String>,
+    pub limit: Option<usize>,
+}
+
+pub async fn api_v2_history(
+    State(state): State<ApiState>,
+    Query(params): Query<HistoryQuery>,
+) -> Json<ApiResponse<Value>> {
+    let db = match state.get_db() {
+        Ok(db) => db,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+    };
+    let limit = params.limit.unwrap_or(100);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let from_time = params.from.unwrap_or(0);
+    let to_time = params.to.unwrap_or(now);
+    let env = params.env.clone();
+
+    match crate::db::query_change_history(&db, params.element, from_time, to_time, env, limit) {
+        Ok(changes) => {
+            let entries: Vec<_> = changes
+                .iter()
+                .map(|c| {
+                    json!({
+                        "element_qualified": c.element_qualified,
+                        "change_type": c.change_type,
+                        "description": c.description,
+                        "valid_from": c.valid_from,
+                        "valid_to": c.valid_to,
+                        "created_at": c.created_at,
+                        "env": c.env,
+                        "file_path": c.file_path,
+                    })
+                })
+                .collect();
+            Json(ApiResponse::success(json!({
+                "entries": entries,
+                "total_count": entries.len(),
+            })))
+        }
+        Err(e) => Json(ApiResponse::error(&e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SnapshotQuery {
+    pub element: Option<String>,
+    pub as_of: Option<i64>,
+    pub env: Option<String>,
+}
+
+pub async fn api_v2_snapshot(
+    State(state): State<ApiState>,
+    Query(params): Query<SnapshotQuery>,
+) -> Json<ApiResponse<Value>> {
+    let db = match state.get_db() {
+        Ok(db) => db,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let as_of_time = params.as_of.unwrap_or(now);
+    let env = params.env.unwrap_or_else(|| "local".to_string());
+
+    if let Some(elem) = params.element {
+        match crate::db::query_element_snapshot(&db, &elem, as_of_time, &env) {
+            Ok(elements) => Json(ApiResponse::success(json!({
+                "elements": elements,
+                "as_of_time": as_of_time,
+                "env": env,
+            }))),
+            Err(e) => Json(ApiResponse::error(&e.to_string())),
+        }
+    } else {
+        match crate::db::query_all_snapshots(&db, as_of_time, &env) {
+            Ok(elements) => Json(ApiResponse::success(json!({
+                "elements": elements,
+                "as_of_time": as_of_time,
+                "env": env,
+            }))),
+            Err(e) => Json(ApiResponse::error(&e.to_string())),
+        }
+    }
+}

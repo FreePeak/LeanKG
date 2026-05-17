@@ -229,12 +229,22 @@ pub struct CodeElement {
     pub metadata: serde_json::Value,
     #[serde(default = "default_env_local")]
     pub env: String,
+    /// Bi-temporal: valid from timestamp (inclusive)
+    #[serde(default)]
+    pub valid_from: i64,
+    /// Bi-temporal: valid to timestamp (exclusive, 0 = infinity)
+    #[serde(default)]
+    pub valid_to: i64,
+    /// Record creation timestamp
+    #[serde(default)]
+    pub created_at: i64,
+    /// Record last update timestamp
+    #[serde(default)]
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Relationship {
-    #[serde(skip)]
-    #[allow(dead_code)]
     pub id: Option<String>,
     pub source_qualified: String,
     pub target_qualified: String,
@@ -243,6 +253,120 @@ pub struct Relationship {
     pub metadata: serde_json::Value,
     #[serde(default = "default_env_local")]
     pub env: String,
+    /// Bi-temporal: valid from timestamp (inclusive)
+    #[serde(default)]
+    pub valid_from: i64,
+    /// Bi-temporal: valid to timestamp (exclusive, 0 = infinity)
+    #[serde(default)]
+    pub valid_to: i64,
+    /// Record creation timestamp
+    #[serde(default)]
+    pub created_at: i64,
+    /// Record last update timestamp
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
+/// Change event types for temporal tracking
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ChangeEventType {
+    Created,
+    Updated,
+    Deleted,
+    Moved,
+    Renamed,
+}
+
+impl ChangeEventType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChangeEventType::Created => "created",
+            ChangeEventType::Updated => "updated",
+            ChangeEventType::Deleted => "deleted",
+            ChangeEventType::Moved => "moved",
+            ChangeEventType::Renamed => "renamed",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "created" => Some(ChangeEventType::Created),
+            "updated" => Some(ChangeEventType::Updated),
+            "deleted" => Some(ChangeEventType::Deleted),
+            "moved" => Some(ChangeEventType::Moved),
+            "renamed" => Some(ChangeEventType::Renamed),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ChangeEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Change event for tracking code element changes over time
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChangeEvent {
+    pub id: String,
+    pub element_qualified: String,
+    pub change_type: String,
+    pub description: String,
+    pub file_path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub language: String,
+    /// Environment where change occurred
+    #[serde(default = "default_env_local")]
+    pub env: String,
+    /// Transaction time: when the record was created in the database
+    pub created_at: i64,
+    /// Valid time: when the change actually occurred in reality
+    pub valid_from: i64,
+    /// Valid time end (exclusive, 0 = infinity)
+    pub valid_to: i64,
+    /// Optional previous qualified name for renames/moves
+    pub previous_qualified: Option<String>,
+    /// Optional git commit SHA
+    pub commit_sha: Option<String>,
+    /// Optional author
+    pub author: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotRequest {
+    pub element_qualified: Option<String>,
+    pub as_of_time: i64,
+    pub env: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryRequest {
+    pub element_qualified: Option<String>,
+    pub from_time: Option<i64>,
+    pub to_time: Option<i64>,
+    pub env: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub element_qualified: String,
+    pub change_type: String,
+    pub description: String,
+    pub valid_from: i64,
+    pub valid_to: i64,
+    pub created_at: i64,
+    pub env: String,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryResponse {
+    pub entries: Vec<HistoryEntry>,
+    pub total_count: usize,
 }
 
 /// Information about a dependency (import)
