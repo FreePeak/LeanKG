@@ -1126,7 +1126,7 @@ pub fn generate_physical_structure(
 
                     elements.push(CodeElement {
                         qualified_name: current_str.to_string(),
-                        element_type: "Folder".to_string(),
+                        element_type: "directory".to_string(),
                         name: dir_name,
                         file_path: current_str.to_string(),
                         ..Default::default()
@@ -1173,7 +1173,82 @@ pub fn generate_physical_structure(
         }
     }
 
+    populate_directory_metadata(&mut elements, files);
+
     (elements, relationships)
+}
+
+fn populate_directory_metadata(elements: &mut [CodeElement], files: &[String]) {
+    use std::collections::HashMap;
+
+    let mut dir_children: HashMap<String, usize> = HashMap::new();
+    let mut dir_langs: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut dir_lines: HashMap<String, usize> = HashMap::new();
+
+    for file_path in files {
+        let lang = file_path
+            .rsplit('.')
+            .next()
+            .map(|ext| ext.to_lowercase())
+            .unwrap_or_default();
+
+        let line_count = std::fs::read_to_string(file_path)
+            .map(|c| c.lines().count())
+            .unwrap_or(0);
+
+        if let Some(parent) = std::path::Path::new(file_path).parent() {
+            let parent_str = parent.to_string_lossy().into_owned();
+            *dir_children.entry(parent_str.clone()).or_insert(0) += 1;
+            *dir_lines.entry(parent_str.clone()).or_insert(0) += line_count;
+            dir_langs
+                .entry(parent_str.clone())
+                .or_default()
+                .entry(lang.clone())
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
+
+            let mut ancestor = parent.parent();
+            while let Some(a) = ancestor {
+                if a.as_os_str().is_empty() {
+                    break;
+                }
+                let a_str = a.to_string_lossy().into_owned();
+                *dir_children.entry(a_str.clone()).or_insert(0) += 1;
+                *dir_lines.entry(a_str.clone()).or_insert(0) += line_count;
+                dir_langs
+                    .entry(a_str)
+                    .or_default()
+                    .entry(lang.clone())
+                    .and_modify(|c| *c += 1)
+                    .or_insert(1);
+
+                ancestor = a.parent();
+            }
+        }
+    }
+
+    for elem in elements.iter_mut() {
+        if elem.element_type != "directory" {
+            continue;
+        }
+        let child_count = dir_children.get(&elem.qualified_name).copied().unwrap_or(0);
+        let total_lines = dir_lines.get(&elem.qualified_name).copied().unwrap_or(0);
+
+        let lang_dist: serde_json::Map<String, serde_json::Value> = dir_langs
+            .get(&elem.qualified_name)
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::Number((*v).into())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        elem.metadata = serde_json::json!({
+            "child_count": child_count,
+            "total_lines": total_lines,
+            "language_distribution": lang_dist,
+        });
+    }
 }
 
 pub fn resolve_call_edges_inline(elements: &mut [CodeElement], relationships: &mut [Relationship]) {

@@ -168,6 +168,23 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     // Run migrations for schema evolution
     run_migrations(db, &existing_relations)?;
 
+    // Create service_metadata table if not exists (idempotent via migration)
+    if !existing_relations.contains("service_metadata") {
+        let create_svc = r#":create service_metadata {service_name: String, env: String default 'local', team: String?, on_call: String?, repo_url: String?, language: String?, health_endpoint: String?, slo_p99_ms: Int?, incident_count: Int, last_incident: Int?, tags: String, version: String?, deploy_envs: String, created_at: Int, updated_at: Int}"#;
+        if let Err(e) = db.run_script(create_svc, Default::default()) {
+            tracing::warn!("Failed to create service_metadata: {:?}", e);
+        }
+        let svc_indexes = [
+            r#":create service_metadata::svc_name_index {ref: (service_name), compressed: true}"#,
+            r#":create service_metadata::svc_env_index {ref: (env), compressed: true}"#,
+        ];
+        for idx in &svc_indexes {
+            if let Err(e) = db.run_script(idx, Default::default()) {
+                tracing::debug!("service_metadata index note: {:?}", e);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -223,88 +240,149 @@ fn run_migrations(
         record_migration(db, "001_knowledge_entries", now)?;
     }
 
-    // Migration 002: Add version columns to code_elements
-    if !applied.contains("002_code_elements_versioning") {
-        tracing::info!("Running migration 002_code_elements_versioning...");
-        // Only apply if the table already existed (new tables get these columns at creation)
-        if existing_relations.contains("code_elements") {
-            let replace_code_elements = r#":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, environment: String default 'production', branch: String? default null, version_tag: String? default null, indexed_at: Int default 0}"#;
-            if let Err(e) = db.run_script(replace_code_elements, Default::default()) {
-                tracing::warn!("Migration 002 code_elements replace failed: {:?}", e);
-            }
-        }
-        record_migration(db, "002_code_elements_versioning", now)?;
+    // Migration 002-005 have been consolidated into migration 006.
+    // The old migration IDs are recorded as applied to skip the stacked
+    // :replace chain that caused schema drift (environment vs env columns).
+    mark_legacy_migrations_as_applied(db, &applied, now)?;
+
+    // Migration 006: Safe canonical schema repair for code_elements and
+    // relationships, plus incident table creation. Replaces the old 002-005
+    // stacked :replace chain. This migration is idempotent: it inspects the
+    // current column count and only performs a :replace when the schema
+    // does not match the canonical 12-column (code_elements) or 6-column
+    // (relationships) layout. Non-matching schemas (e.g. with extra
+    // environment/branch/version_tag columns from old partial migrations)
+    // are repaired to the canonical form.
+    if !applied.contains("006_safe_canonical_schema_repair") {
+        tracing::info!("Running migration 006_safe_canonical_schema_repair...");
+        repair_canonical_schema(db, existing_relations)?;
+        record_migration(db, "006_safe_canonical_schema_repair", now)?;
     }
 
-    // Migration 003: Add version columns to business_logic
-    if !applied.contains("003_business_logic_versioning") {
-        tracing::info!("Running migration 003_business_logic_versioning...");
-        if existing_relations.contains("business_logic") {
-            let replace_bl = r#":replace business_logic {element_qualified: String, description: String, user_story_id: String?, feature_id: String?, environment: String default 'production', branch: String? default null, author: String default '', updated_at: Int default 0}"#;
-            if let Err(e) = db.run_script(replace_bl, Default::default()) {
-                tracing::warn!("Migration 003 business_logic replace failed: {:?}", e);
-            }
-        }
-        record_migration(db, "003_business_logic_versioning", now)?;
-    }
+    Ok(())
+}
 
-    // Migration 004: Add env column and incidents table
-    if !applied.contains("004_env_and_incidents") {
-        tracing::info!("Running migration 004_env_and_incidents...");
-        if existing_relations.contains("code_elements") {
-            let replace_code_elements = r#":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, environment: String default 'production', branch: String? default null, version_tag: String? default null, indexed_at: Int default 0, env: String default 'local'}"#;
-            if let Err(e) = db.run_script(replace_code_elements, Default::default()) {
-                tracing::warn!("Migration 004 code_elements replace failed: {:?}", e);
-            }
+fn mark_legacy_migrations_as_applied(
+    db: &CozoDb,
+    applied: &std::collections::HashSet<String>,
+    now: i64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let legacy_ids = [
+        "002_code_elements_versioning",
+        "003_business_logic_versioning",
+        "004_env_and_incidents",
+        "005_canonical_env_graph_schema",
+    ];
+    for id in &legacy_ids {
+        if !applied.contains(*id) {
+            record_migration(db, id, now)?;
         }
-        if existing_relations.contains("relationships") {
-            let replace_rel = r#":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#;
-            if let Err(e) = db.run_script(replace_rel, Default::default()) {
-                tracing::warn!("Migration 004 relationships replace failed: {:?}", e);
-            }
-        }
-        // Create incidents table
-        let create_incidents = r#":create incidents {id: String, env: String, title: String, severity: String, occurred_at: Int, resolved_at: Int?, root_cause: String, resolution: String, affected_services: String, trigger_pattern: String?, prevention: String?, tags: String, author: String, linked_ticket: String?}"#;
-        if let Err(e) = db.run_script(create_incidents, Default::default()) {
-            tracing::warn!("Migration 004 incidents create failed: {:?}", e);
-        }
-        // Create indexes
-        let incident_indexes = [
-            r#":create incidents::env_index {ref: (env), compressed: true}"#,
-            r#":create incidents::severity_index {ref: (severity), compressed: true}"#,
-            r#":create incidents::author_index {ref: (author), compressed: true}"#,
-        ];
-        for idx in &incident_indexes {
-            if let Err(e) = db.run_script(idx, Default::default()) {
-                tracing::debug!("Incident index creation note: {:?}", e);
-            }
-        }
-        record_migration(db, "004_env_and_incidents", now)?;
     }
+    Ok(())
+}
 
-    // Migration 005: Canonicalize graph schemas after experimental version columns.
-    //
-    // The Rust data model and query layer use env-scoped graph records with these
-    // arities. Some earlier migrations expanded code_elements with environment,
-    // branch, version_tag, and indexed_at columns, which makes existing query
-    // destructuring fail. Keep version/team metadata inside metadata JSON.
-    if !applied.contains("005_canonical_env_graph_schema") {
-        tracing::info!("Running migration 005_canonical_env_graph_schema...");
-        if existing_relations.contains("code_elements") {
-            let replace_code_elements = r#":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}"#;
-            if let Err(e) = db.run_script(replace_code_elements, Default::default()) {
-                tracing::warn!("Migration 005 code_elements replace failed: {:?}", e);
-            }
-        }
-        if existing_relations.contains("relationships") {
-            let replace_relationships = r#":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#;
-            if let Err(e) = db.run_script(replace_relationships, Default::default()) {
-                tracing::warn!("Migration 005 relationships replace failed: {:?}", e);
-            }
-        }
-        record_migration(db, "005_canonical_env_graph_schema", now)?;
+fn repair_canonical_schema(
+    db: &CozoDb,
+    existing_relations: &std::collections::HashSet<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = ensure_canonical_code_elements(db, existing_relations) {
+        tracing::warn!("code_elements canonical repair failed: {:?}", e);
     }
+    if let Err(e) = ensure_canonical_relationships(db, existing_relations) {
+        tracing::warn!("relationships canonical repair failed: {:?}", e);
+    }
+    if let Err(e) = ensure_incidents_table(db) {
+        tracing::warn!("incidents table creation failed: {:?}", e);
+    }
+    Ok(())
+}
 
+const CANONICAL_CODE_ELEMENTS: &str = ":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}";
+const CANONICAL_RELATIONSHIPS: &str = ":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}";
+
+fn get_column_count(db: &CozoDb, relation: &str) -> usize {
+    let query = format!(":schema {}", relation);
+    db.run_script(&query, Default::default())
+        .map(|r| r.rows.len())
+        .unwrap_or(0)
+}
+
+fn ensure_canonical_code_elements(
+    db: &CozoDb,
+    existing_relations: &std::collections::HashSet<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !existing_relations.contains("code_elements") {
+        return Ok(());
+    }
+    const EXPECTED: usize = 12;
+    let current = get_column_count(db, "code_elements");
+    if current == EXPECTED {
+        tracing::info!(
+            "code_elements schema already canonical ({} columns), skipping replace",
+            current
+        );
+        return Ok(());
+    }
+    tracing::info!(
+        "code_elements schema has {} columns (expected {}), applying canonical :replace",
+        current,
+        EXPECTED
+    );
+    db.run_script(CANONICAL_CODE_ELEMENTS, Default::default())?;
+    tracing::info!("code_elements :replace successful");
+    Ok(())
+}
+
+fn ensure_canonical_relationships(
+    db: &CozoDb,
+    existing_relations: &std::collections::HashSet<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !existing_relations.contains("relationships") {
+        return Ok(());
+    }
+    const EXPECTED: usize = 6;
+    let current = get_column_count(db, "relationships");
+    if current == EXPECTED {
+        tracing::info!(
+            "relationships schema already canonical ({} columns), skipping replace",
+            current
+        );
+        return Ok(());
+    }
+    tracing::info!(
+        "relationships schema has {} columns (expected {}), applying canonical :replace",
+        current,
+        EXPECTED
+    );
+    db.run_script(CANONICAL_RELATIONSHIPS, Default::default())?;
+    tracing::info!("relationships :replace successful");
+    Ok(())
+}
+
+fn ensure_incidents_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
+    let existing = db
+        .run_script("::relations", Default::default())
+        .map(|r| {
+            r.rows
+                .iter()
+                .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+    if existing.contains("incidents") {
+        return Ok(());
+    }
+    let create_incidents = r#":create incidents {id: String, env: String, title: String, severity: String, occurred_at: Int, resolved_at: Int?, root_cause: String, resolution: String, affected_services: String, trigger_pattern: String?, prevention: String?, tags: String, author: String, linked_ticket: String?}"#;
+    db.run_script(create_incidents, Default::default())?;
+    for idx in &[
+        r#":create incidents::env_index {ref: (env), compressed: true}"#,
+        r#":create incidents::severity_index {ref: (severity), compressed: true}"#,
+        r#":create incidents::author_index {ref: (author), compressed: true}"#,
+    ] {
+        if let Err(e) = db.run_script(idx, Default::default()) {
+            tracing::debug!("Incident index note: {:?}", e);
+        }
+    }
     Ok(())
 }
 

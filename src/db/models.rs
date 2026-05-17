@@ -494,6 +494,26 @@ pub struct AuthContext {
     pub role: Role,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServiceMetadata {
+    pub service_name: String,
+    #[serde(default = "default_env_local")]
+    pub env: String,
+    pub team: Option<String>,
+    pub on_call: Option<String>,
+    pub repo_url: Option<String>,
+    pub language: Option<String>,
+    pub health_endpoint: Option<String>,
+    pub slo_p99_ms: Option<i32>,
+    pub incident_count: i32,
+    pub last_incident: Option<i64>,
+    pub tags: String,
+    pub version: Option<String>,
+    pub deploy_envs: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -173,6 +173,7 @@ impl ToolHandler {
             "search_code" => self.search_code(arguments),
             "search_annotations" => self.search_annotations(arguments),
             "semantic_search" => self.semantic_search(arguments),
+            "wake_up" => self.wake_up(arguments),
             "generate_doc" => self.generate_doc(arguments),
             "find_large_functions" => self.find_large_functions(arguments),
             "get_tested_by" => self.get_tested_by(arguments),
@@ -426,6 +427,11 @@ impl ToolHandler {
         let _incremental = args["incremental"].as_bool().unwrap_or(false);
         let lang = args["lang"].as_str();
         let exclude = args["exclude"].as_str();
+        let env = args["env"].as_str().unwrap_or("local");
+        let _service_name = args["service_name"].as_str();
+        let _version = args["version"].as_str();
+
+        let _ = env;
 
         let db_path = self.db_path.clone();
         if !db_path.exists() {
@@ -2523,10 +2529,48 @@ impl ToolHandler {
             "service": context.service,
             "env": context.env,
             "version": context.version,
+            "team": context.team,
+            "on_call": context.on_call,
+            "repo_url": context.repo_url,
+            "language": context.language,
             "calls": context.calls,
             "called_by": context.called_by,
+            "schemas": context.schemas,
             "open_incidents": context.open_incidents,
             "recent_incidents": context.recent_incidents,
+            "last_incident": context.last_incident,
+            "known_risks": context.known_risks,
+        }))
+    }
+
+    fn wake_up(&self, args: &Value) -> Result<Value, String> {
+        let project_path = args["project"].as_str().unwrap_or(".");
+        let cache_path = std::path::Path::new(project_path)
+            .join(".leankg")
+            .join("wake_up.txt");
+
+        if let Ok(cached) = std::fs::read_to_string(&cache_path) {
+            if !cached.trim().is_empty() {
+                return Ok(json!({
+                    "context": cached,
+                    "source": "cache",
+                }));
+            }
+        }
+
+        let summary = self
+            .graph_engine
+            .wake_up_summary()
+            .unwrap_or_else(|e| format!("LeanKG project (context generation error: {})", e));
+
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&cache_path, &summary);
+
+        Ok(json!({
+            "context": summary,
+            "source": "generated",
         }))
     }
 }

@@ -2751,6 +2751,8 @@ impl GraphEngine {
             None
         };
 
+        let (team, on_call, repo_url, language) = self.get_service_metadata_fields(service, env);
+
         let outgoing_query = format!(
             r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], source_qualified = "{}", env = "{}", (rel_type = "calls" or rel_type = "service_calls")"#,
             safe_service, safe_env
@@ -2779,8 +2781,24 @@ impl GraphEngine {
             .filter_map(|r| r[0].as_str().map(String::from))
             .collect();
 
+        let service_prefix = format!("./{}", service);
+        let schemas_query = format!(
+            r#"?[name] := *code_elements[name, element_type, qualified_name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], starts_with(file_path, "{}"), regex_matches(element_type, "(schema|protobuf|proto|openapi|json_schema|avro|sql_table|event|topic|config")"#,
+            escape_datalog(&service_prefix)
+        );
+        let schemas: Vec<String> = self
+            .db
+            .run_script(&schemas_query, std::collections::BTreeMap::new())
+            .map(|r| {
+                r.rows
+                    .iter()
+                    .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let incidents_query = format!(
-            r#"?[id, resolved_at, title, occurred_at] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], regex_matches(lowercase(affected_services), "{}"), env = "{}""#,
+            r#"?[id, resolved_at, title, occurred_at, prevention, root_cause] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], regex_matches(lowercase(affected_services), "{}"), env = "{}""#,
             escape_datalog(&format!(".*{}.*", regex::escape(&service.to_lowercase()))),
             safe_env
         );
@@ -2805,17 +2823,74 @@ impl GraphEngine {
             })
             .collect();
         recent.sort_by_key(|b| std::cmp::Reverse(b.0));
-        let recent_incidents: Vec<String> = recent.into_iter().take(3).map(|(_, t)| t).collect();
+        let recent_incidents: Vec<String> = recent.iter().take(3).map(|(_, t)| t.clone()).collect();
+
+        let last_incident = recent.first().map(|(ts, t)| format!("{}: {}", ts, t));
+
+        let known_risks: Vec<String> = incidents_result
+            .rows
+            .iter()
+            .filter_map(|r| {
+                let prevention = r[4].as_str()?;
+                if prevention.is_empty() {
+                    None
+                } else {
+                    let root = r[5].as_str().unwrap_or("");
+                    Some(format!("{} (root: {})", prevention, root))
+                }
+            })
+            .take(5)
+            .collect();
 
         Ok(ServiceContext {
             service: service.to_string(),
             env: env.to_string(),
             version,
+            team,
+            on_call,
+            repo_url,
+            language,
             calls,
             called_by,
+            schemas,
             open_incidents,
             recent_incidents,
+            last_incident,
+            known_risks,
         })
+    }
+
+    fn get_service_metadata_fields(
+        &self,
+        service: &str,
+        env: &str,
+    ) -> (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) {
+        let query = format!(
+            r#"?[team, on_call, repo_url, language] := *service_metadata[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at], service_name = "{}", env = "{}""#,
+            escape_datalog(service),
+            escape_datalog(env)
+        );
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())
+            .ok();
+        result
+            .and_then(|r| {
+                r.rows.first().map(|row| {
+                    (
+                        row[0].as_str().filter(|s| !s.is_empty()).map(String::from),
+                        row[1].as_str().filter(|s| !s.is_empty()).map(String::from),
+                        row[2].as_str().filter(|s| !s.is_empty()).map(String::from),
+                        row[3].as_str().filter(|s| !s.is_empty()).map(String::from),
+                    )
+                })
+            })
+            .unwrap_or((None, None, None, None))
     }
 
     pub fn find_env_conflicts(&self, service: &str) -> Result<Vec<EnvConflict>, String> {
@@ -2921,10 +2996,17 @@ pub struct ServiceContext {
     pub service: String,
     pub env: String,
     pub version: Option<String>,
+    pub team: Option<String>,
+    pub on_call: Option<String>,
+    pub repo_url: Option<String>,
+    pub language: Option<String>,
     pub calls: Vec<String>,
     pub called_by: Vec<String>,
+    pub schemas: Vec<String>,
     pub open_incidents: i64,
     pub recent_incidents: Vec<String>,
+    pub last_incident: Option<String>,
+    pub known_risks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2960,6 +3042,75 @@ pub struct ServiceGraph {
     pub current_service: String,
     pub total_services: usize,
     pub total_connections: usize,
+}
+
+impl GraphEngine {
+    pub fn wake_up_summary(&self) -> Result<String, String> {
+        let elements = self.all_elements().map_err(|e| e.to_string())?;
+
+        let total = elements.len();
+        let file_count = elements.iter().filter(|e| e.element_type == "File").count();
+        let func_count = elements
+            .iter()
+            .filter(|e| e.element_type == "function")
+            .count();
+        let class_count = elements
+            .iter()
+            .filter(|e| e.element_type == "class" || e.element_type == "struct")
+            .count();
+
+        let mut languages: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for e in &elements {
+            if !e.language.is_empty() {
+                *languages.entry(e.language.clone()).or_insert(0) += 1;
+            }
+        }
+        let mut lang_list: Vec<(String, usize)> = languages.into_iter().collect();
+        lang_list.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        let primary_langs: Vec<String> = lang_list.iter().take(5).map(|(l, _)| l.clone()).collect();
+
+        let mut top_dirs: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for e in &elements {
+            if e.element_type == "directory" && !e.file_path.is_empty() {
+                let depth = e.file_path.chars().filter(|&c| c == '/').count();
+                if depth == 1 {
+                    let dir_name = e.file_path.strip_prefix("./").unwrap_or(&e.file_path);
+                    if let Some(child_count) =
+                        e.metadata.get("child_count").and_then(|v| v.as_u64())
+                    {
+                        top_dirs.insert(dir_name.to_string(), child_count as usize);
+                    }
+                }
+            }
+        }
+        let mut dir_list: Vec<(String, usize)> = top_dirs.into_iter().collect();
+        dir_list.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        let dirs: Vec<String> = dir_list.iter().take(8).map(|(d, _)| d.clone()).collect();
+
+        let mut lines = Vec::new();
+        lines.push(format!("Project: {}", primary_langs.join(", ")));
+        lines.push(format!(
+            "Files: {} | Functions: {} | Classes: {} | Total elements: {}",
+            file_count, func_count, class_count, total
+        ));
+        if !dirs.is_empty() {
+            lines.push(format!("Top directories: {}", dirs.join(", ")));
+        }
+
+        let rel_count = self.all_relationships().map(|r| r.len()).unwrap_or(0);
+        let import_count = elements
+            .iter()
+            .filter(|e| e.element_type == "import")
+            .count();
+        lines.push(format!(
+            "Relationships: {} | Imports: {}",
+            rel_count, import_count
+        ));
+
+        Ok(lines.join("\n"))
+    }
 }
 
 #[cfg(test)]
