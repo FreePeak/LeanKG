@@ -1347,6 +1347,10 @@ fn row_to_code_element(row: &[serde_json::Value]) -> models::CodeElement {
         cluster_label,
         metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
         env: row[11].as_str().unwrap_or("local").to_string(),
+        valid_from: row[12].as_i64().unwrap_or(0),
+        valid_to: row[13].as_i64().unwrap_or(0),
+        created_at: row[14].as_i64().unwrap_or(0),
+        updated_at: row[15].as_i64().unwrap_or(0),
     }
 }
 
@@ -1360,6 +1364,10 @@ fn row_to_relationship(row: &[serde_json::Value]) -> models::Relationship {
         confidence: row[3].as_f64().unwrap_or(1.0),
         metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
         env: row[5].as_str().unwrap_or("local").to_string(),
+        valid_from: row[6].as_i64().unwrap_or(0),
+        valid_to: row[7].as_i64().unwrap_or(0),
+        created_at: row[8].as_i64().unwrap_or(0),
+        updated_at: row[9].as_i64().unwrap_or(0),
     }
 }
 
@@ -1477,4 +1485,230 @@ pub fn get_service_metadata(
         created_at: row[13].as_i64().unwrap_or(0),
         updated_at: row[14].as_i64().unwrap_or(0),
     }))
+}
+
+// ============================================================================
+// Temporal / Bi-temporal queries
+// ============================================================================
+
+pub fn query_change_history(
+    db: &CozoDb,
+    element_qualified: Option<String>,
+    from_time: i64,
+    to_time: i64,
+    env: Option<String>,
+    limit: usize,
+) -> Result<Vec<models::ChangeEvent>, Box<dyn std::error::Error>> {
+    let mut conditions = vec![];
+    let mut params = std::collections::BTreeMap::new();
+
+    if let Some(elem) = &element_qualified {
+        params.insert("elem".to_string(), serde_json::Value::String(elem.clone()));
+        conditions.push("element_qualified = $elem".to_string());
+    }
+    if from_time > 0 {
+        params.insert(
+            "from".to_string(),
+            serde_json::Value::Number(from_time.into()),
+        );
+        conditions.push("valid_from >= $from".to_string());
+    }
+    if to_time > 0 {
+        params.insert("to".to_string(), serde_json::Value::Number(to_time.into()));
+        conditions.push("valid_from <= $to".to_string());
+    }
+    if let Some(e) = &env {
+        params.insert("env".to_string(), serde_json::Value::String(e.clone()));
+        conditions.push("env = $env".to_string());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", conditions.join(", "))
+    };
+
+    let query = format!(
+        r#"?[id, element_qualified, change_type, description, file_path, line_start, line_end, language, env, created_at, valid_from, valid_to, previous_qualified, commit_sha, author] := *change_events[id, element_qualified, change_type, description, file_path, line_start, line_end, language, env, created_at, valid_from, valid_to, previous_qualified, commit_sha, author]{} :order by valid_from desc :limit {}"#,
+        where_clause, limit
+    );
+
+    let result = db.run_script(&query, params)?;
+    Ok(result.rows.iter().map(|r| row_to_change_event(r)).collect())
+}
+
+fn row_to_change_event(row: &[serde_json::Value]) -> models::ChangeEvent {
+    models::ChangeEvent {
+        id: row[0].as_str().unwrap_or("").to_string(),
+        element_qualified: row[1].as_str().unwrap_or("").to_string(),
+        change_type: row[2].as_str().unwrap_or("").to_string(),
+        description: row[3].as_str().unwrap_or("").to_string(),
+        file_path: row[4].as_str().unwrap_or("").to_string(),
+        line_start: row[5].as_i64().unwrap_or(0) as u32,
+        line_end: row[6].as_i64().unwrap_or(0) as u32,
+        language: row[7].as_str().unwrap_or("").to_string(),
+        env: row[8].as_str().unwrap_or("local").to_string(),
+        created_at: row[9].as_i64().unwrap_or(0),
+        valid_from: row[10].as_i64().unwrap_or(0),
+        valid_to: row[11].as_i64().unwrap_or(0),
+        previous_qualified: row[12].as_str().map(String::from),
+        commit_sha: row[13].as_str().map(String::from),
+        author: row[14].as_str().map(String::from),
+    }
+}
+
+pub fn query_element_snapshot(
+    db: &CozoDb,
+    element_qualified: &str,
+    as_of_time: i64,
+    env: &str,
+) -> Result<Vec<models::CodeElement>, Box<dyn std::error::Error>> {
+    // Query element state at a specific point in valid time
+    let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, valid_from, valid_to, created_at, updated_at] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, valid_from, valid_to, created_at, updated_at], qualified_name = $qn, env = $env, valid_from <= $as_of, valid_to > $as_of"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "qn".to_string(),
+        serde_json::Value::String(element_qualified.to_string()),
+    );
+    params.insert(
+        "env".to_string(),
+        serde_json::Value::String(env.to_string()),
+    );
+    params.insert(
+        "as_of".to_string(),
+        serde_json::Value::Number(as_of_time.into()),
+    );
+
+    let result = db.run_script(query, params)?;
+    Ok(result.rows.iter().map(|r| row_to_code_element(r)).collect())
+}
+
+pub fn query_all_snapshots(
+    db: &CozoDb,
+    as_of_time: i64,
+    env: &str,
+) -> Result<Vec<models::CodeElement>, Box<dyn std::error::Error>> {
+    // Query all elements active at a specific point in valid time
+    let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, valid_from, valid_to, created_at, updated_at] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, valid_from, valid_to, created_at, updated_at], env = $env, valid_from <= $as_of, valid_to > $as_of"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "env".to_string(),
+        serde_json::Value::String(env.to_string()),
+    );
+    params.insert(
+        "as_of".to_string(),
+        serde_json::Value::Number(as_of_time.into()),
+    );
+
+    let result = db.run_script(query, params)?;
+    Ok(result
+        .rows
+        .iter()
+        .map(|r| row_to_code_element_snapshot(r))
+        .collect())
+}
+
+fn row_to_code_element_snapshot(row: &[serde_json::Value]) -> models::CodeElement {
+    models::CodeElement {
+        qualified_name: row[0].as_str().unwrap_or("").to_string(),
+        element_type: row[1].as_str().unwrap_or("").to_string(),
+        name: row[2].as_str().unwrap_or("").to_string(),
+        file_path: row[3].as_str().unwrap_or("").to_string(),
+        line_start: row[4].as_i64().unwrap_or(0) as u32,
+        line_end: row[5].as_i64().unwrap_or(0) as u32,
+        language: row[6].as_str().unwrap_or("").to_string(),
+        parent_qualified: row[7].as_str().map(String::from),
+        cluster_id: row[8].as_str().map(String::from),
+        cluster_label: row[9].as_str().map(String::from),
+        metadata: serde_json::from_str(row[10].as_str().unwrap_or("{}"))
+            .unwrap_or(serde_json::json!({})),
+        env: row[11].as_str().unwrap_or("local").to_string(),
+        valid_from: row[12].as_i64().unwrap_or(0),
+        valid_to: row[13].as_i64().unwrap_or(0),
+        created_at: row[14].as_i64().unwrap_or(0),
+        updated_at: row[15].as_i64().unwrap_or(0),
+    }
+}
+
+pub fn record_change_event(
+    db: &CozoDb,
+    event: &models::ChangeEvent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let query = r#"?[id, element_qualified, change_type, description, file_path, line_start, line_end, language, env, created_at, valid_from, valid_to, previous_qualified, commit_sha, author] <- [[$id, $eq, $ct, $desc, $fp, $ls, $le, $lang, $env, $ca, $vf, $vt, $pq, $cs, $au]] :put change_events {id, element_qualified, change_type, description, file_path, line_start, line_end, language, env, created_at, valid_from, valid_to, previous_qualified, commit_sha, author}"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "id".to_string(),
+        serde_json::Value::String(event.id.clone()),
+    );
+    params.insert(
+        "eq".to_string(),
+        serde_json::Value::String(event.element_qualified.clone()),
+    );
+    params.insert(
+        "ct".to_string(),
+        serde_json::Value::String(event.change_type.clone()),
+    );
+    params.insert(
+        "desc".to_string(),
+        serde_json::Value::String(event.description.clone()),
+    );
+    params.insert(
+        "fp".to_string(),
+        serde_json::Value::String(event.file_path.clone()),
+    );
+    params.insert(
+        "ls".to_string(),
+        serde_json::Value::Number(event.line_start.into()),
+    );
+    params.insert(
+        "le".to_string(),
+        serde_json::Value::Number(event.line_end.into()),
+    );
+    params.insert(
+        "lang".to_string(),
+        serde_json::Value::String(event.language.clone()),
+    );
+    params.insert(
+        "env".to_string(),
+        serde_json::Value::String(event.env.clone()),
+    );
+    params.insert(
+        "ca".to_string(),
+        serde_json::Value::Number(event.created_at.into()),
+    );
+    params.insert(
+        "vf".to_string(),
+        serde_json::Value::Number(event.valid_from.into()),
+    );
+    params.insert(
+        "vt".to_string(),
+        serde_json::Value::Number(event.valid_to.into()),
+    );
+    params.insert(
+        "pq".to_string(),
+        event
+            .previous_qualified
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "cs".to_string(),
+        event
+            .commit_sha
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "au".to_string(),
+        event
+            .author
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+
+    db.run_script(query, params)?;
+    Ok(())
 }

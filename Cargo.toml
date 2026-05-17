@@ -37,6 +37,7 @@ dirs = "5"
 argon2 = "0.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
+chrono = "0.4"
 tree-sitter-kotlin-ng = "1.1.0"
 which = "7"
 reqwest = { version = "0.12", features = ["rustls-tls", "blocking", "json"], default-features = false }

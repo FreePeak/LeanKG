@@ -338,6 +338,30 @@ pub enum CLICommand {
         #[arg(long, default_value = "production")]
         env: String,
     },
+    /// Show history of code element changes over time
+    History {
+        /// Element qualified name (optional, shows all if not specified)
+        #[arg(long)]
+        element: Option<String>,
+        /// Show history as of this timestamp (Unix ms)
+        #[arg(long)]
+        as_of: Option<i64>,
+        /// Show history from this timestamp (Unix ms)
+        #[arg(long)]
+        from: Option<i64>,
+        /// Show history until this timestamp (Unix ms)
+        #[arg(long)]
+        to: Option<i64>,
+        /// Environment filter
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// Maximum number of entries to return
+        #[arg(long, default_value = "100")]
+        limit: usize,
+        /// Show only snapshots (current state at given time)
+        #[arg(long)]
+        snapshot: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
