@@ -488,6 +488,53 @@ impl std::fmt::Display for Role {
     }
 }
 
+/// Team member entry with role
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub user_id: String,
+    pub role: String,
+    pub joined_at: i64,
+}
+
+/// Team model for shared graph management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Team {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub owner_id: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub graph_read_users: Vec<String>,
+    #[serde(default)]
+    pub graph_write_users: Vec<String>,
+    #[serde(default)]
+    pub members: Vec<TeamMember>,
+}
+
+/// Invite token for team onboarding
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamInvite {
+    pub token: String,
+    pub team_id: String,
+    pub email: Option<String>,
+    pub role: String,
+    pub created_by: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub accepted: bool,
+    pub accepted_by: Option<String>,
+}
+
+/// Permission scope for graph access
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum GraphPermission {
+    Read,
+    Write,
+    Admin,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthContext {
     pub client_id: String,
@@ -687,5 +734,52 @@ mod tests {
         assert_eq!(entry.id, "test-id");
         assert_eq!(entry.environment, "production");
         assert!(entry.element_qualified.is_none());
+    }
+
+    #[test]
+    fn test_team_creation() {
+        let team = Team {
+            id: "team-1".to_string(),
+            name: "Platform Team".to_string(),
+            description: "Core platform services".to_string(),
+            owner_id: "user-1".to_string(),
+            created_at: 1000,
+            updated_at: 1000,
+            graph_read_users: vec!["user-2".to_string()],
+            graph_write_users: vec!["user-1".to_string(), "user-2".to_string()],
+            members: vec![
+                TeamMember {
+                    user_id: "user-1".to_string(),
+                    role: "admin".to_string(),
+                    joined_at: 1000,
+                },
+                TeamMember {
+                    user_id: "user-2".to_string(),
+                    role: "contributor".to_string(),
+                    joined_at: 1001,
+                },
+            ],
+        };
+        assert_eq!(team.id, "team-1");
+        assert_eq!(team.members.len(), 2);
+        assert!(team.graph_write_users.contains(&"user-1".to_string()));
+    }
+
+    #[test]
+    fn test_team_invite() {
+        let invite = TeamInvite {
+            token: "abc123".to_string(),
+            team_id: "team-1".to_string(),
+            email: Some("new@example.com".to_string()),
+            role: "contributor".to_string(),
+            created_by: "user-1".to_string(),
+            created_at: 1000,
+            expires_at: 2000,
+            accepted: false,
+            accepted_by: None,
+        };
+        assert_eq!(invite.team_id, "team-1");
+        assert!(invite.email.is_some());
+        assert!(!invite.accepted);
     }
 }
