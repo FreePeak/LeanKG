@@ -1478,3 +1478,328 @@ pub fn get_service_metadata(
         updated_at: row[14].as_i64().unwrap_or(0),
     }))
 }
+
+// ============================================================================
+// Team CRUD
+// ============================================================================
+
+pub fn create_team(
+    db: &CozoDb,
+    team: &models::Team,
+) -> Result<models::Team, Box<dyn std::error::Error>> {
+    let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] <- [[$id, $name, $desc, $owner, $cat, $uat, $read_users, $write_users, $members]] :put teams {id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members}"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("id".to_string(), serde_json::Value::String(team.id.clone()));
+    params.insert(
+        "name".to_string(),
+        serde_json::Value::String(team.name.clone()),
+    );
+    params.insert(
+        "desc".to_string(),
+        serde_json::Value::String(team.description.clone()),
+    );
+    params.insert(
+        "owner".to_string(),
+        serde_json::Value::String(team.owner_id.clone()),
+    );
+    params.insert(
+        "cat".to_string(),
+        serde_json::Value::Number(team.created_at.into()),
+    );
+    params.insert(
+        "uat".to_string(),
+        serde_json::Value::Number(team.updated_at.into()),
+    );
+    params.insert(
+        "read_users".to_string(),
+        serde_json::Value::String(serde_json::to_string(&team.graph_read_users)?),
+    );
+    params.insert(
+        "write_users".to_string(),
+        serde_json::Value::String(serde_json::to_string(&team.graph_write_users)?),
+    );
+    params.insert(
+        "members".to_string(),
+        serde_json::Value::String(serde_json::to_string(&team.members)?),
+    );
+
+    db.run_script(query, params)?;
+    Ok(team.clone())
+}
+
+pub fn get_team(db: &CozoDb, id: &str) -> Result<Option<models::Team>, Box<dyn std::error::Error>> {
+    let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] := *teams[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members], id = $id"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+
+    let result = db.run_script(query, params)?;
+    if result.rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(row_to_team(&result.rows[0])))
+}
+
+pub fn update_team(
+    db: &CozoDb,
+    team: &models::Team,
+) -> Result<models::Team, Box<dyn std::error::Error>> {
+    create_team(db, team)
+}
+
+pub fn delete_team(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let query = r#":delete teams where id = $id"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+    db.run_script(query, params)?;
+    Ok(())
+}
+
+pub fn list_teams(db: &CozoDb) -> Result<Vec<models::Team>, Box<dyn std::error::Error>> {
+    let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] := *teams[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members]"#;
+    let result = db.run_script(query, Default::default())?;
+    Ok(result.rows.iter().map(|r| row_to_team(r)).collect())
+}
+
+fn row_to_team(row: &[serde_json::Value]) -> models::Team {
+    let graph_read_users: Vec<String> =
+        serde_json::from_str(row[6].as_str().unwrap_or("[]")).unwrap_or_default();
+    let graph_write_users: Vec<String> =
+        serde_json::from_str(row[7].as_str().unwrap_or("[]")).unwrap_or_default();
+    let members: Vec<models::TeamMember> =
+        serde_json::from_str(row[8].as_str().unwrap_or("[]")).unwrap_or_default();
+
+    models::Team {
+        id: row[0].as_str().unwrap_or("").to_string(),
+        name: row[1].as_str().unwrap_or("").to_string(),
+        description: row[2].as_str().unwrap_or("").to_string(),
+        owner_id: row[3].as_str().unwrap_or("").to_string(),
+        created_at: row[4].as_i64().unwrap_or(0),
+        updated_at: row[5].as_i64().unwrap_or(0),
+        graph_read_users,
+        graph_write_users,
+        members,
+    }
+}
+
+// ============================================================================
+// Team Invite CRUD
+// ============================================================================
+
+pub fn create_team_invite(
+    db: &CozoDb,
+    invite: &models::TeamInvite,
+) -> Result<models::TeamInvite, Box<dyn std::error::Error>> {
+    let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] <- [[$token, $tid, $email, $role, $by, $cat, $exp, $acc, $accept]] :put team_invites {token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by}"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "token".to_string(),
+        serde_json::Value::String(invite.token.clone()),
+    );
+    params.insert(
+        "tid".to_string(),
+        serde_json::Value::String(invite.team_id.clone()),
+    );
+    params.insert(
+        "email".to_string(),
+        invite
+            .email
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    params.insert(
+        "role".to_string(),
+        serde_json::Value::String(invite.role.clone()),
+    );
+    params.insert(
+        "by".to_string(),
+        serde_json::Value::String(invite.created_by.clone()),
+    );
+    params.insert(
+        "cat".to_string(),
+        serde_json::Value::Number(invite.created_at.into()),
+    );
+    params.insert(
+        "exp".to_string(),
+        serde_json::Value::Number(invite.expires_at.into()),
+    );
+    params.insert("acc".to_string(), serde_json::Value::Bool(invite.accepted));
+    params.insert(
+        "accept".to_string(),
+        invite
+            .accepted_by
+            .as_ref()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .unwrap_or(serde_json::Value::Null),
+    );
+
+    db.run_script(query, params)?;
+    Ok(invite.clone())
+}
+
+pub fn get_team_invite(
+    db: &CozoDb,
+    token: &str,
+) -> Result<Option<models::TeamInvite>, Box<dyn std::error::Error>> {
+    let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] := *team_invites[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by], token = $token"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "token".to_string(),
+        serde_json::Value::String(token.to_string()),
+    );
+
+    let result = db.run_script(query, params)?;
+    if result.rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(row_to_team_invite(&result.rows[0])))
+}
+
+pub fn get_team_invites(
+    db: &CozoDb,
+    team_id: &str,
+) -> Result<Vec<models::TeamInvite>, Box<dyn std::error::Error>> {
+    let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] := *team_invites[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by], team_id = $tid"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "tid".to_string(),
+        serde_json::Value::String(team_id.to_string()),
+    );
+
+    let result = db.run_script(query, params)?;
+    Ok(result.rows.iter().map(|r| row_to_team_invite(r)).collect())
+}
+
+pub fn accept_team_invite(
+    db: &CozoDb,
+    token: &str,
+    user_id: &str,
+) -> Result<models::TeamInvite, Box<dyn std::error::Error>> {
+    let invite = get_team_invite(db, token)?.ok_or("Invite not found")?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    if now > invite.expires_at {
+        return Err("Invite has expired".into());
+    }
+    if invite.accepted {
+        return Err("Invite already accepted".into());
+    }
+
+    let updated_invite = models::TeamInvite {
+        accepted: true,
+        accepted_by: Some(user_id.to_string()),
+        ..invite
+    };
+    create_team_invite(db, &updated_invite)
+}
+
+pub fn delete_team_invite(db: &CozoDb, token: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let query = r#":delete team_invites where token = $token"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "token".to_string(),
+        serde_json::Value::String(token.to_string()),
+    );
+    db.run_script(query, params)?;
+    Ok(())
+}
+
+fn row_to_team_invite(row: &[serde_json::Value]) -> models::TeamInvite {
+    models::TeamInvite {
+        token: row[0].as_str().unwrap_or("").to_string(),
+        team_id: row[1].as_str().unwrap_or("").to_string(),
+        email: row[2].as_str().map(String::from),
+        role: row[3].as_str().unwrap_or("").to_string(),
+        created_by: row[4].as_str().unwrap_or("").to_string(),
+        created_at: row[5].as_i64().unwrap_or(0),
+        expires_at: row[6].as_i64().unwrap_or(0),
+        accepted: row[7].as_bool().unwrap_or(false),
+        accepted_by: row[8].as_str().map(String::from),
+    }
+}
+
+// ============================================================================
+// Permission checking helpers
+// ============================================================================
+
+pub fn check_graph_permission(
+    db: &CozoDb,
+    team_id: &str,
+    user_id: &str,
+    require_write: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let team = get_team(db, team_id)?;
+    let team = team.as_ref().ok_or("Team not found")?;
+
+    if team.graph_write_users.contains(&user_id.to_string()) {
+        return Ok(true);
+    }
+    if !require_write && team.graph_read_users.contains(&user_id.to_string()) {
+        return Ok(true);
+    }
+    if team.owner_id == user_id {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+pub fn add_team_member(
+    db: &CozoDb,
+    team_id: &str,
+    user_id: &str,
+    role: &str,
+) -> Result<models::Team, Box<dyn std::error::Error>> {
+    let team = get_team(db, team_id)?.ok_or("Team not found")?;
+
+    let member = models::TeamMember {
+        user_id: user_id.to_string(),
+        role: role.to_string(),
+        joined_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64,
+    };
+
+    let mut updated_team = team.clone();
+    updated_team.members.push(member);
+
+    if role == "viewer" && !updated_team.graph_read_users.contains(&user_id.to_string()) {
+        updated_team.graph_read_users.push(user_id.to_string());
+    } else if role != "viewer"
+        && !updated_team
+            .graph_write_users
+            .contains(&user_id.to_string())
+    {
+        updated_team.graph_write_users.push(user_id.to_string());
+    }
+
+    updated_team.updated_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    update_team(db, &updated_team)
+}
+
+pub fn remove_team_member(
+    db: &CozoDb,
+    team_id: &str,
+    user_id: &str,
+) -> Result<models::Team, Box<dyn std::error::Error>> {
+    let team = get_team(db, team_id)?.ok_or("Team not found")?;
+
+    let mut updated_team = team.clone();
+    updated_team.members.retain(|m| m.user_id != user_id);
+    updated_team.graph_read_users.retain(|u| u != user_id);
+    updated_team.graph_write_users.retain(|u| u != user_id);
+    updated_team.updated_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    update_team(db, &updated_team)
+}
