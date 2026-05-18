@@ -2927,6 +2927,7 @@ impl GraphEngine {
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
                     env: row[11].as_str().unwrap_or("local").to_string(),
+                    ..Default::default()
                 }
             });
             env_elements.insert(env.to_string(), element);

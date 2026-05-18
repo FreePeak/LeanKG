@@ -128,6 +128,8 @@ pub async fn start_api_server(
         .route("/api/v2/incidents", get(handlers::api_v2_incidents))
         .route("/api/v2/env/diff", get(handlers::api_v2_env_diff))
         .route("/api/v2/health", get(handlers::api_v2_health))
+        .route("/api/v2/history", get(handlers::api_v2_history))
+        .route("/api/v2/snapshot", get(handlers::api_v2_snapshot))
         .layer(cors)
         .with_state(state);
 

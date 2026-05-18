@@ -473,6 +473,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Pull { remote, token, env } => {
             pull_from_remote(&remote, &token, &env)?;
         }
+        cli::CLICommand::History {
+            element,
+            as_of,
+            from,
+            to,
+            env,
+            limit,
+            snapshot,
+        } => {
+            show_history(element.as_deref(), as_of, from, to, &env, limit, snapshot)?;
+        }
     }
 
     Ok(())
@@ -543,6 +554,92 @@ fn pull_from_remote(
         let body = resp.text()?;
         eprintln!("Pull failed ({}): {}", status, body);
     }
+    Ok(())
+}
+
+fn show_history(
+    element: Option<&str>,
+    as_of: Option<i64>,
+    from: Option<i64>,
+    to: Option<i64>,
+    env: &str,
+    limit: usize,
+    snapshot: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    let db = db::schema::init_db(&db_path)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    if snapshot {
+        // Show snapshot at a specific point in time
+        let as_of_time = as_of.unwrap_or(now);
+        println!("=== Snapshot as of {} ===", as_of_time);
+
+        let elements = if let Some(elem) = element {
+            db::query_element_snapshot(&db, elem, as_of_time, env)?
+        } else {
+            db::query_all_snapshots(&db, as_of_time, env)?
+        };
+
+        if elements.is_empty() {
+            println!("No elements found at specified time");
+        } else {
+            for elem in elements.iter().take(limit) {
+                println!(
+                    "{} {} ({}) - {}:{}",
+                    elem.qualified_name,
+                    elem.element_type,
+                    elem.env,
+                    elem.file_path,
+                    elem.line_start
+                );
+            }
+            println!("\nTotal: {} elements", elements.len());
+        }
+    } else {
+        // Show change history
+        let from_time = from.unwrap_or(0);
+        let to_time = to.unwrap_or(now);
+        println!(
+            "=== Change History {} -> {} (env: {}) ===",
+            from_time, to_time, env
+        );
+
+        let changes = db::query_change_history(
+            &db,
+            element.map(String::from),
+            from_time,
+            to_time,
+            Some(env.to_string()),
+            limit,
+        )?;
+
+        if changes.is_empty() {
+            println!("No changes found in specified time range");
+        } else {
+            for change in &changes {
+                let timestamp = change.valid_from;
+                let time_str = if timestamp > 0 {
+                    chrono::DateTime::from_timestamp_millis(timestamp)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| timestamp.to_string())
+                } else {
+                    "unknown".to_string()
+                };
+                println!(
+                    "[{}] {} - {} ({})",
+                    time_str, change.element_qualified, change.change_type, change.description
+                );
+            }
+            println!("\nTotal: {} changes", changes.len());
+        }
+    }
+
     Ok(())
 }
 

@@ -259,6 +259,14 @@ fn run_migrations(
         record_migration(db, "006_safe_canonical_schema_repair", now)?;
     }
 
+    // Migration 007: Add bi-temporal columns (valid_from, valid_to, created_at, updated_at)
+    // to code_elements and relationships, plus create change_events table
+    if !applied.contains("007_bitemporal_change_events") {
+        tracing::info!("Running migration 007_bitemporal_change_events...");
+        add_bitemporal_support(db, existing_relations)?;
+        record_migration(db, "007_bitemporal_change_events", now)?;
+    }
+
     Ok(())
 }
 
@@ -297,8 +305,8 @@ fn repair_canonical_schema(
     Ok(())
 }
 
-const CANONICAL_CODE_ELEMENTS: &str = ":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}";
-const CANONICAL_RELATIONSHIPS: &str = ":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}";
+const CANONICAL_CODE_ELEMENTS: &str = ":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', valid_from: Int default 0, valid_to: Int default 0, created_at: Int default 0, updated_at: Int default 0}";
+const CANONICAL_RELATIONSHIPS: &str = ":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local', valid_from: Int default 0, valid_to: Int default 0, created_at: Int default 0, updated_at: Int default 0}";
 
 fn get_column_count(db: &CozoDb, relation: &str) -> usize {
     let query = format!(":schema {}", relation);
@@ -383,6 +391,58 @@ fn ensure_incidents_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>>
             tracing::debug!("Incident index note: {:?}", e);
         }
     }
+    Ok(())
+}
+
+fn add_bitemporal_support(
+    db: &CozoDb,
+    existing_relations: &std::collections::HashSet<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Add bi-temporal columns to code_elements if table exists
+    if existing_relations.contains("code_elements") {
+        // Check if columns already exist by trying to select them
+        let check_query = r#"?[valid_from] := *code_elements[qualified_name, _, _, _, _, _, _, _, _, _, _, _, valid_from]"#;
+        if db.run_script(check_query, Default::default()).is_err() {
+            // Columns don't exist, add them via replace with expanded schema
+            let alter_code_elements = r#":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', valid_from: Int default 0, valid_to: Int default 0, created_at: Int default 0, updated_at: Int default 0}"#;
+            if let Err(e) = db.run_script(alter_code_elements, Default::default()) {
+                tracing::warn!("code_elements bitemporal alter failed: {:?}", e);
+            }
+        }
+    }
+
+    // Add bi-temporal columns to relationships if table exists
+    if existing_relations.contains("relationships") {
+        let check_query = r#"?[valid_from] := *relationships[_, _, _, _, _, _, valid_from]"#;
+        if db.run_script(check_query, Default::default()).is_err() {
+            let alter_relationships = r#":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local', valid_from: Int default 0, valid_to: Int default 0, created_at: Int default 0, updated_at: Int default 0}"#;
+            if let Err(e) = db.run_script(alter_relationships, Default::default()) {
+                tracing::warn!("relationships bitemporal alter failed: {:?}", e);
+            }
+        }
+    }
+
+    // Create change_events table for temporal change tracking
+    if !existing_relations.contains("change_events") {
+        let create_change_events = r#":create change_events {id: String, element_qualified: String, change_type: String, description: String, file_path: String, line_start: Int, line_end: Int, language: String, env: String default 'local', created_at: Int, valid_from: Int, valid_to: Int, previous_qualified: String?, commit_sha: String?, author: String?}"#;
+        if let Err(e) = db.run_script(create_change_events, Default::default()) {
+            tracing::warn!("Failed to create change_events: {:?}", e);
+        } else {
+            // Create indexes for change_events
+            let indexes = [
+                r#":create change_events::element_index {ref: (element_qualified), compressed: true}"#,
+                r#":create change_events::time_index {ref: (valid_from), compressed: true}"#,
+                r#":create change_events::created_index {ref: (created_at), compressed: true}"#,
+                r#":create change_events::env_index {ref: (env), compressed: true}"#,
+            ];
+            for idx in &indexes {
+                if let Err(e) = db.run_script(idx, Default::default()) {
+                    tracing::debug!("change_events index note: {:?}", e);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
