@@ -505,11 +505,8 @@ impl MCPServer {
                     // (PID recycling can cause false positives with kill -0 alone)
                     if Self::is_process_alive(pid) {
                         // Verify the server is actually running by checking health endpoint
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
-                        let alive = rt.block_on(Self::check_health_sync(port));
+                        // Use run_blocking() — never create a new Runtime inside an existing one
+                        let alive = crate::runtime::run_blocking(Self::check_health_sync(port));
                         if alive {
                             return Ok(Some(pid));
                         }
@@ -901,7 +898,7 @@ impl MCPServer {
         if pid_file.exists() {
             if let Ok(contents) = fs::read_to_string(&pid_file) {
                 if let Ok(pid) = contents.trim().parse::<u32>() {
-                    if pid == std::process::id() as u32 {
+                    if pid == std::process::id() {
                         let _ = fs::remove_file(&pid_file);
                         tracing::info!("Removed PID file");
                     }
