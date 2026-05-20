@@ -210,6 +210,11 @@ impl ToolHandler {
             "query_incidents" => self.query_incidents(arguments),
             "find_env_conflicts" => self.find_env_conflicts(arguments),
             "get_service_context" => self.get_service_context(arguments),
+            // Ontology semantic search tools
+            "kg_context" => self.kg_context(arguments),
+            "kg_concept_map" => self.kg_concept_map(arguments),
+            "kg_trace_workflow" => self.kg_trace_workflow(arguments),
+            "kg_ontology_status" => self.kg_ontology_status(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
@@ -2584,6 +2589,112 @@ impl ToolHandler {
             "recent_incidents": context.recent_incidents,
             "last_incident": context.last_incident,
             "known_risks": context.known_risks,
+        }))
+    }
+
+    fn kg_context(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
+        let env = args["env"].as_str().unwrap_or("local");
+        let depth = args["depth"].as_u64().unwrap_or(2) as u32;
+
+        let query_engine =
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+
+        let context = query_engine
+            .get_ontology_context(query, env, depth)
+            .map_err(|e| format!("Failed to get ontology context: {}", e))?;
+
+        Ok(json!({
+            "matched_ontology_nodes": context.matched_ontology_nodes,
+            "expanded_code_context": context.expanded_code_context,
+            "expanded_relationships": context.expanded_relationships,
+            "workflows": context.workflows,
+            "workflow_steps": context.workflow_steps,
+            "failure_modes": context.failure_modes,
+            "confidence": context.confidence,
+            "match_reasons": context.match_reasons,
+        }))
+    }
+
+    fn kg_concept_map(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
+        let env = args["env"].as_str().unwrap_or("local");
+
+        let query_engine =
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+
+        // Search for matching ontology nodes
+        let nodes = query_engine
+            .search_ontology_nodes(query, env, 2)
+            .map_err(|e| format!("Failed to search ontology: {}", e))?;
+
+        // Expand context for each node
+        let mut all_elements = Vec::new();
+        let mut all_relationships = Vec::new();
+
+        for node in &nodes {
+            let (elements, relationships) = query_engine
+                .expand_ontology_context(&node.gid, 2)
+                .unwrap_or_else(|_| (vec![], vec![]));
+            all_elements.extend(elements);
+            all_relationships.extend(relationships);
+        }
+
+        Ok(json!({
+            "concept_nodes": nodes,
+            "related_code": all_elements,
+            "relationships": all_relationships,
+        }))
+    }
+
+    fn kg_trace_workflow(&self, args: &Value) -> Result<Value, String> {
+        let workflow_query = args["workflow_id_or_query"]
+            .as_str()
+            .ok_or("Missing 'workflow_id_or_query' parameter")?;
+        let env = args["env"].as_str().unwrap_or("local");
+
+        let query_engine =
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+
+        let steps = query_engine
+            .trace_workflow(workflow_query, env)
+            .map_err(|e| format!("Failed to trace workflow: {}", e))?;
+
+        let step_info: Vec<serde_json::Value> = steps
+            .iter()
+            .map(|s| {
+                json!({
+                    "gid": s.gid,
+                    "name": s.name,
+                    "order": s.order,
+                    "description": s.description,
+                    "code_refs": s.metadata.code_refs,
+                    "failure_modes": s.metadata.failure_modes,
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "workflow_query": workflow_query,
+            "steps": step_info,
+            "step_count": steps.len(),
+        }))
+    }
+
+    fn kg_ontology_status(&self, _args: &Value) -> Result<Value, String> {
+        let query_engine =
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+
+        let status = query_engine
+            .get_ontology_status()
+            .map_err(|e| format!("Failed to get ontology status: {}", e))?;
+
+        Ok(json!({
+            "concept_counts": status.concept_counts,
+            "procedural_counts": status.procedural_counts,
+            "total_aliases": status.total_aliases,
+            "nodes_missing_aliases": status.nodes_missing_aliases,
+            "workflows_without_failure_modes": status.workflows_without_failure_modes,
         }))
     }
 

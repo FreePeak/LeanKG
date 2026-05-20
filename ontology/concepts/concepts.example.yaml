@@ -1,0 +1,47 @@
+# Concept Ontology - Domain Entities
+# Format: concept nodes that describe product/business concepts
+
+concepts:
+  - id: refund
+    type: domain_entity
+    name: Refund
+    env: local
+    aliases:
+      - reversal
+      - chargeback
+      - money back
+    description: Money returned to a customer after payment capture.
+    owned_by:
+      - checkout-service
+      - payment-service
+    code_refs:
+      - src/refund/handler.rs
+    docs:
+      - docs/refund.md
+
+  - id: checkout
+    type: workflow
+    name: Checkout
+    env: local
+    aliases:
+      - place order
+      - purchase flow
+    description: End-to-end customer checkout workflow
+    entry_points:
+      - src/checkout/handler.rs::create_order
+    steps:
+      - id: create_order
+        name: Create Order
+        code_refs:
+          - src/order/service.rs::create
+      - id: authorize_payment
+        name: Authorize Payment
+        code_refs:
+          - src/payment/client.rs::authorize
+        failure_modes:
+          - payment_timeout
+          - insufficient_funds
+      - id: confirm_order
+        name: Confirm Order
+        code_refs:
+          - src/order/service.rs::confirm
