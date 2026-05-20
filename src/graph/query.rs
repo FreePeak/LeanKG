@@ -1295,7 +1295,7 @@ impl GraphEngine {
         } else {
             format!("{}\x7f", prefix_with_slash)
         };
-        let query = r#"?[fp] := *code_elements[fp, _, _, _, _, _, _, _, _, _, _, _], file_path >= $lo and file_path < $hi"#;
+        let query = r#"?[fp] := *code_elements[qualified_name, element_type, name, fp, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], fp >= $lo and fp < $hi"#;
         let mut params = std::collections::BTreeMap::new();
         params.insert("lo".to_string(), serde_json::Value::String(lo));
         params.insert("hi".to_string(), serde_json::Value::String(hi));
@@ -2618,6 +2618,14 @@ impl GraphEngine {
         Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
     }
 
+    pub fn has_elements(&self) -> Result<bool, Box<dyn std::error::Error>> {
+        let query = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :limit 1"#;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(!result.rows.is_empty())
+    }
+
     pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[count(n)] := *relationships[n, a, b, c, d, _]"#;
         let result = self
@@ -2783,7 +2791,7 @@ impl GraphEngine {
 
         let service_prefix = format!("./{}", service);
         let schemas_query = format!(
-            r#"?[name] := *code_elements[name, element_type, qualified_name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], starts_with(file_path, "{}"), regex_matches(element_type, "(schema|protobuf|proto|openapi|json_schema|avro|sql_table|event|topic|config")"#,
+            r#"?[name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], starts_with(file_path, "{}"), regex_matches(element_type, "(schema|protobuf|proto|openapi|json_schema|avro|sql_table|event|topic|config)")"#,
             escape_datalog(&service_prefix)
         );
         let schemas: Vec<String> = self

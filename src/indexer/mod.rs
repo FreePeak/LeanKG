@@ -66,7 +66,22 @@ use crate::graph::GraphEngine;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
+
+const DEFAULT_INDEX_IGNORED_DIRS: &[&str] = &[
+    ".git",
+    ".leankg",
+    ".worktrees",
+    "worktrees",
+    "target",
+    "node_modules",
+    "vendor",
+    "__pycache__",
+    ".gradle",
+    ".idea",
+    ".vscode",
+];
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
@@ -87,7 +102,11 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         "AndroidManifest.xml",
     ];
 
-    let walker = WalkBuilder::new(root).follow_links(true).build();
+    let root_path = Path::new(root).to_path_buf();
+    let walker = WalkBuilder::new(root)
+        .follow_links(true)
+        .filter_entry(move |entry| !is_default_ignored_entry(&root_path, entry.path()))
+        .build();
 
     for entry in walker.flatten() {
         let path = entry.path();
@@ -100,12 +119,24 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
             || extensions.contains(&ext)
             || is_cicd_yaml_file(path);
 
-        if path.is_file() && is_valid_file && !path.to_string_lossy().contains("/node_modules/") {
+        if path.is_file() && is_valid_file {
             files.push(path.to_string_lossy().to_string());
         }
     }
 
     Ok(files)
+}
+
+fn is_default_ignored_entry(root: &Path, path: &Path) -> bool {
+    if path == root {
+        return false;
+    }
+
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    relative.components().any(|component| {
+        let segment = component.as_os_str().to_string_lossy();
+        DEFAULT_INDEX_IGNORED_DIRS.contains(&segment.as_ref())
+    })
 }
 
 /// Returns true if the path should be skipped during indexing.

@@ -424,7 +424,8 @@ impl ToolHandler {
 
     async fn mcp_index(&self, args: &Value) -> Result<Value, String> {
         let path = args["path"].as_str().unwrap_or(".");
-        let _incremental = args["incremental"].as_bool().unwrap_or(false);
+        let incremental = args["incremental"].as_bool().unwrap_or(false);
+        let resolve_calls = args["resolve_calls"].as_bool().unwrap_or(false);
         let lang = args["lang"].as_str();
         let exclude = args["exclude"].as_str();
         let env = args["env"].as_str().unwrap_or("local");
@@ -456,6 +457,49 @@ impl ToolHandler {
         parser_manager
             .init_parsers()
             .map_err(|e| format!("Parser init error: {}", e))?;
+
+        if incremental {
+            let result = crate::indexer::incremental_index_sync(
+                &self.graph_engine,
+                &mut parser_manager,
+                path,
+            )
+            .await
+            .map_err(|e| format!("Incremental index error: {}", e))?;
+            let resolved = if resolve_calls {
+                self.graph_engine.resolve_call_edges().unwrap_or(0)
+            } else {
+                0
+            };
+
+            return Ok(json!({
+                "success": true,
+                "message": if resolve_calls {
+                    format!(
+                        "Incrementally indexed {} files ({} elements), {} dependent files, {} call edges resolved",
+                        result.total_files_processed,
+                        result.elements_indexed,
+                        result.dependent_files.len(),
+                        resolved
+                    )
+                } else {
+                    format!(
+                        "Incrementally indexed {} files ({} elements), {} dependent files; call edge resolution skipped",
+                        result.total_files_processed,
+                        result.elements_indexed,
+                        result.dependent_files.len()
+                    )
+                },
+                "incremental": true,
+                "changed_files": result.changed_files,
+                "dependent_files": result.dependent_files,
+                "indexed": result.total_files_processed,
+                "elements_indexed": result.elements_indexed,
+                "resolved": resolved,
+                "resolve_calls": resolve_calls,
+                "path": path
+            }));
+        }
 
         let files = crate::indexer::find_files_sync(path)
             .map_err(|e| format!("Find files error: {}", e))?;
@@ -502,14 +546,24 @@ impl ToolHandler {
             }
         }
 
-        let resolved = self.graph_engine.resolve_call_edges().unwrap_or(0);
+        let resolved = if resolve_calls {
+            self.graph_engine.resolve_call_edges().unwrap_or(0)
+        } else {
+            0
+        };
 
         Ok(json!({
             "success": true,
-            "message": format!("Indexed {} files, {} skipped, {} call edges resolved", indexed, skipped, resolved),
+            "message": if resolve_calls {
+                format!("Indexed {} files, {} skipped, {} call edges resolved", indexed, skipped, resolved)
+            } else {
+                format!("Indexed {} files, {} skipped; call edge resolution skipped", indexed, skipped)
+            },
+            "incremental": false,
             "indexed": indexed,
             "skipped": skipped,
             "resolved": resolved,
+            "resolve_calls": resolve_calls,
             "path": path
         }))
     }
@@ -540,8 +594,9 @@ impl ToolHandler {
         }))
     }
 
-    fn mcp_status(&self, _args: &Value) -> Result<Value, String> {
+    fn mcp_status(&self, args: &Value) -> Result<Value, String> {
         let db_path = &self.db_path;
+        let include_counts = args["include_counts"].as_bool().unwrap_or(false);
 
         if !db_path.exists() {
             return Ok(json!({
@@ -551,51 +606,40 @@ impl ToolHandler {
         }
 
         // Verify database is actually initialized with proper tables
-        let count = self.graph_engine.count_elements().unwrap_or_default();
-        if count == 0 {
+        let has_elements = self.graph_engine.has_elements().unwrap_or(false);
+        if !has_elements {
             return Ok(json!({
                 "initialized": false,
                 "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
-                "database_exists": false
+                "database_exists": false,
+                "counts_included": false
             }));
         }
 
-        let elements = count;
-        let relationships = self.graph_engine.count_relationships().unwrap_or(0);
-        let annotations = self.graph_engine.count_business_logic().unwrap_or(0);
-        let files = self.graph_engine.count_files().unwrap_or(0);
-        let functions = self
-            .graph_engine
-            .count_by_element_type("function")
-            .unwrap_or(0);
-        let classes = self
-            .graph_engine
-            .count_by_element_type("class")
-            .unwrap_or(0)
-            + self
-                .graph_engine
-                .count_by_element_type("struct")
-                .unwrap_or(0);
-
-        if elements == 0 && relationships == 0 {
+        if !include_counts {
             return Ok(json!({
                 "initialized": true,
-                "index_populated": false,
-                "message": "Database exists but is empty. Run mcp_index to index codebase.",
-                "database": db_path.to_string_lossy()
+                "index_populated": true,
+                "database_exists": true,
+                "database": db_path.to_string_lossy(),
+                "counts_included": false,
+                "message": "Database exists and contains indexed elements. Pass include_counts=true for full counts."
             }));
         }
 
         Ok(json!({
             "initialized": true,
             "index_populated": true,
+            "database_exists": true,
             "database": db_path.to_string_lossy(),
-            "elements": elements,
-            "relationships": relationships,
-            "files": files,
-            "functions": functions,
-            "classes": classes,
-            "annotations": annotations
+            "counts_included": true,
+            "elements": self.graph_engine.count_elements().unwrap_or(0),
+            "relationships": self.graph_engine.count_relationships().unwrap_or(0),
+            "files": self.graph_engine.count_files().unwrap_or(0),
+            "functions": self.graph_engine.count_by_element_type("function").unwrap_or(0),
+            "classes": self.graph_engine.count_by_element_type("class").unwrap_or(0)
+                + self.graph_engine.count_by_element_type("struct").unwrap_or(0),
+            "annotations": self.graph_engine.count_business_logic().unwrap_or(0)
         }))
     }
 
