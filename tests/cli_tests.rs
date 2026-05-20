@@ -35,6 +35,7 @@ fn test_cli_index_no_args() {
             lang,
             exclude,
             verbose,
+            ..
         } => {
             assert!(path.is_none());
             assert!(!incremental);
@@ -56,6 +57,7 @@ fn test_cli_index_with_path() {
             lang,
             exclude,
             verbose,
+            ..
         } => {
             assert_eq!(path.as_deref(), Some("./src"));
             assert!(!incremental);
@@ -77,6 +79,7 @@ fn test_cli_index_incremental() {
             lang,
             exclude,
             verbose,
+            ..
         } => {
             assert!(path.is_none());
             assert!(incremental);
@@ -98,6 +101,7 @@ fn test_cli_index_lang() {
             lang,
             exclude,
             verbose,
+            ..
         } => {
             assert!(path.is_none());
             assert!(!incremental);
@@ -119,6 +123,7 @@ fn test_cli_index_exclude() {
             lang,
             exclude,
             verbose,
+            ..
         } => {
             assert!(path.is_none());
             assert!(!incremental);
@@ -140,6 +145,7 @@ fn test_cli_index_verbose() {
             lang,
             exclude,
             verbose,
+            ..
         } => {
             assert!(path.is_none());
             assert!(!incremental);
@@ -172,6 +178,7 @@ fn test_cli_index_all_options() {
             lang,
             exclude,
             verbose,
+            ..
         } => {
             assert_eq!(path.as_deref(), Some("./src"));
             assert!(incremental);

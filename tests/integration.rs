@@ -37,6 +37,39 @@ async fn test_find_files_excludes_node_modules() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_find_files_excludes_nested_worktrees_from_project_root() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("main.rs"), "fn main() {}").unwrap();
+    let worktree_src = tmp.path().join("worktrees").join("feature").join("src");
+    std::fs::create_dir_all(&worktree_src).unwrap();
+    std::fs::write(worktree_src.join("duplicate.rs"), "fn duplicate() {}").unwrap();
+
+    let files = find_files_sync(tmp.path().to_str().unwrap()).unwrap();
+    assert!(files.iter().any(|f| f.ends_with("main.rs")));
+    assert!(
+        !files.iter().any(|f| f.contains("duplicate.rs")),
+        "nested worktree files should not be indexed from the project root: {:?}",
+        files
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_find_files_allows_explicit_worktree_root() {
+    let tmp = TempDir::new().unwrap();
+    let worktree_src = tmp.path().join("worktrees").join("feature").join("src");
+    std::fs::create_dir_all(&worktree_src).unwrap();
+    std::fs::write(worktree_src.join("feature.rs"), "fn feature() {}").unwrap();
+
+    let worktree_root = tmp.path().join("worktrees").join("feature");
+    let files = find_files_sync(worktree_root.to_str().unwrap()).unwrap();
+    assert!(
+        files.iter().any(|f| f.ends_with("feature.rs")),
+        "explicit worktree roots should still be indexable: {:?}",
+        files
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_in_nested_dirs() {
     let tmp = tempfile::TempDir::new().unwrap();
     let nested = tmp.path().join("a").join("b").join("c");
@@ -56,6 +89,61 @@ async fn test_init_db_creates_schema() {
     let db_path = tmp.path().join("leankg.db");
     let _db = init_db(db_path.as_path()).unwrap();
     assert!(db_path.exists() || std::path::Path::new(db_path.parent().unwrap()).exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_init_db_repairs_legacy_code_elements_after_recorded_migration() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("legacy.db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let legacy_db = cozo::new_cozo_sqlite(db_path_str).unwrap();
+
+    legacy_db.run_script(
+        r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
+        Default::default(),
+    ).unwrap();
+    legacy_db.run_script(
+        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- [["src/main.rs::main", "function", "main", "src/main.rs", 1, 3, "rust", null, null, null, "{}"]]
+        :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}"#,
+        Default::default(),
+    ).unwrap();
+    legacy_db
+        .run_script(
+            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
+            Default::default(),
+        )
+        .unwrap();
+    legacy_db
+        .run_script(
+            r#":create migrations {id: String, applied_at: Int}"#,
+            Default::default(),
+        )
+        .unwrap();
+    legacy_db
+        .run_script(
+            r#"?[id, applied_at] <- [["006_safe_canonical_schema_repair", 1]]
+        :put migrations {id, applied_at}"#,
+            Default::default(),
+        )
+        .unwrap();
+    drop(legacy_db);
+
+    let repaired_db = init_db(db_path.as_path()).unwrap();
+    let canonical_query = repaired_db
+        .run_script(
+            r#"?[qualified_name, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env]"#,
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(canonical_query.rows.len(), 1);
+    assert_eq!(canonical_query.rows[0][1].as_str(), Some("local"));
+
+    let graph = GraphEngine::new(repaired_db);
+    let results = graph
+        .search_by_name_typed("main", Some("function"), 10)
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].qualified_name, "src/main.rs::main");
 }
 
 #[tokio::test(flavor = "multi_thread")]

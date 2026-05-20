@@ -26,6 +26,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {"type": "string", "description": "Path to index (default: current directory)"},
                         "incremental": {"type": "boolean", "description": "Only index changed files (git-based)"},
+                        "resolve_calls": {"type": "boolean", "default": false, "description": "Resolve unresolved call edges after indexing. Defaults to false for MCP responsiveness."},
                         "lang": {"type": "string", "description": "Filter by language (e.g., go,ts,py,rs,kt)"},
                         "exclude": {"type": "string", "description": "Exclude patterns (comma-separated)"},
                         "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Target environment for this index"},
@@ -341,6 +342,11 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
+                        "include_counts": {
+                            "type": "boolean",
+                            "description": "Optional: compute full element/file/function counts. Disabled by default because large databases can take a long time to count.",
+                            "default": false
+                        },
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
