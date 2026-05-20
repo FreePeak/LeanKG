@@ -1691,6 +1691,13 @@ mod json_rpc_code {
     pub const INTERNAL_ERROR: i32 = -32603;
 }
 
+fn should_resolve_tool_paths(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "mcp_index" | "mcp_index_docs" | "mcp_init" | "detect_changes"
+    )
+}
+
 /// Extract bearer token from Authorization header using constant-time comparison
 /// to prevent timing attacks on bearer tokens. Returns an AuthContext with role.
 fn extract_auth_context(
@@ -1802,37 +1809,44 @@ async fn handle_mcp_request(
     // Check if this is a notification (no id) - notifications must not receive a response
     let is_notification = request.id.is_none();
 
-    // Apply project override from query param:
-    // 1. Inject "project" into arguments for db routing
-    // 2. Resolve relative file/doc/element paths against the project root
-    //    (without this, relative paths resolve against server CWD → wrong database)
+    // Apply project override from query param. Inject "project" for DB routing,
+    // but only absolutize arguments for tools that read the filesystem. Graph
+    // query tools expect stored project-relative paths like "./src/main.rs";
+    // rewriting those to absolute paths forces expensive full-graph scans.
     let request = if let Some(ref project) = project_param {
         let project_path = std::path::PathBuf::from(project);
         let mut req = request.clone();
         if let Some(ref mut params) = req.params {
             if let Some(obj) = params.as_object_mut() {
+                let resolve_tool_paths = obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(should_resolve_tool_paths)
+                    .unwrap_or(false);
                 // Inject project param for routing
                 if let Some(ref mut args) = obj.get_mut("arguments") {
                     if let Some(args_obj) = args.as_object_mut() {
                         args_obj
                             .entry("project".to_string())
                             .or_insert(serde_json::Value::String(project.clone()));
-                        // Resolve relative paths against project root
-                        for key in &["file", "doc", "path"] {
-                            if let Some(serde_json::Value::String(v)) = args_obj.get_mut(*key) {
-                                if !v.starts_with('/') {
-                                    let resolved = project_path.join(&*v);
-                                    *v = resolved.to_string_lossy().to_string();
-                                }
-                            }
-                        }
-                        // Resolve files array elements too
-                        if let Some(serde_json::Value::Array(arr)) = args_obj.get_mut("files") {
-                            for item in arr.iter_mut() {
-                                if let serde_json::Value::String(v) = item {
+                        if resolve_tool_paths {
+                            // Resolve relative filesystem paths against project root.
+                            for key in &["file", "doc", "path"] {
+                                if let Some(serde_json::Value::String(v)) = args_obj.get_mut(*key) {
                                     if !v.starts_with('/') {
                                         let resolved = project_path.join(&*v);
                                         *v = resolved.to_string_lossy().to_string();
+                                    }
+                                }
+                            }
+                            // Resolve files array elements too.
+                            if let Some(serde_json::Value::Array(arr)) = args_obj.get_mut("files") {
+                                for item in arr.iter_mut() {
+                                    if let serde_json::Value::String(v) = item {
+                                        if !v.starts_with('/') {
+                                            let resolved = project_path.join(&*v);
+                                            *v = resolved.to_string_lossy().to_string();
+                                        }
                                     }
                                 }
                             }
@@ -2060,5 +2074,14 @@ mod tests {
         let db_path = std::path::PathBuf::from("/custom/path/.leankg");
         let server = MCPServer::new(db_path.clone());
         assert!(server.auth_manager.try_read().is_ok());
+    }
+
+    #[test]
+    fn test_project_routing_only_absolutizes_filesystem_tools() {
+        assert!(should_resolve_tool_paths("mcp_index"));
+        assert!(should_resolve_tool_paths("mcp_index_docs"));
+        assert!(!should_resolve_tool_paths("get_context"));
+        assert!(!should_resolve_tool_paths("search_code"));
+        assert!(!should_resolve_tool_paths("find_function"));
     }
 }
