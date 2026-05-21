@@ -5,7 +5,7 @@ use axum::{
     body::Body,
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use std::net::SocketAddr;
@@ -338,6 +338,36 @@ pub async fn start_server(
         .route("/api/file", get(handlers::api_get_file))
         .route("/api/incidents", get(handlers::api_incidents))
         .route("/api/conflicts", get(handlers::api_conflicts))
+        .route("/api/teams", get(handlers::api_teams))
+        .route("/api/teams", post(handlers::api_create_team))
+        .route("/api/teams/:id", get(handlers::api_get_team))
+        .route("/api/teams/:id", put(handlers::api_update_team))
+        .route("/api/teams/:id", delete(handlers::api_delete_team))
+        .route(
+            "/api/teams/:id/members",
+            post(handlers::api_add_team_member),
+        )
+        .route(
+            "/api/teams/:id/members/:user",
+            delete(handlers::api_remove_team_member),
+        )
+        .route("/api/teams/:id/invites", get(handlers::api_team_invites))
+        .route(
+            "/api/teams/:id/invites",
+            post(handlers::api_create_team_invite),
+        )
+        .route(
+            "/api/teams/invites/:token/accept",
+            post(handlers::api_accept_team_invite),
+        )
+        .route(
+            "/api/teams/invites/:token",
+            delete(handlers::api_revoke_team_invite),
+        )
+        .route(
+            "/api/teams/:id/permissions",
+            get(handlers::api_team_permissions),
+        )
         .route("/services", get(handlers::services_page))
         .route("/*path", get(fallback_handler))
         .with_state(state);

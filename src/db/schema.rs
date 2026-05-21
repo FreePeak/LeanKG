@@ -191,6 +191,37 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Create teams table for shared graph management
+    if !existing_relations.contains("teams") {
+        let create_teams = r#":create teams {id: String, name: String, description: String, owner_id: String, created_at: Int, updated_at: Int, graph_read_users: String, graph_write_users: String, members: String}"#;
+        if let Err(e) = db.run_script(create_teams, Default::default()) {
+            tracing::warn!("Failed to create teams: {:?}", e);
+        }
+        let team_indexes = [r#":create teams::owner_index {ref: (owner_id), compressed: true}"#];
+        for idx in &team_indexes {
+            if let Err(e) = db.run_script(idx, Default::default()) {
+                tracing::debug!("teams index note: {:?}", e);
+            }
+        }
+    }
+
+    // Create team_invites table for onboarding workflow
+    if !existing_relations.contains("team_invites") {
+        let create_invites = r#":create team_invites {token: String, team_id: String, email: String?, role: String, created_by: String, created_at: Int, expires_at: Int, accepted: Bool, accepted_by: String?}"#;
+        if let Err(e) = db.run_script(create_invites, Default::default()) {
+            tracing::warn!("Failed to create team_invites: {:?}", e);
+        }
+        let invite_indexes = [
+            r#":create team_invites::team_index {ref: (team_id), compressed: true}"#,
+            r#":create team_invites::token_index {ref: (token), compressed: true, unique: true}"#,
+        ];
+        for idx in &invite_indexes {
+            if let Err(e) = db.run_script(idx, Default::default()) {
+                tracing::debug!("team_invites index note: {:?}", e);
+            }
+        }
+    }
+
     Ok(())
 }
 

@@ -338,6 +338,11 @@ pub enum CLICommand {
         #[arg(long, default_value = "production")]
         env: String,
     },
+    /// Team management commands
+    Team {
+        #[command(subcommand)]
+        command: TeamCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -451,5 +456,133 @@ pub enum IncidentCommand {
     Show {
         /// Incident ID
         id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TeamCommand {
+    /// Create a new team
+    Create {
+        /// Team name
+        #[arg(long)]
+        name: String,
+        /// Team description
+        #[arg(long)]
+        description: String,
+        /// Owner user ID
+        #[arg(long)]
+        owner: String,
+    },
+    /// List all teams
+    List,
+    /// Show team details
+    Show {
+        /// Team ID
+        id: String,
+    },
+    /// Update team information
+    Update {
+        /// Team ID
+        #[arg(long)]
+        id: String,
+        /// New name (optional)
+        #[arg(long)]
+        name: Option<String>,
+        /// New description (optional)
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Delete a team
+    Delete {
+        /// Team ID
+        #[arg(long)]
+        id: String,
+    },
+    /// Add member to team
+    AddMember {
+        /// Team ID
+        #[arg(long)]
+        team: String,
+        /// User ID to add
+        #[arg(long)]
+        user: String,
+        /// Role: admin, contributor, viewer
+        #[arg(long, default_value = "viewer")]
+        role: String,
+    },
+    /// Remove member from team
+    RemoveMember {
+        /// Team ID
+        #[arg(long)]
+        team: String,
+        /// User ID to remove
+        #[arg(long)]
+        user: String,
+    },
+    /// Generate invite link for team
+    Invite {
+        /// Team ID
+        #[arg(long)]
+        team: String,
+        /// Role for invitee
+        #[arg(long, default_value = "viewer")]
+        role: String,
+        /// Email for invitee (optional)
+        #[arg(long)]
+        email: Option<String>,
+        /// Invite expiration in hours (default: 48)
+        #[arg(long, default_value = "48")]
+        expires_hours: u64,
+    },
+    /// Accept team invite
+    Accept {
+        /// Invite token
+        #[arg(long)]
+        token: String,
+        /// User ID accepting invite
+        #[arg(long)]
+        user: String,
+    },
+    /// List pending invites for team
+    Invites {
+        /// Team ID
+        #[arg(long)]
+        team: String,
+    },
+    /// Revoke team invite
+    RevokeInvite {
+        /// Invite token
+        #[arg(long)]
+        token: String,
+    },
+    /// Set graph read permissions for team
+    SetReadUsers {
+        /// Team ID
+        #[arg(long)]
+        team: String,
+        /// Comma-separated list of user IDs
+        #[arg(long)]
+        users: String,
+    },
+    /// Set graph write permissions for team
+    SetWriteUsers {
+        /// Team ID
+        #[arg(long)]
+        team: String,
+        /// Comma-separated list of user IDs
+        #[arg(long)]
+        users: String,
+    },
+    /// Check if user has permission
+    CheckPermission {
+        /// Team ID
+        #[arg(long)]
+        team: String,
+        /// User ID to check
+        #[arg(long)]
+        user: String,
+        /// Require write permission
+        #[arg(long)]
+        write: bool,
     },
 }
