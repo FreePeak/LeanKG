@@ -450,6 +450,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Incident { command } => {
             handle_incident_command(command)?;
         }
+        cli::CLICommand::Team { command } => {
+            handle_team_command(command)?;
+        }
         cli::CLICommand::Note {
             target,
             content,
@@ -3146,6 +3149,213 @@ fn handle_incident_command(
                 None => {
                     println!("Incident '{}' not found", id);
                 }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    let db = db::schema::init_db(&db_path)?;
+
+    match command {
+        cli::TeamCommand::Create {
+            name,
+            description,
+            owner,
+        } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let team = db::models::Team {
+                id: format!("TEAM-{}", uuid::Uuid::new_v4()),
+                name,
+                description,
+                owner_id: owner,
+                created_at: now,
+                updated_at: now,
+                graph_read_users: vec![],
+                graph_write_users: vec![],
+                members: vec![],
+            };
+            db::create_team(&db, &team)?;
+            println!("Created team '{}' ({})", team.name, team.id);
+            println!("  Owner: {}", team.owner_id);
+        }
+        cli::TeamCommand::List => {
+            let teams = db::list_teams(&db)?;
+            if teams.is_empty() {
+                println!("No teams found");
+            } else {
+                for t in teams {
+                    println!("\nTeam: {} ({})", t.name, t.id);
+                    println!("  Owner: {}", t.owner_id);
+                    println!("  Members: {}", t.members.len());
+                    println!("  Read users: {}", t.graph_read_users.len());
+                    println!("  Write users: {}", t.graph_write_users.len());
+                }
+            }
+        }
+        cli::TeamCommand::Show { id } => match db::get_team(&db, &id)? {
+            Some(t) => {
+                println!("Team Details:");
+                println!("  ID:          {}", t.id);
+                println!("  Name:        {}", t.name);
+                println!("  Description: {}", t.description);
+                println!("  Owner:       {}", t.owner_id);
+                println!("  Created:     {}", t.created_at);
+                println!("  Updated:     {}", t.updated_at);
+                println!("  Members ({}):", t.members.len());
+                for m in &t.members {
+                    println!("    - {} ({})", m.user_id, m.role);
+                }
+                println!("  Graph Read Users:  {:?}", t.graph_read_users);
+                println!("  Graph Write Users: {:?}", t.graph_write_users);
+            }
+            None => {
+                println!("Team '{}' not found", id);
+            }
+        },
+        cli::TeamCommand::Update {
+            id,
+            name,
+            description,
+        } => {
+            if let Some(mut t) = db::get_team(&db, &id)? {
+                if let Some(n) = name {
+                    t.name = n;
+                }
+                if let Some(d) = description {
+                    t.description = d;
+                }
+                t.updated_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                db::update_team(&db, &t)?;
+                println!("Updated team '{}'", id);
+            } else {
+                println!("Team '{}' not found", id);
+            }
+        }
+        cli::TeamCommand::Delete { id } => {
+            db::delete_team(&db, &id)?;
+            println!("Deleted team '{}'", id);
+        }
+        cli::TeamCommand::AddMember { team, user, role } => {
+            let t = db::add_team_member(&db, &team, &user, &role)?;
+            println!("Added '{}' to team '{}' as {}", user, team, role);
+            println!("  Team now has {} members", t.members.len());
+        }
+        cli::TeamCommand::RemoveMember { team, user } => {
+            let t = db::remove_team_member(&db, &team, &user)?;
+            println!("Removed '{}' from team '{}'", user, team);
+            println!("  Team now has {} members", t.members.len());
+        }
+        cli::TeamCommand::Invite {
+            team,
+            role,
+            email,
+            expires_hours,
+        } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let expires_at = now + (expires_hours as i64 * 3600);
+            let token = uuid::Uuid::new_v4().to_string().replace("-", "");
+            let invite = db::models::TeamInvite {
+                token: token.clone(),
+                team_id: team,
+                email,
+                role,
+                created_by: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+                created_at: now,
+                expires_at,
+                accepted: false,
+                accepted_by: None,
+            };
+            db::create_team_invite(&db, &invite)?;
+            println!("Created invite token: {}", token);
+            println!("  Expires in {} hours", expires_hours);
+        }
+        cli::TeamCommand::Accept { token, user } => {
+            let invite = db::accept_team_invite(&db, &token, &user)?;
+            println!("Accepted invite for team '{}'", invite.team_id);
+            println!("User '{}' is now a {}", user, invite.role);
+        }
+        cli::TeamCommand::Invites { team } => {
+            let invites = db::get_team_invites(&db, &team)?;
+            if invites.is_empty() {
+                println!("No pending invites for team '{}'", team);
+            } else {
+                for inv in invites {
+                    let status = if inv.accepted { "ACCEPTED" } else { "PENDING" };
+                    println!("\nInvite: {} [{}]", inv.token, status);
+                    println!("  Role:      {}", inv.role);
+                    println!("  Created:   {}", inv.created_at);
+                    println!("  Expires:   {}", inv.expires_at);
+                    if let Some(ref email) = inv.email {
+                        println!("  Email:     {}", email);
+                    }
+                    if let Some(ref accepted_by) = inv.accepted_by {
+                        println!("  Accepted: {}", accepted_by);
+                    }
+                }
+            }
+        }
+        cli::TeamCommand::RevokeInvite { token } => {
+            db::delete_team_invite(&db, &token)?;
+            println!("Revoked invite '{}'", token);
+        }
+        cli::TeamCommand::SetReadUsers { team, users } => {
+            if let Some(mut t) = db::get_team(&db, &team)? {
+                t.graph_read_users = users.split(',').map(|s| s.trim().to_string()).collect();
+                t.updated_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                db::update_team(&db, &t)?;
+                println!("Updated graph read users for team '{}'", team);
+                println!("  Users: {:?}", t.graph_read_users);
+            } else {
+                println!("Team '{}' not found", team);
+            }
+        }
+        cli::TeamCommand::SetWriteUsers { team, users } => {
+            if let Some(mut t) = db::get_team(&db, &team)? {
+                t.graph_write_users = users.split(',').map(|s| s.trim().to_string()).collect();
+                t.updated_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                db::update_team(&db, &t)?;
+                println!("Updated graph write users for team '{}'", team);
+                println!("  Users: {:?}", t.graph_write_users);
+            } else {
+                println!("Team '{}' not found", team);
+            }
+        }
+        cli::TeamCommand::CheckPermission { team, user, write } => {
+            let has_perm = db::check_graph_permission(&db, &team, &user, write)?;
+            if has_perm {
+                println!(
+                    "User '{}' has {} permission on team '{}'",
+                    user,
+                    if write { "write" } else { "read" },
+                    team
+                );
+            } else {
+                println!(
+                    "User '{}' does NOT have {} permission on team '{}'",
+                    user,
+                    if write { "write" } else { "read" },
+                    team
+                );
             }
         }
     }

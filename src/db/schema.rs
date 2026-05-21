@@ -168,6 +168,12 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     // Run migrations for schema evolution
     run_migrations(db, &existing_relations)?;
 
+    // Do not rely solely on the migration ledger for canonical graph arity.
+    // Some older databases recorded migration 006 while retaining the
+    // pre-env 11-column code_elements relation, which breaks all current
+    // graph queries at runtime.
+    repair_canonical_schema(db, &existing_relations)?;
+
     // Create service_metadata table if not exists (idempotent via migration)
     if !existing_relations.contains("service_metadata") {
         let create_svc = r#":create service_metadata {service_name: String, env: String default 'local', team: String?, on_call: String?, repo_url: String?, language: String?, health_endpoint: String?, slo_p99_ms: Int?, incident_count: Int, last_incident: Int?, tags: String, version: String?, deploy_envs: String, created_at: Int, updated_at: Int}"#;
@@ -181,6 +187,37 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         for idx in &svc_indexes {
             if let Err(e) = db.run_script(idx, Default::default()) {
                 tracing::debug!("service_metadata index note: {:?}", e);
+            }
+        }
+    }
+
+    // Create teams table for shared graph management
+    if !existing_relations.contains("teams") {
+        let create_teams = r#":create teams {id: String, name: String, description: String, owner_id: String, created_at: Int, updated_at: Int, graph_read_users: String, graph_write_users: String, members: String}"#;
+        if let Err(e) = db.run_script(create_teams, Default::default()) {
+            tracing::warn!("Failed to create teams: {:?}", e);
+        }
+        let team_indexes = [r#":create teams::owner_index {ref: (owner_id), compressed: true}"#];
+        for idx in &team_indexes {
+            if let Err(e) = db.run_script(idx, Default::default()) {
+                tracing::debug!("teams index note: {:?}", e);
+            }
+        }
+    }
+
+    // Create team_invites table for onboarding workflow
+    if !existing_relations.contains("team_invites") {
+        let create_invites = r#":create team_invites {token: String, team_id: String, email: String?, role: String, created_by: String, created_at: Int, expires_at: Int, accepted: Bool, accepted_by: String?}"#;
+        if let Err(e) = db.run_script(create_invites, Default::default()) {
+            tracing::warn!("Failed to create team_invites: {:?}", e);
+        }
+        let invite_indexes = [
+            r#":create team_invites::team_index {ref: (team_id), compressed: true}"#,
+            r#":create team_invites::token_index {ref: (token), compressed: true, unique: true}"#,
+        ];
+        for idx in &invite_indexes {
+            if let Err(e) = db.run_script(idx, Default::default()) {
+                tracing::debug!("team_invites index note: {:?}", e);
             }
         }
     }
@@ -285,22 +322,60 @@ fn repair_canonical_schema(
     db: &CozoDb,
     existing_relations: &std::collections::HashSet<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = ensure_canonical_code_elements(db, existing_relations) {
-        tracing::warn!("code_elements canonical repair failed: {:?}", e);
-    }
-    if let Err(e) = ensure_canonical_relationships(db, existing_relations) {
-        tracing::warn!("relationships canonical repair failed: {:?}", e);
-    }
+    ensure_canonical_code_elements(db, existing_relations)?;
+    ensure_canonical_relationships(db, existing_relations)?;
     if let Err(e) = ensure_incidents_table(db) {
         tracing::warn!("incidents table creation failed: {:?}", e);
     }
     Ok(())
 }
 
-const CANONICAL_CODE_ELEMENTS: &str = ":replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}";
-const CANONICAL_RELATIONSHIPS: &str = ":replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}";
+const REPAIR_LEGACY_CODE_ELEMENTS_11_TO_12: &str = r#"
+?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :=
+    *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata],
+    env = "local"
+:replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}
+"#;
+const REPAIR_LEGACY_RELATIONSHIPS_5_TO_6: &str = r#"
+?[source_qualified, target_qualified, rel_type, confidence, metadata, env] :=
+    *relationships[source_qualified, target_qualified, rel_type, confidence, metadata],
+    env = "local"
+:replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}
+"#;
 
 fn get_column_count(db: &CozoDb, relation: &str) -> usize {
+    let arity_probe = match relation {
+        "code_elements" => Some([
+            (
+                12,
+                "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :limit 0",
+            ),
+            (
+                11,
+                "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit 0",
+            ),
+        ]),
+        "relationships" => Some([
+            (
+                6,
+                "?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env] :limit 0",
+            ),
+            (
+                5,
+                "?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata] :limit 0",
+            ),
+        ]),
+        _ => None,
+    };
+
+    if let Some(probes) = arity_probe {
+        for (arity, query) in probes {
+            if db.run_script(query, Default::default()).is_ok() {
+                return arity;
+            }
+        }
+    }
+
     let query = format!(":schema {}", relation);
     db.run_script(&query, Default::default())
         .map(|r| r.rows.len())
@@ -328,7 +403,14 @@ fn ensure_canonical_code_elements(
         current,
         EXPECTED
     );
-    db.run_script(CANONICAL_CODE_ELEMENTS, Default::default())?;
+    if current != 11 {
+        tracing::warn!(
+            "code_elements schema has unsupported arity {}; canonical repair only supports legacy 11-column schema",
+            current
+        );
+        return Ok(());
+    }
+    db.run_script(REPAIR_LEGACY_CODE_ELEMENTS_11_TO_12, Default::default())?;
     tracing::info!("code_elements :replace successful");
     Ok(())
 }
@@ -354,7 +436,14 @@ fn ensure_canonical_relationships(
         current,
         EXPECTED
     );
-    db.run_script(CANONICAL_RELATIONSHIPS, Default::default())?;
+    if current != 5 {
+        tracing::warn!(
+            "relationships schema has unsupported arity {}; canonical repair only supports legacy 5-column schema",
+            current
+        );
+        return Ok(());
+    }
+    db.run_script(REPAIR_LEGACY_RELATIONSHIPS_5_TO_6, Default::default())?;
     tracing::info!("relationships :replace successful");
     Ok(())
 }

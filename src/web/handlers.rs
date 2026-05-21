@@ -4097,3 +4097,276 @@ pub async fn api_conflicts(
         Err(e) => ApiResponse::<serde_json::Value>::error(&e.to_string()),
     }
 }
+
+// ============================================================================
+// Team API handlers
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct CreateTeamRequest {
+    pub name: String,
+    pub description: String,
+    pub owner_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateTeamRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AddMemberRequest {
+    pub user_id: String,
+    pub role: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateInviteRequest {
+    pub role: String,
+    pub email: Option<String>,
+    pub expires_hours: Option<u64>,
+}
+
+#[derive(Deserialize)]
+pub struct AcceptInviteRequest {
+    pub user_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct SetPermissionsRequest {
+    pub read_users: Option<Vec<String>>,
+    pub write_users: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+pub struct CheckPermissionRequest {
+    pub user_id: String,
+    pub require_write: bool,
+}
+
+pub async fn api_teams(State(state): State<AppState>) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => match db::list_teams(&db) {
+            Ok(teams) => ApiResponse::success(serde_json::json!({ "teams": teams })),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_create_team(
+    State(state): State<AppState>,
+    Json(req): Json<CreateTeamRequest>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let team = db::models::Team {
+                id: format!("TEAM-{}", uuid::Uuid::new_v4()),
+                name: req.name,
+                description: req.description,
+                owner_id: req.owner_id,
+                created_at: now,
+                updated_at: now,
+                graph_read_users: vec![],
+                graph_write_users: vec![],
+                members: vec![],
+            };
+            match db::create_team(&db, &team) {
+                Ok(created) => ApiResponse::success(serde_json::json!({ "team": created })),
+                Err(e) => ApiResponse::error(&e.to_string()),
+            }
+        }
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_get_team(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => match db::get_team(&db, &id) {
+            Ok(Some(team)) => ApiResponse::success(serde_json::json!({ "team": team })),
+            Ok(None) => ApiResponse::error("Team not found"),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_update_team(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateTeamRequest>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => match db::get_team(&db, &id) {
+            Ok(Some(mut team)) => {
+                if let Some(name) = req.name {
+                    team.name = name;
+                }
+                if let Some(desc) = req.description {
+                    team.description = desc;
+                }
+                team.updated_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                match db::update_team(&db, &team) {
+                    Ok(updated) => ApiResponse::success(serde_json::json!({ "team": updated })),
+                    Err(e) => ApiResponse::error(&e.to_string()),
+                }
+            }
+            Ok(None) => ApiResponse::error("Team not found"),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_delete_team(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => {
+            if let Err(e) = db::delete_team(&db, &id) {
+                return ApiResponse::error(&e.to_string());
+            }
+            ApiResponse::success(serde_json::json!({ "deleted": true }))
+        }
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_add_team_member(
+    State(state): State<AppState>,
+    Path((team_id, user_id)): Path<(String, String)>,
+    Json(req): Json<AddMemberRequest>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => match db::add_team_member(&db, &team_id, &user_id, &req.role) {
+            Ok(team) => ApiResponse::success(serde_json::json!({ "team": team })),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_remove_team_member(
+    State(state): State<AppState>,
+    Path((team_id, user_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => match db::remove_team_member(&db, &team_id, &user_id) {
+            Ok(team) => ApiResponse::success(serde_json::json!({ "team": team })),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_team_invites(
+    State(state): State<AppState>,
+    Path(team_id): Path<String>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => match db::get_team_invites(&db, &team_id) {
+            Ok(invites) => ApiResponse::success(serde_json::json!({ "invites": invites })),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_create_team_invite(
+    State(state): State<AppState>,
+    Path(team_id): Path<String>,
+    Json(req): Json<CreateInviteRequest>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let expires_hours = req.expires_hours.unwrap_or(48);
+            let expires_at = now + (expires_hours as i64 * 3600);
+            let token = uuid::Uuid::new_v4().to_string().replace("-", "");
+            let invite = db::models::TeamInvite {
+                token,
+                team_id,
+                email: req.email,
+                role: req.role,
+                created_by: "system".to_string(),
+                created_at: now,
+                expires_at,
+                accepted: false,
+                accepted_by: None,
+            };
+            match db::create_team_invite(&db, &invite) {
+                Ok(created) => ApiResponse::success(serde_json::json!({ "invite": created })),
+                Err(e) => ApiResponse::error(&e.to_string()),
+            }
+        }
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_accept_team_invite(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    Json(req): Json<AcceptInviteRequest>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => match db::accept_team_invite(&db, &token, &req.user_id) {
+            Ok(invite) => ApiResponse::success(serde_json::json!({ "invite": invite })),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_revoke_team_invite(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> impl IntoResponse {
+    match state.get_db() {
+        Ok(db) => {
+            if let Err(e) = db::delete_team_invite(&db, &token) {
+                return ApiResponse::error(&e.to_string());
+            }
+            ApiResponse::success(serde_json::json!({ "revoked": true }))
+        }
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+pub async fn api_team_permissions(
+    State(state): State<AppState>,
+    Path(team_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let user_id = params.get("user_id").cloned().unwrap_or_default();
+    let require_write = params
+        .get("require_write")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(false);
+
+    match state.get_db() {
+        Ok(db) => match db::check_graph_permission(&db, &team_id, &user_id, require_write) {
+            Ok(has_permission) => ApiResponse::success(serde_json::json!({
+                "has_permission": has_permission,
+                "user_id": user_id,
+                "require_write": require_write
+            })),
+            Err(e) => ApiResponse::error(&e.to_string()),
+        },
+        Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}

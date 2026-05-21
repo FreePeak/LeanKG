@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::signal;
-use tokio::sync::RwLock as TokioRwLock;
+use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock};
 use tower_http::cors::{Any, CorsLayer};
 
 /// Session information for coordination between multiple LeanKG instances
@@ -56,6 +56,8 @@ pub struct MCPServer {
     shutdown_flag: Arc<AtomicBool>,
     /// Port this server is bound to (for cleanup tracking)
     bound_port: Arc<AtomicU32>,
+    /// Serializes MCP write/index operations so Cozo SQLite is not written concurrently.
+    write_lock: Arc<TokioMutex<()>>,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -79,6 +81,7 @@ impl Clone for MCPServer {
             child_processes: self.child_processes.clone(),
             shutdown_flag: self.shutdown_flag.clone(),
             bound_port: self.bound_port.clone(),
+            write_lock: self.write_lock.clone(),
         }
     }
 }
@@ -97,6 +100,7 @@ impl MCPServer {
             child_processes: Arc::new(TokioRwLock::new(HashMap::new())),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
+            write_lock: Arc::new(TokioMutex::new(())),
         }
     }
 
@@ -113,6 +117,7 @@ impl MCPServer {
             child_processes: Arc::new(TokioRwLock::new(HashMap::new())),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
+            write_lock: Arc::new(TokioMutex::new(())),
         }
     }
 
@@ -212,7 +217,7 @@ impl MCPServer {
             if leankg_path.is_dir() {
                 return Some(leankg_path);
             }
-            if ancestor.join("leankg.yaml").exists() {
+            if ancestor.join("leankg.yaml").exists() && leankg_path.exists() {
                 return Some(leankg_path);
             }
         }
@@ -504,12 +509,9 @@ impl MCPServer {
                     // Check if process is still alive AND actually responds as the MCP server
                     // (PID recycling can cause false positives with kill -0 alone)
                     if Self::is_process_alive(pid) {
-                        // Verify the server is actually running by checking health endpoint
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
-                        let alive = rt.block_on(Self::check_health_sync(port));
+                        // Verify without creating a nested Tokio runtime. This method is called
+                        // from async startup paths, so block_on here can panic.
+                        let alive = Self::check_health_blocking(port);
                         if alive {
                             return Ok(Some(pid));
                         }
@@ -541,6 +543,16 @@ impl MCPServer {
             .timeout(Duration::from_millis(500))
             .send()
             .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+
+    fn check_health_blocking(port: u16) -> bool {
+        let url = format!("http://127.0.0.1:{}/health", port);
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(500))
+            .build()
+            .and_then(|client| client.get(url).send())
             .map(|r| r.status().is_success())
             .unwrap_or(false)
     }
@@ -919,20 +931,23 @@ impl MCPServer {
         let leankg_dir_exists = leankg_path.is_dir();
         let leankg_yaml_exists = project_root.join("leankg.yaml").exists();
 
-        if leankg_dir_exists || leankg_yaml_exists {
-            if leankg_dir_exists {
-                tracing::info!(
-                    "LeanKG project already initialized at {}",
-                    project_root.display()
-                );
-                return self.auto_index_if_needed().await;
-            } else {
-                tracing::warn!(
-                    ".leankg exists but is not a directory. Removing and re-initializing..."
-                );
-                std::fs::remove_file(&leankg_path)
-                    .map_err(|e| format!("Failed to remove invalid .leankg file: {}", e))?;
-            }
+        if leankg_path.exists() && !leankg_dir_exists {
+            tracing::warn!(
+                ".leankg exists but is not a directory. Removing and re-initializing..."
+            );
+            std::fs::remove_file(&leankg_path)
+                .map_err(|e| format!("Failed to remove invalid .leankg file: {}", e))?;
+        } else if leankg_dir_exists {
+            tracing::info!(
+                "LeanKG project already initialized at {}",
+                project_root.display()
+            );
+            return self.auto_index_if_needed().await;
+        } else if leankg_yaml_exists {
+            tracing::info!(
+                "LeanKG config exists at {}, creating missing .leankg directory",
+                project_root.display()
+            );
         }
 
         tracing::info!("LeanKG not found, searching for project root...");
@@ -1315,6 +1330,19 @@ impl MCPServer {
     }
 
     fn find_project_root(&self) -> Result<std::path::PathBuf, String> {
+        let configured_db_path = self.get_db_path();
+        if configured_db_path.ends_with(".leankg") {
+            if let Some(parent) = configured_db_path.parent() {
+                if !parent.as_os_str().is_empty() && parent.exists() {
+                    tracing::debug!(
+                        "Using configured db_path parent as project root: {}",
+                        parent.display()
+                    );
+                    return Ok(parent.to_path_buf());
+                }
+            }
+        }
+
         let current_dir =
             std::env::current_dir().map_err(|e| format!("Failed to get current dir: {}", e))?;
 
@@ -1391,6 +1419,13 @@ impl MCPServer {
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
+        let _write_guard = if Self::requires_write_lock(tool_name) || self.write_tracker.is_dirty()
+        {
+            Some(self.write_lock.lock().await)
+        } else {
+            None
+        };
+
         let project_root = self.find_project_root()?;
         tracing::info!(
             "execute_tool called. project_root={}, db_path={}",
@@ -1492,6 +1527,22 @@ impl MCPServer {
         }
 
         result
+    }
+
+    fn requires_write_lock(tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "mcp_init"
+                | "mcp_index"
+                | "mcp_index_docs"
+                | "add_knowledge"
+                | "update_knowledge"
+                | "delete_knowledge"
+                | "add_annotation"
+                | "link_element"
+                | "add_documentation"
+                | "promote_environment"
+        )
     }
 }
 
@@ -1640,6 +1691,13 @@ mod json_rpc_code {
     pub const INTERNAL_ERROR: i32 = -32603;
 }
 
+fn should_resolve_tool_paths(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "mcp_index" | "mcp_index_docs" | "mcp_init" | "detect_changes"
+    )
+}
+
 /// Extract bearer token from Authorization header using constant-time comparison
 /// to prevent timing attacks on bearer tokens. Returns an AuthContext with role.
 fn extract_auth_context(
@@ -1751,28 +1809,28 @@ async fn handle_mcp_request(
     // Check if this is a notification (no id) - notifications must not receive a response
     let is_notification = request.id.is_none();
 
-    // Apply project override from query param:
-    // 1. Inject "project" into arguments for db routing
-    // 2. Resolve relative file/doc/element paths against the project root
-    //    (without this, relative paths resolve against server CWD → wrong database)
+    // Apply project override from query param. Inject "project" for DB routing,
+    // but only absolutize arguments for tools that read the filesystem. Graph
+    // query tools expect stored project-relative paths like "./src/main.rs";
+    // rewriting those to absolute paths forces expensive full-graph scans.
     let request = if let Some(ref project) = project_param {
         let project_path = std::path::PathBuf::from(project);
-        let db_path = if project_path.ends_with(".leankg") {
-            project_path.clone()
-        } else {
-            project_path.join(".leankg")
-        };
-        if db_path != server.mcp_server.get_db_path() {
-            let mut req = request.clone();
-            if let Some(ref mut params) = req.params {
-                if let Some(obj) = params.as_object_mut() {
-                    // Inject project param for routing
-                    if let Some(ref mut args) = obj.get_mut("arguments") {
-                        if let Some(args_obj) = args.as_object_mut() {
-                            args_obj
-                                .entry("project".to_string())
-                                .or_insert(serde_json::Value::String(project.clone()));
-                            // Resolve relative paths against project root
+        let mut req = request.clone();
+        if let Some(ref mut params) = req.params {
+            if let Some(obj) = params.as_object_mut() {
+                let resolve_tool_paths = obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(should_resolve_tool_paths)
+                    .unwrap_or(false);
+                // Inject project param for routing
+                if let Some(ref mut args) = obj.get_mut("arguments") {
+                    if let Some(args_obj) = args.as_object_mut() {
+                        args_obj
+                            .entry("project".to_string())
+                            .or_insert(serde_json::Value::String(project.clone()));
+                        if resolve_tool_paths {
+                            // Resolve relative filesystem paths against project root.
                             for key in &["file", "doc", "path"] {
                                 if let Some(serde_json::Value::String(v)) = args_obj.get_mut(*key) {
                                     if !v.starts_with('/') {
@@ -1781,7 +1839,7 @@ async fn handle_mcp_request(
                                     }
                                 }
                             }
-                            // Resolve files array elements too
+                            // Resolve files array elements too.
                             if let Some(serde_json::Value::Array(arr)) = args_obj.get_mut("files") {
                                 for item in arr.iter_mut() {
                                     if let serde_json::Value::String(v) = item {
@@ -1796,10 +1854,8 @@ async fn handle_mcp_request(
                     }
                 }
             }
-            req
-        } else {
-            request
         }
+        req
     } else {
         request
     };
@@ -1938,14 +1994,6 @@ async fn process_jsonrpc_request(
                     .or_insert(serde_json::Value::String(project.to_string()));
             }
 
-            // Auto-index the project if needed (this ensures the database is fresh before tool execution)
-            if let Some(ref project) = project_param {
-                if let Err(e) = mcp_server.ensure_project_indexed(project).await {
-                    tracing::warn!("Auto-index check failed for {}: {}", project, e);
-                    // Continue with tool execution even if auto-index fails
-                }
-            }
-
             let result = mcp_server
                 .execute_tool(tool_name, arguments)
                 .await
@@ -2026,5 +2074,14 @@ mod tests {
         let db_path = std::path::PathBuf::from("/custom/path/.leankg");
         let server = MCPServer::new(db_path.clone());
         assert!(server.auth_manager.try_read().is_ok());
+    }
+
+    #[test]
+    fn test_project_routing_only_absolutizes_filesystem_tools() {
+        assert!(should_resolve_tool_paths("mcp_index"));
+        assert!(should_resolve_tool_paths("mcp_index_docs"));
+        assert!(!should_resolve_tool_paths("get_context"));
+        assert!(!should_resolve_tool_paths("search_code"));
+        assert!(!should_resolve_tool_paths("find_function"));
     }
 }
