@@ -742,6 +742,59 @@ impl ToolRegistry {
                     "required": []
                 }),
             },
+
+            // Ontology Semantic Search Tools
+            ToolDefinition {
+                name: "kg_context".to_string(),
+                description: "Get ontology-aware context for a semantic query. Returns matched concept nodes, expanded code context, workflows, docs, tests, and confidence scores. Use for agentic semantic questions like 'where is checkout refund failure handled?'".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Natural language query (e.g., 'checkout refund failure')"},
+                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment to search"},
+                        "depth": {"type": "integer", "default": 2, "description": "Expansion depth (default: 2)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "kg_concept_map".to_string(),
+                description: "Get a compact concept neighborhood for a domain, service, or feature. Useful for feature onboarding, impact analysis before edits, and understanding ownership boundaries.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Concept or service name to map"},
+                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "kg_trace_workflow".to_string(),
+                description: "Get an ordered procedural trace for a workflow. Useful for debugging user flows, understanding what code runs before/after a step, and identifying missing tests or failure handling.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "workflow_id_or_query": {"type": "string", "description": "Workflow name, ID, or search query"},
+                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["workflow_id_or_query"]
+                }),
+            },
+            ToolDefinition {
+                name: "kg_ontology_status".to_string(),
+                description: "Get ontology coverage status: counts of concept and procedural nodes by type, relationships by type, nodes missing aliases, and workflows without failure modes.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": []
+                }),
+            },
         ]
     }
 }

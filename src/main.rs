@@ -12,6 +12,7 @@ mod graph;
 mod indexer;
 mod mcp;
 mod obsidian;
+mod ontology;
 mod orchestrator;
 mod registry;
 mod runtime;
@@ -475,6 +476,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         cli::CLICommand::Pull { remote, token, env } => {
             pull_from_remote(&remote, &token, &env)?;
+        }
+        cli::CLICommand::Ontology { command } => {
+            handle_ontology_command(command)?;
         }
     }
 
@@ -3508,6 +3512,251 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     if !found {
         println!("No environment conflicts found for service '{}'", service);
+    }
+
+    Ok(())
+}
+
+fn handle_ontology_command(
+    command: cli::OntologyCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    let db = db::schema::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db.clone());
+    let query_engine = crate::ontology::OntologyQueryEngine::new(db);
+
+    match command {
+        cli::OntologyCommand::Validate => {
+            println!("Validating ontology YAML files...");
+            let ontology_path = project_path.join("ontology");
+            if !ontology_path.exists() {
+                println!("No ontology directory found at {}. Run 'ontology sync' to create from example files.", ontology_path.display());
+                return Ok(());
+            }
+
+            let concepts_file = ontology_path.join("concepts");
+            let workflows_file = ontology_path.join("workflows");
+
+            if concepts_file.exists() {
+                println!("  concepts/ found");
+            }
+            if workflows_file.exists() {
+                println!("  workflows/ found");
+            }
+
+            println!("Validation complete.");
+        }
+
+        cli::OntologyCommand::Sync { path } => {
+            println!("Syncing ontology from YAML files...");
+            let ontology_path = match path {
+                Some(p) => std::path::PathBuf::from(p),
+                None => project_path.join("ontology"),
+            };
+
+            if !ontology_path.exists() {
+                println!(
+                    "Creating example ontology directory at {}",
+                    ontology_path.display()
+                );
+                std::fs::create_dir_all(&ontology_path)?;
+                std::fs::create_dir_all(ontology_path.join("concepts"))?;
+                std::fs::create_dir_all(ontology_path.join("workflows"))?;
+                std::fs::create_dir_all(ontology_path.join("playbooks"))?;
+                println!(
+                    "Created ontology structure. Add YAML files to define concepts and workflows."
+                );
+                return Ok(());
+            }
+
+            let mut total_nodes = 0;
+            let mut total_relationships = 0;
+
+            // Load concepts
+            let concepts_file = ontology_path.join("concepts.yaml");
+            if concepts_file.exists() {
+                match crate::ontology::load_concepts_yaml(&concepts_file) {
+                    Ok(nodes) => {
+                        let elements = crate::ontology::concept_nodes_to_elements(&nodes);
+                        for elem in &elements {
+                            if let Err(e) = graph.insert_element(elem) {
+                                tracing::warn!("Failed to insert concept element: {}", e);
+                            }
+                        }
+                        println!("  Loaded {} concept nodes", nodes.len());
+                        total_nodes += nodes.len();
+                    }
+                    Err(e) => println!("  Warning: Failed to load concepts.yaml: {}", e),
+                }
+            }
+
+            // Load workflows
+            let workflows_file = ontology_path.join("workflows.yaml");
+            if workflows_file.exists() {
+                match crate::ontology::load_workflows_yaml(&workflows_file) {
+                    Ok((workflows, steps, failures, relationships)) => {
+                        let workflow_elements =
+                            crate::ontology::workflow_nodes_to_elements(&workflows);
+                        let step_elements =
+                            crate::ontology::workflow_step_nodes_to_elements(&steps);
+                        let failure_elements =
+                            crate::ontology::failure_mode_nodes_to_elements(&failures);
+
+                        for elem in workflow_elements
+                            .iter()
+                            .chain(step_elements.iter())
+                            .chain(failure_elements.iter())
+                        {
+                            if let Err(e) = graph.insert_element(elem) {
+                                tracing::warn!("Failed to insert workflow element: {}", e);
+                            }
+                        }
+
+                        for rel in &relationships {
+                            if let Err(e) = graph.insert_relationship(rel) {
+                                tracing::warn!("Failed to insert relationship: {}", e);
+                            }
+                        }
+
+                        println!("  Loaded {} workflow nodes", workflows.len());
+                        println!("  Loaded {} workflow steps", steps.len());
+                        println!("  Loaded {} failure modes", failures.len());
+                        total_nodes += workflows.len() + steps.len() + failures.len();
+                        total_relationships += relationships.len();
+                    }
+                    Err(e) => println!("  Warning: Failed to load workflows.yaml: {}", e),
+                }
+            }
+
+            println!("\nOntology sync complete");
+            println!("  Total nodes: {}", total_nodes);
+            println!("  Total relationships: {}", total_relationships);
+        }
+
+        cli::OntologyCommand::Status => {
+            println!("Ontology Status\n===============");
+
+            let status = query_engine.get_ontology_status()?;
+
+            println!("\nConcept Nodes:");
+            for (t, count) in &status.concept_counts {
+                println!("  {}: {}", t, count);
+            }
+
+            println!("\nProcedural Nodes:");
+            for (t, count) in &status.procedural_counts {
+                println!("  {}: {}", t, count);
+            }
+
+            println!("\nTotal aliases: {}", status.total_aliases);
+            println!("Nodes missing aliases: {}", status.nodes_missing_aliases);
+            println!(
+                "Workflows without failure modes: {}",
+                status.workflows_without_failure_modes
+            );
+        }
+
+        cli::OntologyCommand::Context { query, env, depth } => {
+            let context = query_engine.get_ontology_context(&query, &env, depth)?;
+
+            if context.matched_ontology_nodes.is_empty() {
+                println!("No ontology nodes matched query '{}'", query);
+                return Ok(());
+            }
+
+            println!("Matched Ontology Nodes:");
+            for node in &context.matched_ontology_nodes {
+                println!(
+                    "  [{}] {} ({}) - score: {:.2}",
+                    node.gid, node.name, node.element_type, node.match_score
+                );
+                println!("    Match reason: {}", node.match_reason);
+            }
+
+            if !context.workflows.is_empty() {
+                println!("\nWorkflows:");
+                for w in &context.workflows {
+                    println!("  - {} ({})", w.name, w.gid);
+                }
+            }
+
+            if !context.workflow_steps.is_empty() {
+                println!("\nWorkflow Steps:");
+                for s in &context.workflow_steps {
+                    println!("  {}. {} ({})", s.order, s.name, s.gid);
+                }
+            }
+
+            if !context.expanded_code_context.is_empty() {
+                println!(
+                    "\nRelated Code Elements ({}):",
+                    context.expanded_code_context.len()
+                );
+                for elem in context.expanded_code_context.iter().take(10) {
+                    println!("  - {} ({})", elem.qualified_name, elem.element_type);
+                }
+                if context.expanded_code_context.len() > 10 {
+                    println!(
+                        "  ... and {} more",
+                        context.expanded_code_context.len() - 10
+                    );
+                }
+            }
+
+            println!("\nConfidence: {:.2}", context.confidence);
+        }
+
+        cli::OntologyCommand::ConceptMap { query, env } => {
+            let nodes = query_engine.search_ontology_nodes(&query, &env, 2)?;
+
+            if nodes.is_empty() {
+                println!("No concept nodes matched query '{}'", query);
+                return Ok(());
+            }
+
+            println!("Concept Map for '{}':", query);
+            for node in &nodes {
+                println!("  [{}] {} ({})", node.gid, node.name, node.element_type);
+                if !node.aliases.is_empty() {
+                    println!("    Aliases: {}", node.aliases.join(", "));
+                }
+                println!("    Description: {}", node.description);
+            }
+
+            println!("\nFound {} matching nodes", nodes.len());
+        }
+
+        cli::OntologyCommand::TraceWorkflow {
+            workflow_id_or_query,
+            env,
+        } => {
+            let steps = query_engine.trace_workflow(&workflow_id_or_query, &env)?;
+
+            if steps.is_empty() {
+                println!("No workflow found matching '{}'", workflow_id_or_query);
+                return Ok(());
+            }
+
+            println!(
+                "Workflow Trace: {} ({} steps)",
+                workflow_id_or_query,
+                steps.len()
+            );
+            for step in &steps {
+                println!("\n  Step {}: {}", step.order, step.name);
+                println!("    GID: {}", step.gid);
+                if !step.metadata.code_refs.is_empty() {
+                    println!("    Code refs: {}", step.metadata.code_refs.join(", "));
+                }
+                if !step.metadata.failure_modes.is_empty() {
+                    println!(
+                        "    Failure modes: {}",
+                        step.metadata.failure_modes.join(", ")
+                    );
+                }
+            }
+        }
     }
 
     Ok(())

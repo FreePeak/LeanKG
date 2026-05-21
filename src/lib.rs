@@ -13,6 +13,7 @@ pub mod hooks;
 pub mod indexer;
 pub mod mcp;
 pub mod obsidian;
+pub mod ontology;
 pub mod orchestrator;
 pub mod registry;
 pub mod runtime;

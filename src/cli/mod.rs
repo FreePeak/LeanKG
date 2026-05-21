@@ -343,6 +343,11 @@ pub enum CLICommand {
         #[command(subcommand)]
         command: TeamCommand,
     },
+    /// Ontology management commands (semantic search layer)
+    Ontology {
+        #[command(subcommand)]
+        command: OntologyCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -584,5 +589,46 @@ pub enum TeamCommand {
         /// Require write permission
         #[arg(long)]
         write: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum OntologyCommand {
+    /// Validate ontology YAML files
+    Validate,
+    /// Sync ontology from YAML files into the graph
+    Sync {
+        /// Path to ontology directory (default: ./ontology)
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Show ontology status and coverage
+    Status,
+    /// Get ontology context for a semantic query
+    Context {
+        /// Query string
+        query: String,
+        /// Environment
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// Expansion depth
+        #[arg(long, default_value = "2")]
+        depth: u32,
+    },
+    /// Get concept map for a domain or service
+    ConceptMap {
+        /// Concept or service name
+        query: String,
+        /// Environment
+        #[arg(long, default_value = "local")]
+        env: String,
+    },
+    /// Trace a workflow's ordered steps
+    TraceWorkflow {
+        /// Workflow name or ID
+        workflow_id_or_query: String,
+        /// Environment
+        #[arg(long, default_value = "local")]
+        env: String,
     },
 }
