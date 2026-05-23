@@ -65,9 +65,7 @@ impl OntologyQueryEngine {
         let normalized_query = query.to_lowercase();
 
         // Query all ontology nodes (element_type in concept or procedural types)
-        let query_str = r#"?[qualified_name, element_type, name, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], element_type in $types, file_path =~ "ontology://""#;
-
-        let types = serde_json::json!([
+        let types_list = [
             "domain_entity",
             "service",
             "api_endpoint",
@@ -80,13 +78,21 @@ impl OntologyQueryEngine {
             "workflow_step",
             "decision_point",
             "failure_mode",
-            "playbook_step"
-        ]);
+            "playbook_step",
+        ];
+        let types_str = types_list
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>()
+            .join(",");
+        let query_str = format!(
+            r#"?[qualified_name, element_type, name, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type in [{}], regex_matches(file_path, "ontology://")"#,
+            types_str
+        );
 
-        let mut params = std::collections::BTreeMap::new();
-        params.insert("types".to_string(), types);
-
-        let result = self.db.run_script(query_str, params)?;
+        let result = self
+            .db
+            .run_script(&query_str, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut matches: Vec<OntologyNodeInfo> = Vec::new();
@@ -495,8 +501,6 @@ impl OntologyQueryEngine {
 
     /// Get ontology status (counts by type)
     pub fn get_ontology_status(&self) -> Result<OntologyStatus, Box<dyn std::error::Error>> {
-        let query_str = r#"?[element_type, count] := code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], file_path =~ "ontology://", element_type = $et, :count = count(qualified_name)"#;
-
         let ontology_types = [
             "domain_entity",
             "service",
@@ -520,14 +524,17 @@ impl OntologyQueryEngine {
         let workflows_without_failure_modes = 0;
 
         for ont_type in &ontology_types {
-            let mut params = std::collections::BTreeMap::new();
-            params.insert(
-                "et".to_string(),
-                serde_json::Value::String(ont_type.to_string()),
+            let type_query = format!(
+                r#"?[cnt] := code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], file_path =~ "ontology://", element_type = "{}""#,
+                ont_type
             );
 
-            if let Ok(result) = self.db.run_script(query_str, params.clone()) {
+            if let Ok(result) = self
+                .db
+                .run_script(&type_query, std::collections::BTreeMap::new())
+            {
                 let count = result.rows.first().and_then(|r| r[0].as_u64()).unwrap_or(0) as usize;
+                let count = std::cmp::min(count, 1_000_000);
 
                 if is_procedural_type(ont_type) {
                     procedural_counts.insert(ont_type.to_string(), count);
