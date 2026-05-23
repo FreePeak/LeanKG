@@ -1,0 +1,19 @@
+services:
+  leankg:
+    build:
+      context: .
+      dockerfile: Dockerfile.rocksdb
+    environment:
+      LEANKG_DB_ENGINE: rocksdb
+      LEANKG_ROCKSDB_ROOT: /data/leankg-rocksdb
+      MCP_HTTP_PORT: "9699"
+      LEANKG_AUTO_INDEX: "1"
+    ports:
+      - "9699:9699"
+    volumes:
+      - .:/workspace
+      - leankg-rocksdb:/data/leankg-rocksdb
+    working_dir: /workspace
+
+volumes:
+  leankg-rocksdb:
