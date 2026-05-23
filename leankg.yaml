@@ -22,6 +22,7 @@ mcp:
   auto_index_on_start: true
   auto_index_threshold_minutes: 5
   auto_index_on_db_write: true
+  require_git_for_auto_index: true
 documentation:
   output: ./docs
   templates:

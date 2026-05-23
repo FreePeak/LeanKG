@@ -16,8 +16,11 @@ cargo run -- index ./src
 # Calculate impact radius
 cargo run -- impact src/main.rs 3
 
-# Start MCP server
-cargo run -- serve
+# Start MCP server (stdio transport -- for local AI tool integration)
+cargo run -- mcp-stdio --watch
+
+# Start MCP server (HTTP/SSE transport -- for remote clients)
+cargo run -- mcp-http --port 9699
 ```
 
 ## Development Workflow
@@ -77,6 +80,71 @@ cargo build      # Build project
 cargo test       # Run tests
 cargo run -- <cmd>  # Run CLI commands
 ```
+
+## MCP Server Transport Modes
+
+LeanKG supports two MCP transport modes:
+
+### Stdio Transport (Local AI Tools)
+
+For local AI tools (Cursor, Claude Code, opencode, etc.):
+
+```bash
+cargo run -- mcp-stdio --watch
+```
+
+The stdio transport uses the per-project SQLite-backed CozoDB file at `<project>/.leankg/leankg.db`. This is the default mode for local development.
+
+### HTTP/SSE Transport (Remote Clients)
+
+For remote clients or multi-repo setups:
+
+```bash
+# Single project
+cargo run -- mcp-http --port 9699
+
+# Multi-repo routing with auth
+cargo run -- mcp-http --port 9699 --auth "my-secret-token" --project /path/to/project
+```
+
+HTTP endpoints:
+- `POST /mcp` -- JSON-RPC endpoint
+- `GET /mcp/stream` -- SSE (Server-Sent Events) stream
+- `GET /health` -- Health check
+
+Environment variables:
+- `MCP_HTTP_PORT` -- Override port (default: 9699)
+- `MCP_HTTP_AUTH` -- Bearer token for authentication
+
+## RocksDB Docker Deployment
+
+The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects:
+
+```bash
+# Start with RocksDB in Docker
+docker compose -f docker-compose.rocksdb.yml up --build
+
+# Stop
+docker compose -f docker-compose.rocksdb.yml down
+
+# Clean up RocksDB volume
+docker volume rm leankg_leankg-rocksdb
+```
+
+Environment variables for RocksDB:
+- `LEANKG_DB_ENGINE=rocksdb` -- Switch from SQLite to RocksDB
+- `LEANKG_ROCKSDB_ROOT` -- Centralized storage root (default: `$HOME/.leankg-rocksdb`)
+
+Without Docker (host machine):
+
+```bash
+export LEANKG_DB_ENGINE=rocksdb
+export LEANKG_ROCKSDB_ROOT="$HOME/.leankg-rocksdb"
+cargo build --release
+target/release/leankg mcp-http --port 9699 --project /path/to/project
+```
+
+When `LEANKG_DB_ENGINE` is not set, LeanKG uses the default per-project SQLite storage at `<project>/.leankg/leankg.db`.
 
 ## UI Development
 
@@ -139,4 +207,4 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ---
 
-*Last updated: 2026-04-20*
+*Last updated: 2026-05-22*
