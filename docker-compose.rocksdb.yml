@@ -12,6 +12,7 @@ services:
       - "9699:9699"
     volumes:
       - .:/workspace
+      - /Users/linh.doan/work/be:/workspace-be
       - leankg-rocksdb:/data/leankg-rocksdb
     working_dir: /workspace
 
