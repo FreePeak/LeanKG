@@ -1055,16 +1055,22 @@ impl MCPServer {
             return Ok(());
         }
 
-        if !crate::indexer::GitAnalyzer::is_git_repo() {
+        let is_git = crate::indexer::GitAnalyzer::is_git_repo();
+        if config.mcp.require_git_for_auto_index && !is_git {
             tracing::info!("Not a git repo, skipping auto-index");
             return Ok(());
         }
 
-        let last_commit_time = match crate::indexer::GitAnalyzer::get_last_commit_time() {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::warn!("Failed to get last commit time: {}", e);
-                return Ok(());
+        let last_commit_time = if !is_git {
+            tracing::info!("Not a git repo but require_git_for_auto_index=false, forcing reindex");
+            i64::MAX
+        } else {
+            match crate::indexer::GitAnalyzer::get_last_commit_time() {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("Failed to get last commit time: {}", e);
+                    return Ok(());
+                }
             }
         };
 
@@ -1194,16 +1200,24 @@ impl MCPServer {
         }
 
         // Check git status to determine if indexing is needed
-        let last_commit_time = match Self::get_git_commit_time_for_path(&project_root) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::debug!(
-                    "Failed to get last commit time for {}: {}, skipping auto-index",
-                    project_root.display(),
-                    e
-                );
-                return Ok(());
+        let last_commit_time = if config.mcp.require_git_for_auto_index {
+            match Self::get_git_commit_time_for_path(&project_root) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::debug!(
+                        "Failed to get last commit time for {}: {}, skipping auto-index",
+                        project_root.display(),
+                        e
+                    );
+                    return Ok(());
+                }
             }
+        } else {
+            tracing::debug!(
+                "require_git_for_auto_index=false, forcing reindex for {}",
+                project_root.display()
+            );
+            i64::MAX
         };
 
         let db_modified = std::fs::metadata(&db_file)

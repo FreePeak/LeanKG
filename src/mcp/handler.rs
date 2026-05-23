@@ -104,6 +104,60 @@ src/main.rs      ./src/main.rs      src/lib.rs::parse_config
 ```
 
 Works across all tools. No need to worry about `./` prefix or absolute paths.
+
+---
+
+## Multi-Project Setup (HTTP/SSE Server)
+
+LeanKG supports multiple projects through a single Docker-based HTTP server.
+
+### How Routing Works
+
+The server identifies which project database to use via the `?project=` URL query parameter:
+
+| URL | Project |
+|-----|---------|
+| `http://host:9699/mcp` | Default project (where server started) |
+| `http://host:9699/mcp?project=/workspace-be` | BE backend |
+| `http://host:9699/mcp?project=/workspace-new` | Custom project |
+
+### Registering a New Project Directory
+
+**Option A: Docker volume mount**
+1. Add volume mount to `docker-compose.rocksdb.yml`:
+   ```yaml
+   volumes:
+     - /host/path/to/project:/workspace-new
+   ```
+2. Restart: `docker compose restart`
+3. Auto-discovery entrypoint detects the new `.leankg` directory and indexes it.
+
+**Option B: Via MCP tools (from AI agent)**
+1. Call `mcp_init(path="/workspace-new")` to create `.leankg/leankg.yaml`
+2. Call `mcp_index(path="/workspace-new")` to index all files
+3. All subsequent queries use `?project=/workspace-new` for that project
+
+**Option C: Via CLI (Docker exec)**
+```bash
+docker exec leankg-leankg-1 leankg index /workspace-new
+```
+
+### Adding MCP Config for a New Project Tool
+
+Each AI tool (opencode, Claude, Cursor) needs the `?project=` param in its MCP URL:
+
+```json
+// .mcp.json or equivalent config
+{
+  "mcpServers": {
+    "leankg": {
+      "url": "http://localhost:9699/mcp?project=/workspace-new"
+    }
+  }
+}
+```
+
+Without the param, the server defaults to the project it was started in (`/workspace`).
 "#;
 
 pub struct ToolHandler {
@@ -602,10 +656,17 @@ impl ToolHandler {
     fn mcp_status(&self, args: &Value) -> Result<Value, String> {
         let db_path = &self.db_path;
         let include_counts = args["include_counts"].as_bool().unwrap_or(false);
+        let storage = db::schema::resolve_storage_config(db_path);
+        let storage_engine = match storage.engine {
+            db::schema::StorageEngine::Sqlite => "sqlite",
+            db::schema::StorageEngine::RocksDb => "rocksdb",
+        };
 
         if !db_path.exists() {
             return Ok(json!({
                 "initialized": false,
+                "storage_engine": storage_engine,
+                "storage_path": storage.path.to_string_lossy(),
                 "message": "LeanKG not initialized. Run mcp_init first."
             }));
         }
@@ -617,6 +678,8 @@ impl ToolHandler {
                 "initialized": false,
                 "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
                 "database_exists": false,
+                "storage_engine": storage_engine,
+                "storage_path": storage.path.to_string_lossy(),
                 "counts_included": false
             }));
         }
@@ -627,6 +690,8 @@ impl ToolHandler {
                 "index_populated": true,
                 "database_exists": true,
                 "database": db_path.to_string_lossy(),
+                "storage_engine": storage_engine,
+                "storage_path": storage.path.to_string_lossy(),
                 "counts_included": false,
                 "message": "Database exists and contains indexed elements. Pass include_counts=true for full counts."
             }));
@@ -637,6 +702,8 @@ impl ToolHandler {
             "index_populated": true,
             "database_exists": true,
             "database": db_path.to_string_lossy(),
+            "storage_engine": storage_engine,
+            "storage_path": storage.path.to_string_lossy(),
             "counts_included": true,
             "elements": self.graph_engine.count_elements().unwrap_or(0),
             "relationships": self.graph_engine.count_relationships().unwrap_or(0),
@@ -1374,8 +1441,24 @@ impl ToolHandler {
         let query_lower = query.to_lowercase();
         let keywords: Vec<&str> = query_lower.split_whitespace().collect();
 
-        let elements = db::get_elements_by_env(self.graph_engine.db(), env, 1000)
+        let mut elements = db::get_elements_by_env(self.graph_engine.db(), env, 1000)
             .map_err(|e| format!("DB error: {}", e))?;
+        let mut seen: std::collections::HashSet<String> = elements
+            .iter()
+            .map(|elem| elem.qualified_name.clone())
+            .collect();
+
+        for keyword in &keywords {
+            for elem in self
+                .graph_engine
+                .search_by_name_typed(keyword, None, 50)
+                .map_err(|e| format!("DB error: {}", e))?
+            {
+                if seen.insert(elem.qualified_name.clone()) {
+                    elements.push(elem);
+                }
+            }
+        }
 
         let mut scored: Vec<(f64, &db::models::CodeElement)> = elements
             .iter()
@@ -1383,6 +1466,7 @@ impl ToolHandler {
                 let name_lower = elem.name.to_lowercase();
                 let type_lower = elem.element_type.to_lowercase();
                 let qn_lower = elem.qualified_name.to_lowercase();
+                let file_lower = elem.file_path.to_lowercase();
 
                 let mut score = 0.0;
                 for kw in &keywords {
@@ -1393,6 +1477,9 @@ impl ToolHandler {
                         score += 2.0;
                     }
                     if qn_lower.contains(kw) {
+                        score += 1.0;
+                    }
+                    if file_lower.contains(kw) {
                         score += 1.0;
                     }
                 }

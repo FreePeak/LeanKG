@@ -1,7 +1,21 @@
-use cozo::{Db, SqliteStorage};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub type CozoDb = Db<SqliteStorage>;
+pub type CozoDb = cozo::DbInstance;
+
+const DEFAULT_ROCKSDB_ROOT: &str = ".leankg-rocksdb";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageEngine {
+    Sqlite,
+    RocksDb,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageConfig {
+    pub engine: StorageEngine,
+    pub path: std::path::PathBuf,
+}
 
 fn get_env_mmap_size() -> u64 {
     std::env::var("LEANKG_MMAP_SIZE")
@@ -11,20 +25,25 @@ fn get_env_mmap_size() -> u64 {
 }
 
 pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
-    let db_file_path = if db_path.is_dir() {
-        db_path.join("leankg.db")
-    } else {
-        db_path.to_path_buf()
+    let storage = resolve_storage_config(db_path);
+    if let Some(parent) = storage.path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let path_str = storage.path.to_string_lossy().to_string();
+    let db = match storage.engine {
+        StorageEngine::Sqlite => cozo::DbInstance::new("sqlite", &path_str, "")?,
+        StorageEngine::RocksDb => {
+            std::fs::create_dir_all(&storage.path)?;
+            cozo::DbInstance::new("rocksdb", &path_str, "")?
+        }
     };
-
-    let path_str = db_file_path.to_string_lossy().to_string();
-
-    let db = cozo::new_cozo_sqlite(path_str)?;
 
     let mmap_size = get_env_mmap_size();
     tracing::info!(
-        "SQLite mmap_size = {} (LEANKG_MMAP_SIZE={})",
-        mmap_size,
+        "Cozo storage = {:?} at {} (LEANKG_MMAP_SIZE={})",
+        storage.engine,
+        storage.path.display(),
         mmap_size
     );
 
@@ -51,6 +70,63 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     init_schema(&db)?;
 
     Ok(db)
+}
+
+pub fn resolve_storage_config(db_path: &Path) -> StorageConfig {
+    match std::env::var("LEANKG_DB_ENGINE")
+        .unwrap_or_else(|_| "sqlite".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "rocksdb" | "rocks" | "rockdb" => StorageConfig {
+            engine: StorageEngine::RocksDb,
+            path: central_project_storage_path(db_path),
+        },
+        _ => StorageConfig {
+            engine: StorageEngine::Sqlite,
+            path: if db_path.is_dir() {
+                db_path.join("leankg.db")
+            } else {
+                db_path.to_path_buf()
+            },
+        },
+    }
+}
+
+fn central_project_storage_path(db_path: &Path) -> std::path::PathBuf {
+    let root = std::env::var_os("LEANKG_ROCKSDB_ROOT")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(DEFAULT_ROCKSDB_ROOT)))
+        .unwrap_or_else(|| std::path::PathBuf::from(DEFAULT_ROCKSDB_ROOT));
+
+    let project_root = if db_path.file_name().and_then(|name| name.to_str()) == Some(".leankg") {
+        db_path.parent().unwrap_or(db_path)
+    } else {
+        db_path
+    };
+    let project_key = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let project_key = project_key.to_string_lossy();
+    let mut hasher = Sha256::new();
+    hasher.update(project_key.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    let name = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project")
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    root.join("projects")
+        .join(format!("{}-{}", name, &hash[..12]))
 }
 
 fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {

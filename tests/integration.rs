@@ -1,5 +1,6 @@
 // Integration tests requiring filesystem, async, or SurrealDB
 
+use leankg::db::get_elements_by_env;
 use leankg::db::schema::init_db;
 use leankg::doc::DocGenerator;
 use leankg::graph::{GraphEngine, ImpactAnalyzer};
@@ -144,6 +145,49 @@ async fn test_init_db_repairs_legacy_code_elements_after_recorded_migration() {
         .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].qualified_name, "src/main.rs::main");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_graph_queries_support_ontology_layer_code_elements_schema() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("ontology-layer.db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let db = cozo::new_cozo_sqlite(db_path_str).unwrap();
+
+    db.run_script(
+        r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
+        Default::default(),
+    ).unwrap();
+    db.run_script(
+        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
+        [["src/metrics/prometheus.go::registerPrometheus", "function", "registerPrometheus", "src/metrics/prometheus.go", 10, 20, "go", null, null, null, "{}", "local", "procedural"]]
+        :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
+        Default::default(),
+    ).unwrap();
+    db.run_script(
+        r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
+        Default::default(),
+    ).unwrap();
+    drop(db);
+
+    let db = init_db(db_path.as_path()).unwrap();
+    let graph = GraphEngine::new(db.clone());
+
+    assert!(graph.has_elements().unwrap());
+    assert_eq!(graph.count_elements().unwrap(), 1);
+
+    let search_results = graph
+        .search_by_name_typed("prometheus", Some("function"), 10)
+        .unwrap();
+    assert_eq!(search_results.len(), 1);
+    assert_eq!(search_results[0].name, "registerPrometheus");
+
+    let env_results = get_elements_by_env(&db, "local", 10).unwrap();
+    assert_eq!(env_results.len(), 1);
+    assert_eq!(
+        env_results[0].qualified_name,
+        "src/metrics/prometheus.go::registerPrometheus"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

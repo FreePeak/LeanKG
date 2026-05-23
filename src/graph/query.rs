@@ -1,3 +1,4 @@
+#![allow(clippy::needless_borrow)]
 use crate::db::models::{
     BusinessLogic, CodeElement, DependencyInfo, DocLink, Incident, Relationship, TraceabilityEntry,
     TraceabilityReport,
@@ -11,6 +12,9 @@ use tracing::debug;
 fn escape_datalog(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
+
+const CODE_ELEMENTS_12_TAIL: &str = ", env";
+const CODE_ELEMENTS_13_TAIL: &str = ", env, ontology_layer";
 
 fn normalize_path(path: &str) -> String {
     let p = if path == "." || path.is_empty() {
@@ -89,6 +93,19 @@ impl GraphEngine {
         &self.db
     }
 
+    fn code_elements_tail(&self) -> &'static str {
+        let arity_13_probe = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0"#;
+        if self
+            .db
+            .run_script(arity_13_probe, std::collections::BTreeMap::new())
+            .is_ok()
+        {
+            CODE_ELEMENTS_13_TAIL
+        } else {
+            CODE_ELEMENTS_12_TAIL
+        }
+    }
+
     /// Invalidate all caches - call this when data changes (e.g., after indexing)
     pub fn invalidate_cache(&self) {
         *self.elements_cache.write() = None;
@@ -107,13 +124,16 @@ impl GraphEngine {
         &self,
         qualified_name: &str,
     ) -> Result<Option<CodeElement>, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], qualified_name = $qn"#;
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = $qn"#
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "qn".to_string(),
             serde_json::Value::String(qualified_name.to_string()),
         );
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         if rows.is_empty() {
@@ -147,13 +167,16 @@ impl GraphEngine {
         &self,
         name: &str,
     ) -> Result<Option<CodeElement>, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], name = $nm"#;
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], name = $nm"#
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "nm".to_string(),
             serde_json::Value::String(name.to_string()),
         );
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         if rows.is_empty() {
@@ -220,7 +243,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let deps: Vec<DependencyInfo> = rows
@@ -266,7 +289,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -331,7 +354,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -377,7 +400,7 @@ impl GraphEngine {
         query: &str,
         params: std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Result<cozo::NamedRows, Box<dyn std::error::Error + Send + Sync>> {
-        self.db.run_script(query, params).map_err(|e| {
+        self.db.run_script(&query, params).map_err(|e| {
             let msg = e.to_string();
             Box::new(std::io::Error::other(msg)) as Box<dyn std::error::Error + Send + Sync>
         })
@@ -390,9 +413,10 @@ impl GraphEngine {
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<CodeElement>, usize), Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let limit = limit.min(1000); // Cap to prevent excessive memory
         let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _] :limit {} :offset {}"#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit {} :offset {}"#,
             limit, offset
         );
 
@@ -543,6 +567,7 @@ impl GraphEngine {
     }
 
     pub fn all_elements(&self) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         // Check cache first
         if let Some(cached) = self.elements_cache.read().as_ref() {
             return Ok(cached.clone());
@@ -552,11 +577,13 @@ impl GraphEngine {
         // This method loads ALL elements into memory - problematic for large codebases
         tracing::warn!("all_elements() is deprecated - use get_elements_paginated() instead");
 
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _]"#;
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
+        );
 
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -598,6 +625,7 @@ impl GraphEngine {
         offset: Option<usize>,
         all_content: bool,
     ) -> Result<ChildrenResult, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let limit = limit.unwrap_or(500).min(500);
         let offset = offset.unwrap_or(0);
 
@@ -607,7 +635,7 @@ impl GraphEngine {
             if all_content {
                 // Load ALL elements under root (for single-repo when user wants full content)
                 let query_str = format!(
-                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _] :limit {} :offset {}",
+                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit {} :offset {}",
                     limit,
                     offset
                 );
@@ -689,7 +717,7 @@ impl GraphEngine {
             // For root without all_content, return direct children only
             // Query a reasonable number of rows (direct children are typically few)
             let query_str = format!(
-                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _] :limit {} :offset {}",
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit {} :offset {}",
                 5000,  // Large enough to get all root elements
                 0
             );
@@ -790,7 +818,7 @@ impl GraphEngine {
             folder_path.replace('.', "\\.").replace('/', "\\/")
         );
         let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], regex_matches(file_path, $pat) :limit {} :offset {}"#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, $pat) :limit {} :offset {}"#,
             limit, offset
         );
         let mut params = std::collections::BTreeMap::new();
@@ -1020,7 +1048,7 @@ impl GraphEngine {
 
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -1066,14 +1094,17 @@ impl GraphEngine {
         &self,
         parent_qualified: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], parent_qualified = $pq"#;
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], parent_qualified = $pq"#
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "pq".to_string(),
             serde_json::Value::String(parent_qualified.to_string()),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -1110,6 +1141,7 @@ impl GraphEngine {
         limit: Option<usize>,
         offset: Option<usize>,
     ) -> Result<ChildrenResult, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let normalized_prefix = normalize_path(parent_path);
         let prefix_with_slash = if normalized_prefix.is_empty() {
             String::new()
@@ -1136,7 +1168,7 @@ impl GraphEngine {
             // Empty parent - return root-level direct children (no type filtering in this branch)
             // Note: Type filtering for empty parent would need a different approach
             let query = format!(
-                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _] :limit {} :offset {}",
+                "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit {} :offset {}",
                 limit,
                 offset
             );
@@ -1150,12 +1182,12 @@ impl GraphEngine {
             let literal_pattern = format!(".*{}/.*", stripped);
             let query = if type_clause.is_empty() {
                 format!(
-                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], regex_matches(file_path, $pat) :limit {} :offset {}",
+                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, $pat) :limit {} :offset {}",
                     limit, offset
                 )
             } else {
                 format!(
-                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], regex_matches(file_path, $pat), {} :limit {} :offset {}",
+                    "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, $pat), {} :limit {} :offset {}",
                     type_clause, limit, offset
                 )
             };
@@ -1278,6 +1310,7 @@ impl GraphEngine {
         &self,
         prefix: &str,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let normalized_prefix = normalize_path(prefix);
         let prefix_with_slash = if normalized_prefix.is_empty() {
             String::new()
@@ -1295,12 +1328,14 @@ impl GraphEngine {
         } else {
             format!("{}\x7f", prefix_with_slash)
         };
-        let query = r#"?[fp] := *code_elements[qualified_name, element_type, name, fp, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], fp >= $lo and fp < $hi"#;
+        let query = format!(
+            r#"?[fp] := *code_elements[qualified_name, element_type, name, fp, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], fp >= $lo and fp < $hi"#
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert("lo".to_string(), serde_json::Value::String(lo));
         params.insert("hi".to_string(), serde_json::Value::String(hi));
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let mut directories: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for row in result.rows.iter() {
@@ -1338,7 +1373,7 @@ impl GraphEngine {
             serde_json::Value::String(element_qualified.to_string()),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         if rows.is_empty() {
@@ -1390,7 +1425,7 @@ impl GraphEngine {
 
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let annotations: Vec<BusinessLogic> = rows
@@ -1423,7 +1458,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let doc_links: Vec<DocLink> = rows
@@ -1513,7 +1548,7 @@ impl GraphEngine {
             serde_json::Value::String(user_story_id.to_string()),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let business_logic: Vec<BusinessLogic> = rows
@@ -1567,7 +1602,7 @@ impl GraphEngine {
                 "batch_data".to_string(),
                 serde_json::Value::Array(chunk.to_vec()),
             );
-            self.db.run_script(query, params)?;
+            self.db.run_script(&query, params)?;
         }
 
         let mut unique_files = std::collections::HashSet::new();
@@ -1632,7 +1667,7 @@ impl GraphEngine {
 
         let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- [[ $qn, $et, $nm, $fp, $ls, $le, $lg, $pq, $cid, $cl, $md ]] :put code_elements { qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata }"#;
 
-        self.db.run_script(query, params)?;
+        self.db.run_script(&query, params)?;
 
         let cache = self.cache.clone();
         let fp = element.file_path.clone();
@@ -1649,19 +1684,22 @@ impl GraphEngine {
         cluster_id: Option<String>,
         cluster_label: Option<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         if let Some(mut element) = self.find_element(qualified_name)? {
             // Remove the specific original element securely
-            let query = r#"
+            let query = format!(
+                r#"
                 ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
-                    *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], qualified_name = $qn
-                :rm code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}
-            "#;
+                    *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = $qn
+                :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
+            "#
+            );
             let mut params = std::collections::BTreeMap::new();
             params.insert(
                 "qn".to_string(),
                 serde_json::Value::String(qualified_name.to_string()),
             );
-            self.db.run_script(query, params)?;
+            self.db.run_script(&query, params)?;
 
             // Apply new cluster attributes and natively reinsert mapped into caches and DB
             element.cluster_id = cluster_id;
@@ -1694,7 +1732,7 @@ impl GraphEngine {
 
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] <- [[ $sq, $tq, $rt, $cn, $md ]] :put relationships { source_qualified, target_qualified, rel_type, confidence, metadata }"#;
 
-        self.db.run_script(query, params)?;
+        self.db.run_script(&query, params)?;
 
         Ok(())
     }
@@ -1730,7 +1768,7 @@ impl GraphEngine {
                 "batch_data".to_string(),
                 serde_json::Value::Array(chunk.to_vec()),
             );
-            self.db.run_script(query, params)?;
+            self.db.run_script(&query, params)?;
         }
 
         let mut unique_sources = std::collections::HashSet::new();
@@ -1752,18 +1790,21 @@ impl GraphEngine {
         &self,
         file_path: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let query = r#"
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"
             ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
-                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], file_path = $fp
-            :rm code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}
-        "#;
+                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], file_path = $fp
+            :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
+        "#
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "fp".to_string(),
             serde_json::Value::String(file_path.to_string()),
         );
 
-        self.db.run_script(query, params)?;
+        self.db.run_script(&query, params)?;
 
         let cache = self.cache.clone();
         let fp = file_path.to_string();
@@ -1789,7 +1830,7 @@ impl GraphEngine {
             serde_json::Value::String(source.to_string()),
         );
 
-        self.db.run_script(query, params)?;
+        self.db.run_script(&query, params)?;
 
         let cache = self.cache.clone();
         let s = source.to_string();
@@ -1804,14 +1845,17 @@ impl GraphEngine {
         &self,
         file_path: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], file_path = $fp"#;
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], file_path = $fp"#
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "fp".to_string(),
             serde_json::Value::String(file_path.to_string()),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -1845,6 +1889,7 @@ impl GraphEngine {
         &self,
         name: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let lower_name = name.to_lowercase();
         let safe_name = escape_datalog(&regex::escape(&lower_name));
         let cache_key = format!("search:name:{}", lower_name);
@@ -1855,7 +1900,7 @@ impl GraphEngine {
         }
 
         let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], regex_matches(lowercase(name), ".*{safe_name}.*")"#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(lowercase(name), ".*{safe_name}.*")"#,
             safe_name = safe_name
         );
 
@@ -1898,8 +1943,9 @@ impl GraphEngine {
         &self,
         element_type: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], element_type = "{}""#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "{}""#,
             element_type
         );
 
@@ -1939,9 +1985,12 @@ impl GraphEngine {
         &self,
         pattern: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := 
-            *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _],
-            str_includes(lowercase(qualified_name), lowercase($pattern))"#;
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := 
+            *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+            str_includes(lowercase(qualified_name), lowercase($pattern))"#
+        );
 
         let mut params = std::collections::BTreeMap::new();
         params.insert(
@@ -1949,7 +1998,7 @@ impl GraphEngine {
             serde_json::Value::String(pattern.to_string()),
         );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2017,8 +2066,9 @@ impl GraphEngine {
         &self,
         min_lines: u32,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], element_type = "function", (line_end - line_start + 1) >= {}"#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "function", (line_end - line_start + 1) >= {}"#,
             min_lines
         );
 
@@ -2065,8 +2115,9 @@ impl GraphEngine {
         min_lines: u32,
         language: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], element_type = "function", language = "{}", (line_end - line_start + 1) >= {}"#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "function", language = "{}", (line_end - line_start + 1) >= {}"#,
             language, min_lines
         );
 
@@ -2112,7 +2163,7 @@ impl GraphEngine {
         &self,
         query: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let result = self.db.run_script(query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
         Ok(result
             .rows
             .iter()
@@ -2145,6 +2196,7 @@ impl GraphEngine {
         element_type: Option<&str>,
         limit: usize,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let lower_name = name.to_lowercase();
         let safe_name = escape_datalog(&regex::escape(&lower_name));
         let (filter_clause, has_type_filter) = match element_type {
@@ -2154,7 +2206,7 @@ impl GraphEngine {
         let query = if has_type_filter {
             format!(
                 r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]
-                   := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _]{filter_clause},
+                   := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]{filter_clause},
                   regex_matches(lowercase(name), "{pattern}")
                :limit {limit}"#,
                 filter_clause = filter_clause,
@@ -2164,7 +2216,7 @@ impl GraphEngine {
         } else {
             format!(
                 r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]
-                   := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _],
+                   := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
                   regex_matches(lowercase(name), "{pattern}")
                :limit {limit}"#,
                 pattern = safe_name,
@@ -2180,6 +2232,7 @@ impl GraphEngine {
         name: &str,
         element_type: Option<&str>,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let safe_name = escape_datalog(name);
         let type_clause = match element_type {
             Some(t) => format!(r#", element_type = "{}""#, escape_datalog(t)),
@@ -2187,7 +2240,7 @@ impl GraphEngine {
         };
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]
-               := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _]{type_clause},
+               := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]{type_clause},
               name = "{name}"
            :limit 20"#,
             type_clause = type_clause,
@@ -2201,6 +2254,7 @@ impl GraphEngine {
         function_name: &str,
         file_scope: Option<&str>,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let safe_name = escape_datalog(function_name);
 
         let file_filter = match file_scope {
@@ -2244,7 +2298,7 @@ impl GraphEngine {
 
         let element_query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
-               *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _],
+               *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
                ({sources}){file_filter}
                :limit 50"#,
             sources = sources_pattern,
@@ -2324,11 +2378,12 @@ impl GraphEngine {
     }
 
     pub fn resolve_call_edges(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "calls""#;
         debug!("Running resolve_call_edges query (filtered at DB level)");
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
 
         let unresolved_rows: Vec<_> = result
             .rows
@@ -2350,10 +2405,12 @@ impl GraphEngine {
         }
 
         debug!("Loading all functions into memory for fast lookup...");
-        let functions_query = r#"?[qualified_name, name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], element_type = "function""#;
+        let functions_query = format!(
+            r#"?[qualified_name, name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "function""#
+        );
         let func_result = self
             .db
-            .run_script(functions_query, std::collections::BTreeMap::new())?;
+            .run_script(&functions_query, std::collections::BTreeMap::new())?;
 
         let mut by_name_and_file: std::collections::HashMap<(String, String), (String, f64)> =
             std::collections::HashMap::new();
@@ -2453,7 +2510,7 @@ impl GraphEngine {
                 "batch_data".to_string(),
                 serde_json::Value::Array(batch_data),
             );
-            self.db.run_script(query, params)?;
+            self.db.run_script(&query, params)?;
         }
         Ok(())
     }
@@ -2464,11 +2521,12 @@ impl GraphEngine {
         name: &str,
         file_hint: Option<&str>,
     ) -> Result<(Option<String>, f64), Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let safe_name = escape_datalog(name);
 
         if let Some(hint) = file_hint {
             let safe_hint = escape_datalog(hint);
-            let query = format!("?[qualified_name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], element_type = \"function\", name = \"{}\", file_path = \"{}\" :limit 1", safe_name, safe_hint);
+            let query = format!("?[qualified_name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = \"function\", name = \"{}\", file_path = \"{}\" :limit 1", safe_name, safe_hint);
             let result = self.db.run_script(&query, Default::default())?;
             if let Some(row) = result.rows.first() {
                 let qn = row[0].as_str().map(String::from);
@@ -2478,7 +2536,7 @@ impl GraphEngine {
             }
         }
 
-        let query = format!("?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], element_type = \"function\", name = \"{}\" :limit 1", safe_name);
+        let query = format!("?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = \"function\", name = \"{}\" :limit 1", safe_name);
         let result = self.db.run_script(&query, Default::default())?;
         Ok((
             result
@@ -2509,7 +2567,7 @@ impl GraphEngine {
             serde_json::Value::String(target.to_string()),
         );
 
-        self.db.run_script(query, params)?;
+        self.db.run_script(&query, params)?;
         Ok(())
     }
 
@@ -2520,7 +2578,7 @@ impl GraphEngine {
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "service_calls""#;
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
 
         let mut service_connections: std::collections::HashMap<
             (String, String),
@@ -2611,18 +2669,23 @@ impl GraphEngine {
     }
 
     pub fn count_elements(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(n)] := *code_elements[n, a, b, c, d, e, f, g, h, i, j, _]"#;
+        let tail = self.code_elements_tail();
+        let query =
+            format!(r#"?[count(n)] := *code_elements[n, a, b, c, d, e, f, g, h, i, j{tail}]"#);
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
     }
 
     pub fn has_elements(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :limit 1"#;
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit 1"#
+        );
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(!result.rows.is_empty())
     }
 
@@ -2630,7 +2693,7 @@ impl GraphEngine {
         let query = r#"?[count(n)] := *relationships[n, a, b, c, d, _]"#;
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
     }
 
@@ -2638,16 +2701,19 @@ impl GraphEngine {
         let query = r#"?[count(n)] := *business_logic[n, a, b, c]"#;
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
     }
 
     pub fn count_files(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j, _]
-?[count(f)] := files[f]"#;
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j{tail}]
+?[count(f)] := files[f]"#
+        );
         let result = self
             .db
-            .run_script(query, std::collections::BTreeMap::new())?;
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result.rows.first().and_then(|r| r[0].as_i64()).unwrap_or(0) as usize)
     }
 
@@ -2655,8 +2721,9 @@ impl GraphEngine {
         &self,
         element_type: &str,
     ) -> Result<usize, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
         let query = format!(
-            r#"?[count(n)] := *code_elements[n, t, a, b, c, d, e, f, g, h, i, _], t = "{}""#,
+            r#"?[count(n)] := *code_elements[n, t, a, b, c, d, e, f, g, h, i{tail}], t = "{}""#,
             element_type
         );
         let result = self
@@ -2735,11 +2802,12 @@ impl GraphEngine {
     }
 
     pub fn get_service_context(&self, service: &str, env: &str) -> Result<ServiceContext, String> {
+        let tail = self.code_elements_tail();
         let safe_service = escape_datalog(service);
         let safe_env = escape_datalog(env);
 
         let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = "{}", env = "{}""#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = "{}", env = "{}""#,
             safe_service, safe_env
         );
         let result = self
@@ -2791,7 +2859,7 @@ impl GraphEngine {
 
         let service_prefix = format!("./{}", service);
         let schemas_query = format!(
-            r#"?[name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], starts_with(file_path, "{}"), regex_matches(element_type, "(schema|protobuf|proto|openapi|json_schema|avro|sql_table|event|topic|config)")"#,
+            r#"?[name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], starts_with(file_path, "{}"), regex_matches(element_type, "(schema|protobuf|proto|openapi|json_schema|avro|sql_table|event|topic|config)")"#,
             escape_datalog(&service_prefix)
         );
         let schemas: Vec<String> = self
@@ -2902,13 +2970,14 @@ impl GraphEngine {
     }
 
     pub fn find_env_conflicts(&self, service: &str) -> Result<Vec<EnvConflict>, String> {
+        let tail = self.code_elements_tail();
         let envs = vec!["local", "staging", "production"];
         let mut env_elements: std::collections::HashMap<String, Option<CodeElement>> =
             std::collections::HashMap::new();
 
         for env in &envs {
             let query = format!(
-                r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = "{}", env = "{}""#,
+                r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = "{}", env = "{}""#,
                 escape_datalog(service),
                 escape_datalog(env)
             );
@@ -3202,9 +3271,12 @@ mod tests {
     #[test]
     fn test_run_raw_query_with_empty_params() {
         let (engine, _tmp) = make_test_engine();
+        let tail = engine.code_elements_tail();
         insert_test_element(&engine, "main", "function");
 
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _]"#;
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
+        );
         let result = engine.run_raw_query(query, Default::default());
         assert!(
             result.is_ok(),
@@ -3220,9 +3292,12 @@ mod tests {
     #[test]
     fn test_run_raw_query_with_params() {
         let (engine, _tmp) = make_test_engine();
+        let tail = engine.code_elements_tail();
         insert_test_element(&engine, "main", "function");
 
-        let query = r#"?[qualified_name, name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], name = $nm"#;
+        let query = format!(
+            r#"?[qualified_name, name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], name = $nm"#
+        );
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "nm".to_string(),

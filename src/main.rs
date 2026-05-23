@@ -958,6 +958,7 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
         return Ok(());
     }
 
+    let storage = db::schema::resolve_storage_config(db_path);
     let db = db::schema::init_db(db_path)?;
 
     let elements = graph::GraphEngine::new(db.clone()).all_elements()?;
@@ -966,6 +967,8 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
 
     println!("LeanKG Status:");
     println!("  Database: {}", db_path.display());
+    println!("  Storage Engine: {:?}", storage.engine);
+    println!("  Storage Path: {}", storage.path.display());
     println!("  Elements: {}", elements.len());
     println!("  Relationships: {}", relationships.len());
 

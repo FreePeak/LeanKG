@@ -1274,9 +1274,20 @@ pub fn get_elements_by_env(
     env: &str,
     limit: usize,
 ) -> Result<Vec<models::CodeElement>, Box<dyn std::error::Error>> {
+    let tail = if db
+        .run_script(
+            "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
+            Default::default(),
+        )
+        .is_ok()
+    {
+        ", env, ontology_layer"
+    } else {
+        ", env"
+    };
     let query = format!(
-        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], env = $env :limit {}"#,
-        limit
+        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{}], env = $env :limit {}"#,
+        tail, limit
     );
     let mut params = std::collections::BTreeMap::new();
     params.insert(

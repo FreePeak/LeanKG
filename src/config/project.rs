@@ -61,6 +61,12 @@ pub struct McpConfig {
     pub auto_index_on_start: bool,
     pub auto_index_threshold_minutes: u64,
     pub auto_index_on_db_write: bool,
+    #[serde(default = "default_true")]
+    pub require_git_for_auto_index: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +132,7 @@ impl Default for ProjectConfig {
                 auto_index_on_start: true,
                 auto_index_threshold_minutes: 5,
                 auto_index_on_db_write: true,
+                require_git_for_auto_index: true,
             },
             documentation: DocConfig {
                 output: PathBuf::from("./docs"),
