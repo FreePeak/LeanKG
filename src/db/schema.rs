@@ -93,7 +93,7 @@ pub fn resolve_storage_config(db_path: &Path) -> StorageConfig {
     }
 }
 
-fn central_project_storage_path(db_path: &Path) -> std::path::PathBuf {
+pub(crate) fn central_project_storage_path(db_path: &Path) -> std::path::PathBuf {
     let root = std::env::var_os("LEANKG_ROCKSDB_ROOT")
         .map(std::path::PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(DEFAULT_ROCKSDB_ROOT)))

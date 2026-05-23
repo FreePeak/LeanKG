@@ -405,7 +405,11 @@ impl ToolHandler {
     }
 
     fn mcp_init(&self, args: &Value) -> Result<Value, String> {
-        let path = args["path"].as_str().unwrap_or(".leankg");
+        // Use project argument as default path (injected by HTTP server via ?project= URL param)
+        let path = args["path"]
+            .as_str()
+            .or_else(|| args["project"].as_str())
+            .unwrap_or(".leankg");
         let path_ref = std::path::Path::new(path);
 
         if !path_ref.exists() || path_ref.is_dir() {

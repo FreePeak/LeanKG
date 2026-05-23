@@ -1,0 +1,19 @@
+FROM rust:1-bookworm
+WORKDIR /app
+
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y clang libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY vendor/ ./vendor/
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+
+RUN cargo build --release && strip target/release/leankg && cp target/release/leankg /usr/local/bin/
+
+COPY entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 9699
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

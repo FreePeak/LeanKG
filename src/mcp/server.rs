@@ -1517,6 +1517,29 @@ impl MCPServer {
         };
 
         let graph_engine = self.get_graph_engine_for_path(file_path.as_ref())?;
+
+        // On-demand auto-indexing: if project has .leankg but no RocksDB index, index it
+        if tool_name != "mcp_index" && tool_name != "mcp_init" && tool_name != "mcp_index_docs" {
+            let rocksdb_path = crate::db::schema::central_project_storage_path(&project_db_path);
+            let has_index = rocksdb_path.join("manifest").exists()
+                || rocksdb_path.join("data/CURRENT").exists();
+            if !has_index {
+                tracing::info!(
+                    "Project at {} has no RocksDB index, triggering auto-index",
+                    project_db_path.display()
+                );
+                let _ = self
+                    .ensure_project_indexed(
+                        project_db_path
+                            .parent()
+                            .unwrap_or(&project_db_path)
+                            .to_string_lossy()
+                            .as_ref(),
+                    )
+                    .await;
+            }
+        }
+
         let handler = ToolHandler::new(graph_engine, project_db_path);
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;
