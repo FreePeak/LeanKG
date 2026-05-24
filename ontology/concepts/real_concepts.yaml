@@ -1,0 +1,283 @@
+# LeanKG Core Concept Ontology
+# Real domain entities derived from actual code in this codebase
+
+concepts:
+  - id: code_indexing
+    type_: domain_entity
+    name: Code Indexing
+    env: local
+    aliases:
+      - file indexing
+      - code extraction
+      - element extraction
+    description: Process of parsing source files and extracting code elements (functions, structs, imports) into the knowledge graph.
+    owned_by:
+      - indexer
+    code_refs:
+      - src/indexer/mod.rs::index_files_parallel
+      - src/indexer/mod.rs::index_file_sync
+      - src/indexer/extractor.rs
+      - src/indexer/parser.rs
+    docs:
+      - docs/indexing.md
+
+  - id: knowledge_graph
+    type_: domain_entity
+    name: Knowledge Graph
+    env: local
+    aliases:
+      - code graph
+      - dependency graph
+      - call graph
+    description: A graph structure connecting code elements via relationships (imports, calls, references).
+    owned_by:
+      - graph
+      - db
+    code_refs:
+      - src/graph/mod.rs
+      - src/graph/traversal.rs
+      - src/db/mod.rs
+      - src/db/models.rs
+    docs:
+      - docs/graph.md
+
+  - id: mcp_server
+    type_: domain_entity
+    name: MCP Server
+    env: local
+    aliases:
+      - model context protocol
+      - MCP tool server
+      - JSON-RPC server
+    description: HTTP server exposing LeanKG functionality via MCP (Model Context Protocol) JSON-RPC interface.
+    owned_by:
+      - mcp
+    code_refs:
+      - src/mcp/server.rs
+      - src/mcp/handler.rs
+      - src/mcp/tools.rs
+    docs:
+      - docs/mcp.md
+
+  - id: impact_analysis
+    type_: domain_entity
+    name: Impact Analysis
+    env: local
+    aliases:
+      - blast radius
+      - change impact
+      - dependency analysis
+    description: Calculating which files would be affected by a change to a given file or function.
+    owned_by:
+      - graph
+    code_refs:
+      - src/graph/traversal.rs::traverse_impact
+      - src/graph/traversal.rs::ImpactResult
+    docs:
+      - docs/impact.md
+
+  - id: semantic_search
+    type_: domain_entity
+    name: Semantic Search
+    env: local
+    aliases:
+      - code search
+      - natural language search
+      - fuzzy search
+    description: Searching code elements using natural language queries with keyword and fuzzy matching.
+    owned_by:
+      - mcp
+      - db
+    code_refs:
+      - src/mcp/tools.rs::semantic_search
+      - src/db/mod.rs::search_knowledge
+    docs:
+      - docs/search.md
+
+  - id: call_graph_resolution
+    type_: domain_entity
+    name: Call Graph Resolution
+    env: local
+    aliases:
+      - edge resolution
+      - call edges
+      - function calls
+    description: Resolving function call relationships between code elements to build accurate dependency graphs.
+    owned_by:
+      - indexer
+    code_refs:
+      - src/indexer/call_graph.rs
+      - src/indexer/mod.rs::resolve_call_edges_inline
+    docs:
+      - docs/call-graph.md
+
+  - id: document_indexing
+    type_: domain_entity
+    name: Document Indexing
+    env: local
+    aliases:
+      - docs indexing
+      - markdown indexing
+      - documentation
+    description: Indexing documentation files (markdown) to enable documentation search and traceability.
+    owned_by:
+      - doc_indexer
+    code_refs:
+      - src/doc_indexer/mod.rs
+      - src/indexer/mod.rs::generate_physical_structure
+    docs:
+      - docs/docs-indexing.md
+
+  - id: business_traceability
+    type_: domain_entity
+    name: Business Traceability
+    env: local
+    aliases:
+      - requirement traceability
+      - user story tracking
+      - feature mapping
+    description: Linking code elements to business requirements, user stories, and features for traceability.
+    owned_by:
+      - db
+    code_refs:
+      - src/db/mod.rs::create_business_logic
+      - src/db/mod.rs::get_feature_traceability
+      - src/db/mod.rs::get_user_story_traceability
+    docs:
+      - docs/traceability.md
+
+  - id: ontology_management
+    type_: domain_entity
+    name: Ontology Management
+    env: local
+    aliases:
+      - concept ontology
+      - semantic layer
+      - domain concepts
+    description: Managing domain concepts and their relationships via YAML files, enabling semantic code understanding.
+    owned_by:
+      - ontology
+    code_refs:
+      - src/ontology/mod.rs
+      - src/ontology/loader.rs
+      - src/ontology/query.rs
+      - src/ontology/concept.rs
+    docs:
+      - docs/ontology.md
+
+  - id: rocksdb_storage
+    type_: domain_entity
+    name: RocksDB Storage
+    env: local
+    aliases:
+      - persistent storage
+      - RocksDB engine
+    description: RocksDB-based persistent storage engine for LeanKG with CozoDB interface.
+    owned_by:
+      - db
+    code_refs:
+      - src/db/schema.rs
+      - docker-compose.rocksdb.yml
+    docs:
+      - docs/storage.md
+
+  - id: cli_commands
+    type_: domain_entity
+    name: CLI Commands
+    env: local
+    aliases:
+      - command line interface
+      - leankg CLI
+      - terminal commands
+    description: Command-line interface for LeanKG operations including init, index, serve, query, and ontology management.
+    owned_by:
+      - cli
+    code_refs:
+      - src/cli/mod.rs
+      - src/main.rs
+    docs:
+      - docs/cli.md
+
+  - id: cozo_integration
+    type_: domain_entity
+    name: CozoDB Integration
+    env: local
+    aliases:
+      - Cozo database
+      - Datalog queries
+    description: Integration with CozoDB for storing and querying code elements using Datalog/Cypher-like queries.
+    owned_by:
+      - db
+    code_refs:
+      - src/db/schema.rs
+      - src/db/mod.rs
+    docs:
+      - docs/cozo.md
+
+  - id: android_indexing
+    type_: domain_entity
+    name: Android Code Indexing
+    env: local
+    aliases:
+      - Android extraction
+      - Android-specific parsing
+    description: Specialized indexer for Android codebases including Hilt, Room, Jetpack Navigation, and resource files.
+    owned_by:
+      - indexer
+    code_refs:
+      - src/indexer/android_hilt.rs
+      - src/indexer/android_room.rs
+      - src/indexer/android_nav_jetpack.rs
+      - src/indexer/android_resources.rs
+    docs:
+      - docs/android.md
+
+  - id: compression
+    type_: domain_entity
+    name: Context Compression
+    env: local
+    aliases:
+      - RTK compression
+      - context summarization
+    description: Compressing context using Relevance-Then-Kentian (RTK) methods for efficient LLM token usage.
+    owned_by:
+      - compress
+    code_refs:
+      - src/compress/mod.rs
+      - src/compress/reader.rs
+      - src/compress/shell.rs
+    docs:
+      - docs/compression.md
+
+  - id: cluster_detection
+    type_: domain_entity
+    name: Cluster Detection
+    env: local
+    aliases:
+      - community detection
+      - code clustering
+    description: Detecting communities/clusters in code using graph analysis algorithms.
+    owned_by:
+      - graph
+    code_refs:
+      - src/graph/cache.rs
+      - src/graph/persistent_cache.rs
+    docs:
+      - docs/clusters.md
+
+  - id: microservice_detection
+    type_: domain_entity
+    name: Microservice Detection
+    env: local
+    aliases:
+      - service boundary
+      - microservice extraction
+    description: Detecting microservice boundaries by analyzing Gradle/Maven module structures and their dependencies.
+    owned_by:
+      - indexer
+    code_refs:
+      - src/indexer/microservice.rs
+      - src/indexer/gradle_extractor.rs
+      - src/indexer/maven_extractor.rs
+    docs:
+      - docs/microservices.md
