@@ -525,7 +525,7 @@ impl OntologyQueryEngine {
 
         for ont_type in &ontology_types {
             let type_query = format!(
-                r#"?[cnt] := code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], file_path =~ "ontology://", element_type = "{}""#,
+                r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], regex_matches(file_path, "ontology://"), element_type = "{}""#,
                 ont_type
             );
 
@@ -533,7 +533,7 @@ impl OntologyQueryEngine {
                 .db
                 .run_script(&type_query, std::collections::BTreeMap::new())
             {
-                let count = result.rows.first().and_then(|r| r[0].as_u64()).unwrap_or(0) as usize;
+                let count = result.rows.len();
                 let count = std::cmp::min(count, 1_000_000);
 
                 if is_procedural_type(ont_type) {
