@@ -459,7 +459,7 @@ impl OntologyQueryEngine {
     ) -> Result<Vec<WorkflowNode>, Box<dyn std::error::Error>> {
         let normalized_query = query.to_lowercase();
 
-        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type = "workflow", file_path =~ "ontology://""#;
+        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type = "workflow", regex_matches(file_path, "ontology://")"#;
 
         let result = self
             .db
