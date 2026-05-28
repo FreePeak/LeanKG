@@ -93,3 +93,57 @@ src/main.rs      ./src/main.rs      src/lib.rs::parse_config
 ```
 
 Works across all tools. No need to worry about `./` prefix or absolute paths.
+
+---
+
+## Multi-Project Setup (HTTP/SSE Server)
+
+LeanKG supports multiple projects through a single Docker-based HTTP server.
+
+### How Routing Works
+
+The server identifies which project database to use via the `?project=` URL query parameter:
+
+| URL | Project |
+|-----|---------|
+| `http://host:9699/mcp` | Default project (where server started) |
+| `http://host:9699/mcp?project=/workspace-be` | BE backend |
+| `http://host:9699/mcp?project=/workspace-new` | Custom project |
+
+### Registering a New Project Directory
+
+**Option A: Docker volume mount**
+1. Add volume mount to `docker-compose.rocksdb.yml`:
+   ```yaml
+   volumes:
+     - /host/path/to/project:/workspace-new
+   ```
+2. Restart: `docker compose restart`
+3. Auto-discovery entrypoint detects the new `.leankg` directory and indexes it.
+
+**Option B: Via MCP tools (from AI agent)**
+1. Call `mcp_init(path="/workspace-new")` to create `.leankg/leankg.yaml`
+2. Call `mcp_index(path="/workspace-new")` to index all files
+3. All subsequent queries use `?project=/workspace-new` for that project
+
+**Option C: Via CLI (Docker exec)**
+```bash
+docker exec leankg-leankg-1 leankg index /workspace-new
+```
+
+### Adding MCP Config for a New Project Tool
+
+Each AI tool (opencode, Claude, Cursor) needs the `?project=` param in its MCP URL:
+
+```json
+// .mcp.json or equivalent config
+{
+  "mcpServers": {
+    "leankg": {
+      "url": "http://localhost:9699/mcp?project=/workspace-new"
+    }
+  }
+}
+```
+
+Without the param, the server defaults to the project it was started in (`/workspace`).
