@@ -10,6 +10,16 @@ LeanKG can instruct AI coding agents to use it **first** before falling back to 
 
 ## Setup
 
+### Docker (Recommended)
+
+```bash
+docker compose -f docker-compose.rocksdb.yml up
+```
+
+This starts LeanKG MCP HTTP server on port 9699 with auto-indexing. AI agents can connect via `http://localhost:9699`.
+
+### Local Development
+
 ```bash
 # 1. Install LeanKG with MCP config
 leankg install
