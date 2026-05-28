@@ -31,6 +31,31 @@ Tested **50 MCP tools** against the LeanKG server in Docker containers with Rock
 | 2 (bash, fixed) | Proper JSON-RPC, sequential | 21 pass, 37 fail (lock + file not found) |
 | 3 (Python) | Python clients, sequential | 21 pass, 36 fail (same root causes) |
 | 4 (Python, individual restarts) | Container restart between writes | ALL 50 TOOLS PASSED |
+| 5 (Python, fix applied) | Cache invalidation after writes | **ALL 50 PASSED IN SINGLE SESSION** |
+| 6 (Python, confirmation) | Re-test with fix | **ALL 50 PASSED - STABLE** |
+
+### Root Cause & Fix
+
+**Problem:** After write tools (`add_knowledge`, `add_annotation`, `add_documentation`) perform CozoDB `:put` operations, the cached `GraphEngine` retains the RocksDB connection with an open write lock. Subsequent read tools get a clone of the same cached engine and fail with "lock hold by current process".
+
+**Fix** (`src/mcp/server.rs:1547`): Invalidate both `graph_engine` and `graph_engine_cache` after all write operations (not just `mcp_index`). This forces the next request to create a fresh `GraphEngine` with a new RocksDB connection.
+
+```rust
+// Before: only invalidated for mcp_index
+if tool_name == "mcp_index" {
+    let mut guard = self.graph_engine.lock();
+    *guard = None;
+}
+
+// After: invalidate for ALL write tools
+if matches!(tool_name, "mcp_index" | "mcp_index_docs" | "add_knowledge" |
+    "update_knowledge" | "delete_knowledge" | "add_annotation" | ...) {
+    let mut guard = self.graph_engine.lock();
+    *guard = None;
+    let mut cache = self.graph_engine_cache.write();
+    cache.clear();
+}
+```
 
 ### Root Cause Analysis
 

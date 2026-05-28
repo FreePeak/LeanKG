@@ -1549,6 +1549,26 @@ impl MCPServer {
             *guard = None;
         }
 
+        // Invalidate cached GraphEngine after write tools so subsequent reads
+        // get a fresh RocksDB connection (avoids lock contention from :put ops)
+        if matches!(
+            tool_name,
+            "mcp_index"
+                | "mcp_index_docs"
+                | "add_knowledge"
+                | "update_knowledge"
+                | "delete_knowledge"
+                | "add_annotation"
+                | "link_element"
+                | "add_documentation"
+                | "promote_environment"
+        ) {
+            let mut guard = self.graph_engine.lock();
+            *guard = None;
+            let mut cache = self.graph_engine_cache.write();
+            cache.clear();
+        }
+
         // Mark write tracker dirty for knowledge contribution tools
         if matches!(
             tool_name,
