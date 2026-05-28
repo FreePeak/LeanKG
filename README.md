@@ -70,6 +70,16 @@ git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG && cargo build --r
 
 ---
 
+### Docker (Recommended for Teams)
+
+```bash
+docker compose -f docker-compose.rocksdb.yml up
+```
+
+This starts the LeanKG MCP HTTP server on port 9699 with auto-indexing enabled. Requires [Docker](https://docs.docker.com/engine/install/) or [OrbStack](https://orbstack.dev).
+
+---
+
 ## Quick Start
 
 ```bash
@@ -196,6 +206,7 @@ See [docs/architecture.md](docs/architecture.md) for system design and data mode
 | Cursor | Yes | session-start | - | - |
 | Claude Code | Yes | session-start | Yes | Setup, SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop |
 | OpenCode | Yes | - | Yes | - |
+| Docker | Yes | - | - | - |
 | Kilo Code | Yes | - | - | - |
 | Gemini CLI | Yes | - | - | - |
 | Google Antigravity | Yes | - | - | - |

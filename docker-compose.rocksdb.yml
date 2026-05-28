@@ -8,6 +8,8 @@ services:
       LEANKG_ROCKSDB_ROOT: /data/leankg-rocksdb
       MCP_HTTP_PORT: "9699"
       LEANKG_AUTO_INDEX: "1"
+      LEANKG_PROJECT_DIRS: "/workspace-be"
+      RUST_LOG: "leankg=info"
     ports:
       - "9699:9699"
     volumes:
