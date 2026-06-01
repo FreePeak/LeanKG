@@ -108,7 +108,7 @@ fix/mcp-index-fetch-failed
 - [x] Add `resolve_calls` with default `false` so MCP index calls do not always perform global call-edge resolution.
 - [x] Report whether call resolution ran or was skipped in the tool result.
 - [x] Exclude nested worktrees and common generated/cache directories during default file discovery.
-- [ ] Improve per-file error reporting for skipped files instead of only counting skipped files.
+- [x] Improve per-file error reporting for skipped files instead of only counting skipped files.
 
 ### Phase 3: Fix Session/Lock Runtime Panic
 
@@ -119,6 +119,8 @@ fix/mcp-index-fetch-failed
 
 - [x] Add an MCP-server-level mutex for write-heavy MCP tools and dirty-write-triggered reindex.
 - [ ] Extend the same serialization boundary to watcher reindex paths if watcher and HTTP run in the same process.
+
+**Note**: Remaining items (Phase 3 stale lock cleanup, Phase 4 watcher serialization) require architectural changes to pass watcher a shared write lock. These are low priority since all critical functionality works and tests pass.
 
 ### Phase 5: Verification
 
