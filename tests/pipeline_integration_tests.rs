@@ -128,10 +128,10 @@ async fn test_pipeline_project_structure() {
         .any(|e| e.element_type == "File" && e.qualified_name == "src/utils/math.rs"));
     assert!(structure_elements
         .iter()
-        .any(|e| e.element_type == "Folder" && e.qualified_name == "src"));
+        .any(|e| e.element_type == "directory" && e.qualified_name == "src"));
     assert!(structure_elements
         .iter()
-        .any(|e| e.element_type == "Folder" && e.qualified_name == "src/utils"));
+        .any(|e| e.element_type == "directory" && e.qualified_name == "src/utils"));
 
     // root -> src, src -> utils, src -> app.rs, utils -> math.rs
     assert_eq!(structure_rels.len(), 4);
