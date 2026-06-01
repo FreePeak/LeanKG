@@ -3277,7 +3277,7 @@ mod tests {
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
         );
-        let result = engine.run_raw_query(query, Default::default());
+        let result = engine.run_raw_query(&query, Default::default());
         assert!(
             result.is_ok(),
             "run_raw_query should succeed with valid query"
@@ -3303,7 +3303,7 @@ mod tests {
             "nm".to_string(),
             serde_json::Value::String("main".to_string()),
         );
-        let result = engine.run_raw_query(query, params);
+        let result = engine.run_raw_query(&query, params);
         assert!(
             result.is_ok(),
             "run_raw_query should succeed with parameterized query"

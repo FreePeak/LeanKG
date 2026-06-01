@@ -568,7 +568,7 @@ impl ToolHandler {
             .map_err(|e| format!("Find files error: {}", e))?;
 
         let mut indexed = 0;
-        let mut skipped = 0;
+        let mut skipped_files: Vec<serde_json::Value> = Vec::new();
 
         for file_path in &files {
             if let Some(lang_filter) = lang {
@@ -605,7 +605,12 @@ impl ToolHandler {
                 file_path,
             ) {
                 Ok(_) => indexed += 1,
-                Err(_) => skipped += 1,
+                Err(e) => {
+                    skipped_files.push(serde_json::json!({
+                        "file": file_path,
+                        "reason": e.to_string()
+                    }));
+                }
             }
         }
 
@@ -615,16 +620,18 @@ impl ToolHandler {
             0
         };
 
+        let skipped_count = skipped_files.len();
         Ok(json!({
             "success": true,
             "message": if resolve_calls {
-                format!("Indexed {} files, {} skipped, {} call edges resolved", indexed, skipped, resolved)
+                format!("Indexed {} files, {} skipped, {} call edges resolved", indexed, skipped_count, resolved)
             } else {
-                format!("Indexed {} files, {} skipped; call edge resolution skipped", indexed, skipped)
+                format!("Indexed {} files, {} skipped; call edge resolution skipped", indexed, skipped_count)
             },
             "incremental": false,
             "indexed": indexed,
-            "skipped": skipped,
+            "skipped_count": skipped_count,
+            "skipped_files": skipped_files,
             "resolved": resolved,
             "resolve_calls": resolve_calls,
             "path": path
