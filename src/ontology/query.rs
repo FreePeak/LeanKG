@@ -451,7 +451,7 @@ impl OntologyQueryEngine {
         Ok(steps)
     }
 
-    /// Search for workflows by name/alias
+    /// Search for workflows by name/alias/GID
     pub fn search_workflows(
         &self,
         query: &str,
@@ -476,14 +476,15 @@ impl OntologyQueryEngine {
 
             let metadata: WorkflowMetadata = serde_json::from_str(metadata_str).unwrap_or_default();
 
-            // Check if name or aliases match query
+            // Check if name, aliases, or GID ID match query
             let name_match = name.to_lowercase().contains(&normalized_query);
             let alias_match = metadata
                 .aliases
                 .iter()
                 .any(|a| a.to_lowercase().contains(&normalized_query));
+            let gid_match = qualified_name.to_lowercase().contains(&normalized_query);
 
-            if name_match || alias_match {
+            if name_match || alias_match || gid_match {
                 matches.push(WorkflowNode {
                     gid: qualified_name.to_string(),
                     name: name.to_string(),
@@ -501,7 +502,7 @@ impl OntologyQueryEngine {
 
     /// Get ontology status (counts by type)
     pub fn get_ontology_status(&self) -> Result<OntologyStatus, Box<dyn std::error::Error>> {
-        let ontology_types = [
+        let _ontology_types = [
             "domain_entity",
             "service",
             "api_endpoint",
@@ -519,30 +520,75 @@ impl OntologyQueryEngine {
 
         let mut concept_counts: HashMap<String, usize> = HashMap::new();
         let mut procedural_counts: HashMap<String, usize> = HashMap::new();
-        let total_aliases = 0;
-        let nodes_missing_aliases = 0;
-        let workflows_without_failure_modes = 0;
+        let mut total_aliases: usize = 0;
+        let mut nodes_missing_aliases: usize = 0;
+        let mut workflow_gids: Vec<String> = Vec::new();
+        let mut workflows_with_failure_modes: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
-        for ont_type in &ontology_types {
-            let type_query = format!(
-                r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], regex_matches(file_path, "ontology://"), element_type = "{}""#,
-                ont_type
-            );
+        // Get all ontology nodes with metadata
+        let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], regex_matches(file_path, "ontology://")"#;
 
-            if let Ok(result) = self
-                .db
-                .run_script(&type_query, std::collections::BTreeMap::new())
-            {
-                let count = result.rows.len();
-                let count = std::cmp::min(count, 1_000_000);
+        if let Ok(result) = self
+            .db
+            .run_script(all_query, std::collections::BTreeMap::new())
+        {
+            for row in &result.rows {
+                let qualified_name = row[0].as_str().unwrap_or("");
+                let element_type = row[1].as_str().unwrap_or("");
+                let metadata_str = row[2].as_str().unwrap_or("{}");
 
-                if is_procedural_type(ont_type) {
-                    procedural_counts.insert(ont_type.to_string(), count);
+                let metadata: serde_json::Value =
+                    serde_json::from_str(metadata_str).unwrap_or_default();
+
+                // Count aliases
+                let aliases: Vec<String> = metadata
+                    .get("aliases")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|s| s.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                total_aliases += aliases.len();
+                if aliases.is_empty() {
+                    nodes_missing_aliases += 1;
+                }
+
+                // Count by type
+                if is_procedural_type(element_type) {
+                    *procedural_counts
+                        .entry(element_type.to_string())
+                        .or_insert(0) += 1;
                 } else {
-                    concept_counts.insert(ont_type.to_string(), count);
+                    *concept_counts.entry(element_type.to_string()).or_insert(0) += 1;
+                }
+
+                if element_type == "workflow" {
+                    workflow_gids.push(qualified_name.to_string());
+                } else if element_type == "workflow_step" {
+                    let failure_count = metadata
+                        .get("failure_modes")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    if failure_count == 0 {
+                        continue;
+                    }
+                    if let Some(workflow_gid) =
+                        metadata.get("workflow_gid").and_then(|v| v.as_str())
+                    {
+                        workflows_with_failure_modes.insert(workflow_gid.to_string());
+                    }
                 }
             }
         }
+
+        let workflows_without_failure_modes = workflow_gids
+            .iter()
+            .filter(|gid| !workflows_with_failure_modes.contains(*gid))
+            .count();
 
         Ok(OntologyStatus {
             concept_counts,
@@ -571,18 +617,19 @@ pub fn calculate_match_score(
 ) -> (f64, String) {
     let query_lower = query.to_lowercase();
     let name_lower = name.to_lowercase();
+    let desc_lower = description.to_lowercase();
 
     // Exact name match is highest
     if name_lower == query_lower {
         return (1.0, format!("exact name match: {}", name));
     }
 
-    // Name contains query
+    // Name contains full query
     if name_lower.contains(&query_lower) {
         return (0.8, format!("name contains '{}': {}", query, name));
     }
 
-    // Alias match
+    // Exact alias match
     for alias in aliases {
         let alias_lower = alias.to_lowercase();
         if alias_lower == query_lower {
@@ -593,23 +640,71 @@ pub fn calculate_match_score(
         }
     }
 
-    // Description contains query
-    if description.to_lowercase().contains(&query_lower) {
+    // Description contains full query
+    if desc_lower.contains(&query_lower) {
         return (0.5, format!("description contains '{}'", query));
     }
 
-    // Check for multi-word query match
+    // Multi-word query: score based on what fraction of query words match
     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
     if query_words.len() > 1 {
-        let mut matched_words = 0;
+        let mut matched_words: usize = 0;
+        let mut match_sources: Vec<String> = Vec::new();
         for word in &query_words {
-            if name_lower.contains(word) || aliases.iter().any(|a| a.to_lowercase().contains(word))
-            {
+            if word.len() < 3 {
+                continue; // skip very short words
+            }
+            if name_lower.contains(word) {
                 matched_words += 1;
+                match_sources.push(format!("{} (name)", word));
+            } else if aliases.iter().any(|a| a.to_lowercase().contains(word)) {
+                matched_words += 1;
+                match_sources.push(format!("{} (alias)", word));
+            } else if desc_lower.contains(word) {
+                matched_words += 1;
+                match_sources.push(format!("{} (desc)", word));
             }
         }
-        if matched_words == query_words.len() {
-            return (0.6, "all query words matched in name/aliases".to_string());
+        let meaningful_words = query_words.iter().filter(|w| w.len() >= 3).count();
+        if meaningful_words > 0 && matched_words > 0 {
+            let ratio = matched_words as f64 / meaningful_words as f64;
+            if ratio >= 0.5 {
+                return (
+                    ratio * 0.7,
+                    format!(
+                        "{} of {} meaningful query words matched: {}",
+                        matched_words,
+                        meaningful_words,
+                        match_sources.join(", ")
+                    ),
+                );
+            }
+            if ratio > 0.0 {
+                return (
+                    ratio * 0.3,
+                    format!(
+                        "partial match: {} of {} words: {}",
+                        matched_words,
+                        meaningful_words,
+                        match_sources.join(", ")
+                    ),
+                );
+            }
+        }
+    }
+
+    // Single-word query: check if any word from the query is in name or aliases
+    if query_lower.len() > 2 {
+        if name_lower.contains(&query_lower) {
+            return (0.8, format!("name contains '{}': {}", query, name));
+        }
+        for alias in aliases {
+            if alias.to_lowercase().contains(&query_lower) {
+                return (0.7, format!("alias contains '{}': {}", query, alias));
+            }
+        }
+        if desc_lower.contains(&query_lower) {
+            return (0.4, format!("description contains '{}'", query));
         }
     }
 

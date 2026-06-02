@@ -212,6 +212,7 @@ pub fn load_workflows_yaml(
             &workflow_def.name,
             &workflow_def.description,
         );
+        metadata = metadata.with_aliases(workflow_def.aliases.clone());
         metadata = metadata.with_entry_points(workflow_def.entry_points.clone());
         metadata = metadata.with_step_count(workflow_def.steps.len());
         metadata = metadata.with_source(path.to_str().unwrap_or("unknown"));
@@ -460,6 +461,7 @@ workflows:
             load_workflows_yaml(temp_file.path()).unwrap();
         assert_eq!(workflows.len(), 1);
         assert_eq!(workflows[0].name, "Checkout");
+        assert!(workflows[0].aliases.contains(&"place order".to_string()));
         assert_eq!(steps.len(), 2);
         assert_eq!(failures.len(), 1);
         assert!(relationships.len() >= 3); // has_step + next_step + has_failure_mode

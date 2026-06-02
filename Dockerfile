@@ -11,6 +11,7 @@ RUN npm install && npm run build
 
 WORKDIR /app
 COPY src ./src
+COPY ontology/ ./ontology/
 RUN cargo build --release && strip target/release/leankg
 
 ENV PORT=8080

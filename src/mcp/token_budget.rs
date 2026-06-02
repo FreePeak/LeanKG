@@ -12,11 +12,24 @@ impl TokenBudget {
     pub fn max_tokens_for_tool(tool_name: &str) -> usize {
         match tool_name {
             "get_service_context" => 800,
-            "get_impact_radius" => 600,
-            "query_incidents" => 500,
-            "find_env_conflicts" => 400,
-            "trace_call_chain" => 400,
-            "semantic_search" => 300,
+            "get_impact_radius" => 6000,
+            "query_incidents" => 2000,
+            "find_env_conflicts" => 2000,
+            "trace_call_chain" => 2000,
+            "semantic_search" => 2000,
+            "kg_context" => 4000,
+            "kg_concept_map" => 4000,
+            "kg_trace_workflow" => 4000,
+            "kg_ontology_status" => 2000,
+            "get_clusters" => 4000,
+            "get_cluster_context" => 4000,
+            "get_doc_tree" => 4000,
+            "get_code_tree" => 4000,
+            "get_call_graph" => 4000,
+            "search_code" => 4000,
+            "query_file" => 4000,
+            "get_dependencies" => 2000,
+            "get_dependents" => 2000,
             _ => 1000, // default
         }
     }
@@ -131,7 +144,9 @@ mod tests {
     #[test]
     fn test_max_tokens_for_tool() {
         assert_eq!(TokenBudget::max_tokens_for_tool("get_service_context"), 800);
-        assert_eq!(TokenBudget::max_tokens_for_tool("semantic_search"), 300);
+        assert_eq!(TokenBudget::max_tokens_for_tool("semantic_search"), 2000);
+        assert_eq!(TokenBudget::max_tokens_for_tool("kg_context"), 4000);
+        assert_eq!(TokenBudget::max_tokens_for_tool("get_impact_radius"), 6000);
         assert_eq!(TokenBudget::max_tokens_for_tool("unknown_tool"), 1000);
     }
 

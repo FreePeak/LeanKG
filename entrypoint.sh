@@ -87,6 +87,15 @@ if [ "${LEANKG_AUTO_INDEX:-1}" = "1" ]; then
     fi
 fi
 
+# Sync ontology from YAML files into the database
+if [ -d "/workspace/ontology" ] && [ -f "/workspace/ontology/concepts.yaml" ]; then
+    echo "=== Syncing ontology ==="
+    ( cd /workspace && leankg ontology sync )
+    echo "=== Ontology sync done ==="
+else
+    echo "No ontology directory found, skipping ontology sync"
+fi
+
 echo "=== Starting MCP HTTP on port $MCP_PORT ==="
 cd /workspace
 exec leankg mcp-http --port "$MCP_PORT" "$@"

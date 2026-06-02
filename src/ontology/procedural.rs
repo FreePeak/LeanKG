@@ -137,6 +137,12 @@ impl WorkflowMetadata {
         self
     }
 
+    pub fn with_aliases(mut self, aliases: Vec<String>) -> Self {
+        self.aliases
+            .extend(aliases.iter().map(|alias| normalize_alias(alias)));
+        self
+    }
+
     pub fn with_step_count(mut self, count: usize) -> Self {
         self.step_count = Some(count);
         self
