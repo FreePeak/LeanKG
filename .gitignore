@@ -10,3 +10,4 @@ test-results/
 .mcp.json
 node_modules/
 .leankg
+.clauge-worktrees/

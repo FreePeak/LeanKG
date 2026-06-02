@@ -9,6 +9,7 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
 COPY vendor/ ./vendor/
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY ontology/ ./ontology/
 
 RUN cargo build --release && strip target/release/leankg && cp target/release/leankg /usr/local/bin/
 
