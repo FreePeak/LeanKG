@@ -69,6 +69,119 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+/// Cache for go.mod module name -> directory mapping
+static GO_MOD_CACHE: OnceLock<std::sync::Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+
+fn go_mod_cache() -> &'static std::sync::Mutex<HashMap<String, Option<String>>> {
+    GO_MOD_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// Find the nearest go.mod directory for a given file path
+fn find_go_mod_dir(file_path: &str) -> Option<String> {
+    let path = Path::new(file_path);
+    for ancestor in path.ancestors() {
+        let go_mod = ancestor.join("go.mod");
+        if go_mod.exists() {
+            return Some(ancestor.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// Parse module name from go.mod content
+fn parse_go_module_name(go_mod_path: &str) -> Option<String> {
+    let content = std::fs::read_to_string(go_mod_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("module ") {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Get the module name for a given Go file path
+fn get_go_module_name(file_path: &str) -> Option<String> {
+    let go_mod_dir = find_go_mod_dir(file_path)?;
+    let go_mod_path = format!("{}/go.mod", go_mod_dir);
+
+    let mut cache = go_mod_cache().lock().unwrap();
+    if let Some(cached) = cache.get(&go_mod_dir) {
+        return cached.clone();
+    }
+
+    let module_name = parse_go_module_name(&go_mod_path);
+    cache.insert(go_mod_dir.clone(), module_name.clone());
+    module_name
+}
+
+/// Resolve a Go module import path to a filesystem path relative to the project root
+fn resolve_go_import(import_path: &str, file_path: &str) -> Option<String> {
+    // Standard library imports (no dots, no slashes before first path element)
+    // Examples: "fmt", "net/http", "crypto/tls"
+    if !import_path.contains('.')
+        && import_path
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase())
+    {
+        // Could be stdlib, skip
+        return None;
+    }
+
+    let go_mod_dir = find_go_mod_dir(file_path)?;
+    let module_name = get_go_module_name(file_path)?;
+
+    // Check if the import belongs to this module
+    if let Some(sub_path) = import_path.strip_prefix(&module_name) {
+        let sub_path = sub_path.trim_start_matches('/');
+        let resolved = format!("{}/{}", go_mod_dir, sub_path);
+        return Some(resolved);
+    }
+
+    // For external module imports, try resolving within the project tree
+    // by matching the import path suffix against known directories
+    let parts: Vec<&str> = import_path.rsplitn(3, '/').collect();
+    if parts.len() >= 2 {
+        // Check if the go_mod_dir ancestor has a matching subdirectory
+        let go_mod_parent = Path::new(&go_mod_dir).parent()?;
+        let candidate = go_mod_parent.join(parts[0]);
+        if candidate.exists() {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+        if parts.len() >= 3 {
+            let candidate2 = go_mod_parent.join(parts[1]).join(parts[0]);
+            if candidate2.exists() {
+                return Some(candidate2.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// Resolve Go import targets in relationships to filesystem paths
+fn resolve_go_imports(relationships: &mut [Relationship], file_path: &str, language: &str) {
+    if language != "go" {
+        return;
+    }
+
+    for rel in relationships.iter_mut() {
+        if rel.rel_type == "imports" && !rel.target_qualified.is_empty() {
+            // Skip if already a filesystem path (contains / or starts with .)
+            if rel.target_qualified.starts_with('.') || rel.target_qualified.starts_with('/') {
+                continue;
+            }
+            if let Some(resolved) = resolve_go_import(&rel.target_qualified, file_path) {
+                rel.target_qualified = resolved;
+            }
+        }
+    }
+}
+
 const DEFAULT_INDEX_IGNORED_DIRS: &[&str] = &[
     ".git",
     ".leankg",
@@ -807,6 +920,11 @@ pub fn index_file_sync(
 
     if elements.is_empty() && relationships.is_empty() {
         return Ok(0);
+    }
+
+    // Resolve Go import paths to filesystem paths
+    if language == "go" {
+        resolve_go_imports(&mut relationships, file_path, language);
     }
 
     let _ = graph.insert_elements(&elements);
