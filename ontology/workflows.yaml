@@ -1,0 +1,460 @@
+# LeanKG Procedural Workflow Ontology
+# Real workflows derived from actual code in this codebase
+
+workflows:
+  - id: code_indexing_flow
+    name: Code Indexing Flow
+    env: local
+    aliases:
+      - indexing pipeline
+      - code extraction flow
+    description: End-to-end flow for parsing source files and extracting code elements into the knowledge graph.
+    entry_points:
+      - src/indexer/mod.rs::index_files_parallel
+    steps:
+      - id: find_files
+        name: Find Source Files
+        code_refs:
+          - src/indexer/mod.rs::find_files_sync
+          - src/indexer/mod.rs::find_files_parallel
+      - id: init_parsers
+        name: Initialize Language Parsers
+        code_refs:
+          - src/indexer/mod.rs::init_parsers
+          - src/indexer/parser.rs::Parser
+      - id: parse_file
+        name: Parse File with Tree-Sitter
+        code_refs:
+          - src/indexer/extractor.rs
+          - src/indexer/parser.rs::parse_file_sync
+        failure_modes:
+          - parse_timeout
+          - unsupported_language
+          - invalid_syntax_error
+      - id: extract_elements
+        name: Extract Code Elements
+        code_refs:
+          - src/indexer/extractor.rs::extract_functions
+          - src/indexer/extractor.rs::extract_structs
+          - src/indexer/extractor.rs::extract_imports
+        failure_modes:
+          - extraction_failure
+          - missing_parent_scope
+      - id: insert_elements
+        name: Insert into Graph DB
+        code_refs:
+          - src/graph/query.rs::insert_element
+          - src/db/schema.rs::init_db
+        failure_modes:
+          - db_write_failure
+          - schema_conflict
+      - id: resolve_edges
+        name: Resolve Call Edges
+        code_refs:
+          - src/indexer/mod.rs::resolve_call_edges_inline
+          - src/indexer/call_graph.rs
+        failure_modes:
+          - edge_resolution_timeout
+          - unresolvable_reference
+      - id: cluster_elements
+        name: Cluster Code Elements
+        code_refs:
+          - src/graph/cache.rs
+          - src/graph/persistent_cache.rs
+        failure_modes:
+          - cluster_overlap
+          - memory_exhaustion
+
+  - id: mcp_request_flow
+    name: MCP Request Handling Flow
+    env: local
+    aliases:
+      - MCP tool flow
+      - tool execution flow
+    description: How MCP tool requests are received, validated, routed, and executed.
+    entry_points:
+      - src/mcp/handler.rs::execute_tool
+    steps:
+      - id: receive_request
+        name: Receive JSON-RPC Request
+        code_refs:
+          - src/mcp/server.rs::handle_mcp_request
+          - src/mcp/server.rs::serve_http
+        failure_modes:
+          - parse_error
+          - invalid_jsonrpc
+      - id: authenticate
+        name: Authenticate Request
+        code_refs:
+          - src/mcp/auth.rs::AuthManager
+          - src/mcp/server.rs::auth_manager_read
+        failure_modes:
+          - auth_timeout
+          - invalid_token
+      - id: route_tool
+        name: Route to Tool Handler
+        code_refs:
+          - src/mcp/handler.rs::execute_tool
+          - src/mcp/tools.rs::ToolRegistry
+        failure_modes:
+          - unknown_tool
+          - missing_parameter
+      - id: validate_args
+        name: Validate Tool Arguments
+        code_refs:
+          - src/mcp/handler.rs
+          - src/mcp/tools.rs
+        failure_modes:
+          - schema_mismatch
+          - type_error
+      - id: execute_operation
+        name: Execute Graph Operation
+        code_refs:
+          - src/graph/query.rs
+          - src/db/mod.rs
+        failure_modes:
+          - db_timeout
+          - graph_traversal_error
+      - id: compress_response
+        name: Compress Response
+        code_refs:
+          - src/compress/mod.rs
+          - src/compress/shell.rs
+          - src/compress/reader.rs
+        failure_modes:
+          - compression_overflow
+          - token_budget_exceeded
+      - id: return_response
+        name: Return JSON-RPC Response
+        code_refs:
+          - src/mcp/server.rs::handle_mcp_request
+          - src/mcp/toon.rs
+
+  - id: ontology_sync_flow
+    name: Ontology Sync Flow
+    env: local
+    aliases:
+      - ontology loading
+      - concept sync
+    description: Loads concept and workflow definitions from YAML files into the CozoDB knowledge graph.
+    entry_points:
+      - src/main.rs::handle_ontology_command
+    steps:
+      - id: load_concepts
+        name: Load Concept Definitions
+        code_refs:
+          - src/ontology/loader.rs::load_concepts_yaml
+        failure_modes:
+          - yaml_parse_error
+          - missing_concepts_file
+      - id: convert_to_elements
+        name: Convert to CodeElements
+        code_refs:
+          - src/ontology/loader.rs::concept_nodes_to_elements
+          - src/ontology/loader.rs::workflow_nodes_to_elements
+          - src/ontology/loader.rs::workflow_step_nodes_to_elements
+          - src/ontology/loader.rs::failure_mode_nodes_to_elements
+      - id: insert_concepts
+        name: Insert Concepts into DB
+        code_refs:
+          - src/graph/query.rs::insert_element
+          - src/main.rs::handle_ontology_command
+        failure_modes:
+          - duplicate_gid
+          - db_write_error
+      - id: insert_relationships
+        name: Insert Relationships
+        code_refs:
+          - src/graph/query.rs::insert_relationship
+        failure_modes:
+          - dangling_reference
+          - relationship_conflict
+      - id: verify_sync
+        name: Verify Sync Completeness
+        code_refs:
+          - src/ontology/query.rs::get_ontology_status
+        failure_modes:
+          - missing_nodes
+          - stale_entries
+
+  - id: docker_deployment_flow
+    name: Docker Deployment Flow
+    env: local
+    aliases:
+      - container startup
+      - Docker entrypoint
+    description: How the LeanKG Docker container starts up, initializes, indexes, and serves MCP.
+    entry_points:
+      - entrypoint.sh
+    steps:
+      - id: setup_rocksdb
+        name: Setup RocksDB Storage
+        code_refs:
+          - entrypoint.sh::rocksdb_dir_for
+        failure_modes:
+          - permission_denied
+          - disk_space_exhausted
+      - id: init_project
+        name: Initialize LeanKG Project
+        code_refs:
+          - src/mcp/server.rs::auto_init_if_needed
+          - entrypoint.sh::index_if_needed
+        failure_modes:
+          - read_only_filesystem
+          - git_not_found
+      - id: index_code
+        name: Index Codebase
+        code_refs:
+          - src/indexer/mod.rs
+          - entrypoint.sh
+        failure_modes:
+          - index_timeout
+          - large_file_error
+      - id: sync_ontology
+        name: Sync Ontology Data
+        code_refs:
+          - src/main.rs::handle_ontology_command
+          - entrypoint.sh
+        failure_modes:
+          - missing_ontology_dir
+          - yaml_malformed
+      - id: serve_mcp
+        name: Start MCP HTTP Server
+        code_refs:
+          - src/mcp/server.rs::serve_http
+          - entrypoint.sh
+        failure_modes:
+          - port_conflict
+          - bind_failure
+
+  - id: impact_analysis_flow
+    name: Impact Analysis Flow
+    env: local
+    aliases:
+      - blast radius
+      - change impact
+      - dependency analysis
+    description: Calculates which files and functions would be affected by a code change.
+    entry_points:
+      - src/graph/traversal.rs::traverse_impact
+    steps:
+      - id: resolve_dependencies
+        name: Resolve Direct Dependencies
+        code_refs:
+          - src/graph/query.rs::get_dependencies
+          - src/graph/query.rs::get_dependents
+        failure_modes:
+          - no_dependencies_found
+          - circular_dependency
+      - id: traverse_graph
+        name: Traverse Dependency Graph
+        code_refs:
+          - src/graph/traversal.rs::traverse_impact
+        failure_modes:
+          - infinite_loop
+          - memory_overflow
+      - id: calculate_confidence
+        name: Calculate Confidence Scores
+        code_refs:
+          - src/graph/traversal.rs::ImpactResult
+        failure_modes:
+          - score_miscalculation
+      - id: compress_results
+        name: Compress Results for LLM
+        code_refs:
+          - src/compress/mod.rs
+          - src/mcp/token_budget.rs
+        failure_modes:
+          - truncation_too_aggressive
+          - token_budget_exceeded
+
+  - id: document_indexing_flow
+    name: Document Indexing Flow
+    env: local
+    aliases:
+      - docs indexing
+      - markdown parsing
+    description: Indexes documentation files to link code elements with documentation.
+    entry_points:
+      - src/doc_indexer/mod.rs
+    steps:
+      - id: scan_docs
+        name: Scan Documentation Directory
+        code_refs:
+          - src/doc_indexer/mod.rs
+          - src/indexer/mod.rs::generate_physical_structure
+        failure_modes:
+          - directory_not_found
+          - too_many_files
+      - id: parse_markdown
+        name: Parse Markdown Content
+        code_refs:
+          - src/doc_indexer/mod.rs::parse_document
+        failure_modes:
+          - parsing_error
+          - encoding_error
+      - id: extract_references
+        name: Extract Code References
+        code_refs:
+          - src/doc_indexer/mod.rs::extract_code_references
+        failure_modes:
+          - no_references_found
+      - id: create_edges
+        name: Create Documented-by Edges
+        code_refs:
+          - src/doc_indexer/mod.rs::create_documentation_edges
+        failure_modes:
+          - orphan_document
+          - stale_reference
+
+  - id: semantic_search_flow
+    name: Semantic Search Flow
+    env: local
+    aliases:
+      - NL search
+      - concept search
+    description: Searches code elements and ontology using natural language with match scoring.
+    entry_points:
+      - src/ontology/query.rs::search_ontology_nodes
+    steps:
+      - id: normalize_query
+        name: Normalize Search Query
+        code_refs:
+          - src/ontology/query.rs::calculate_match_score
+          - src/ontology/mod.rs::normalize_alias
+      - id: search_concepts
+        name: Search Concept Nodes
+        code_refs:
+          - src/ontology/query.rs::search_ontology_nodes
+        failure_modes:
+          - no_concepts_loaded
+          - regex_error
+      - id: search_code
+        name: Search Code Elements
+        code_refs:
+          - src/mcp/handler.rs::search_code
+          - src/db/mod.rs
+        failure_modes:
+          - index_stale
+          - query_too_broad
+      - id: rank_results
+        name: Rank by Match Score
+        code_refs:
+          - src/ontology/query.rs::calculate_match_score
+        failure_modes:
+          - score_miscalculation
+          - low_recall
+
+  - id: git_change_detection_flow
+    name: Git Change Detection Flow
+    env: local
+    aliases:
+      - pre-commit analysis
+      - risk assessment
+    description: Detects code changes via git and assesses the risk of those changes.
+    entry_points:
+      - src/mcp/handler.rs::detect_changes
+    steps:
+      - id: compute_diff
+        name: Compute Git Diff
+        code_refs:
+          - src/indexer/mod.rs::GitAnalyzer
+        failure_modes:
+          - git_not_available
+          - large_diff
+      - id: identify_changed_files
+        name: Identify Changed Files
+        code_refs:
+          - src/mcp/handler.rs::detect_changes
+      - id: find_affected_symbols
+        name: Find Affected Symbols
+        code_refs:
+          - src/graph/traversal.rs
+        failure_modes:
+          - symbol_not_indexed
+      - id: classify_risk
+        name: Classify Risk Level
+        code_refs:
+          - src/mcp/handler.rs::detect_changes
+        failure_modes:
+          - false_positive
+          - missed_dependency
+
+  - id: knowledge_contribution_flow
+    name: Knowledge Contribution Flow
+    env: local
+    aliases:
+      - knowledge base
+      - annotation workflow
+    description: Flow for adding and managing business knowledge entries linked to code.
+    entry_points:
+      - src/db/mod.rs::create_business_logic
+    steps:
+      - id: validate_entry
+        name: Validate Knowledge Entry
+        code_refs:
+          - src/mcp/handler.rs::add_knowledge
+          - src/mcp/handler.rs::add_annotation
+        failure_modes:
+          - missing_required_field
+          - invalid_element_reference
+      - id: store_entry
+        name: Store Knowledge Entry
+        code_refs:
+          - src/db/mod.rs::create_business_logic
+          - src/db/mod.rs::insert_knowledge_entry
+        failure_modes:
+          - db_write_failure
+          - duplicate_entry
+      - id: link_to_elements
+        name: Link to Code Elements
+        code_refs:
+          - src/mcp/handler.rs::link_element
+        failure_modes:
+          - element_not_found
+      - id: tag_environment
+        name: Tag with Environment
+        code_refs:
+          - src/mcp/handler.rs::search_by_environment
+          - src/mcp/handler.rs::promote_environment
+        failure_modes:
+          - environment_mismatch
+
+  - id: watch_reindex_flow
+    name: Watch and Reindex Flow
+    env: local
+    aliases:
+      - auto-index
+      - file watcher
+    description: Watches for file changes and automatically triggers re-indexing.
+    entry_points:
+      - src/mcp/watcher.rs::start_watcher
+    steps:
+      - id: watch_files
+        name: Watch File System
+        code_refs:
+          - src/mcp/watcher.rs::start_watcher
+        failure_modes:
+          - watcher_error
+          - too_many_events
+      - id: detect_change
+        name: Detect File Changes
+        code_refs:
+          - src/mcp/server.rs::auto_index_if_needed
+        failure_modes:
+          - false_trigger
+          - debounce_failure
+      - id: incremental_index
+        name: Run Incremental Index
+        code_refs:
+          - src/indexer/mod.rs::incremental_index_sync
+        failure_modes:
+          - index_corruption
+          - concurrent_write
+      - id: update_cache
+        name: Update Graph Cache
+        code_refs:
+          - src/graph/cache.rs
+          - src/graph/persistent_cache.rs
+        failure_modes:
+          - cache_invalidation_error
