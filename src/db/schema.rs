@@ -139,7 +139,7 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     if !existing_relations.contains("code_elements") {
-        let create_code_elements = r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}"#;
+        let create_code_elements = r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#;
         if let Err(e) = db.run_script(create_code_elements, Default::default()) {
             eprintln!("Failed to create code_elements: {:?}", e);
         }
@@ -362,7 +362,7 @@ fn run_migrations(
     // relationships, plus incident table creation. Replaces the old 002-005
     // stacked :replace chain. This migration is idempotent: it inspects the
     // current column count and only performs a :replace when the schema
-    // does not match the canonical 12-column (code_elements) or 6-column
+    // does not match the canonical 13-column (code_elements) or 6-column
     // (relationships) layout. Non-matching schemas (e.g. with extra
     // environment/branch/version_tag columns from old partial migrations)
     // are repaired to the canonical form.
@@ -406,11 +406,18 @@ fn repair_canonical_schema(
     Ok(())
 }
 
-const REPAIR_LEGACY_CODE_ELEMENTS_11_TO_12: &str = r#"
-?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :=
+const REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13: &str = r#"
+?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :=
     *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata],
-    env = "local"
-:replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}
+    env = "local",
+    ontology_layer = "procedural"
+:replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}
+"#;
+const REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13: &str = r#"
+?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :=
+    *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env],
+    ontology_layer = "procedural"
+:replace code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}
 "#;
 const REPAIR_LEGACY_RELATIONSHIPS_5_TO_6: &str = r#"
 ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] :=
@@ -421,7 +428,11 @@ const REPAIR_LEGACY_RELATIONSHIPS_5_TO_6: &str = r#"
 
 fn get_column_count(db: &CozoDb, relation: &str) -> usize {
     let arity_probe = match relation {
-        "code_elements" => Some([
+        "code_elements" => Some(vec![
+            (
+                13,
+                "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
+            ),
             (
                 12,
                 "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :limit 0",
@@ -431,7 +442,7 @@ fn get_column_count(db: &CozoDb, relation: &str) -> usize {
                 "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :limit 0",
             ),
         ]),
-        "relationships" => Some([
+        "relationships" => Some(vec![
             (
                 6,
                 "?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env] :limit 0",
@@ -465,7 +476,7 @@ fn ensure_canonical_code_elements(
     if !existing_relations.contains("code_elements") {
         return Ok(());
     }
-    const EXPECTED: usize = 12;
+    const EXPECTED: usize = 13;
     let current = get_column_count(db, "code_elements");
     if current == EXPECTED {
         tracing::info!(
@@ -479,14 +490,21 @@ fn ensure_canonical_code_elements(
         current,
         EXPECTED
     );
-    if current != 11 {
-        tracing::warn!(
-            "code_elements schema has unsupported arity {}; canonical repair only supports legacy 11-column schema",
-            current
-        );
-        return Ok(());
+    match current {
+        11 => {
+            db.run_script(REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13, Default::default())?;
+        }
+        12 => {
+            db.run_script(REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13, Default::default())?;
+        }
+        _ => {
+            tracing::warn!(
+                "code_elements schema has unsupported arity {}; canonical repair only supports legacy 11- or 12-column schema",
+                current
+            );
+            return Ok(());
+        }
     }
-    db.run_script(REPAIR_LEGACY_CODE_ELEMENTS_11_TO_12, Default::default())?;
     tracing::info!("code_elements :replace successful");
     Ok(())
 }
@@ -572,7 +590,7 @@ fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
-            const EXPECTED_COLUMNS: usize = 12;
+            const EXPECTED_COLUMNS: usize = 13;
             if column_count != EXPECTED_COLUMNS {
                 eprintln!(
                     "WARNING: code_elements schema has {} columns, expected {}. \

@@ -132,12 +132,13 @@ async fn test_init_db_repairs_legacy_code_elements_after_recorded_migration() {
     let repaired_db = init_db(db_path.as_path()).unwrap();
     let canonical_query = repaired_db
         .run_script(
-            r#"?[qualified_name, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env]"#,
+            r#"?[qualified_name, env, ontology_layer] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer]"#,
             Default::default(),
         )
         .unwrap();
     assert_eq!(canonical_query.rows.len(), 1);
     assert_eq!(canonical_query.rows[0][1].as_str(), Some("local"));
+    assert_eq!(canonical_query.rows[0][2].as_str(), Some("procedural"));
 
     let graph = GraphEngine::new(repaired_db);
     let results = graph
@@ -145,6 +146,42 @@ async fn test_init_db_repairs_legacy_code_elements_after_recorded_migration() {
         .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].qualified_name, "src/main.rs::main");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_init_db_repairs_env_code_elements_to_ontology_layer_schema() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("env-only.db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let legacy_db = cozo::new_cozo_sqlite(db_path_str).unwrap();
+
+    legacy_db.run_script(
+        r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}"#,
+        Default::default(),
+    ).unwrap();
+    legacy_db.run_script(
+        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] <- [["src/lib.rs::activate", "function", "activate", "src/lib.rs", 2, 5, "rust", null, null, null, "{}", "staging"]]
+        :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}"#,
+        Default::default(),
+    ).unwrap();
+    legacy_db
+        .run_script(
+            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
+            Default::default(),
+        )
+        .unwrap();
+    drop(legacy_db);
+
+    let repaired_db = init_db(db_path.as_path()).unwrap();
+    let canonical_query = repaired_db
+        .run_script(
+            r#"?[qualified_name, env, ontology_layer] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer]"#,
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(canonical_query.rows.len(), 1);
+    assert_eq!(canonical_query.rows[0][1].as_str(), Some("staging"));
+    assert_eq!(canonical_query.rows[0][2].as_str(), Some("procedural"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
