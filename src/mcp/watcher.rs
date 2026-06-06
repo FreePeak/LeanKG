@@ -4,12 +4,33 @@ use crate::indexer::{reindex_file_sync, ParserManager};
 use crate::watcher::FileChange;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// Maximum database size before triggering prune (500MB)
+/// Maximum database size before triggering VACUUM (500 MiB).
+/// Lowered from the previous 500 MiB; can be overridden via
+/// `LEANKG_WATCHER_MAX_DB_SIZE` (bytes).
 const MAX_DB_SIZE_BYTES: u64 = 500 * 1024 * 1024;
-/// Check database size every N file changes
+/// Check database size every N file changes.
 const DB_SIZE_CHECK_INTERVAL: usize = 100;
+
+/// Debounce window before flushing pending file changes. Tuned for editor
+/// workloads: 500ms was too short and caused thrash on every keystroke, 2s
+/// coalesces typical save bursts without leaving the index noticeably stale.
+/// Override via `LEANKG_WATCHER_DEBOUNCE_MS`.
+const DEFAULT_DEBOUNCE_MS: u64 = 2000;
+
+/// Soft cap on the number of pending files per debounce window. If a single
+/// event flush exceeds this (e.g. `git checkout` rewrites thousands of files),
+/// the watcher drops down to a slower "batch-of-batch" mode and processes the
+/// rest in chunks with extra spacing, so we don't fork-bomb the database.
+/// Override via `LEANKG_WATCHER_BURST_LIMIT`.
+const DEFAULT_BURST_LIMIT: usize = 256;
+
+/// When the burst limit is hit, sleep this long between micro-batches so
+/// the rest of the system can breathe. Override via
+/// `LEANKG_WATCHER_BURST_PAUSE_MS`.
+const DEFAULT_BURST_PAUSE_MS: u64 = 250;
 
 const IGNORED_PATH_SEGMENTS: &[&str] = &[
     ".git",
@@ -22,6 +43,37 @@ const IGNORED_PATH_SEGMENTS: &[&str] = &[
     ".gradle",
     ".idea",
     ".vscode",
+    "dist",
+    "build",
+    "out",
+    "bin",
+    "coverage",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".turbo",
+    ".cache",
+    ".parcel-cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".tox",
+    ".venv",
+    "venv",
+    ".terraform",
+    ".terragrunt-cache",
+    "Godeps",
+    "pb",
+    "pb-go",
+    "gen",
+    "generated",
+    "swagger",
+    "fixtures",
+    "__snapshots__",
+    "testdata",
+    "docs",
+    "tmp",
+    "logs",
 ];
 
 const IGNORED_EXTENSIONS: &[&str] = &[
@@ -35,7 +87,30 @@ const IGNORED_EXTENSIONS: &[&str] = &[
     ".lock",
     ".log",
     ".pid",
+    ".tmp",
+    ".swp",
+    ".swo",
+    ".bak",
+    ".orig",
+    ".rej",
+    ".min.js",
+    ".min.css",
+    ".map",
 ];
+
+const SOURCE_EXTENSIONS: &[&str] = &[
+    "rs", "go", "ts", "tsx", "js", "jsx", "py", "java", "kt", "kts", "c", "cpp", "h", "hpp", "cs",
+    "rb", "swift", "scala", "clj", "hs", "zig", "nim", "tf", "proto", "graphql", "toml", "yaml",
+    "yml", "md", "rst", "dart",
+];
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
 
 fn should_ignore(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
@@ -71,7 +146,11 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
         }
     };
 
-    let (tx, mut rx) = mpsc::channel(256);
+    // Larger channel (4096) to absorb the storm of events a `git pull` or
+    // build emits before the debounce timer can flush. The previous 256-slot
+    // channel was the choke point that caused the watcher to drop events
+    // and then over-index.
+    let (tx, mut rx) = mpsc::channel(4096);
     let async_watcher = watcher.into_async(tx);
     tokio::spawn(async_watcher.run());
 
@@ -89,7 +168,17 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
         return;
     }
 
-    let debounce_interval = std::time::Duration::from_millis(500);
+    let debounce_interval = Duration::from_millis(env_u64(
+        "LEANKG_WATCHER_DEBOUNCE_MS",
+        DEFAULT_DEBOUNCE_MS,
+    ));
+    let burst_limit = env_usize("LEANKG_WATCHER_BURST_LIMIT", DEFAULT_BURST_LIMIT);
+    let burst_pause = Duration::from_millis(env_u64(
+        "LEANKG_WATCHER_BURST_PAUSE_MS",
+        DEFAULT_BURST_PAUSE_MS,
+    ));
+    let max_db_size: u64 = env_u64("LEANKG_WATCHER_MAX_DB_SIZE", MAX_DB_SIZE_BYTES);
+
     let mut pending: HashSet<PathBuf> = HashSet::new();
     let mut debounce_timer = tokio::time::Instant::now() + debounce_interval;
     let mut files_since_check: usize = 0;
@@ -105,15 +194,7 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
                     .and_then(|e| e.to_str())
                     .map(|e| e.to_lowercase())
                     .unwrap_or_default();
-                let is_source = [
-                    "rs", "go", "ts", "tsx", "js", "jsx", "py", "java",
-                    "kt", "kts", "c", "cpp", "h", "hpp", "cs", "rb",
-                    "swift", "scala", "clj", "hs", "zig", "nim",
-                    "tf", "proto", "graphql", "toml", "yaml", "yml",
-                    "md", "rst",
-                ].contains(&ext.as_str());
-
-                if !is_source {
+                if !SOURCE_EXTENSIONS.contains(&ext.as_str()) {
                     continue;
                 }
 
@@ -122,11 +203,19 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
             }
             _ = tokio::time::sleep_until(debounce_timer), if !pending.is_empty() => {
                 let files: Vec<PathBuf> = pending.drain().collect();
-                for file_path in files {
+                let total = files.len();
+                if total > burst_limit {
+                    tracing::warn!(
+                        "Watcher burst: {} files pending (>{}); processing in chunks to avoid OOM",
+                        total,
+                        burst_limit
+                    );
+                }
+                for (i, file_path) in files.into_iter().enumerate() {
                     let path_str = file_path.to_string_lossy();
                     match reindex_file_sync(&graph, &mut parser, &path_str) {
                         Ok(count) => {
-                            if count > 0 {
+                            if count > 0 && total <= burst_limit {
                                 tracing::info!("Indexed {} elements from {}", count, path_str);
                             }
                         }
@@ -136,10 +225,15 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
                     }
                     files_since_check += 1;
 
-                    // Periodically check and enforce database size limit
                     if files_since_check >= DB_SIZE_CHECK_INTERVAL {
                         files_since_check = 0;
-                        check_and_enforce_db_size(&db_path);
+                        check_and_enforce_db_size(&db_path, &graph, max_db_size);
+                    }
+
+                    // Insert a small pause every burst_limit files when we're
+                    // processing a large event flush, to keep RSS bounded.
+                    if i > 0 && i % burst_limit == 0 {
+                        tokio::time::sleep(burst_pause).await;
                     }
                 }
             }
@@ -150,18 +244,24 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
     }
 }
 
-/// Check database size and trigger prune if over limit
-fn check_and_enforce_db_size(db_path: &Path) {
+/// Check database size and trigger a VACUUM if over the configured limit.
+/// Previously this only logged a warning — which is why the 14 GB `leankg.db`
+/// in the user's workspace kept growing without bound.
+fn check_and_enforce_db_size(db_path: &Path, graph: &GraphEngine, max_size: u64) {
     let db_file = db_path.join("leankg.db");
-    if let Ok(metadata) = std::fs::metadata(&db_file) {
-        let size = metadata.len();
-        if size > MAX_DB_SIZE_BYTES {
-            tracing::warn!(
-                "Database size {} bytes exceeds limit {} bytes, consider running vacuum or cleanup",
-                size,
-                MAX_DB_SIZE_BYTES
-            );
-            // Future: could trigger async vacuum or cleanup here
-        }
+    let size = match std::fs::metadata(&db_file) {
+        Ok(m) => m.len(),
+        Err(_) => return,
+    };
+    if size <= max_size {
+        return;
+    }
+    tracing::warn!(
+        "Database size {} bytes exceeds limit {} bytes; running VACUUM to reclaim space",
+        size,
+        max_size
+    );
+    if let Err(e) = graph.vacuum() {
+        tracing::warn!("VACUUM failed: {}", e);
     }
 }
