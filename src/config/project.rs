@@ -131,7 +131,11 @@ impl Default for ProjectConfig {
                 auth_token: "".to_string(),
                 auto_index_on_start: true,
                 auto_index_threshold_minutes: 5,
-                auto_index_on_db_write: true,
+                // auto_index_on_db_write defaults to false: re-indexing on every
+                // external DB write can create CPU/memory storms in large workspaces
+                // and is rarely what users want. Set explicitly to true in leankg.yaml
+                // if needed.
+                auto_index_on_db_write: false,
                 require_git_for_auto_index: true,
             },
             documentation: DocConfig {
