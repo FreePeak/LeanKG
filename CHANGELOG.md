@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.17.2] - 2026-06-06
+
+### Fixed
+- Indexer no longer reads files larger than 2 MiB (configurable via
+  `LEANKG_MAX_FILE_SIZE`); stops the indexer from slurping checked-in
+  binaries and huge generated XML/JSON into memory.
+- Watcher debounce raised from 500 ms to 2 s and the event channel
+  expanded to 4096; large bursts (e.g. `git pull`) now process in chunks
+  with a 250 ms pause between batches instead of fork-bombing the DB.
+- Watcher now skips minified JS/CSS, editor swap files, `.bak`, `.tmp`,
+  `.pid`, `.lock` and a much longer list of build / generated dirs.
+- Watcher now actually runs `VACUUM` on the SQLite `leankg.db` when the
+  file exceeds the size cap, instead of only logging a warning. This
+  bounds a previously unbounded growth problem (a single workspace had
+  grown to 14 GB).
+- Default `LEANKG_MMAP_SIZE` lowered from 256 MiB to 64 MiB. The
+  previous default pushed containers past their memory limit and was
+  the proximate cause of OOM kills (container exit 137).
+- Default `mcp.auto_index_on_db_write` flipped to `false`; the previous
+  default created reindex storms on every external DB write.
+
+### Added
+- `GraphEngine::vacuum()` to reclaim SQLite file space after large
+  deletes.
+- Docker compose now sets `mem_limit: 6g`, `mem_reservation: 4g`,
+  `cpus: "4"`, `pids_limit: 4096`, and `restart: unless-stopped` so the
+  container can no longer consume the entire host memory.
+- New env tunables for the watcher: `LEANKG_WATCHER_DEBOUNCE_MS`,
+  `LEANKG_WATCHER_BURST_LIMIT`, `LEANKG_WATCHER_BURST_PAUSE_MS`,
+  `LEANKG_WATCHER_MAX_DB_SIZE`.
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
