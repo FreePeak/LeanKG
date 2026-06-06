@@ -194,7 +194,55 @@ const DEFAULT_INDEX_IGNORED_DIRS: &[&str] = &[
     ".gradle",
     ".idea",
     ".vscode",
+    // Build outputs / generated / caches
+    "dist",
+    "build",
+    "out",
+    "bin",
+    "obj",
+    "coverage",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".turbo",
+    ".cache",
+    ".parcel-cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".tox",
+    ".venv",
+    "venv",
+    "env",
+    ".terraform",
+    ".terragrunt-cache",
+    "Godeps",
+    "k8s",
+    // Generated proto / SDK outputs
+    "pb",
+    "pb-go",
+    "gen",
+    "generated",
+    "swagger",
+    "openapi",
+    ".openapi-generator",
+    // Snapshots / fixtures / large data files
+    "fixtures",
+    "__snapshots__",
+    "testdata",
+    "docs",
+    "tmp",
+    "logs",
 ];
+
+/// Maximum file size to read for parsing. Files larger than this are skipped to
+/// bound memory + parse time. Default 2 MiB. Override with `LEANKG_MAX_FILE_SIZE` (bytes).
+fn max_file_size() -> u64 {
+    std::env::var("LEANKG_MAX_FILE_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2 * 1024 * 1024)
+}
 
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
@@ -221,8 +269,26 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         .filter_entry(move |entry| !is_default_ignored_entry(&root_path, entry.path()))
         .build();
 
+    let max_size = max_file_size();
+
     for entry in walker.flatten() {
         let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        // Skip files that are too large to parse efficiently.
+        if let Ok(meta) = std::fs::metadata(path) {
+            if meta.len() > max_size {
+                tracing::debug!(
+                    "Skipping oversized file ({} bytes): {}",
+                    meta.len(),
+                    path.display()
+                );
+                continue;
+            }
+        }
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -232,7 +298,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
             || extensions.contains(&ext)
             || is_cicd_yaml_file(path);
 
-        if path.is_file() && is_valid_file {
+        if is_valid_file {
             files.push(path.to_string_lossy().to_string());
         }
     }
@@ -315,6 +381,20 @@ fn try_extract_android(
 fn extract_elements_for_file(
     file_path: &str,
 ) -> Result<ParsedFile, Box<dyn std::error::Error + Send + Sync>> {
+    if let Ok(meta) = std::fs::metadata(file_path) {
+        if meta.len() > max_file_size() {
+            tracing::debug!(
+                "Skipping oversized file ({} bytes): {}",
+                meta.len(),
+                file_path
+            );
+            return Ok(ParsedFile {
+                element_count: 0,
+                elements: vec![],
+                relationships: vec![],
+            });
+        }
+    }
     let content = std::fs::read(file_path)?;
     let source = content.as_slice();
 
@@ -736,6 +816,16 @@ pub fn index_file_sync(
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    if let Ok(meta) = std::fs::metadata(file_path) {
+        if meta.len() > max_file_size() {
+            tracing::debug!(
+                "Skipping oversized file ({} bytes): {}",
+                meta.len(),
+                file_path
+            );
+            return Ok(0);
+        }
+    }
     let content = std::fs::read(file_path)?;
     let source = content.as_slice();
 
@@ -1486,6 +1576,75 @@ pub fn extract_microservice_relationships(project_path: &str) -> Vec<Relationshi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_max_file_size_default_is_2_mib() {
+        // Sanity check: the default cap should be 2 MiB unless overridden by
+        // env. This is the cap that protects the indexer from accidentally
+        // slurping a 60 MB checked-in binary or a huge generated XML.
+        assert_eq!(max_file_size(), 2 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_file_size_env_override() {
+        // LEANKG_MAX_FILE_SIZE should override the default when set.
+        // SAFETY: tests run single-threaded for this crate and no other test
+        // reads the same env var; the previous value is restored at the end.
+        let prev = std::env::var("LEANKG_MAX_FILE_SIZE").ok();
+        std::env::set_var("LEANKG_MAX_FILE_SIZE", "1024");
+        assert_eq!(max_file_size(), 1024);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_MAX_FILE_SIZE", v),
+            None => std::env::remove_var("LEANKG_MAX_FILE_SIZE"),
+        }
+    }
+
+    #[test]
+    fn test_find_files_sync_skips_oversized_files() {
+        // Create a temp tree with one small .go file and one oversized one.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let small = dir.path().join("small.go");
+        std::fs::write(&small, b"package x\nfunc A() {}").expect("write small");
+
+        let big = dir.path().join("big.go");
+        // 64 KiB is well over the 1 KiB override we set below.
+        let big_contents = vec![b'x'; 64 * 1024];
+        std::fs::write(&big, &big_contents).expect("write big");
+
+        let prev = std::env::var("LEANKG_MAX_FILE_SIZE").ok();
+        std::env::set_var("LEANKG_MAX_FILE_SIZE", "1024");
+
+        let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
+        let names: Vec<&str> = files
+            .iter()
+            .map(|p| std::path::Path::new(p).file_name().unwrap().to_str().unwrap())
+            .collect();
+
+        assert!(names.contains(&"small.go"), "small.go should be indexed: {:?}", names);
+        assert!(!names.contains(&"big.go"), "big.go should be skipped: {:?}", names);
+
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_MAX_FILE_SIZE", v),
+            None => std::env::remove_var("LEANKG_MAX_FILE_SIZE"),
+        }
+    }
+
+    #[test]
+    fn test_default_index_ignored_dirs_covers_common_build_dirs() {
+        // Regression guard: the default exclude set must keep growing to cover
+        // common monorepo build outputs, otherwise the indexer drags in
+        // hundreds of MiB of generated code per service.
+        for d in [
+            "dist", "build", "out", "coverage", ".next", ".nuxt",
+            ".cache", ".venv", "testdata", "fixtures", "gen", "pb",
+        ] {
+            assert!(
+                DEFAULT_INDEX_IGNORED_DIRS.contains(&d),
+                "missing default exclude dir: {}",
+                d
+            );
+        }
+    }
 
     #[test]
     fn test_detect_gradle_submodules() {
