@@ -87,6 +87,11 @@ if [ "${LEANKG_AUTO_INDEX:-1}" = "1" ]; then
     fi
 fi
 
+# Default SQLite mmap to 64 MiB instead of the upstream 256 MiB.
+# The previous default consumed hundreds of MiB of RSS per leankg process and
+# pushed containers past their memory limit (exit 137 = OOM kill).
+export LEANKG_MMAP_SIZE="${LEANKG_MMAP_SIZE:-67108864}"
+
 # Sync ontology from YAML files into the database
 if [ -d "/workspace/ontology" ] && [ -f "/workspace/ontology/concepts.yaml" ]; then
     echo "=== Syncing ontology ==="
