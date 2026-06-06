@@ -21,7 +21,11 @@ fn get_env_mmap_size() -> u64 {
     std::env::var("LEANKG_MMAP_SIZE")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(268435456) // Default 256MB
+        // Default 64 MiB. SQLite's mmap'd region is resident in the process RSS,
+        // so a smaller mmap dramatically reduces the container's memory footprint
+        // for large codebases. 256 MiB was far too aggressive for the common case
+        // (it pushed containers past their memory limits and triggered OOM kills).
+        .unwrap_or(64 * 1024 * 1024)
 }
 
 pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
