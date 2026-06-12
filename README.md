@@ -128,6 +128,25 @@ See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
 
 ---
 
+## Configuration (Environment Variables)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LEANKG_MMAP_SIZE` | `67108864` (64 MiB) | SQLite mmap window. Lower = less RSS, more page faults. |
+| `LEANKG_DB_ENGINE` | `sqlite` | `rocksdb` enables the RocksDB storage backend (recommended for teams). |
+| `LEANKG_ROCKSDB_ROOT` | `~/.leankg-rocksdb` | Centralized RocksDB project store. |
+| `LEANKG_AUTO_INDEX` | `1` | Enable index-if-needed on container startup. |
+| `LEANKG_VACUUM_INTERVAL_HOURS` | `1` | Hourly tick that calls `GraphEngine.vacuum()`. Set `0` to disable. **No-op on RocksDB** (background compaction handles it). |
+| `LEANKG_WATCHER_DEBOUNCE_MS` | `2000` | File-watcher debounce window. |
+| `LEANKG_WATCHER_BURST_LIMIT` | `256` | Soft cap on pending file changes per debounce window. |
+| `LEANKG_WATCHER_MAX_DB_SIZE` | `524288000` (500 MiB) | Trigger VACUUM once the on-disk DB exceeds this size. |
+| `LEANKG_CACHE_MAX_TOKENS` | `500000` | SessionCache upper bound. Lower this on memory-constrained hosts. |
+| `LEANKG_API_PORT` | `9699` | Port for the auto-spawned REST API child process. |
+
+See [INSTRUCTION.md](INSTRUCTION.md) for the full memory-tuning playbook.
+
+---
+
 ## Claude Code Setup
 
 LeanKG auto-triggers in Claude Code sessions via lifecycle hooks that route search intents to LeanKG tools instead of native tools.
@@ -286,6 +305,7 @@ LeanKG uses memory-mapped I/O and in-memory caching which can consume significan
 | SessionCache 500K tokens | `src/compress/session_cache.rs:11` | Set `LEANKG_CACHE_MAX_TOKENS=100000` |
 | Multiple GraphEngine cached | `src/mcp/server.rs:48-49` | Cache eviction with TTL |
 | Multiple cache layers | Various | Enable `memory_only` mode for PersistentCache |
+| Unbounded DB file growth on long-lived servers | `src/graph/query.rs:100` | `LEANKG_VACUUM_INTERVAL_HOURS=1` (default) reclaims free pages hourly. No-op on RocksDB. |
 
 **Quick fix - add to your shell profile:**
 ```bash

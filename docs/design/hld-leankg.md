@@ -1,9 +1,9 @@
 # LeanKG v2 — High-Level Design Document
 
 **Project:** FreePeak/LeanKG
-**Version:** 2.0
+**Version:** 2.1
 **Status:** In Progress
-**Date:** 2026-05-12
+**Date:** 2026-06-12
 
 ---
 
@@ -94,6 +94,32 @@ leankg note add --target <SERVICE> --content <TEXT>
 leankg pattern add --title <TITLE> --context <PATTERN> --solution <FIX>
 leankg env conflicts --service <SERVICE>
 ```
+
+### 2.5 Scheduled Maintenance Job
+
+A lightweight `tokio` task spawned during MCP server startup that periodically calls `GraphEngine::vacuum()` to reclaim disk space in the active CozoDB store. This protects long-running servers from unbounded DB growth caused by deletes (e.g. a file gets removed from the project and all its elements/relationships get purged from the graph).
+
+**Configuration:**
+- Env var: `LEANKG_VACUUM_INTERVAL_HOURS` (integer)
+  - Default: `1` (run every hour)
+  - `0` disables the job entirely
+  - Negative values are treated as 0
+
+**Behavior:**
+- On every tick, the job acquires the `GraphEngine` and invokes `vacuum()`.
+- For the **Sqlite** engine: this runs SQLite's `VACUUM` command which rewrites the DB file in place, shrinking it to the smallest possible size. This can be expensive (I/O-bound, proportional to DB size).
+- For the **RocksDB** engine: the call returns an error because CozoDB's RocksDB backend does not support `VACUUM`. The job logs this at debug level and continues — RocksDB's background compaction is sufficient.
+- After a successful vacuum, the in-memory caches (`elements_cache`, `relationships_cache`, `relationships_by_element`) are invalidated via `GraphEngine::invalidate_cache()`.
+
+**Lifecycle:**
+- Started during `serve_stdio()` and `serve_http()` right after the watcher task.
+- Cooperates with the existing `shutdown_flag` (atomic bool) for clean shutdown — the loop checks the flag every tick.
+- A failure on one tick does not stop the job; the next tick retries.
+
+**Resource budget:**
+- Memory: negligible (a few hundred bytes of task state).
+- CPU: zero between ticks. During a tick, dominated by SQLite I/O — bounded by the size of the DB.
+- Disk: a brief spike in disk writes during the VACUUM (the entire DB is rewritten). For a 1 GB DB this typically completes in a few seconds.
 
 ---
 
@@ -246,6 +272,36 @@ leankg incident add \
 
 ---
 
+### 3.3 Scheduled Vacuum Flow
+
+```
+MCP server boot
+    |
+    v
++--------------------------------------------------+
+| Spawn background tokio task: vacuum_scheduler    |
+| interval = LEANKG_VACUUM_INTERVAL_HOURS (default 1)
++--------------------------------------------------+
+    |
+    v (every N hours, in a loop)
++--------------------------------------------------+
+| 1. Check shutdown_flag -> exit if true           |
+| 2. Acquire GraphEngine from server state         |
+| 3. Call engine.vacuum()                          |
+|    - Sqlite: rebuilds DB file, frees pages       |
+|    - RocksDB: returns error, logged at debug     |
+| 4. Log success/failure (warn level on failure)   |
+| 5. sleep(interval).await                         |
++--------------------------------------------------+
+    |
+    v
++--------------------------------------------------+
+| Next tick                                        |
++--------------------------------------------------+
+```
+
+---
+
 ## 6. Risk & Mitigation
 
 | Risk | Impact | Mitigation |
@@ -254,7 +310,9 @@ leankg incident add \
 | Token budgets too restrictive | Medium | Make budgets configurable in `.cursor/leankg.toml` |
 | Performance with 200 services | High | Add query result caching, pagination |
 | Concurrent writes to shared backend | Medium | Use CozoDB transactions, implement optimistic locking |
+| DB file grows unbounded over weeks of operation | Medium | Hourly scheduled `VACUUM` reclaims free pages (`LEANKG_VACUUM_INTERVAL_HOURS=0` to disable) |
+| VACUUM causes I/O spike on large DBs | Low | Default cadence is 1 hour; operation is bounded and short-lived |
 
 ---
 
-*Last updated: 2026-05-12*
+*Last updated: 2026-06-12*
