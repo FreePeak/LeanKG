@@ -144,6 +144,18 @@ Local development, staging integration, and production have different service ve
 - Input: `{ "services": ["payment-service", "ledger-service"] }`
 - Output: `{ "teams": [{ "service": "...", "team": "...", "on_call": "..." }] }`
 
+### FR-10: Scheduled DB Maintenance
+- The MCP server runs a periodic tick that calls `GraphEngine.vacuum()` to reclaim free pages from the underlying SQLite store.
+- Default cadence: every 1 hour. Override with `LEANKG_VACUUM_INTERVAL_HOURS` (integer, `0` disables the job entirely).
+- Behavior:
+  - **Sqlite engine**: actually rebuilds the DB file in place, freeing pages left by deletes.
+  - **RocksDB engine**: no-op (RocksDB compacts automatically); the call is logged at debug level and does not produce an error.
+  - Cached query results (`elements_cache`, `relationships_cache`, `relationships_by_element`) are invalidated after each successful tick.
+- Failure handling: any vacuum error is logged at warn level but does not crash the server; the next tick retries.
+
+### US-08: Automatic DB housekeeping
+As a team running a long-lived MCP server, I want the graph database to be periodically vacuumed so that disk usage from deleted code elements and relationships does not grow unbounded over weeks of operation, without me having to remember to run a maintenance command.
+
 ---
 
 ## 6. Data Model v2
@@ -227,7 +239,10 @@ Service {
   - Token budget enforcement on all MCP tools
   - CI/CD GitHub Actions workflow template
   - Team map and ownership lookup
+- v2.1 - Operational Hardening
+  - FR-10: Scheduled DB maintenance (hourly vacuum) — `LEANKG_VACUUM_INTERVAL_HOURS`
+  - US-08: Automatic DB housekeeping user story
 
 ---
 
-*Last updated: 2026-05-12*
+*Last updated: 2026-06-12*
