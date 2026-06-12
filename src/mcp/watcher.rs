@@ -105,11 +105,17 @@ const SOURCE_EXTENSIONS: &[&str] = &[
 ];
 
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn should_ignore(path: &Path) -> bool {
@@ -168,10 +174,8 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
         return;
     }
 
-    let debounce_interval = Duration::from_millis(env_u64(
-        "LEANKG_WATCHER_DEBOUNCE_MS",
-        DEFAULT_DEBOUNCE_MS,
-    ));
+    let debounce_interval =
+        Duration::from_millis(env_u64("LEANKG_WATCHER_DEBOUNCE_MS", DEFAULT_DEBOUNCE_MS));
     let burst_limit = env_usize("LEANKG_WATCHER_BURST_LIMIT", DEFAULT_BURST_LIMIT);
     let burst_pause = Duration::from_millis(env_u64(
         "LEANKG_WATCHER_BURST_PAUSE_MS",

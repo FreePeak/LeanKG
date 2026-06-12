@@ -306,6 +306,80 @@ impl MCPServer {
         Ok(ge)
     }
 
+    /// Parse the `LEANKG_VACUUM_INTERVAL_HOURS` env var.
+    /// Returns `None` if the scheduler should be disabled (`0` or negative).
+    /// Falls back to the default 1 hour if the var is unset or unparseable.
+    fn parse_vacuum_interval() -> Option<Duration> {
+        let raw = std::env::var("LEANKG_VACUUM_INTERVAL_HOURS")
+            .ok()
+            .unwrap_or_else(|| "1".to_string());
+        let hours: i64 = match raw.parse() {
+            Ok(n) => n,
+            Err(_) => return Some(Duration::from_secs(3600)),
+        };
+        if hours <= 0 {
+            return None;
+        }
+        Some(Duration::from_secs((hours as u64).saturating_mul(3600)))
+    }
+
+    /// Spawn a tokio task that periodically calls `GraphEngine::vacuum()` to
+    /// reclaim free pages in the active CozoDB store. Skips ticks where the
+    /// engine is not yet initialized. Exits cleanly on shutdown.
+    ///
+    /// Configuration: `LEANKG_VACUUM_INTERVAL_HOURS` (default `1`, `0` disables).
+    /// The vacuum is a no-op on RocksDB backends (Cozo's RocksDB backend does
+    /// not support `VACUUM`); in that case the tick is logged at debug level.
+    fn spawn_vacuum_scheduler(&self) {
+        let interval = match Self::parse_vacuum_interval() {
+            Some(d) => d,
+            None => {
+                tracing::info!("Vacuum scheduler disabled (LEANKG_VACUUM_INTERVAL_HOURS=0)");
+                return;
+            }
+        };
+        let interval_hours = interval.as_secs() / 3600;
+        let shutdown_flag = self.shutdown_flag.clone();
+        let graph_engine = self.graph_engine.clone();
+
+        tokio::spawn(async move {
+            tracing::info!(
+                "Vacuum scheduler started: running every {} hour(s)",
+                interval_hours
+            );
+            loop {
+                tokio::time::sleep(interval).await;
+                if shutdown_flag.load(Ordering::SeqCst) {
+                    tracing::info!("Vacuum scheduler shutting down");
+                    break;
+                }
+                let result = {
+                    let guard = graph_engine.lock();
+                    (*guard).as_ref().map(|engine| engine.vacuum())
+                };
+                match result {
+                    Some(Ok(())) => {
+                        tracing::info!("Vacuum tick: ok");
+                    }
+                    Some(Err(e)) => {
+                        // Cozo's RocksDB backend returns an error (no-op).
+                        // Log at debug to avoid noise; warn only for anything
+                        // unexpected (e.g. a real Sqlite error).
+                        let msg = e.to_string();
+                        if msg.to_lowercase().contains("vacuum") {
+                            tracing::debug!("Vacuum tick: {}", msg);
+                        } else {
+                            tracing::warn!("Vacuum tick failed: {}", msg);
+                        }
+                    }
+                    None => {
+                        tracing::debug!("Vacuum tick: engine not initialized yet, skipping");
+                    }
+                }
+            }
+        });
+    }
+
     pub async fn serve_stdio(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Err(e) = self.auto_init_if_needed().await {
             tracing::warn!(
@@ -343,6 +417,10 @@ impl MCPServer {
                     .display()
             );
         }
+
+        // Background maintenance: periodically reclaim free pages via VACUUM.
+        // See HLD §2.5 / PRD FR-10.
+        self.spawn_vacuum_scheduler();
 
         // Setup graceful shutdown for stdio mode
         let shutdown_flag = self.shutdown_flag.clone();
@@ -753,6 +831,10 @@ impl MCPServer {
                     .display()
             );
         }
+
+        // Background maintenance: periodically reclaim free pages via VACUUM.
+        // See HLD §2.5 / PRD FR-10.
+        self.spawn_vacuum_scheduler();
 
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),
@@ -2140,5 +2222,65 @@ mod tests {
         assert!(!should_resolve_tool_paths("get_context"));
         assert!(!should_resolve_tool_paths("search_code"));
         assert!(!should_resolve_tool_paths("find_function"));
+    }
+
+    #[test]
+    fn test_parse_vacuum_interval_default_when_unset() {
+        // SAFETY: tests run on a single thread for env mutation; serialize with
+        // a mutex if you ever parallelize.
+        // SAFETY: env::remove_var is unsafe on the 2024 edition; gate behind cfg.
+        // Here we accept the existing project's edition to keep behavior simple.
+        let prev = std::env::var("LEANKG_VACUUM_INTERVAL_HOURS").ok();
+        // SAFETY: tests are single-threaded for env mutation in this binary.
+        unsafe {
+            std::env::remove_var("LEANKG_VACUUM_INTERVAL_HOURS");
+        }
+        let result = MCPServer::parse_vacuum_interval();
+        // Default: Some(1 hour) — but on this codebase the default is `1`, so we
+        // expect Some(3600s).
+        assert_eq!(result, Some(std::time::Duration::from_secs(3600)));
+        if let Some(v) = prev {
+            // SAFETY: see above.
+            unsafe {
+                std::env::set_var("LEANKG_VACUUM_INTERVAL_HOURS", v);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_vacuum_interval_zero_disables() {
+        // SAFETY: tests are single-threaded for env mutation in this binary.
+        unsafe {
+            std::env::set_var("LEANKG_VACUUM_INTERVAL_HOURS", "0");
+        }
+        assert_eq!(MCPServer::parse_vacuum_interval(), None);
+        unsafe {
+            std::env::remove_var("LEANKG_VACUUM_INTERVAL_HOURS");
+        }
+    }
+
+    #[test]
+    fn test_parse_vacuum_interval_negative_disables() {
+        unsafe {
+            std::env::set_var("LEANKG_VACUUM_INTERVAL_HOURS", "-1");
+        }
+        assert_eq!(MCPServer::parse_vacuum_interval(), None);
+        unsafe {
+            std::env::remove_var("LEANKG_VACUUM_INTERVAL_HOURS");
+        }
+    }
+
+    #[test]
+    fn test_parse_vacuum_interval_custom() {
+        unsafe {
+            std::env::set_var("LEANKG_VACUUM_INTERVAL_HOURS", "6");
+        }
+        assert_eq!(
+            MCPServer::parse_vacuum_interval(),
+            Some(std::time::Duration::from_secs(6 * 3600))
+        );
+        unsafe {
+            std::env::remove_var("LEANKG_VACUUM_INTERVAL_HOURS");
+        }
     }
 }

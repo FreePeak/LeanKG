@@ -98,7 +98,10 @@ impl GraphEngine {
     /// The operation can be expensive (rewrites the entire DB file), so
     /// callers should gate it on a size check first.
     pub fn vacuum(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Err(e) = self.db.run_script("VACUUM", std::collections::BTreeMap::new()) {
+        if let Err(e) = self
+            .db
+            .run_script("VACUUM", std::collections::BTreeMap::new())
+        {
             return Err(format!("VACUUM failed: {:?}", e).into());
         }
         self.invalidate_cache();

@@ -1617,11 +1617,25 @@ mod tests {
         let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
         let names: Vec<&str> = files
             .iter()
-            .map(|p| std::path::Path::new(p).file_name().unwrap().to_str().unwrap())
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            })
             .collect();
 
-        assert!(names.contains(&"small.go"), "small.go should be indexed: {:?}", names);
-        assert!(!names.contains(&"big.go"), "big.go should be skipped: {:?}", names);
+        assert!(
+            names.contains(&"small.go"),
+            "small.go should be indexed: {:?}",
+            names
+        );
+        assert!(
+            !names.contains(&"big.go"),
+            "big.go should be skipped: {:?}",
+            names
+        );
 
         match prev {
             Some(v) => std::env::set_var("LEANKG_MAX_FILE_SIZE", v),
@@ -1635,8 +1649,8 @@ mod tests {
         // common monorepo build outputs, otherwise the indexer drags in
         // hundreds of MiB of generated code per service.
         for d in [
-            "dist", "build", "out", "coverage", ".next", ".nuxt",
-            ".cache", ".venv", "testdata", "fixtures", "gen", "pb",
+            "dist", "build", "out", "coverage", ".next", ".nuxt", ".cache", ".venv", "testdata",
+            "fixtures", "gen", "pb",
         ] {
             assert!(
                 DEFAULT_INDEX_IGNORED_DIRS.contains(&d),
