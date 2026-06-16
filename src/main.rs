@@ -1327,9 +1327,28 @@ fn run_query(
                 }
             }
         }
+        "content" => {
+            let results = graph_engine.search_by_content(query)?;
+            if results.is_empty() {
+                println!("No elements found matching content '{}'", query);
+            } else {
+                println!(
+                    "Found {} element(s) matching content '{}' (name / qualified_name / file_path):",
+                    results.len(),
+                    query
+                );
+                for elem in results {
+                    println!(
+                        "  - {} ({}) [{}:{}]",
+                        elem.qualified_name, elem.element_type, elem.line_start, elem.line_end
+                    );
+                    println!("    File: {}", elem.file_path);
+                }
+            }
+        }
         _ => {
             println!(
-                "Unknown query kind '{}'. Use: name, type, rel, or pattern",
+                "Unknown query kind '{}'. Use: name, type, rel, pattern, or content",
                 kind
             );
         }

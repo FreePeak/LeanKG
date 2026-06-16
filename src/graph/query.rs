@@ -2043,6 +2043,67 @@ impl GraphEngine {
         Ok(elements)
     }
 
+    pub fn search_by_content(
+        &self,
+        pattern: &str,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let lower_pattern = pattern.to_lowercase();
+        let safe_pattern = escape_datalog(&lower_pattern);
+        let cache_key = format!("search:content:{}", lower_pattern);
+
+        if let Some(cached) = self.cache.get_search(&cache_key) {
+            return Ok(cached);
+        }
+
+        // Substring match (case-insensitive) across name, qualified_name, and file_path.
+        // This is intentionally broader than search_by_pattern (qualified_name only) and
+        // search_by_name (name only) so users can find symbols whose name is split across
+        // naming conventions (e.g. snake_case query matching camelCase symbols).
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+               *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+               str_includes(lowercase(name), "{pattern}")
+               or str_includes(lowercase(qualified_name), "{pattern}")
+               or str_includes(lowercase(file_path), "{pattern}")
+               :limit 200"#,
+            tail = tail,
+            pattern = safe_pattern,
+        );
+
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        let rows = result.rows;
+
+        let elements: Vec<CodeElement> = rows
+            .iter()
+            .map(|row| {
+                let parent_qualified = row[7].as_str().map(String::from);
+                let cluster_id = row[8].as_str().map(String::from);
+                let cluster_label = row[9].as_str().map(String::from);
+                let metadata_str = row[10].as_str().unwrap_or("{}");
+                CodeElement {
+                    qualified_name: row[0].as_str().unwrap_or("").to_string(),
+                    element_type: row[1].as_str().unwrap_or("").to_string(),
+                    name: row[2].as_str().unwrap_or("").to_string(),
+                    file_path: row[3].as_str().unwrap_or("").to_string(),
+                    line_start: row[4].as_i64().unwrap_or(0) as u32,
+                    line_end: row[5].as_i64().unwrap_or(0) as u32,
+                    language: row[6].as_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        self.cache.set_search(cache_key, elements.clone());
+        Ok(elements)
+    }
+
     pub fn search_by_relation_type(
         &self,
         rel_type: &str,
@@ -3338,6 +3399,89 @@ mod tests {
         assert!(
             !rows.is_empty(),
             "run_raw_query with params should find element named 'main'"
+        );
+    }
+
+    #[test]
+    fn test_search_by_content_matches_name_field() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "get_vendor", "function");
+
+        let results = engine.search_by_content("get_vendor").unwrap();
+        assert!(
+            !results.is_empty(),
+            "search_by_content should find an element by exact name"
+        );
+        assert_eq!(results[0].name, "get_vendor");
+    }
+
+    #[test]
+    fn test_search_by_content_matches_qualified_name_only() {
+        // Element where the user-supplied substring only appears in qualified_name
+        // (not in the bare `name` field). search_by_content should still find it.
+        let (engine, _tmp) = make_test_engine();
+        let elem = CodeElement {
+            qualified_name: "src/special/get_vendor_helper.rs::Helper".to_string(),
+            element_type: "function".to_string(),
+            name: "Helper".to_string(),
+            file_path: "src/special/get_vendor_helper.rs".to_string(),
+            line_start: 1,
+            line_end: 10,
+            language: "rust".to_string(),
+            ..Default::default()
+        };
+        engine.insert_element(&elem).unwrap();
+
+        let results = engine.search_by_content("get_vendor").unwrap();
+        assert!(
+            !results.is_empty(),
+            "search_by_content should find elements whose qualified_name contains the substring"
+        );
+    }
+
+    #[test]
+    fn test_search_by_content_matches_file_path() {
+        let (engine, _tmp) = make_test_engine();
+        let elem = CodeElement {
+            qualified_name: "src/foo.rs::Handler".to_string(),
+            element_type: "function".to_string(),
+            name: "Handler".to_string(),
+            file_path: "src/get_vendor_module/foo.rs".to_string(),
+            line_start: 1,
+            line_end: 10,
+            language: "rust".to_string(),
+            ..Default::default()
+        };
+        engine.insert_element(&elem).unwrap();
+
+        let results = engine.search_by_content("get_vendor").unwrap();
+        assert!(
+            !results.is_empty(),
+            "search_by_content should find elements whose file_path contains the substring"
+        );
+    }
+
+    #[test]
+    fn test_search_by_content_case_insensitive() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "GetVendorById", "function");
+
+        let results = engine.search_by_content("getvendor").unwrap();
+        assert!(
+            !results.is_empty(),
+            "search_by_content should be case-insensitive"
+        );
+    }
+
+    #[test]
+    fn test_search_by_content_no_match_returns_empty() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "calculate_total", "function");
+
+        let results = engine.search_by_content("zzz_nonexistent_xyz").unwrap();
+        assert!(
+            results.is_empty(),
+            "search_by_content should return empty when nothing matches"
         );
     }
 }

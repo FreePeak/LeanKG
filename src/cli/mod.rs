@@ -40,7 +40,8 @@ pub enum CLICommand {
     Query {
         /// Query string
         query: String,
-        /// Query type: name, type, rel, pattern
+        /// Query type: name, type, rel, pattern, or content
+        /// (content does case-insensitive substring match across name, qualified_name, and file_path)
         #[arg(long, default_value = "name")]
         kind: String,
     },
