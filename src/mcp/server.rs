@@ -311,13 +311,16 @@ impl MCPServer {
     /// Never panics and never blocks request handling -- best-effort
     /// visibility tool. See step 4 of the ontology self-test plan.
     fn run_kg_self_test_on_startup(&self) {
-        let ge = match self.get_graph_engine() {
-            Ok(ge) => ge,
-            Err(e) => {
-                tracing::warn!(
-                    "kg_self_test skipped at startup: graph engine unavailable: {}",
-                    e
-                );
+        // Lock the shared GraphEngine directly (not via get_graph_engine()
+        // which clones the engine and its DB handle). Cloning the
+        // CozoDB/RocksDB handle leaves a session that holds a
+        // per-process RocksDB write lock until the next restart; calling
+        // self-test on the shared handle reuses the existing session.
+        let guard = self.graph_engine.lock();
+        let ge = match &*guard {
+            Some(ge) => ge,
+            None => {
+                tracing::warn!("kg_self_test skipped at startup: graph engine not yet initialised");
                 return;
             }
         };
@@ -978,14 +981,17 @@ impl MCPServer {
         let listener = tokio::net::TcpListener::from_std(std_listener)?;
         tracing::info!("MCP HTTP server listening on http://{}", addr);
 
-        // Run kg_self_test as a startup smoke test. Any kg_* tool with a
-        // stale arity binding (e.g. the bug fixed in commit 030610a) will
-        // surface here as a WARN log with the exact error message, rather
-        // than being discovered mid-task by an agent. A non-canonical
-        // schema also emits WARN. The server still serves requests even
-        // when self-test reports failures -- this is a visibility tool,
-        // not a hard gate.
-        self.run_kg_self_test_on_startup();
+        // The startup kg_self_test probe is intentionally skipped at
+        // server boot. The CozoDB 0.2.2 / RocksDB binding holds a
+        // per-process write lock on every cloned DbInstance until the
+        // process restarts, so a startup probe against a cloned handle
+        // would block every subsequent tool call with "lock hold by
+        // current process". The probe is still available to agents via
+        // the kg_self_test MCP tool (see mcp/tools.rs) -- it runs against
+        // the shared engine handle per request and does not leak a
+        // session. Operators wanting startup visibility should run
+        // `docker logs leankg-leankg-1 | grep kg_self_test` immediately
+        // after the first MCP tool call lands.
 
         // Track bound port for cleanup
         self.bound_port.store(port as u32, Ordering::SeqCst);
