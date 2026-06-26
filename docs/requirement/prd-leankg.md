@@ -156,6 +156,19 @@ Local development, staging integration, and production have different service ve
 ### US-08: Automatic DB housekeeping
 As a team running a long-lived MCP server, I want the graph database to be periodically vacuumed so that disk usage from deleted code elements and relationships does not grow unbounded over weeks of operation, without me having to remember to run a maintenance command.
 
+### FR-11: Ontology Self-Test
+- The MCP server must expose a `kg_self_test` tool that runs a non-mutating smoke test against every `kg_*` ontology query path and reports per-tool status alongside the live CozoDB schema snapshot for `code_elements` and `relationships`.
+- The `mcp_http` server must run the same self-test once at startup, after the HTTP listener is bound and before serving requests. Failures must produce a `tracing::warn` log line with the exact error message; success produces a single `tracing::info` summary line.
+- Behavior:
+  - **Healthy**: log `kg_self_test: OK (code_elements=13 cols, relationships=6 cols)` at info level.
+  - **Non-canonical schema**: log a warn with the live arity, expected arity, and the column list actually present.
+  - **Per-tool failure**: log a warn naming the failing `kg_*` tool and the underlying CozoDB error (e.g. `Arity mismatch for rule application code_elements`).
+  - **Never a hard gate**: the server still binds and serves requests when self-test reports failures. This is a visibility aid, not an auth check.
+- The tool must be safe to call any number of times from any MCP client (Cursor, Claude Code, opencode). It does not mutate the DB.
+
+### US-09: Schema-drift early warning
+As a team running LeanKG in Docker for multiple projects, I want the MCP server to log a clear warning at container startup if any kg_* ontology tool would fail when an agent calls it, so that we learn about a broken tool from `docker logs` instead of discovering it mid-task when an agent gets an `MCP error -32603` reply.
+
 ---
 
 ## 6. Data Model v2

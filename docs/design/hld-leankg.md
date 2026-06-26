@@ -300,6 +300,53 @@ MCP server boot
 +--------------------------------------------------+
 ```
 
+### 3.4 Ontology Self-Test Flow
+
+```
+MCP HTTP server boot
+    |
+    v
++--------------------------------------------------+
+| Bind TCP listener on --port                      |
+| Log "MCP HTTP server listening on http://..."   |
++--------------------------------------------------+
+    |
+    v
++--------------------------------------------------+
+| run_kg_self_test_on_startup()                    |
+|   - Acquire GraphEngine from server state        |
+|   - Build OntologyQueryEngine over engine.db()   |
+|   - Call query_engine.self_test()                |
+|     For each kg_* tool:                          |
+|       kg_context      -> KgSelfTestEntry         |
+|       kg_concept_map  -> KgSelfTestEntry         |
+|       kg_trace_workflow -> KgSelfTestEntry       |
+|       kg_ontology_status -> KgSelfTestEntry      |
+|     Plus:                                        |
+|       code_elements_schema (arity, cols, canon)  |
+|       relationships_schema (arity, cols, canon)   |
+|     All four kg_* must succeed AND both           |
+|     relations must be canonical (13 / 6 cols).    |
++--------------------------------------------------+
+    |
+    +-- all_ok == true --> tracing::info! "OK (code_elements=13 cols, relationships=6 cols)"
+    |
+    +-- any failure ----> tracing::warn! per problem (arity mismatch, non-canonical schema,
+                          per-tool error). Server still binds and serves requests.
+```
+
+The `kg_self_test` MCP tool exposes the same `OntologyQueryEngine::self_test()`
+call so any MCP client can re-run the probe on demand and get a structured JSON
+report (`KgSelfTestReport`) instead of a log line.
+
+Why: ontology queries are Datalog rules that bind a fixed number of columns
+from `code_elements`. When the schema gains a column (e.g. the recent
+`ontology_layer` field added in the canonical repair migration) every
+existing rule must be updated, and a missed binding raises
+`Arity mismatch for rule application code_elements` at MCP-tool call time.
+The self-test turns that late failure into a startup-time WARN log line,
+visible from `docker logs` before any agent session opens.
+
 ---
 
 ## 6. Risk & Mitigation
@@ -312,6 +359,7 @@ MCP server boot
 | Concurrent writes to shared backend | Medium | Use CozoDB transactions, implement optimistic locking |
 | DB file grows unbounded over weeks of operation | Medium | Hourly scheduled `VACUUM` reclaims free pages (`LEANKG_VACUUM_INTERVAL_HOURS=0` to disable) |
 | VACUUM causes I/O spike on large DBs | Low | Default cadence is 1 hour; operation is bounded and short-lived |
+| Ontology query arity drift after schema migration (kg_* tools fail with -32603) | High | `kg_self_test` MCP tool + startup self-test log a WARN with the exact error message; `code_elements_schema()` / `relationships_schema()` expose live arity for callers that build arity-correct queries |
 
 ---
 
