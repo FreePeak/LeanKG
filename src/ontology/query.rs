@@ -86,7 +86,7 @@ impl OntologyQueryEngine {
             .collect::<Vec<_>>()
             .join(",");
         let query_str = format!(
-            r#"?[qualified_name, element_type, name, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type in [{}], regex_matches(file_path, "ontology://")"#,
+            r#"?[qualified_name, element_type, name, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type in [{}], regex_matches(file_path, "ontology://")"#,
             types_str
         );
 
@@ -361,7 +361,7 @@ impl OntologyQueryEngine {
         &self,
         qualified_name: &str,
     ) -> Result<Option<CodeElement>, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = $qn"#;
+        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], qualified_name = $qn"#;
 
         let mut params = std::collections::BTreeMap::new();
         params.insert(
@@ -416,7 +416,7 @@ impl OntologyQueryEngine {
         let workflow_gid = &workflow.gid;
 
         // Get all steps for this workflow
-        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type = "workflow_step", parent_qualified = $wgid"#;
+        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow_step", parent_qualified = $wgid"#;
 
         let mut params = std::collections::BTreeMap::new();
         params.insert(
@@ -459,7 +459,7 @@ impl OntologyQueryEngine {
     ) -> Result<Vec<WorkflowNode>, Box<dyn std::error::Error>> {
         let normalized_query = query.to_lowercase();
 
-        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type = "workflow", regex_matches(file_path, "ontology://")"#;
+        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow", regex_matches(file_path, "ontology://")"#;
 
         let result = self
             .db
@@ -527,7 +527,7 @@ impl OntologyQueryEngine {
             std::collections::HashSet::new();
 
         // Get all ontology nodes with metadata
-        let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], regex_matches(file_path, "ontology://")"#;
+        let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], regex_matches(file_path, "ontology://")"#;
 
         if let Ok(result) = self
             .db

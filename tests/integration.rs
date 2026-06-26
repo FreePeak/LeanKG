@@ -5,6 +5,7 @@ use leankg::db::schema::init_db;
 use leankg::doc::DocGenerator;
 use leankg::graph::{GraphEngine, ImpactAnalyzer};
 use leankg::indexer::{find_files_sync, index_file_sync, ParserManager};
+use leankg::ontology::OntologyQueryEngine;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -225,6 +226,108 @@ async fn test_graph_queries_support_ontology_layer_code_elements_schema() {
         env_results[0].qualified_name,
         "src/metrics/prometheus.go::registerPrometheus"
     );
+}
+
+// Regression: ontology queries in src/ontology/query.rs were binding
+// 12 columns (missing `ontology_layer`) against the canonical 13-column
+// code_elements schema, causing every kg_* MCP tool that exercises them
+// to fail with "Arity mismatch for rule application code_elements".
+// This test seeds the 13-column schema directly with ontology rows and
+// asserts that the previously-failing query paths now run cleanly.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_ontology_queries_support_13_column_code_elements_schema() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("ontology-arity.db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let raw_db = cozo::new_cozo_sqlite(db_path_str).unwrap();
+
+    raw_db
+        .run_script(
+            r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
+            Default::default(),
+        )
+        .unwrap();
+    raw_db
+        .run_script(
+            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
+            Default::default(),
+        )
+        .unwrap();
+
+    // Seed one workflow, two workflow_steps (parent_qualified = workflow gid),
+    // and one domain_entity. file_path uses the ontology:// scheme so
+    // regex_matches(file_path, "ontology://") selects them.
+    raw_db
+        .run_script(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
+            [["ontology://local/checkout/workflow:checkout@1", "workflow", "Checkout Workflow", "ontology://local/checkout/workflow:checkout@1", 1, 1, "ontology", null, null, null, '{"description":"end-to-end checkout","aliases":[]}', "local", "procedural"],
+             ["ontology://local/checkout/step:validate_cart@1", "workflow_step", "Validate Cart", "ontology://local/checkout/step:validate_cart@1", 1, 1, "ontology", "ontology://local/checkout/workflow:checkout@1", null, null, '{"gid":"ontology://local/checkout/step:validate_cart@1","ontology":"procedural","ontology_layer":"procedural","workflow_gid":"ontology://local/checkout/workflow:checkout@1","order":1,"aliases":[],"description":"validate cart","code_refs":["src/checkout.rs::validate_cart"],"failure_modes":[],"stale":false}', "local", "procedural"],
+             ["ontology://local/checkout/step:charge@1", "workflow_step", "Charge Card", "ontology://local/checkout/step:charge@1", 1, 1, "ontology", "ontology://local/checkout/workflow:checkout@1", null, null, '{"gid":"ontology://local/checkout/step:charge@1","ontology":"procedural","ontology_layer":"procedural","workflow_gid":"ontology://local/checkout/workflow:checkout@1","order":2,"aliases":[],"description":"charge the card","code_refs":["src/checkout.rs::charge"],"failure_modes":[],"stale":false}', "local", "procedural"],
+             ["ontology://local/checkout/concept:cart@1", "domain_entity", "Cart", "ontology://local/checkout/concept:cart@1", 1, 1, "ontology", null, null, null, '{"description":"shopping cart","aliases":["cart","basket"],"ontology":"concept","ontology_layer":"domain"}', "local", "domain"]]
+            :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
+            Default::default(),
+        )
+        .unwrap();
+    drop(raw_db);
+
+    let db = init_db(db_path.as_path()).unwrap();
+    let engine = OntologyQueryEngine::new(db);
+
+    // search_ontology_nodes covers query.rs:89. Query "checkout" should
+    // match the workflow (name contains "checkout") and the workflow_step
+    // "Validate Cart" (description contains "validate_cart" via code_refs
+    // is NOT in the score path; in practice it matches by name, alias, or
+    // description). "cart" should match the domain_entity plus the step.
+    let checkout_nodes = engine
+        .search_ontology_nodes("checkout", "local", 2)
+        .expect("search_ontology_nodes must succeed on canonical 13-col schema");
+    assert!(
+        checkout_nodes.iter().any(|n| n.name == "Checkout Workflow"),
+        "expected workflow node, got: {:?}",
+        checkout_nodes
+    );
+
+    let cart_nodes = engine
+        .search_ontology_nodes("cart", "local", 2)
+        .expect("search_ontology_nodes must succeed on canonical 13-col schema");
+    assert!(
+        cart_nodes.iter().any(|n| n.name == "Cart"),
+        "expected domain_entity node, got: {:?}",
+        cart_nodes
+    );
+
+    // search_workflows covers query.rs:462.
+    let workflows = engine
+        .search_workflows("checkout", "local")
+        .expect("search_workflows must succeed on canonical 13-col schema");
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(workflows[0].name, "Checkout Workflow");
+
+    // get_ontology_context covers query.rs:221 (delegates to
+    // search_ontology_nodes + expand_ontology_context + trace_workflow).
+    let ctx = engine
+        .get_ontology_context("checkout", "local", 2)
+        .expect("get_ontology_context must succeed on canonical 13-col schema");
+    assert!(
+        !ctx.matched_ontology_nodes.is_empty(),
+        "expected at least one matched node"
+    );
+
+    // trace_workflow covers query.rs:419.
+    let steps = engine
+        .trace_workflow("checkout", "local")
+        .expect("trace_workflow must succeed on canonical 13-col schema");
+    assert_eq!(steps.len(), 2, "workflow should expose two steps");
+    let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
+    assert!(step_names.contains(&"Validate Cart"));
+    assert!(step_names.contains(&"Charge Card"));
+
+    // get_ontology_status must not crash (it was the only kg_* tool that
+    // already worked; we re-assert it here to lock in the invariant).
+    let status = engine
+        .get_ontology_status()
+        .expect("get_ontology_status must succeed");
+    let _ = status.workflows_without_failure_modes;
 }
 
 #[tokio::test(flavor = "multi_thread")]
