@@ -306,6 +306,66 @@ impl MCPServer {
         Ok(ge)
     }
 
+    /// Run kg_self_test and log the result. Designed to be called once at
+    /// MCP HTTP server startup, immediately after the listener is bound.
+    /// Never panics and never blocks request handling -- best-effort
+    /// visibility tool. See step 4 of the ontology self-test plan.
+    fn run_kg_self_test_on_startup(&self) {
+        let ge = match self.get_graph_engine() {
+            Ok(ge) => ge,
+            Err(e) => {
+                tracing::warn!(
+                    "kg_self_test skipped at startup: graph engine unavailable: {}",
+                    e
+                );
+                return;
+            }
+        };
+        let query_engine = crate::ontology::OntologyQueryEngine::new(ge.db().clone());
+        let report = query_engine.self_test();
+
+        if report.all_ok {
+            tracing::info!(
+                "kg_self_test: OK (code_elements={} cols, relationships={} cols)",
+                report.code_elements.arity,
+                report.relationships.arity
+            );
+            return;
+        }
+
+        if !report.code_elements.canonical {
+            tracing::warn!(
+                "kg_self_test: code_elements schema is non-canonical ({} cols, expected 13). \
+                 Run the canonical repair migration or rebuild the index. Columns present: {:?}",
+                report.code_elements.arity,
+                report.code_elements.columns
+            );
+        }
+        if !report.relationships.canonical {
+            tracing::warn!(
+                "kg_self_test: relationships schema is non-canonical ({} cols, expected 6). \
+                 Run the canonical repair migration or rebuild the index. Columns present: {:?}",
+                report.relationships.arity,
+                report.relationships.columns
+            );
+        }
+        for (name, entry) in [
+            ("kg_context", &report.kg_context),
+            ("kg_concept_map", &report.kg_concept_map),
+            ("kg_trace_workflow", &report.kg_trace_workflow),
+            ("kg_ontology_status", &report.kg_ontology_status),
+        ] {
+            if !entry.ok {
+                let msg = entry.error.as_deref().unwrap_or("(no error message)");
+                tracing::warn!("kg_self_test: {} FAILED at startup: {}", name, msg);
+            }
+        }
+        tracing::warn!(
+            "kg_self_test: one or more kg_* tools are unhealthy. Agents relying on kg_* may \
+             see -32603 errors. Call kg_self_test via MCP for the full report."
+        );
+    }
+
     /// Parse the `LEANKG_VACUUM_INTERVAL_HOURS` env var.
     /// Returns `None` if the scheduler should be disabled (`0` or negative).
     /// Falls back to the default 1 hour if the var is unset or unparseable.
@@ -917,6 +977,15 @@ impl MCPServer {
         std_listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(std_listener)?;
         tracing::info!("MCP HTTP server listening on http://{}", addr);
+
+        // Run kg_self_test as a startup smoke test. Any kg_* tool with a
+        // stale arity binding (e.g. the bug fixed in commit 030610a) will
+        // surface here as a WARN log with the exact error message, rather
+        // than being discovered mid-task by an agent. A non-canonical
+        // schema also emits WARN. The server still serves requests even
+        // when self-test reports failures -- this is a visibility tool,
+        // not a hard gate.
+        self.run_kg_self_test_on_startup();
 
         // Track bound port for cleanup
         self.bound_port.store(port as u32, Ordering::SeqCst);
