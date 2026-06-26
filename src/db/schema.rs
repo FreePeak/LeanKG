@@ -542,7 +542,7 @@ const RELATIONSHIPS_5_COLUMNS: &[&str] = &[
 /// Schema snapshot for one CozoDB relation. Returned by `get_relation_schema`
 /// and consumed by callers that need to write arity-correct Datalog rules
 /// (e.g. the ontology self-test in `mcp/kg_self_test.rs`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RelationSchema {
     pub name: String,
     pub arity: usize,

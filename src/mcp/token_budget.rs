@@ -21,6 +21,7 @@ impl TokenBudget {
             "kg_concept_map" => 4000,
             "kg_trace_workflow" => 4000,
             "kg_ontology_status" => 2000,
+            "kg_self_test" => 4000,
             "get_clusters" => 4000,
             "get_cluster_context" => 4000,
             "get_doc_tree" => 4000,

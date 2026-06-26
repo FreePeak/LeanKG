@@ -269,6 +269,7 @@ impl ToolHandler {
             "kg_concept_map" => self.kg_concept_map(arguments),
             "kg_trace_workflow" => self.kg_trace_workflow(arguments),
             "kg_ontology_status" => self.kg_ontology_status(arguments),
+            "kg_self_test" => self.kg_self_test(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
@@ -2793,6 +2794,18 @@ impl ToolHandler {
             "total_aliases": status.total_aliases,
             "nodes_missing_aliases": status.nodes_missing_aliases,
             "workflows_without_failure_modes": status.workflows_without_failure_modes,
+        }))
+    }
+
+    fn kg_self_test(&self, _args: &Value) -> Result<Value, String> {
+        let query_engine =
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+        let report = query_engine.self_test();
+        Ok(serde_json::to_value(report).unwrap_or_else(|e| {
+            json!({
+                "all_ok": false,
+                "serialization_error": format!("{}", e),
+            })
         }))
     }
 

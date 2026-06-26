@@ -330,6 +330,89 @@ async fn test_ontology_queries_support_13_column_code_elements_schema() {
     let _ = status.workflows_without_failure_modes;
 }
 
+// Regression: kg_self_test must report all four kg_* tools as healthy
+// when the canonical 13-column code_elements schema is in place. If a
+// future change reintroduces a 12-column binding anywhere, this test
+// fails fast with the exact arity-mismatch error message captured in
+// the failing entry's `error` field.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_kg_self_test_reports_all_ok_on_canonical_schema() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("selftest.db");
+    let db = init_db(db_path.as_path()).unwrap();
+    let engine = OntologyQueryEngine::new(db);
+
+    let report = engine.self_test();
+    assert!(report.all_ok, "all_ok should be true; report={:?}", report);
+    assert!(
+        report.kg_context.ok,
+        "kg_context failed: {:?}",
+        report.kg_context
+    );
+    assert!(
+        report.kg_concept_map.ok,
+        "kg_concept_map failed: {:?}",
+        report.kg_concept_map
+    );
+    assert!(
+        report.kg_trace_workflow.ok,
+        "kg_trace_workflow failed: {:?}",
+        report.kg_trace_workflow
+    );
+    assert!(
+        report.kg_ontology_status.ok,
+        "kg_ontology_status failed: {:?}",
+        report.kg_ontology_status
+    );
+    assert_eq!(report.code_elements.arity, 13);
+    assert!(report.code_elements.canonical);
+    assert_eq!(report.relationships.arity, 6);
+    assert!(report.relationships.canonical);
+}
+
+// Regression: kg_self_test must flag an 11-column legacy schema as not
+// canonical even if the kg_* tools happen to keep working (they use
+// narrower bindings for some code paths). This is the early-warning
+// signal the tool is designed to emit. We bypass init_db so that the
+// auto-repair does not run before the self-test fires.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_kg_self_test_flags_legacy_11_column_schema() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("legacy-selftest.db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let raw_db = cozo::DbInstance::new("sqlite", &db_path_str, "").unwrap();
+
+    raw_db
+        .run_script(
+            r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
+            Default::default(),
+        )
+        .unwrap();
+    raw_db
+        .run_script(
+            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
+            Default::default(),
+        )
+        .unwrap();
+
+    // Self-test against the raw, un-repaired DB so we can verify the
+    // non-canonical detection logic itself.
+    let engine = OntologyQueryEngine::new(raw_db);
+    let report = engine.self_test();
+
+    assert_eq!(report.code_elements.arity, 11);
+    assert!(
+        !report.code_elements.canonical,
+        "11-col schema must not be canonical"
+    );
+    assert!(
+        !report.all_ok,
+        "all_ok must be false on a non-canonical schema"
+    );
+    assert_eq!(report.relationships.arity, 5);
+    assert!(!report.relationships.canonical);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_graph_engine_all_elements_empty() {
     let tmp = TempDir::new().unwrap();
