@@ -473,6 +473,141 @@ fn get_column_count(db: &CozoDb, relation: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// Canonical column lists per arity, keyed by relation name. Used by
+/// `get_relation_schema` to translate an arity probe into a concrete list
+/// of column names. Keep in sync with `:create` statements above and with
+/// the repair scripts (`REPAIR_LEGACY_CODE_ELEMENTS_*`, `REPAIR_LEGACY_RELATIONSHIPS_5_TO_6`).
+const CODE_ELEMENTS_13_COLUMNS: &[&str] = &[
+    "qualified_name",
+    "element_type",
+    "name",
+    "file_path",
+    "line_start",
+    "line_end",
+    "language",
+    "parent_qualified",
+    "cluster_id",
+    "cluster_label",
+    "metadata",
+    "env",
+    "ontology_layer",
+];
+
+const CODE_ELEMENTS_12_COLUMNS: &[&str] = &[
+    "qualified_name",
+    "element_type",
+    "name",
+    "file_path",
+    "line_start",
+    "line_end",
+    "language",
+    "parent_qualified",
+    "cluster_id",
+    "cluster_label",
+    "metadata",
+    "env",
+];
+
+const CODE_ELEMENTS_11_COLUMNS: &[&str] = &[
+    "qualified_name",
+    "element_type",
+    "name",
+    "file_path",
+    "line_start",
+    "line_end",
+    "language",
+    "parent_qualified",
+    "cluster_id",
+    "cluster_label",
+    "metadata",
+];
+
+const RELATIONSHIPS_6_COLUMNS: &[&str] = &[
+    "source_qualified",
+    "target_qualified",
+    "rel_type",
+    "confidence",
+    "metadata",
+    "env",
+];
+
+const RELATIONSHIPS_5_COLUMNS: &[&str] = &[
+    "source_qualified",
+    "target_qualified",
+    "rel_type",
+    "confidence",
+    "metadata",
+];
+
+/// Schema snapshot for one CozoDB relation. Returned by `get_relation_schema`
+/// and consumed by callers that need to write arity-correct Datalog rules
+/// (e.g. the ontology self-test in `mcp/kg_self_test.rs`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RelationSchema {
+    pub name: String,
+    pub arity: usize,
+    pub columns: Vec<String>,
+    pub canonical: bool,
+}
+
+/// Returns the live schema for the named relation. `columns` is the ordered
+/// list of column names as the relation is currently defined; `canonical`
+/// is true when the live arity matches the current canonical schema
+/// (13 for code_elements, 6 for relationships).
+pub fn get_relation_schema(db: &CozoDb, relation: &str) -> RelationSchema {
+    let arity = get_column_count(db, relation);
+    let columns: Vec<String> = match relation {
+        "code_elements" => match arity {
+            13 => CODE_ELEMENTS_13_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            12 => CODE_ELEMENTS_12_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            11 => CODE_ELEMENTS_11_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            _ => Vec::new(),
+        },
+        "relationships" => match arity {
+            6 => RELATIONSHIPS_6_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            5 => RELATIONSHIPS_5_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    let canonical = match relation {
+        "code_elements" => arity == 13,
+        "relationships" => arity == 6,
+        _ => arity > 0,
+    };
+    RelationSchema {
+        name: relation.to_string(),
+        arity,
+        columns,
+        canonical,
+    }
+}
+
+/// Convenience accessor for the code_elements relation.
+pub fn code_elements_schema(db: &CozoDb) -> RelationSchema {
+    get_relation_schema(db, "code_elements")
+}
+
+/// Convenience accessor for the relationships relation.
+pub fn relationships_schema(db: &CozoDb) -> RelationSchema {
+    get_relation_schema(db, "relationships")
+}
+
 fn ensure_canonical_code_elements(
     db: &CozoDb,
     existing_relations: &std::collections::HashSet<String>,
@@ -629,4 +764,128 @@ fn validate_relationships_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn make_db(path: &std::path::Path) -> CozoDb {
+        let s = path.to_string_lossy().to_string();
+        cozo::DbInstance::new("sqlite", &s, "").unwrap()
+    }
+
+    #[test]
+    fn code_elements_schema_on_canonical_db() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("ce.db");
+        let db = make_db(&db_path);
+        db.run_script(
+            r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
+            Default::default(),
+        )
+        .unwrap();
+
+        let schema = code_elements_schema(&db);
+        assert_eq!(schema.name, "code_elements");
+        assert_eq!(schema.arity, 13);
+        assert!(schema.canonical, "fresh 13-col DB must report canonical");
+        assert_eq!(
+            schema.columns,
+            CODE_ELEMENTS_13_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            schema.columns.last().map(String::as_str),
+            Some("ontology_layer")
+        );
+    }
+
+    #[test]
+    fn relationships_schema_on_canonical_db() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("rel.db");
+        let db = make_db(&db_path);
+        db.run_script(
+            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
+            Default::default(),
+        )
+        .unwrap();
+
+        let schema = relationships_schema(&db);
+        assert_eq!(schema.name, "relationships");
+        assert_eq!(schema.arity, 6);
+        assert!(schema.canonical);
+        assert_eq!(
+            schema.columns,
+            RELATIONSHIPS_6_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn code_elements_schema_reports_legacy_11_columns_as_non_canonical() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("legacy.db");
+        let db = make_db(&db_path);
+        db.run_script(
+            r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
+            Default::default(),
+        )
+        .unwrap();
+
+        let schema = code_elements_schema(&db);
+        assert_eq!(schema.arity, 11);
+        assert!(!schema.canonical, "11-col schema must not be canonical");
+        assert_eq!(
+            schema.columns,
+            CODE_ELEMENTS_11_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert!(!schema.columns.contains(&"env".to_string()));
+        assert!(!schema.columns.contains(&"ontology_layer".to_string()));
+    }
+
+    #[test]
+    fn relationships_schema_reports_legacy_5_columns_as_non_canonical() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("legacy-rel.db");
+        let db = make_db(&db_path);
+        db.run_script(
+            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
+            Default::default(),
+        )
+        .unwrap();
+
+        let schema = relationships_schema(&db);
+        assert_eq!(schema.arity, 5);
+        assert!(!schema.canonical);
+        assert_eq!(
+            schema.columns,
+            RELATIONSHIPS_5_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert!(!schema.columns.contains(&"env".to_string()));
+    }
+
+    #[test]
+    fn get_relation_schema_unknown_relation_returns_zero_columns() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("unknown.db");
+        let db = make_db(&db_path);
+        let schema = get_relation_schema(&db, "no_such_relation");
+        assert_eq!(schema.name, "no_such_relation");
+        assert_eq!(schema.arity, 0);
+        assert!(schema.columns.is_empty());
+        assert!(!schema.canonical);
+    }
 }

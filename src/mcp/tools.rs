@@ -795,6 +795,17 @@ impl ToolRegistry {
                     "required": []
                 }),
             },
+            ToolDefinition {
+                name: "kg_self_test".to_string(),
+                description: "Run a smoke test against every kg_* ontology tool and the live CozoDB schema. Returns per-tool status plus the code_elements and relationships arity/columns. Use this to detect ontology-layer drift (e.g. arity mismatch from a missed schema migration) before any agent relies on kg_*. Safe to call at any time; does not mutate state.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": []
+                }),
+            },
         ]
     }
 }

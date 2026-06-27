@@ -86,7 +86,7 @@ impl OntologyQueryEngine {
             .collect::<Vec<_>>()
             .join(",");
         let query_str = format!(
-            r#"?[qualified_name, element_type, name, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type in [{}], regex_matches(file_path, "ontology://")"#,
+            r#"?[qualified_name, element_type, name, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type in [{}], regex_matches(file_path, "ontology://")"#,
             types_str
         );
 
@@ -361,7 +361,7 @@ impl OntologyQueryEngine {
         &self,
         qualified_name: &str,
     ) -> Result<Option<CodeElement>, Box<dyn std::error::Error>> {
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = $qn"#;
+        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], qualified_name = $qn"#;
 
         let mut params = std::collections::BTreeMap::new();
         params.insert(
@@ -416,7 +416,7 @@ impl OntologyQueryEngine {
         let workflow_gid = &workflow.gid;
 
         // Get all steps for this workflow
-        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type = "workflow_step", parent_qualified = $wgid"#;
+        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow_step", parent_qualified = $wgid"#;
 
         let mut params = std::collections::BTreeMap::new();
         params.insert(
@@ -459,7 +459,7 @@ impl OntologyQueryEngine {
     ) -> Result<Vec<WorkflowNode>, Box<dyn std::error::Error>> {
         let normalized_query = query.to_lowercase();
 
-        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], element_type = "workflow", regex_matches(file_path, "ontology://")"#;
+        let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow", regex_matches(file_path, "ontology://")"#;
 
         let result = self
             .db
@@ -527,7 +527,7 @@ impl OntologyQueryEngine {
             std::collections::HashSet::new();
 
         // Get all ontology nodes with metadata
-        let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], regex_matches(file_path, "ontology://")"#;
+        let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], regex_matches(file_path, "ontology://")"#;
 
         if let Ok(result) = self
             .db
@@ -718,6 +718,109 @@ pub struct OntologyStatus {
     pub total_aliases: usize,
     pub nodes_missing_aliases: usize,
     pub workflows_without_failure_modes: usize,
+}
+
+/// Per-tool smoke-test result. `ok=true` means the call completed without
+/// returning an error to the caller. `error` carries the message if not.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KgSelfTestEntry {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Full self-test report returned by `OntologyQueryEngine::self_test()`.
+/// Covers the four kg_* tools that exercise Datalog rule bodies plus the
+/// live schema snapshot for both core relations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KgSelfTestReport {
+    pub code_elements: crate::db::schema::RelationSchema,
+    pub relationships: crate::db::schema::RelationSchema,
+    pub kg_context: KgSelfTestEntry,
+    pub kg_concept_map: KgSelfTestEntry,
+    pub kg_trace_workflow: KgSelfTestEntry,
+    pub kg_ontology_status: KgSelfTestEntry,
+    pub all_ok: bool,
+}
+
+impl OntologyQueryEngine {
+    /// Run a non-mutating smoke test against every kg_* query path and
+    /// return per-tool status alongside the live CozoDB schema snapshot.
+    ///
+    /// The probe queries use a synthetic `__selftest__` query string that
+    /// does not match any ontology node in a real codebase, so the call
+    /// returns an empty result set without erroring out. If a query path
+    /// has a stale arity binding (the bug fixed in commit 030610a) the
+    /// Datalog engine raises "Arity mismatch for rule application" and
+    /// the corresponding entry surfaces the error message here.
+    pub fn self_test(&self) -> KgSelfTestReport {
+        let ce_schema = crate::db::schema::code_elements_schema(&self.db);
+        let rel_schema = crate::db::schema::relationships_schema(&self.db);
+
+        let probe = "__selftest__";
+        let env = "local";
+
+        let kg_context = match self.get_ontology_context(probe, env, 1) {
+            Ok(_) => KgSelfTestEntry {
+                ok: true,
+                error: None,
+            },
+            Err(e) => KgSelfTestEntry {
+                ok: false,
+                error: Some(format!("{}", e)),
+            },
+        };
+
+        let kg_concept_map = match self.search_ontology_nodes(probe, env, 1) {
+            Ok(_) => KgSelfTestEntry {
+                ok: true,
+                error: None,
+            },
+            Err(e) => KgSelfTestEntry {
+                ok: false,
+                error: Some(format!("{}", e)),
+            },
+        };
+
+        let kg_trace_workflow = match self.trace_workflow(probe, env) {
+            Ok(_) => KgSelfTestEntry {
+                ok: true,
+                error: None,
+            },
+            Err(e) => KgSelfTestEntry {
+                ok: false,
+                error: Some(format!("{}", e)),
+            },
+        };
+
+        let kg_ontology_status = match self.get_ontology_status() {
+            Ok(_) => KgSelfTestEntry {
+                ok: true,
+                error: None,
+            },
+            Err(e) => KgSelfTestEntry {
+                ok: false,
+                error: Some(format!("{}", e)),
+            },
+        };
+
+        let all_ok = kg_context.ok
+            && kg_concept_map.ok
+            && kg_trace_workflow.ok
+            && kg_ontology_status.ok
+            && ce_schema.canonical
+            && rel_schema.canonical;
+
+        KgSelfTestReport {
+            code_elements: ce_schema,
+            relationships: rel_schema,
+            kg_context,
+            kg_concept_map,
+            kg_trace_workflow,
+            kg_ontology_status,
+            all_ok,
+        }
+    }
 }
 
 #[cfg(test)]
