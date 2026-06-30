@@ -791,6 +791,22 @@ pub fn index_files_parallel(
                 total_elements, total_elements
             );
         }
+
+        // Mark every touched element as embedding-stale so the next
+        // `embed` run picks them up incrementally. Only fires when the
+        // `embeddings` feature is compiled in; otherwise no-op.
+        #[cfg(feature = "embeddings")]
+        {
+            let touched: Vec<String> = all_elements
+                .iter()
+                .map(|e| e.qualified_name.clone())
+                .collect();
+            if let Err(e) =
+                crate::embeddings::state::mark_stale_for_qualified_names(graph.db(), &touched)
+            {
+                tracing::warn!("embedding_state stale-mark failed: {}", e);
+            }
+        }
     }
 
     if !all_relationships.is_empty() {

@@ -8,6 +8,8 @@ pub mod config;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;
+#[cfg(feature = "embeddings")]
+pub mod embeddings;
 pub mod graph;
 pub mod hooks;
 pub mod indexer;
@@ -16,5 +18,7 @@ pub mod obsidian;
 pub mod ontology;
 pub mod orchestrator;
 pub mod registry;
+#[cfg(feature = "embeddings")]
+pub mod retrieval;
 pub mod runtime;
 pub mod watcher;
