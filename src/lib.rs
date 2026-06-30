@@ -18,5 +18,7 @@ pub mod obsidian;
 pub mod ontology;
 pub mod orchestrator;
 pub mod registry;
+#[cfg(feature = "embeddings")]
+pub mod retrieval;
 pub mod runtime;
 pub mod watcher;
