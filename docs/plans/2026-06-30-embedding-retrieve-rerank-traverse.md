@@ -20,7 +20,7 @@ What this plan is **not** doing:
 
 | Decision | Choice |
 | --- | --- |
-| Runtime stack | All-Rust in-process: `fastembed` (embeddings) + `usearch` (ANN) + `ort` (cross-encoder reranker). No external services. |
+| Runtime stack | All-Rust in-process: `fastembed` (embeddings + cross-encoder rerank, ONNX-backed) + `usearch` (ANN). No external services. `ort` was originally listed as a separate reranker dep but `fastembed::TextRerank` covers `bge-reranker-v2-m3` natively, so the dedicated `ort` dep was dropped during Phase 0. |
 | What gets embedded | Text blob (qualified_name + name + doc/signature) **and** ontology description + aliases. No code body. No offline GNN embeddings. |
 | Traversal policy | Adaptive: hops depend on seed `element_type`. Workflow/procedural seeds → 2 hops; function/file/concept seeds → 1 hop. Fanout cap per seed. |
 | Plan handling | Extend the two existing docs into this unified plan (done). |
@@ -40,7 +40,7 @@ What this plan is **not** doing:
    ▼  Stage 2 — ANN retrieve (usearch, cosine, top-K=50)
 [top-50 candidate node IDs]
    │
-   ▼  Stage 3 — Cross-encoder rerank (ort, bge-reranker-v2-m3)
+   ▼  Stage 3 — Cross-encoder rerank (fastembed::TextRerank, bge-reranker-v2-m3)
 [top-N=10 seed nodes]
    │
    ▼  Stage 4 — Adaptive KG traversal (CozoDB Datalog)
@@ -220,9 +220,9 @@ When `debug=false`, drop `diagnostics`, `matched_blob_excerpt`, and edge list. C
 
 ### Phase 0 — Dependencies and feature gate
 
-1. Add Cargo deps under a new feature `embeddings`: `fastembed`, `usearch`, `ort`, `ndarray`.
+1. Add Cargo deps under a new feature `embeddings`: `fastembed` (covers embed + rerank), `usearch`. `ort` was originally listed but dropped — `fastembed::TextRerank` covers the reranker natively.
 2. Gate all new modules behind `#[cfg(feature = "embeddings")]` so default builds stay slim.
-3. Document ONNX runtime requirements in `docs/mcp-setup.md`.
+3. Document ONNX runtime requirements in `docs/mcp-setup.md` (fastembed bundles ONNX runtime via its own deps).
 
 ### Phase 1 — `src/embeddings/` module
 
@@ -242,7 +242,7 @@ CLI:
 ### Phase 2 — `src/retrieval/` module
 
 1. `src/retrieval/ann.rs` — embed query → `usearch` top-K → return `(CodeElement.id, score)[]`. Apply worktree path filter here (Q2 default-on).
-2. `src/retrieval/rerank.rs` — `ort` Session for `bge-reranker-v2-m3`, batch-score `(query, blob)` pairs, return reranked top-N. **On any failure** (model missing after lazy-download attempt, init error, inference OOM/panic) → return ANN-order top-N unchanged and set a `RerankerStatus::Fallback` flag on the result (Q4 option A).
+2. `src/retrieval/rerank.rs` — `fastembed::TextRerank` with `RerankerModel::BGERerankerV2M3`, batch-score `(query, blob)` pairs, return reranked top-N. **On any failure** (model missing after lazy-download attempt, init error, inference OOM/panic) → return ANN-order top-N unchanged and set a `RerankerStatus::Fallback` flag on the result (Q4 option A).
 3. `src/retrieval/pipeline.rs` — `SemanticRetrievalPipeline` struct with `retrieve(query, env, top_k, rerank_top_n) -> RetrievalResult { seeds, reranker_status, embeddings_stale }`.
 
 No MCP wiring yet. Unit-testable end to end.
@@ -329,4 +329,4 @@ All four open questions settled before branch creation:
 | Traversal returns noise | Edge-type filter per seed type, global cap, dedup |
 | Embeddings miss exact identifiers | Keep `semantic_search` and `find_function` unchanged; agents choose tool |
 | Index drift after re-indexing | Timestamp check + explicit `embed` step + warning in MCP response |
-| `ort` / ONNX runtime portability | Document supported targets; fall back to ANN-only on load failure |
+| `ort` / ONNX runtime portability | fastembed bundles ONNX runtime; document supported targets; fall back to ANN-only on load failure |
