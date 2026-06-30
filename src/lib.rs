@@ -8,6 +8,8 @@ pub mod config;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;
+#[cfg(feature = "embeddings")]
+pub mod embeddings;
 pub mod graph;
 pub mod hooks;
 pub mod indexer;
