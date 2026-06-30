@@ -33,6 +33,7 @@ impl AnnIndex {
             connectivity: 0, // auto
             expansion_add: 0,
             expansion_search: 0,
+            multi: false,
         };
         let inner = new_index(&opts)?;
         Ok(Self { inner, dim })

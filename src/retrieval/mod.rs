@@ -10,4 +10,5 @@ pub mod ann;
 pub mod pipeline;
 pub mod rerank;
 
+#[allow(unused_imports)]
 pub use pipeline::{RetrieveOptions, RetrievalResult, Seed, SemanticRetrievalPipeline};
