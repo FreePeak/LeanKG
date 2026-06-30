@@ -302,6 +302,14 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Embedding-state table (only when the `embeddings` feature is compiled in).
+    // Without the feature, the table is never created and `embeddings::*`
+    // calls are absent from the binary — keeps default builds lean.
+    #[cfg(feature = "embeddings")]
+    {
+        crate::embeddings::state::ensure_embedding_state_table(db)?;
+    }
+
     Ok(())
 }
 
