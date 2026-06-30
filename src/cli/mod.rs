@@ -119,6 +119,58 @@ pub enum CLICommand {
         #[arg(long)]
         lang: Option<String>,
     },
+    /// Build or refresh the embedding index (requires --features embeddings).
+    /// Default mode is incremental: only re-embed nodes touched since the
+    /// last `embed` run, plus newly-added nodes. Orphans (state rows whose
+    /// qualified_name no longer exists) are reaped from usearch + state.
+    #[cfg(feature = "embeddings")]
+    Embed {
+        /// Download the embedding + reranker models to the cache and exit.
+        /// No index is built. Recommended first step on a fresh install.
+        #[arg(long)]
+        init: bool,
+        /// Ignore embedding_state freshness and re-embed every node from
+        /// scratch. Use after a model swap or index corruption.
+        #[arg(long)]
+        full: bool,
+        /// Override the embedding batch size (default 256). Lower this on
+        /// memory-constrained hosts.
+        #[arg(long, default_value = "256")]
+        batch_size: usize,
+        /// Project root (defaults to current working directory).
+        #[arg(long, default_value = ".")]
+        project: String,
+    },
+    /// One-shot embedding retrieval for CLI testing (requires
+    /// --features embeddings). Useful for validating the retrieve→rerank→
+    /// traverse pipeline without standing up the MCP server.
+    #[cfg(feature = "embeddings")]
+    SemanticContext {
+        /// Natural language query.
+        query: String,
+        /// Environment filter.
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// ANN retrieve depth.
+        #[arg(long, default_value = "50")]
+        top_k: usize,
+        /// Final seed count after rerank.
+        #[arg(long, default_value = "10")]
+        rerank_top_n: usize,
+        /// Disable Stage 4 graph enrichment.
+        #[arg(long)]
+        no_traverse: bool,
+        /// Include paths under .worktrees/ / .claude/worktrees/ /
+        /// .opencode/worktrees/ (filtered by default).
+        #[arg(long)]
+        include_worktrees: bool,
+        /// Print diagnostics: candidate counts, latency, reranker status.
+        #[arg(long)]
+        debug: bool,
+        /// Project root (defaults to current working directory).
+        #[arg(long, default_value = ".")]
+        project: String,
+    },
     /// Export knowledge graph
     Export {
         /// Output file path
