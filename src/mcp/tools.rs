@@ -822,6 +822,25 @@ impl ToolRegistry {
                     "required": []
                 }),
             },
+            #[cfg(feature = "embeddings")]
+            ToolDefinition {
+                name: "kg_semantic_context".to_string(),
+                description: "Vector retrieval + cross-encoder rerank + adaptive KG traversal. Use for natural-language queries where keyword search misses: 'where do we validate access rights', 'how does the refund flow work'. Returns ranked seed nodes plus 1-2 hop graph context (related code, tests, docs, workflows). Requires the `embeddings` cargo feature and an embedding index built via `cargo run --release -- embed`.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Natural language query"},
+                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment to search"},
+                        "top_k": {"type": "integer", "default": 50, "description": "ANN retrieve depth (candidates before rerank)"},
+                        "rerank_top_n": {"type": "integer", "default": 10, "description": "Final seed count after cross-encoder rerank"},
+                        "traverse": {"type": "boolean", "default": true, "description": "Toggle Stage 4 graph enrichment (1-2 hop neighbors via ontology + code edges)"},
+                        "include_worktrees": {"type": "boolean", "default": false, "description": "Include paths under .worktrees/ / .claude/worktrees/ / .opencode/worktrees/ (filtered by default to dedupe agent scratch copies)"},
+                        "debug": {"type": "boolean", "default": false, "description": "Include diagnostics: candidate counts, latency per stage, reranker status"},
+                        "project": {"type": "string", "description": "Optional: project path (defaults to current working directory)"}
+                    },
+                    "required": ["query"]
+                }),
+            },
         ]
     }
 }

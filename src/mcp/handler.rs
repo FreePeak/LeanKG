@@ -271,6 +271,8 @@ impl ToolHandler {
             "kg_trace_workflow" => self.kg_trace_workflow(arguments),
             "kg_ontology_status" => self.kg_ontology_status(arguments),
             "kg_self_test" => self.kg_self_test(arguments),
+            #[cfg(feature = "embeddings")]
+            "kg_semantic_context" => self.kg_semantic_context(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
@@ -2906,6 +2908,169 @@ impl ToolHandler {
         }))
     }
 
+    /// Embedding-backed semantic retrieval + adaptive KG traversal.
+    /// Compiles out entirely unless the binary was built with
+    /// `--features embeddings`.
+    #[cfg(feature = "embeddings")]
+    fn kg_semantic_context(&self, args: &Value) -> Result<Value, String> {
+        use crate::embeddings as emb;
+        use crate::graph::traversal::traverse_seeds;
+        use crate::retrieval::{RetrieveOptions, SemanticRetrievalPipeline};
+
+        let query = args["query"]
+            .as_str()
+            .ok_or("Missing 'query' parameter")?
+            .trim();
+        if query.is_empty() {
+            return Err("'query' must not be empty".to_string());
+        }
+
+        let env = args["env"].as_str().unwrap_or("local").to_string();
+        let top_k = args["top_k"].as_u64().unwrap_or(50) as usize;
+        let rerank_top_n = args["rerank_top_n"].as_u64().unwrap_or(10) as usize;
+        let do_traverse = args["traverse"].as_bool().unwrap_or(true);
+        let include_worktrees = args["include_worktrees"].as_bool().unwrap_or(false);
+        let debug = args["debug"].as_bool().unwrap_or(false);
+        let project = args["project"].as_str().unwrap_or(".");
+
+        let index_path = std::path::Path::new(project)
+            .join(".leankg")
+            .join("embeddings.usearch");
+        if !index_path.exists() {
+            return Err(format!(
+                "Embedding index not found at {}. Run `cargo run --release -- embed --init` \
+                 to download models, then `cargo run --release -- embed` to build the index.",
+                index_path.display()
+            ));
+        }
+
+        let t0 = std::time::Instant::now();
+        let pipeline =
+            SemanticRetrievalPipeline::new(self.graph_engine.db().clone(), &index_path)
+                .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
+        let t_pipeline_ms = t0.elapsed().as_millis() as u64;
+
+        let meta_path = index_path.with_extension("meta.json");
+        let embeddings_stale = embeddings_are_stale(&meta_path);
+
+        let opts = RetrieveOptions {
+            env: Some(env.clone()),
+            ann_top_k: top_k,
+            rerank_top_n,
+            include_worktrees,
+            embeddings_stale,
+        };
+
+        let t1 = std::time::Instant::now();
+        let retrieval = pipeline
+            .retrieve(query, &opts)
+            .map_err(|e| format!("Retrieval failed: {}", e))?;
+        let t_retrieve_ms = t1.elapsed().as_millis() as u64;
+
+        let mut traversed_json: Vec<Value> = Vec::new();
+        let mut edges_json: Vec<Value> = Vec::new();
+        let mut traverse_capped = false;
+        let mut total_neighbors = 0usize;
+        let mut t_traverse_ms = 0u64;
+
+        if do_traverse && !retrieval.seeds.is_empty() {
+            let t2 = std::time::Instant::now();
+            let seeds_iter = retrieval
+                .seeds
+                .iter()
+                .map(|s| (s.qualified_name.clone(), s.element_type.clone()));
+            let traverse_result = traverse_seeds(self.graph_engine, seeds_iter, Some(env.as_str()))
+                .map_err(|e| format!("Traversal failed: {}", e))?;
+            t_traverse_ms = t2.elapsed().as_millis() as u64;
+            traverse_capped = traverse_result.capped;
+            total_neighbors = traverse_result.total_neighbors;
+
+            traversed_json = traverse_result
+                .nodes
+                .iter()
+                .map(|n| {
+                    json!({
+                        "qualified_name": n.qualified_name,
+                        "element_type": n.element_type,
+                        "from_seed": n.from_seed,
+                        "via_edge": n.via_edge,
+                        "hop": n.hop,
+                    })
+                })
+                .collect();
+            edges_json = traverse_result
+                .edges
+                .iter()
+                .map(|e| {
+                    json!({
+                        "source": e.source,
+                        "target": e.target,
+                        "rel_type": e.rel_type,
+                    })
+                })
+                .collect();
+        }
+
+        let total_ms = t0.elapsed().as_millis() as u64;
+
+        let seeds_json: Vec<Value> = retrieval
+            .seeds
+            .iter()
+            .map(|s| {
+                let mut obj = json!({
+                    "qualified_name": s.qualified_name,
+                    "element_type": s.element_type,
+                    "file_path": s.file_path,
+                    "ann_distance": s.ann_distance,
+                });
+                if let Some(score) = s.rerank_score {
+                    obj["rerank_score"] = json!(score);
+                }
+                if debug {
+                    obj["blob_excerpt"] = json!(s.blob_excerpt);
+                }
+                obj
+            })
+            .collect();
+
+        let mut response = json!({
+            "query": query,
+            "env": env,
+            "seeds": seeds_json,
+            "traversed": traversed_json,
+        });
+
+        if debug {
+            let reranker_label = match retrieval.reranker_status {
+                emb::RerankerStatus::Active => "bge-reranker-v2-m3",
+                emb::RerankerStatus::Fallback => "fallback_ann",
+            };
+            response["diagnostics"] = json!({
+                "ann_candidate_count": retrieval.ann_candidate_count,
+                "worktree_filtered_count": retrieval.worktree_filtered_count,
+                "env_filtered_count": retrieval.env_filtered_count,
+                "reranker": reranker_label,
+                "embeddings_stale": retrieval.embeddings_stale,
+                "traversal": {
+                    "enabled": do_traverse,
+                    "capped": traverse_capped,
+                    "neighbor_count": total_neighbors,
+                },
+                "latency_ms": {
+                    "pipeline_init": t_pipeline_ms,
+                    "retrieve": t_retrieve_ms,
+                    "traverse": t_traverse_ms,
+                    "total": total_ms,
+                },
+            });
+            if !edges_json.is_empty() {
+                response["diagnostics"]["edges"] = json!(edges_json);
+            }
+        }
+
+        Ok(response)
+    }
+
     fn wake_up(&self, args: &Value) -> Result<Value, String> {
         let project_path = args["project"].as_str().unwrap_or(".");
         let cache_path = std::path::Path::new(project_path)
@@ -2953,6 +3118,36 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len])
     }
+}
+
+/// Q3 stale-embeddings detection: compare `embeddings.meta.json.built_at`
+/// against the cozodb file's mtime. If the database was modified after the
+/// embedding index was built, we're stale. Conservative: on any read or
+/// parse error, returns false (assume fresh) so queries still serve.
+#[cfg(feature = "embeddings")]
+fn embeddings_are_stale(meta_path: &std::path::Path) -> bool {
+    let meta_bytes = match std::fs::read(meta_path) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let meta: serde_json::Value = match serde_json::from_slice(&meta_bytes) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let built_at = meta.get("built_at").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let cozo_path = match meta_path.parent() {
+        Some(p) => p.join("leankg.db"),
+        None => return false,
+    };
+    let cozo_mtime = std::fs::metadata(&cozo_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    cozo_mtime > built_at
 }
 
 fn generate_review_prompt(elements: &[CodeElement], _relationships: &[Relationship]) -> String {
