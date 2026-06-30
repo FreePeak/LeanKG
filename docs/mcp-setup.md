@@ -131,3 +131,51 @@ When the MCP server starts with an existing LeanKG project, it checks if the ind
 ## Fallback
 
 If the MCP server reports "LeanKG not initialized", manually run `leankg init` in your project directory, then restart the AI tool.
+
+## Embedding Retrieval (optional, `embeddings` feature)
+
+The `kg_semantic_context` tool — vector retrieve + cross-encoder rerank + adaptive KG traversal — only ships when LeanKG is built with `--features embeddings`. Default builds skip it to keep the binary lean.
+
+### Building with the feature
+
+```bash
+# From a LeanKG checkout:
+cargo build --release --features embeddings
+
+# Or directly install the binary with the feature on:
+cargo install --path . --features embeddings
+```
+
+This pulls in `fastembed` (ONNX-backed embedding + reranker inference) and `usearch` (HNSW ANN index). The first build downloads ONNX Runtime binaries via fastembed's deps.
+
+### One-time setup per machine
+
+```bash
+# 1. Pre-download embedding (BGE-small-en-v1.5, ~130MB) and reranker
+#    (bge-reranker-v2-m3, ~600MB) into ~/.cache/leankg/models:
+leankg embed --init
+
+# 2. Index your project (if not already indexed):
+leankg index ./src
+
+# 3. Build the embedding index (~seconds for incremental, minutes for a
+#    fresh 10k-node repo on CPU):
+leankg embed
+```
+
+### Index lifecycle
+
+`leankg embed` (default) is **incremental**: it reads the `embedding_state` CozoDB table that tracks per-node freshness and only re-embeds nodes that are stale (touched by a recent `index` run), missing (newly added), or whose text blob hash changed. Orphans (state rows whose `qualified_name` is no longer in `code_elements`) are reaped.
+
+`leankg embed --full` ignores state and re-embeds every node. Use after a model swap or suspected index corruption.
+
+The `index` command marks touched elements stale but does **not** trigger `embed` automatically — embedding is a separate explicit step. The MCP tool surfaces a stale-embeddings warning in `diagnostics.embeddings_stale` so callers know when to re-run `embed`.
+
+### Worktree exclusion
+
+By default, `kg_semantic_context` filters out paths under `.worktrees/`, `.claude/worktrees/`, and `.opencode/worktrees/` to avoid duplicate-noise from agent scratch copies. Pass `include_worktrees: true` to include them.
+
+### Reranker fallback
+
+If the reranker fails to load or score, the tool falls back to ANN-order top-N (no cross-encoder). `diagnostics.reranker` will be `"fallback_ann"` instead of `"bge-reranker-v2-m3"`. The most common cause is a partial model download — re-running `leankg embed --init` fixes it.
+
