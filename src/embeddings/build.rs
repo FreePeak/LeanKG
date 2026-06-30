@@ -16,7 +16,6 @@
 //!
 //! Full rebuild (`--full`): step 3 becomes "embed every embeddable node".
 
-use crate::db::models::CodeElement;
 use crate::embeddings::{
     index::AnnIndex,
     models::{EMBEDDING_DIM, Embedder},
@@ -73,7 +72,7 @@ pub fn run(
     let embedder = Embedder::new()?;
     let dim = embedder.dim();
 
-    let mut index = if index_path.exists() {
+    let index = if index_path.exists() {
         match AnnIndex::load(index_path) {
             Ok(loaded) if loaded.dim() == dim => loaded,
             Ok(loaded) => {
@@ -138,7 +137,19 @@ pub fn run(
     let considered = work.len();
     let skipped_fresh = considered - to_embed.len();
 
-    // 3. Batch embed and add to usearch.
+    // 3. Reserve usearch capacity ahead of any insertions. usearch panics
+    // ("Reserve capacity ahead of insertions!") if you add before reserving.
+    // Use the existing index size + the new embed count as a lower bound,
+    // with 10% headroom for future incremental runs.
+    let needed_capacity = match opts.reserve_capacity {
+        Some(cap) => cap,
+        None => index.size() + to_embed.len() + (to_embed.len() / 10).max(16),
+    };
+    if needed_capacity > index.size() {
+        index.reserve(needed_capacity)?;
+    }
+
+    // 4. Batch embed and add to usearch.
     let mut embedded = 0usize;
     let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(to_embed.len());
     for chunk in to_embed.chunks(opts.batch_size) {

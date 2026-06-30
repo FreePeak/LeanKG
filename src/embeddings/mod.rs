@@ -19,15 +19,20 @@ pub mod models;
 pub mod state;
 pub mod text_blob;
 
+#[allow(unused_imports)]
 pub use build::{run as build_index, BuildMode, BuildOptions, BuildReport};
+#[allow(unused_imports)]
 pub use index::{AnnIndex, AnnSearchResult};
+#[allow(unused_imports)]
 pub use models::{
     cache_dir, init_models, Embedder, InitReport, Reranker, RerankerStatus, RerankScore,
     DEFAULT_EMBEDDING_MODEL, DEFAULT_RERANKER_MODEL, EMBEDDING_DIM,
 };
+#[allow(unused_imports)]
 pub use state::{
     count_by_state, delete_state_rows, ensure_embedding_state_table, list_all, list_orphans,
     list_stale, lookup_usearch_key, mark_stale_for_qualified_names, upsert_fresh,
     EmbeddingStateRow, FreshRow, StateCounts,
 };
+#[allow(unused_imports)]
 pub use text_blob::{build_blob, classify, usearch_key_for, BlobKind};

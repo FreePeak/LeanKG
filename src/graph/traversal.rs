@@ -289,7 +289,7 @@ where
         frontier.push_back((seed_qn.clone(), 0, seed_qn.clone(), "seed".to_string()));
 
         let mut seed_count = 0usize;
-        while let Some((current, hop, from, via)) = frontier.pop_front() {
+        while let Some((current, hop, from, _via)) = frontier.pop_front() {
             if hop >= rule.hops {
                 continue;
             }

@@ -95,7 +95,7 @@ pub fn mark_stale_for_qualified_names(
     let values_clause = rows.join(", ");
 
     let query = format!(
-        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values}]
+        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
            :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
     );
     db.run_script(&query, Default::default())?;
@@ -194,7 +194,7 @@ pub fn upsert_fresh(
         .collect();
     let values_clause = rows.join(", ");
     let query = format!(
-        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values}]
+        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
            :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
     );
     db.run_script(&query, Default::default())?;
@@ -216,7 +216,7 @@ pub fn delete_state_rows(
         .collect();
     let rows_clause = rows.join(", ");
     let query = format!(
-        r#"?[qualified_name] <- [{rows}] :delete embedding_state {{qualified_name}}"#
+        r#"?[qualified_name] <- [{rows_clause}] :delete embedding_state {{qualified_name}}"#
     );
     db.run_script(&query, Default::default())?;
     Ok(())
@@ -257,7 +257,7 @@ pub struct FreshRow {
     pub content_hash: String,
 }
 
-fn row_to_state_row(row: &[serde_json::Value]) -> Option<EmbeddingStateRow> {
+fn row_to_state_row(row: &Vec<serde_json::Value>) -> Option<EmbeddingStateRow> {
     let qualified_name = row.first()?.as_str()?.to_string();
     let usearch_key = row.get(1)?.as_i64()?;
     let content_hash = row.get(2)?.as_str()?.to_string();

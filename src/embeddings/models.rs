@@ -49,7 +49,13 @@ impl Embedder {
     pub fn with_model(model: EmbeddingModel) -> Result<Self, Box<dyn std::error::Error>> {
         let opts = InitOptions::new(model)
             .with_cache_dir(cache_dir())
-            .with_show_download_progress(true);
+            .with_show_download_progress(true)
+            // Pin to a single intra-op thread. ONNX Runtime pre-allocates
+            // memory pools per thread; on small hosts (e.g. 1-vCPU ARM
+            // instances) the default of "all cores" explodes RSS and OOMs
+            // the container. Single-threaded inference is also faster on
+            // 1-CPU hosts because it avoids cross-thread contention.
+            .with_intra_threads(Some(1));
         let inner = TextEmbedding::try_new(opts)?;
         Ok(Self { inner })
     }
@@ -80,7 +86,8 @@ impl Reranker {
     pub fn with_model(model: RerankerModel) -> Result<Self, Box<dyn std::error::Error>> {
         let opts = RerankInitOptions::new(model)
             .with_cache_dir(cache_dir())
-            .with_show_download_progress(true);
+            .with_show_download_progress(true)
+            .with_intra_threads(Some(1));
         let inner = TextRerank::try_new(opts)?;
         Ok(Self { inner })
     }
@@ -98,7 +105,7 @@ impl Reranker {
         Ok(results
             .into_iter()
             .map(|r| RerankScore {
-                document_idx: r.document_idx,
+                document_idx: r.index,
                 score: r.score,
             })
             .collect())

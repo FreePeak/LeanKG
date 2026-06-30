@@ -2979,7 +2979,7 @@ impl ToolHandler {
                 .seeds
                 .iter()
                 .map(|s| (s.qualified_name.clone(), s.element_type.clone()));
-            let traverse_result = traverse_seeds(self.graph_engine, seeds_iter, Some(env.as_str()))
+            let traverse_result = traverse_seeds(&self.graph_engine, seeds_iter, Some(env.as_str()))
                 .map_err(|e| format!("Traversal failed: {}", e))?;
             t_traverse_ms = t2.elapsed().as_millis() as u64;
             traverse_capped = traverse_result.capped;
