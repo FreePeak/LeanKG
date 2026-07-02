@@ -2,6 +2,7 @@ pub mod context_parser;
 pub mod data;
 pub mod runner;
 pub mod summary;
+pub mod tool_bench;
 
 pub use context_parser::QualityMetrics;
 

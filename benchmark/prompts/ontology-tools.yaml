@@ -1,0 +1,146 @@
+name: "Ontology Tools Performance"
+description: "Benchmark all concept-ontology search/find tools directly (execution time + correctness)"
+
+tools:
+  - name: concept_search
+    description: "Concept-gated search workflow: extract keywords -> scan ontology -> load concept -> query db"
+    queries:
+      - id: cs-feature-flag
+        query: "feature flag"
+        env: platform
+        expected:
+          min_concepts: 1
+          min_linked_code: 40
+          top_concept_contains: "Be-Toggle"
+      - id: cs-gorm-store
+        query: "gorm store"
+        env: platform
+        expected:
+          min_concepts: 3
+          min_linked_code: 40
+          top_concept_contains: "GORM Store"
+      - id: cs-grpc-service
+        query: "grpc service"
+        env: platform
+        expected:
+          min_concepts: 10
+          top_concept_contains: "gRPC Service"
+      - id: cs-natural-language
+        query: "how does the feature flag work"
+        env: platform
+        expected:
+          min_concepts: 5
+          top_concept_contains: "Be-Toggle"
+      - id: cs-fallback
+        query: "zzqxnonexistent"
+        env: platform
+        expected:
+          fallback_used: true
+
+  - name: kg_context
+    description: "Ontology context: matched nodes + expanded code context + workflows"
+    queries:
+      - id: kc-feature-flag
+        query: "feature flag"
+        env: platform
+        expected:
+          min_nodes: 1
+          min_code_elements: 30
+          top_concept_contains: "Be-Toggle"
+      - id: kc-gorm-store
+        query: "gorm store"
+        env: platform
+        expected:
+          min_nodes: 3
+          min_code_elements: 30
+          top_concept_contains: "GORM Store"
+
+  - name: kg_concept_map
+    description: "Concept map for domain/service queries"
+    queries:
+      - id: km-gorm
+        query: "gorm"
+        env: platform
+        expected:
+          min_nodes: 1
+          node_contains: "GORM"
+      - id: km-grpc
+        query: "grpc"
+        env: platform
+        expected:
+          min_nodes: 2
+          node_contains: "gRPC"
+
+  - name: kg_trace_workflow
+    description: "Trace workflow steps (by name or step name)"
+    queries:
+      - id: tw-order
+        query: "order"
+        env: platform
+        expected:
+          min_steps: 5
+          step_contains: "Checkout"
+      - id: tw-checkout-via-step
+        query: "checkout"
+        env: platform
+        expected:
+          min_steps: 5
+          step_contains: "Checkout"
+
+  - name: semantic_search
+    description: "Keyword + fuzzy search for graph nodes (uses search_by_name_typed as proxy)"
+    queries:
+      - id: ss-feature-flag
+        query: "feature flag"
+        env: local
+        expected:
+          min_results: 1
+      - id: ss-gorm
+        query: "gorm store"
+        env: local
+        expected:
+          min_results: 1
+
+  - name: search_code
+    description: "Name-based code search (baseline for comparison)"
+    queries:
+      - id: sc-IsEnabled
+        query: "IsEnabled"
+        element_type: "function"
+        expected:
+          min_results: 1
+      - id: sc-Order
+        query: "Order"
+        expected:
+          min_results: 5
+
+  - name: query_file
+    description: "Get elements by file path"
+    queries:
+      - id: qf-be-toggle
+        query: "platform-food/be-restaurant/internal/external/be_toggle.go"
+        expected:
+          min_results: 40
+      - id: qf-order
+        query: "platform-food/be-food-order/internal/stores/order.go"
+        expected:
+          min_results: 30
+
+  - name: find_function
+    description: "Find function by name"
+    queries:
+      - id: ff-IsEnabled
+        query: "IsEnabled"
+        expected:
+          min_results: 1
+      - id: ff-GetByOrderID
+        query: "GetByOrderID"
+        expected:
+          min_results: 1
+
+  - name: kg_ontology_status
+    description: "Ontology coverage statistics"
+    queries:
+      - id: os-status
+        expected:
+          has_counts: true

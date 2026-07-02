@@ -194,6 +194,12 @@ pub enum CLICommand {
         #[arg(long, default_value = "kilo")]
         cli: String,
     },
+    /// Run direct tool performance benchmarks (ontology/search/find)
+    ToolBench {
+        /// Project path (default: auto-detect from cwd)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Register current directory in global registry
     Register {
         /// Name for the repository

@@ -353,6 +353,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             benchmark::run(category, cli_tool)?;
         }
+        cli::CLICommand::ToolBench { project } => {
+            let project_path = match project {
+                Some(p) => std::path::PathBuf::from(p),
+                None => find_project_root()?,
+            };
+            benchmark::tool_bench::run(&project_path.to_string_lossy())?;
+        }
         cli::CLICommand::Register { name } => {
             register_repo(&name)?;
         }
