@@ -1,8 +1,7 @@
 use crate::db;
 use crate::graph;
-use crate::ontology;
-// Unified A/B test benchmark: LeanKG tools vs manual grep/find equivalents.
-// Measures latency, token usage, and result counts. Saves comparison report.
+// A/B test benchmark: LeanKG tools vs manual grep/find equivalents.
+// Measures latency, input/output token usage, and result counts.
 
 use serde::Serialize;
 use std::path::Path;
@@ -16,7 +15,9 @@ struct AbQueryResult {
     variant_a: VariantResult,
     variant_b: VariantResult,
     latency_ratio: f64,
-    token_diff: i64,
+    token_total_diff: i64,
+    token_input_diff: i64,
+    token_output_diff: i64,
     result_diff: i64,
     winner: String,
 }
@@ -24,8 +25,11 @@ struct AbQueryResult {
 #[derive(Debug, Clone, Serialize)]
 struct VariantResult {
     latency_ms: f64,
+    input_bytes: usize,
+    input_tokens: usize,
     output_bytes: usize,
     output_tokens: usize,
+    total_tokens: usize,
     result_count: usize,
     success: bool,
     error: Option<String>,
@@ -48,6 +52,10 @@ struct AbSummary {
     a_avg_ms: f64,
     b_avg_ms: f64,
     avg_speedup: f64,
+    a_input_tokens: usize,
+    b_input_tokens: usize,
+    a_output_tokens: usize,
+    b_output_tokens: usize,
     a_total_tokens: usize,
     b_total_tokens: usize,
     a_total_results: usize,
@@ -57,7 +65,12 @@ struct AbSummary {
 }
 
 fn estimate_tokens(bytes: usize) -> usize {
-    bytes / 4
+    // ~4 chars per token for code; min 1 if any output
+    if bytes == 0 {
+        0
+    } else {
+        std::cmp::max(1, bytes / 4)
+    }
 }
 
 fn run_shell(cmd: &str, project: &str) -> (String, String, f64) {
@@ -93,16 +106,14 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     let graph_engine = db.as_ref().map(|d| graph::GraphEngine::new(d.clone()));
-    let oq = db
-        .as_ref()
-        .map(|d| ontology::OntologyQueryEngine::new(d.clone()));
 
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    println!("A/B Test: LeanKG vs Manual\n  Project: {}\n", project_path);
+    println!("A/B Test: LeanKG vs Manual | Token Usage Comparison");
+    println!("  Project: {}\n", project_path);
 
     let cases = &[
         (
@@ -159,8 +170,10 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     use serde_json::json;
     let mut results: Vec<AbQueryResult> = Vec::new();
-    let (mut a_tot_ms, mut b_tot_ms, mut a_tot_tok, mut b_tot_tok, mut a_tot_res, mut b_tot_res) =
-        (0.0_f64, 0.0_f64, 0usize, 0usize, 0usize, 0usize);
+    let (mut a_tot_ms, mut b_tot_ms) = (0.0_f64, 0.0_f64);
+    let (mut a_in, mut a_out, mut a_tot_tok) = (0usize, 0usize, 0usize);
+    let (mut b_in, mut b_out, mut b_tot_tok) = (0usize, 0usize, 0usize);
+    let (mut a_tot_res, mut b_tot_res) = (0usize, 0usize);
     let (mut a_wins, mut b_wins) = (0usize, 0usize);
 
     for (idx, (tool, description, shell_cmd)) in cases.iter().enumerate() {
@@ -172,30 +185,38 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             description
         );
 
-        let (a_lat, a_out, a_count, a_ok) = if has_db {
+        // Tokenise input: the description string itself is the "prompt"
+        let input_bytes = description.len();
+        let input_tokens = estimate_tokens(input_bytes);
+
+        // --- A: LeanKG ---
+        let (a_lat, a_out_str, a_count, a_ok) = if has_db {
             run_lean_kg(&graph_engine, tool, description)
         } else {
             (0.0, String::new(), 0, false)
         };
-        let a_tok = estimate_tokens(a_out.len());
+        let a_out_bytes = a_out_str.len();
+        let a_out_tok = estimate_tokens(a_out_bytes);
+        let a_total_tok = input_tokens + a_out_tok;
         println!(
-            "    A (LeanKG):   {:>8.1} ms  {:>6} results  {:>6} tokens",
-            a_lat, a_count, a_tok
+            "    A (LeanKG):   {:>7.1}ms  in={:>4}tok  out={:>4}tok  total={:>4}tok  {:>4}res",
+            a_lat, input_tokens, a_out_tok, a_total_tok, a_count
         );
 
-        let (b_out, b_err, b_lat) = run_shell(shell_cmd, project_path);
+        // --- B: Manual ---
+        let (b_out_str, b_err, b_lat) = run_shell(shell_cmd, project_path);
         let b_ok = b_err.is_empty();
-        let b_count = b_out.trim().parse::<usize>().unwrap_or(0);
-        let b_tok = estimate_tokens(b_out.len());
+        let b_out_bytes = b_out_str.len();
+        let b_out_tok = estimate_tokens(b_out_bytes);
+        let b_total_tok = input_tokens + b_out_tok;
+        let b_count = b_out_str.trim().parse::<usize>().unwrap_or(0);
         println!(
-            "    B (Manual):   {:>8.1} ms  {:>6} results  {:>6} tokens",
-            b_lat, b_count, b_tok
+            "    B (Manual):   {:>7.1}ms  in={:>4}tok  out={:>4}tok  total={:>4}tok  {:>4}res",
+            b_lat, input_tokens, b_out_tok, b_total_tok, b_count
         );
 
+        // --- Comparison ---
         let ratio = if a_lat > 0.0 { b_lat / a_lat } else { 0.0 };
-        let token_diff = a_tok as i64 - b_tok as i64;
-        let result_diff = a_count as i64 - b_count as i64;
-        let winner = if a_lat < b_lat { "LeanKG" } else { "Manual" };
         let speedup = if ratio > 1.0 {
             ratio
         } else if ratio > 0.0 {
@@ -203,18 +224,24 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             0.0
         };
+        let winner = if a_lat < b_lat { "LeanKG" } else { "Manual" };
         println!(
-            "    => LeanKG {:.1}x {} | token diff: {} | result diff: {}",
+            "    => LeanKG {:.1}x {} | token delta: in=0 out={:+} total={:+} | result delta: {:+}",
             speedup,
             if a_lat < b_lat { "faster" } else { "slower" },
-            token_diff,
-            result_diff
+            a_out_tok as i64 - b_out_tok as i64,
+            a_total_tok as i64 - b_total_tok as i64,
+            a_count as i64 - b_count as i64
         );
 
         a_tot_ms += a_lat;
         b_tot_ms += b_lat;
-        a_tot_tok += a_tok;
-        b_tot_tok += b_tok;
+        a_in += input_tokens;
+        b_in += input_tokens;
+        a_out += a_out_tok;
+        b_out += b_out_tok;
+        a_tot_tok += a_total_tok;
+        b_tot_tok += b_total_tok;
         a_tot_res += a_count;
         b_tot_res += b_count;
         if a_lat < b_lat {
@@ -228,23 +255,31 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             query: description.to_string(),
             variant_a: VariantResult {
                 latency_ms: a_lat,
-                output_bytes: a_out.len(),
-                output_tokens: a_tok,
+                input_bytes,
+                input_tokens,
+                output_bytes: a_out_bytes,
+                output_tokens: a_out_tok,
+                total_tokens: a_total_tok,
                 result_count: a_count,
                 success: a_ok,
                 error: None,
             },
             variant_b: VariantResult {
                 latency_ms: b_lat,
-                output_bytes: b_out.len(),
-                output_tokens: b_tok,
+                input_bytes,
+                input_tokens,
+                output_bytes: b_out_bytes,
+                output_tokens: b_out_tok,
+                total_tokens: b_total_tok,
                 result_count: b_count,
                 success: b_ok,
                 error: if b_ok { None } else { Some(b_err) },
             },
             latency_ratio: ratio,
-            token_diff,
-            result_diff,
+            token_total_diff: a_total_tok as i64 - b_total_tok as i64,
+            token_input_diff: 0,
+            token_output_diff: a_out_tok as i64 - b_out_tok as i64,
+            result_diff: a_count as i64 - b_count as i64,
             winner: winner.to_string(),
         });
     }
@@ -256,44 +291,83 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         0.0
     };
 
-    println!("\n ============================================");
-    println!("  A/B Test Summary");
-    println!(" ============================================");
+    println!();
+    println!("================================================================================");
+    println!("  A/B Test: TOKEN USAGE COMPARISON");
+    println!("================================================================================");
     println!(
-        "  {:<18} {:>10} {:>10} {:>10}",
-        "Metric", "A: LeanKG", "B: Manual", "Delta"
+        "  {:<18} {:>10} {:>10} {:>10} {:>10}",
+        "Metric", "A: LeanKG", "B: Manual", "Delta", "Savings %"
     );
+    println!("  {:-<63}", "");
     println!(
-        "  {:<18} {:>10.1} {:>10.1} {:>10.1}",
-        "Total ms",
+        "  {:<18} {:>10.1} {:>10.1} {:>10.1} {:>9.0}%",
+        "Latency (ms)",
         a_tot_ms,
         b_tot_ms,
-        a_tot_ms - b_tot_ms
+        a_tot_ms - b_tot_ms,
+        if b_tot_ms > 0.0 {
+            ((b_tot_ms - a_tot_ms) / b_tot_ms) * 100.0
+        } else {
+            0.0
+        }
     );
     println!(
-        "  {:<18} {:>10.1} {:>10.1} {:>10.1}",
-        "Avg ms",
+        "  {:<18} {:>10.1} {:>10.1} {:>10.1} {:>9.0}%",
+        "Avg ms/query",
         a_tot_ms / n,
         b_tot_ms / n,
-        (a_tot_ms - b_tot_ms) / n
+        (a_tot_ms - b_tot_ms) / n,
+        if b_tot_ms > 0.0 {
+            ((b_tot_ms - a_tot_ms) / b_tot_ms) * 100.0
+        } else {
+            0.0
+        }
+    );
+    println!("  {:-<63}", "");
+    println!(
+        "  {:<18} {:>10} {:>10} {:>10} {:>9.0}%",
+        "Input tokens",
+        a_in,
+        b_in,
+        a_in as i64 - b_in as i64,
+        0.0
     );
     println!(
-        "  {:<18} {:>10} {:>10} {:>10}",
-        "Total tokens",
+        "  {:<18} {:>10} {:>10} {:>10} {:>9.0}%",
+        "Output tokens",
+        a_out,
+        b_out,
+        a_out as i64 - b_out as i64,
+        if b_out > 0 {
+            ((b_out as i64 - a_out as i64) as f64 / b_out as f64) * 100.0
+        } else {
+            0.0
+        }
+    );
+    println!(
+        "  {:<18} {:>10} {:>10} {:>10} {:>9.0}%",
+        "TOTAL tokens",
         a_tot_tok,
         b_tot_tok,
-        a_tot_tok as i64 - b_tot_tok as i64
+        a_tot_tok as i64 - b_tot_tok as i64,
+        if b_tot_tok > 0 {
+            ((b_tot_tok as i64 - a_tot_tok as i64) as f64 / b_tot_tok as f64) * 100.0
+        } else {
+            0.0
+        }
     );
+    println!("  {:-<63}", "");
     println!(
         "  {:<18} {:>10} {:>10} {:>10}",
-        "Total results",
+        "Results",
         a_tot_res,
         b_tot_res,
         a_tot_res as i64 - b_tot_res as i64
     );
     println!("  {:<18} {:>10} {:>10}", "Wins", a_wins, b_wins);
     println!("  {:<18} {:>10.1}x", "Avg speedup", avg_speedup);
-    println!(" ============================================");
+    println!("================================================================================");
 
     let report = AbReport {
         name: "LeanKG A/B Test".into(),
@@ -306,6 +380,10 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             a_avg_ms: a_tot_ms / n,
             b_avg_ms: b_tot_ms / n,
             avg_speedup,
+            a_input_tokens: a_in,
+            b_input_tokens: b_in,
+            a_output_tokens: a_out,
+            b_output_tokens: b_out,
             a_total_tokens: a_tot_tok,
             b_total_tokens: b_tot_tok,
             a_total_results: a_tot_res,
@@ -330,33 +408,32 @@ fn run_lean_kg(
     desc: &str,
 ) -> (f64, String, usize, bool) {
     let start = Instant::now();
-    let (out, count) = match (tool, graph) {
-        ("search_code", Some(g)) => {
-            let q = extract_arg(desc);
-            let els = g.search_by_name_typed(&q, None, 50).unwrap_or_default();
-            let n = els.len();
-            (format!("{} results", n), n)
-        }
-        ("find_function", Some(g)) => {
-            let q = extract_arg(desc);
-            let els = g
-                .search_by_name_typed(&q, Some("function"), 50)
-                .unwrap_or_default();
-            let n = els.len();
-            (format!("{} functions", n), n)
-        }
-        _ => ("unknown".to_string(), 0),
-    };
-    let ms = start.elapsed().as_secs_f64() * 1000.0;
-    (ms, out, count, true)
-}
-
-fn extract_arg(desc: &str) -> String {
-    desc.split('(')
+    let q = desc
+        .split('(')
         .nth(1)
         .unwrap_or("")
         .split(')')
         .next()
-        .unwrap_or("")
-        .to_string()
+        .unwrap_or("");
+    let (out, count) = match (tool, graph) {
+        ("search_code", Some(g)) => {
+            let els = g.search_by_name_typed(q, None, 50).unwrap_or_default();
+            (
+                format!("{} elements found for '{}'", els.len(), q),
+                els.len(),
+            )
+        }
+        ("find_function", Some(g)) => {
+            let els = g
+                .search_by_name_typed(q, Some("function"), 50)
+                .unwrap_or_default();
+            (
+                format!("{} functions found for '{}'", els.len(), q),
+                els.len(),
+            )
+        }
+        _ => ("unknown tool".to_string(), 0),
+    };
+    let ms = start.elapsed().as_secs_f64() * 1000.0;
+    (ms, out, count, true)
 }
