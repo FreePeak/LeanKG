@@ -272,6 +272,12 @@ pub enum CLICommand {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Run unified A/B benchmark (all tools, simple->complex, auto-export markdown)
+    BenchmarkUnified {
+        /// Project path (default: auto-detect from cwd)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Register current directory in global registry
     Register {
         /// Name for the repository

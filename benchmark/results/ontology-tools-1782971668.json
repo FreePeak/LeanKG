@@ -1,0 +1,384 @@
+{
+  "name": "Ontology Tools Performance",
+  "description": "Benchmark all concept-ontology search/find tools directly (execution time + correctness)",
+  "project": "/Users/linh.doan/work/harvey/freepeak/leankg",
+  "timestamp": "1782971668",
+  "summary": {
+    "total_queries": 20,
+    "passed": 12,
+    "failed": 8,
+    "total_latency_ms": 19075.104956,
+    "avg_latency_ms": 953.7552478,
+    "max_latency_ms": 5961.11675
+  },
+  "tool_results": [
+    {
+      "tool": "concept_search",
+      "description": "Concept-gated search workflow: extract keywords -> scan ontology -> load concept -> query db",
+      "queries": [
+        {
+          "id": "cs-feature-flag",
+          "query": "feature flag",
+          "passed": false,
+          "latency_ms": 1255.192334,
+          "result_summary": {
+            "output": {
+              "concepts": 2,
+              "linked": 6,
+              "refs": 5
+            }
+          },
+          "failures": [
+            "linked 6 < 40"
+          ]
+        },
+        {
+          "id": "cs-gorm-store",
+          "query": "gorm store",
+          "passed": false,
+          "latency_ms": 1591.196375,
+          "result_summary": {
+            "output": {
+              "concepts": 5,
+              "linked": 28,
+              "refs": 10
+            }
+          },
+          "failures": [
+            "linked 28 < 40"
+          ]
+        },
+        {
+          "id": "cs-grpc-service",
+          "query": "grpc service",
+          "passed": true,
+          "latency_ms": 2637.791333,
+          "result_summary": {
+            "output": {
+              "concepts": 17,
+              "linked": 80,
+              "refs": 31
+            }
+          },
+          "failures": []
+        },
+        {
+          "id": "cs-natural-language",
+          "query": "how does the feature flag work",
+          "passed": true,
+          "latency_ms": 2873.200209,
+          "result_summary": {
+            "output": {
+              "concepts": 17,
+              "linked": 80,
+              "refs": 38
+            }
+          },
+          "failures": []
+        },
+        {
+          "id": "cs-fallback",
+          "query": "zzqxnonexistent",
+          "passed": true,
+          "latency_ms": 779.990917,
+          "result_summary": {
+            "output": {
+              "concepts": 0,
+              "linked": 0,
+              "refs": 0
+            }
+          },
+          "failures": []
+        }
+      ],
+      "tool_avg_ms": 1827.4742336,
+      "tool_max_ms": 2873.200209,
+      "tool_passed": 3,
+      "tool_failed": 2
+    },
+    {
+      "tool": "kg_context",
+      "description": "Ontology context: matched nodes + expanded code context + workflows",
+      "queries": [
+        {
+          "id": "kc-feature-flag",
+          "query": "feature flag",
+          "passed": false,
+          "latency_ms": 2088.871083,
+          "result_summary": {
+            "output": {
+              "code": 6,
+              "confidence": 0.575,
+              "nodes": 2
+            }
+          },
+          "failures": [
+            "code 6 < 30"
+          ]
+        },
+        {
+          "id": "kc-gorm-store",
+          "query": "gorm store",
+          "passed": true,
+          "latency_ms": 5961.11675,
+          "result_summary": {
+            "output": {
+              "code": 32,
+              "confidence": 0.4583333333333334,
+              "nodes": 6
+            }
+          },
+          "failures": []
+        }
+      ],
+      "tool_avg_ms": 4024.9939165,
+      "tool_max_ms": 5961.11675,
+      "tool_passed": 1,
+      "tool_failed": 1
+    },
+    {
+      "tool": "kg_concept_map",
+      "description": "Concept map for domain/service queries",
+      "queries": [
+        {
+          "id": "km-gorm",
+          "query": "gorm",
+          "passed": true,
+          "latency_ms": 121.31016699999999,
+          "result_summary": {
+            "output": {
+              "nodes": 2
+            }
+          },
+          "failures": []
+        },
+        {
+          "id": "km-grpc",
+          "query": "grpc",
+          "passed": true,
+          "latency_ms": 116.641791,
+          "result_summary": {
+            "output": {
+              "nodes": 6
+            }
+          },
+          "failures": []
+        }
+      ],
+      "tool_avg_ms": 118.975979,
+      "tool_max_ms": 121.31016699999999,
+      "tool_passed": 2,
+      "tool_failed": 0
+    },
+    {
+      "tool": "kg_trace_workflow",
+      "description": "Trace workflow steps (by name or step name)",
+      "queries": [
+        {
+          "id": "tw-order",
+          "query": "order",
+          "passed": true,
+          "latency_ms": 205.038042,
+          "result_summary": {
+            "output": {
+              "steps": 11
+            }
+          },
+          "failures": []
+        },
+        {
+          "id": "tw-checkout-via-step",
+          "query": "checkout",
+          "passed": true,
+          "latency_ms": 446.3115,
+          "result_summary": {
+            "output": {
+              "steps": 11
+            }
+          },
+          "failures": []
+        }
+      ],
+      "tool_avg_ms": 325.674771,
+      "tool_max_ms": 446.3115,
+      "tool_passed": 2,
+      "tool_failed": 0
+    },
+    {
+      "tool": "semantic_search",
+      "description": "Keyword + fuzzy search for graph nodes (uses search_by_name_typed as proxy)",
+      "queries": [
+        {
+          "id": "ss-feature-flag",
+          "query": "feature flag",
+          "passed": true,
+          "latency_ms": 124.217833,
+          "result_summary": {
+            "output": {
+              "results": 1
+            }
+          },
+          "failures": []
+        },
+        {
+          "id": "ss-gorm",
+          "query": "gorm store",
+          "passed": true,
+          "latency_ms": 147.813083,
+          "result_summary": {
+            "output": {
+              "results": 1
+            }
+          },
+          "failures": []
+        }
+      ],
+      "tool_avg_ms": 136.015458,
+      "tool_max_ms": 147.813083,
+      "tool_passed": 2,
+      "tool_failed": 0
+    },
+    {
+      "tool": "search_code",
+      "description": "Name-based code search (baseline for comparison)",
+      "queries": [
+        {
+          "id": "sc-IsEnabled",
+          "query": "IsEnabled",
+          "passed": false,
+          "latency_ms": 144.178791,
+          "result_summary": {
+            "output": {
+              "results": 0
+            }
+          },
+          "failures": [
+            "results 0 < 1"
+          ]
+        },
+        {
+          "id": "sc-Order",
+          "query": "Order",
+          "passed": true,
+          "latency_ms": 41.654625,
+          "result_summary": {
+            "output": {
+              "results": 50
+            }
+          },
+          "failures": []
+        }
+      ],
+      "tool_avg_ms": 92.916708,
+      "tool_max_ms": 144.178791,
+      "tool_passed": 1,
+      "tool_failed": 1
+    },
+    {
+      "tool": "query_file",
+      "description": "Get elements by file path",
+      "queries": [
+        {
+          "id": "qf-be-toggle",
+          "query": "platform-food/be-restaurant/internal/external/be_toggle.go",
+          "passed": false,
+          "latency_ms": 95.71475,
+          "result_summary": {
+            "output": {
+              "results": 0
+            }
+          },
+          "failures": [
+            "results 0 < 40"
+          ]
+        },
+        {
+          "id": "qf-order",
+          "query": "platform-food/be-food-order/internal/stores/order.go",
+          "passed": false,
+          "latency_ms": 94.297416,
+          "result_summary": {
+            "output": {
+              "results": 0
+            }
+          },
+          "failures": [
+            "results 0 < 30"
+          ]
+        }
+      ],
+      "tool_avg_ms": 95.00608299999999,
+      "tool_max_ms": 95.71475,
+      "tool_passed": 0,
+      "tool_failed": 2
+    },
+    {
+      "tool": "find_function",
+      "description": "Find function by name",
+      "queries": [
+        {
+          "id": "ff-IsEnabled",
+          "query": "IsEnabled",
+          "passed": false,
+          "latency_ms": 118.552583,
+          "result_summary": {
+            "output": {
+              "results": 0
+            }
+          },
+          "failures": [
+            "results 0 < 1"
+          ]
+        },
+        {
+          "id": "ff-GetByOrderID",
+          "query": "GetByOrderID",
+          "passed": false,
+          "latency_ms": 117.523291,
+          "result_summary": {
+            "output": {
+              "results": 0
+            }
+          },
+          "failures": [
+            "results 0 < 1"
+          ]
+        }
+      ],
+      "tool_avg_ms": 118.037937,
+      "tool_max_ms": 118.552583,
+      "tool_passed": 0,
+      "tool_failed": 2
+    },
+    {
+      "tool": "kg_ontology_status",
+      "description": "Ontology coverage statistics",
+      "queries": [
+        {
+          "id": "os-status",
+          "query": "",
+          "passed": true,
+          "latency_ms": 114.492083,
+          "result_summary": {
+            "output": {
+              "aliases": 388,
+              "concept_counts": {
+                "domain_entity": 65
+              },
+              "procedural_counts": {
+                "failure_mode": 96,
+                "workflow": 11,
+                "workflow_step": 61
+              }
+            }
+          },
+          "failures": []
+        }
+      ],
+      "tool_avg_ms": 114.492083,
+      "tool_max_ms": 114.492083,
+      "tool_passed": 1,
+      "tool_failed": 0
+    }
+  ]
+}
