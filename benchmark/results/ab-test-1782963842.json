@@ -1,0 +1,261 @@
+{
+  "name": "LeanKG A/B Test",
+  "project": "/Users/linh.doan/work/harvey/freepeak/leankg",
+  "timestamp": "1782963842",
+  "summary": {
+    "total_queries": 10,
+    "a_total_ms": 902.3994169999999,
+    "b_total_ms": 194.97591599999998,
+    "a_avg_ms": 90.23994169999999,
+    "b_avg_ms": 19.4975916,
+    "avg_speedup": 0.2160638762912676,
+    "a_total_tokens": 36,
+    "b_total_tokens": 2,
+    "a_total_results": 71,
+    "b_total_results": 4462,
+    "a_wins": 3,
+    "b_wins": 7
+  },
+  "results": [
+    {
+      "tool": "search_code",
+      "query": "search_by_name(\"CodeElement\")",
+      "variant_a": {
+        "latency_ms": 247.359625,
+        "output_bytes": 16,
+        "output_tokens": 4,
+        "result_count": 17,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 30.420084,
+        "output_bytes": 3,
+        "output_tokens": 0,
+        "result_count": 43,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 0.1229791806160767,
+      "token_diff": 4,
+      "result_diff": -26,
+      "winner": "Manual"
+    },
+    {
+      "tool": "search_code",
+      "query": "search_by_name(\"OntologyQueryEngine\")",
+      "variant_a": {
+        "latency_ms": 115.32725,
+        "output_bytes": 15,
+        "output_tokens": 3,
+        "result_count": 2,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 20.869374999999998,
+        "output_bytes": 2,
+        "output_tokens": 0,
+        "result_count": 7,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 0.18095788289411216,
+      "token_diff": 3,
+      "result_diff": -5,
+      "winner": "Manual"
+    },
+    {
+      "tool": "find_function",
+      "query": "find_function(\"concept_search\")",
+      "variant_a": {
+        "latency_ms": 115.377417,
+        "output_bytes": 17,
+        "output_tokens": 4,
+        "result_count": 0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 26.179333,
+        "output_bytes": 2,
+        "output_tokens": 0,
+        "result_count": 3,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 0.22690170815663174,
+      "token_diff": 4,
+      "result_diff": -3,
+      "winner": "Manual"
+    },
+    {
+      "tool": "find_function",
+      "query": "find_function(\"search_ontology_nodes\")",
+      "variant_a": {
+        "latency_ms": 118.28212500000001,
+        "output_bytes": 17,
+        "output_tokens": 4,
+        "result_count": 2,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 25.415708,
+        "output_bytes": 2,
+        "output_tokens": 0,
+        "result_count": 2,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 0.2148736167869828,
+      "token_diff": 4,
+      "result_diff": 0,
+      "winner": "Manual"
+    },
+    {
+      "tool": "query_file",
+      "query": "query_file(\"src/ontology/query.rs\")",
+      "variant_a": {
+        "latency_ms": 95.981333,
+        "output_bytes": 18,
+        "output_tokens": 4,
+        "result_count": 0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 10.152,
+        "output_bytes": 5,
+        "output_tokens": 1,
+        "result_count": 1292,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 0.1057705668663718,
+      "token_diff": 3,
+      "result_diff": -1292,
+      "winner": "Manual"
+    },
+    {
+      "tool": "query_file",
+      "query": "query_file(\"src/mcp/handler.rs\")",
+      "variant_a": {
+        "latency_ms": 96.031,
+        "output_bytes": 18,
+        "output_tokens": 4,
+        "result_count": 0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 9.112250000000001,
+        "output_bytes": 5,
+        "output_tokens": 1,
+        "result_count": 3083,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 0.09488862971332175,
+      "token_diff": 3,
+      "result_diff": -3083,
+      "winner": "Manual"
+    },
+    {
+      "tool": "get_impact_radius",
+      "query": "impact(\"src/ontology/query.rs\", depth=2)",
+      "variant_a": {
+        "latency_ms": 0.000417,
+        "output_bytes": 12,
+        "output_tokens": 3,
+        "result_count": 0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 38.923375,
+        "output_bytes": 2,
+        "output_tokens": 0,
+        "result_count": 8,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 93341.4268585132,
+      "token_diff": 3,
+      "result_diff": -8,
+      "winner": "LeanKG"
+    },
+    {
+      "tool": "get_dependencies",
+      "query": "get_dependencies(\"src/ontology/query.rs\")",
+      "variant_a": {
+        "latency_ms": 0.000375,
+        "output_bytes": 12,
+        "output_tokens": 3,
+        "result_count": 0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 7.592416,
+        "output_bytes": 2,
+        "output_tokens": 0,
+        "result_count": 5,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 20246.442666666666,
+      "token_diff": 3,
+      "result_diff": -5,
+      "winner": "LeanKG"
+    },
+    {
+      "tool": "get_dependencies",
+      "query": "get_dependencies(\"src/mcp/handler.rs\")",
+      "variant_a": {
+        "latency_ms": 0.000125,
+        "output_bytes": 12,
+        "output_tokens": 3,
+        "result_count": 0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 7.020833,
+        "output_bytes": 3,
+        "output_tokens": 0,
+        "result_count": 10,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 56166.664,
+      "token_diff": 3,
+      "result_diff": -10,
+      "winner": "LeanKG"
+    },
+    {
+      "tool": "search_code",
+      "query": "search_by_name(\"benchmark\")",
+      "variant_a": {
+        "latency_ms": 114.03975,
+        "output_bytes": 16,
+        "output_tokens": 4,
+        "result_count": 50,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 19.290542000000002,
+        "output_bytes": 2,
+        "output_tokens": 0,
+        "result_count": 9,
+        "success": true,
+        "error": null
+      },
+      "latency_ratio": 0.16915629857133152,
+      "token_diff": 4,
+      "result_diff": 41,
+      "winner": "Manual"
+    }
+  ]
+}

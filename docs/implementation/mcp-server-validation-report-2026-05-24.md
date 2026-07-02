@@ -157,11 +157,9 @@ The MCP server supports multi-project routing via path mapping:
 
 | Host Path | Container Path |
 |-----------|----------------|
-| `/Users/linh.doan/work/be` | `/workspace-be` |
 
 **Indexed Files:**
 - LeanKG workspace: 271 files
-- `/workspace-be` (be project): 22,008 files
 
 ---
 

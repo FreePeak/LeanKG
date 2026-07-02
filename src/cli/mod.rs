@@ -200,6 +200,12 @@ pub enum CLICommand {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Run A/B test: LeanKG tools vs manual grep/find equivalents
+    AbTest {
+        /// Project path (default: auto-detect from cwd)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Register current directory in global registry
     Register {
         /// Name for the repository
