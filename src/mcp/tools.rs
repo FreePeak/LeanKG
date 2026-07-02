@@ -247,14 +247,30 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_code".to_string(),
-                description: "Search code elements by name/type".to_string(),
+                description: "Search code elements by name/type. Set use_ontology=true to run the concept-gated workflow first (extract keywords -> scan concept ontology -> load concept -> query db); falls back to name search if no concept matches.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search query string"},
+                        "query": {"type": "string", "description": "Search query string (raw words/concepts allowed when use_ontology=true)"},
                         "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module", "import"], "description": "Filter by element type"},
                         "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20, max: 50)"},
+                        "use_ontology": {"type": "boolean", "default": false, "description": "If true, first scan the concept ontology and resolve matched concept code_refs against the DB before falling back to name search."},
+                        "env": {"type": "string", "default": "local", "description": "Environment scope for the ontology scan (used only when use_ontology=true)"},
                         "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "concept_search".to_string(),
+                description: "Concept-gated semantic search: extracts keywords from raw input, scans the concept ontology for matching concepts, loads each concept's code references, and queries the LeanKG DB for the actual code. Use this for natural-language / domain-concept queries (e.g. 'feature flag', 'gorm store', 'grpc service'). Falls back to name-based code search if no concept matches.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Raw natural-language or concept query"},
+                        "env": {"type": "string", "default": "local", "description": "Environment scope for the ontology scan"},
+                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of matched concepts / code results"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["query"]
                 }),
@@ -643,7 +659,7 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Environment to filter by"},
+                                                "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming", "local"], "description": "Environment to filter by (use 'local' for default-indexed code)"},
                         "query": {"type": "string", "description": "Optional: search query to further filter results"},
                         "limit": {"type": "integer", "description": "Max results (default: 20)"},
                         "project": {"type": "string", "description": "Optional: project path"}

@@ -239,10 +239,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             generate_docs(&db_path)?;
         }
-        cli::CLICommand::Query { query, kind } => {
+        cli::CLICommand::Query {
+            query,
+            kind,
+            file,
+            function,
+        } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            run_query(&query, &kind, &db_path)?;
+            // If --file or --function is given, handle those directly;
+            // otherwise fall through to the kind-based query.
+            if let Some(file_path) = file {
+                run_file_query(&file_path, &db_path)?;
+            } else if let Some(func_name) = function {
+                run_function_query(&func_name, &db_path)?;
+            } else {
+                run_query(&query, &kind, &db_path)?;
+            }
         }
         cli::CLICommand::Install => {
             install_mcp_config()?;
@@ -1350,6 +1363,85 @@ fn run_query(
             println!(
                 "Unknown query kind '{}'. Use: name, type, rel, pattern, or content",
                 kind
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Query elements by file path (substring match). Supports the `--file` CLI flag.
+fn run_file_query(
+    file_path: &str,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+
+    let results = graph_engine.get_elements_by_file(file_path)?;
+    if results.is_empty() {
+        // Fallback: substring search across all file_path values
+        let all = graph_engine.search_by_content(file_path)?;
+        let filtered: Vec<_> = all
+            .into_iter()
+            .filter(|e| e.file_path.contains(file_path))
+            .collect();
+        if filtered.is_empty() {
+            println!("No elements found in file matching '{}'", file_path);
+        } else {
+            println!(
+                "Found {} element(s) in files matching '{}':",
+                filtered.len(),
+                file_path
+            );
+            for elem in filtered.iter().take(50) {
+                println!(
+                    "  - {} ({}) [{}:{}]",
+                    elem.qualified_name, elem.element_type, elem.file_path, elem.line_start
+                );
+            }
+        }
+    } else {
+        println!(
+            "Found {} element(s) in file '{}':",
+            results.len(),
+            file_path
+        );
+        for elem in results.iter().take(50) {
+            println!(
+                "  - {} ({}) [{}:{}]",
+                elem.qualified_name, elem.element_type, elem.file_path, elem.line_start
+            );
+        }
+        if results.len() > 50 {
+            println!("  ... and {} more", results.len() - 50);
+        }
+    }
+
+    Ok(())
+}
+
+/// Query functions by name (substring match). Supports the `--function` CLI flag.
+fn run_function_query(
+    func_name: &str,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+
+    let results = graph_engine.search_by_name_typed(func_name, Some("function"), 50)?;
+    if results.is_empty() {
+        println!("No functions found with name matching '{}'", func_name);
+    } else {
+        println!(
+            "Found {} function(s) matching '{}':",
+            results.len(),
+            func_name
+        );
+        for elem in results {
+            println!(
+                "  - {} [{}:{}]",
+                elem.qualified_name, elem.file_path, elem.line_start
             );
         }
     }
@@ -3775,6 +3867,71 @@ fn handle_ontology_command(
                     println!(
                         "    Failure modes: {}",
                         step.metadata.failure_modes.join(", ")
+                    );
+                }
+            }
+        }
+
+        cli::OntologyCommand::ConceptSearch { query, env, limit } => {
+            let result = query_engine.concept_search(&query, &env, limit)?;
+
+            println!("Concept Search: '{}'", result.query);
+            println!(
+                "Workflow: extract_keywords -> scan_concept_ontology -> load_concept -> query_db"
+            );
+            println!(
+                "Extracted keywords: {}",
+                if result.extracted_keywords.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    result.extracted_keywords.join(", ")
+                }
+            );
+
+            if result.matched_concepts.is_empty() {
+                println!("\nNo concept ontology nodes matched.");
+            } else {
+                println!("\nMatched Concepts ({}):", result.concept_match_count);
+                for c in &result.matched_concepts {
+                    println!(
+                        "  [{:.2}] {} ({}) - {}",
+                        c.match_score, c.name, c.element_type, c.gid
+                    );
+                    println!("        reason: {}", c.match_reason);
+                    if !c.aliases.is_empty() {
+                        println!("        aliases: {}", c.aliases.join(", "));
+                    }
+                    if !c.code_refs.is_empty() {
+                        println!("        code_refs: {}", c.code_refs.join(", "));
+                    }
+                }
+            }
+
+            if result.linked_code_count > 0 {
+                println!("\nLinked Code from DB ({}):", result.linked_code_count);
+                for elem in result.linked_code.iter().take(20) {
+                    println!(
+                        "  - {} ({}) [{}:{}]",
+                        elem.qualified_name, elem.element_type, elem.file_path, elem.line_start
+                    );
+                }
+                if result.linked_code_count > 20 {
+                    println!("  ... and {} more", result.linked_code_count - 20);
+                }
+            } else if result.concept_match_count > 0 {
+                println!("\nNo indexed code elements resolved from concept code_refs.");
+                println!("  (Make sure the referenced files are indexed: cargo run -- index)");
+            }
+
+            if result.fallback_used {
+                println!(
+                    "\nFallback name search results ({}):",
+                    result.fallback_results.len()
+                );
+                for elem in result.fallback_results.iter().take(10) {
+                    println!(
+                        "  - {} ({}) [{}]",
+                        elem.qualified_name, elem.element_type, elem.file_path
                     );
                 }
             }

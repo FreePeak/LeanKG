@@ -18,7 +18,11 @@ pub use procedural::{
     WorkflowStepMetadata, WorkflowStepNode,
 };
 #[allow(unused_imports)]
-pub use query::{calculate_match_score, OntologyQueryEngine, OntologyStatus};
+pub use query::{
+    calculate_match_score, extract_keywords, normalize_path, ConceptSearchResult, KgSelfTestEntry,
+    KgSelfTestReport, MatchedConcept, OntologyContextResult, OntologyNodeInfo, OntologyQueryEngine,
+    OntologyStatus,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -166,5 +170,39 @@ mod tests {
         let (score, reason) = calculate_match_score("xyz", "Refund", &[], "");
         assert_eq!(score, 0.0);
         assert!(reason.is_empty());
+    }
+
+    #[test]
+    fn test_extract_keywords_drops_stopwords() {
+        let kws = extract_keywords("how does the feature flag work");
+        assert!(kws.contains(&"feature".to_string()));
+        assert!(kws.contains(&"flag".to_string()));
+        assert!(kws.contains(&"work".to_string()));
+        // stop words must be dropped
+        assert!(!kws.contains(&"how".to_string()));
+        assert!(!kws.contains(&"the".to_string()));
+        assert!(!kws.contains(&"does".to_string()));
+    }
+
+    #[test]
+    fn test_extract_keywords_dedup_and_case() {
+        let kws = extract_keywords("Refund refund REFUND");
+        assert_eq!(kws, vec!["refund".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_keywords_filters_short_and_stopwords() {
+        let kws = extract_keywords("a be refund");
+        assert!(kws.contains(&"refund".to_string()));
+        assert!(!kws.contains(&"a".to_string()));
+        assert!(!kws.contains(&"be".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_path_strips_prefix() {
+        assert_eq!(normalize_path("./src/main.rs"), "src/main.rs");
+        assert_eq!(normalize_path("/src/main.rs"), "src/main.rs");
+        assert_eq!(normalize_path("src/main.rs"), "src/main.rs");
+        assert_eq!(normalize_path("  ./a/b/  "), "a/b");
     }
 }

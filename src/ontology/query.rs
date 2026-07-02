@@ -45,6 +45,46 @@ impl OntologyContextResult {
     }
 }
 
+/// A concept matched by `concept_search`, with its code references attached.
+///
+/// This is the "loaded concept" in the workflow:
+///   grep extract user raw input -> scan concept ontology -> **load concept** -> query db
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchedConcept {
+    pub gid: String,
+    pub name: String,
+    pub element_type: String,
+    pub description: String,
+    pub aliases: Vec<String>,
+    pub match_score: f64,
+    pub match_reason: String,
+    /// File / directory / file::symbol references declared in the concept YAML.
+    pub code_refs: Vec<String>,
+    /// Documentation references declared in the concept YAML.
+    pub docs: Vec<String>,
+    /// Owners declared in the concept YAML.
+    pub owned_by: Vec<String>,
+}
+
+/// Result of the concept-gated search workflow:
+///   extract keywords -> scan concept ontology -> load concept -> query leankg db
+///
+/// `linked_code` holds the actual indexed code elements resolved from the matched
+/// concepts' `code_refs`. If no concept matched, `fallback_used` is true and
+/// `fallback_results` contains a name-based code search so callers still get output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConceptSearchResult {
+    pub query: String,
+    pub extracted_keywords: Vec<String>,
+    pub matched_concepts: Vec<MatchedConcept>,
+    pub linked_code: Vec<CodeElement>,
+    pub concept_match_count: usize,
+    pub code_ref_count: usize,
+    pub linked_code_count: usize,
+    pub fallback_used: bool,
+    pub fallback_results: Vec<CodeElement>,
+}
+
 /// Query engine for ontology nodes
 pub struct OntologyQueryEngine {
     db: CozoDb,
@@ -255,6 +295,20 @@ impl OntologyQueryEngine {
             all_elements.extend(elements);
             all_relationships.extend(relationships);
 
+            // For concept-layer nodes (domain_entity, service, etc.), resolve
+            // the concept's code_refs metadata into actual indexed code elements.
+            // This is the same logic as concept_search: read code_refs from the
+            // matched node's metadata, then query the DB for the real code.
+            if !is_procedural_type(&node.element_type) {
+                if let Ok(Some(full_element)) = self.find_element_by_qualified(&node.gid) {
+                    let code_refs = json_str_array(&full_element.metadata, "code_refs");
+                    if !code_refs.is_empty() {
+                        let resolved = self.resolve_code_refs(&code_refs, (depth as usize) * 20)?;
+                        all_elements.extend(resolved);
+                    }
+                }
+            }
+
             // Check if this is a workflow or workflow_step
             if node.element_type == "workflow" {
                 if let Some(w) = self.get_workflow_by_gid(&node.gid)? {
@@ -285,6 +339,270 @@ impl OntologyQueryEngine {
             confidence: avg_confidence,
             match_reasons,
         })
+    }
+
+    /// Concept-gated search implementing the workflow:
+    ///
+    ///   1. **extract keywords** from the raw user input (tokenize, lowercase,
+    ///      drop stop words)
+    ///   2. **scan the concept ontology** for matching concepts by probing with
+    ///      the full query and each extracted keyword against name / aliases /
+    ///      description
+    ///   3. **load each matched concept**, reading its `code_refs` from metadata
+    ///   4. **query the leankg db** to resolve those `code_refs` into actual
+    ///      indexed code elements
+    ///
+    /// If no concept matches, `fallback_used` is set and a name-based code search
+    /// is returned in `fallback_results` so callers still get useful output.
+    pub fn concept_search(
+        &self,
+        raw_input: &str,
+        env: &str,
+        limit: usize,
+    ) -> Result<ConceptSearchResult, Box<dyn std::error::Error>> {
+        let keywords = extract_keywords(raw_input);
+        let limit = if limit == 0 { 20 } else { limit };
+
+        // Build probe strings: the full query first (best for multi-word concept
+        // names/aliases like "feature flag"), then each extracted keyword.
+        let mut probes: Vec<String> = Vec::new();
+        let full = raw_input.trim().to_lowercase();
+        if !full.is_empty() {
+            probes.push(full.clone());
+        }
+        for kw in &keywords {
+            if !probes.contains(kw) {
+                probes.push(kw.clone());
+            }
+        }
+
+        // Scan the concept ontology with each probe; keep the best score per gid.
+        let mut best_by_gid: std::collections::HashMap<String, OntologyNodeInfo> =
+            std::collections::HashMap::new();
+        for probe in &probes {
+            let nodes = self.search_ontology_nodes(probe, env, 1)?;
+            for node in nodes {
+                best_by_gid
+                    .entry(node.gid.clone())
+                    .and_modify(|existing| {
+                        if node.match_score > existing.match_score {
+                            *existing = node.clone();
+                        }
+                    })
+                    .or_insert_with(|| node.clone());
+            }
+        }
+
+        // Keep only concept-layer (domain) nodes, sorted by score descending.
+        let mut matched: Vec<OntologyNodeInfo> = best_by_gid.into_values().collect();
+        matched.retain(|n| !is_procedural_type(&n.element_type));
+        matched.sort_by(|a, b| {
+            b.match_score
+                .partial_cmp(&a.match_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let matched: Vec<OntologyNodeInfo> = matched.into_iter().take(limit).collect();
+
+        // Load full concept metadata (code_refs, docs, owned_by) for each match.
+        let mut matched_concepts: Vec<MatchedConcept> = Vec::new();
+        let mut all_code_refs: Vec<String> = Vec::new();
+        for node in &matched {
+            let (code_refs, docs, owned_by) = match self.find_element_by_qualified(&node.gid)? {
+                Some(e) => {
+                    let code_refs = json_str_array(&e.metadata, "code_refs");
+                    let docs = json_str_array(&e.metadata, "docs");
+                    let owned_by = json_str_array(&e.metadata, "owned_by");
+                    (code_refs, docs, owned_by)
+                }
+                None => (vec![], vec![], vec![]),
+            };
+            for r in &code_refs {
+                if !all_code_refs.contains(r) {
+                    all_code_refs.push(r.clone());
+                }
+            }
+            matched_concepts.push(MatchedConcept {
+                gid: node.gid.clone(),
+                name: node.name.clone(),
+                element_type: node.element_type.clone(),
+                description: node.description.clone(),
+                aliases: node.aliases.clone(),
+                match_score: node.match_score,
+                match_reason: node.match_reason.clone(),
+                code_refs: code_refs.clone(),
+                docs,
+                owned_by,
+            });
+        }
+
+        // Resolve code_refs against indexed code elements (the "query db" step).
+        let linked_code = if all_code_refs.is_empty() {
+            Vec::new()
+        } else {
+            self.resolve_code_refs(&all_code_refs, limit * 4)?
+        };
+        let linked_code_count = linked_code.len();
+
+        // Fallback: if no concept matched, do a name-based code search.
+        let mut fallback_used = false;
+        let mut fallback_results: Vec<CodeElement> = Vec::new();
+        if matched_concepts.is_empty() {
+            fallback_used = true;
+            for kw in &keywords {
+                let hits = self.search_code_elements_by_name(kw, limit)?;
+                for h in hits {
+                    if !fallback_results
+                        .iter()
+                        .any(|e| e.qualified_name == h.qualified_name)
+                    {
+                        fallback_results.push(h);
+                    }
+                }
+                if fallback_results.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(ConceptSearchResult {
+            query: raw_input.to_string(),
+            extracted_keywords: keywords,
+            matched_concepts,
+            linked_code,
+            concept_match_count: matched.len(),
+            code_ref_count: all_code_refs.len(),
+            linked_code_count,
+            fallback_used,
+            fallback_results,
+        })
+    }
+
+    /// Resolve a list of `code_refs` (file paths, directory paths, or
+    /// `file::symbol` references) against the indexed code elements in the db.
+    fn resolve_code_refs(
+        &self,
+        code_refs: &[String],
+        limit: usize,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        if code_refs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let elements = self.load_indexed_code_elements()?;
+        if elements.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut matched: Vec<CodeElement> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for raw_ref in code_refs {
+            if matched.len() >= limit {
+                break;
+            }
+            let r = normalize_path(raw_ref);
+            if r.is_empty() {
+                continue;
+            }
+
+            // file::symbol form
+            if let Some((file_part, sym_part)) = r.split_once("::") {
+                let file_norm = normalize_path(file_part);
+                let sym_lower = sym_part.to_lowercase();
+                for e in &elements {
+                    let efile = normalize_path(&e.file_path);
+                    let matches_file = efile == file_norm
+                        || efile.ends_with(&file_norm)
+                        || file_norm.ends_with(&efile);
+                    let matches_sym = e.name.to_lowercase() == sym_lower
+                        || e.qualified_name
+                            .to_lowercase()
+                            .ends_with(&format!("::{}", sym_lower))
+                        || e.name.to_lowercase().contains(&sym_lower);
+                    if matches_file && matches_sym && seen.insert(e.qualified_name.clone()) {
+                        matched.push(e.clone());
+                    }
+                }
+                continue;
+            }
+
+            // file or directory form
+            let r_norm = normalize_path(&r);
+            let looks_like_dir = raw_ref.trim().ends_with('/')
+                || (!raw_ref.contains('.') && !raw_ref.contains("::"));
+            for e in &elements {
+                if matched.len() >= limit {
+                    break;
+                }
+                let efile = normalize_path(&e.file_path);
+                let mut hit = false;
+                if efile == r_norm
+                    || (looks_like_dir
+                        && efile.starts_with(&format!("{}/", r_norm.trim_end_matches('/'))))
+                    || efile.ends_with(&format!("/{}", r_norm))
+                    || efile.ends_with(&r_norm)
+                {
+                    hit = true;
+                } else if !looks_like_dir {
+                    if let Some(base) = r_norm.rsplit('/').next() {
+                        if efile.ends_with(&format!("/{}", base)) || efile == base {
+                            hit = true;
+                        }
+                    }
+                }
+                if hit && seen.insert(e.qualified_name.clone()) {
+                    matched.push(e.clone());
+                }
+            }
+        }
+
+        Ok(matched)
+    }
+
+    /// Load all non-ontology code elements from the db (the actual indexed code,
+    /// excluding `ontology://` concept/workflow nodes).
+    fn load_indexed_code_elements(&self) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = if self
+            .db
+            .run_script(
+                "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
+                Default::default(),
+            )
+            .is_ok()
+        {
+            ", env, ontology_layer"
+        } else {
+            ", env"
+        };
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env]
+            := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+            !regex_matches(file_path, "^ontology://")"#
+        );
+        let result = self.db.run_script(&query, Default::default())?;
+        Ok(result
+            .rows
+            .iter()
+            .map(|row| row_to_code_element(row))
+            .collect())
+    }
+
+    /// Name-based code search over indexed (non-ontology) elements, used as the
+    /// fallback when no concept ontology node matches.
+    fn search_code_elements_by_name(
+        &self,
+        name: &str,
+        limit: usize,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let lower = name.to_lowercase();
+        let elements = self.load_indexed_code_elements()?;
+        Ok(elements
+            .into_iter()
+            .filter(|e| {
+                e.name.to_lowercase().contains(&lower)
+                    || e.qualified_name.to_lowercase().contains(&lower)
+            })
+            .take(limit)
+            .collect())
     }
 
     /// Get workflow node by GID
@@ -405,15 +723,45 @@ impl OntologyQueryEngine {
         workflow_query: &str,
         env: &str,
     ) -> Result<Vec<WorkflowStepNode>, Box<dyn std::error::Error>> {
-        // First find the workflow
+        // First find the workflow by name/alias/GID
         let workflows = self.search_workflows(workflow_query, env)?;
 
-        if workflows.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let workflow = &workflows[0];
-        let workflow_gid = &workflow.gid;
+        let workflow_gid = if let Some(w) = workflows.first() {
+            w.gid.clone()
+        } else {
+            // Fallback: if no workflow node matched, search for a workflow_step
+            // whose name/alias matches the query. If found, trace its parent
+            // workflow. This lets users search by step name (e.g. "checkout"
+            // finds the "order" workflow that contains a "Checkout" step).
+            let step_nodes = self.search_ontology_nodes(workflow_query, env, 1)?;
+            let step_match = step_nodes
+                .iter()
+                .find(|n| n.element_type == "workflow_step");
+            if let Some(step) = step_match {
+                // Get the full element to read parent_qualified (the workflow GID)
+                if let Some(full_elem) = self.find_element_by_qualified(&step.gid)? {
+                    if let Some(parent) = &full_elem.parent_qualified {
+                        parent.clone()
+                    } else {
+                        // Try metadata.workflow_gid as fallback
+                        let meta_wgid = full_elem
+                            .metadata
+                            .get("workflow_gid")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if meta_wgid.is_empty() {
+                            return Ok(vec![]);
+                        }
+                        meta_wgid
+                    }
+                } else {
+                    return Ok(vec![]);
+                }
+            } else {
+                return Ok(vec![]);
+            }
+        };
 
         // Get all steps for this workflow
         let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow_step", parent_qualified = $wgid"#;
@@ -709,6 +1057,81 @@ pub fn calculate_match_score(
     }
 
     (0.0, String::new())
+}
+
+/// Normalize a path-like reference: trim whitespace, strip a leading `./`, and
+/// trim surrounding slashes. Used so `code_refs` and stored `file_path` values
+/// can be compared regardless of how each was rooted.
+pub fn normalize_path(p: &str) -> String {
+    p.trim()
+        .trim_start_matches("./")
+        .trim_matches('/')
+        .to_string()
+}
+
+/// Read a `Vec<String>` field out of a JSON metadata object, tolerating a
+/// missing or non-array field.
+fn json_str_array(meta: &serde_json::Value, key: &str) -> Vec<String> {
+    meta.get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Map a CozoDB result row into a `CodeElement`. Mirrors the column order used
+/// by `load_indexed_code_elements` / `find_element_by_qualified`.
+fn row_to_code_element(row: &[serde_json::Value]) -> CodeElement {
+    CodeElement {
+        qualified_name: row[0].as_str().unwrap_or("").to_string(),
+        element_type: row[1].as_str().unwrap_or("").to_string(),
+        name: row[2].as_str().unwrap_or("").to_string(),
+        file_path: row[3].as_str().unwrap_or("").to_string(),
+        line_start: row[4].as_i64().unwrap_or(0) as u32,
+        line_end: row[5].as_i64().unwrap_or(0) as u32,
+        language: row[6].as_str().unwrap_or("").to_string(),
+        parent_qualified: row[7].as_str().map(String::from),
+        cluster_id: row[8].as_str().map(String::from),
+        cluster_label: row[9].as_str().map(String::from),
+        metadata: serde_json::from_str(row[10].as_str().unwrap_or("{}")).unwrap_or_default(),
+        env: row[11].as_str().unwrap_or("local").to_string(),
+    }
+}
+
+/// Extract meaningful keywords from raw user input.
+///
+/// This is the first step of the concept ontology workflow ("grep extract user
+/// raw input"): tokenize the raw natural-language input, lowercase it, strip
+/// punctuation, and drop common stop words and very short tokens so the
+/// remaining keywords can be scanned against the concept ontology.
+pub fn extract_keywords(raw: &str) -> Vec<String> {
+    const STOPWORDS: &[&str] = &[
+        "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for", "with", "is", "are",
+        "was", "were", "be", "been", "being", "this", "that", "these", "those", "it", "its", "as",
+        "at", "by", "from", "how", "what", "where", "why", "when", "which", "who", "whom", "whose",
+        "do", "does", "did", "can", "could", "should", "would", "will", "shall", "may", "might",
+        "must", "have", "has", "had", "i", "we", "you", "they", "he", "she", "my", "our", "your",
+        "their", "me", "us", "them", "about", "into", "than", "then", "so", "if", "no", "not",
+        "any", "all", "find", "show", "get", "tell", "explain", "describe", "see", "look", "want",
+        "need", "please", "help", "use", "using", "used", "like", "also",
+    ];
+    let stopset: std::collections::HashSet<&str> = STOPWORDS.iter().copied().collect();
+
+    raw.split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                .to_lowercase()
+        })
+        .filter(|w| w.len() >= 2 && !stopset.contains(w.as_str()))
+        .fold(Vec::new(), |mut acc, w| {
+            if !acc.contains(&w) {
+                acc.push(w);
+            }
+            acc
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

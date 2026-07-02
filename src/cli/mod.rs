@@ -44,6 +44,12 @@ pub enum CLICommand {
         /// (content does case-insensitive substring match across name, qualified_name, and file_path)
         #[arg(long, default_value = "name")]
         kind: String,
+        /// Find elements in a specific file path (substring match)
+        #[arg(long)]
+        file: Option<String>,
+        /// Find functions by name (substring match)
+        #[arg(long)]
+        function: Option<String>,
     },
     /// Generate documentation
     Generate {
@@ -631,5 +637,17 @@ pub enum OntologyCommand {
         /// Environment
         #[arg(long, default_value = "local")]
         env: String,
+    },
+    /// Concept-gated search: extract keywords -> scan concept ontology ->
+    /// load concept -> query the LeanKG DB for the actual code.
+    ConceptSearch {
+        /// Raw natural-language or concept query (e.g. "feature flag", "gorm store")
+        query: String,
+        /// Environment scope for the ontology scan
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// Maximum number of concepts / code results
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
 }

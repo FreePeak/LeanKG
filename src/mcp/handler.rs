@@ -225,6 +225,7 @@ impl ToolHandler {
             "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
+            "concept_search" => self.concept_search(arguments),
             "search_annotations" => self.search_annotations(arguments),
             "semantic_search" => self.semantic_search(arguments),
             "wake_up" => self.wake_up(arguments),
@@ -1333,6 +1334,23 @@ impl ToolHandler {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
         let limit = args["limit"].as_i64().unwrap_or(20).min(50) as usize;
         let element_type = args["element_type"].as_str();
+        let use_ontology = args["use_ontology"].as_bool().unwrap_or(false);
+
+        // Concept-gated workflow: extract keywords -> scan concept ontology ->
+        // load concept -> query db. Only used when explicitly requested; falls
+        // back to plain name search if no concept matches.
+        if use_ontology {
+            let env = args["env"].as_str().unwrap_or("local");
+            let query_engine =
+                crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            let result = query_engine
+                .concept_search(query, env, limit)
+                .map_err(|e| format!("Concept search failed: {}", e))?;
+            if result.concept_match_count > 0 || !result.linked_code.is_empty() {
+                return Ok(self.format_concept_search_result(&result));
+            }
+            // else fall through to plain name search
+        }
 
         let elements = self
             .graph_engine
@@ -1355,6 +1373,85 @@ impl ToolHandler {
             .collect();
 
         Ok(json!({ "results": matches }))
+    }
+
+    fn concept_search(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
+        let env = args["env"].as_str().unwrap_or("local");
+        let limit = args["limit"].as_i64().unwrap_or(20) as usize;
+
+        let query_engine =
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+        let result = query_engine
+            .concept_search(query, env, limit)
+            .map_err(|e| format!("Concept search failed: {}", e))?;
+
+        Ok(self.format_concept_search_result(&result))
+    }
+
+    /// Shared JSON formatter for `ConceptSearchResult` used by both
+    /// `concept_search` and the `use_ontology` path of `search_code`.
+    fn format_concept_search_result(&self, result: &crate::ontology::ConceptSearchResult) -> Value {
+        let matched_concepts: Vec<Value> = result
+            .matched_concepts
+            .iter()
+            .map(|c| {
+                json!({
+                    "gid": c.gid,
+                    "name": c.name,
+                    "element_type": c.element_type,
+                    "description": c.description,
+                    "aliases": c.aliases,
+                    "match_score": c.match_score,
+                    "match_reason": c.match_reason,
+                    "code_refs": c.code_refs,
+                    "docs": c.docs,
+                    "owned_by": c.owned_by,
+                })
+            })
+            .collect();
+
+        let linked_code: Vec<Value> = result
+            .linked_code
+            .iter()
+            .map(|e| {
+                json!({
+                    "qualified_name": e.qualified_name,
+                    "name": e.name,
+                    "type": e.element_type,
+                    "file": e.file_path,
+                    "line": e.line_start,
+                    "language": e.language,
+                })
+            })
+            .collect();
+
+        let fallback_results: Vec<Value> = result
+            .fallback_results
+            .iter()
+            .map(|e| {
+                json!({
+                    "qualified_name": e.qualified_name,
+                    "name": e.name,
+                    "type": e.element_type,
+                    "file": e.file_path,
+                    "line": e.line_start,
+                })
+            })
+            .collect();
+
+        json!({
+            "query": result.query,
+            "extracted_keywords": result.extracted_keywords,
+            "workflow": "extract_keywords -> scan_concept_ontology -> load_concept -> query_db",
+            "matched_concepts": matched_concepts,
+            "concept_match_count": result.concept_match_count,
+            "code_ref_count": result.code_ref_count,
+            "linked_code": linked_code,
+            "linked_code_count": result.linked_code_count,
+            "fallback_used": result.fallback_used,
+            "fallback_results": fallback_results,
+        })
     }
 
     fn search_annotations(&self, args: &Value) -> Result<Value, String> {
