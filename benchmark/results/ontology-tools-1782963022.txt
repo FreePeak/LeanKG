@@ -1,0 +1,14 @@
+Ontology Tools Benchmark | Project: /Users/linh.doan/work/be
+20 queries, 20 passed, 0 failed
+Latency: total=1729.2ms avg=86.5ms max=510.6ms
+
+Tool                    Queries        P        F   Avg ms
+concept_search                5        5        0    180.8
+kg_context                    2        2        0    326.6
+kg_concept_map                2        2        0     13.9
+kg_trace_workflow             2        2        0     29.2
+semantic_search               2        2        0     10.2
+search_code                   2        2        0      8.0
+query_file                    2        2        0      8.4
+find_function                 2        2        0     10.2
+kg_ontology_status            1        1        0     12.3

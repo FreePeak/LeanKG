@@ -202,6 +202,75 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("==========================================");
 
+    // ── Context Usage & A/B Comparison ─────────────────────────────────
+    // Group tools by category for A/B comparison
+    let ontology_tools: Vec<&ToolResult> = all_results
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.tool.as_str(),
+                "concept_search" | "kg_context" | "kg_concept_map" | "kg_trace_workflow"
+            )
+        })
+        .collect();
+    let name_tools: Vec<&ToolResult> = all_results
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.tool.as_str(),
+                "semantic_search"
+                    | "search_code"
+                    | "query_file"
+                    | "find_function"
+                    | "kg_ontology_status"
+            )
+        })
+        .collect();
+
+    let sum = |tools: &[&ToolResult]| -> (usize, f64, f64) {
+        let q = tools.iter().map(|t| t.queries.len()).sum();
+        let l = tools
+            .iter()
+            .map(|t| t.tool_avg_ms * t.queries.len() as f64)
+            .sum::<f64>();
+        let avg = if q > 0 { l / q as f64 } else { 0.0 };
+        (q, l, avg)
+    };
+
+    let (oq, ol, oa) = sum(&ontology_tools);
+    let (nq, nl, na) = sum(&name_tools);
+
+    println!("\n  Context Usage A/B Comparison");
+    println!("  ──────────────────────────────────────────");
+    println!(
+        "  {:<22} {:>6} {:>10} {:>10}",
+        "Category", "Queries", "Total ms", "Avg ms"
+    );
+    println!(
+        "  {:<22} {:>6} {:>10.1} {:>10.1}",
+        "A: Ontology tools", oq, ol, oa
+    );
+    println!(
+        "  {:<22} {:>6} {:>10.1} {:>10.1}",
+        "B: Name-search tools", nq, nl, na
+    );
+    if nq > 0 {
+        println!("  Ratio (A/B): {:.1}x slower", oa / na);
+    }
+    println!("  ──────────────────────────────────────────");
+    println!("  Context token estimate (output JSON per result):");
+    for t in &all_results {
+        // Estimate output tokens from the JSON size (~4 chars per token)
+        let json_str = serde_json::to_string(&t).unwrap_or_default();
+        let est_tokens = json_str.len() as i32 / 4;
+        println!(
+            "    {:<22} {:>6} queries  ~{:>6} tokens output",
+            t.tool,
+            t.queries.len(),
+            est_tokens
+        );
+    }
+
     let report = ToolBenchReport {
         name: yaml.name,
         description: yaml.description,
