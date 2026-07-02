@@ -1,0 +1,32 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - img [ref=e4]
+  - generic [ref=e6]:
+    - generic [ref=e8]:
+      - img [ref=e9]
+      - text: You need to sign in or sign up before continuing.
+      - img [ref=e12] [cursor=pointer]
+    - heading "GitLab" [level=1] [ref=e16]
+    - generic [ref=e17]:
+      - generic [ref=e18]:
+        - img [ref=e19]
+        - heading "A complete DevOps platform" [level=3] [ref=e20]
+        - paragraph [ref=e21]: GitLab is a single application for the entire software development lifecycle. From project planning and source code management to CI/CD, monitoring, and security.
+        - paragraph [ref=e22]: This is a self-managed instance of GitLab.
+      - generic [ref=e26]:
+        - generic [ref=e27]: Sign in with
+        - button "Azure AD Azure AD" [ref=e30] [cursor=pointer]:
+          - img "Azure AD" [ref=e31]
+          - generic [ref=e32]: Azure AD
+        - group [ref=e33]:
+          - generic [ref=e34]:
+            - checkbox "Remember me" [ref=e35]
+            - text: Remember me
+  - separator [ref=e36]
+  - generic [ref=e38]:
+    - link "Explore" [ref=e39] [cursor=pointer]:
+      - /url: /explore
+    - link "Help" [ref=e40] [cursor=pointer]:
+      - /url: /help
+    - link "About GitLab" [ref=e41] [cursor=pointer]:
+      - /url: https://about.gitlab.com
