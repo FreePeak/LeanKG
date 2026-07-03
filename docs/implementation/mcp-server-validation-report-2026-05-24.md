@@ -169,7 +169,7 @@ The MCP server supports multi-project routing via path mapping:
 |--------|-------------|
 | `7163c8f` | fix: replace =~ with regex_matches for workflow search |
 | `68dd72c` | fix: add * prefix and use row count for ontology status queries |
-| `3f53030` | feat: add /workspace-be volume mount to docker-compose.rocksdb.yml |
+| `3f53030` | feat: add side-project volume mount to docker-compose.rocksdb.yml |
 
 ---
 
