@@ -152,23 +152,6 @@ fn truncate_to_chars(s: &str, max_chars: usize) -> &str {
     &s[..end]
 }
 
-/// Deterministic u64 key derived from `qualified_name`. Used as the usearch
-/// HNSW key — stable across re-indexes as long as qualified_name is unchanged.
-/// We store the same value in `embedding_state.usearch_key` so reverse lookup
-/// (search result → qualified_name) is a single equality predicate.
-///
-/// We use the first 8 bytes of SHA-256 (little-endian) rather than a faster
-/// non-crypto hash: collisions across a 10k-node repo are ~10^-11, and we get
-/// portability across architectures for free.
-pub fn usearch_key_for(qualified_name: &str) -> u64 {
-    let mut hasher = Sha256::new();
-    hasher.update(qualified_name.as_bytes());
-    let digest = hasher.finalize();
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&digest[..8]);
-    u64::from_le_bytes(bytes)
-}
-
 /// SHA-256 hex digest of the text blob. Stored in `embedding_state.content_hash`
 /// to detect content changes between embed runs.
 pub fn content_hash_for(blob: &str) -> String {
@@ -232,20 +215,6 @@ mod tests {
     fn skip_element_types_return_none() {
         let el = make_element("cluster", "cluster1", "cluster://x");
         assert!(build_blob(&el).is_none());
-    }
-
-    #[test]
-    fn usearch_key_is_deterministic() {
-        let k1 = usearch_key_for("src/main.rs::main");
-        let k2 = usearch_key_for("src/main.rs::main");
-        assert_eq!(k1, k2);
-    }
-
-    #[test]
-    fn usearch_key_differs_for_different_names() {
-        let k1 = usearch_key_for("src/main.rs::main");
-        let k2 = usearch_key_for("src/main.rs::helper");
-        assert_ne!(k1, k2);
     }
 
     #[test]

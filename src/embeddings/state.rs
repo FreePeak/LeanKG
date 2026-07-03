@@ -75,7 +75,11 @@ pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::erro
     if !existing.contains("embedding_vectors:vec_idx") {
         match crate::db::schema::run_script(db, CREATE_EMBEDDING_VECTORS_HNSW, Default::default()) {
             Ok(_) => tracing::info!("created HNSW index embedding_vectors:vec_idx"),
-            Err(e) => tracing::warn!("failed to create HNSW index on embedding_vectors: {:?}", e),
+            Err(e) => tracing::warn!(
+                "failed to create HNSW index on embedding_vectors (query len={}): {:?}",
+                CREATE_EMBEDDING_VECTORS_HNSW.len(),
+                e
+            ),
         }
     }
 
@@ -94,7 +98,7 @@ const CREATE_EMBEDDING_VECTORS_HNSW: &str = r#"::hnsw create embedding_vectors:v
     m: 50,
     extend_candidates: false,
     keep_pruned_connections: false
-}""#;
+}"#;
 
 /// Mark a batch of qualified_names as stale. Idempotent: rows that already
 /// exist flip to `state="stale"`; rows that don't exist are inserted with a
@@ -115,7 +119,9 @@ pub fn mark_stale_for_qualified_names(
         let rows: Vec<String> = chunk
             .iter()
             .map(|qn| {
-                let key_i64 = crate::embeddings::text_blob::usearch_key_for(qn) as i64;
+                // usearch_key column is now legacy (CozoDB HNSW keys on
+                // qualified_name directly). Stored as 0 for schema-compat.
+                let key_i64: i64 = 0;
                 format!(
                     "[{}, {}, {}, {}, {}]",
                     serde_json::Value::String(qn.clone()),
@@ -179,28 +185,6 @@ pub fn list_all(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::erro
         .iter()
         .filter_map(row_to_state_row)
         .collect())
-}
-
-/// Lookup the usearch key for a single qualified_name. Returns None if the
-/// row is missing (e.g., the element was never indexed).
-pub fn lookup_usearch_key(
-    db: &CozoDb,
-    qualified_name: &str,
-) -> Result<Option<u64>, Box<dyn std::error::Error>> {
-    let query =
-        r#"?[usearch_key] := *embedding_state[qualified_name, usearch_key, _, _, _], qualified_name = $qn"#;
-    let mut params = std::collections::BTreeMap::new();
-    params.insert(
-        "qn".to_string(),
-        serde_json::Value::String(qualified_name.to_string()),
-    );
-    let result = crate::db::schema::run_script(db, query, params)?;
-    Ok(result
-        .rows
-        .first()
-        .and_then(|row| row.first())
-        .and_then(|v| v.get_int())
-        .map(|i| i as u64))
 }
 
 /// Maximum number of rows to inline into a single CozoDB `<~ [...]` literal.

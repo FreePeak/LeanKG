@@ -4010,7 +4010,6 @@ fn run_embed(
     let project_path = std::path::PathBuf::from(project);
     let leankg_dir = project_path.join(".leankg");
     let db_path = leankg_dir.join("leankg.db");
-    let index_path = leankg_dir.join("embeddings.usearch");
 
     if !db_path.exists() {
         return Err(format!(
@@ -4036,7 +4035,9 @@ fn run_embed(
     };
 
     let started = std::time::Instant::now();
-    let report = embeddings::build_index(&graph, &index_path, &opts)?;
+    // Vectors live in CozoDB now; index_path is unused but retained in the
+    // signature for backward source-compat with the public `build_index` API.
+    let report = embeddings::build_index(&graph, std::path::Path::new(""), &opts)?;
     let elapsed = started.elapsed();
 
     println!("Embed build complete ({:?}) in {:.2}s", mode, elapsed.as_secs_f64());

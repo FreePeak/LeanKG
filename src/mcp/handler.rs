@@ -3123,36 +3123,6 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
-/// Q3 stale-embeddings detection: compare `embeddings.meta.json.built_at`
-/// against the cozodb file's mtime. If the database was modified after the
-/// embedding index was built, we're stale. Conservative: on any read or
-/// parse error, returns false (assume fresh) so queries still serve.
-#[cfg(feature = "embeddings")]
-fn embeddings_are_stale(meta_path: &std::path::Path) -> bool {
-    let meta_bytes = match std::fs::read(meta_path) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    let meta: serde_json::Value = match serde_json::from_slice(&meta_bytes) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let built_at = meta.get("built_at").and_then(|v| v.as_u64()).unwrap_or(0);
-
-    let cozo_path = match meta_path.parent() {
-        Some(p) => p.join("leankg.db"),
-        None => return false,
-    };
-    let cozo_mtime = std::fs::metadata(&cozo_path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    cozo_mtime > built_at
-}
-
 fn generate_review_prompt(elements: &[CodeElement], _relationships: &[Relationship]) -> String {
     if elements.is_empty() {
         return "No elements found for review.".to_string();

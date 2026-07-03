@@ -6,7 +6,6 @@
 
 #![cfg(feature = "embeddings")]
 
-pub mod ann;
 pub mod pipeline;
 pub mod rerank;
 

@@ -72,7 +72,7 @@ fn upsert_fresh_transitions_state_and_stores_hash() {
         .iter()
         .map(|qn| FreshRow {
             qualified_name: qn.clone(),
-            usearch_key: leankg::embeddings::usearch_key_for(qn),
+            usearch_key: 0, // legacy field, HNSW keys on qualified_name
             content_hash: format!("hash-{qn}"),
         })
         .collect();
@@ -136,7 +136,7 @@ fn count_by_state_partitions_correctly() {
         .iter()
         .map(|qn| FreshRow {
             qualified_name: qn.clone(),
-            usearch_key: leankg::embeddings::usearch_key_for(qn),
+            usearch_key: 0, // legacy field, HNSW keys on qualified_name
             content_hash: "x".to_string(),
         })
         .collect();
@@ -145,15 +145,4 @@ fn count_by_state_partitions_correctly() {
     let counts = count_by_state(&db).expect("count_by_state again");
     assert_eq!(counts.fresh, 2);
     assert_eq!(counts.stale, 3);
-}
-
-#[test]
-fn lookup_usearch_key_returns_computed_value() {
-    let db = fresh_db();
-    let qn = "src/main.rs::main".to_string();
-    mark_stale_for_qualified_names(&db, &[qn.clone()]).expect("mark");
-
-    let key = leankg::embeddings::state::lookup_usearch_key(&db, &qn).expect("lookup");
-    let expected = leankg::embeddings::usearch_key_for(&qn);
-    assert_eq!(key, Some(expected));
 }
