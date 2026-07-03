@@ -184,7 +184,7 @@ impl PersistentCache {
         "#;
         let mut params = std::collections::BTreeMap::new();
         params.insert("count".to_string(), serde_json::Value::Number(count.into()));
-        self.db.run_script(query, params)?;
+        crate::db::schema::run_script(&self.db, query, params)?;
         Ok(())
     }
 
@@ -229,11 +229,11 @@ impl PersistentCache {
             serde_json::Value::String(key.to_string()),
         );
 
-        let result = self.db.run_script(query, params).ok()?;
+        let result = crate::db::schema::run_script(&self.db, query, params).ok()?;
 
         let row = result.rows.first()?;
-        let created_at = row.get(1)?.as_i64()?;
-        let ttl_seconds = row.get(2)?.as_i64()?;
+        let created_at = row.get(1)?.get_int()?;
+        let ttl_seconds = row.get(2)?.get_int()?;
 
         if ttl_seconds > 0 {
             let now = SystemTime::now()
@@ -246,7 +246,7 @@ impl PersistentCache {
             }
         }
 
-        row.first()?.as_str().map(String::from)
+        row.first()?.get_str().map(String::from)
     }
 
     async fn save_to_db(
@@ -278,7 +278,7 @@ impl PersistentCache {
             serde_json::Value::Number((self.default_ttl as i64).into()),
         );
 
-        self.db.run_script(query, params)?;
+        crate::db::schema::run_script(&self.db, query, params)?;
         Ok(())
     }
 
@@ -292,7 +292,7 @@ impl PersistentCache {
             "key".to_string(),
             serde_json::Value::String(key.to_string()),
         );
-        self.db.run_script(query, params)?;
+        crate::db::schema::run_script(&self.db, query, params)?;
         Ok(())
     }
 
@@ -319,14 +319,13 @@ impl PersistentCache {
 
     /// Get database size in bytes (approximate, for monitoring)
     pub fn database_size_approx(&self) -> Option<u64> {
-        self.db
-            .run_script("PRAGMA page_count", Default::default())
+        crate::db::schema::run_script(&self.db, "PRAGMA page_count", Default::default())
             .ok()
             .and_then(|result| {
                 result
                     .rows
                     .first()
-                    .and_then(|row| row.first()?.as_i64().map(|pages| (pages as u64) * 4096))
+                    .and_then(|row| row.first()?.get_int().map(|pages| (pages as u64) * 4096))
             })
     }
 }

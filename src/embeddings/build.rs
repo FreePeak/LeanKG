@@ -48,7 +48,7 @@ impl Default for BuildOptions {
     fn default() -> Self {
         Self {
             mode: BuildMode::Incremental,
-            batch_size: 256,
+            batch_size: 32,
             reserve_capacity: None,
         }
     }
@@ -167,26 +167,37 @@ pub fn run(
             });
             embedded += 1;
         }
+        tracing::info!(
+            "embed batch done: running total {}/{} (chunk_size={})",
+            embedded,
+            to_embed.len(),
+            chunk.len()
+        );
     }
 
+    tracing::info!("embed loop complete, calling upsert_fresh for {} rows", fresh_rows.len());
     // 4. Persist fresh state.
     state::upsert_fresh(graph.db(), &fresh_rows)?;
+    tracing::info!("upsert_fresh complete");
 
-    // 5. Reap orphans: state rows whose qualified_name is no longer present.
+    // 5. Reap orphans: state rows whose qualified_name is no longer present
+    // in the work list (either removed from code_elements, or SKIP-classified
+    // element types like clusters/processes that don't get embedded).
     let work_qns: std::collections::HashSet<&str> =
         work.iter().map(|w| w.qualified_name.as_str()).collect();
-    let orphans: Vec<String> = existing_state
-        .keys()
-        .filter(|qn| !work_qns.contains(qn.as_str()))
-        .cloned()
+    let orphan_rows: Vec<state::EmbeddingStateRow> = existing_state
+        .iter()
+        .filter(|(qn, _)| !work_qns.contains(qn.as_str()))
+        .map(|(_, row)| row.clone())
         .collect();
-    for qn in &orphans {
-        if let Ok(Some(key)) = state::lookup_usearch_key(graph.db(), qn) {
-            let _ = index.remove(key);
-        }
+    tracing::info!("orphan reap: {} orphans", orphan_rows.len());
+    for row in &orphan_rows {
+        let _ = index.remove(row.usearch_key as u64);
     }
-    if !orphans.is_empty() {
-        state::delete_state_rows(graph.db(), &orphans)?;
+    if !orphan_rows.is_empty() {
+        tracing::info!("calling delete_state_rows for {} orphans", orphan_rows.len());
+        state::delete_state_rows(graph.db(), &orphan_rows)?;
+        tracing::info!("delete_state_rows complete");
     }
 
     // 6. Persist index + meta.
@@ -197,7 +208,7 @@ pub fn run(
         considered_count: considered,
         embedded_count: embedded,
         skipped_fresh_count: skipped_fresh,
-        orphaned_count: orphans.len(),
+        orphaned_count: orphan_rows.len(),
         index_size: index.size(),
         index_path: index_path.to_path_buf(),
     })

@@ -133,9 +133,9 @@ pub enum CLICommand {
         /// scratch. Use after a model swap or index corruption.
         #[arg(long)]
         full: bool,
-        /// Override the embedding batch size (default 256). Lower this on
+        /// Override the embedding batch size (default 32). Lower this on
         /// memory-constrained hosts.
-        #[arg(long, default_value = "256")]
+        #[arg(long, default_value = "32")]
         batch_size: usize,
         /// Project root (defaults to current working directory).
         #[arg(long, default_value = ".")]

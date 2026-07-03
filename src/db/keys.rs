@@ -3,12 +3,12 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use cozo::{Db, SqliteStorage};
+use crate::db::schema::CozoDb;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-pub type KeysDb = Db<SqliteStorage>;
+pub type KeysDb = CozoDb;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
@@ -35,19 +35,19 @@ impl ApiKeyStore {
 
     pub fn init_db(&self) -> Result<KeysDb, Box<dyn std::error::Error>> {
         let path_str = self.db_path.to_string_lossy().to_string();
-        let db = cozo::new_cozo_sqlite(path_str)?;
+        let db: KeysDb = cozo::DbInstance::new("sqlite", &path_str, "")?;
 
         let check_relations = r#"::relations"#;
-        let relations_result = db.run_script(check_relations, Default::default())?;
+        let relations_result = crate::db::schema::run_script(&db, check_relations, Default::default())?;
         let existing_relations: std::collections::HashSet<String> = relations_result
             .rows
             .iter()
-            .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
+            .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
             .collect();
 
         if !existing_relations.contains("api_keys") {
             let create_table = r#":create api_keys {id: String, name: String, key_hash: String, created_at: String, last_used_at: String?, revoked_at: String?}"#;
-            db.run_script(create_table, Default::default())?;
+            crate::db::schema::run_script(&db, create_table, Default::default())?;
         }
 
         Ok(db)
@@ -80,7 +80,7 @@ impl ApiKeyStore {
         :put api_keys { id, name, key_hash, created_at, last_used_at, revoked_at }
         "#;
 
-        db.run_script(insert, params)?;
+        crate::db::schema::run_script(&db, insert, params)?;
 
         let api_key = ApiKey {
             id: key_id,
@@ -101,16 +101,16 @@ impl ApiKeyStore {
         ?[id, name, key_hash, created_at, last_used_at, revoked_at] := *api_keys[id, name, key_hash, created_at, last_used_at, revoked_at]
         "#;
 
-        let result = db.run_script(query, BTreeMap::new())?;
+        let result = crate::db::schema::run_script(&db, query, BTreeMap::new())?;
 
         let mut keys: std::collections::HashMap<String, ApiKey> = std::collections::HashMap::new();
         for row in result.rows {
-            let id = row[0].as_str().unwrap_or("").to_string();
-            let name = row[1].as_str().unwrap_or("").to_string();
+            let id = row[0].get_str().unwrap_or("").to_string();
+            let name = row[1].get_str().unwrap_or("").to_string();
             let key_hash = String::new();
-            let created_at = row[3].as_str().unwrap_or("").to_string();
-            let last_used_at = row[4].as_str().map(String::from);
-            let revoked_at: Option<String> = row[5].as_str().map(String::from);
+            let created_at = row[3].get_str().unwrap_or("").to_string();
+            let last_used_at = row[4].get_str().map(String::from);
+            let revoked_at: Option<String> = row[5].get_str().map(String::from);
 
             if revoked_at.is_some() {
                 keys.remove(&id);
@@ -145,7 +145,7 @@ impl ApiKeyStore {
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), serde_json::json!(id));
 
-        let result = db.run_script(query, params)?;
+        let result = crate::db::schema::run_script(&db, query, params)?;
 
         if result.rows.is_empty() {
             return Ok(false);
@@ -153,7 +153,7 @@ impl ApiKeyStore {
 
         let row = &result.rows[0];
 
-        let revoked_at_val = row[5].as_str();
+        let revoked_at_val = row[5].get_str();
         if revoked_at_val.is_some() {
             return Ok(false);
         }
@@ -168,27 +168,27 @@ impl ApiKeyStore {
         let mut params = BTreeMap::new();
         params.insert(
             "id".to_string(),
-            serde_json::json!(row[0].as_str().unwrap_or("")),
+            serde_json::json!(row[0].get_str().unwrap_or("")),
         );
         params.insert(
             "name".to_string(),
-            serde_json::json!(row[1].as_str().unwrap_or("")),
+            serde_json::json!(row[1].get_str().unwrap_or("")),
         );
         params.insert(
             "key_hash".to_string(),
-            serde_json::json!(row[2].as_str().unwrap_or("")),
+            serde_json::json!(row[2].get_str().unwrap_or("")),
         );
         params.insert(
             "created_at".to_string(),
-            serde_json::json!(row[3].as_str().unwrap_or("")),
+            serde_json::json!(row[3].get_str().unwrap_or("")),
         );
         params.insert(
             "last_used_at".to_string(),
-            serde_json::json!(row[4].as_str().map(String::from)),
+            serde_json::json!(row[4].get_str().map(String::from)),
         );
         params.insert("revoked_at".to_string(), serde_json::json!(revoked_at));
 
-        db.run_script(update, params)?;
+        crate::db::schema::run_script(&db, update, params)?;
 
         Ok(true)
     }
@@ -200,16 +200,16 @@ impl ApiKeyStore {
         ?[id, key_hash] := *api_keys[id, key_hash], revoked_at = null
         "#;
 
-        let result = db.run_script(query, BTreeMap::new())?;
+        let result = crate::db::schema::run_script(&db, query, BTreeMap::new())?;
 
         for row in result.rows {
-            let key_id = row[0].as_str().unwrap_or("").to_string();
-            let stored_hash = row[1].as_str().unwrap_or("");
+            let key_id = row[0].get_str().unwrap_or("").to_string();
+            let stored_hash = row[1].get_str().unwrap_or("");
             if verify_api_key(key, stored_hash) {
                 let last_used = chrono_timestamp();
 
                 let delete = format!(r#":delete api_keys where id = "{}""#, key_id);
-                let _ = db.run_script(&delete, BTreeMap::new());
+                let _ = crate::db::schema::run_script(&db, &delete, BTreeMap::new());
 
                 let insert = r#"
                 ?[id, name, key_hash, created_at, last_used_at, revoked_at] <- [[$id, $name, $key_hash, $created_at, $last_used_at, $revoked_at]]
@@ -226,7 +226,7 @@ impl ApiKeyStore {
                     "revoked_at".to_string(),
                     serde_json::json!(serde_json::Value::Null),
                 );
-                let _ = db.run_script(insert, params);
+                let _ = crate::db::schema::run_script(&db, insert, params);
 
                 return Ok(Some(key_id));
             }

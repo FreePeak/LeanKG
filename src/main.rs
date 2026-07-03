@@ -3621,15 +3621,15 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut found = false;
-    match graph_engine.db().run_script(query, params) {
+    match crate::db::schema::run_script(graph_engine.db(), query, params) {
         Ok(result) => {
             if !result.rows.is_empty() {
                 found = true;
                 println!("Environment conflicts for service '{}':", service);
                 for row in &result.rows {
-                    let source = row[0].as_str().unwrap_or("");
-                    let target = row[1].as_str().unwrap_or("");
-                    let conf = row[3].as_f64().unwrap_or(0.0);
+                    let source = row[0].get_str().unwrap_or("");
+                    let target = row[1].get_str().unwrap_or("");
+                    let conf = row[3].get_float().unwrap_or(0.0);
                     println!("  - {} <-> {} (confidence: {:.2})", source, target, conf);
                 }
             }
@@ -3641,13 +3641,13 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     // Also check for elements with same qualified_name but different env
     let env_query = r#"?[qualified_name, env, count(n)] := *code_elements[n, a, b, qualified_name, c, d, e, f, g, h, env, _] :group [qualified_name, env] :order count(n) desc"#;
-    match graph_engine.db().run_script(env_query, Default::default()) {
+    match crate::db::schema::run_script(graph_engine.db(), env_query, Default::default()) {
         Ok(result) => {
             let mut env_map: std::collections::HashMap<String, Vec<String>> =
                 std::collections::HashMap::new();
             for row in &result.rows {
-                let qn = row[0].as_str().unwrap_or("").to_string();
-                let env = row[1].as_str().unwrap_or("").to_string();
+                let qn = row[0].get_str().unwrap_or("").to_string();
+                let env = row[1].get_str().unwrap_or("").to_string();
                 env_map.entry(qn).or_default().push(env);
             }
 

@@ -104,7 +104,15 @@ fn delete_state_rows_removes_named_rows() {
     let qns: Vec<String> = (0..4).map(|i| format!("q{i}")).collect();
     mark_stale_for_qualified_names(&db, &qns).expect("mark");
 
-    delete_state_rows(&db, &qns[0..2].to_vec()).expect("delete");
+    // delete_state_rows now takes full EmbeddingStateRow records (CozoDB 0.7.x
+    // requires all key columns for `:rm`). Build the rows from list_all.
+    let all_rows = list_all(&db).expect("list_all before delete");
+    let to_delete: Vec<_> = all_rows
+        .iter()
+        .filter(|r| r.qualified_name == "q0" || r.qualified_name == "q1")
+        .cloned()
+        .collect();
+    delete_state_rows(&db, &to_delete).expect("delete");
 
     let remaining = list_all(&db).expect("list_all");
     assert_eq!(remaining.len(), 2);

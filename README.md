@@ -128,6 +128,73 @@ See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
 
 ---
 
+## Semantic Search (Embeddings)
+
+Optional feature: dense-vector retrieval + cross-encoder reranking + graph
+traversal. Off by default to keep the binary slim. Requires building with the
+`embeddings` Cargo feature.
+
+### Build & first-time setup
+
+```bash
+# 1. Build with the feature flag
+cargo build --release --features embeddings
+
+# 2. Pre-download models (~2.3 GB) — do this once per machine
+./target/release/leankg embed --init
+```
+
+Models cache to `~/Library/Caches/leankg/models/` (macOS),
+`~/.cache/leankg/models/` (Linux), or `%LOCALAPPDATA%\leankg\models` (Windows).
+
+### Build the embedding index
+
+```bash
+leankg embed                          # incremental (default): only changed/new nodes
+leankg embed --full                   # force re-embed every node
+leankg embed --batch-size 8           # lower peak RSS on memory-constrained hosts
+```
+
+Index lands at `.leankg/embeddings.usearch` + `.leankg/embeddings.meta.json`.
+Incremental runs diff against the `embedding_state` table and skip rows whose
+content hash hasn't changed.
+
+### Query
+
+```bash
+# CLI one-shot (retrieve → rerank → traverse)
+leankg semantic-context "embedding inference for semantic search"
+leankg semantic-context "auth token validation" --env production --top-k 100
+leankg semantic-context "..." --no-traverse       # skip Stage 4 graph enrichment
+leankg semantic-context "..." --debug             # diagnostics: counts, latency
+```
+
+Via MCP, the `kg_semantic_context` tool exposes the same pipeline to AI tools.
+
+### Memory tuning
+
+Peak RSS scales with `--batch-size` (ORT pre-allocates per-thread arenas).
+Defaults lowered to 32 in the current release. Use the table below if RSS is
+a problem:
+
+| `--batch-size` | Approx peak RSS (10-core Mac) | When to use |
+|---------------|-------------------------------|------------|
+| 32 (default)  | ~1.3 GB                       | Workstation |
+| 8             | ~730 MB                       | Memory-pressured host |
+| 4             | ~400 MB                       | 1-vCPU container |
+
+### Internals & design rationale
+
+See [`src/embeddings/EMBEDDINGS.md`](src/embeddings/EMBEDDINGS.md) for the
+module architecture, file map, data model, the embed/retrieve pipelines,
+operational gotchas (CozoDB operator compat, state/usearch consistency), and
+the rationale for using usearch instead of CozoDB's built-in HNSW.
+
+Design philosophy for the retrieve→rerank→traverse flow is in
+[docs/design/hybrid-retrieval-reranking.md](docs/design/hybrid-retrieval-reranking.md).
+
+---
+
 ## Configuration (Environment Variables)
 
 | Variable | Default | Purpose |
@@ -286,6 +353,7 @@ leankg obsidian pull                      # Pull annotation edits from Obsidian
 | [docs/roadmap.md](docs/roadmap.md) | Feature planning |
 | [docs/tech-stack.md](docs/tech-stack.md) | Tech stack & structure |
 | [docs/android-extraction.md](docs/android-extraction.md) | Android XML & resource extraction |
+| [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings module internals (vector index, pipelines, usearch rationale) |
 
 ---
 
@@ -314,6 +382,20 @@ export LEANKG_CACHE_MAX_TOKENS=100000  # 100K instead of 500K
 ```
 
 See [INSTRUCTION.md](INSTRUCTION.md) for detailed memory tuning and MCP server setup.
+
+### Embeddings feature (`--features embeddings`)
+
+The optional embeddings pipeline (dense-vector retrieval + reranker) has its
+own failure modes. See [`src/embeddings/EMBEDDINGS.md`](src/embeddings/EMBEDDINGS.md)
+for full operational notes. Common issues:
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `embed` peaks at 10+ GB RSS | ORT per-thread arenas × large batch | `leankg embed --batch-size 8` (or `4`) |
+| `semantic-context` returns 0 seeds, `Env-filtered: N` in `--debug` | elements' `env` doesn't match the requested env (default `local`) | pass `--env <value>`, or re-index with the right env |
+| `parser::pest` from `embed` | ran against an old build that uses `:delete` (CozoDB 0.2.2 only supports `:rm`) | rebuild from current `main` |
+| `semantic-context` says `Reranker: fallback` | bge-reranker-v2-m3 failed to init (corrupt cache, OOM) | `leankg embed --init` to re-download; lower `--batch-size` |
+| Searches miss elements that state says are `fresh` | usearch file was deleted or model swapped without `--full` | `leankg embed --full` |
 
 ### Database Lock Error
 

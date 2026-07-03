@@ -16,16 +16,16 @@
 use crate::db::schema::CozoDb;
 
 const CREATE_EMBEDDING_STATE: &str =
-    r#":create embedding_state {qualified_name: String, usearch_key: Int, content_hash: String, state: String, embedded_at: String}"#;
+    r#":create embedding_state {qualified_name: String => usearch_key: Int, content_hash: String, state: String, embedded_at: String}"#;
 
 const CREATE_QN_INDEX: &str =
-    r#":create embedding_state::qn_index {ref: (qualified_name), compressed: true, unique: true}"#;
+    r#"::index create embedding_state:qn_index { qualified_name }"#;
 
 const CREATE_KEY_INDEX: &str =
-    r#":create embedding_state::usearch_key_index {ref: (usearch_key), compressed: true, unique: true}"#;
+    r#"::index create embedding_state:usearch_key_index { usearch_key }"#;
 
 const CREATE_STATE_INDEX: &str =
-    r#":create embedding_state::state_index {ref: (state), compressed: true}"#;
+    r#"::index create embedding_state:state_index { state }"#;
 
 #[derive(Debug, Clone)]
 pub struct EmbeddingStateRow {
@@ -41,20 +41,19 @@ pub struct EmbeddingStateRow {
 /// Idempotently create the `embedding_state` table. Called from `init_schema`
 /// on every DB open, so it must be cheap when the table already exists.
 pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
-    let existing: std::collections::HashSet<String> = db
-        .run_script("::relations", Default::default())
+    let existing: std::collections::HashSet<String> = crate::db::schema::run_script(db, "::relations", Default::default())
         .map(|r| {
             r.rows
                 .iter()
-                .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
+                .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
                 .collect()
         })
         .unwrap_or_default();
 
     if !existing.contains("embedding_state") {
-        db.run_script(CREATE_EMBEDDING_STATE, Default::default())?;
+        crate::db::schema::run_script(db, CREATE_EMBEDDING_STATE, Default::default())?;
         for idx in &[CREATE_QN_INDEX, CREATE_KEY_INDEX, CREATE_STATE_INDEX] {
-            if let Err(e) = db.run_script(idx, Default::default()) {
+            if let Err(e) = crate::db::schema::run_script(db, idx, Default::default()) {
                 tracing::debug!("embedding_state index note: {:?}", e);
             }
         }
@@ -78,27 +77,29 @@ pub fn mark_stale_for_qualified_names(
         return Ok(());
     }
     let now = now_iso();
-    let rows: Vec<String> = qualified_names
-        .iter()
-        .map(|qn| {
-            let key_i64 = crate::embeddings::text_blob::usearch_key_for(qn) as i64;
-            format!(
-                "[{}, {}, {}, {}, {}]",
-                serde_json::Value::String(qn.clone()),
-                serde_json::Value::Number(key_i64.into()),
-                serde_json::Value::String("".to_string()),
-                serde_json::Value::String("stale".to_string()),
-                serde_json::Value::String(now.clone()),
-            )
-        })
-        .collect();
-    let values_clause = rows.join(", ");
+    for chunk in qualified_names.chunks(UPSERT_CHUNK) {
+        let rows: Vec<String> = chunk
+            .iter()
+            .map(|qn| {
+                let key_i64 = crate::embeddings::text_blob::usearch_key_for(qn) as i64;
+                format!(
+                    "[{}, {}, {}, {}, {}]",
+                    serde_json::Value::String(qn.clone()),
+                    serde_json::Value::Number(key_i64.into()),
+                    serde_json::Value::String("".to_string()),
+                    serde_json::Value::String("stale".to_string()),
+                    serde_json::Value::String(now.clone()),
+                )
+            })
+            .collect();
+        let values_clause = rows.join(", ");
 
-    let query = format!(
-        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
-           :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
-    );
-    db.run_script(&query, Default::default())?;
+        let query = format!(
+            r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
+               :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
+        );
+        crate::db::schema::run_script(db, &query, Default::default())?;
+    }
     Ok(())
 }
 
@@ -108,7 +109,7 @@ pub fn mark_stale_for_qualified_names(
 pub fn list_stale(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
     let query =
         r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at], state != "fresh""#;
-    let result = db.run_script(query, Default::default())?;
+    let result = crate::db::schema::run_script(db, query, Default::default())?;
     Ok(result
         .rows
         .iter()
@@ -125,7 +126,7 @@ pub fn list_orphans(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::
             *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at],
             not *code_elements[qualified_name, _, _, _, _, _, _, _, _, _, _, _, _]
     "#;
-    let result = db.run_script(query, Default::default())?;
+    let result = crate::db::schema::run_script(db, query, Default::default())?;
     Ok(result
         .rows
         .iter()
@@ -138,7 +139,7 @@ pub fn list_orphans(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::
 pub fn list_all(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
     let query =
         r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at]"#;
-    let result = db.run_script(query, Default::default())?;
+    let result = crate::db::schema::run_script(db, query, Default::default())?;
     Ok(result
         .rows
         .iter()
@@ -159,14 +160,20 @@ pub fn lookup_usearch_key(
         "qn".to_string(),
         serde_json::Value::String(qualified_name.to_string()),
     );
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     Ok(result
         .rows
         .first()
         .and_then(|row| row.first())
-        .and_then(|v| v.as_i64())
+        .and_then(|v| v.get_int())
         .map(|i| i as u64))
 }
+
+/// Maximum number of rows to inline into a single CozoDB `<~ [...]` literal.
+/// CozoDB's pest grammar parser recurses on large literals and can blow the
+/// stack or hit internal limits on thousand-row repos; chunking keeps each
+/// statement bounded.
+const UPSERT_CHUNK: usize = 500;
 
 /// Batch upsert: mark rows fresh and stamp their content_hash + embedded_at.
 /// Called by the embed step after vectors land in usearch.
@@ -178,66 +185,66 @@ pub fn upsert_fresh(
         return Ok(());
     }
     let now = now_iso();
-    let rows: Vec<String> = updates
-        .iter()
-        .map(|u| {
-            let key_i64 = u.usearch_key as i64;
-            format!(
-                "[{}, {}, {}, {}, {}]",
-                serde_json::Value::String(u.qualified_name.clone()),
-                serde_json::Value::Number(key_i64.into()),
-                serde_json::Value::String(u.content_hash.clone()),
-                serde_json::Value::String("fresh".to_string()),
-                serde_json::Value::String(now.clone()),
-            )
-        })
-        .collect();
-    let values_clause = rows.join(", ");
-    let query = format!(
-        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
-           :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
-    );
-    db.run_script(&query, Default::default())?;
+    for chunk in updates.chunks(UPSERT_CHUNK) {
+        let rows: Vec<String> = chunk
+            .iter()
+            .map(|u| {
+                let key_i64 = u.usearch_key as i64;
+                format!(
+                    "[{}, {}, {}, {}, {}]",
+                    serde_json::Value::String(u.qualified_name.clone()),
+                    serde_json::Value::Number(key_i64.into()),
+                    serde_json::Value::String(u.content_hash.clone()),
+                    serde_json::Value::String("fresh".to_string()),
+                    serde_json::Value::String(now.clone()),
+                )
+            })
+            .collect();
+        let values_clause = rows.join(", ");
+        let query = format!(
+            r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
+               :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
+        );
+        crate::db::schema::run_script(db, &query, Default::default())?;
+    }
     Ok(())
 }
 
-/// Delete state rows for a set of qualified_names. Called after the embed
-/// step removes orphan vectors from usearch.
+/// Delete state rows for a set of orphan qualified_names. Called after the
+/// embed step removes orphan vectors. With the CozoDB 0.7.x schema
+/// (`qualified_name: String => ...`), only the key column is needed for `:rm`.
 pub fn delete_state_rows(
     db: &CozoDb,
-    qualified_names: &[String],
+    rows: &[EmbeddingStateRow],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if qualified_names.is_empty() {
+    if rows.is_empty() {
         return Ok(());
     }
-    let rows: Vec<String> = qualified_names
-        .iter()
-        .map(|qn| format!("[{}]", serde_json::Value::String(qn.clone())))
-        .collect();
-    let rows_clause = rows.join(", ");
-    let query = format!(
-        r#"?[qualified_name] <- [{rows_clause}] :delete embedding_state {{qualified_name}}"#
-    );
-    db.run_script(&query, Default::default())?;
+    for chunk in rows.chunks(UPSERT_CHUNK) {
+        let literals: Vec<String> = chunk
+            .iter()
+            .map(|r| format!("[{}]", serde_json::Value::String(r.qualified_name.clone())))
+            .collect();
+        let values_clause = literals.join(", ");
+        let query = format!(
+            r#"?[qualified_name] <- [{values_clause}] :rm embedding_state {{qualified_name}}"#
+        );
+        crate::db::schema::run_script(db, &query, Default::default())?;
+    }
     Ok(())
 }
 
 /// Count of fresh vs stale rows, for diagnostics.
 pub fn count_by_state(db: &CozoDb) -> Result<StateCounts, Box<dyn std::error::Error>> {
-    let query = r#"
-        ?[state, n] :=
-            *embedding_state[_, _, _, state, _],
-            n = count(state)
-    "#;
-    let result = db.run_script(query, Default::default())?;
+    // Aggregate in Rust — CozoDB 0.7.x has stricter handling of underscore
+    // bindings and `count()` placement that makes the inline aggregation fragile.
+    let all = list_all(db)?;
     let mut counts = StateCounts::default();
-    for row in &result.rows {
-        let state = row.first().and_then(|v| v.as_str()).unwrap_or("");
-        let n = row.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-        match state {
-            "fresh" => counts.fresh = n,
-            "stale" => counts.stale = n,
-            _ => counts.other += n,
+    for row in all {
+        match row.state.as_str() {
+            "fresh" => counts.fresh += 1,
+            "stale" => counts.stale += 1,
+            _ => counts.other += 1,
         }
     }
     Ok(counts)
@@ -257,12 +264,12 @@ pub struct FreshRow {
     pub content_hash: String,
 }
 
-fn row_to_state_row(row: &Vec<serde_json::Value>) -> Option<EmbeddingStateRow> {
-    let qualified_name = row.first()?.as_str()?.to_string();
-    let usearch_key = row.get(1)?.as_i64()?;
-    let content_hash = row.get(2)?.as_str()?.to_string();
-    let state = row.get(3)?.as_str()?.to_string();
-    let embedded_at = row.get(4)?.as_str()?.to_string();
+fn row_to_state_row(row: &Vec<cozo::DataValue>) -> Option<EmbeddingStateRow> {
+    let qualified_name = row.first()?.get_str()?.to_string();
+    let usearch_key = row.get(1)?.get_int()?;
+    let content_hash = row.get(2)?.get_str()?.to_string();
+    let state = row.get(3)?.get_str()?.to_string();
+    let embedded_at = row.get(4)?.get_str()?.to_string();
     Some(EmbeddingStateRow {
         qualified_name,
         usearch_key,

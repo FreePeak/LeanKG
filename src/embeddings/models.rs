@@ -47,15 +47,15 @@ impl Embedder {
     }
 
     pub fn with_model(model: EmbeddingModel) -> Result<Self, Box<dyn std::error::Error>> {
+        // NOTE: fastembed 4.9.1 hard-codes `intra_threads = available_parallelism()`
+        // (text_embedding/impl.rs:52) with no public override. On a 10-core host
+        // each ORT thread pre-allocates its own arena, which is the RSS blow-up
+        // users see at large batch sizes. We bound peak memory via batch_size
+        // (see BuildOptions::default) rather than thread count. Users on small
+        // hosts should pass `--batch-size 4` (or lower) to `embed`.
         let opts = InitOptions::new(model)
             .with_cache_dir(cache_dir())
-            .with_show_download_progress(true)
-            // Pin to a single intra-op thread. ONNX Runtime pre-allocates
-            // memory pools per thread; on small hosts (e.g. 1-vCPU ARM
-            // instances) the default of "all cores" explodes RSS and OOMs
-            // the container. Single-threaded inference is also faster on
-            // 1-CPU hosts because it avoids cross-thread contention.
-            .with_intra_threads(Some(1));
+            .with_show_download_progress(true);
         let inner = TextEmbedding::try_new(opts)?;
         Ok(Self { inner })
     }
@@ -84,10 +84,12 @@ impl Reranker {
     }
 
     pub fn with_model(model: RerankerModel) -> Result<Self, Box<dyn std::error::Error>> {
+        // See Embedder::with_model note: fastembed 4.9.1 doesn't expose
+        // intra_threads publicly; we bound reranker RSS via the retrieval
+        // pipeline's candidate count (default top_k=50 → ≤50 docs reranked).
         let opts = RerankInitOptions::new(model)
             .with_cache_dir(cache_dir())
-            .with_show_download_progress(true)
-            .with_intra_threads(Some(1));
+            .with_show_download_progress(true);
         let inner = TextRerank::try_new(opts)?;
         Ok(Self { inner })
     }

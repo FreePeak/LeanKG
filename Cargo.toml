@@ -75,7 +75,7 @@ libc = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = "0.7"
-cozo = { version = "0.2.2", features = ["storage-rocksdb"] }
+cozo = { version = "0.7.6", features = ["storage-rocksdb"] }
 notify = "7"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
@@ -96,5 +96,3 @@ tree-sitter-dart = "0.1"
 
 [dev-dependencies]
 
-[patch.crates-io]
-cozo = { path = "vendor/cozo-0.2.2" }

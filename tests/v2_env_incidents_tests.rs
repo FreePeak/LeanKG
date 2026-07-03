@@ -37,7 +37,7 @@ fn insert_service(
         "env".to_string(),
         serde_json::Value::String(env.to_string()),
     );
-    db.run_script(query, params).unwrap();
+    leankg::db::schema::run_script(&db, query, params).unwrap();
 }
 
 fn insert_call(db: &leankg::db::schema::CozoDb, source: &str, target: &str, env: &str) {
@@ -59,19 +59,19 @@ fn insert_call(db: &leankg::db::schema::CozoDb, source: &str, target: &str, env:
         "env".to_string(),
         serde_json::Value::String(env.to_string()),
     );
-    db.run_script(query, params).unwrap();
+    leankg::db::schema::run_script(&db, query, params).unwrap();
 }
 
 #[test]
 fn v2_schema_uses_canonical_env_arity() {
     let (_tmp, db) = test_db();
 
-    db.run_script(
-        "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :limit 0",
+    leankg::db::schema::run_script(&db, 
+        "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
         Default::default(),
     )
     .unwrap();
-    db.run_script(
+    leankg::db::schema::run_script(&db, 
         "?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env] :limit 0",
         Default::default(),
     )
