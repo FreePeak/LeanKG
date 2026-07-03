@@ -107,8 +107,11 @@ The server identifies which project database to use via the `?project=` URL quer
 | URL | Project |
 |-----|---------|
 | `http://host:9699/mcp` | Default project (where server started) |
-| `http://host:9699/mcp?project=/workspace-be` | BE backend |
+| `http://host:9699/mcp?project=/workspace-foo` | Side-by-side project mounted at `/workspace-foo` |
 | `http://host:9699/mcp?project=/workspace-new` | Custom project |
+
+The side-by-side project path is whatever the user configured in their
+local `.dockerfile` (see `.dockerfile.example`).
 
 ### Registering a New Project Directory
 

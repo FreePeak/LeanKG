@@ -11,3 +11,7 @@ test-results/
 node_modules/
 .leankg
 .clauge-worktrees/
+# Local-only docker compose overrides. Holds absolute host paths to
+# the user's other repos so they never get committed. The committed
+# template is `.dockerfile.example`; copy it to `.dockerfile` locally.
+.dockerfile
