@@ -1,20 +1,16 @@
-//! Retrieval pipeline orchestration: query → embed → ANN → worktree/env
+//! Retrieval pipeline orchestration: query → embed → HNSW ANN → worktree/env
 //! filter → cross-encoder rerank. Returns a `RetrievalResult` ready for the
 //! MCP handler to hand off to the traversal stage.
 
 use crate::db::models::CodeElement;
-use crate::db::schema::CozoDb;
-use crate::embeddings::{
-    index::AnnIndex,
-    models::{Embedder, RerankerStatus},
-};
-use crate::retrieval::{ann::AnnRetrieve, rerank::RerankStage};
+use crate::db::schema::{run_script, CozoDb};
+use crate::embeddings::models::{Embedder, RerankerStatus};
+use crate::retrieval::rerank::RerankStage;
+use cozo::DataValue;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 pub struct SemanticRetrievalPipeline {
     embedder: Embedder,
-    index: AnnIndex,
     rerank_stage: RerankStage,
     db: CozoDb,
 }
@@ -22,12 +18,13 @@ pub struct SemanticRetrievalPipeline {
 #[derive(Debug, Clone)]
 pub struct Seed {
     pub qualified_name: String,
+    /// Legacy field preserved for API compat — HNSW keys on qualified_name
+    /// directly so there is no separate numeric key.
     pub usearch_key: u64,
-    /// Raw usearch cosine distance/similarity (semantics depend on usearch
-    /// version; we surface the value as-is for diagnostics).
+    /// Raw HNSW cosine distance from `~embedding_vectors:vec_idx`.
     pub ann_distance: f32,
     /// Set by the cross-encoder. None when the pipeline ran in ANN-only
-    /// fallback mode (Q4 option A).
+    /// fallback mode.
     pub rerank_score: Option<f32>,
     pub element_type: String,
     pub file_path: String,
@@ -58,8 +55,7 @@ pub struct RetrieveOptions {
     pub rerank_top_n: usize,
     /// Q2 default-on worktree filter. Set true to include worktree copies.
     pub include_worktrees: bool,
-    /// Surface a stale-embeddings warning in diagnostics. Set by the caller
-    /// based on comparing embeddings.meta.json.built_at vs last index run.
+    /// Surface a stale-embeddings warning in diagnostics.
     pub embeddings_stale: bool,
 }
 
@@ -76,13 +72,11 @@ impl Default for RetrieveOptions {
 }
 
 impl SemanticRetrievalPipeline {
-    pub fn new(db: CozoDb, index_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(db: CozoDb) -> Result<Self, Box<dyn std::error::Error>> {
         let embedder = Embedder::new()?;
-        let index = AnnIndex::load(index_path)?;
         let rerank_stage = RerankStage::try_new();
         Ok(Self {
             embedder,
-            index,
             rerank_stage,
             db,
         })
@@ -97,31 +91,20 @@ impl SemanticRetrievalPipeline {
         query: &str,
         opts: &RetrieveOptions,
     ) -> Result<RetrievalResult, Box<dyn std::error::Error>> {
-        // Stage 2: ANN retrieve.
-        let ann = AnnRetrieve::new(&self.embedder, &self.index);
-        let raw = ann.retrieve(query, opts.ann_top_k)?;
+        // Stage 2: embed query, run CozoDB HNSW search.
+        let qvec = self.embedder.embed(&[query.to_string()])?;
+        let raw = self.hnsw_retrieve(&qvec[0], opts.ann_top_k)?;
         let ann_candidate_count = raw.len();
 
-        // Map keys → qualified_names (single batched query).
-        let qn_map = self.build_key_to_qn_map()?;
-
-        // Resolve desired qualified_names for the batch CodeElements fetch.
-        let desired_qns: Vec<String> = raw
-            .iter()
-            .filter_map(|r| qn_map.get(&r.key).cloned())
-            .collect();
-
-        // Fetch CodeElements for those qualified_names.
+        // HNSW returns qualified_name directly — no key→QN map needed.
+        let desired_qns: Vec<String> = raw.iter().map(|(qn, _)| qn.clone()).collect();
         let element_map = self.fetch_elements_batch(&desired_qns)?;
 
         // Build seeds, applying worktree + env filters.
         let mut seeds: Vec<Seed> = Vec::with_capacity(raw.len());
         let mut worktree_filtered = 0usize;
         let mut env_filtered = 0usize;
-        for r in &raw {
-            let Some(qn) = qn_map.get(&r.key) else {
-                continue;
-            };
+        for (qn, dist) in &raw {
             let Some(el) = element_map.get(qn) else {
                 continue;
             };
@@ -140,8 +123,8 @@ impl SemanticRetrievalPipeline {
             let blob = crate::embeddings::build_blob(el).unwrap_or_default();
             seeds.push(Seed {
                 qualified_name: qn.clone(),
-                usearch_key: r.key,
-                ann_distance: r.distance,
+                usearch_key: 0,
+                ann_distance: *dist,
                 rerank_score: None,
                 element_type: el.element_type.clone(),
                 file_path: el.file_path.clone(),
@@ -172,12 +155,46 @@ impl SemanticRetrievalPipeline {
         })
     }
 
-    fn build_key_to_qn_map(&self) -> Result<HashMap<u64, String>, Box<dyn std::error::Error>> {
-        let rows = crate::embeddings::state::list_all(&self.db)?;
-        Ok(rows
-            .into_iter()
-            .map(|r| (r.usearch_key as u64, r.qualified_name))
-            .collect())
+    /// Run the HNSW search via `~embedding_vectors:vec_idx`. Returns
+    /// `(qualified_name, cosine_distance)` pairs.
+    fn hnsw_retrieve(
+        &self,
+        qvec: &[f32],
+        k: usize,
+    ) -> Result<Vec<(String, f32)>, Box<dyn std::error::Error>> {
+        let vec_literal = qvec
+            .iter()
+            .map(|f| format!("{:.6}", f))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            r#"?[dist, qualified_name] := ~embedding_vectors:vec_idx {{
+                    qualified_name |
+                    query: vec([{vec_literal}]),
+                    k: {k},
+                    ef: {ef},
+                    bind_distance: dist
+                }}"#,
+            // ef (search effort) — bump with k so the index has headroom.
+            ef = (k * 2).max(50)
+        );
+        let result = run_script(&self.db, &query, Default::default())?;
+        let mut out = Vec::with_capacity(result.rows.len());
+        for row in &result.rows {
+            let dist = row
+                .first()
+                .and_then(|v: &DataValue| v.get_float())
+                .unwrap_or(1.0) as f32;
+            let qn = row
+                .get(1)
+                .and_then(|v: &DataValue| v.get_str())
+                .unwrap_or("")
+                .to_string();
+            if !qn.is_empty() {
+                out.push((qn, dist));
+            }
+        }
+        Ok(out)
     }
 
     fn fetch_elements_batch(
@@ -187,9 +204,6 @@ impl SemanticRetrievalPipeline {
         if qns.is_empty() {
             return Ok(HashMap::new());
         }
-        // Phase 2 simplicity: pull all elements and filter in Rust. This is
-        // O(n) per query which is fine for repos up to ~50k elements; larger
-        // deployments should swap in a real batched Datalog lookup.
         let engine = crate::graph::query::GraphEngine::new(self.db.clone());
         let all = engine.all_elements()?;
         let qn_set: HashSet<&str> = qns.iter().map(|s| s.as_str()).collect();

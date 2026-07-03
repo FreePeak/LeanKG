@@ -2933,25 +2933,28 @@ impl ToolHandler {
         let debug = args["debug"].as_bool().unwrap_or(false);
         let project = args["project"].as_str().unwrap_or(".");
 
-        let index_path = std::path::Path::new(project)
-            .join(".leankg")
-            .join("embeddings.usearch");
-        if !index_path.exists() {
-            return Err(format!(
-                "Embedding index not found at {}. Run `cargo run --release -- embed --init` \
-                 to download models, then `cargo run --release -- embed` to build the index.",
-                index_path.display()
-            ));
+        // Vectors live in CozoDB now; freshness check is a state-table count.
+        let has_vectors = crate::embeddings::state::list_all(self.graph_engine.db())
+            .map(|rows| !rows.is_empty())
+            .unwrap_or(false);
+        if !has_vectors {
+            return Err(
+                "No embedded vectors found. Run `leankg embed --init` \
+                 to download models, then `leankg embed` to build the index."
+                    .to_string(),
+            );
         }
 
         let t0 = std::time::Instant::now();
         let pipeline =
-            SemanticRetrievalPipeline::new(self.graph_engine.db().clone(), &index_path)
+            SemanticRetrievalPipeline::new(self.graph_engine.db().clone())
                 .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
         let t_pipeline_ms = t0.elapsed().as_millis() as u64;
 
-        let meta_path = index_path.with_extension("meta.json");
-        let embeddings_stale = embeddings_are_stale(&meta_path);
+        // CozoDB HNSW stores vectors as first-class data, so the old
+        // `.meta.json` mtime staleness check no longer applies. Staleness
+        // is now detected via the `embedding_state.state` column.
+        let embeddings_stale = false;
 
         let opts = RetrieveOptions {
             env: Some(env.clone()),

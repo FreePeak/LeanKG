@@ -1,29 +1,39 @@
 //! Embedding build orchestration: incremental vs full rebuild, plus orphan
 //! reaping. Implements `cargo run --release -- embed [--full]`.
 //!
+//! Vectors live in the CozoDB `embedding_vectors` relation (keyed by
+//! qualified_name, HNSW index via `::hnsw create embedding_vectors:vec_idx`).
+//! The `embedding_state` relation tracks freshness for incremental builds.
+//!
 //! Incremental flow (default):
-//! 1. Load (or create) the usearch index from `embeddings.usearch`.
-//! 2. Walk all `code_elements` and compute the current text blob + hash for
+//! 1. Walk all `code_elements` and compute the current text blob + hash for
 //!    each embeddable node.
-//! 3. Diff against `embedding_state`: embed any qualified_name where
+//! 2. Diff against `embedding_state`: embed any qualified_name where
 //!    (a) no state row exists, OR
 //!    (b) `state != "fresh"`, OR
 //!    (c) stored `content_hash` differs from the current blob hash.
-//! 4. Reap orphans: state rows whose qualified_name is no longer in
-//!    `code_elements` get their vector removed from usearch and their row
-//!    deleted.
-//! 5. Persist `embeddings.usearch` + `embeddings.meta.json`.
+//! 3. For each batch: run fastembed inference, then `:put embedding_vectors`
+//!    in chunks of `UPSERT_CHUNK` (CozoDB pest parser limits).
+//! 4. Mark embedded rows fresh in `embedding_state`.
+//! 5. Reap orphans: state rows whose qualified_name is no longer in the work
+//!    list get their vector removed (`:rm embedding_vectors`) and their state
+//!    row deleted.
 //!
-//! Full rebuild (`--full`): step 3 becomes "embed every embeddable node".
+//! Full rebuild (`--full`): step 2 becomes "embed every embeddable node".
 
+use crate::db::schema::{run_script, CozoDb};
 use crate::embeddings::{
-    index::AnnIndex,
     models::{EMBEDDING_DIM, Embedder},
-    state::{self, FreshRow},
+    state::{self, EmbeddingStateRow, FreshRow},
     text_blob,
 };
 use crate::graph::query::GraphEngine;
-use std::path::{Path, PathBuf};
+use cozo::DataValue;
+use std::path::PathBuf;
+
+/// CozoDB pest parser has stack-depth limits on `<~ [...]` literals; keep
+/// each `:put` / `:rm` bounded.
+const UPSERT_CHUNK: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildMode {
@@ -36,11 +46,11 @@ pub enum BuildMode {
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
     pub mode: BuildMode,
-    /// Vectors per embed call. fastembed handles batching internally; we
-    /// chunk to keep peak memory bounded on very large repos.
+    /// Vectors per fastembed call. ONNX Runtime pre-allocates per-thread
+    /// memory arenas, so peak RSS scales with batch size.
     pub batch_size: usize,
-    /// Optional capacity hint for the usearch index. If None, reserve to
-    /// the current element count + 10% headroom.
+    /// Accepted for backward-compat with CLI flag; ignored (CozoDB HNSW
+    /// manages its own capacity).
     pub reserve_capacity: Option<usize>,
 }
 
@@ -66,35 +76,11 @@ pub struct BuildReport {
 
 pub fn run(
     graph: &GraphEngine,
-    index_path: &Path,
+    _index_path: &std::path::Path,
     opts: &BuildOptions,
 ) -> Result<BuildReport, Box<dyn std::error::Error>> {
     let embedder = Embedder::new()?;
-    let dim = embedder.dim();
-
-    let index = if index_path.exists() {
-        match AnnIndex::load(index_path) {
-            Ok(loaded) if loaded.dim() == dim => loaded,
-            Ok(loaded) => {
-                tracing::warn!(
-                    "existing index dim {} != model dim {}; rebuilding from scratch",
-                    loaded.dim(),
-                    dim
-                );
-                AnnIndex::new(dim)?
-            }
-            Err(e) => {
-                tracing::warn!("failed to load existing index ({}); rebuilding", e);
-                AnnIndex::new(dim)?
-            }
-        }
-    } else {
-        let new = AnnIndex::new(dim)?;
-        if let Some(cap) = opts.reserve_capacity {
-            new.reserve(cap)?;
-        }
-        new
-    };
+    let db = graph.db();
 
     // 1. Walk code_elements and build the work list.
     let elements = graph.all_elements()?;
@@ -103,21 +89,20 @@ pub fn run(
         .filter_map(|el| {
             let blob = text_blob::build_blob(el)?;
             let hash = text_blob::content_hash_for(&blob);
-            let key = text_blob::usearch_key_for(&el.qualified_name);
             Some(WorkItem {
                 qualified_name: el.qualified_name.clone(),
                 blob,
                 current_hash: hash,
-                key,
             })
         })
         .collect();
 
     // 2. Build the "needs embed" set.
-    let existing_state: std::collections::HashMap<String, state::EmbeddingStateRow> = state::list_all(graph.db())?
-        .into_iter()
-        .map(|r| (r.qualified_name.clone(), r))
-        .collect();
+    let existing_state: std::collections::HashMap<String, EmbeddingStateRow> =
+        state::list_all(db)?
+            .into_iter()
+            .map(|r| (r.qualified_name.clone(), r))
+            .collect();
 
     let to_embed: Vec<&WorkItem> = work
         .iter()
@@ -137,32 +122,19 @@ pub fn run(
     let considered = work.len();
     let skipped_fresh = considered - to_embed.len();
 
-    // 3. Reserve usearch capacity ahead of any insertions. usearch panics
-    // ("Reserve capacity ahead of insertions!") if you add before reserving.
-    // Use the existing index size + the new embed count as a lower bound,
-    // with 10% headroom for future incremental runs.
-    let needed_capacity = match opts.reserve_capacity {
-        Some(cap) => cap,
-        None => index.size() + to_embed.len() + (to_embed.len() / 10).max(16),
-    };
-    if needed_capacity > index.size() {
-        index.reserve(needed_capacity)?;
-    }
-
-    // 4. Batch embed and add to usearch.
+    // 3. Batch embed and :put into embedding_vectors.
     let mut embedded = 0usize;
     let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(to_embed.len());
     for chunk in to_embed.chunks(opts.batch_size) {
         let texts: Vec<String> = chunk.iter().map(|w| w.blob.clone()).collect();
         let vectors = embedder.embed(&texts)?;
-        for (item, vector) in chunk.iter().zip(vectors.iter()) {
-            // Remove the old vector if it exists (usearch `add` does NOT
-            // overwrite by default — it can leave duplicate keys).
-            let _ = index.remove(item.key);
-            index.add(item.key, vector)?;
+        let pairs: Vec<(&WorkItem, &Vec<f32>)> =
+            chunk.iter().copied().zip(vectors.iter()).collect();
+        upsert_vectors(db, pairs.iter().copied())?;
+        for (item, _vector) in pairs {
             fresh_rows.push(FreshRow {
                 qualified_name: item.qualified_name.clone(),
-                usearch_key: item.key,
+                usearch_key: 0,
                 content_hash: item.current_hash.clone(),
             });
             embedded += 1;
@@ -175,82 +147,109 @@ pub fn run(
         );
     }
 
-    tracing::info!("embed loop complete, calling upsert_fresh for {} rows", fresh_rows.len());
-    // 4. Persist fresh state.
-    state::upsert_fresh(graph.db(), &fresh_rows)?;
+    tracing::info!(
+        "embed loop complete, calling upsert_fresh for {} rows",
+        fresh_rows.len()
+    );
+    state::upsert_fresh(db, &fresh_rows)?;
     tracing::info!("upsert_fresh complete");
 
-    // 5. Reap orphans: state rows whose qualified_name is no longer present
+    // 4. Reap orphans: state rows whose qualified_name is no longer present
     // in the work list (either removed from code_elements, or SKIP-classified
     // element types like clusters/processes that don't get embedded).
     let work_qns: std::collections::HashSet<&str> =
         work.iter().map(|w| w.qualified_name.as_str()).collect();
-    let orphan_rows: Vec<state::EmbeddingStateRow> = existing_state
+    let orphan_rows: Vec<EmbeddingStateRow> = existing_state
         .iter()
         .filter(|(qn, _)| !work_qns.contains(qn.as_str()))
         .map(|(_, row)| row.clone())
         .collect();
     tracing::info!("orphan reap: {} orphans", orphan_rows.len());
-    for row in &orphan_rows {
-        let _ = index.remove(row.usearch_key as u64);
-    }
     if !orphan_rows.is_empty() {
+        // Remove vectors from HNSW index first, then state rows.
+        let orphan_qns: Vec<String> = orphan_rows.iter().map(|r| r.qualified_name.clone()).collect();
+        remove_vectors(db, &orphan_qns)?;
         tracing::info!("calling delete_state_rows for {} orphans", orphan_rows.len());
-        state::delete_state_rows(graph.db(), &orphan_rows)?;
+        state::delete_state_rows(db, &orphan_rows)?;
         tracing::info!("delete_state_rows complete");
     }
 
-    // 6. Persist index + meta.
-    index.save(index_path)?;
-    write_meta(index_path, dim, embedded, index.size())?;
+    let index_size = count_vectors(db)?;
 
     Ok(BuildReport {
         considered_count: considered,
         embedded_count: embedded,
         skipped_fresh_count: skipped_fresh,
         orphaned_count: orphan_rows.len(),
-        index_size: index.size(),
-        index_path: index_path.to_path_buf(),
+        index_size,
+        index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
     })
+}
+
+/// `:put embedding_vectors {qualified_name => vector}` for a batch.
+/// CozoDB `<F32; 384>` literal is `[f32, f32, ...]` — we build it from a
+/// `Vec<f32>` via a comma-joined decimal list.
+fn upsert_vectors<'a, I>(db: &CozoDb, items: I) -> Result<(), Box<dyn std::error::Error>>
+where
+    I: Iterator<Item = (&'a WorkItem, &'a Vec<f32>)>,
+{
+    let rows: Vec<String> = items
+        .map(|(item, vector)| {
+            let vec_literal = vector
+                .iter()
+                .map(|f| format!("{:.6}", f))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "[{}, vec([{}])]",
+                serde_json::Value::String(item.qualified_name.clone()),
+                vec_literal
+            )
+        })
+        .collect();
+    for chunk in rows.chunks(UPSERT_CHUNK) {
+        let values_clause = chunk.join(", ");
+        let query = format!(
+            r#"?[qualified_name, vector] <- [{values_clause}]
+               :put embedding_vectors {{qualified_name => vector}}"#
+        );
+        run_script(db, &query, Default::default())?;
+    }
+    Ok(())
+}
+
+/// `:rm embedding_vectors {qualified_name}` for a batch of orphans.
+fn remove_vectors(db: &CozoDb, qns: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if qns.is_empty() {
+        return Ok(());
+    }
+    for chunk in qns.chunks(UPSERT_CHUNK) {
+        let literals: Vec<String> = chunk
+            .iter()
+            .map(|qn| format!("[{}]", serde_json::Value::String(qn.clone())))
+            .collect();
+        let values_clause = literals.join(", ");
+        let query = format!(
+            r#"?[qualified_name] <- [{values_clause}] :rm embedding_vectors {{qualified_name}}"#
+        );
+        run_script(db, &query, Default::default())?;
+    }
+    Ok(())
+}
+
+fn count_vectors(db: &CozoDb) -> Result<usize, Box<dyn std::error::Error>> {
+    let result = run_script(
+        db,
+        "?[qualified_name] := *embedding_vectors{qualified_name}",
+        Default::default(),
+    )?;
+    Ok(result.rows.len())
 }
 
 struct WorkItem {
     qualified_name: String,
     blob: String,
     current_hash: String,
-    key: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct IndexMeta {
-    model_id: &'static str,
-    dim: usize,
-    metric: &'static str,
-    size: usize,
-    built_at: u64,
-}
-
-fn write_meta(index_path: &Path, dim: usize, _embedded: usize, size: usize) -> Result<(), Box<dyn std::error::Error>> {
-    let meta = IndexMeta {
-        model_id: "BAAI/bge-small-en-v1.5",
-        dim,
-        metric: "cosine",
-        size,
-        built_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-    };
-    let meta_path = meta_path_for(index_path);
-    let bytes = serde_json::to_vec_pretty(&meta)?;
-    std::fs::write(&meta_path, bytes)?;
-    Ok(())
-}
-
-pub fn meta_path_for(index_path: &Path) -> PathBuf {
-    let mut p = index_path.to_path_buf();
-    p.set_extension("meta.json");
-    p
 }
 
 pub const EMBEDDING_DIM_CONST: usize = EMBEDDING_DIM;
@@ -260,13 +259,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn meta_path_swaps_extension() {
-        let p = PathBuf::from("/tmp/.leankg/embeddings.usearch");
-        let meta = meta_path_for(&p);
-        assert_eq!(meta.file_name().unwrap(), "embeddings.meta.json");
+    fn default_options_batch_size_32() {
+        assert_eq!(BuildOptions::default().batch_size, 32);
     }
-
-    // End-to-end build tests live in /tests/embeddings_build_e2e.rs (Phase 6).
-    // They require a live CozoDB + fastembed model cache, so they aren't run
-    // as part of `cargo test` on machines without the `embeddings` feature.
 }

@@ -4066,21 +4066,25 @@ fn run_semantic_context(
     let project_path = std::path::PathBuf::from(project);
     let leankg_dir = project_path.join(".leankg");
     let db_path = leankg_dir.join("leankg.db");
-    let index_path = leankg_dir.join("embeddings.usearch");
-
-    if !index_path.exists() {
-        return Err(format!(
-            "Embedding index not found at {}. Run `cargo run --release -- embed --init` \
-             (to download models), then `cargo run --release -- embed` (to build the index).",
-            index_path.display()
-        )
-        .into());
-    }
 
     let db = db::schema::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
 
-    let pipeline = retrieval::SemanticRetrievalPipeline::new(db, &index_path)?;
+    // Vectors live inside CozoDB now (embedding_vectors relation + HNSW index),
+    // so the freshness check is a single count query rather than a file stat.
+    let has_vectors = crate::embeddings::state::list_all(&db)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    if !has_vectors {
+        return Err(format!(
+            "No embedded vectors in {}. Run `leankg embed --init` \
+             (to download models), then `leankg embed` (to build the index).",
+            db_path.display()
+        )
+        .into());
+    }
+
+    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
     let opts = retrieval::RetrieveOptions {
         env: Some(env.to_string()),
         ann_top_k: top_k,

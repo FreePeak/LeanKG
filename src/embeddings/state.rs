@@ -38,8 +38,9 @@ pub struct EmbeddingStateRow {
     pub embedded_at: String,
 }
 
-/// Idempotently create the `embedding_state` table. Called from `init_schema`
-/// on every DB open, so it must be cheap when the table already exists.
+/// Idempotently create the `embedding_state` table and the `embedding_vectors`
+/// relation + HNSW index. Called from `init_schema` on every DB open, so it
+/// must be cheap when both already exist.
 pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     let existing: std::collections::HashSet<String> = crate::db::schema::run_script(db, "::relations", Default::default())
         .map(|r| {
@@ -59,8 +60,41 @@ pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::erro
         }
         tracing::info!("created embedding_state table");
     }
+
+    // HNSW-backed vector store. qualified_name is the only key (=> separator),
+    // so :put acts as upsert and `:rm embedding_vectors {qualified_name}` is
+    // sufficient for deletes. The HNSW index uses Cosine distance + f32 (the
+    // default fastembed output type for BGE-small-en-v1.5, 384-dim).
+    if !existing.contains("embedding_vectors") {
+        crate::db::schema::run_script(db, CREATE_EMBEDDING_VECTORS, Default::default())?;
+        tracing::info!("created embedding_vectors relation");
+    }
+    // Check the index separately — earlier runs may have created the relation
+    // but failed silently on HNSW (e.g., the index create is not idempotent
+    // and gets skipped if the relation check is coupled to it).
+    if !existing.contains("embedding_vectors:vec_idx") {
+        match crate::db::schema::run_script(db, CREATE_EMBEDDING_VECTORS_HNSW, Default::default()) {
+            Ok(_) => tracing::info!("created HNSW index embedding_vectors:vec_idx"),
+            Err(e) => tracing::warn!("failed to create HNSW index on embedding_vectors: {:?}", e),
+        }
+    }
+
     Ok(())
 }
+
+const CREATE_EMBEDDING_VECTORS: &str =
+    r#":create embedding_vectors {qualified_name: String => vector: <F32; 384>}"#;
+
+const CREATE_EMBEDDING_VECTORS_HNSW: &str = r#"::hnsw create embedding_vectors:vec_idx {
+    dim: 384,
+    dtype: F32,
+    fields: [vector],
+    distance: Cosine,
+    ef_construction: 20,
+    m: 50,
+    extend_candidates: false,
+    keep_pruned_connections: false
+}""#;
 
 /// Mark a batch of qualified_names as stale. Idempotent: rows that already
 /// exist flip to `state="stale"`; rows that don't exist are inserted with a
