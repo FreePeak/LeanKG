@@ -155,9 +155,10 @@ leankg embed --full                   # force re-embed every node
 leankg embed --batch-size 8           # lower peak RSS on memory-constrained hosts
 ```
 
-Index lands at `.leankg/embeddings.usearch` + `.leankg/embeddings.meta.json`.
-Incremental runs diff against the `embedding_state` table and skip rows whose
-content hash hasn't changed.
+Index lives inside CozoDB as the `embedding_vectors` relation + native HNSW
+index (`embedding_vectors:vec_idx`, Cosine, f32, 384-dim). Incremental runs
+diff against the `embedding_state` table and skip rows whose content hash
+hasn't changed.
 
 ### Query
 
@@ -187,8 +188,8 @@ a problem:
 
 See [`src/embeddings/EMBEDDINGS.md`](src/embeddings/EMBEDDINGS.md) for the
 module architecture, file map, data model, the embed/retrieve pipelines,
-operational gotchas (CozoDB operator compat, state/usearch consistency), and
-the rationale for using usearch instead of CozoDB's built-in HNSW.
+operational gotchas, and the rationale for storing vectors natively in
+CozoDB's HNSW index.
 
 Design philosophy for the retrieve→rerank→traverse flow is in
 [docs/design/hybrid-retrieval-reranking.md](docs/design/hybrid-retrieval-reranking.md).
@@ -353,7 +354,7 @@ leankg obsidian pull                      # Pull annotation edits from Obsidian
 | [docs/roadmap.md](docs/roadmap.md) | Feature planning |
 | [docs/tech-stack.md](docs/tech-stack.md) | Tech stack & structure |
 | [docs/android-extraction.md](docs/android-extraction.md) | Android XML & resource extraction |
-| [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings module internals (vector index, pipelines, usearch rationale) |
+| [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings module internals (vector index, pipelines, native HNSW rationale) |
 
 ---
 
@@ -395,7 +396,7 @@ for full operational notes. Common issues:
 | `semantic-context` returns 0 seeds, `Env-filtered: N` in `--debug` | elements' `env` doesn't match the requested env (default `local`) | pass `--env <value>`, or re-index with the right env |
 | `parser::pest` from `embed` | ran against an old build that uses `:delete` (CozoDB 0.2.2 only supports `:rm`) | rebuild from current `main` |
 | `semantic-context` says `Reranker: fallback` | bge-reranker-v2-m3 failed to init (corrupt cache, OOM) | `leankg embed --init` to re-download; lower `--batch-size` |
-| Searches miss elements that state says are `fresh` | usearch file was deleted or model swapped without `--full` | `leankg embed --full` |
+| Searches miss elements that state says are `fresh` | DB was modified out-of-band (manual SQLite edit) without re-running `embed` | `leankg embed --full` |
 
 ### Database Lock Error
 
