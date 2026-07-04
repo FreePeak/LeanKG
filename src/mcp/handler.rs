@@ -2938,17 +2938,14 @@ impl ToolHandler {
             .map(|rows| !rows.is_empty())
             .unwrap_or(false);
         if !has_vectors {
-            return Err(
-                "No embedded vectors found. Run `leankg embed --init` \
+            return Err("No embedded vectors found. Run `leankg embed --init` \
                  to download models, then `leankg embed` to build the index."
-                    .to_string(),
-            );
+                .to_string());
         }
 
         let t0 = std::time::Instant::now();
-        let pipeline =
-            SemanticRetrievalPipeline::new(self.graph_engine.db().clone())
-                .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
+        let pipeline = SemanticRetrievalPipeline::new(self.graph_engine.db().clone())
+            .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
         let t_pipeline_ms = t0.elapsed().as_millis() as u64;
 
         // CozoDB HNSW stores vectors as first-class data, so the old
@@ -2983,8 +2980,9 @@ impl ToolHandler {
                 .seeds
                 .iter()
                 .map(|s| (s.qualified_name.clone(), s.element_type.clone()));
-            let traverse_result = traverse_seeds(&self.graph_engine, seeds_iter, Some(env.as_str()))
-                .map_err(|e| format!("Traversal failed: {}", e))?;
+            let traverse_result =
+                traverse_seeds(&self.graph_engine, seeds_iter, Some(env.as_str()))
+                    .map_err(|e| format!("Traversal failed: {}", e))?;
             t_traverse_ms = t2.elapsed().as_millis() as u64;
             traverse_capped = traverse_result.capped;
             total_neighbors = traverse_result.total_neighbors;

@@ -4046,7 +4046,11 @@ fn run_embed(
     let report = embeddings::build_index(&graph, std::path::Path::new(""), &opts)?;
     let elapsed = started.elapsed();
 
-    println!("Embed build complete ({:?}) in {:.2}s", mode, elapsed.as_secs_f64());
+    println!(
+        "Embed build complete ({:?}) in {:.2}s",
+        mode,
+        elapsed.as_secs_f64()
+    );
     println!("  Considered:    {}", report.considered_count);
     println!("  Embedded:      {}", report.embedded_count);
     println!("  Skipped fresh: {}", report.skipped_fresh_count);

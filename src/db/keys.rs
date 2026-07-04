@@ -1,9 +1,9 @@
 #![allow(dead_code)]
+use crate::db::schema::CozoDb;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use crate::db::schema::CozoDb;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -38,7 +38,8 @@ impl ApiKeyStore {
         let db: KeysDb = cozo::DbInstance::new("sqlite", &path_str, "")?;
 
         let check_relations = r#"::relations"#;
-        let relations_result = crate::db::schema::run_script(&db, check_relations, Default::default())?;
+        let relations_result =
+            crate::db::schema::run_script(&db, check_relations, Default::default())?;
         let existing_relations: std::collections::HashSet<String> = relations_result
             .rows
             .iter()

@@ -40,8 +40,19 @@ fn mutability_for(query: &str) -> ScriptMutability {
     // is `?` but the action still needs a write lock. So we scan the whole
     // query for any write operator, not just the prefix.
     const WRITE_TOKENS: &[&str] = &[
-        ":put", ":rm", ":create", ":replace", ":delete", ":update", ":insert",
-        "PRAGMA", "::set_triggers", "::hnsw", "::lsh", "::fts", "::index",
+        ":put",
+        ":rm",
+        ":create",
+        ":replace",
+        ":delete",
+        ":update",
+        ":insert",
+        "PRAGMA",
+        "::set_triggers",
+        "::hnsw",
+        "::lsh",
+        "::fts",
+        "::index",
     ];
     if WRITE_TOKENS.iter().any(|t| query.contains(t)) {
         ScriptMutability::Mutable
@@ -49,7 +60,6 @@ fn mutability_for(query: &str) -> ScriptMutability {
         ScriptMutability::Immutable
     }
 }
-
 
 const DEFAULT_ROCKSDB_ROOT: &str = ".leankg-rocksdb";
 
@@ -188,7 +198,8 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             tracing::debug!("file_path index may already exist: {:?}", e);
         }
 
-        let create_qualified_name_index = r#"::index create code_elements:qualified_name_index { qualified_name }"#;
+        let create_qualified_name_index =
+            r#"::index create code_elements:qualified_name_index { qualified_name }"#;
         if let Err(e) = run_script(db, create_qualified_name_index, Default::default()) {
             tracing::debug!("qualified_name index may already exist: {:?}", e);
         }
@@ -199,7 +210,8 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             tracing::debug!("element_type index may already exist: {:?}", e);
         }
 
-        let create_parent_qualified_index = r#"::index create code_elements:parent_qualified_index { parent_qualified }"#;
+        let create_parent_qualified_index =
+            r#"::index create code_elements:parent_qualified_index { parent_qualified }"#;
         if let Err(e) = run_script(db, create_parent_qualified_index, Default::default()) {
             tracing::debug!("parent_qualified index may already exist: {:?}", e);
         }
@@ -213,13 +225,13 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Failed to create relationships: {:?}", e);
         }
     } else {
-        let create_rel_type_index =
-            r#"::index create relationships:rel_type_index { rel_type }"#;
+        let create_rel_type_index = r#"::index create relationships:rel_type_index { rel_type }"#;
         if let Err(e) = run_script(db, create_rel_type_index, Default::default()) {
             tracing::debug!("rel_type index may already exist: {:?}", e);
         }
 
-        let create_target_index = r#"::index create relationships:target_qualified_index { target_qualified }"#;
+        let create_target_index =
+            r#"::index create relationships:target_qualified_index { target_qualified }"#;
         if let Err(e) = run_script(db, create_target_index, Default::default()) {
             tracing::debug!("target_qualified index may already exist: {:?}", e);
         }
@@ -243,8 +255,7 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Failed to create context_metrics: {:?}", e);
         }
 
-        let create_tool_index =
-            r#"::index create context_metrics:tool_name_index { tool_name }"#;
+        let create_tool_index = r#"::index create context_metrics:tool_name_index { tool_name }"#;
         if let Err(e) = run_script(db, create_tool_index, Default::default()) {
             tracing::debug!("tool_name index may already exist: {:?}", e);
         }
@@ -255,7 +266,8 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             tracing::debug!("timestamp index may already exist: {:?}", e);
         }
 
-        let create_project_index = r#"::index create context_metrics:project_path_index { project_path }"#;
+        let create_project_index =
+            r#"::index create context_metrics:project_path_index { project_path }"#;
         if let Err(e) = run_script(db, create_project_index, Default::default()) {
             tracing::debug!("project_path index may already exist: {:?}", e);
         }
@@ -272,8 +284,7 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             tracing::debug!("cache_key index may already exist: {:?}", e);
         }
 
-        let create_tool_index =
-            r#"::index create query_cache:tool_name_index { tool_name }"#;
+        let create_tool_index = r#"::index create query_cache:tool_name_index { tool_name }"#;
         if let Err(e) = run_script(db, create_tool_index, Default::default()) {
             tracing::debug!("tool_name index may already exist: {:?}", e);
         }
@@ -360,14 +371,15 @@ fn run_migrations(
     }
 
     // Get already-applied migrations
-    let applied: std::collections::HashSet<String> = run_script(db, "?[id] := *migrations[id, _]", Default::default())
-        .map(|r| {
-            r.rows
-                .iter()
-                .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
-                .collect()
-        })
-        .unwrap_or_default();
+    let applied: std::collections::HashSet<String> =
+        run_script(db, "?[id] := *migrations[id, _]", Default::default())
+            .map(|r| {
+                r.rows
+                    .iter()
+                    .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+                    .collect()
+            })
+            .unwrap_or_default();
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -687,10 +699,18 @@ fn ensure_canonical_code_elements(
     }
     match current {
         11 => {
-            run_script(&db, REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13, Default::default())?;
+            run_script(
+                &db,
+                REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13,
+                Default::default(),
+            )?;
         }
         12 => {
-            run_script(&db, REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13, Default::default())?;
+            run_script(
+                &db,
+                REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13,
+                Default::default(),
+            )?;
         }
         _ => {
             tracing::warn!(
@@ -860,7 +880,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("ce.db");
         let db = make_db(&db_path);
-        run_script(&db, 
+        run_script(&db,
             r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
             Default::default(),
         )
@@ -888,7 +908,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("rel.db");
         let db = make_db(&db_path);
-        run_script(&db, 
+        run_script(&db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
             Default::default(),
         )
@@ -912,7 +932,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("legacy.db");
         let db = make_db(&db_path);
-        run_script(&db, 
+        run_script(&db,
             r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
             Default::default(),
         )
@@ -937,7 +957,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("legacy-rel.db");
         let db = make_db(&db_path);
-        run_script(&db, 
+        run_script(&db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
             Default::default(),
         )

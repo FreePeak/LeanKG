@@ -27,20 +27,12 @@ pub enum BlobKind {
 /// that duplicate the code they group).
 pub fn classify(element_type: &str) -> BlobKind {
     match element_type {
-        "file" | "function" | "class" | "module" | "method" | "trait" | "interface" => BlobKind::Code,
-        "domain_entity"
-        | "service"
-        | "api_endpoint"
-        | "data_store"
-        | "environment"
-        | "known_issue"
-        | "playbook"
-        | "playbook_step"
-        | "team_knowledge"
-        | "workflow"
-        | "workflow_step"
-        | "decision_point"
-        | "failure_mode" => BlobKind::Ontology,
+        "file" | "function" | "class" | "module" | "method" | "trait" | "interface" => {
+            BlobKind::Code
+        }
+        "domain_entity" | "service" | "api_endpoint" | "data_store" | "environment"
+        | "known_issue" | "playbook" | "playbook_step" | "team_knowledge" | "workflow"
+        | "workflow_step" | "decision_point" | "failure_mode" => BlobKind::Ontology,
         // Skip clusters/processes/etc.: they're grouping abstractions whose
         // members already get embedded individually.
         _ => BlobKind::Skip,
@@ -162,7 +154,11 @@ fn param_to_string(v: &serde_json::Value) -> Option<String> {
         if name.is_empty() {
             return None;
         }
-        let ty = obj.get("type").and_then(|t| t.as_str()).unwrap_or("").trim();
+        let ty = obj
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .trim();
         return Some(if ty.is_empty() {
             name.to_string()
         } else {
@@ -211,7 +207,11 @@ fn build_doc_blob(element: &CodeElement) -> String {
             parts.push(heading_str.join(" / "));
         }
     }
-    if let Some(body) = element.metadata.get("first_paragraph").and_then(|v| v.as_str()) {
+    if let Some(body) = element
+        .metadata
+        .get("first_paragraph")
+        .and_then(|v| v.as_str())
+    {
         parts.push(body.to_string());
     }
     parts.join("\n")

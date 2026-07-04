@@ -134,7 +134,10 @@ pub enum RerankerStatus {
 /// `kg_semantic_context` calls don't pay the download cost. Implements
 /// `cargo run --release -- embed --init`.
 pub fn init_models() -> Result<InitReport, Box<dyn std::error::Error>> {
-    tracing::info!("initializing embedding + reranker models at {}", cache_dir().display());
+    tracing::info!(
+        "initializing embedding + reranker models at {}",
+        cache_dir().display()
+    );
     let _embedder = Embedder::new()?;
     let _reranker = Reranker::new()?;
     Ok(InitReport {

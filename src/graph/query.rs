@@ -98,7 +98,8 @@ impl GraphEngine {
     /// The operation can be expensive (rewrites the entire DB file), so
     /// callers should gate it on a size check first.
     pub fn vacuum(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Err(e) = crate::db::schema::run_script(&self.db, "VACUUM", std::collections::BTreeMap::new())
+        if let Err(e) =
+            crate::db::schema::run_script(&self.db, "VACUUM", std::collections::BTreeMap::new())
         {
             return Err(format!("VACUUM failed: {:?}", e).into());
         }
@@ -108,8 +109,12 @@ impl GraphEngine {
 
     fn code_elements_tail(&self) -> &'static str {
         let arity_13_probe = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0"#;
-        if crate::db::schema::run_script(&self.db, arity_13_probe, std::collections::BTreeMap::new())
-            .is_ok()
+        if crate::db::schema::run_script(
+            &self.db,
+            arity_13_probe,
+            std::collections::BTreeMap::new(),
+        )
+        .is_ok()
         {
             CODE_ELEMENTS_13_TAIL
         } else {
@@ -435,7 +440,8 @@ impl GraphEngine {
             limit, offset
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
 
         let elements: Vec<CodeElement> = result
             .rows
@@ -480,7 +486,8 @@ impl GraphEngine {
             limit, offset
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
 
         let relationships: Vec<Relationship> = result
             .rows
@@ -592,7 +599,8 @@ impl GraphEngine {
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -650,7 +658,11 @@ impl GraphEngine {
                     limit,
                     offset
                 );
-                let result = crate::db::schema::run_script(&self.db, &query_str, std::collections::BTreeMap::new())?;
+                let result = crate::db::schema::run_script(
+                    &self.db,
+                    &query_str,
+                    std::collections::BTreeMap::new(),
+                )?;
                 let total_count = result.rows.len();
 
                 let elements: Vec<CodeElement> = result
@@ -731,7 +743,11 @@ impl GraphEngine {
                 0
             );
 
-            let result = crate::db::schema::run_script(&self.db, &query_str, std::collections::BTreeMap::new())?;
+            let result = crate::db::schema::run_script(
+                &self.db,
+                &query_str,
+                std::collections::BTreeMap::new(),
+            )?;
             let _total_count = result.rows.len();
 
             // Filter to direct children only (paths starting with "./" and containing exactly one "/")
@@ -1053,7 +1069,8 @@ impl GraphEngine {
 
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _]"#;
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -1406,7 +1423,8 @@ impl GraphEngine {
             safe_pattern = safe_pattern
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let annotations: Vec<BusinessLogic> = rows
@@ -1426,7 +1444,8 @@ impl GraphEngine {
     pub fn all_annotations(&self) -> Result<Vec<BusinessLogic>, Box<dyn std::error::Error>> {
         let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id]"#;
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let annotations: Vec<BusinessLogic> = rows
@@ -1905,7 +1924,8 @@ impl GraphEngine {
             safe_name = safe_name
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -1948,7 +1968,8 @@ impl GraphEngine {
             element_type
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2053,7 +2074,8 @@ impl GraphEngine {
             pattern = safe_pattern,
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2094,7 +2116,8 @@ impl GraphEngine {
             escaped
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -2126,7 +2149,8 @@ impl GraphEngine {
             min_lines
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut elements: Vec<CodeElement> = rows
@@ -2173,7 +2197,8 @@ impl GraphEngine {
             language, min_lines
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut elements: Vec<CodeElement> = rows
@@ -2431,7 +2456,8 @@ impl GraphEngine {
         let tail = self.code_elements_tail();
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "calls""#;
         debug!("Running resolve_call_edges query (filtered at DB level)");
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
 
         let unresolved_rows: Vec<_> = result
             .rows
@@ -2456,7 +2482,11 @@ impl GraphEngine {
         let functions_query = format!(
             r#"?[qualified_name, name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "function""#
         );
-        let func_result = crate::db::schema::run_script(&self.db, &functions_query, std::collections::BTreeMap::new())?;
+        let func_result = crate::db::schema::run_script(
+            &self.db,
+            &functions_query,
+            std::collections::BTreeMap::new(),
+        )?;
 
         let mut by_name_and_file: std::collections::HashMap<(String, String), (String, f64)> =
             std::collections::HashMap::new();
@@ -2622,7 +2652,8 @@ impl GraphEngine {
         current_service: &str,
     ) -> Result<ServiceGraph, Box<dyn std::error::Error>> {
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "service_calls""#;
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
 
         let mut service_connections: std::collections::HashMap<
             (String, String),
@@ -2716,8 +2747,13 @@ impl GraphEngine {
         let tail = self.code_elements_tail();
         let query =
             format!(r#"?[count(n)] := *code_elements[n, a, b, c, d, e, f, g, h, i, j{tail}]"#);
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].get_int()).unwrap_or(0) as usize)
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
     }
 
     pub fn has_elements(&self) -> Result<bool, Box<dyn std::error::Error>> {
@@ -2725,20 +2761,31 @@ impl GraphEngine {
         let query = format!(
             r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit 1"#
         );
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
         Ok(!result.rows.is_empty())
     }
 
     pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[count(n)] := *relationships[n, a, b, c, d, _]"#;
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].get_int()).unwrap_or(0) as usize)
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
     }
 
     pub fn count_business_logic(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[count(n)] := *business_logic[n, a, b, c]"#;
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].get_int()).unwrap_or(0) as usize)
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
     }
 
     pub fn count_files(&self) -> Result<usize, Box<dyn std::error::Error>> {
@@ -2747,8 +2794,13 @@ impl GraphEngine {
             r#"files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j{tail}]
 ?[count(f)] := files[f]"#
         );
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].get_int()).unwrap_or(0) as usize)
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
     }
 
     pub fn count_by_element_type(
@@ -2760,8 +2812,13 @@ impl GraphEngine {
             r#"?[count(n)] := *code_elements[n, t, a, b, c, d, e, f, g, h, i{tail}], t = "{}""#,
             element_type
         );
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
-        Ok(result.rows.first().and_then(|r| r[0].get_int()).unwrap_or(0) as usize)
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
     }
 
     pub fn query_incidents(
@@ -2795,8 +2852,9 @@ impl GraphEngine {
             where_clause, limit
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
-            .map_err(|e| e.to_string())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
+                .map_err(|e| e.to_string())?;
 
         let mut incidents: Vec<Incident> = result
             .rows
@@ -2840,8 +2898,9 @@ impl GraphEngine {
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = "{}", env = "{}""#,
             safe_service, safe_env
         );
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
-            .map_err(|e| e.to_string())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
+                .map_err(|e| e.to_string())?;
 
         let version = if let Some(row) = result.rows.first() {
             let metadata_str = row[10].get_str().unwrap_or("{}");
@@ -2861,8 +2920,12 @@ impl GraphEngine {
             r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], source_qualified = "{}", env = "{}", (rel_type = "calls" or rel_type = "service_calls")"#,
             safe_service, safe_env
         );
-        let outgoing_result = crate::db::schema::run_script(&self.db, &outgoing_query, std::collections::BTreeMap::new())
-            .map_err(|e| e.to_string())?;
+        let outgoing_result = crate::db::schema::run_script(
+            &self.db,
+            &outgoing_query,
+            std::collections::BTreeMap::new(),
+        )
+        .map_err(|e| e.to_string())?;
         let calls: Vec<String> = outgoing_result
             .rows
             .iter()
@@ -2873,8 +2936,12 @@ impl GraphEngine {
             r#"?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], target_qualified = "{}", env = "{}", (rel_type = "calls" or rel_type = "service_calls")"#,
             safe_service, safe_env
         );
-        let incoming_result = crate::db::schema::run_script(&self.db, &incoming_query, std::collections::BTreeMap::new())
-            .map_err(|e| e.to_string())?;
+        let incoming_result = crate::db::schema::run_script(
+            &self.db,
+            &incoming_query,
+            std::collections::BTreeMap::new(),
+        )
+        .map_err(|e| e.to_string())?;
         let called_by: Vec<String> = incoming_result
             .rows
             .iter()
@@ -2886,22 +2953,30 @@ impl GraphEngine {
             r#"?[name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], starts_with(file_path, "{}"), regex_matches(element_type, "(schema|protobuf|proto|openapi|json_schema|avro|sql_table|event|topic|config)")"#,
             escape_datalog(&service_prefix)
         );
-        let schemas: Vec<String> = crate::db::schema::run_script(&self.db, &schemas_query, std::collections::BTreeMap::new())
-            .map(|r| {
-                r.rows
-                    .iter()
-                    .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let schemas: Vec<String> = crate::db::schema::run_script(
+            &self.db,
+            &schemas_query,
+            std::collections::BTreeMap::new(),
+        )
+        .map(|r| {
+            r.rows
+                .iter()
+                .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+                .collect()
+        })
+        .unwrap_or_default();
 
         let incidents_query = format!(
             r#"?[id, resolved_at, title, occurred_at, prevention, root_cause] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], regex_matches(lowercase(affected_services), "{}"), env = "{}""#,
             escape_datalog(&format!(".*{}.*", regex::escape(&service.to_lowercase()))),
             safe_env
         );
-        let incidents_result = crate::db::schema::run_script(&self.db, &incidents_query, std::collections::BTreeMap::new())
-            .map_err(|e| e.to_string())?;
+        let incidents_result = crate::db::schema::run_script(
+            &self.db,
+            &incidents_query,
+            std::collections::BTreeMap::new(),
+        )
+        .map_err(|e| e.to_string())?;
 
         let open_incidents = incidents_result
             .rows
@@ -2971,8 +3046,8 @@ impl GraphEngine {
             escape_datalog(service),
             escape_datalog(env)
         );
-        let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
-            .ok();
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new()).ok();
         result
             .and_then(|r| {
                 r.rows.first().map(|row| {
@@ -2999,8 +3074,9 @@ impl GraphEngine {
                 escape_datalog(service),
                 escape_datalog(env)
             );
-            let result = crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
-                .map_err(|e| e.to_string())?;
+            let result =
+                crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
+                    .map_err(|e| e.to_string())?;
 
             let element = result.rows.first().map(|row| {
                 let parent_qualified = row[7].get_str().map(String::from);

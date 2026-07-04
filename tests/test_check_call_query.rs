@@ -31,8 +31,8 @@ async fn test_check_call_graph_query() {
 
     // Also check if the function exists in relationships at all
     let all_calls_query = r#"?[src, tgt] := *relationships[src, tgt, "calls", _, _, _] :limit 10"#;
-    let all_result = leankg::db::schema::run_script(graph.db(), all_calls_query, Default::default())
-        .unwrap();
+    let all_result =
+        leankg::db::schema::run_script(graph.db(), all_calls_query, Default::default()).unwrap();
     println!("\nSample calls (first 10):");
     for row in all_result.rows.iter() {
         println!("  {:?} -> {:?}", row[0], row[1]);
@@ -43,7 +43,7 @@ async fn test_check_call_graph_query() {
         r#"?[tgt] := *relationships[src, tgt, "calls", _, _, _], src = "{}""#,
         safe_src
     );
-    let main_result = leankg::db::schema::run_script(graph.db(), &main_check, Default::default())
-        .unwrap();
+    let main_result =
+        leankg::db::schema::run_script(graph.db(), &main_check, Default::default()).unwrap();
     println!("\nCalls FROM {}: {} rows", source, main_result.rows.len());
 }

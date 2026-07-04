@@ -49,10 +49,7 @@ impl RerankStage {
         match reranker.rerank(query, documents) {
             Ok(scores) => (scores, RerankerStatus::Active),
             Err(e) => {
-                tracing::warn!(
-                    "rerank inference failed; falling back to ANN order: {}",
-                    e
-                );
+                tracing::warn!("rerank inference failed; falling back to ANN order: {}", e);
                 (ann_order(n), RerankerStatus::Fallback)
             }
         }

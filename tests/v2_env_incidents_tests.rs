@@ -66,12 +66,12 @@ fn insert_call(db: &leankg::db::schema::CozoDb, source: &str, target: &str, env:
 fn v2_schema_uses_canonical_env_arity() {
     let (_tmp, db) = test_db();
 
-    leankg::db::schema::run_script(&db, 
+    leankg::db::schema::run_script(&db,
         "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
         Default::default(),
     )
     .unwrap();
-    leankg::db::schema::run_script(&db, 
+    leankg::db::schema::run_script(&db,
         "?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env] :limit 0",
         Default::default(),
     )

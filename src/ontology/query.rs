@@ -130,7 +130,8 @@ impl OntologyQueryEngine {
             types_str
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query_str, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, &query_str, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut matches: Vec<OntologyNodeInfo> = Vec::new();
@@ -559,13 +560,12 @@ impl OntologyQueryEngine {
     /// Load all non-ontology code elements from the db (the actual indexed code,
     /// excluding `ontology://` concept/workflow nodes).
     fn load_indexed_code_elements(&self) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let tail = if self
-            .db
-            .run_script(
-                "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
-                Default::default(),
-            )
-            .is_ok()
+        let tail = if crate::db::schema::run_script(
+            &self.db,
+            "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
+            Default::default(),
+        )
+        .is_ok()
         {
             ", env, ontology_layer"
         } else {
@@ -576,7 +576,7 @@ impl OntologyQueryEngine {
             := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
             !regex_matches(file_path, "^ontology://")"#
         );
-        let result = self.db.run_script(&query, Default::default())?;
+        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
         Ok(result
             .rows
             .iter()
@@ -807,7 +807,8 @@ impl OntologyQueryEngine {
 
         let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow", regex_matches(file_path, "ontology://")"#;
 
-        let result = crate::db::schema::run_script(&self.db, query_str, std::collections::BTreeMap::new())?;
+        let result =
+            crate::db::schema::run_script(&self.db, query_str, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut matches: Vec<WorkflowNode> = Vec::new();
@@ -873,7 +874,8 @@ impl OntologyQueryEngine {
         // Get all ontology nodes with metadata
         let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], regex_matches(file_path, "ontology://")"#;
 
-        if let Ok(result) = crate::db::schema::run_script(&self.db, all_query, std::collections::BTreeMap::new())
+        if let Ok(result) =
+            crate::db::schema::run_script(&self.db, all_query, std::collections::BTreeMap::new())
         {
             for row in &result.rows {
                 let qualified_name = row[0].get_str().unwrap_or("");
@@ -1078,20 +1080,20 @@ fn json_str_array(meta: &serde_json::Value, key: &str) -> Vec<String> {
 
 /// Map a CozoDB result row into a `CodeElement`. Mirrors the column order used
 /// by `load_indexed_code_elements` / `find_element_by_qualified`.
-fn row_to_code_element(row: &[serde_json::Value]) -> CodeElement {
+fn row_to_code_element(row: &[cozo::DataValue]) -> CodeElement {
     CodeElement {
-        qualified_name: row[0].as_str().unwrap_or("").to_string(),
-        element_type: row[1].as_str().unwrap_or("").to_string(),
-        name: row[2].as_str().unwrap_or("").to_string(),
-        file_path: row[3].as_str().unwrap_or("").to_string(),
-        line_start: row[4].as_i64().unwrap_or(0) as u32,
-        line_end: row[5].as_i64().unwrap_or(0) as u32,
-        language: row[6].as_str().unwrap_or("").to_string(),
-        parent_qualified: row[7].as_str().map(String::from),
-        cluster_id: row[8].as_str().map(String::from),
-        cluster_label: row[9].as_str().map(String::from),
-        metadata: serde_json::from_str(row[10].as_str().unwrap_or("{}")).unwrap_or_default(),
-        env: row[11].as_str().unwrap_or("local").to_string(),
+        qualified_name: row[0].get_str().unwrap_or("").to_string(),
+        element_type: row[1].get_str().unwrap_or("").to_string(),
+        name: row[2].get_str().unwrap_or("").to_string(),
+        file_path: row[3].get_str().unwrap_or("").to_string(),
+        line_start: row[4].get_int().unwrap_or(0) as u32,
+        line_end: row[5].get_int().unwrap_or(0) as u32,
+        language: row[6].get_str().unwrap_or("").to_string(),
+        parent_qualified: row[7].get_str().map(String::from),
+        cluster_id: row[8].get_str().map(String::from),
+        cluster_label: row[9].get_str().map(String::from),
+        metadata: serde_json::from_str(row[10].get_str().unwrap_or("{}")).unwrap_or_default(),
+        env: row[11].get_str().unwrap_or("local").to_string(),
     }
 }
 

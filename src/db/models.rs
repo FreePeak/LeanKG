@@ -609,7 +609,7 @@ mod tests {
         };
         assert_eq!(rel.rel_type, "imports");
         assert_eq!(rel.confidence, 1.0);
-        assert_eq!(rel.env, "");
+        assert_eq!(rel.env, "local");
     }
 
     #[test]

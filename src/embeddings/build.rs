@@ -23,7 +23,7 @@
 
 use crate::db::schema::{run_script, CozoDb};
 use crate::embeddings::{
-    models::{EMBEDDING_DIM, Embedder},
+    models::{Embedder, EMBEDDING_DIM},
     state::{self, EmbeddingStateRow, FreshRow},
     text_blob,
 };
@@ -98,11 +98,10 @@ pub fn run(
         .collect();
 
     // 2. Build the "needs embed" set.
-    let existing_state: std::collections::HashMap<String, EmbeddingStateRow> =
-        state::list_all(db)?
-            .into_iter()
-            .map(|r| (r.qualified_name.clone(), r))
-            .collect();
+    let existing_state: std::collections::HashMap<String, EmbeddingStateRow> = state::list_all(db)?
+        .into_iter()
+        .map(|r| (r.qualified_name.clone(), r))
+        .collect();
 
     let to_embed: Vec<&WorkItem> = work
         .iter()
@@ -167,9 +166,15 @@ pub fn run(
     tracing::info!("orphan reap: {} orphans", orphan_rows.len());
     if !orphan_rows.is_empty() {
         // Remove vectors from HNSW index first, then state rows.
-        let orphan_qns: Vec<String> = orphan_rows.iter().map(|r| r.qualified_name.clone()).collect();
+        let orphan_qns: Vec<String> = orphan_rows
+            .iter()
+            .map(|r| r.qualified_name.clone())
+            .collect();
         remove_vectors(db, &orphan_qns)?;
-        tracing::info!("calling delete_state_rows for {} orphans", orphan_rows.len());
+        tracing::info!(
+            "calling delete_state_rows for {} orphans",
+            orphan_rows.len()
+        );
         state::delete_state_rows(db, &orphan_rows)?;
         tracing::info!("delete_state_rows complete");
     }

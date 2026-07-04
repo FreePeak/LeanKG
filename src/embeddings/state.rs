@@ -15,17 +15,14 @@
 
 use crate::db::schema::CozoDb;
 
-const CREATE_EMBEDDING_STATE: &str =
-    r#":create embedding_state {qualified_name: String => usearch_key: Int, content_hash: String, state: String, embedded_at: String}"#;
+const CREATE_EMBEDDING_STATE: &str = r#":create embedding_state {qualified_name: String => usearch_key: Int, content_hash: String, state: String, embedded_at: String}"#;
 
-const CREATE_QN_INDEX: &str =
-    r#"::index create embedding_state:qn_index { qualified_name }"#;
+const CREATE_QN_INDEX: &str = r#"::index create embedding_state:qn_index { qualified_name }"#;
 
 const CREATE_KEY_INDEX: &str =
     r#"::index create embedding_state:usearch_key_index { usearch_key }"#;
 
-const CREATE_STATE_INDEX: &str =
-    r#"::index create embedding_state:state_index { state }"#;
+const CREATE_STATE_INDEX: &str = r#"::index create embedding_state:state_index { state }"#;
 
 #[derive(Debug, Clone)]
 pub struct EmbeddingStateRow {
@@ -42,14 +39,15 @@ pub struct EmbeddingStateRow {
 /// relation + HNSW index. Called from `init_schema` on every DB open, so it
 /// must be cheap when both already exist.
 pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
-    let existing: std::collections::HashSet<String> = crate::db::schema::run_script(db, "::relations", Default::default())
-        .map(|r| {
-            r.rows
-                .iter()
-                .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
-                .collect()
-        })
-        .unwrap_or_default();
+    let existing: std::collections::HashSet<String> =
+        crate::db::schema::run_script(db, "::relations", Default::default())
+            .map(|r| {
+                r.rows
+                    .iter()
+                    .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+                    .collect()
+            })
+            .unwrap_or_default();
 
     if !existing.contains("embedding_state") {
         crate::db::schema::run_script(db, CREATE_EMBEDDING_STATE, Default::default())?;
@@ -147,14 +145,9 @@ pub fn mark_stale_for_qualified_names(
 /// placeholders (state="stale", content_hash="") and existing rows that were
 /// re-touched by the indexer.
 pub fn list_stale(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
-    let query =
-        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at], state != "fresh""#;
+    let query = r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at], state != "fresh""#;
     let result = crate::db::schema::run_script(db, query, Default::default())?;
-    Ok(result
-        .rows
-        .iter()
-        .filter_map(row_to_state_row)
-        .collect())
+    Ok(result.rows.iter().filter_map(row_to_state_row).collect())
 }
 
 /// Return every state row whose qualified_name no longer exists in
@@ -167,24 +160,15 @@ pub fn list_orphans(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::
             not *code_elements[qualified_name, _, _, _, _, _, _, _, _, _, _, _, _]
     "#;
     let result = crate::db::schema::run_script(db, query, Default::default())?;
-    Ok(result
-        .rows
-        .iter()
-        .filter_map(row_to_state_row)
-        .collect())
+    Ok(result.rows.iter().filter_map(row_to_state_row).collect())
 }
 
 /// Return all state rows. Used by `embed --full` to re-embed every existing
 /// vector.
 pub fn list_all(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
-    let query =
-        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at]"#;
+    let query = r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at]"#;
     let result = crate::db::schema::run_script(db, query, Default::default())?;
-    Ok(result
-        .rows
-        .iter()
-        .filter_map(row_to_state_row)
-        .collect())
+    Ok(result.rows.iter().filter_map(row_to_state_row).collect())
 }
 
 /// Maximum number of rows to inline into a single CozoDB `<~ [...]` literal.
@@ -195,10 +179,7 @@ const UPSERT_CHUNK: usize = 500;
 
 /// Batch upsert: mark rows fresh and stamp their content_hash + embedded_at.
 /// Called by the embed step after vectors land in usearch.
-pub fn upsert_fresh(
-    db: &CozoDb,
-    updates: &[FreshRow],
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn upsert_fresh(db: &CozoDb, updates: &[FreshRow]) -> Result<(), Box<dyn std::error::Error>> {
     if updates.is_empty() {
         return Ok(());
     }

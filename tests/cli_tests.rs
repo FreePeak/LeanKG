@@ -194,7 +194,12 @@ fn test_cli_index_all_options() {
 fn test_cli_query_basic() {
     let args = TestArgs::try_parse_from(["leankg", "query", "find_foo"]).unwrap();
     match args.command {
-        CLICommand::Query { query, kind } => {
+        CLICommand::Query {
+            query,
+            kind,
+            file: _,
+            function: _,
+        } => {
             assert_eq!(query, "find_foo");
             assert_eq!(kind, "name");
         }
@@ -206,7 +211,12 @@ fn test_cli_query_basic() {
 fn test_cli_query_with_kind() {
     let args = TestArgs::try_parse_from(["leankg", "query", "find_foo", "--kind", "type"]).unwrap();
     match args.command {
-        CLICommand::Query { query, kind } => {
+        CLICommand::Query {
+            query,
+            kind,
+            file: _,
+            function: _,
+        } => {
             assert_eq!(query, "find_foo");
             assert_eq!(kind, "type");
         }

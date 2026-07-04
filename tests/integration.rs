@@ -100,35 +100,37 @@ async fn test_init_db_repairs_legacy_code_elements_after_recorded_migration() {
     let db_path_str = db_path.to_string_lossy().to_string();
     let legacy_db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
 
-    leankg::db::schema::run_script(&legacy_db, 
+    leankg::db::schema::run_script(&legacy_db,
         r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
         Default::default(),
     ).unwrap();
-    leankg::db::schema::run_script(&legacy_db, 
+    leankg::db::schema::run_script(&legacy_db,
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- [["src/main.rs::main", "function", "main", "src/main.rs", 1, 3, "rust", null, null, null, "{}"]]
         :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}"#,
         Default::default(),
     ).unwrap();
-    leankg::db::schema::run_script(&legacy_db, 
+    leankg::db::schema::run_script(&legacy_db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
             Default::default(),
         )
         .unwrap();
-    leankg::db::schema::run_script(&legacy_db, 
-            r#":create migrations {id: String, applied_at: Int}"#,
-            Default::default(),
-        )
-        .unwrap();
-    leankg::db::schema::run_script(&legacy_db, 
-            r#"?[id, applied_at] <- [["006_safe_canonical_schema_repair", 1]]
+    leankg::db::schema::run_script(
+        &legacy_db,
+        r#":create migrations {id: String, applied_at: Int}"#,
+        Default::default(),
+    )
+    .unwrap();
+    leankg::db::schema::run_script(
+        &legacy_db,
+        r#"?[id, applied_at] <- [["006_safe_canonical_schema_repair", 1]]
         :put migrations {id, applied_at}"#,
-            Default::default(),
-        )
-        .unwrap();
+        Default::default(),
+    )
+    .unwrap();
     drop(legacy_db);
 
     let repaired_db = init_db(db_path.as_path()).unwrap();
-    let canonical_query = leankg::db::schema::run_script(&repaired_db, 
+    let canonical_query = leankg::db::schema::run_script(&repaired_db,
             r#"?[qualified_name, env, ontology_layer] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer]"#,
             Default::default(),
         )
@@ -152,16 +154,16 @@ async fn test_init_db_repairs_env_code_elements_to_ontology_layer_schema() {
     let db_path_str = db_path.to_string_lossy().to_string();
     let legacy_db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
 
-    leankg::db::schema::run_script(&legacy_db, 
+    leankg::db::schema::run_script(&legacy_db,
         r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}"#,
         Default::default(),
     ).unwrap();
-    leankg::db::schema::run_script(&legacy_db, 
+    leankg::db::schema::run_script(&legacy_db,
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] <- [["src/lib.rs::activate", "function", "activate", "src/lib.rs", 2, 5, "rust", null, null, null, "{}", "staging"]]
         :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}"#,
         Default::default(),
     ).unwrap();
-    leankg::db::schema::run_script(&legacy_db, 
+    leankg::db::schema::run_script(&legacy_db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
             Default::default(),
         )
@@ -169,7 +171,7 @@ async fn test_init_db_repairs_env_code_elements_to_ontology_layer_schema() {
     drop(legacy_db);
 
     let repaired_db = init_db(db_path.as_path()).unwrap();
-    let canonical_query = leankg::db::schema::run_script(&repaired_db, 
+    let canonical_query = leankg::db::schema::run_script(&repaired_db,
             r#"?[qualified_name, env, ontology_layer] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer]"#,
             Default::default(),
         )
@@ -186,17 +188,17 @@ async fn test_graph_queries_support_ontology_layer_code_elements_schema() {
     let db_path_str = db_path.to_string_lossy().to_string();
     let db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
 
-    leankg::db::schema::run_script(&db, 
+    leankg::db::schema::run_script(&db,
         r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
         Default::default(),
     ).unwrap();
-    leankg::db::schema::run_script(&db, 
+    leankg::db::schema::run_script(&db,
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
         [["src/metrics/prometheus.go::registerPrometheus", "function", "registerPrometheus", "src/metrics/prometheus.go", 10, 20, "go", null, null, null, "{}", "local", "procedural"]]
         :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
         Default::default(),
     ).unwrap();
-    leankg::db::schema::run_script(&db, 
+    leankg::db::schema::run_script(&db,
         r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
         Default::default(),
     ).unwrap();
@@ -235,12 +237,12 @@ async fn test_ontology_queries_support_13_column_code_elements_schema() {
     let db_path_str = db_path.to_string_lossy().to_string();
     let raw_db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
 
-    leankg::db::schema::run_script(&raw_db, 
+    leankg::db::schema::run_script(&raw_db,
             r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
             Default::default(),
         )
         .unwrap();
-    leankg::db::schema::run_script(&raw_db, 
+    leankg::db::schema::run_script(&raw_db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
             Default::default(),
         )
@@ -249,7 +251,7 @@ async fn test_ontology_queries_support_13_column_code_elements_schema() {
     // Seed one workflow, two workflow_steps (parent_qualified = workflow gid),
     // and one domain_entity. file_path uses the ontology:// scheme so
     // regex_matches(file_path, "ontology://") selects them.
-    leankg::db::schema::run_script(&raw_db, 
+    leankg::db::schema::run_script(&raw_db,
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
             [["ontology://local/checkout/workflow:checkout@1", "workflow", "Checkout Workflow", "ontology://local/checkout/workflow:checkout@1", 1, 1, "ontology", null, null, null, '{"description":"end-to-end checkout","aliases":[]}', "local", "procedural"],
              ["ontology://local/checkout/step:validate_cart@1", "workflow_step", "Validate Cart", "ontology://local/checkout/step:validate_cart@1", 1, 1, "ontology", "ontology://local/checkout/workflow:checkout@1", null, null, '{"gid":"ontology://local/checkout/step:validate_cart@1","ontology":"procedural","ontology_layer":"procedural","workflow_gid":"ontology://local/checkout/workflow:checkout@1","order":1,"aliases":[],"description":"validate cart","code_refs":["src/checkout.rs::validate_cart"],"failure_modes":[],"stale":false}', "local", "procedural"],
@@ -373,12 +375,12 @@ async fn test_kg_self_test_flags_legacy_11_column_schema() {
     let db_path_str = db_path.to_string_lossy().to_string();
     let raw_db = cozo::DbInstance::new("sqlite", &db_path_str, "").unwrap();
 
-    leankg::db::schema::run_script(&raw_db, 
+    leankg::db::schema::run_script(&raw_db,
             r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
             Default::default(),
         )
         .unwrap();
-    leankg::db::schema::run_script(&raw_db, 
+    leankg::db::schema::run_script(&raw_db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
             Default::default(),
         )
@@ -579,7 +581,8 @@ async fn test_get_relationships_with_real_db() {
 
     // Check if DB has data (skip test if empty)
     let count_query = r#"?[cnt] := count(code_elements[qualified_name]), cnt = $cnt"#;
-    let count_result = leankg::db::schema::run_script(&db, count_query, std::collections::BTreeMap::new());
+    let count_result =
+        leankg::db::schema::run_script(&db, count_query, std::collections::BTreeMap::new());
     let has_data = count_result
         .map(|r| !r.rows.is_empty() && r.rows[0].len() > 0)
         .unwrap_or(false);
@@ -668,8 +671,8 @@ async fn test_get_dependencies_with_real_db() {
         escaped, escaped
     );
 
-    let result = leankg::db::schema::run_script(&db, &query, std::collections::BTreeMap::new())
-        .unwrap();
+    let result =
+        leankg::db::schema::run_script(&db, &query, std::collections::BTreeMap::new()).unwrap();
     println!(
         "Path normalization query returned {} rows (may be 0 if DB is empty/unindexed)",
         result.rows.len()

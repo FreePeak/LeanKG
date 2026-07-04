@@ -13,4 +13,4 @@ pub mod rerank;
 #[allow(unused_imports)]
 pub use filter_policy::FilterPolicy;
 #[allow(unused_imports)]
-pub use pipeline::{RetrieveOptions, RetrievalResult, Seed, SemanticRetrievalPipeline};
+pub use pipeline::{RetrievalResult, RetrieveOptions, Seed, SemanticRetrievalPipeline};

@@ -38,9 +38,7 @@ fn ensure_embedding_state_table_is_idempotent() {
 #[test]
 fn mark_stale_inserts_rows_with_placeholder_hash() {
     let db = fresh_db();
-    let qns: Vec<String> = (0..5)
-        .map(|i| format!("src/file{i}.rs::fn{i}"))
-        .collect();
+    let qns: Vec<String> = (0..5).map(|i| format!("src/file{i}.rs::fn{i}")).collect();
     mark_stale_for_qualified_names(&db, &qns).expect("mark_stale");
 
     let stale = list_stale(&db).expect("list_stale");

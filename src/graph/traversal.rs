@@ -309,7 +309,9 @@ where
             }
 
             let outgoing = graph.get_relationships(&current).unwrap_or_default();
-            let incoming = graph.get_relationships_for_target(&current).unwrap_or_default();
+            let incoming = graph
+                .get_relationships_for_target(&current)
+                .unwrap_or_default();
 
             for rel in outgoing.iter().chain(incoming.iter()) {
                 if !rule.edge_types.contains(&rel.rel_type.as_str()) {
@@ -364,12 +366,7 @@ where
                     hop: hop + 1,
                 });
 
-                frontier.push_back((
-                    neighbor,
-                    hop + 1,
-                    from.clone(),
-                    rel.rel_type.clone(),
-                ));
+                frontier.push_back((neighbor, hop + 1, from.clone(), rel.rel_type.clone()));
 
                 seed_count += 1;
                 total += 1;
