@@ -171,6 +171,14 @@ pub enum CLICommand {
         #[arg(long, default_value = ".")]
         project: String,
     },
+    /// Run canonical semantic-context queries with structural assertions.
+    /// Catches regressions in the retrieve→rerank→traverse pipeline.
+    #[cfg(feature = "embeddings")]
+    SmokeTest {
+        /// Project root (defaults to current working directory).
+        #[arg(long, default_value = ".")]
+        project: String,
+    },
     /// Export knowledge graph
     Export {
         /// Output file path

@@ -325,6 +325,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &project,
             )?;
         }
+        #[cfg(feature = "embeddings")]
+        cli::CLICommand::SmokeTest { project } => {
+            run_smoke_test(&project)?;
+        }
         cli::CLICommand::Export {
             output,
             format,
@@ -4160,8 +4164,137 @@ fn run_semantic_context(
             retrieval.worktree_filtered_count
         );
         println!("Env-filtered:          {}", retrieval.env_filtered_count);
+        println!("Test-filtered:         {}", retrieval.test_filtered_count);
         println!("Retrieve latency:      {}ms", retrieve_ms);
     }
 
     Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+fn run_smoke_test(project: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use embeddings::RerankerStatus;
+
+    let project_path = std::path::PathBuf::from(project);
+    let leankg_dir = project_path.join(".leankg");
+    let db_path = leankg_dir.join("leankg.db");
+
+    let db = db::schema::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db.clone());
+
+    let has_vectors = crate::embeddings::state::list_all(&db)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    if !has_vectors {
+        return Err(format!(
+            "No embedded vectors in {}. Run `leankg embed --init` \
+             (to download models), then `leankg embed` (to build the index) \
+             before running the smoke test.",
+            db_path.display()
+        )
+        .into());
+    }
+
+    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
+    let queries = [
+        "embedding inference for code elements",
+        "how does the reranker score documents",
+        "graph traversal for impact radius calculation",
+        "MCP tool to query a file",
+        "where do we filter out worktree paths",
+    ];
+
+    let env = "local";
+    let mut passed = 0usize;
+    let mut any_traversed = false;
+
+    for (idx, q) in queries.iter().enumerate() {
+        let label = format!("[{}/{}] \"{}\"", idx + 1, queries.len(), q);
+        let mut failures: Vec<String> = Vec::new();
+        let mut notes: Vec<String> = Vec::new();
+
+        let result = (|| {
+            let opts = retrieval::RetrieveOptions::default();
+            let retrieval = pipeline.retrieve(q, &opts)?;
+
+            let reranker_ok = match retrieval.reranker_status {
+                RerankerStatus::Active => true,
+                RerankerStatus::Fallback => {
+                    notes.push("reranker=Fallback".to_string());
+                    false
+                }
+            };
+            if !reranker_ok {
+                failures.push("reranker_status != Active (Fallback)".to_string());
+            }
+
+            let nonempty_seeds = retrieval
+                .seeds
+                .iter()
+                .filter(|s| s.blob_excerpt.trim().len() > 0)
+                .count();
+            if nonempty_seeds < 3 {
+                failures.push(format!(
+                    "only {} seeds have non-empty blob_excerpt (need >=3)",
+                    nonempty_seeds
+                ));
+            }
+
+            let trav_neighbors = if retrieval.seeds.is_empty() {
+                0
+            } else {
+                let seeds_iter = retrieval
+                    .seeds
+                    .iter()
+                    .map(|s| (s.qualified_name.clone(), s.element_type.clone()));
+                let result = graph::traversal::traverse_seeds(&graph, seeds_iter, Some(env))?;
+                result.nodes.len()
+            };
+            if trav_neighbors > 0 {
+                any_traversed = true;
+            }
+
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })();
+
+        match result {
+            Ok(()) => {
+                if failures.is_empty() {
+                    println!("PASS {}", label);
+                    if !notes.is_empty() {
+                        println!("     (warn: {})", notes.join(", "));
+                    }
+                    passed += 1;
+                } else {
+                    println!("FAIL {} — {}", label, failures.join("; "));
+                }
+            }
+            Err(e) => {
+                println!("FAIL {} — query error: {}", label, e);
+            }
+        }
+    }
+
+    if !any_traversed {
+        println!(
+            "FAIL (global): no query produced >=1 traversed neighbor \
+             (Stage 4 traversal regression?)"
+        );
+    }
+
+    println!();
+    println!("Smoke test: {}/{} queries passed", passed, queries.len());
+
+    let traversal_ok = any_traversed;
+    if passed == queries.len() && traversal_ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "Smoke test failed: {}/{} queries passed, traversal_ok={}",
+            passed,
+            queries.len(),
+            traversal_ok
+        )
+        .into())
+    }
 }
