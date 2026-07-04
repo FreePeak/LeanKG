@@ -281,7 +281,7 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let b_qual_val = quality_eval(0, b_count);
 
         let ratio = if a_lat > 0.0 { b_lat / a_lat } else { 0.0 };
-        let speedup = if ratio > 1.0 {
+        let _speedup = if ratio > 1.0 {
             ratio
         } else if ratio > 0.0 {
             1.0 / ratio
@@ -567,7 +567,7 @@ fn generate_markdown(report: &AbReport) -> String {
     let s = &report.summary;
     let n = s.total_queries;
     let mut md = String::new();
-    md.push_str(&format!("# LeanKG A/B Test Report\n\n"));
+    md.push_str("# LeanKG A/B Test Report\n\n");
     md.push_str(&format!("**Project:** `{}`  \n", report.project));
     md.push_str(&format!("**Timestamp:** {}  \n", report.timestamp));
     md.push_str(&format!(
@@ -638,7 +638,7 @@ fn generate_markdown(report: &AbReport) -> String {
             "Manual"
         }
     ));
-    md.push_str("\n");
+    md.push('\n');
 
     md.push_str("## Efficiency Metrics\n\n");
     md.push_str("| Metric | A: LeanKG | B: Manual | Better |\n");
@@ -673,7 +673,7 @@ fn generate_markdown(report: &AbReport) -> String {
             "Manual"
         }
     ));
-    md.push_str("\n");
+    md.push('\n');
 
     md.push_str("## Quality Metrics\n\n");
     md.push_str("| Metric | A: LeanKG | B: Manual | Better |\n");
@@ -706,7 +706,7 @@ fn generate_markdown(report: &AbReport) -> String {
         "| Quality | {} | {} |\n",
         s.a_quality_wins, s.b_quality_wins
     ));
-    md.push_str("\n");
+    md.push('\n');
 
     md.push_str("## Per-Query Results\n\n");
     md.push_str("| # | Tool | Query | A ms | A res | A tok/res | A qual | B ms | B res | B tok/res | B qual | Lat W | Eff W | Qual W |\n");

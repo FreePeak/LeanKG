@@ -320,7 +320,6 @@ impl GraphEngine {
                     confidence: row[3].get_float().unwrap_or(1.0),
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
                     env: row[5].get_str().unwrap_or("local").to_string(),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -355,7 +354,6 @@ impl GraphEngine {
                         metadata: serde_json::json!({}),
                         // TODO: cache doesn't track env
                         env: "local".to_string(),
-                        ..Default::default()
                     })
                     .collect();
                 return Ok(relationships);
@@ -388,7 +386,6 @@ impl GraphEngine {
                     confidence: row[3].get_float().unwrap_or(1.0),
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
                     env: row[5].get_str().unwrap_or("local").to_string(),
-                    ..Default::default()
                 }
             })
             .collect();
@@ -624,7 +621,6 @@ impl GraphEngine {
                     cluster_label,
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
                     env,
-                    ..Default::default()
                 }
             })
             .collect();

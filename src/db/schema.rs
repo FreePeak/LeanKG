@@ -521,7 +521,7 @@ fn get_column_count(db: &CozoDb, relation: &str) -> usize {
     }
 
     let query = format!(":schema {}", relation);
-    run_script(&db, &query, Default::default())
+    run_script(db, &query, Default::default())
         .map(|r| r.rows.len())
         .unwrap_or(0)
 }
@@ -692,25 +692,17 @@ fn ensure_canonical_code_elements(
         "parent_qualified_index",
     ] {
         let _ = run_script(
-            &db,
+            db,
             &format!("::index drop code_elements:{}", idx),
             Default::default(),
         );
     }
     match current {
         11 => {
-            run_script(
-                &db,
-                REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13,
-                Default::default(),
-            )?;
+            run_script(db, REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13, Default::default())?;
         }
         12 => {
-            run_script(
-                &db,
-                REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13,
-                Default::default(),
-            )?;
+            run_script(db, REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13, Default::default())?;
         }
         _ => {
             tracing::warn!(
@@ -728,7 +720,7 @@ fn ensure_canonical_code_elements(
         r#"::index create code_elements:element_type_index { element_type }"#,
         r#"::index create code_elements:parent_qualified_index { parent_qualified }"#,
     ] {
-        let _ = run_script(&db, idx_query, Default::default());
+        let _ = run_script(db, idx_query, Default::default());
     }
     Ok(())
 }
@@ -764,18 +756,18 @@ fn ensure_canonical_relationships(
     // Drop indices before :replace (CozoDB 0.7.6 requirement).
     for idx in &["rel_type_index", "target_qualified_index"] {
         let _ = run_script(
-            &db,
+            db,
             &format!("::index drop relationships:{}", idx),
             Default::default(),
         );
     }
-    run_script(&db, REPAIR_LEGACY_RELATIONSHIPS_5_TO_6, Default::default())?;
+    run_script(db, REPAIR_LEGACY_RELATIONSHIPS_5_TO_6, Default::default())?;
     // Recreate indices after :replace.
     for idx_query in &[
         r#"::index create relationships:rel_type_index { rel_type }"#,
         r#"::index create relationships:target_qualified_index { target_qualified }"#,
     ] {
-        let _ = run_script(&db, idx_query, Default::default());
+        let _ = run_script(db, idx_query, Default::default());
     }
     tracing::info!("relationships :replace successful");
     Ok(())
@@ -794,7 +786,7 @@ fn ensure_incidents_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>>
         return Ok(());
     }
     let create_incidents = r#":create incidents {id: String, env: String, title: String, severity: String, occurred_at: Int, resolved_at: Int?, root_cause: String, resolution: String, affected_services: String, trigger_pattern: String?, prevention: String?, tags: String, author: String, linked_ticket: String?}"#;
-    run_script(&db, create_incidents, Default::default())?;
+    run_script(db, create_incidents, Default::default())?;
     for idx in &[
         r#"::index create incidents:env_index { env }"#,
         r#"::index create incidents:severity_index { severity }"#,
@@ -819,7 +811,7 @@ fn record_migration(
         "ts".to_string(),
         serde_json::Value::Number(applied_at.into()),
     );
-    run_script(&db, query, params)?;
+    run_script(db, query, params)?;
     Ok(())
 }
 
