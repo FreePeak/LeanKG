@@ -74,12 +74,102 @@ fn build_code_blob(element: &CodeElement) -> String {
     if let Some(doc) = extract_doc_signature(&element.metadata) {
         parts.push(doc);
     } else {
-        // Fallback: file path + language as a weak signature stand-in.
+        // Fallback: keep file path (weak signal but cheap) and try to
+        // synthesize a signature-like line from any structured metadata
+        // (parameters / return_type) the indexer might have stored.
         if !element.file_path.is_empty() {
             parts.push(element.file_path.clone());
         }
+        if let Some(sig) = synthesize_signature(&element.name, &element.metadata) {
+            parts.push(sig);
+        }
     }
     parts.join("\n")
+}
+
+/// Synthesize a Rust/TS-style signature line from structured metadata, when
+/// the indexer didn't store a pre-formatted `signature` / `doc_comment`.
+///
+/// Looks for `parameters` (array of strings, array of `{name, type}` objects,
+/// or a single object with named fields) and an optional `return_type`.
+/// Returns `None` if neither parameters nor return_type are usable.
+fn synthesize_signature(name: &str, metadata: &serde_json::Value) -> Option<String> {
+    let params = format_parameters(metadata.get("parameters"));
+    let return_type = metadata
+        .get("return_type")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string());
+
+    if params.is_none() && return_type.is_none() {
+        return None;
+    }
+
+    let params_str = params.unwrap_or_default();
+    let mut line = format!("fn {name}({params_str})");
+    if let Some(rt) = return_type {
+        line.push_str(" -> ");
+        line.push_str(&rt);
+    }
+    Some(line)
+}
+
+/// Convert a `parameters` JSON value into a comma-separated `name: Type` list.
+/// Defensive about shape: accepts arrays of strings, arrays of objects with
+/// `name`/`type`, or an object mapping name -> type.
+fn format_parameters(value: Option<&serde_json::Value>) -> Option<String> {
+    let value = value?;
+    let items: Vec<String> = if let Some(arr) = value.as_array() {
+        if arr.is_empty() {
+            return None;
+        }
+        arr.iter().filter_map(param_to_string).collect()
+    } else if let Some(obj) = value.as_object() {
+        if obj.is_empty() {
+            return None;
+        }
+        obj.iter()
+            .map(|(k, v)| {
+                let ty = v.as_str().unwrap_or("");
+                if ty.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{k}: {ty}")
+                }
+            })
+            .collect()
+    } else {
+        return None;
+    };
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(items.join(", "))
+    }
+}
+
+fn param_to_string(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        return Some(trimmed.to_string());
+    }
+    if let Some(obj) = v.as_object() {
+        let name = obj.get("name").and_then(|n| n.as_str())?.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let ty = obj.get("type").and_then(|t| t.as_str()).unwrap_or("").trim();
+        return Some(if ty.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name}: {ty}")
+        });
+    }
+    None
 }
 
 fn build_ontology_blob(element: &CodeElement) -> String {
@@ -131,7 +221,15 @@ fn build_doc_blob(element: &CodeElement) -> String {
 /// indexer stored one. Different extractor paths use different keys; we
 /// accept any of the known ones.
 fn extract_doc_signature(metadata: &serde_json::Value) -> Option<String> {
-    for key in &["doc_comment", "doc", "signature", "signature_text"] {
+    for key in &[
+        "doc_comment",
+        "doc",
+        "signature",
+        "signature_text",
+        "description",
+        "comment",
+        "docstring",
+    ] {
         if let Some(s) = metadata.get(key).and_then(|v| v.as_str()) {
             if !s.trim().is_empty() {
                 return Some(s.to_string());
@@ -222,5 +320,67 @@ mod tests {
         let s = "a".repeat(2000);
         let truncated = truncate_to_chars(&s, MAX_BLOB_CHARS);
         assert_eq!(truncated.len(), MAX_BLOB_CHARS);
+    }
+
+    #[test]
+    fn synthesize_signature_array_of_strings() {
+        let meta = serde_json::json!({"parameters": ["x", "y"]});
+        let sig = synthesize_signature("add", &meta).unwrap();
+        assert_eq!(sig, "fn add(x, y)");
+    }
+
+    #[test]
+    fn synthesize_signature_array_of_objects_with_name_and_type() {
+        let meta = serde_json::json!({
+            "parameters": [
+                {"name": "x", "type": "i32"},
+                {"name": "y", "type": "i32"}
+            ],
+            "return_type": "i32"
+        });
+        let sig = synthesize_signature("add", &meta).unwrap();
+        assert_eq!(sig, "fn add(x: i32, y: i32) -> i32");
+    }
+
+    #[test]
+    fn synthesize_signature_return_type_only() {
+        let meta = serde_json::json!({"return_type": "void"});
+        let sig = synthesize_signature("noop", &meta).unwrap();
+        assert_eq!(sig, "fn noop() -> void");
+    }
+
+    #[test]
+    fn synthesize_signature_empty_params_with_return_type() {
+        let meta = serde_json::json!({"parameters": [], "return_type": "Bool"});
+        let sig = synthesize_signature("is_ready", &meta).unwrap();
+        assert_eq!(sig, "fn is_ready() -> Bool");
+    }
+
+    #[test]
+    fn synthesize_signature_no_metadata_returns_none() {
+        let meta = serde_json::json!({});
+        assert!(synthesize_signature("foo", &meta).is_none());
+    }
+
+    #[test]
+    fn synthesize_signature_object_mapping_params() {
+        let meta = serde_json::json!({
+            "parameters": {"x": "String", "y": "usize"}
+        });
+        let sig = synthesize_signature("concat", &meta).unwrap();
+        assert_eq!(sig, "fn concat(x: String, y: usize)");
+    }
+
+    #[test]
+    fn code_blob_falls_back_to_synthesized_signature() {
+        let mut el = make_element("function", "detect_root", "src/main.rs::detect_root");
+        el.file_path = "./src/main.rs".to_string();
+        el.metadata = serde_json::json!({
+            "parameters": [{"name": "path", "type": "PathBuf"}],
+            "return_type": "Option<PathBuf>"
+        });
+        let blob = build_blob(&el).unwrap();
+        assert!(blob.contains("src/main.rs::detect_root"));
+        assert!(blob.contains("fn detect_root(path: PathBuf) -> Option<PathBuf>"));
     }
 }
