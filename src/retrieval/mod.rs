@@ -6,8 +6,11 @@
 
 #![cfg(feature = "embeddings")]
 
+pub mod filter_policy;
 pub mod pipeline;
 pub mod rerank;
 
+#[allow(unused_imports)]
+pub use filter_policy::FilterPolicy;
 #[allow(unused_imports)]
 pub use pipeline::{RetrieveOptions, RetrievalResult, Seed, SemanticRetrievalPipeline};

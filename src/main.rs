@@ -311,6 +311,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rerank_top_n,
             no_traverse,
             include_worktrees,
+            include_ontology_steps,
             debug,
             project,
         } => {
@@ -321,6 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rerank_top_n,
                 !no_traverse,
                 include_worktrees,
+                include_ontology_steps,
                 debug,
                 &project,
             )?;
@@ -4063,6 +4065,7 @@ fn run_semantic_context(
     rerank_top_n: usize,
     traverse: bool,
     include_worktrees: bool,
+    include_ontology_steps: bool,
     debug: bool,
     project: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -4095,6 +4098,7 @@ fn run_semantic_context(
         ann_top_k: top_k,
         rerank_top_n,
         include_worktrees,
+        include_ontology_steps,
         embeddings_stale: false,
     };
 
@@ -4165,6 +4169,10 @@ fn run_semantic_context(
         );
         println!("Env-filtered:          {}", retrieval.env_filtered_count);
         println!("Test-filtered:         {}", retrieval.test_filtered_count);
+        println!(
+            "Node-type-filtered:    {}",
+            retrieval.node_type_filtered_count
+        );
         println!("Retrieve latency:      {}ms", retrieve_ms);
     }
 

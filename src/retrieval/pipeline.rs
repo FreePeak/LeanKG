@@ -42,6 +42,7 @@ pub struct RetrievalResult {
     pub worktree_filtered_count: usize,
     pub env_filtered_count: usize,
     pub test_filtered_count: usize,
+    pub node_type_filtered_count: usize,
     pub embeddings_stale: bool,
 }
 
@@ -56,6 +57,10 @@ pub struct RetrieveOptions {
     pub rerank_top_n: usize,
     /// Q2 default-on worktree filter. Set true to include worktree copies.
     pub include_worktrees: bool,
+    /// Per-node-type candidate filter bypass. Set true to keep
+    /// workflow_step / playbook_step / decision_point / failure_mode
+    /// even when the query doesn't mention them.
+    pub include_ontology_steps: bool,
     /// Surface a stale-embeddings warning in diagnostics.
     pub embeddings_stale: bool,
 }
@@ -67,6 +72,7 @@ impl Default for RetrieveOptions {
             ann_top_k: 50,
             rerank_top_n: 10,
             include_worktrees: false,
+            include_ontology_steps: false,
             embeddings_stale: false,
         }
     }
@@ -101,12 +107,19 @@ impl SemanticRetrievalPipeline {
         let desired_qns: Vec<String> = raw.iter().map(|(qn, _)| qn.clone()).collect();
         let element_map = self.fetch_elements_batch(&desired_qns)?;
 
-        // Build seeds, applying worktree + env + test filters.
-        let query_is_about_tests = query.to_lowercase().contains("test");
+        // Build seeds, applying worktree + env + test + node-type filters.
+        let query_lower = query.to_lowercase();
+        let query_is_about_tests = query_lower.contains("test");
+        let policy = if opts.include_ontology_steps {
+            None
+        } else {
+            Some(crate::retrieval::FilterPolicy::new())
+        };
         let mut seeds: Vec<Seed> = Vec::with_capacity(raw.len());
         let mut worktree_filtered = 0usize;
         let mut env_filtered = 0usize;
         let mut test_filtered = 0usize;
+        let mut node_type_filtered = 0usize;
         for (qn, dist) in &raw {
             let Some(el) = element_map.get(qn) else {
                 continue;
@@ -127,6 +140,12 @@ impl SemanticRetrievalPipeline {
             {
                 test_filtered += 1;
                 continue;
+            }
+            if let Some(p) = &policy {
+                if p.should_drop(&el.element_type, &query_lower) {
+                    node_type_filtered += 1;
+                    continue;
+                }
             }
 
             let blob = crate::embeddings::build_blob(el).unwrap_or_default();
@@ -161,7 +180,7 @@ impl SemanticRetrievalPipeline {
             worktree_filtered_count: worktree_filtered,
             env_filtered_count: env_filtered,
             test_filtered_count: test_filtered,
-            // TODO: surface in CLI debug output
+            node_type_filtered_count: node_type_filtered,
             embeddings_stale: opts.embeddings_stale,
         })
     }

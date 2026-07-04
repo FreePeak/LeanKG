@@ -2961,6 +2961,7 @@ impl ToolHandler {
             ann_top_k: top_k,
             rerank_top_n,
             include_worktrees,
+            include_ontology_steps: false,
             embeddings_stale,
         };
 

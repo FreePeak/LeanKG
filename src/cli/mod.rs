@@ -164,6 +164,11 @@ pub enum CLICommand {
         /// .opencode/worktrees/ (filtered by default).
         #[arg(long)]
         include_worktrees: bool,
+        /// Include workflow_step / playbook_step / decision_point /
+        /// failure_mode candidates even when the query doesn't mention
+        /// them (filtered by default).
+        #[arg(long)]
+        include_ontology_steps: bool,
         /// Print diagnostics: candidate counts, latency, reranker status.
         #[arg(long)]
         debug: bool,
