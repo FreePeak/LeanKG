@@ -4061,7 +4061,7 @@ fn run_embed(
 fn run_semantic_context(
     query: &str,
     env: &str,
-    top_k: usize,
+    top_k: Option<usize>,
     rerank_top_n: usize,
     traverse: bool,
     include_worktrees: bool,
@@ -4101,6 +4101,7 @@ fn run_semantic_context(
         include_ontology_steps,
         embeddings_stale: false,
     };
+    let adaptive = top_k.is_none();
 
     let started = std::time::Instant::now();
     let retrieval = pipeline.retrieve(query, &opts)?;
@@ -4163,6 +4164,12 @@ fn run_semantic_context(
         println!();
         println!("Diagnostics:");
         println!("  ANN candidates:        {}", retrieval.ann_candidate_count);
+        println!(
+            "ANN k used:            {} ({})",
+            retrieval.ann_top_k_used,
+            if adaptive { "adaptive" } else { "override" }
+        );
+        println!("Index size:            {}", retrieval.index_size);
         println!(
             "Worktree-filtered:     {}",
             retrieval.worktree_filtered_count

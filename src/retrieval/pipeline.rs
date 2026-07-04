@@ -43,6 +43,11 @@ pub struct RetrievalResult {
     pub env_filtered_count: usize,
     pub test_filtered_count: usize,
     pub node_type_filtered_count: usize,
+    /// Number of embedded vectors in the index at query time.
+    pub index_size: usize,
+    /// Effective k used for this query (may differ from opts.ann_top_k when
+    /// adaptive mode is on).
+    pub ann_top_k_used: usize,
     pub embeddings_stale: bool,
 }
 
@@ -51,8 +56,9 @@ pub struct RetrieveOptions {
     /// Restrict results to a single env ("local" / "staging" / "production").
     /// None disables env filtering.
     pub env: Option<String>,
-    /// ANN depth. The reranker then narrows to `rerank_top_n`. Default 50.
-    pub ann_top_k: usize,
+    /// ANN depth. None = adaptive based on index size (default). Some(n) =
+    /// explicit override.
+    pub ann_top_k: Option<usize>,
     /// Final seed count after rerank. Default 10.
     pub rerank_top_n: usize,
     /// Q2 default-on worktree filter. Set true to include worktree copies.
@@ -69,12 +75,68 @@ impl Default for RetrieveOptions {
     fn default() -> Self {
         Self {
             env: Some("local".to_string()),
-            ann_top_k: 50,
+            ann_top_k: None,
             rerank_top_n: 10,
             include_worktrees: false,
             include_ontology_steps: false,
             embeddings_stale: false,
         }
+    }
+}
+
+/// Adaptive ANN depth based on embedded-vector count. Keeps the candidate
+/// sample ratio reasonable as the index grows without paying unbounded
+/// rerank cost. Conservative — rerank is O(k) on CPU.
+///
+///   index_size ≤ 10k    → 50   (small repos, current default)
+///   index_size ≤ 100k   → 100
+///   index_size ≤ 500k   → 150
+///   index_size ≤ 1M     → 200
+///   index_size > 1M     → 300  (cap; bounds rerank to ~900ms)
+pub fn adaptive_k(index_size: usize) -> usize {
+    match index_size {
+        0..=10_000 => 50,
+        10_001..=100_000 => 100,
+        100_001..=500_000 => 150,
+        500_001..=1_000_000 => 200,
+        _ => 300,
+    }
+}
+
+#[cfg(test)]
+mod adaptive_k_tests {
+    use super::*;
+
+    #[test]
+    fn small_index_uses_baseline_50() {
+        assert_eq!(adaptive_k(0), 50);
+        assert_eq!(adaptive_k(2_780), 50);
+        assert_eq!(adaptive_k(10_000), 50);
+    }
+
+    #[test]
+    fn mid_index_uses_100() {
+        assert_eq!(adaptive_k(10_001), 100);
+        assert_eq!(adaptive_k(50_000), 100);
+        assert_eq!(adaptive_k(100_000), 100);
+    }
+
+    #[test]
+    fn large_index_uses_150() {
+        assert_eq!(adaptive_k(100_001), 150);
+        assert_eq!(adaptive_k(500_000), 150);
+    }
+
+    #[test]
+    fn very_large_index_uses_200() {
+        assert_eq!(adaptive_k(500_001), 200);
+        assert_eq!(adaptive_k(1_000_000), 200);
+    }
+
+    #[test]
+    fn million_plus_capped_at_300() {
+        assert_eq!(adaptive_k(1_000_001), 300);
+        assert_eq!(adaptive_k(10_000_000), 300);
     }
 }
 
@@ -98,9 +160,13 @@ impl SemanticRetrievalPipeline {
         query: &str,
         opts: &RetrieveOptions,
     ) -> Result<RetrievalResult, Box<dyn std::error::Error>> {
+        // Resolve effective k: explicit override or adaptive on index size.
+        let index_size = self.index_size()?;
+        let effective_k = opts.ann_top_k.unwrap_or_else(|| adaptive_k(index_size));
+
         // Stage 2: embed query, run CozoDB HNSW search.
         let qvec = self.embedder.embed(&[query.to_string()])?;
-        let raw = self.hnsw_retrieve(&qvec[0], opts.ann_top_k)?;
+        let raw = self.hnsw_retrieve(&qvec[0], effective_k)?;
         let ann_candidate_count = raw.len();
 
         // HNSW returns qualified_name directly — no key→QN map needed.
@@ -181,8 +247,18 @@ impl SemanticRetrievalPipeline {
             env_filtered_count: env_filtered,
             test_filtered_count: test_filtered,
             node_type_filtered_count: node_type_filtered,
+            index_size,
+            ann_top_k_used: effective_k,
             embeddings_stale: opts.embeddings_stale,
         })
+    }
+
+    /// Count rows in `embedding_state`. Cheap; called once per retrieve to
+    /// size adaptive k. Reuses the existing count_by_state aggregator
+    /// because CozoDB 0.7.x is picky about inline count() placement.
+    fn index_size(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let counts = crate::embeddings::state::count_by_state(&self.db)?;
+        Ok(counts.fresh + counts.stale + counts.other)
     }
 
     /// Run the HNSW search via `~embedding_vectors:vec_idx`. Returns

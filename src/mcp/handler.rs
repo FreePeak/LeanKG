@@ -2958,7 +2958,7 @@ impl ToolHandler {
 
         let opts = RetrieveOptions {
             env: Some(env.clone()),
-            ann_top_k: top_k,
+            ann_top_k: Some(top_k),
             rerank_top_n,
             include_worktrees,
             include_ontology_steps: false,

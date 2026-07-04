@@ -151,9 +151,10 @@ pub enum CLICommand {
         /// Environment filter.
         #[arg(long, default_value = "local")]
         env: String,
-        /// ANN retrieve depth.
-        #[arg(long, default_value = "50")]
-        top_k: usize,
+        /// ANN retrieve depth. Defaults to adaptive based on index size
+        /// (50 for ≤10k vectors, scaling up to 300 for >1M).
+        #[arg(long)]
+        top_k: Option<usize>,
         /// Final seed count after rerank.
         #[arg(long, default_value = "10")]
         rerank_top_n: usize,
