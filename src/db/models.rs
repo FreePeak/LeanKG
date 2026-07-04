@@ -231,7 +231,7 @@ pub struct CodeElement {
     pub env: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relationship {
     #[serde(skip)]
     #[allow(dead_code)]
@@ -243,6 +243,20 @@ pub struct Relationship {
     pub metadata: serde_json::Value,
     #[serde(default = "default_env_local")]
     pub env: String,
+}
+
+impl Default for Relationship {
+    fn default() -> Self {
+        Self {
+            id: None,
+            source_qualified: String::new(),
+            target_qualified: String::new(),
+            rel_type: String::new(),
+            confidence: 1.0,
+            metadata: serde_json::Value::Null,
+            env: default_env_local(),
+        }
+    }
 }
 
 /// Information about a dependency (import)

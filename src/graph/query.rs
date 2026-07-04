@@ -289,7 +289,7 @@ impl GraphEngine {
         source: &str,
     ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
         let normalized = normalize_path(source);
-        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], (source_qualified = $sq1 or source_qualified = $sq2)"#;
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata, env] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], (source_qualified = $sq1 or source_qualified = $sq2)"#;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "sq1".to_string(),
@@ -314,6 +314,7 @@ impl GraphEngine {
                     rel_type: row[2].get_str().unwrap_or("").to_string(),
                     confidence: row[3].get_float().unwrap_or(1.0),
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    env: row[5].get_str().unwrap_or("local").to_string(),
                     ..Default::default()
                 }
             })
@@ -347,6 +348,8 @@ impl GraphEngine {
                         rel_type: "imports".to_string(),
                         confidence: 1.0,
                         metadata: serde_json::json!({}),
+                        // TODO: cache doesn't track env
+                        env: "local".to_string(),
                         ..Default::default()
                     })
                     .collect();
@@ -354,7 +357,7 @@ impl GraphEngine {
             }
         }
 
-        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], (target_qualified = $tq1 or target_qualified = $tq2)"#;
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata, env] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], (target_qualified = $tq1 or target_qualified = $tq2)"#;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "tq1".to_string(),
@@ -379,6 +382,7 @@ impl GraphEngine {
                     rel_type: row[2].get_str().unwrap_or("").to_string(),
                     confidence: row[3].get_float().unwrap_or(1.0),
                     metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    env: row[5].get_str().unwrap_or("local").to_string(),
                     ..Default::default()
                 }
             })
