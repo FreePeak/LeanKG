@@ -195,6 +195,17 @@ const FILE_EDGES: &[&str] = &[
 
 const DOC_EDGES: &[&str] = &["documented_by", "documents_concept"];
 
+/// Element types that should never appear as traversal neighbors.
+/// `unknown` is indexer noise — chain-call artifacts (iter, Ok,
+/// unwrap_or, etc.) that tree-sitter extraction wrongly promotes to
+/// first-class elements. `environment` is pure metadata. Both crowd
+/// out real signal in `traverse_seeds` output.
+const INDEXER_NOISE_TYPES: &[&str] = &["unknown", "environment"];
+
+pub fn is_indexer_noise(element_type: &str) -> bool {
+    INDEXER_NOISE_TYPES.contains(&element_type)
+}
+
 pub fn traverse_rule_for(element_type: &str) -> TraverseRule {
     match element_type {
         "workflow" => TraverseRule {
@@ -319,13 +330,6 @@ where
                 if visited.contains(&neighbor) {
                     continue;
                 }
-                visited.insert(neighbor.clone());
-
-                edges.push(TraversedEdge {
-                    source: rel.source_qualified.clone(),
-                    target: rel.target_qualified.clone(),
-                    rel_type: rel.rel_type.clone(),
-                });
 
                 let element_type = graph
                     .find_element(&neighbor)
@@ -333,6 +337,24 @@ where
                     .flatten()
                     .map(|e| e.element_type)
                     .unwrap_or_else(|| "unknown".to_string());
+
+                // Skip indexer noise: chain-call artifacts (iter, Ok,
+                // unwrap_or, etc.) that tree-sitter extraction wrongly
+                // promotes to first-class elements, plus pure-metadata
+                // environment nodes. These crowd out real neighbors in
+                // traversal output. Mark visited so we don't re-check.
+                if is_indexer_noise(&element_type) {
+                    visited.insert(neighbor);
+                    continue;
+                }
+
+                visited.insert(neighbor.clone());
+
+                edges.push(TraversedEdge {
+                    source: rel.source_qualified.clone(),
+                    target: rel.target_qualified.clone(),
+                    rel_type: rel.rel_type.clone(),
+                });
 
                 nodes.push(TraversedNode {
                     qualified_name: neighbor.clone(),
