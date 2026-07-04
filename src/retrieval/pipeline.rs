@@ -41,6 +41,7 @@ pub struct RetrievalResult {
     pub ann_candidate_count: usize,
     pub worktree_filtered_count: usize,
     pub env_filtered_count: usize,
+    pub test_filtered_count: usize,
     pub embeddings_stale: bool,
 }
 
@@ -100,10 +101,12 @@ impl SemanticRetrievalPipeline {
         let desired_qns: Vec<String> = raw.iter().map(|(qn, _)| qn.clone()).collect();
         let element_map = self.fetch_elements_batch(&desired_qns)?;
 
-        // Build seeds, applying worktree + env filters.
+        // Build seeds, applying worktree + env + test filters.
+        let query_is_about_tests = query.to_lowercase().contains("test");
         let mut seeds: Vec<Seed> = Vec::with_capacity(raw.len());
         let mut worktree_filtered = 0usize;
         let mut env_filtered = 0usize;
+        let mut test_filtered = 0usize;
         for (qn, dist) in &raw {
             let Some(el) = element_map.get(qn) else {
                 continue;
@@ -119,6 +122,12 @@ impl SemanticRetrievalPipeline {
                     continue;
                 }
             }
+            if !query_is_about_tests
+                && (el.name.starts_with("test_") || el.qualified_name.contains("::test_"))
+            {
+                test_filtered += 1;
+                continue;
+            }
 
             let blob = crate::embeddings::build_blob(el).unwrap_or_default();
             seeds.push(Seed {
@@ -129,7 +138,7 @@ impl SemanticRetrievalPipeline {
                 element_type: el.element_type.clone(),
                 file_path: el.file_path.clone(),
                 env: el.env.clone(),
-                blob_excerpt: truncate(&blob, 200),
+                blob_excerpt: blob.clone(),
             });
         }
 
@@ -151,6 +160,8 @@ impl SemanticRetrievalPipeline {
             ann_candidate_count,
             worktree_filtered_count: worktree_filtered,
             env_filtered_count: env_filtered,
+            test_filtered_count: test_filtered,
+            // TODO: surface in CLI debug output
             embeddings_stale: opts.embeddings_stale,
         })
     }
