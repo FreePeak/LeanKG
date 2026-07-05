@@ -111,7 +111,8 @@ The server identifies which project database to use via the `?project=` URL quer
 | `http://host:9699/mcp?project=/workspace-new` | Custom project |
 
 The side-by-side project path is whatever the user configured in their
-local `.dockerfile` (see `.dockerfile.example`).
+local `.dockerfile` (see `.dockerfile.example`); the canonical example
+used in this repo's docker-compose is `/workspace`.
 
 ### Registering a New Project Directory
 
