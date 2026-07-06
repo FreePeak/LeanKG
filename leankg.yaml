@@ -1,9 +1,12 @@
 project:
-  name: .leankg
-  root: ./src
+  name: my-project
+  root: .
   languages:
-  - javascript
-  - rust
+  - go
+  - typescript
+  - python
+  - java
+  - kotlin
 indexer:
   exclude:
   - '**/node_modules/**'
@@ -21,8 +24,6 @@ mcp:
   auth_token: ''
   auto_index_on_start: true
   auto_index_threshold_minutes: 5
-  # Disabled by default: re-indexing on every external DB write creates
-  # CPU/memory storms on large workspaces. Set to true explicitly if needed.
   auto_index_on_db_write: false
   require_git_for_auto_index: true
 documentation:
