@@ -66,6 +66,40 @@ LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowle
 
 When the MCP server starts without an existing LeanKG project, it automatically initializes and indexes the current directory. This provides a "plug and play" experience for AI tools.
 
+## Semantic Retrieval (optional, `embeddings` feature)
+
+These tools ship only when LeanKG is built with `--features embeddings`. They add vector retrieval + cross-encoder rerank + adaptive graph traversal on top of the existing keyword/graph search.
+
+| Tool | Description |
+|------|-------------|
+| `kg_semantic_context` | Vector retrieve → rerank → traverse. Best for natural-language questions where keyword search misses (e.g., 'where do we validate access rights'). Returns ranked seed nodes plus 1-2 hop graph context. |
+
+Setup (one-time):
+
+```bash
+cargo run --release --features embeddings -- embed --init        # pre-download models (~700MB)
+cargo run --release --features embeddings -- embed               # build the embedding index
+```
+
+Then call from any MCP client:
+
+```json
+{ "tool": "kg_semantic_context", "arguments": { "query": "where is refund failure handled" } }
+```
+
+Optional arguments: `env` (default `local`), `top_k` (default 50), `rerank_top_n` (default 10), `traverse` (default true), `include_worktrees` (default false), `debug` (default false).
+
+Response shape (debug=false): `{ query, env, seeds[], traversed[] }`. With `debug=true`: adds `diagnostics` with reranker status, candidate counts, per-stage latency, and the edges traversed.
+
+Behavior notes:
+- If the reranker fails to load, the tool silently falls back to ANN-order top-N (Q4 option A). `diagnostics.reranker = "fallback_ann"` surfaces this.
+- If the embedding index is older than the last `index` run, `diagnostics.embeddings_stale = true` (still serves, just warns).
+- Worktree scratch copies (`.worktrees/`, `.claude/worktrees/`, `.opencode/worktrees/`) are filtered out by default to avoid duplicate-noise results.
+
+## Auto-Indexing
+
+When the MCP server starts with an existing LeanKG project, it checks if the index is stale (by comparing git HEAD commit time vs database file modification time). If stale, it automatically runs incremental indexing to ensure AI tools have up-to-date context.
+
 ## Auto-Indexing
 
 When the MCP server starts with an existing LeanKG project, it checks if the index is stale (by comparing git HEAD commit time vs database file modification time). If stale, it automatically runs incremental indexing to ensure AI tools have up-to-date context.
