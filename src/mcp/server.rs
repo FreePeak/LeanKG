@@ -1070,7 +1070,7 @@ impl MCPServer {
         if pid_file.exists() {
             if let Ok(contents) = fs::read_to_string(&pid_file) {
                 if let Ok(pid) = contents.trim().parse::<u32>() {
-                    if pid == std::process::id() as u32 {
+                    if pid == std::process::id() {
                         let _ = fs::remove_file(&pid_file);
                         tracing::info!("Removed PID file");
                     }

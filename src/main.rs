@@ -8,6 +8,8 @@ mod db;
 mod doc;
 mod doc_indexer;
 mod embed;
+#[cfg(feature = "embeddings")]
+mod embeddings;
 mod graph;
 mod indexer;
 mod mcp;
@@ -15,6 +17,8 @@ mod obsidian;
 mod ontology;
 mod orchestrator;
 mod registry;
+#[cfg(feature = "embeddings")]
+mod retrieval;
 mod runtime;
 mod watcher;
 mod web;
@@ -289,6 +293,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
             find_oversized_functions(min_lines, lang.as_deref(), &db_path)?;
+        }
+        #[cfg(feature = "embeddings")]
+        cli::CLICommand::Embed {
+            init,
+            full,
+            batch_size,
+            project,
+        } => {
+            run_embed(init, full, batch_size, &project)?;
+        }
+        #[cfg(feature = "embeddings")]
+        cli::CLICommand::SemanticContext {
+            query,
+            env,
+            top_k,
+            rerank_top_n,
+            no_traverse,
+            include_worktrees,
+            include_ontology_steps,
+            debug,
+            project,
+        } => {
+            run_semantic_context(
+                &query,
+                &env,
+                top_k,
+                rerank_top_n,
+                !no_traverse,
+                include_worktrees,
+                include_ontology_steps,
+                debug,
+                &project,
+            )?;
+        }
+        #[cfg(feature = "embeddings")]
+        cli::CLICommand::SmokeTest { project } => {
+            run_smoke_test(&project)?;
         }
         cli::CLICommand::Export {
             output,
@@ -3586,15 +3627,15 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut found = false;
-    match graph_engine.db().run_script(query, params) {
+    match crate::db::schema::run_script(graph_engine.db(), query, params) {
         Ok(result) => {
             if !result.rows.is_empty() {
                 found = true;
                 println!("Environment conflicts for service '{}':", service);
                 for row in &result.rows {
-                    let source = row[0].as_str().unwrap_or("");
-                    let target = row[1].as_str().unwrap_or("");
-                    let conf = row[3].as_f64().unwrap_or(0.0);
+                    let source = row[0].get_str().unwrap_or("");
+                    let target = row[1].get_str().unwrap_or("");
+                    let conf = row[3].get_float().unwrap_or(0.0);
                     println!("  - {} <-> {} (confidence: {:.2})", source, target, conf);
                 }
             }
@@ -3606,13 +3647,13 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     // Also check for elements with same qualified_name but different env
     let env_query = r#"?[qualified_name, env, count(n)] := *code_elements[n, a, b, qualified_name, c, d, e, f, g, h, env, _] :group [qualified_name, env] :order count(n) desc"#;
-    match graph_engine.db().run_script(env_query, Default::default()) {
+    match crate::db::schema::run_script(graph_engine.db(), env_query, Default::default()) {
         Ok(result) => {
             let mut env_map: std::collections::HashMap<String, Vec<String>> =
                 std::collections::HashMap::new();
             for row in &result.rows {
-                let qn = row[0].as_str().unwrap_or("").to_string();
-                let env = row[1].as_str().unwrap_or("").to_string();
+                let qn = row[0].get_str().unwrap_or("").to_string();
+                let env = row[1].get_str().unwrap_or("").to_string();
                 env_map.entry(qn).or_default().push(env);
             }
 
@@ -3953,4 +3994,326 @@ fn handle_ontology_command(
     }
 
     Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+fn run_embed(
+    init: bool,
+    full: bool,
+    batch_size: usize,
+    project: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if init {
+        let report = embeddings::init_models()?;
+        println!("Models cached at: {}", report.cache_dir.display());
+        println!();
+        println!("Next steps:");
+        println!("  cargo run --release -- index {project}");
+        println!("  cargo run --release -- embed --project {project}");
+        return Ok(());
+    }
+
+    let project_path = std::path::PathBuf::from(project);
+    let leankg_dir = project_path.join(".leankg");
+    let db_path = leankg_dir.join("leankg.db");
+
+    if !db_path.exists() {
+        return Err(format!(
+            "LeanKG database not found at {}. Run `cargo run --release -- index {}` first.",
+            db_path.display(),
+            project
+        )
+        .into());
+    }
+
+    let db = db::schema::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db);
+
+    let mode = if full {
+        embeddings::BuildMode::Full
+    } else {
+        embeddings::BuildMode::Incremental
+    };
+    let opts = embeddings::BuildOptions {
+        mode,
+        batch_size,
+        reserve_capacity: None,
+    };
+
+    let started = std::time::Instant::now();
+    // Vectors live in CozoDB now; index_path is unused but retained in the
+    // signature for backward source-compat with the public `build_index` API.
+    let report = embeddings::build_index(&graph, std::path::Path::new(""), &opts)?;
+    let elapsed = started.elapsed();
+
+    println!(
+        "Embed build complete ({:?}) in {:.2}s",
+        mode,
+        elapsed.as_secs_f64()
+    );
+    println!("  Considered:    {}", report.considered_count);
+    println!("  Embedded:      {}", report.embedded_count);
+    println!("  Skipped fresh: {}", report.skipped_fresh_count);
+    println!("  Orphans reaped: {}", report.orphaned_count);
+    println!("  Index size:    {} vectors", report.index_size);
+    println!("  Index path:    {}", report.index_path.display());
+    Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+#[allow(clippy::too_many_arguments)]
+fn run_semantic_context(
+    query: &str,
+    env: &str,
+    top_k: Option<usize>,
+    rerank_top_n: usize,
+    traverse: bool,
+    include_worktrees: bool,
+    include_ontology_steps: bool,
+    debug: bool,
+    project: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use embeddings::RerankerStatus;
+
+    let project_path = std::path::PathBuf::from(project);
+    let leankg_dir = project_path.join(".leankg");
+    let db_path = leankg_dir.join("leankg.db");
+
+    let db = db::schema::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db.clone());
+
+    // Vectors live inside CozoDB now (embedding_vectors relation + HNSW index),
+    // so the freshness check is a single count query rather than a file stat.
+    let has_vectors = crate::embeddings::state::list_all(&db)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    if !has_vectors {
+        return Err(format!(
+            "No embedded vectors in {}. Run `leankg embed --init` \
+             (to download models), then `leankg embed` (to build the index).",
+            db_path.display()
+        )
+        .into());
+    }
+
+    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
+    let opts = retrieval::RetrieveOptions {
+        env: Some(env.to_string()),
+        ann_top_k: top_k,
+        rerank_top_n,
+        include_worktrees,
+        include_ontology_steps,
+        embeddings_stale: false,
+    };
+    let adaptive = top_k.is_none();
+
+    let started = std::time::Instant::now();
+    let retrieval = pipeline.retrieve(query, &opts)?;
+    let retrieve_ms = started.elapsed().as_millis();
+
+    println!("Query:   {}", query);
+    println!(
+        "Reranker: {}",
+        match retrieval.reranker_status {
+            RerankerStatus::Active => "active (bge-reranker-v2-m3)",
+            RerankerStatus::Fallback => "FALLBACK (ANN-only)",
+        }
+    );
+    println!();
+
+    println!("Seeds ({}):", retrieval.seeds.len());
+    for (i, s) in retrieval.seeds.iter().enumerate() {
+        let score = s
+            .rerank_score
+            .map(|x| format!("rerank={:.4}", x))
+            .unwrap_or_else(|| format!("ann={:.4}", s.ann_distance));
+        println!(
+            "  {:>2}. [{:<15}] {}  ({})",
+            i + 1,
+            s.element_type,
+            s.qualified_name,
+            score
+        );
+        if debug {
+            println!("       blob: {}", s.blob_excerpt);
+        }
+    }
+
+    if traverse && !retrieval.seeds.is_empty() {
+        let t = std::time::Instant::now();
+        let seeds_iter = retrieval
+            .seeds
+            .iter()
+            .map(|s| (s.qualified_name.clone(), s.element_type.clone()));
+        let result = graph::traversal::traverse_seeds(&graph, seeds_iter, Some(env))?;
+        let trav_ms = t.elapsed().as_millis();
+
+        println!();
+        println!(
+            "Traversed ({} neighbors, {} edges{}) in {}ms:",
+            result.nodes.len(),
+            result.edges.len(),
+            if result.capped { ", CAPPED" } else { "" },
+            trav_ms
+        );
+        for n in &result.nodes {
+            println!(
+                "  hop {} via {:<20} [{:<15}] {}  (from {})",
+                n.hop, n.via_edge, n.element_type, n.qualified_name, n.from_seed
+            );
+        }
+    }
+
+    if debug {
+        println!();
+        println!("Diagnostics:");
+        println!("  ANN candidates:        {}", retrieval.ann_candidate_count);
+        println!(
+            "ANN k used:            {} ({})",
+            retrieval.ann_top_k_used,
+            if adaptive { "adaptive" } else { "override" }
+        );
+        println!("Index size:            {}", retrieval.index_size);
+        println!(
+            "Worktree-filtered:     {}",
+            retrieval.worktree_filtered_count
+        );
+        println!("Env-filtered:          {}", retrieval.env_filtered_count);
+        println!("Test-filtered:         {}", retrieval.test_filtered_count);
+        println!(
+            "Node-type-filtered:    {}",
+            retrieval.node_type_filtered_count
+        );
+        println!("Retrieve latency:      {}ms", retrieve_ms);
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+fn run_smoke_test(project: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use embeddings::RerankerStatus;
+
+    let project_path = std::path::PathBuf::from(project);
+    let leankg_dir = project_path.join(".leankg");
+    let db_path = leankg_dir.join("leankg.db");
+
+    let db = db::schema::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db.clone());
+
+    let has_vectors = crate::embeddings::state::list_all(&db)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    if !has_vectors {
+        return Err(format!(
+            "No embedded vectors in {}. Run `leankg embed --init` \
+             (to download models), then `leankg embed` (to build the index) \
+             before running the smoke test.",
+            db_path.display()
+        )
+        .into());
+    }
+
+    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
+    let queries = [
+        "embedding inference for code elements",
+        "how does the reranker score documents",
+        "graph traversal for impact radius calculation",
+        "MCP tool to query a file",
+        "where do we filter out worktree paths",
+    ];
+
+    let env = "local";
+    let mut passed = 0usize;
+    let mut any_traversed = false;
+
+    for (idx, q) in queries.iter().enumerate() {
+        let label = format!("[{}/{}] \"{}\"", idx + 1, queries.len(), q);
+        let mut failures: Vec<String> = Vec::new();
+        let mut notes: Vec<String> = Vec::new();
+
+        let result = (|| {
+            let opts = retrieval::RetrieveOptions::default();
+            let retrieval = pipeline.retrieve(q, &opts)?;
+
+            let reranker_ok = match retrieval.reranker_status {
+                RerankerStatus::Active => true,
+                RerankerStatus::Fallback => {
+                    notes.push("reranker=Fallback".to_string());
+                    false
+                }
+            };
+            if !reranker_ok {
+                failures.push("reranker_status != Active (Fallback)".to_string());
+            }
+
+            let nonempty_seeds = retrieval
+                .seeds
+                .iter()
+                .filter(|s| s.blob_excerpt.trim().len() > 0)
+                .count();
+            if nonempty_seeds < 3 {
+                failures.push(format!(
+                    "only {} seeds have non-empty blob_excerpt (need >=3)",
+                    nonempty_seeds
+                ));
+            }
+
+            let trav_neighbors = if retrieval.seeds.is_empty() {
+                0
+            } else {
+                let seeds_iter = retrieval
+                    .seeds
+                    .iter()
+                    .map(|s| (s.qualified_name.clone(), s.element_type.clone()));
+                let result = graph::traversal::traverse_seeds(&graph, seeds_iter, Some(env))?;
+                result.nodes.len()
+            };
+            if trav_neighbors > 0 {
+                any_traversed = true;
+            }
+
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })();
+
+        match result {
+            Ok(()) => {
+                if failures.is_empty() {
+                    println!("PASS {}", label);
+                    if !notes.is_empty() {
+                        println!("     (warn: {})", notes.join(", "));
+                    }
+                    passed += 1;
+                } else {
+                    println!("FAIL {} — {}", label, failures.join("; "));
+                }
+            }
+            Err(e) => {
+                println!("FAIL {} — query error: {}", label, e);
+            }
+        }
+    }
+
+    if !any_traversed {
+        println!(
+            "FAIL (global): no query produced >=1 traversed neighbor \
+             (Stage 4 traversal regression?)"
+        );
+    }
+
+    println!();
+    println!("Smoke test: {}/{} queries passed", passed, queries.len());
+
+    let traversal_ok = any_traversed;
+    if passed == queries.len() && traversal_ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "Smoke test failed: {}/{} queries passed, traversal_ok={}",
+            passed,
+            queries.len(),
+            traversal_ok
+        )
+        .into())
+    }
 }

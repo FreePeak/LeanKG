@@ -1,7 +1,65 @@
+use cozo::{DataValue, NamedRows, ScriptMutability};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub type CozoDb = cozo::DbInstance;
+
+/// Thin wrapper around `DbInstance::run_script` that absorbs the CozoDB 0.7.x
+/// API changes (third `ScriptMutability` argument, `BTreeMap<String, DataValue>`
+/// params type) so the rest of the codebase keeps the old 2-arg
+/// `BTreeMap<String, serde_json::Value>` calling convention.
+///
+/// Mutability is auto-detected from the leading operator in the query string.
+/// The full operator surface in this codebase is `:put :rm :create :replace`
+/// and `PRAGMA` (writes) plus bare `?`/`::relations` reads — verified by grep.
+/// New write operators (e.g. `::hnsw create`) must be added to `WRITE_PREFIXES`.
+pub fn run_script(
+    db: &CozoDb,
+    query: &str,
+    params: std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<NamedRows, cozo::Error> {
+    let cozo_params: std::collections::BTreeMap<String, DataValue> = params
+        .into_iter()
+        .map(|(k, v)| (k, json_to_datavalue(v)))
+        .collect();
+    db.run_script(query, cozo_params, mutability_for(query))
+}
+
+/// Convert serde_json::Value to cozo::DataValue using CozoDB's own conversion
+/// semantics (matches `impl From<JsonValue> for DataValue` in cozo 0.7.6).
+/// Importantly, `JsonValue::Null` becomes `DataValue::Null` (not `Bot` — `Bot`
+/// is the bottom type and is rejected by nullable column coercion).
+fn json_to_datavalue(v: serde_json::Value) -> DataValue {
+    DataValue::from(v)
+}
+
+fn mutability_for(query: &str) -> ScriptMutability {
+    // CozoDB 0.7.x enforces that Immutable scripts cannot acquire write locks.
+    // A Datalog statement can combine a read head (`?[...] := ...`) with an
+    // action operator (`:put`, `:rm`, etc.) in one script — the leading char
+    // is `?` but the action still needs a write lock. So we scan the whole
+    // query for any write operator, not just the prefix.
+    const WRITE_TOKENS: &[&str] = &[
+        ":put",
+        ":rm",
+        ":create",
+        ":replace",
+        ":delete",
+        ":update",
+        ":insert",
+        "PRAGMA",
+        "::set_triggers",
+        "::hnsw",
+        "::lsh",
+        "::fts",
+        "::index",
+    ];
+    if WRITE_TOKENS.iter().any(|t| query.contains(t)) {
+        ScriptMutability::Mutable
+    } else {
+        ScriptMutability::Immutable
+    }
+}
 
 const DEFAULT_ROCKSDB_ROOT: &str = ".leankg-rocksdb";
 
@@ -51,25 +109,11 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
         mmap_size
     );
 
-    // Set memory limits for SQLite (CozoDB backend) - run individually to avoid parsing issues
-    let static_pragmas: &[&str] = &[
-        "PRAGMA cache_size = -64000",
-        "PRAGMA temp_store = MEMORY",
-        "PRAGMA synchronous = NORMAL",
-        "PRAGMA journal_mode = WAL",
-        "PRAGMA wal_autocheckpoint = 100",
-    ];
-    for pragma in static_pragmas {
-        if let Err(e) = db.run_script(pragma, Default::default()) {
-            tracing::debug!("Pragma '{}' failed (may not be supported): {}", pragma, e);
-        }
-    }
-
-    // mmap_size is dynamic based on env var
-    let mmap_pragma = format!("PRAGMA mmap_size = {}", mmap_size);
-    if let Err(e) = db.run_script(&mmap_pragma, Default::default()) {
-        tracing::debug!("mmap_size pragma failed: {}", e);
-    }
+    // CozoDB 0.7.x no longer accepts raw PRAGMA statements — the parser rejects
+    // them silently. SQLite tuning is now done by CozoDB internally based on
+    // the storage engine's own defaults. LEANKG_MMAP_SIZE is captured for
+    // diagnostic logging only.
+    let _ = mmap_size;
 
     init_schema(&db)?;
 
@@ -135,38 +179,40 @@ pub(crate) fn central_project_storage_path(db_path: &Path) -> std::path::PathBuf
 
 fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     let check_relations = r#"::relations"#;
-    let relations_result = db.run_script(check_relations, Default::default())?;
+    let relations_result = run_script(db, check_relations, Default::default())?;
     let existing_relations: std::collections::HashSet<String> = relations_result
         .rows
         .iter()
-        .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
+        .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
         .collect();
 
     if !existing_relations.contains("code_elements") {
         let create_code_elements = r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#;
-        if let Err(e) = db.run_script(create_code_elements, Default::default()) {
+        if let Err(e) = run_script(db, create_code_elements, Default::default()) {
             eprintln!("Failed to create code_elements: {:?}", e);
         }
     } else {
         let create_file_path_index =
-            r#":create code_elements::file_path_index {ref: (file_path), compressed: true}"#;
-        if let Err(e) = db.run_script(create_file_path_index, Default::default()) {
+            r#"::index create code_elements:file_path_index { file_path }"#;
+        if let Err(e) = run_script(db, create_file_path_index, Default::default()) {
             tracing::debug!("file_path index may already exist: {:?}", e);
         }
 
-        let create_qualified_name_index = r#":create code_elements::qualified_name_index {ref: (qualified_name), compressed: true}"#;
-        if let Err(e) = db.run_script(create_qualified_name_index, Default::default()) {
+        let create_qualified_name_index =
+            r#"::index create code_elements:qualified_name_index { qualified_name }"#;
+        if let Err(e) = run_script(db, create_qualified_name_index, Default::default()) {
             tracing::debug!("qualified_name index may already exist: {:?}", e);
         }
 
         let create_element_type_index =
-            r#":create code_elements::element_type_index {ref: (element_type), compressed: true}"#;
-        if let Err(e) = db.run_script(create_element_type_index, Default::default()) {
+            r#"::index create code_elements:element_type_index { element_type }"#;
+        if let Err(e) = run_script(db, create_element_type_index, Default::default()) {
             tracing::debug!("element_type index may already exist: {:?}", e);
         }
 
-        let create_parent_qualified_index = r#":create code_elements::parent_qualified_index {ref: (parent_qualified), compressed: true}"#;
-        if let Err(e) = db.run_script(create_parent_qualified_index, Default::default()) {
+        let create_parent_qualified_index =
+            r#"::index create code_elements:parent_qualified_index { parent_qualified }"#;
+        if let Err(e) = run_script(db, create_parent_qualified_index, Default::default()) {
             tracing::debug!("parent_qualified index may already exist: {:?}", e);
         }
 
@@ -175,18 +221,18 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
 
     if !existing_relations.contains("relationships") {
         let create_relationships = r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#;
-        if let Err(e) = db.run_script(create_relationships, Default::default()) {
+        if let Err(e) = run_script(db, create_relationships, Default::default()) {
             eprintln!("Failed to create relationships: {:?}", e);
         }
     } else {
-        let create_rel_type_index =
-            r#":create relationships::rel_type_index {ref: (rel_type), compressed: true}"#;
-        if let Err(e) = db.run_script(create_rel_type_index, Default::default()) {
+        let create_rel_type_index = r#"::index create relationships:rel_type_index { rel_type }"#;
+        if let Err(e) = run_script(db, create_rel_type_index, Default::default()) {
             tracing::debug!("rel_type index may already exist: {:?}", e);
         }
 
-        let create_target_index = r#":create relationships::target_qualified_index {ref: (target_qualified), compressed: true}"#;
-        if let Err(e) = db.run_script(create_target_index, Default::default()) {
+        let create_target_index =
+            r#"::index create relationships:target_qualified_index { target_qualified }"#;
+        if let Err(e) = run_script(db, create_target_index, Default::default()) {
             tracing::debug!("target_qualified index may already exist: {:?}", e);
         }
 
@@ -198,49 +244,48 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
 
     if !existing_relations.contains("business_logic") {
         let create_business_logic = r#":create business_logic {element_qualified: String, description: String, user_story_id: String?, feature_id: String?}"#;
-        if let Err(e) = db.run_script(create_business_logic, Default::default()) {
+        if let Err(e) = run_script(db, create_business_logic, Default::default()) {
             eprintln!("Failed to create business_logic: {:?}", e);
         }
     }
 
     if !existing_relations.contains("context_metrics") {
         let create_context_metrics = r#":create context_metrics {tool_name: String, timestamp: Int, project_path: String, input_tokens: Int, output_tokens: Int, output_elements: Int, execution_time_ms: Int, baseline_tokens: Int, baseline_lines_scanned: Int, tokens_saved: Int, savings_percent: Float, correct_elements: Int?, total_expected: Int?, f1_score: Float?, query_pattern: String?, query_file: String?, query_depth: Int?, success: Bool, is_deleted: Bool}"#;
-        if let Err(e) = db.run_script(create_context_metrics, Default::default()) {
+        if let Err(e) = run_script(db, create_context_metrics, Default::default()) {
             eprintln!("Failed to create context_metrics: {:?}", e);
         }
 
-        let create_tool_index =
-            r#":create context_metrics::tool_name_index {ref: (tool_name), compressed: true}"#;
-        if let Err(e) = db.run_script(create_tool_index, Default::default()) {
+        let create_tool_index = r#"::index create context_metrics:tool_name_index { tool_name }"#;
+        if let Err(e) = run_script(db, create_tool_index, Default::default()) {
             tracing::debug!("tool_name index may already exist: {:?}", e);
         }
 
         let create_timestamp_index =
-            r#":create context_metrics::timestamp_index {ref: (timestamp), compressed: true}"#;
-        if let Err(e) = db.run_script(create_timestamp_index, Default::default()) {
+            r#"::index create context_metrics:timestamp_index { timestamp }"#;
+        if let Err(e) = run_script(db, create_timestamp_index, Default::default()) {
             tracing::debug!("timestamp index may already exist: {:?}", e);
         }
 
-        let create_project_index = r#":create context_metrics::project_path_index {ref: (project_path), compressed: true}"#;
-        if let Err(e) = db.run_script(create_project_index, Default::default()) {
+        let create_project_index =
+            r#"::index create context_metrics:project_path_index { project_path }"#;
+        if let Err(e) = run_script(db, create_project_index, Default::default()) {
             tracing::debug!("project_path index may already exist: {:?}", e);
         }
     }
 
     if !existing_relations.contains("query_cache") {
         let create_query_cache = r#":create query_cache {cache_key: String, value_json: String, created_at: Int, ttl_seconds: Int, tool_name: String, project_path: String, metadata: String}"#;
-        if let Err(e) = db.run_script(create_query_cache, Default::default()) {
+        if let Err(e) = run_script(db, create_query_cache, Default::default()) {
             eprintln!("Failed to create query_cache: {:?}", e);
         }
 
-        let create_key_index = r#":create query_cache::cache_key_index {ref: (cache_key), compressed: true, unique: true}"#;
-        if let Err(e) = db.run_script(create_key_index, Default::default()) {
+        let create_key_index = r#"::index create query_cache:cache_key_index { cache_key }"#;
+        if let Err(e) = run_script(db, create_key_index, Default::default()) {
             tracing::debug!("cache_key index may already exist: {:?}", e);
         }
 
-        let create_tool_index =
-            r#":create query_cache::tool_name_index {ref: (tool_name), compressed: true}"#;
-        if let Err(e) = db.run_script(create_tool_index, Default::default()) {
+        let create_tool_index = r#"::index create query_cache:tool_name_index { tool_name }"#;
+        if let Err(e) = run_script(db, create_tool_index, Default::default()) {
             tracing::debug!("tool_name index may already exist: {:?}", e);
         }
     }
@@ -257,15 +302,15 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     // Create service_metadata table if not exists (idempotent via migration)
     if !existing_relations.contains("service_metadata") {
         let create_svc = r#":create service_metadata {service_name: String, env: String default 'local', team: String?, on_call: String?, repo_url: String?, language: String?, health_endpoint: String?, slo_p99_ms: Int?, incident_count: Int, last_incident: Int?, tags: String, version: String?, deploy_envs: String, created_at: Int, updated_at: Int}"#;
-        if let Err(e) = db.run_script(create_svc, Default::default()) {
+        if let Err(e) = run_script(db, create_svc, Default::default()) {
             tracing::warn!("Failed to create service_metadata: {:?}", e);
         }
         let svc_indexes = [
-            r#":create service_metadata::svc_name_index {ref: (service_name), compressed: true}"#,
-            r#":create service_metadata::svc_env_index {ref: (env), compressed: true}"#,
+            r#"::index create service_metadata:svc_name_index { service_name }"#,
+            r#"::index create service_metadata:svc_env_index { env }"#,
         ];
         for idx in &svc_indexes {
-            if let Err(e) = db.run_script(idx, Default::default()) {
+            if let Err(e) = run_script(db, idx, Default::default()) {
                 tracing::debug!("service_metadata index note: {:?}", e);
             }
         }
@@ -274,12 +319,12 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     // Create teams table for shared graph management
     if !existing_relations.contains("teams") {
         let create_teams = r#":create teams {id: String, name: String, description: String, owner_id: String, created_at: Int, updated_at: Int, graph_read_users: String, graph_write_users: String, members: String}"#;
-        if let Err(e) = db.run_script(create_teams, Default::default()) {
+        if let Err(e) = run_script(db, create_teams, Default::default()) {
             tracing::warn!("Failed to create teams: {:?}", e);
         }
-        let team_indexes = [r#":create teams::owner_index {ref: (owner_id), compressed: true}"#];
+        let team_indexes = [r#"::index create teams:owner_index { owner_id }"#];
         for idx in &team_indexes {
-            if let Err(e) = db.run_script(idx, Default::default()) {
+            if let Err(e) = run_script(db, idx, Default::default()) {
                 tracing::debug!("teams index note: {:?}", e);
             }
         }
@@ -288,18 +333,26 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     // Create team_invites table for onboarding workflow
     if !existing_relations.contains("team_invites") {
         let create_invites = r#":create team_invites {token: String, team_id: String, email: String?, role: String, created_by: String, created_at: Int, expires_at: Int, accepted: Bool, accepted_by: String?}"#;
-        if let Err(e) = db.run_script(create_invites, Default::default()) {
+        if let Err(e) = run_script(db, create_invites, Default::default()) {
             tracing::warn!("Failed to create team_invites: {:?}", e);
         }
         let invite_indexes = [
-            r#":create team_invites::team_index {ref: (team_id), compressed: true}"#,
-            r#":create team_invites::token_index {ref: (token), compressed: true, unique: true}"#,
+            r#"::index create team_invites:team_index { team_id }"#,
+            r#"::index create team_invites:token_index { token }"#,
         ];
         for idx in &invite_indexes {
-            if let Err(e) = db.run_script(idx, Default::default()) {
+            if let Err(e) = run_script(db, idx, Default::default()) {
                 tracing::debug!("team_invites index note: {:?}", e);
             }
         }
+    }
+
+    // Embedding-state table (only when the `embeddings` feature is compiled in).
+    // Without the feature, the table is never created and `embeddings::*`
+    // calls are absent from the binary — keeps default builds lean.
+    #[cfg(feature = "embeddings")]
+    {
+        crate::embeddings::state::ensure_embedding_state_table(db)?;
     }
 
     Ok(())
@@ -312,21 +365,21 @@ fn run_migrations(
     // Create migrations tracking table if not exists
     if !existing_relations.contains("migrations") {
         let create_migrations = r#":create migrations {id: String, applied_at: Int}"#;
-        if let Err(e) = db.run_script(create_migrations, Default::default()) {
+        if let Err(e) = run_script(db, create_migrations, Default::default()) {
             tracing::warn!("Failed to create migrations table: {:?}", e);
         }
     }
 
     // Get already-applied migrations
-    let applied: std::collections::HashSet<String> = db
-        .run_script("?[id] := *migrations[id, _]", Default::default())
-        .map(|r| {
-            r.rows
-                .iter()
-                .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
-                .collect()
-        })
-        .unwrap_or_default();
+    let applied: std::collections::HashSet<String> =
+        run_script(db, "?[id] := *migrations[id, _]", Default::default())
+            .map(|r| {
+                r.rows
+                    .iter()
+                    .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+                    .collect()
+            })
+            .unwrap_or_default();
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -337,19 +390,19 @@ fn run_migrations(
     if !applied.contains("001_knowledge_entries") {
         tracing::info!("Running migration 001_knowledge_entries...");
         let create_knowledge = r#":create knowledge_entries {id: String, knowledge_type: String, title: String, content: String, element_qualified: String?, user_story_id: String?, feature_id: String?, tags: String, environment: String, branch: String?, author: String, created_at: Int, updated_at: Int}"#;
-        if let Err(e) = db.run_script(create_knowledge, Default::default()) {
+        if let Err(e) = run_script(db, create_knowledge, Default::default()) {
             tracing::warn!("Migration 001 failed (may already exist): {:?}", e);
         }
 
         // Create indexes
         let indexes = [
-            r#":create knowledge_entries::type_index {ref: (knowledge_type), compressed: true}"#,
-            r#":create knowledge_entries::element_index {ref: (element_qualified), compressed: true}"#,
-            r#":create knowledge_entries::env_index {ref: (environment), compressed: true}"#,
-            r#":create knowledge_entries::author_index {ref: (author), compressed: true}"#,
+            r#"::index create knowledge_entries:type_index { knowledge_type }"#,
+            r#"::index create knowledge_entries:element_index { element_qualified }"#,
+            r#"::index create knowledge_entries:env_index { environment }"#,
+            r#"::index create knowledge_entries:author_index { author }"#,
         ];
         for idx in &indexes {
-            if let Err(e) = db.run_script(idx, Default::default()) {
+            if let Err(e) = run_script(db, idx, Default::default()) {
                 tracing::debug!("Index creation note: {:?}", e);
             }
         }
@@ -461,14 +514,14 @@ fn get_column_count(db: &CozoDb, relation: &str) -> usize {
 
     if let Some(probes) = arity_probe {
         for (arity, query) in probes {
-            if db.run_script(query, Default::default()).is_ok() {
+            if run_script(db, query, Default::default()).is_ok() {
                 return arity;
             }
         }
     }
 
     let query = format!(":schema {}", relation);
-    db.run_script(&query, Default::default())
+    run_script(db, &query, Default::default())
         .map(|r| r.rows.len())
         .unwrap_or(0)
 }
@@ -629,12 +682,27 @@ fn ensure_canonical_code_elements(
         current,
         EXPECTED
     );
+    // CozoDB 0.7.6 refuses to :replace a relation that has indices — drop them
+    // first, then recreate after the replace. Best-effort: legacy DBs may have
+    // a different index set, so we tolerate "index not found" errors.
+    for idx in &[
+        "file_path_index",
+        "qualified_name_index",
+        "element_type_index",
+        "parent_qualified_index",
+    ] {
+        let _ = run_script(
+            db,
+            &format!("::index drop code_elements:{}", idx),
+            Default::default(),
+        );
+    }
     match current {
         11 => {
-            db.run_script(REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13, Default::default())?;
+            run_script(db, REPAIR_LEGACY_CODE_ELEMENTS_11_TO_13, Default::default())?;
         }
         12 => {
-            db.run_script(REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13, Default::default())?;
+            run_script(db, REPAIR_LEGACY_CODE_ELEMENTS_12_TO_13, Default::default())?;
         }
         _ => {
             tracing::warn!(
@@ -644,7 +712,16 @@ fn ensure_canonical_code_elements(
             return Ok(());
         }
     }
-    tracing::info!("code_elements :replace successful");
+    tracing::info!("code_elements :replace successful, recreating indices");
+    // Recreate indices dropped before the :replace (CozoDB 0.7.6 requirement).
+    for idx_query in &[
+        r#"::index create code_elements:file_path_index { file_path }"#,
+        r#"::index create code_elements:qualified_name_index { qualified_name }"#,
+        r#"::index create code_elements:element_type_index { element_type }"#,
+        r#"::index create code_elements:parent_qualified_index { parent_qualified }"#,
+    ] {
+        let _ = run_script(db, idx_query, Default::default());
+    }
     Ok(())
 }
 
@@ -676,18 +753,32 @@ fn ensure_canonical_relationships(
         );
         return Ok(());
     }
-    db.run_script(REPAIR_LEGACY_RELATIONSHIPS_5_TO_6, Default::default())?;
+    // Drop indices before :replace (CozoDB 0.7.6 requirement).
+    for idx in &["rel_type_index", "target_qualified_index"] {
+        let _ = run_script(
+            db,
+            &format!("::index drop relationships:{}", idx),
+            Default::default(),
+        );
+    }
+    run_script(db, REPAIR_LEGACY_RELATIONSHIPS_5_TO_6, Default::default())?;
+    // Recreate indices after :replace.
+    for idx_query in &[
+        r#"::index create relationships:rel_type_index { rel_type }"#,
+        r#"::index create relationships:target_qualified_index { target_qualified }"#,
+    ] {
+        let _ = run_script(db, idx_query, Default::default());
+    }
     tracing::info!("relationships :replace successful");
     Ok(())
 }
 
 fn ensure_incidents_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
-    let existing = db
-        .run_script("::relations", Default::default())
+    let existing = run_script(db, "::relations", Default::default())
         .map(|r| {
             r.rows
                 .iter()
-                .filter_map(|row| row.first().and_then(|v| v.as_str().map(String::from)))
+                .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
                 .collect::<std::collections::HashSet<_>>()
         })
         .unwrap_or_default();
@@ -695,13 +786,13 @@ fn ensure_incidents_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>>
         return Ok(());
     }
     let create_incidents = r#":create incidents {id: String, env: String, title: String, severity: String, occurred_at: Int, resolved_at: Int?, root_cause: String, resolution: String, affected_services: String, trigger_pattern: String?, prevention: String?, tags: String, author: String, linked_ticket: String?}"#;
-    db.run_script(create_incidents, Default::default())?;
+    run_script(db, create_incidents, Default::default())?;
     for idx in &[
-        r#":create incidents::env_index {ref: (env), compressed: true}"#,
-        r#":create incidents::severity_index {ref: (severity), compressed: true}"#,
-        r#":create incidents::author_index {ref: (author), compressed: true}"#,
+        r#"::index create incidents:env_index { env }"#,
+        r#"::index create incidents:severity_index { severity }"#,
+        r#"::index create incidents:author_index { author }"#,
     ] {
-        if let Err(e) = db.run_script(idx, Default::default()) {
+        if let Err(e) = run_script(db, idx, Default::default()) {
             tracing::debug!("Incident index note: {:?}", e);
         }
     }
@@ -720,13 +811,13 @@ fn record_migration(
         "ts".to_string(),
         serde_json::Value::Number(applied_at.into()),
     );
-    db.run_script(query, params)?;
+    run_script(db, query, params)?;
     Ok(())
 }
 
 fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     let schema_query = r#":schema code_elements"#;
-    match db.run_script(schema_query, Default::default()) {
+    match run_script(db, schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
             const EXPECTED_COLUMNS: usize = 13;
@@ -747,7 +838,7 @@ fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
 
 fn validate_relationships_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     let schema_query = r#":schema relationships"#;
-    match db.run_script(schema_query, Default::default()) {
+    match run_script(db, schema_query, Default::default()) {
         Ok(result) => {
             let column_count = result.rows.len();
             const EXPECTED_COLUMNS: usize = 6;
@@ -781,7 +872,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("ce.db");
         let db = make_db(&db_path);
-        db.run_script(
+        run_script(&db,
             r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
             Default::default(),
         )
@@ -809,7 +900,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("rel.db");
         let db = make_db(&db_path);
-        db.run_script(
+        run_script(&db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
             Default::default(),
         )
@@ -833,7 +924,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("legacy.db");
         let db = make_db(&db_path);
-        db.run_script(
+        run_script(&db,
             r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
             Default::default(),
         )
@@ -858,7 +949,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("legacy-rel.db");
         let db = make_db(&db_path);
-        db.run_script(
+        run_script(&db,
             r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
             Default::default(),
         )

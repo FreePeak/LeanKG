@@ -41,7 +41,7 @@ fn seed_test_data(db: &leankg::db::schema::CozoDb) {
     ]
     :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}
     "#;
-    db.run_script(elements, Default::default()).unwrap();
+    leankg::db::schema::run_script(&db, elements, Default::default()).unwrap();
 
     let relationships = r#"
     ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] <-
@@ -53,7 +53,7 @@ fn seed_test_data(db: &leankg::db::schema::CozoDb) {
     ]
     :put relationships {source_qualified, target_qualified, rel_type, confidence, metadata, env}
     "#;
-    db.run_script(relationships, Default::default()).unwrap();
+    leankg::db::schema::run_script(&db, relationships, Default::default()).unwrap();
 }
 
 // ============================================================================
@@ -812,7 +812,7 @@ mod utility_tools {
     async fn test_run_raw_query() {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler
-            .execute_tool("run_raw_query", &json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _, _] :limit 5"}))
+            .execute_tool("run_raw_query", &json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _, _, _] :limit 5"}))
             .await;
         assert!(
             result.is_ok(),

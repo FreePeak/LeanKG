@@ -21,7 +21,7 @@ impl TrackingDb {
         if is_write_operation(script) {
             self.tracker.mark_dirty();
         }
-        self.inner.run_script(script, params)
+        crate::db::schema::run_script(&self.inner, script, params)
     }
 
     pub fn into_inner(self) -> CozoDb {

@@ -39,7 +39,7 @@ pub fn create_business_logic(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
 
     Ok(models::BusinessLogic {
         id: None,
@@ -61,7 +61,7 @@ pub fn get_business_logic(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     let rows = result.rows;
 
     if rows.is_empty() {
@@ -69,13 +69,13 @@ pub fn get_business_logic(
     }
 
     let row = &rows[0];
-    let user_story_id = row[2].as_str().map(String::from);
-    let feature_id = row[3].as_str().map(String::from);
+    let user_story_id = row[2].get_str().map(String::from);
+    let feature_id = row[3].get_str().map(String::from);
 
     Ok(Some(models::BusinessLogic {
         id: None,
-        element_qualified: row[0].as_str().unwrap_or("").to_string(),
-        description: row[1].as_str().unwrap_or("").to_string(),
+        element_qualified: row[0].get_str().unwrap_or("").to_string(),
+        description: row[1].get_str().unwrap_or("").to_string(),
         user_story_id,
         feature_id,
     }))
@@ -111,7 +111,7 @@ pub fn update_business_logic(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
 
     Ok(Some(models::BusinessLogic {
         id: None,
@@ -134,7 +134,7 @@ pub fn delete_business_logic(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(())
 }
 
@@ -149,18 +149,18 @@ pub fn get_by_user_story(
         serde_json::Value::String(user_story_id.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
         .iter()
         .map(|row| {
-            let user_story_id = row[2].as_str().map(String::from);
-            let feature_id = row[3].as_str().map(String::from);
+            let user_story_id = row[2].get_str().map(String::from);
+            let feature_id = row[3].get_str().map(String::from);
             models::BusinessLogic {
                 id: None,
-                element_qualified: row[0].as_str().unwrap_or("").to_string(),
-                description: row[1].as_str().unwrap_or("").to_string(),
+                element_qualified: row[0].get_str().unwrap_or("").to_string(),
+                description: row[1].get_str().unwrap_or("").to_string(),
                 user_story_id,
                 feature_id,
             }
@@ -181,18 +181,18 @@ pub fn get_by_feature(
         serde_json::Value::String(feature_id.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
         .iter()
         .map(|row| {
-            let user_story_id = row[2].as_str().map(String::from);
-            let feature_id = row[3].as_str().map(String::from);
+            let user_story_id = row[2].get_str().map(String::from);
+            let feature_id = row[3].get_str().map(String::from);
             models::BusinessLogic {
                 id: None,
-                element_qualified: row[0].as_str().unwrap_or("").to_string(),
-                description: row[1].as_str().unwrap_or("").to_string(),
+                element_qualified: row[0].get_str().unwrap_or("").to_string(),
+                description: row[1].get_str().unwrap_or("").to_string(),
                 user_story_id,
                 feature_id,
             }
@@ -212,18 +212,18 @@ pub fn search_business_logic(
         regex_pattern
     );
 
-    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let result = crate::db::schema::run_script(db, &query, std::collections::BTreeMap::new())?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
         .iter()
         .map(|row| {
-            let user_story_id = row[2].as_str().map(String::from);
-            let feature_id = row[3].as_str().map(String::from);
+            let user_story_id = row[2].get_str().map(String::from);
+            let feature_id = row[3].get_str().map(String::from);
             models::BusinessLogic {
                 id: None,
-                element_qualified: row[0].as_str().unwrap_or("").to_string(),
-                description: row[1].as_str().unwrap_or("").to_string(),
+                element_qualified: row[0].get_str().unwrap_or("").to_string(),
+                description: row[1].get_str().unwrap_or("").to_string(),
                 user_story_id,
                 feature_id,
             }
@@ -238,18 +238,18 @@ pub fn all_business_logic(
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id]"#;
 
-    let result = db.run_script(query, std::collections::BTreeMap::new())?;
+    let result = crate::db::schema::run_script(db, query, std::collections::BTreeMap::new())?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
         .iter()
         .map(|row| {
-            let user_story_id = row[2].as_str().map(String::from);
-            let feature_id = row[3].as_str().map(String::from);
+            let user_story_id = row[2].get_str().map(String::from);
+            let feature_id = row[3].get_str().map(String::from);
             models::BusinessLogic {
                 id: None,
-                element_qualified: row[0].as_str().unwrap_or("").to_string(),
-                description: row[1].as_str().unwrap_or("").to_string(),
+                element_qualified: row[0].get_str().unwrap_or("").to_string(),
+                description: row[1].get_str().unwrap_or("").to_string(),
                 user_story_id,
                 feature_id,
             }
@@ -421,17 +421,17 @@ pub fn get_documented_by(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     let rows = result.rows;
 
     let doc_links: Vec<models::DocLink> = rows
         .iter()
         .filter_map(|row| {
-            let _source = row[0].as_str().unwrap_or("");
-            let doc_qualified = row[1].as_str().unwrap_or("").to_string();
-            let _rel_type = row[2].as_str().unwrap_or("");
-            let _confidence = row[3].as_f64().unwrap_or(1.0);
-            let metadata_str = row.get(4).and_then(|v| v.as_str()).unwrap_or("{}");
+            let _source = row[0].get_str().unwrap_or("");
+            let doc_qualified = row[1].get_str().unwrap_or("").to_string();
+            let _rel_type = row[2].get_str().unwrap_or("");
+            let _confidence = row[3].get_float().unwrap_or(1.0);
+            let metadata_str = row.get(4).and_then(|v| v.get_str()).unwrap_or("{}");
             let metadata: serde_json::Value = serde_json::from_str(metadata_str).ok()?;
 
             let doc_title = metadata
@@ -493,15 +493,15 @@ pub fn get_code_for_requirement(
         serde_json::Value::String(requirement_id.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     let rows = result.rows;
 
     let mut entries = Vec::new();
     for row in rows {
-        let element_qualified = row[0].as_str().unwrap_or("").to_string();
-        let description = row[1].as_str().unwrap_or("").to_string();
-        let user_story_id = row[2].as_str().map(String::from);
-        let feature_id = row[3].as_str().map(String::from);
+        let element_qualified = row[0].get_str().unwrap_or("").to_string();
+        let description = row[1].get_str().unwrap_or("").to_string();
+        let user_story_id = row[2].get_str().map(String::from);
+        let feature_id = row[3].get_str().map(String::from);
 
         let doc_links = get_documented_by(db, &element_qualified)?;
 
@@ -624,7 +624,7 @@ pub fn record_metric(
         serde_json::Value::Bool(metric.success),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(())
 }
 
@@ -655,7 +655,7 @@ pub fn get_metrics_summary(
         r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted], timestamp >= $cutoff, is_deleted = false"#
     };
 
-    let result = db.run_script(query, params.clone())?;
+    let result = crate::db::schema::run_script(db, query, params.clone())?;
 
     let mut summary = models::MetricsSummary {
         total_invocations: 0,
@@ -676,10 +676,10 @@ pub fn get_metrics_summary(
 
     for row in &result.rows {
         summary.total_invocations += 1;
-        let saved = row[9].as_i64().unwrap_or(0);
-        let pct = row[10].as_f64().unwrap_or(0.0);
-        let correct = row[12].as_i64().unwrap_or(0);
-        let total = row[13].as_i64().unwrap_or(0);
+        let saved = row[9].get_int().unwrap_or(0);
+        let pct = row[10].get_float().unwrap_or(0.0);
+        let correct = row[12].get_int().unwrap_or(0);
+        let total = row[13].get_int().unwrap_or(0);
 
         // Only add positive savings to the total
         if saved > 0 {
@@ -695,7 +695,7 @@ pub fn get_metrics_summary(
             count_has_correctness += 1;
         }
 
-        let tool_name = row[0].as_str().unwrap_or("unknown").to_string();
+        let tool_name = row[0].get_str().unwrap_or("unknown").to_string();
         let entry = by_tool_map
             .entry(tool_name.clone())
             .or_insert((0, 0, 0.0, 0.0, 0));
@@ -757,7 +757,7 @@ pub fn cleanup_old_metrics(
         serde_json::Value::Number(cutoff_timestamp.into()),
     );
 
-    let count_result = db.run_script(count_query, params)?;
+    let count_result = crate::db::schema::run_script(db, count_query, params)?;
     let deleted_count = count_result.rows.len() as i64;
 
     if deleted_count > 0 {
@@ -767,7 +767,7 @@ pub fn cleanup_old_metrics(
             serde_json::Value::Number(cutoff_timestamp.into()),
         );
         let delete_query = r#":delete context_metrics where timestamp < $cutoff"#;
-        if let Err(e) = db.run_script(delete_query, delete_params) {
+        if let Err(e) = crate::db::schema::run_script(db, delete_query, delete_params) {
             eprintln!("Warning: cleanup delete failed: {}", e);
         }
     }
@@ -778,12 +778,12 @@ pub fn cleanup_old_metrics(
 pub fn reset_metrics(db: &CozoDb) -> Result<i64, Box<dyn std::error::Error>> {
     let count_query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted]"#;
 
-    let count_result = db.run_script(count_query, Default::default())?;
+    let count_result = crate::db::schema::run_script(db, count_query, Default::default())?;
     let deleted_count = count_result.rows.len() as i64;
     if deleted_count > 0 {
         let delete_query =
             r#":delete context_metrics where tool_name != "NON_EXISTENT_TOOL_NAME_123456789""#;
-        if let Err(e) = db.run_script(delete_query, Default::default()) {
+        if let Err(e) = crate::db::schema::run_script(db, delete_query, Default::default()) {
             eprintln!("Warning: reset delete failed: {}", e);
         }
     }
@@ -869,7 +869,7 @@ pub fn create_knowledge_entry(
         serde_json::Value::Number(entry.updated_at.into()),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(entry.clone())
 }
 
@@ -881,7 +881,7 @@ pub fn get_knowledge_entry(
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -901,7 +901,7 @@ pub fn delete_knowledge_entry(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::
     let query = r#":delete knowledge_entries where id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(())
 }
 
@@ -937,7 +937,7 @@ pub fn search_knowledge(
         where_clause, limit
     );
 
-    let result = db.run_script(&query, params)?;
+    let result = crate::db::schema::run_script(db, &query, params)?;
     Ok(result
         .rows
         .iter()
@@ -956,7 +956,7 @@ pub fn get_knowledge_by_element(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     Ok(result
         .rows
         .iter()
@@ -975,7 +975,7 @@ pub fn get_knowledge_by_feature(
         serde_json::Value::String(feature_id.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     Ok(result
         .rows
         .iter()
@@ -998,7 +998,7 @@ pub fn get_knowledge_by_environment(
         serde_json::Value::String(environment.to_string()),
     );
 
-    let result = db.run_script(&query, params)?;
+    let result = crate::db::schema::run_script(db, &query, params)?;
     Ok(result
         .rows
         .iter()
@@ -1006,21 +1006,21 @@ pub fn get_knowledge_by_environment(
         .collect())
 }
 
-fn row_to_knowledge_entry(row: &[serde_json::Value]) -> models::KnowledgeEntry {
+fn row_to_knowledge_entry(row: &[cozo::DataValue]) -> models::KnowledgeEntry {
     models::KnowledgeEntry {
-        id: row[0].as_str().unwrap_or("").to_string(),
-        knowledge_type: row[1].as_str().unwrap_or("general").to_string(),
-        title: row[2].as_str().unwrap_or("").to_string(),
-        content: row[3].as_str().unwrap_or("").to_string(),
-        element_qualified: row[4].as_str().map(String::from),
-        user_story_id: row[5].as_str().map(String::from),
-        feature_id: row[6].as_str().map(String::from),
-        tags: row[7].as_str().unwrap_or("[]").to_string(),
-        environment: row[8].as_str().unwrap_or("production").to_string(),
-        branch: row[9].as_str().map(String::from),
-        author: row[10].as_str().unwrap_or("").to_string(),
-        created_at: row[11].as_i64().unwrap_or(0),
-        updated_at: row[12].as_i64().unwrap_or(0),
+        id: row[0].get_str().unwrap_or("").to_string(),
+        knowledge_type: row[1].get_str().unwrap_or("general").to_string(),
+        title: row[2].get_str().unwrap_or("").to_string(),
+        content: row[3].get_str().unwrap_or("").to_string(),
+        element_qualified: row[4].get_str().map(String::from),
+        user_story_id: row[5].get_str().map(String::from),
+        feature_id: row[6].get_str().map(String::from),
+        tags: row[7].get_str().unwrap_or("[]").to_string(),
+        environment: row[8].get_str().unwrap_or("production").to_string(),
+        branch: row[9].get_str().map(String::from),
+        author: row[10].get_str().unwrap_or("").to_string(),
+        created_at: row[11].get_int().unwrap_or(0),
+        updated_at: row[12].get_int().unwrap_or(0),
     }
 }
 
@@ -1107,7 +1107,7 @@ pub fn create_incident(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(incident.clone())
 }
 
@@ -1164,7 +1164,7 @@ pub fn get_incident(
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -1183,7 +1183,7 @@ pub fn delete_incident(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::
     let query = r#":delete incidents where id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(())
 }
 
@@ -1228,7 +1228,7 @@ pub fn query_incidents(
         where_clause, limit
     );
 
-    let result = db.run_script(&query, params)?;
+    let result = crate::db::schema::run_script(db, &query, params)?;
     Ok(result.rows.iter().map(|r| row_to_incident(r)).collect())
 }
 
@@ -1241,27 +1241,27 @@ pub fn get_incidents_by_service(
     query_incidents(db, Some(service), None, env, limit)
 }
 
-fn row_to_incident(row: &[serde_json::Value]) -> models::Incident {
+fn row_to_incident(row: &[cozo::DataValue]) -> models::Incident {
     let affected_services: Vec<String> =
-        serde_json::from_str(row[8].as_str().unwrap_or("[]")).unwrap_or_default();
+        serde_json::from_str(row[8].get_str().unwrap_or("[]")).unwrap_or_default();
     let tags: Vec<String> =
-        serde_json::from_str(row[11].as_str().unwrap_or("[]")).unwrap_or_default();
+        serde_json::from_str(row[11].get_str().unwrap_or("[]")).unwrap_or_default();
 
     models::Incident {
-        id: row[0].as_str().unwrap_or("").to_string(),
-        env: row[1].as_str().unwrap_or("local").to_string(),
-        title: row[2].as_str().unwrap_or("").to_string(),
-        severity: row[3].as_str().unwrap_or("").to_string(),
-        occurred_at: row[4].as_i64().unwrap_or(0),
-        resolved_at: row[5].as_i64(),
-        root_cause: row[6].as_str().unwrap_or("").to_string(),
-        resolution: row[7].as_str().unwrap_or("").to_string(),
+        id: row[0].get_str().unwrap_or("").to_string(),
+        env: row[1].get_str().unwrap_or("local").to_string(),
+        title: row[2].get_str().unwrap_or("").to_string(),
+        severity: row[3].get_str().unwrap_or("").to_string(),
+        occurred_at: row[4].get_int().unwrap_or(0),
+        resolved_at: row[5].get_int(),
+        root_cause: row[6].get_str().unwrap_or("").to_string(),
+        resolution: row[7].get_str().unwrap_or("").to_string(),
         affected_services,
-        trigger_pattern: row[9].as_str().map(String::from),
-        prevention: row[10].as_str().map(String::from),
+        trigger_pattern: row[9].get_str().map(String::from),
+        prevention: row[10].get_str().map(String::from),
         tags,
-        author: row[12].as_str().unwrap_or("").to_string(),
-        linked_ticket: row[13].as_str().map(String::from),
+        author: row[12].get_str().unwrap_or("").to_string(),
+        linked_ticket: row[13].get_str().map(String::from),
     }
 }
 
@@ -1274,8 +1274,7 @@ pub fn get_elements_by_env(
     env: &str,
     limit: usize,
 ) -> Result<Vec<models::CodeElement>, Box<dyn std::error::Error>> {
-    let tail = if db
-        .run_script(
+    let tail = if crate::db::schema::run_script(db,
             "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
             Default::default(),
         )
@@ -1295,7 +1294,7 @@ pub fn get_elements_by_env(
         serde_json::Value::String(env.to_string()),
     );
 
-    let result = db.run_script(&query, params)?;
+    let result = crate::db::schema::run_script(db, &query, params)?;
     Ok(result.rows.iter().map(|r| row_to_code_element(r)).collect())
 }
 
@@ -1314,7 +1313,7 @@ pub fn get_relationships_by_env(
         serde_json::Value::String(env.to_string()),
     );
 
-    let result = db.run_script(&query, params)?;
+    let result = crate::db::schema::run_script(db, &query, params)?;
     Ok(result.rows.iter().map(|r| row_to_relationship(r)).collect())
 }
 
@@ -1329,48 +1328,48 @@ pub fn get_element_across_envs(
         serde_json::Value::String(qualified_name.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     Ok(result
         .rows
         .iter()
         .map(|row| {
-            let env = row[11].as_str().unwrap_or("local").to_string();
+            let env = row[11].get_str().unwrap_or("local").to_string();
             (env, row_to_code_element(row))
         })
         .collect())
 }
 
-fn row_to_code_element(row: &[serde_json::Value]) -> models::CodeElement {
-    let parent_qualified = row[7].as_str().map(String::from);
-    let cluster_id = row[8].as_str().map(String::from);
-    let cluster_label = row[9].as_str().map(String::from);
-    let metadata_str = row[10].as_str().unwrap_or("{}");
+fn row_to_code_element(row: &[cozo::DataValue]) -> models::CodeElement {
+    let parent_qualified = row[7].get_str().map(String::from);
+    let cluster_id = row[8].get_str().map(String::from);
+    let cluster_label = row[9].get_str().map(String::from);
+    let metadata_str = row[10].get_str().unwrap_or("{}");
     models::CodeElement {
-        qualified_name: row[0].as_str().unwrap_or("").to_string(),
-        element_type: row[1].as_str().unwrap_or("").to_string(),
-        name: row[2].as_str().unwrap_or("").to_string(),
-        file_path: row[3].as_str().unwrap_or("").to_string(),
-        line_start: row[4].as_i64().unwrap_or(0) as u32,
-        line_end: row[5].as_i64().unwrap_or(0) as u32,
-        language: row[6].as_str().unwrap_or("").to_string(),
+        qualified_name: row[0].get_str().unwrap_or("").to_string(),
+        element_type: row[1].get_str().unwrap_or("").to_string(),
+        name: row[2].get_str().unwrap_or("").to_string(),
+        file_path: row[3].get_str().unwrap_or("").to_string(),
+        line_start: row[4].get_int().unwrap_or(0) as u32,
+        line_end: row[5].get_int().unwrap_or(0) as u32,
+        language: row[6].get_str().unwrap_or("").to_string(),
         parent_qualified,
         cluster_id,
         cluster_label,
         metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-        env: row[11].as_str().unwrap_or("local").to_string(),
+        env: row[11].get_str().unwrap_or("local").to_string(),
     }
 }
 
-fn row_to_relationship(row: &[serde_json::Value]) -> models::Relationship {
-    let metadata_str = row[4].as_str().unwrap_or("{}");
+fn row_to_relationship(row: &[cozo::DataValue]) -> models::Relationship {
+    let metadata_str = row[4].get_str().unwrap_or("{}");
     models::Relationship {
         id: None,
-        source_qualified: row[0].as_str().unwrap_or("").to_string(),
-        target_qualified: row[1].as_str().unwrap_or("").to_string(),
-        rel_type: row[2].as_str().unwrap_or("").to_string(),
-        confidence: row[3].as_f64().unwrap_or(1.0),
+        source_qualified: row[0].get_str().unwrap_or("").to_string(),
+        target_qualified: row[1].get_str().unwrap_or("").to_string(),
+        rel_type: row[2].get_str().unwrap_or("").to_string(),
+        confidence: row[3].get_float().unwrap_or(1.0),
         metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-        env: row[5].as_str().unwrap_or("local").to_string(),
+        env: row[5].get_str().unwrap_or("local").to_string(),
     }
 }
 
@@ -1429,7 +1428,7 @@ pub fn upsert_service_metadata(db: &CozoDb, svc: &models::ServiceMetadata) -> Re
     );
     params.insert("cat".into(), serde_json::Value::Number(now.into()));
     params.insert("uat".into(), serde_json::Value::Number(now.into()));
-    db.run_script(query, params)
+    crate::db::schema::run_script(db, query, params)
         .map_err(|e| format!("upsert_service_metadata: {}", e))?;
     Ok(())
 }
@@ -1446,47 +1445,46 @@ pub fn get_service_metadata(
         serde_json::Value::String(service_name.to_string()),
     );
     params.insert("env".into(), serde_json::Value::String(env.to_string()));
-    let result = db
-        .run_script(query, params)
+    let result = crate::db::schema::run_script(db, query, params)
         .map_err(|e| format!("get_service_metadata: {}", e))?;
     if result.rows.is_empty() {
         return Ok(None);
     }
     let row = &result.rows[0];
     Ok(Some(models::ServiceMetadata {
-        service_name: row[0].as_str().unwrap_or("").to_string(),
-        env: row[1].as_str().unwrap_or("local").to_string(),
+        service_name: row[0].get_str().unwrap_or("").to_string(),
+        env: row[1].get_str().unwrap_or("local").to_string(),
         team: row[2]
-            .as_str()
-            .map(|s| s.to_string())
+            .get_str()
+            .map(|s: &str| s.to_string())
             .filter(|s| !s.is_empty()),
         on_call: row[3]
-            .as_str()
-            .map(|s| s.to_string())
+            .get_str()
+            .map(|s: &str| s.to_string())
             .filter(|s| !s.is_empty()),
         repo_url: row[4]
-            .as_str()
-            .map(|s| s.to_string())
+            .get_str()
+            .map(|s: &str| s.to_string())
             .filter(|s| !s.is_empty()),
         language: row[5]
-            .as_str()
-            .map(|s| s.to_string())
+            .get_str()
+            .map(|s: &str| s.to_string())
             .filter(|s| !s.is_empty()),
         health_endpoint: row[6]
-            .as_str()
-            .map(|s| s.to_string())
+            .get_str()
+            .map(|s: &str| s.to_string())
             .filter(|s| !s.is_empty()),
-        slo_p99_ms: row[7].as_i64().map(|v| v as i32),
-        incident_count: row[8].as_i64().unwrap_or(0) as i32,
-        last_incident: row[9].as_i64(),
-        tags: row[10].as_str().unwrap_or("").to_string(),
+        slo_p99_ms: row[7].get_int().map(|v| v as i32),
+        incident_count: row[8].get_int().unwrap_or(0) as i32,
+        last_incident: row[9].get_int(),
+        tags: row[10].get_str().unwrap_or("").to_string(),
         version: row[11]
-            .as_str()
-            .map(|s| s.to_string())
+            .get_str()
+            .map(|s: &str| s.to_string())
             .filter(|s| !s.is_empty()),
-        deploy_envs: row[12].as_str().unwrap_or("").to_string(),
-        created_at: row[13].as_i64().unwrap_or(0),
-        updated_at: row[14].as_i64().unwrap_or(0),
+        deploy_envs: row[12].get_str().unwrap_or("").to_string(),
+        created_at: row[13].get_int().unwrap_or(0),
+        updated_at: row[14].get_int().unwrap_or(0),
     }))
 }
 
@@ -1534,7 +1532,7 @@ pub fn create_team(
         serde_json::Value::String(serde_json::to_string(&team.members)?),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(team.clone())
 }
 
@@ -1543,7 +1541,7 @@ pub fn get_team(db: &CozoDb, id: &str) -> Result<Option<models::Team>, Box<dyn s
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -1561,31 +1559,31 @@ pub fn delete_team(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::Erro
     let query = r#":delete teams where id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(())
 }
 
 pub fn list_teams(db: &CozoDb) -> Result<Vec<models::Team>, Box<dyn std::error::Error>> {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] := *teams[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members]"#;
-    let result = db.run_script(query, Default::default())?;
+    let result = crate::db::schema::run_script(db, query, Default::default())?;
     Ok(result.rows.iter().map(|r| row_to_team(r)).collect())
 }
 
-fn row_to_team(row: &[serde_json::Value]) -> models::Team {
+fn row_to_team(row: &[cozo::DataValue]) -> models::Team {
     let graph_read_users: Vec<String> =
-        serde_json::from_str(row[6].as_str().unwrap_or("[]")).unwrap_or_default();
+        serde_json::from_str(row[6].get_str().unwrap_or("[]")).unwrap_or_default();
     let graph_write_users: Vec<String> =
-        serde_json::from_str(row[7].as_str().unwrap_or("[]")).unwrap_or_default();
+        serde_json::from_str(row[7].get_str().unwrap_or("[]")).unwrap_or_default();
     let members: Vec<models::TeamMember> =
-        serde_json::from_str(row[8].as_str().unwrap_or("[]")).unwrap_or_default();
+        serde_json::from_str(row[8].get_str().unwrap_or("[]")).unwrap_or_default();
 
     models::Team {
-        id: row[0].as_str().unwrap_or("").to_string(),
-        name: row[1].as_str().unwrap_or("").to_string(),
-        description: row[2].as_str().unwrap_or("").to_string(),
-        owner_id: row[3].as_str().unwrap_or("").to_string(),
-        created_at: row[4].as_i64().unwrap_or(0),
-        updated_at: row[5].as_i64().unwrap_or(0),
+        id: row[0].get_str().unwrap_or("").to_string(),
+        name: row[1].get_str().unwrap_or("").to_string(),
+        description: row[2].get_str().unwrap_or("").to_string(),
+        owner_id: row[3].get_str().unwrap_or("").to_string(),
+        created_at: row[4].get_int().unwrap_or(0),
+        updated_at: row[5].get_int().unwrap_or(0),
         graph_read_users,
         graph_write_users,
         members,
@@ -1644,7 +1642,7 @@ pub fn create_team_invite(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(invite.clone())
 }
 
@@ -1659,7 +1657,7 @@ pub fn get_team_invite(
         serde_json::Value::String(token.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -1677,7 +1675,7 @@ pub fn get_team_invites(
         serde_json::Value::String(team_id.to_string()),
     );
 
-    let result = db.run_script(query, params)?;
+    let result = crate::db::schema::run_script(db, query, params)?;
     Ok(result.rows.iter().map(|r| row_to_team_invite(r)).collect())
 }
 
@@ -1715,21 +1713,21 @@ pub fn delete_team_invite(db: &CozoDb, token: &str) -> Result<(), Box<dyn std::e
         "token".to_string(),
         serde_json::Value::String(token.to_string()),
     );
-    db.run_script(query, params)?;
+    crate::db::schema::run_script(db, query, params)?;
     Ok(())
 }
 
-fn row_to_team_invite(row: &[serde_json::Value]) -> models::TeamInvite {
+fn row_to_team_invite(row: &[cozo::DataValue]) -> models::TeamInvite {
     models::TeamInvite {
-        token: row[0].as_str().unwrap_or("").to_string(),
-        team_id: row[1].as_str().unwrap_or("").to_string(),
-        email: row[2].as_str().map(String::from),
-        role: row[3].as_str().unwrap_or("").to_string(),
-        created_by: row[4].as_str().unwrap_or("").to_string(),
-        created_at: row[5].as_i64().unwrap_or(0),
-        expires_at: row[6].as_i64().unwrap_or(0),
-        accepted: row[7].as_bool().unwrap_or(false),
-        accepted_by: row[8].as_str().map(String::from),
+        token: row[0].get_str().unwrap_or("").to_string(),
+        team_id: row[1].get_str().unwrap_or("").to_string(),
+        email: row[2].get_str().map(String::from),
+        role: row[3].get_str().unwrap_or("").to_string(),
+        created_by: row[4].get_str().unwrap_or("").to_string(),
+        created_at: row[5].get_int().unwrap_or(0),
+        expires_at: row[6].get_int().unwrap_or(0),
+        accepted: row[7].get_bool().unwrap_or(false),
+        accepted_by: row[8].get_str().map(String::from),
     }
 }
 

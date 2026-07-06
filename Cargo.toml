@@ -14,6 +14,14 @@ categories = ["command-line-utilities", "data-structures"]
 [lib]
 crate-type = ["rlib"]
 
+[features]
+default = []
+# Enable vector retrieval + cross-encoder rerank + adaptive KG traversal.
+# Adds fastembed (embedding + reranker inference via ONNX). Vectors are stored
+# in CozoDB's native HNSW index on `embedding_vectors` (no extra deps).
+# Off by default to keep the default binary slim.
+embeddings = ["dep:fastembed"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
@@ -56,12 +64,17 @@ tree-sitter = "0.26"
 tree-sitter-perl = "1.1.2"
 sysinfo = "0.32"
 
+# Embedding retrieval stack (optional, behind `embeddings` feature).
+# fastembed: in-process embedding inference AND cross-encoder reranking
+#   via ONNX Runtime. Covers BGE-small-en-v1.5 (embed) + bge-reranker-v2-m3 (rerank).
+fastembed = { version = "4", optional = true }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = "0.7"
-cozo = { version = "0.2.2", features = ["storage-rocksdb"] }
+cozo = { version = "0.7.6", features = ["storage-rocksdb"] }
 notify = "7"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
@@ -82,5 +95,3 @@ tree-sitter-dart = "0.1"
 
 [dev-dependencies]
 
-[patch.crates-io]
-cozo = { path = "vendor/cozo-0.2.2" }
