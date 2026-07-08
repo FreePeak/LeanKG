@@ -412,4 +412,143 @@ mod traverse_tests {
         assert_eq!(r.fanout_cap, 5);
         assert!(r.edge_types.contains(&"documented_by"));
     }
+
+    // =========================================================================
+    // Indexer-noise filtering tests
+    //
+    // `is_indexer_noise` prevents chain-call artifacts (iter, Ok, unwrap_or,
+    // etc. — promoted to `unknown` element type by tree-sitter extraction)
+    // and pure-metadata `environment` nodes from crowding out real signal
+    // in `traverse_seeds` output.
+    // =========================================================================
+
+    #[test]
+    fn is_indexer_noise_filters_unknown_type() {
+        assert!(is_indexer_noise("unknown"));
+    }
+
+    #[test]
+    fn is_indexer_noise_filters_environment_type() {
+        assert!(is_indexer_noise("environment"));
+    }
+
+    #[test]
+    fn is_indexer_noise_passes_real_code_types() {
+        assert!(!is_indexer_noise("function"));
+        assert!(!is_indexer_noise("class"));
+        assert!(!is_indexer_noise("file"));
+        assert!(!is_indexer_noise("module"));
+        assert!(!is_indexer_noise("method"));
+    }
+
+    #[test]
+    fn is_indexer_noise_passes_ontology_types() {
+        assert!(!is_indexer_noise("workflow"));
+        assert!(!is_indexer_noise("playbook"));
+        assert!(!is_indexer_noise("domain_entity"));
+        assert!(!is_indexer_noise("service"));
+        assert!(!is_indexer_noise("known_issue"));
+    }
+
+    #[test]
+    fn is_indexer_noise_passes_empty_and_arbitrary_strings() {
+        // Non-noise strings (including empty) are not in the noise set.
+        assert!(!is_indexer_noise(""));
+        assert!(!is_indexer_noise("random_type"));
+        assert!(!is_indexer_noise("cluster"));
+    }
+
+    #[test]
+    fn indexer_noise_types_has_exactly_two_entries() {
+        assert_eq!(INDEXER_NOISE_TYPES.len(), 2);
+        assert!(INDEXER_NOISE_TYPES.contains(&"unknown"));
+        assert!(INDEXER_NOISE_TYPES.contains(&"environment"));
+    }
+
+    #[test]
+    fn global_neighbor_cap_is_60() {
+        // Bounded MCP response size — documented contract.
+        assert_eq!(GLOBAL_NEIGHBOR_CAP, 60);
+    }
+
+    // =========================================================================
+    // Traverse rule edge-type coverage tests
+    // =========================================================================
+
+    #[test]
+    fn rule_for_workflow_step_is_two_hops() {
+        let r = traverse_rule_for("workflow_step");
+        assert_eq!(r.hops, 2);
+        assert!(r.fanout_cap > 0);
+        assert!(r.edge_types.contains(&"next_step"));
+        assert!(r.edge_types.contains(&"branches_to"));
+    }
+
+    #[test]
+    fn rule_for_class_is_one_hop() {
+        let r = traverse_rule_for("class");
+        assert_eq!(r.hops, 1);
+        assert!(r.edge_types.contains(&"calls") || r.edge_types.contains(&"imports"));
+    }
+
+    #[test]
+    fn rule_for_file_is_one_hop() {
+        let r = traverse_rule_for("file");
+        assert_eq!(r.hops, 1);
+        assert!(r.edge_types.contains(&"imports"));
+        assert!(r.edge_types.contains(&"contains"));
+    }
+
+    #[test]
+    fn rule_for_domain_entity_uses_concept_edges() {
+        let r = traverse_rule_for("domain_entity");
+        assert!(r.hops >= 1);
+        assert!(
+            r.edge_types.contains(&"owns_concept") || r.edge_types.contains(&"implements_concept")
+        );
+    }
+
+    #[test]
+    fn rule_for_known_issue_uses_issue_edges() {
+        let r = traverse_rule_for("known_issue");
+        assert!(r.hops >= 1);
+        assert!(
+            r.edge_types.contains(&"has_known_issue")
+                || r.edge_types.contains(&"resolved_by_playbook")
+        );
+    }
+
+    #[test]
+    fn all_traverse_rules_have_positive_fanout_cap() {
+        for et in &[
+            "workflow",
+            "workflow_step",
+            "playbook",
+            "playbook_step",
+            "domain_entity",
+            "service",
+            "api_endpoint",
+            "data_store",
+            "known_issue",
+            "function",
+            "class",
+            "file",
+            "module",
+            "method",
+            "trait",
+            "interface",
+            "team_knowledge",
+        ] {
+            let r = traverse_rule_for(et);
+            assert!(
+                r.fanout_cap > 0,
+                "fanout_cap for '{et}' should be positive, got {}",
+                r.fanout_cap
+            );
+            assert!(
+                !r.edge_types.is_empty(),
+                "edge_types for '{et}' should not be empty"
+            );
+        }
+    }
 }

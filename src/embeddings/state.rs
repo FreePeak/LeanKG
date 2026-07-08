@@ -289,7 +289,81 @@ fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
-    // Integration tests live in /tests; these are unit-level guards for the
-    // SQL builders. The state helpers themselves require a live CozoDB and
-    // are exercised by tests/embeddings_state_e2e.rs (added in Phase 6).
+    use super::*;
+
+    #[test]
+    fn now_iso_returns_numeric_string() {
+        let ts = now_iso();
+        assert!(
+            ts.chars().all(|c| c.is_ascii_digit()),
+            "now_iso must be numeric: {ts}"
+        );
+        assert!(!ts.is_empty());
+    }
+
+    #[test]
+    fn state_counts_default_is_all_zero() {
+        let counts = StateCounts::default();
+        assert_eq!(counts.fresh, 0);
+        assert_eq!(counts.stale, 0);
+        assert_eq!(counts.other, 0);
+    }
+
+    #[test]
+    fn fresh_row_fields_are_accessible() {
+        let row = FreshRow {
+            qualified_name: "src/main.rs::main".to_string(),
+            usearch_key: 42,
+            content_hash: "abc123".to_string(),
+        };
+        assert_eq!(row.qualified_name, "src/main.rs::main");
+        assert_eq!(row.usearch_key, 42);
+        assert_eq!(row.content_hash, "abc123");
+    }
+
+    #[test]
+    fn embedding_state_row_fields_are_accessible() {
+        let row = EmbeddingStateRow {
+            qualified_name: "q".to_string(),
+            usearch_key: 7,
+            content_hash: "h".to_string(),
+            state: "fresh".to_string(),
+            embedded_at: "12345".to_string(),
+        };
+        assert_eq!(row.qualified_name, "q");
+        assert_eq!(row.usearch_key, 7);
+        assert_eq!(row.content_hash, "h");
+        assert_eq!(row.state, "fresh");
+        assert_eq!(row.embedded_at, "12345");
+    }
+
+    #[test]
+    fn row_to_state_row_parses_valid_row() {
+        let row = vec![
+            cozo::DataValue::Str("qn".into()),
+            cozo::DataValue::Int(5),
+            cozo::DataValue::Str("hash".into()),
+            cozo::DataValue::Str("stale".into()),
+            cozo::DataValue::Str("999".into()),
+        ];
+        let parsed = row_to_state_row(&row).expect("should parse");
+        assert_eq!(parsed.qualified_name, "qn");
+        assert_eq!(parsed.usearch_key, 5);
+        assert_eq!(parsed.content_hash, "hash");
+        assert_eq!(parsed.state, "stale");
+        assert_eq!(parsed.embedded_at, "999");
+    }
+
+    #[test]
+    fn row_to_state_row_returns_none_for_empty_row() {
+        let row: Vec<cozo::DataValue> = vec![];
+        assert!(row_to_state_row(&row).is_none());
+    }
+
+    #[test]
+    fn row_to_state_row_returns_none_for_short_row() {
+        // Only 2 columns instead of 5 — missing fields.
+        let row = vec![cozo::DataValue::Str("qn".into()), cozo::DataValue::Int(5)];
+        assert!(row_to_state_row(&row).is_none());
+    }
 }

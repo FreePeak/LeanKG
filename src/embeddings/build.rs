@@ -267,4 +267,41 @@ mod tests {
     fn default_options_batch_size_32() {
         assert_eq!(BuildOptions::default().batch_size, 32);
     }
+
+    #[test]
+    fn default_options_mode_is_incremental() {
+        assert_eq!(BuildOptions::default().mode, BuildMode::Incremental);
+    }
+
+    #[test]
+    fn default_options_reserve_capacity_is_none() {
+        assert!(BuildOptions::default().reserve_capacity.is_none());
+    }
+
+    #[test]
+    fn build_mode_variants_are_distinct() {
+        assert_ne!(BuildMode::Incremental, BuildMode::Full);
+    }
+
+    #[test]
+    fn embedding_dim_const_matches_model_dim() {
+        assert_eq!(EMBEDDING_DIM_CONST, EMBEDDING_DIM);
+        assert_eq!(EMBEDDING_DIM_CONST, 384);
+    }
+
+    #[test]
+    fn build_report_default_has_zero_counts() {
+        let report = BuildReport::default();
+        assert_eq!(report.considered_count, 0);
+        assert_eq!(report.embedded_count, 0);
+        assert_eq!(report.skipped_fresh_count, 0);
+        assert_eq!(report.orphaned_count, 0);
+        assert_eq!(report.index_size, 0);
+    }
+
+    #[test]
+    fn upsert_chunk_is_500() {
+        // CozoDB pest parser stack-depth limit — documented contract.
+        assert_eq!(UPSERT_CHUNK, 500);
+    }
 }

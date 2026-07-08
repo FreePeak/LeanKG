@@ -375,4 +375,50 @@ mod tests {
         let t = truncate(&s, 200);
         assert!(t.len() <= 200);
     }
+
+    // =========================================================================
+    // RetrieveOptions default tests
+    // =========================================================================
+
+    #[test]
+    fn retrieve_options_default_env_is_local() {
+        let opts = RetrieveOptions::default();
+        assert_eq!(opts.env, Some("local".to_string()));
+    }
+
+    #[test]
+    fn retrieve_options_default_ann_top_k_is_none() {
+        let opts = RetrieveOptions::default();
+        assert!(
+            opts.ann_top_k.is_none(),
+            "default should be adaptive (None)"
+        );
+    }
+
+    #[test]
+    fn retrieve_options_default_rerank_top_n_is_10() {
+        let opts = RetrieveOptions::default();
+        assert_eq!(opts.rerank_top_n, 10);
+    }
+
+    #[test]
+    fn retrieve_options_default_include_worktrees_false() {
+        let opts = RetrieveOptions::default();
+        assert!(!opts.include_worktrees, "Q2 default-on worktree filter");
+    }
+
+    #[test]
+    fn retrieve_options_default_include_ontology_steps_false() {
+        let opts = RetrieveOptions::default();
+        assert!(
+            !opts.include_ontology_steps,
+            "node-type filter on by default"
+        );
+    }
+
+    #[test]
+    fn retrieve_options_default_embeddings_stale_false() {
+        let opts = RetrieveOptions::default();
+        assert!(!opts.embeddings_stale);
+    }
 }

@@ -1058,3 +1058,171 @@ fn generate_markdown(report: &UnifiedReport) -> String {
     md.push_str("- **Complex queries** (impact radius, call graphs, ontology) are where LeanKG excels - grep cannot compute these in a single call.\n");
     md
 }
+
+// =========================================================================
+// Unit tests for benchmark helper functions
+//
+// These test the pure-logic helpers (token estimation, variant construction,
+// winner selection, case definitions) without requiring a live CozoDB or
+// project filesystem. The DB-backed run_leankg/run_manual/compute_summary
+// functions are exercised by the integration benchmark harness.
+// =========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn estimate_tokens_empty_returns_zero() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn estimate_tokens_short_string_returns_min_one() {
+        // Any non-empty string < 4 chars still rounds up to 1 token.
+        assert_eq!(estimate_tokens("a"), 1);
+        assert_eq!(estimate_tokens("ab"), 1);
+        assert_eq!(estimate_tokens("abc"), 1);
+    }
+
+    #[test]
+    fn estimate_tokens_long_string_divides_by_four() {
+        assert_eq!(estimate_tokens("abcd"), 1);
+        assert_eq!(estimate_tokens("abcdefgh"), 2);
+        assert_eq!(estimate_tokens("abcdefghijklmnop"), 4);
+    }
+
+    #[test]
+    fn estimate_tokens_unicode_counts_bytes() {
+        // estimate_tokens uses .len() which counts bytes, not chars.
+        // A 3-byte UTF-8 char (e.g. CJK) counts as 3 bytes.
+        assert_eq!(estimate_tokens("中"), 1); // 3 bytes -> max(1, 0) = 1
+        assert_eq!(estimate_tokens("中文"), 1); // 6 bytes -> max(1, 1) = 1
+                                                // 10 CJK chars = 30 bytes -> 30/4 = 7
+        assert_eq!(estimate_tokens("中文中文中文中文中文"), 7);
+    }
+
+    #[test]
+    fn make_variant_calculates_tokens_from_input_and_output() {
+        let v = make_variant(10.5, "abcdefgh", "ijklmnop", 2, None);
+        assert_eq!(v.input_tokens, 2); // 8 bytes / 4
+        assert_eq!(v.output_tokens, 2); // 8 bytes / 4
+        assert_eq!(v.total_tokens, 4);
+        assert_eq!(v.latency_ms, 10.5);
+        assert_eq!(v.result_count, 2);
+        assert!(v.success);
+        assert!(v.error.is_none());
+    }
+
+    #[test]
+    fn make_variant_tpr_with_zero_count_is_zero() {
+        let v = make_variant(5.0, "abcd", "efgh", 0, None);
+        assert_eq!(v.tokens_per_result, 0.0);
+        assert_eq!(v.result_count, 0);
+    }
+
+    #[test]
+    fn make_variant_tpr_with_positive_count() {
+        // "abcdefgh" = 8 bytes -> 2 tokens; total = 2+2 = 4; tpr = 4/4 = 1.0
+        let v = make_variant(5.0, "abcdefgh", "ijklmnop", 4, None);
+        assert_eq!(v.tokens_per_result, 1.0);
+    }
+
+    #[test]
+    fn make_variant_success_flag_false_when_error_present() {
+        let v = make_variant(0.0, "", "", 0, Some("timeout".to_string()));
+        assert!(!v.success);
+        assert_eq!(v.error, Some("timeout".to_string()));
+    }
+
+    #[test]
+    fn make_variant_success_flag_true_when_error_none() {
+        let v = make_variant(0.0, "x", "y", 1, None);
+        assert!(v.success);
+        assert!(v.error.is_none());
+    }
+
+    #[test]
+    fn winner_lower_prefers_lower_value() {
+        assert_eq!(winner_lower(10.0, 20.0), "LeanKG");
+        assert_eq!(winner_lower(1.5, 99.9), "LeanKG");
+    }
+
+    #[test]
+    fn winner_lower_tie_goes_to_manual() {
+        // When a == b, the else branch fires (Manual wins).
+        assert_eq!(winner_lower(50.0, 50.0), "Manual");
+    }
+
+    #[test]
+    fn winner_lower_when_a_is_larger_goes_to_manual() {
+        assert_eq!(winner_lower(100.0, 50.0), "Manual");
+    }
+
+    #[test]
+    fn get_cases_is_not_empty() {
+        let cases = get_cases();
+        assert!(!cases.is_empty(), "get_cases should return benchmark cases");
+        assert!(
+            cases.len() >= 10,
+            "expected at least 10 cases, got {}",
+            cases.len()
+        );
+    }
+
+    #[test]
+    fn get_cases_has_simple_medium_and_complex() {
+        let cases = get_cases();
+        let complexities: std::collections::HashSet<&str> =
+            cases.iter().map(|c| c.complexity).collect();
+        assert!(
+            complexities.contains("simple"),
+            "missing 'simple' complexity cases"
+        );
+        assert!(
+            complexities.contains("medium"),
+            "missing 'medium' complexity cases"
+        );
+        assert!(
+            complexities.contains("complex"),
+            "missing 'complex' complexity cases"
+        );
+    }
+
+    #[test]
+    fn get_cases_all_have_non_empty_fields() {
+        let cases = get_cases();
+        for c in &cases {
+            assert!(!c.id.is_empty(), "case id is empty");
+            assert!(!c.category.is_empty(), "case {} category is empty", c.id);
+            assert!(
+                !c.complexity.is_empty(),
+                "case {} complexity is empty",
+                c.id
+            );
+            assert!(!c.tool.is_empty(), "case {} tool is empty", c.id);
+            assert!(!c.query.is_empty(), "case {} query is empty", c.id);
+        }
+    }
+
+    #[test]
+    fn get_cases_includes_impact_radius_and_call_graph() {
+        let cases = get_cases();
+        let tools: std::collections::HashSet<&str> = cases.iter().map(|c| c.tool).collect();
+        assert!(
+            tools.contains("get_impact_radius"),
+            "missing get_impact_radius case"
+        );
+        assert!(
+            tools.contains("get_call_graph"),
+            "missing get_call_graph case"
+        );
+    }
+
+    #[test]
+    fn get_cases_ids_are_unique() {
+        let cases = get_cases();
+        let ids: std::collections::HashSet<&str> = cases.iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), cases.len(), "case IDs must be unique");
+    }
+}
