@@ -1,0 +1,14 @@
+Ontology Tools Benchmark | Project: /Users/linh.doan/work/harvey/freepeak/leankg
+20 queries, 12 passed, 8 failed
+Latency: total=19075.1ms avg=953.8ms max=5961.1ms
+
+Tool                    Queries        P        F   Avg ms
+concept_search                5        3        2   1827.5
+kg_context                    2        1        1   4025.0
+kg_concept_map                2        2        0    119.0
+kg_trace_workflow             2        2        0    325.7
+semantic_search               2        2        0    136.0
+search_code                   2        1        1     92.9
+query_file                    2        0        2     95.0
+find_function                 2        0        2    118.0
+kg_ontology_status            1        1        0    114.5

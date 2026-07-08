@@ -8,6 +8,10 @@ MCP_PORT="${MCP_HTTP_PORT:-9699}"
 echo "=== LeanKG Entrypoint ==="
 echo "RocksDB root: $ROCKSDB_ROOT"
 
+# Determine which project to serve via MCP
+# LEANKG_MCP_PROJECT takes precedence; fall back to /workspace
+MCP_PROJECT="${LEANKG_MCP_PROJECT:-/workspace}"
+
 rocksdb_dir_for() {
     local project_dir="$1"
     local canonical=$(realpath "$project_dir" 2>/dev/null || readlink -f "$project_dir" 2>/dev/null || echo "$project_dir")
@@ -59,6 +63,14 @@ YAML
     fi
 
     local rdb_dir=$(rocksdb_dir_for "$project_dir")
+
+    # Force re-index if LEANKG_FORCE_REINDEX is set
+    if [ "${LEANKG_FORCE_REINDEX:-0}" = "1" ]; then
+        echo "  LEANKG_FORCE_REINDEX=1, removing old RocksDB data at $rdb_dir..."
+        rm -rf "$rdb_dir"
+    fi
+
+    # Skip index if RocksDB data already exists (unless forced above)
     if [ -f "$rdb_dir/manifest" ] || [ -f "$rdb_dir/data/CURRENT" ]; then
         echo "  RocksDB data exists at $rdb_dir, skip index."
         return
@@ -92,15 +104,16 @@ fi
 # pushed containers past their memory limit (exit 137 = OOM kill).
 export LEANKG_MMAP_SIZE="${LEANKG_MMAP_SIZE:-67108864}"
 
-# Sync ontology from YAML files into the database
-if [ -d "/workspace/ontology" ] && [ -f "/workspace/ontology/concepts.yaml" ]; then
-    echo "=== Syncing ontology ==="
-    ( cd /workspace && leankg ontology sync )
+# Sync ontology from the MCP project's YAML files (fallback to /workspace)
+ONTOLOGY_DIR="$MCP_PROJECT/ontology"
+if [ -d "$ONTOLOGY_DIR" ] && [ -f "$ONTOLOGY_DIR/concepts.yaml" ]; then
+    echo "=== Syncing ontology from $ONTOLOGY_DIR ==="
+    ( cd "$MCP_PROJECT" && leankg ontology sync )
     echo "=== Ontology sync done ==="
 else
-    echo "No ontology directory found, skipping ontology sync"
+    echo "No ontology directory found at $ONTOLOGY_DIR, skipping ontology sync"
 fi
 
-echo "=== Starting MCP HTTP on port $MCP_PORT ==="
-cd /workspace
-exec leankg mcp-http --port "$MCP_PORT" "$@"
+echo "=== Starting MCP HTTP on port $MCP_PORT for project $MCP_PROJECT ==="
+cd "$MCP_PROJECT" || { echo "FATAL: cannot cd to $MCP_PROJECT"; exit 1; }
+exec leankg mcp-http --port "$MCP_PORT" --project "$MCP_PROJECT" "$@"

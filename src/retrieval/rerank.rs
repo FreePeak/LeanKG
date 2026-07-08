@@ -64,3 +64,64 @@ fn ann_order(n: usize) -> Vec<RerankScore> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ann_order_empty_returns_empty() {
+        let result = ann_order(0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn ann_order_returns_sequential_indices() {
+        let result = ann_order(5);
+        assert_eq!(result.len(), 5);
+        for (i, score) in result.iter().enumerate() {
+            assert_eq!(
+                score.document_idx, i,
+                "index {i} should map to document_idx {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn ann_order_scores_are_all_zero() {
+        let result = ann_order(10);
+        for score in &result {
+            assert_eq!(score.score, 0.0, "fallback scores must be 0.0");
+        }
+    }
+
+    #[test]
+    fn ann_order_single_element() {
+        let result = ann_order(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].document_idx, 0);
+        assert_eq!(result[0].score, 0.0);
+    }
+
+    #[test]
+    fn rerank_stage_inactive_reports_false() {
+        // We can't construct a RerankStage without a model download, but we
+        // can verify the is_active() contract on a stage with inner=None via
+        // the try_new() fallback path. On CI without cached models, try_new()
+        // will fail and inner will be None.
+        // This test is a no-op if models are available; it only verifies the
+        // inactive path when it occurs.
+        let stage = RerankStage::try_new();
+        if !stage.is_active() {
+            // Fallback path: rerank should return ANN order with Fallback status.
+            let docs = vec!["doc1".to_string(), "doc2".to_string(), "doc3".to_string()];
+            let (scores, status) = stage.rerank("query", docs);
+            assert_eq!(status, RerankerStatus::Fallback);
+            assert_eq!(scores.len(), 3);
+            for (i, s) in scores.iter().enumerate() {
+                assert_eq!(s.document_idx, i);
+                assert_eq!(s.score, 0.0);
+            }
+        }
+    }
+}

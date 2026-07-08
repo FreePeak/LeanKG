@@ -979,4 +979,236 @@ mod tests {
         assert!(schema.columns.is_empty());
         assert!(!schema.canonical);
     }
+
+    // CozoDB 0.7.x migration wrapper tests — verify the `run_script` adapter,
+    // `mutability_for` auto-detection, `json_to_datavalue` conversion, and
+    // storage config resolution introduced when upgrading from vendored
+    // cozo-0.2.2 to cozo-0.7.6.
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn mutability_for_read_query_is_immutable() {
+        assert_eq!(
+            mutability_for("?[a, b] := *code_elements[a, b]"),
+            ScriptMutability::Immutable
+        );
+        assert_eq!(mutability_for("::relations"), ScriptMutability::Immutable);
+    }
+
+    #[test]
+    fn mutability_for_put_query_is_mutable() {
+        assert_eq!(
+            mutability_for("?[a, b] <- [[$a, $b]] :put code_elements {a, b}"),
+            ScriptMutability::Mutable
+        );
+    }
+
+    #[test]
+    fn mutability_for_rm_query_is_mutable() {
+        assert_eq!(
+            mutability_for("?[a] <- [[$a]] :rm code_elements {a}"),
+            ScriptMutability::Mutable
+        );
+    }
+
+    #[test]
+    fn mutability_for_create_query_is_mutable() {
+        assert_eq!(
+            mutability_for(":create code_elements {a: String, b: String}"),
+            ScriptMutability::Mutable
+        );
+    }
+
+    #[test]
+    fn mutability_for_hnsw_query_is_mutable() {
+        assert_eq!(
+            mutability_for("::hnsw create embedding_vectors:vec_idx { dim: 384 }"),
+            ScriptMutability::Mutable
+        );
+    }
+
+    #[test]
+    fn mutability_for_index_create_is_mutable() {
+        assert_eq!(
+            mutability_for("::index create code_elements:name_idx { name }"),
+            ScriptMutability::Mutable
+        );
+    }
+
+    #[test]
+    fn mutability_for_combined_read_head_with_put_is_mutable() {
+        // Read head (?) + write action (:put) → Mutable (scans whole query).
+        assert_eq!(
+            mutability_for("?[a, b] := *rel[a, b], b = $val :put rel2 {a, b}"),
+            ScriptMutability::Mutable
+        );
+    }
+
+    #[test]
+    fn json_to_datavalue_null_becomes_datavalue_null() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("null.db");
+        let db = make_db(&db_path);
+        run_script(&db, ":create t {k: String, v: String?}", Default::default()).unwrap();
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("k".to_string(), serde_json::json!("key1"));
+        params.insert("v".to_string(), serde_json::Value::Null);
+        run_script(&db, "?[k, v] <- [[$k, $v]] :put t {k, v}", params).unwrap();
+        let result = run_script(&db, "?[k, v] := *t[k, v]", Default::default()).unwrap();
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[test]
+    fn json_to_datavalue_string_preserves_value() {
+        let dv = json_to_datavalue(serde_json::json!("hello"));
+        assert_eq!(dv.get_str(), Some("hello"));
+    }
+
+    #[test]
+    fn json_to_datavalue_int_preserves_value() {
+        let dv = json_to_datavalue(serde_json::json!(42));
+        assert_eq!(dv.get_int(), Some(42));
+    }
+
+    #[test]
+    fn run_script_put_then_get_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("rt.db");
+        let db = make_db(&db_path);
+        run_script(
+            &db,
+            ":create kv {k: String => v: String}",
+            Default::default(),
+        )
+        .unwrap();
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("k".to_string(), serde_json::json!("alpha"));
+        params.insert("v".to_string(), serde_json::json!("beta"));
+        run_script(&db, "?[k, v] <- [[$k, $v]] :put kv {k => v}", params).unwrap();
+        let mut qparams = std::collections::BTreeMap::new();
+        qparams.insert("k".to_string(), serde_json::json!("alpha"));
+        let result = run_script(&db, "?[v] := *kv[k, v], k = $k", qparams).unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0].get_str(), Some("beta"));
+    }
+
+    #[test]
+    fn run_script_immutable_read_after_write() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("imm.db");
+        let db = make_db(&db_path);
+        run_script(
+            &db,
+            ":create simple {a: String, b: Int}",
+            Default::default(),
+        )
+        .unwrap();
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("a".to_string(), serde_json::json!("x"));
+        params.insert("b".to_string(), serde_json::json!(10));
+        run_script(&db, "?[a, b] <- [[$a, $b]] :put simple {a, b}", params).unwrap();
+        let result = run_script(&db, "?[a, b] := *simple[a, b]", Default::default()).unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0].get_str(), Some("x"));
+        assert_eq!(result.rows[0][1].get_int(), Some(10));
+    }
+
+    #[test]
+    fn resolve_storage_config_defaults_to_sqlite() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DB_ENGINE").ok();
+        std::env::remove_var("LEANKG_DB_ENGINE");
+        let cfg = resolve_storage_config(std::path::Path::new("/tmp/test.db"));
+        assert_eq!(cfg.engine, StorageEngine::Sqlite);
+        if let Some(v) = prev {
+            std::env::set_var("LEANKG_DB_ENGINE", v);
+        }
+    }
+
+    #[test]
+    fn resolve_storage_config_rocksdb_when_env_set() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DB_ENGINE").ok();
+        std::env::set_var("LEANKG_DB_ENGINE", "rocksdb");
+        let cfg = resolve_storage_config(std::path::Path::new("/tmp/test.db"));
+        assert_eq!(cfg.engine, StorageEngine::RocksDb);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_DB_ENGINE", v),
+            None => std::env::remove_var("LEANKG_DB_ENGINE"),
+        }
+    }
+
+    #[test]
+    fn resolve_storage_config_sqlite_dir_appends_leankg_db() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DB_ENGINE").ok();
+        std::env::remove_var("LEANKG_DB_ENGINE");
+        // resolve_storage_config checks is_dir() — create a real temp dir
+        // so the SQLite path appends "leankg.db".
+        let tmp = TempDir::new().unwrap();
+        let cfg = resolve_storage_config(tmp.path());
+        assert_eq!(cfg.engine, StorageEngine::Sqlite);
+        assert!(cfg.path.ends_with("leankg.db"));
+        if let Some(v) = prev {
+            std::env::set_var("LEANKG_DB_ENGINE", v);
+        }
+    }
+
+    #[test]
+    fn get_env_mmap_size_default_is_64_mib() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_MMAP_SIZE").ok();
+        std::env::remove_var("LEANKG_MMAP_SIZE");
+        assert_eq!(get_env_mmap_size(), 64 * 1024 * 1024);
+        if let Some(v) = prev {
+            std::env::set_var("LEANKG_MMAP_SIZE", v);
+        }
+    }
+
+    #[test]
+    fn get_env_mmap_size_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_MMAP_SIZE").ok();
+        std::env::set_var("LEANKG_MMAP_SIZE", "134217728");
+        assert_eq!(get_env_mmap_size(), 134217728);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_MMAP_SIZE", v),
+            None => std::env::remove_var("LEANKG_MMAP_SIZE"),
+        }
+    }
+
+    #[test]
+    fn central_project_storage_path_includes_project_name() {
+        let path =
+            central_project_storage_path(std::path::Path::new("/home/user/myproject/.leankg"));
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains("projects"), "path: {path_str}");
+        assert!(path_str.contains("myproject"), "path: {path_str}");
+    }
+
+    #[test]
+    fn init_db_creates_canonical_schema_on_sqlite() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("init.db");
+        let db = init_db(&db_path).expect("init_db");
+        let schema = code_elements_schema(&db);
+        assert_eq!(schema.name, "code_elements");
+        assert_eq!(schema.arity, 13);
+        assert!(schema.canonical);
+        assert!(schema.columns.contains(&"env".to_string()));
+        assert!(schema.columns.contains(&"ontology_layer".to_string()));
+    }
+
+    #[test]
+    fn init_db_relationships_has_six_columns() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("rel_init.db");
+        let db = init_db(&db_path).expect("init_db");
+        let schema = relationships_schema(&db);
+        assert_eq!(schema.name, "relationships");
+        assert_eq!(schema.arity, 6);
+        assert!(schema.canonical);
+        assert!(schema.columns.contains(&"env".to_string()));
+    }
 }

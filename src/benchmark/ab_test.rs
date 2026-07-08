@@ -281,13 +281,6 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let b_qual_val = quality_eval(0, b_count);
 
         let ratio = if a_lat > 0.0 { b_lat / a_lat } else { 0.0 };
-        let _speedup = if ratio > 1.0 {
-            ratio
-        } else if ratio > 0.0 {
-            1.0 / ratio
-        } else {
-            0.0
-        };
         let lat_winner = if a_lat < b_lat { "LeanKG" } else { "Manual" };
         let eff_winner = if a_tok_per_res < b_tok_per_res || (b_count == 0 && a_tok_per_res > 0.0) {
             "LeanKG"

@@ -1,0 +1,645 @@
+{
+  "name": "LeanKG Unified A/B Benchmark",
+  "project": "/Users/linh.doan/work/harvey/freepeak/leankg",
+  "timestamp": "1782980096",
+  "codebase_stats": {
+    "total_files": 112,
+    "total_lines": 57149,
+    "total_bytes": 2081873,
+    "indexed_elements": 16602,
+    "indexed_relationships": 45374
+  },
+  "summary": {
+    "total_cases": 19,
+    "a_avg_latency_ms": 3786.313168947368,
+    "b_avg_latency_ms": 25.17704157894737,
+    "a_total_input_tokens": 210,
+    "b_total_input_tokens": 300,
+    "a_total_output_tokens": 239,
+    "b_total_output_tokens": 141,
+    "a_total_tokens": 449,
+    "b_total_tokens": 441,
+    "a_avg_tokens_per_result": 2.08570956039336,
+    "b_avg_tokens_per_result": 6.388490311039388,
+    "input_token_savings_pct": 30.000000000000004,
+    "output_token_overhead_pct": 69.50354609929077,
+    "total_token_savings_pct": -1.8140589569161092,
+    "latency_overhead_pct": 14938.753290670264,
+    "a_latency_wins": 5,
+    "b_latency_wins": 14,
+    "a_token_wins": 8,
+    "b_token_wins": 11,
+    "a_efficiency_wins": 11,
+    "b_efficiency_wins": 8
+  },
+  "by_complexity": [
+    {
+      "complexity": "simple",
+      "case_count": 4,
+      "a_avg_latency_ms": 20.4468855,
+      "b_avg_latency_ms": 20.249656,
+      "a_avg_input_tokens": 11.75,
+      "b_avg_input_tokens": 13.25,
+      "a_avg_output_tokens": 29.75,
+      "b_avg_output_tokens": 1.0,
+      "input_savings_pct": 11.32075471698113,
+      "latency_overhead_pct": 0.973989385301155
+    },
+    {
+      "complexity": "medium",
+      "case_count": 7,
+      "a_avg_latency_ms": 29.319821571428573,
+      "b_avg_latency_ms": 16.855017857142855,
+      "a_avg_input_tokens": 11.142857142857142,
+      "b_avg_input_tokens": 16.857142857142858,
+      "a_avg_output_tokens": 5.428571428571429,
+      "b_avg_output_tokens": 1.0,
+      "input_savings_pct": 33.89830508474577,
+      "latency_overhead_pct": 73.95307332174292
+    },
+    {
+      "complexity": "complex",
+      "case_count": 8,
+      "a_avg_latency_ms": 8956.615489625001,
+      "b_avg_latency_ms": 34.922505125,
+      "a_avg_input_tokens": 10.625,
+      "b_avg_input_tokens": 16.125,
+      "a_avg_output_tokens": 10.25,
+      "b_avg_output_tokens": 16.25,
+      "input_savings_pct": 34.10852713178295,
+      "latency_overhead_pct": 25547.11625802933
+    }
+  ],
+  "cases": [
+    {
+      "id": "S1",
+      "category": "search",
+      "complexity": "simple",
+      "tool": "search_code",
+      "query": "CodeElement",
+      "variant_a": {
+        "latency_ms": 24.508875,
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+        "result_count": 17,
+        "tokens_per_result": 1.0588235294117647,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 15.870458000000001,
+        "input_tokens": 14,
+        "output_tokens": 1,
+        "total_tokens": 15,
+        "result_count": 44,
+        "tokens_per_result": 0.3409090909090909,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "Manual"
+    },
+    {
+      "id": "S2",
+      "category": "search",
+      "complexity": "simple",
+      "tool": "search_code",
+      "query": "GraphEngine",
+      "variant_a": {
+        "latency_ms": 25.881833999999998,
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+        "result_count": 17,
+        "tokens_per_result": 1.0588235294117647,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 16.916041,
+        "input_tokens": 14,
+        "output_tokens": 1,
+        "total_tokens": 15,
+        "result_count": 21,
+        "tokens_per_result": 0.7142857142857143,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "Manual"
+    },
+    {
+      "id": "S3",
+      "category": "find",
+      "complexity": "simple",
+      "tool": "find_function",
+      "query": "run",
+      "variant_a": {
+        "latency_ms": 7.495500000000001,
+        "input_tokens": 12,
+        "output_tokens": 55,
+        "total_tokens": 67,
+        "result_count": 50,
+        "tokens_per_result": 1.34,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 23.639541,
+        "input_tokens": 12,
+        "output_tokens": 1,
+        "total_tokens": 13,
+        "result_count": 41,
+        "tokens_per_result": 0.3170731707317073,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "LeanKG",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "Manual"
+    },
+    {
+      "id": "S4",
+      "category": "find",
+      "complexity": "simple",
+      "tool": "find_function",
+      "query": "init_db",
+      "variant_a": {
+        "latency_ms": 23.901333,
+        "input_tokens": 13,
+        "output_tokens": 50,
+        "total_tokens": 63,
+        "result_count": 10,
+        "tokens_per_result": 6.3,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 24.572584000000003,
+        "input_tokens": 13,
+        "output_tokens": 1,
+        "total_tokens": 14,
+        "result_count": 4,
+        "tokens_per_result": 3.5,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "LeanKG",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "Manual"
+    },
+    {
+      "id": "M1",
+      "category": "search_typed",
+      "complexity": "medium",
+      "tool": "search_code_typed",
+      "query": "function:search",
+      "variant_a": {
+        "latency_ms": 7.669582999999999,
+        "input_tokens": 13,
+        "output_tokens": 4,
+        "total_tokens": 17,
+        "result_count": 50,
+        "tokens_per_result": 0.34,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 22.105,
+        "input_tokens": 16,
+        "output_tokens": 1,
+        "total_tokens": 17,
+        "result_count": 50,
+        "tokens_per_result": 0.34,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "LeanKG",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "Manual"
+    },
+    {
+      "id": "M2",
+      "category": "search_typed",
+      "complexity": "medium",
+      "tool": "search_code_typed",
+      "query": "class:GraphEngine",
+      "variant_a": {
+        "latency_ms": 22.915125,
+        "input_tokens": 13,
+        "output_tokens": 3,
+        "total_tokens": 16,
+        "result_count": 2,
+        "tokens_per_result": 8.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 25.111749999999997,
+        "input_tokens": 18,
+        "output_tokens": 1,
+        "total_tokens": 19,
+        "result_count": 1,
+        "tokens_per_result": 19.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "LeanKG",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "M3",
+      "category": "context",
+      "complexity": "medium",
+      "tool": "get_context",
+      "query": "src/db/models.rs",
+      "variant_a": {
+        "latency_ms": 18.181124999999998,
+        "input_tokens": 10,
+        "output_tokens": 10,
+        "total_tokens": 20,
+        "result_count": 0,
+        "tokens_per_result": 0.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 7.914375,
+        "input_tokens": 10,
+        "output_tokens": 1,
+        "total_tokens": 11,
+        "result_count": 1,
+        "tokens_per_result": 11.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "M4",
+      "category": "context",
+      "complexity": "medium",
+      "tool": "get_context",
+      "query": "src/graph/query.rs",
+      "variant_a": {
+        "latency_ms": 17.930417000000002,
+        "input_tokens": 10,
+        "output_tokens": 10,
+        "total_tokens": 20,
+        "result_count": 0,
+        "tokens_per_result": 0.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 7.5915,
+        "input_tokens": 11,
+        "output_tokens": 1,
+        "total_tokens": 12,
+        "result_count": 1,
+        "tokens_per_result": 12.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "M5",
+      "category": "dependencies",
+      "complexity": "medium",
+      "tool": "get_dependencies",
+      "query": "src/db/models.rs",
+      "variant_a": {
+        "latency_ms": 67.707625,
+        "input_tokens": 9,
+        "output_tokens": 3,
+        "total_tokens": 12,
+        "result_count": 0,
+        "tokens_per_result": 0.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 7.86625,
+        "input_tokens": 13,
+        "output_tokens": 1,
+        "total_tokens": 14,
+        "result_count": 2,
+        "tokens_per_result": 7.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "M6",
+      "category": "dependents",
+      "complexity": "medium",
+      "tool": "get_dependents",
+      "query": "src/db/models.rs",
+      "variant_a": {
+        "latency_ms": 70.822709,
+        "input_tokens": 8,
+        "output_tokens": 3,
+        "total_tokens": 11,
+        "result_count": 19,
+        "tokens_per_result": 0.5789473684210527,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 26.510417,
+        "input_tokens": 15,
+        "output_tokens": 1,
+        "total_tokens": 16,
+        "result_count": 1,
+        "tokens_per_result": 16.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "M7",
+      "category": "tested_by",
+      "complexity": "medium",
+      "tool": "get_tested_by",
+      "query": "src/db/models.rs",
+      "variant_a": {
+        "latency_ms": 0.012167,
+        "input_tokens": 15,
+        "output_tokens": 5,
+        "total_tokens": 20,
+        "result_count": 19,
+        "tokens_per_result": 1.0526315789473684,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 20.885832999999998,
+        "input_tokens": 35,
+        "output_tokens": 1,
+        "total_tokens": 36,
+        "result_count": 0,
+        "tokens_per_result": 0.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "LeanKG",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "Manual"
+    },
+    {
+      "id": "C1",
+      "category": "impact",
+      "complexity": "complex",
+      "tool": "get_impact_radius",
+      "query": "src/db/models.rs:2",
+      "variant_a": {
+        "latency_ms": 32221.053583,
+        "input_tokens": 15,
+        "output_tokens": 8,
+        "total_tokens": 23,
+        "result_count": 1114,
+        "tokens_per_result": 0.02064631956912029,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 34.743875,
+        "input_tokens": 14,
+        "output_tokens": 1,
+        "total_tokens": 15,
+        "result_count": 42,
+        "tokens_per_result": 0.35714285714285715,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "C2",
+      "category": "impact",
+      "complexity": "complex",
+      "tool": "get_impact_radius",
+      "query": "src/graph/query.rs:2",
+      "variant_a": {
+        "latency_ms": 38078.036334,
+        "input_tokens": 16,
+        "output_tokens": 8,
+        "total_tokens": 24,
+        "result_count": 928,
+        "tokens_per_result": 0.02586206896551724,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 39.329041000000004,
+        "input_tokens": 14,
+        "output_tokens": 1,
+        "total_tokens": 15,
+        "result_count": 8,
+        "tokens_per_result": 1.875,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "C3",
+      "category": "callgraph",
+      "complexity": "complex",
+      "tool": "get_call_graph",
+      "query": "init_db:2",
+      "variant_a": {
+        "latency_ms": 287.307792,
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "result_count": 5,
+        "tokens_per_result": 3.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 29.989874999999998,
+        "input_tokens": 12,
+        "output_tokens": 1,
+        "total_tokens": 13,
+        "result_count": 61,
+        "tokens_per_result": 0.21311475409836064,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "Manual"
+    },
+    {
+      "id": "C4",
+      "category": "callers",
+      "complexity": "complex",
+      "tool": "get_callers",
+      "query": "search_by_name_typed",
+      "variant_a": {
+        "latency_ms": 300.14829199999997,
+        "input_tokens": 8,
+        "output_tokens": 2,
+        "total_tokens": 10,
+        "result_count": 14,
+        "tokens_per_result": 0.7142857142857143,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 27.981959,
+        "input_tokens": 16,
+        "output_tokens": 1,
+        "total_tokens": 17,
+        "result_count": 16,
+        "tokens_per_result": 1.0625,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "C5",
+      "category": "ontology",
+      "complexity": "complex",
+      "tool": "concept_search",
+      "query": "benchmark testing",
+      "variant_a": {
+        "latency_ms": 162.471666,
+        "input_tokens": 12,
+        "output_tokens": 6,
+        "total_tokens": 18,
+        "result_count": 0,
+        "tokens_per_result": 0.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 54.497875,
+        "input_tokens": 16,
+        "output_tokens": 1,
+        "total_tokens": 17,
+        "result_count": 1,
+        "tokens_per_result": 17.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "Manual",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "C6",
+      "category": "ontology",
+      "complexity": "complex",
+      "tool": "kg_context",
+      "query": "impact radius calculation",
+      "variant_a": {
+        "latency_ms": 418.927083,
+        "input_tokens": 15,
+        "output_tokens": 5,
+        "total_tokens": 20,
+        "result_count": 5,
+        "tokens_per_result": 4.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 63.784083,
+        "input_tokens": 23,
+        "output_tokens": 1,
+        "total_tokens": 24,
+        "result_count": 1,
+        "tokens_per_result": 24.0,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "C7",
+      "category": "ontology",
+      "complexity": "complex",
+      "tool": "ontology_status",
+      "query": "ontology status",
+      "variant_a": {
+        "latency_ms": 29.518417000000003,
+        "input_tokens": 5,
+        "output_tokens": 4,
+        "total_tokens": 9,
+        "result_count": 65,
+        "tokens_per_result": 0.13846153846153847,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 9.931375,
+        "input_tokens": 14,
+        "output_tokens": 1,
+        "total_tokens": 15,
+        "result_count": 93,
+        "tokens_per_result": 0.16129032258064516,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "LeanKG"
+    },
+    {
+      "id": "C8",
+      "category": "overview",
+      "complexity": "complex",
+      "tool": "wake_up",
+      "query": "project overview",
+      "variant_a": {
+        "latency_ms": 155.46075000000002,
+        "input_tokens": 4,
+        "output_tokens": 44,
+        "total_tokens": 48,
+        "result_count": 4,
+        "tokens_per_result": 12.0,
+        "success": true,
+        "error": null
+      },
+      "variant_b": {
+        "latency_ms": 19.121958000000003,
+        "input_tokens": 20,
+        "output_tokens": 123,
+        "total_tokens": 143,
+        "result_count": 22,
+        "tokens_per_result": 6.5,
+        "success": true,
+        "error": null
+      },
+      "winner_latency": "Manual",
+      "winner_tokens": "LeanKG",
+      "winner_efficiency": "Manual"
+    }
+  ]
+}

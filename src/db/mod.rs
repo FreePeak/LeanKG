@@ -898,7 +898,10 @@ pub fn update_knowledge_entry(
 }
 
 pub fn delete_knowledge_entry(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let query = r#":delete knowledge_entries where id = $id"#;
+    // CozoDB has no `:delete` operator. Read the matching row(s) by id via
+    // head-binding, then `:rm` exactly those rows.
+    let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], id = $id
+:rm knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
     crate::db::schema::run_script(db, query, params)?;

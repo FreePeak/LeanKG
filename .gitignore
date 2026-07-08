@@ -10,4 +10,13 @@ test-results/
 .mcp.json
 node_modules/
 .leankg
+.leankg.bak-pre-cozo-upgrade/
 .clauge-worktrees/
+# Local-only docker compose overrides. Holds absolute host paths to
+# the user's other repos so they never get committed. The committed
+# template is `.dockerfile.example`; copy it to `.dockerfile` locally.
+.dockerfile
+# Same purpose, but as a docker compose override file (for additional
+# volume mounts, ports, etc.). Created locally by the user; never
+# committed.
+docker-compose.override.yml
