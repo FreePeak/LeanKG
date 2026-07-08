@@ -1593,6 +1593,11 @@ pub fn extract_microservice_relationships(project_path: &str) -> Vec<Relationshi
 mod tests {
     use super::*;
 
+    // Serialize tests that mutate process-wide environment variables.
+    // `std::env::set_var` / `remove_var` are not thread-safe; without this
+    // lock, parallel `cargo test` invocations can race on `max_file_size`.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_max_file_size_default_is_2_mib() {
         // Sanity check: the default cap should be 2 MiB unless overridden by
@@ -1603,6 +1608,7 @@ mod tests {
 
     #[test]
     fn test_max_file_size_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // LEANKG_MAX_FILE_SIZE should override the default when set.
         // SAFETY: tests run single-threaded for this crate and no other test
         // reads the same env var; the previous value is restored at the end.
@@ -1617,6 +1623,7 @@ mod tests {
 
     #[test]
     fn test_find_files_sync_skips_oversized_files() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Create a temp tree with one small .go file and one oversized one.
         let dir = tempfile::tempdir().expect("tempdir");
         let small = dir.path().join("small.go");

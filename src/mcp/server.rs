@@ -2278,6 +2278,12 @@ async fn health_check() -> Response {
 mod tests {
     use super::*;
 
+    // Serialize tests that mutate process-wide environment variables.
+    // `std::env::set_var` / `remove_var` are not thread-safe; without this
+    // lock, parallel `cargo test` invocations can race and observe the
+    // wrong value. See `parse_vacuum_interval_*` tests below.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[tokio::test]
     async fn test_mcp_server_creation() {
         let _server = MCPServer::new(std::path::PathBuf::from(".leankg"));
@@ -2301,8 +2307,7 @@ mod tests {
 
     #[test]
     fn test_parse_vacuum_interval_default_when_unset() {
-        // SAFETY: tests run on a single thread for env mutation; serialize with
-        // a mutex if you ever parallelize.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: env::remove_var is unsafe on the 2024 edition; gate behind cfg.
         // Here we accept the existing project's edition to keep behavior simple.
         let prev = std::env::var("LEANKG_VACUUM_INTERVAL_HOURS").ok();
@@ -2324,6 +2329,7 @@ mod tests {
 
     #[test]
     fn test_parse_vacuum_interval_zero_disables() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: tests are single-threaded for env mutation in this binary.
         unsafe {
             std::env::set_var("LEANKG_VACUUM_INTERVAL_HOURS", "0");
@@ -2336,6 +2342,7 @@ mod tests {
 
     #[test]
     fn test_parse_vacuum_interval_negative_disables() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("LEANKG_VACUUM_INTERVAL_HOURS", "-1");
         }
@@ -2347,6 +2354,7 @@ mod tests {
 
     #[test]
     fn test_parse_vacuum_interval_custom() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("LEANKG_VACUUM_INTERVAL_HOURS", "6");
         }
