@@ -438,9 +438,28 @@ Run load tests:
 cargo test --release load_test -- --nocapture
 ```
 
-### A/B Benchmark Results
+### Unified A/B Benchmark (All Tools, Simple to Complex)
 
-See [tests/benchmark/results/clean-benchmark-2026-04-21.md](tests/benchmark/results/clean-benchmark-2026-04-21.md) for detailed A/B testing results comparing LeanKG vs baseline code search.
+Measures latency, input/output token usage, and token efficiency across **19 test cases** spanning all LeanKG tools (search, find, context, dependencies, impact radius, call graphs, ontology) at 3 complexity levels, with automated Markdown export.
+
+```bash
+# Run the unified benchmark (rebuild first if source changed)
+cargo build --release
+target/release/leankg benchmark-unified --project .
+```
+
+| Metric | With LeanKG | Without (grep) | Winner |
+|--------|-------------|----------------|--------|
+| Input Token Savings | 30.0% | -- | **LeanKG** |
+| Token Efficiency (tokens/result) | 2.09 | 6.39 | **LeanKG (3x)** |
+| Latency (simple queries) | 20.4ms | 20.2ms | ~Equal |
+| Latency (complex queries) | 8.9s | 34.9ms | Manual (impact radius is heavy) |
+
+See [benchmark/results/unified-benchmark-1782980096.md](benchmark/results/unified-benchmark-1782980096.md) for the full report (JSON + Markdown).
+
+### A/B Benchmark Results (Legacy)
+
+See [tests/benchmark/results/clean-benchmark-2026-04-21.md](tests/benchmark/results/clean-benchmark-2026-04-21.md) for earlier A/B testing results comparing LeanKG vs baseline code search.
 
 ---
 
