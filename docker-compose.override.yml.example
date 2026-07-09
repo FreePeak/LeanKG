@@ -21,6 +21,6 @@
 services:
   leankg:
     volumes:
-      # Example: serve a side-by-side Go monorepo at /workspace-be
+      # Example: serve a second repo at /workspace-other
       # (replace the host path with your actual repo location).
-      # - /Users/you/work/be:/workspace-be
+      # - /Users/you/work/other-repo:/workspace-other

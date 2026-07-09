@@ -137,18 +137,18 @@ Environment variables for RocksDB (defaults are built into compose):
 - `LEANKG_DB_ENGINE=rocksdb` -- Switch from SQLite to RocksDB
 - `LEANKG_ROCKSDB_ROOT` -- Centralized storage root (default: `$HOME/.leankg-rocksdb`)
 
-The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-be`).
+The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-other`).
 
 ### Multi-project (side-by-side repos)
 
-To serve additional repos (e.g. a Go monorepo mounted at `/workspace-be` alongside the LeanKG source tree at `/workspace`):
+To serve additional repos (e.g. another project mounted at `/workspace-other` alongside the LeanKG source tree at `/workspace`):
 
 1. Create `.dockerfile` (local-only, gitignored) — copy from `.dockerfile.example`. Set:
    ```bash
    HOST_PROJECT_PATH=/path/to/leankg
    CONTAINER_PROJECT_PATH=/workspace
-   LEANKG_MCP_PROJECT=/workspace-be
-   LEANKG_PROJECT_DIRS=/workspace,/workspace-be
+   LEANKG_MCP_PROJECT=/workspace-other
+   LEANKG_PROJECT_DIRS=/workspace,/workspace-other
    ```
    Note the **comma-separated** `LEANKG_PROJECT_DIRS` -- `entrypoint.sh` uses `IFS=','`.
 
@@ -157,8 +157,9 @@ To serve additional repos (e.g. a Go monorepo mounted at `/workspace-be` alongsi
    services:
      leankg:
        volumes:
-         - /Users/you/work/be:/workspace-be
+         - /Users/you/work/other-repo:/workspace-other
    ```
+
 
 3. Start with the override file chained in:
    ```bash

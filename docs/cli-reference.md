@@ -121,6 +121,6 @@ When the HTTP server is started, every URL supports an optional `?project=` quer
 | URL | Routes to |
 |-----|-----------|
 | `http://host:9699/mcp` | `LEANKG_MCP_PROJECT` (or default) |
-| `http://host:9699/mcp?project=/workspace-be` | `.leankg` DB inside `/workspace-be` |
+| `http://host:9699/mcp?project=/workspace-other` | `.leankg` DB inside `/workspace-other` |
 
 AI tool MCP configs must include the `?project=` param so each project queries the correct database. See `docs/agentic-instructions.md` for examples.
