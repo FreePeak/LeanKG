@@ -15,11 +15,14 @@ services:
       LEANKG_ROCKSDB_ROOT: /data/leankg-rocksdb
       MCP_HTTP_PORT: "9699"
       LEANKG_AUTO_INDEX: "1"
-      # The MCP project path and the project-dirs scan glob. Defaults are
-      # the single-project case (`./workspace`). Override via .dockerfile
-      # when running multiple projects side-by-side.
-      LEANKG_MCP_PROJECT: "${LEANKG_MCP_PROJECT:-/workspace}"
-      LEANKG_PROJECT_DIRS: "${LEANKG_PROJECT_DIRS:-/workspace}"
+      # `LEANKG_MCP_PROJECT` and `LEANKG_PROJECT_DIRS` are intentionally
+      # NOT set here. With both `env_file` (`.dockerfile`) and `environment:`
+      # declaring the same key, Compose lets `environment:` win, which silently
+      # ignored user overrides. The defaults live in `entrypoint.sh`:
+      #   LEANKG_MCP_PROJECT    -> /workspace if unset
+      #   LEANKG_PROJECT_DIRS   -> unset (entrypoint falls back to /workspace* glob)
+      # Override both by setting them in `.dockerfile` (comma-separated for
+      # LEANKG_PROJECT_DIRS, matching `entrypoint.sh`'s `IFS=','`).
       # Lower mmap default to keep RSS bounded; the previous 256 MiB blew
       # containers past the macOS Docker Desktop limit and triggered OOM kills.
       LEANKG_MMAP_SIZE: "67108864"

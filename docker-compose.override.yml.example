@@ -1,0 +1,26 @@
+# Local-only docker compose override for THIS machine.
+# Copy this file to `docker-compose.override.yml` and edit for your setup.
+# Both files are .gitignored so host-specific paths never leak.
+#
+# Usage:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   $EDITOR docker-compose.override.yml   # add your side-project bind mount(s)
+#   docker compose \
+#     -f docker-compose.rocksdb.yml \
+#     -f docker-compose.override.yml \
+#     --env-file .dockerfile up -d
+#
+# The `services.leankg.volumes` list below is APPENDED to the volumes in
+# docker-compose.rocksdb.yml. The named `leankg-rocksdb` volume is still
+# auto-created by the base file; only add additional bind mounts here.
+#
+# Important: any container path you bind-mount here MUST also appear in
+# `.dockerfile`'s `LEANKG_PROJECT_DIRS` (comma-separated) so the entrypoint
+# can find and index it on startup. See `.dockerfile.example`.
+
+services:
+  leankg:
+    volumes:
+      # Example: serve a side-by-side Go monorepo at /workspace-be
+      # (replace the host path with your actual repo location).
+      # - /Users/you/work/be:/workspace-be
