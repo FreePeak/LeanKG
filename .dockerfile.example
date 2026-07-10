@@ -1,12 +1,22 @@
 # Local-only docker compose overrides. Copy to `.dockerfile` and edit.
 # This file is .gitignored so user-specific host paths never leak.
 #
-# Usage:
+# Usage (single project):
 #   cp .dockerfile.example .dockerfile
-#   $EDITOR .dockerfile   # edit the paths
+#   $EDITOR .dockerfile
 #   docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up -d
 #
-# All variables are optional. Defaults are set in docker-compose.rocksdb.yml.
+# Usage (multi-project, with override file for side mounts):
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   $EDITOR docker-compose.override.yml  # add bind mounts for side repos
+#   docker compose \
+#     -f docker-compose.rocksdb.yml \
+#     -f docker-compose.override.yml \
+#     --env-file .dockerfile up -d
+#
+# All variables below are optional. When unset, `entrypoint.sh` falls back to:
+#   LEANKG_MCP_PROJECT   -> /workspace
+#   LEANKG_PROJECT_DIRS  -> /workspace* glob (auto-discovery)
 
 # Absolute path to the LeanKG source tree on the host. Used as the primary
 # project mount and the container's working directory.
@@ -18,17 +28,24 @@ CONTAINER_PROJECT_PATH=/workspace
 
 # Path inside the container that the MCP server should serve by default.
 # LEANKG_MCP_PROJECT is read by `leankg mcp-http --project <path>`.
-# If LEANKG_PROJECT_DIRS is empty, the entrypoint falls back to CONTAINER_PROJECT_PATH.
 LEANKG_MCP_PROJECT=/workspace
+
+# Paths the entrypoint should scan and auto-index at startup.
+# IMPORTANT: this is a COMMA-SEPARATED list. `entrypoint.sh` does
+#   IFS=',' read -ra DIRS <<< "$LEANKG_PROJECT_DIRS"
+# so each entry must be separated by `,` (spaces are NOT separators).
+# Omit or leave blank to let the entrypoint fall back to a /workspace* glob.
 LEANKG_PROJECT_DIRS=/workspace
 
-# Multiple projects: list the host:container pairs (one per line). The MCP
-# server will scan and index every project listed in LEANKG_PROJECT_DIRS.
+# Multiple projects: list additional container paths after a comma. Each path
+# listed here MUST also be bind-mounted into the container. The simplest way
+# is via a local docker-compose override file (recommended); an example
+# template lives at `docker-compose.override.yml.example` (committed).
 #
 # Example — a second project on the side:
-#   LEANKG_PROJECT_DIRS=/workspace /workspace-other
-#   # Then add the matching bind mount via a docker compose override file
-#   # (see `.dockerfile.example` and `docker compose --env-file`).
-#
-# For additional mounts, prefer a docker-compose override file alongside
-# this .dockerfile rather than crowding the env list.
+#   LEANKG_PROJECT_DIRS=/workspace,/workspace-other
+#   # And in docker-compose.override.yml:
+#   #   services:
+#   #     leankg:
+#   #       volumes:
+#   #         - /Users/you/work/other-repo:/workspace-other
