@@ -69,3 +69,58 @@ leankg index --lang go,ts,py,rs,java,kotlin
 # Exclude patterns
 leankg index --exclude vendor,node_modules,dist
 ```
+
+## Multi-Project Setup (Docker Compose)
+
+The containerized MCP server (RocksDB-backed, see `docker-compose.rocksdb.yml`) can serve multiple repositories side-by-side. Each repo gets its own auto-detected `?project=` route.
+
+**Required layout:**
+
+| What | Where | Why |
+|------|-------|-----|
+| `.dockerfile` | repo root (gitignored) | Holds host paths and per-project env vars |
+| `docker-compose.override.yml` | repo root (gitignored) | Adds bind mounts for side repos |
+| `LEANKG_PROJECT_DIRS` | inside `.dockerfile` | Comma-separated list of container paths to scan |
+
+**Start command (multi-project):**
+
+```bash
+docker compose \
+  -f docker-compose.rocksdb.yml \
+  -f docker-compose.override.yml \
+  --env-file .dockerfile \
+  up -d
+```
+
+**`.dockerfile` template:**
+
+```bash
+HOST_PROJECT_PATH=/path/to/leankg
+CONTAINER_PROJECT_PATH=/workspace
+LEANKG_MCP_PROJECT=/workspace              # default project the MCP server serves
+LEANKG_PROJECT_DIRS=/workspace,/workspace-other  # comma-separated!
+```
+
+**`docker-compose.override.yml` template:**
+
+```yaml
+services:
+  leankg:
+    volumes:
+      - /host/path/to/other-repo:/workspace-other
+```
+
+The override is **required** for any side repo to be mounted -- `docker-compose.rocksdb.yml` only mounts the primary `HOST_PROJECT_PATH`.
+
+If `LEANKG_PROJECT_DIRS` is unset, the entrypoint falls back to scanning `/workspace*`, `/test-project*` globs automatically.
+
+## MCP Project Routing
+
+When the HTTP server is started, every URL supports an optional `?project=` query parameter:
+
+| URL | Routes to |
+|-----|-----------|
+| `http://host:9699/mcp` | `LEANKG_MCP_PROJECT` (or default) |
+| `http://host:9699/mcp?project=/workspace-other` | `.leankg` DB inside `/workspace-other` |
+
+AI tool MCP configs must include the `?project=` param so each project queries the correct database. See `docs/agentic-instructions.md` for examples.

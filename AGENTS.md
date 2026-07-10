@@ -118,11 +118,13 @@ Environment variables:
 
 ## RocksDB Docker Deployment
 
-The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects:
+The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects.
+
+### Single-project (default)
 
 ```bash
 # Start with RocksDB in Docker
-docker compose -f docker-compose.rocksdb.yml up --build
+docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up --build
 
 # Stop
 docker compose -f docker-compose.rocksdb.yml down
@@ -131,9 +133,44 @@ docker compose -f docker-compose.rocksdb.yml down
 docker volume rm leankg_leankg-rocksdb
 ```
 
-Environment variables for RocksDB:
+Environment variables for RocksDB (defaults are built into compose):
 - `LEANKG_DB_ENGINE=rocksdb` -- Switch from SQLite to RocksDB
 - `LEANKG_ROCKSDB_ROOT` -- Centralized storage root (default: `$HOME/.leankg-rocksdb`)
+
+The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-other`).
+
+### Multi-project (side-by-side repos)
+
+To serve additional repos (e.g. another project mounted at `/workspace-other` alongside the LeanKG source tree at `/workspace`):
+
+1. Create `.dockerfile` (local-only, gitignored) — copy from `.dockerfile.example`. Set:
+   ```bash
+   HOST_PROJECT_PATH=/path/to/leankg
+   CONTAINER_PROJECT_PATH=/workspace
+   LEANKG_MCP_PROJECT=/workspace-other
+   LEANKG_PROJECT_DIRS=/workspace,/workspace-other
+   ```
+   Note the **comma-separated** `LEANKG_PROJECT_DIRS` -- `entrypoint.sh` uses `IFS=','`.
+
+2. Create `docker-compose.override.yml` (local-only, gitignored). The committed template adds the bind mount for the second repo:
+   ```yaml
+   services:
+     leankg:
+       volumes:
+         - /Users/you/work/other-repo:/workspace-other
+   ```
+
+
+3. Start with the override file chained in:
+   ```bash
+   docker compose \
+     -f docker-compose.rocksdb.yml \
+     -f docker-compose.override.yml \
+     --env-file .dockerfile \
+     up -d
+   ```
+
+The override file's `volumes:` list is appended to the base compose, so the second bind mount appears alongside `/workspace` and the named RocksDB volume.
 
 Without Docker (host machine):
 
