@@ -2,13 +2,13 @@
 
 **Project:** FreePeak/LeanKG  
 **Document:** `docs/requirement/prd-structural-parity-cbm.md`  
-**Version:** 2.1  
+**Version:** 2.2  
 **Status:** In Progress  
 **Date:** 2026-07-10  
 **Owner:** Product / Engineering  
 **LeanKG baseline:** 0.17.8  
 **codebase-memory-mcp (CBM) baseline:** 0.9.0  
-**Last implementation:** 2026-07-10 (Phase 1 partial: FR-B01/B02/20/21/23 done, PR #67)  
+**Last implementation:** 2026-07-10 (Phase 1 partial: FR-B01/B02/20/21/23 done, PR #67; Track E spec added)  
 
 **Related:** [prd-leankg.md](./prd-leankg.md) · [../roadmap.md](../roadmap.md) · [../architecture.md](../architecture.md) · [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) · [arXiv:2603.27277](https://arxiv.org/abs/2603.27277)
 
@@ -74,6 +74,7 @@ Both are **local-first MCP servers that index codebases into a knowledge graph f
 | **B — Build (structural)** | Typed calls, routes, architecture, clones, cross-repo edges, … |
 | **C — Build (platform)** | Embeddings default, query latency, selective languages, Windows, scale benchmarks, security signals |
 | **D — Borrow** | Optionally dual-run CBM for workloads we will not copy soon |
+| **E — Visualize** | Build a new 3D graph visualization UI (separate from the existing 2D force-directed web UI) inspired by CBM's `graph-ui` |
 
 ---
 
@@ -272,7 +273,7 @@ internal/cbm/                 158 vendored tree-sitter grammars + AST engine
 | Always-on embeddings (nomic-embed-code) | Zero setup |
 | Clone/duplicate detection | MinHash + LSH → SIMILAR_TO |
 | Cross-repo intelligence | CROSS_* edges, multi-galaxy UI |
-| 3D graph visualization | Embedded UI |
+| 3D graph visualization | Vite + React 19 + Three.js / R3F galaxy renderer (see 10.1) |
 | Runtime trace ingestion | Validate HTTP_CALLS |
 | Custom Cypher engine | Full C implementation |
 | arXiv paper | arXiv:2603.27277 |
@@ -285,6 +286,141 @@ internal/cbm/                 158 vendored tree-sitter grammars + AST engine
 | Data-flow analysis | Track data through codebase |
 | Multi-package distribution | 8+ channels |
 | Windows support | Full cross-platform |
+
+---
+
+### 10.1 CBM `graph-ui` — 3D Graph Visualization Tech Stack (Deep Dive)
+
+CBM ships a standalone 3D graph visualization frontend (`graph-ui/`) that renders the codebase knowledge graph as an interactive WebGL galaxy. The following tech stack was reverse-engineered from the repository's `package.json`, `vite.config.ts`, `components.json`, and source files (`App.tsx`, `GraphScene.tsx`, `NodeCloud.tsx`, `EdgeLines.tsx`, `rpc.ts`).
+
+#### Frontend framework
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| UI framework | React | ^19.0.0 |
+| Language | TypeScript | ^5.7.0 |
+| Build tool | Vite + `@vitejs/plugin-react` | ^6.4.3 / ^4.3.0 |
+| Module aliases | `@` -> `./src` (via `vite.config.ts` resolve.alias) | — |
+
+#### 3D rendering engine (core)
+
+| Library | Purpose | Version |
+|---------|---------|---------|
+| `three` | WebGL 3D engine — geometries, materials, cameras, scenes | ~0.183.0 |
+| `@react-three/fiber` | React renderer for Three.js (declarative `<Canvas>`, `useFrame`, `useThree`) | ^9.5.0 |
+| `@react-three/drei` | R3F helpers — `OrbitControls`, camera utilities, text labels | ^10.7.0 |
+| `@react-three/postprocessing` | Post-processing effects — `EffectComposer`, `Bloom` | ^3.0.4 |
+| `postprocessing` | Underlying post-processing engine (peer dep) | ^6.38.3 |
+
+#### Rendering techniques observed in source
+
+- **Nodes (`NodeCloud.tsx`):** `THREE.InstancedMesh` with `sphereGeometry` for up to 75,000 nodes. Adaptive LOD reduces sphere tessellation (32x24 -> 16x12 -> 10x7 segments) as node count grows. Above 75K nodes, switches to `THREE.Points` with a procedurally generated soft-edged `CanvasTexture` sprite and `pointsMaterial` (vertexColors, sizeAttenuation, alphaTest). Node colors are boosted above 1.0 so the Bloom pass picks up the excess as a glow corona; boost fades toward 1.0 as density rises.
+- **Edges (`EdgeLines.tsx`):** `THREE.LineSegments` with `lineBasicMaterial` using `AdditiveBlending` and `depthWrite=false`. Edge colors are type-coded (CALLS green, IMPORTS blue, HTTP_CALLS red, GRPC_CALLS amber, CROSS_* variants, etc.). Intensity scales inversely with edge count (density-adaptive) to prevent additive saturation to white.
+- **Post-processing (`GraphScene.tsx`):** `EffectComposer` with `Bloom` (luminanceThreshold=0.3, luminanceSmoothing=0.7, mipmapBlur, radius=0.6). Bloom intensity scales with node density. Multisampling disabled (`multisampling=0`) for performance.
+- **Camera:** `OrbitControls` with damping (0.08), rotateSpeed=0.5, zoomSpeed=1.5, minDistance=10, maxDistance=50000. DPR capped at [1, 1.5].
+- **Camera fly-to:** `CameraAnimator` component uses `useFrame` + ease-out cubic lerp on camera position and OrbitControls target for smooth node-focus animation.
+- **Idle auto-rotation:** `IdleAutoRotate` enables `autoRotate` after 60s of no pointer/wheel interaction.
+- **Multi-galaxy cross-repo:** Linked projects rendered as satellite clusters at 3D offsets with cross-galaxy `CROSS_*` edges between them.
+
+#### UI component library
+
+| Library | Purpose | Version |
+|---------|---------|---------|
+| shadcn/ui (new-york style) | Component system — configured via `components.json` | — |
+| `radix-ui` | Primitive components (dialogs, dropdowns, etc.) | ^1.4.3 |
+| `lucide-react` | Icon library | ^0.577.0 |
+| `class-variance-authority` | Variant management for component classes | ^0.7.1 |
+| `clsx` + `tailwind-merge` | Class name composition + merge | ^2.1.1 / ^3.5.0 |
+
+shadcn/ui config (`components.json`): style=`new-york`, rsc=false, tsx=true, baseColor=`neutral`, cssVariables=true, iconLibrary=`lucide`, aliases: `@/components`, `@/lib/utils`, `@/components/ui`, `@/lib`, `@/hooks`.
+
+#### CSS / Styling
+
+| Technology | Version |
+|-----------|---------|
+| Tailwind CSS 4 (`@tailwindcss/vite` plugin) | ^4.1.0 / ^4.2.1 |
+
+Global styles in `src/styles/globals.css`. Dark theme with `bg-background` / `text-foreground` semantic tokens.
+
+#### Testing
+
+| Tool | Version |
+|------|---------|
+| Vitest | ^4.1.0 |
+| @testing-library/react | ^16.1.0 |
+| @testing-library/jest-dom | ^6.6.0 |
+| jsdom | ^25.0.0 |
+
+Test files co-located with components (e.g., `GraphScene.test.ts`, `GraphTab.test.ts`, `NodeDetailPanel.test.tsx`, `StatsTab.test.tsx`). Vitest config: `environment: "jsdom"`, `globals: true`.
+
+#### API communication
+
+The frontend communicates with the C backend via **JSON-RPC 2.0 over HTTP POST `/rpc`**:
+
+```
+POST /rpc
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+  "params": { "name": "<tool_name>", "arguments": { ... } } }
+
+Response: { "result": { "content": [{ "text": "..." }] } }  // MCP tool result wrapper
+```
+
+- Uses the **same MCP `tools/call` protocol** as stdio MCP clients — the C HTTP server (`src/ui/http_server.c`) exposes MCP tools over HTTP.
+- Vite dev server proxies `/rpc` and `/api` to `http://127.0.0.1:9749` (the C backend port).
+- Production: compiled `graph-ui/dist/` is embedded into the C binary via `src/ui/embedded_assets.h` and served by the embedded HTTP server.
+
+#### Backend (C) — 3D layout + HTTP server
+
+| File | Purpose |
+|------|---------|
+| `src/ui/layout3d.c` / `.h` | Server-side 3D layout computation — nodes receive pre-computed `x`, `y`, `z` coordinates before being sent to the frontend |
+| `src/ui/http_server.c` / `.h` | Embedded HTTP server — serves `/rpc` (JSON-RPC) and static assets |
+| `src/ui/embedded_assets.h` | Compiled `graph-ui/dist/` assets embedded as C byte arrays |
+| `src/ui/config.c` / `.h` | UI server configuration |
+
+**Architecture pattern:** Server computes 3D positions -> serializes nodes `{id, x, y, z, color, size, file_path, type}` + edges `{source, target, type}` as JSON -> frontend renders with R3F. The frontend never runs a layout algorithm; it only renders pre-positioned data.
+
+#### Source structure
+
+```
+graph-ui/
+  src/
+    api/rpc.ts                  JSON-RPC client
+    components/                 20+ React components
+      GraphScene.tsx            Main <Canvas> with R3F, camera, bloom
+      NodeCloud.tsx             3D nodes (instanced spheres / point sprites)
+      EdgeLines.tsx             3D edges (additive-blended line segments)
+      NodeLabels.tsx            3D text labels
+      NodeTooltip.tsx           Hover tooltips
+      GraphTab.tsx              Graph view tab container
+      StatsTab.tsx              Project listing / stats
+      ControlTab.tsx            Control panel
+      FilterPanel.tsx           Edge-type filter UI
+      NodeDetailPanel.tsx       Node detail sidebar
+      DisplaySettingsMenu.tsx   Density / brightness controls
+      Sidebar.tsx, TabBar.tsx, ProjectCard.tsx, ...
+      ui/                       shadcn/ui primitives
+    hooks/
+      useGraphData.ts           Graph data fetching + state
+      useProjects.ts            Project list management
+    lib/
+      types.ts                  TypeScript types (GraphNode, GraphEdge, etc.)
+      density.ts                Adaptive scaling (bloom, node boost, edge intensity)
+      i18n.ts                   UI message localization
+    styles/globals.css          Tailwind global styles
+    App.tsx                     Root: tabs (graph / stats / control), URL routing
+    main.tsx                    React entry point
+  package.json, vite.config.ts, tsconfig.json, components.json
+```
+
+#### Key takeaways for LeanKG Track E
+
+1. **Server-computed layout** — CBM computes 3D positions in C (`layout3d.c`), not in the browser. LeanKG should compute layouts in Rust (force-directed or Fruchterman-Reingold) and serve pre-positioned nodes.
+2. **Adaptive rendering** — InstancedMesh under 75K nodes, point sprites above. Adaptive LOD on sphere tessellation. LeanKG should replicate this for performance at scale.
+3. **Bloom + additive blending** — The "galaxy" aesthetic comes from Bloom post-processing on color-boosted nodes + additively blended edges. This is the visual differentiator.
+4. **Same protocol** — CBM's graph-ui speaks MCP `tools/call` over HTTP `/rpc`. LeanKG already has HTTP/SSE + REST; the new UI can call existing MCP tools or a new dedicated `/api/graph` endpoint.
+5. **Co-located tests** — Every major component has a `.test.ts(x)` file. Track E must include component tests.
+6. **Not a replacement** — LeanKG's existing 2D force-directed web UI (`src/web/` / `ui/`) stays. Track E adds a **new** 3D visualization UI as a separate route or standalone app.
 
 ---
 
@@ -455,10 +591,16 @@ graph TB
 - **US-B7** Clone / near-duplicate detection  
 - **US-B8** Cross-repo edges on multi-repo registry  
 - **US-B9** Embeddings on by default (Docker)  
-- **US-B10** `run_raw_query` recipes (≥ 10)  
+- **US-B10** `run_raw_query` recipes (>= 10)  
 - **US-C1** Query latency hot path  
 - **US-C2** Selective language expansion  
 - **US-C3** Large-scale + per-language benchmarks  
+- **US-E1** 3D graph visualization UI (new, alongside existing 2D UI) — WebGL galaxy renderer with Bloom glow, instanced nodes, type-colored edges  
+- **US-E2** Server-computed 3D layout (Rust) — force-directed or Fruchterman-Reingold positions sent to frontend as pre-computed x/y/z  
+- **US-E3** Adaptive rendering — InstancedMesh under 75K nodes, point sprites above; LOD on sphere tessellation  
+- **US-E4** Node detail panel — click node to see qualified name, type, file path, relationships, code context  
+- **US-E5** Edge-type filter panel — toggle CALLS, IMPORTS, HTTP_CALLS, service_calls, etc.  
+- **US-E6** Camera fly-to + idle auto-rotation — smooth focus animation on node click; gentle rotation when idle  
 
 ### Could Have
 
@@ -580,6 +722,65 @@ graph TB
 | FR-D03 | No auto-install CBM into default freepeak `.mcp.json` | Must |
 | FR-D04 | Re-evaluate dual-run after Phase 3 | Must |
 
+### Track E — 3D Graph Visualization UI
+
+New standalone 3D graph visualization UI, separate from the existing 2D force-directed web UI. Inspired by CBM's `graph-ui` (see section 10.1) but adapted for LeanKG's CozoDB backend and richer relationship types.
+
+#### E0 — Frontend stack
+
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| FR-E01 | Vite + React 19 + TypeScript frontend in `graph-ui/` (new directory, not `ui/`) | Must |
+| FR-E02 | Three.js + `@react-three/fiber` + `@react-three/drei` + `@react-three/postprocessing` for 3D rendering | Must |
+| FR-E03 | shadcn/ui (new-york style) + Radix UI + Tailwind CSS 4 + lucide-react for UI chrome | Must |
+| FR-E04 | Vitest + Testing Library + jsdom for component testing | Must |
+| FR-E05 | Vite dev proxy: `/rpc` and `/api` to LeanKG HTTP/SSE server port | Must |
+
+#### E1 — 3D layout (server-side, Rust)
+
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| FR-E10 | Rust 3D layout module — compute x/y/z positions for nodes using force-directed or Fruchterman-Reingold algorithm | Must |
+| FR-E11 | Layout computed on index or on-demand; cached in CozoDB or in-memory | Must |
+| FR-E12 | New MCP tool `get_graph_layout` or REST endpoint `/api/graph` returning `{ nodes: [{id, x, y, z, color, size, type, file_path}], edges: [{source, target, type}] }` | Must |
+| FR-E13 | Layout supports cluster-aware positioning (group files by directory/cluster) | Should |
+| FR-E14 | Incremental layout update on re-index (don't recompute full graph) | Should |
+
+#### E2 — 3D rendering (client-side, R3F)
+
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| FR-E20 | `GraphScene` component: R3F `<Canvas>` with OrbitControls + EffectComposer + Bloom | Must |
+| FR-E21 | `NodeCloud` component: InstancedMesh (sphereGeometry) for < 75K nodes; point sprites for >= 75K nodes | Must |
+| FR-E22 | Adaptive LOD: sphere tessellation reduces as node count grows (32x24 -> 16x12 -> 10x7) | Should |
+| FR-E23 | `EdgeLines` component: LineSegments with AdditiveBlending, depthWrite=false, type-coded colors | Must |
+| FR-E24 | Edge type color map covering LeanKG relationship types: CALLS, IMPORTS, TESTED_BY, service_calls, references, documented_by, etc. | Must |
+| FR-E25 | Node color boost > 1.0 for Bloom glow corona; density-adaptive fade | Should |
+| FR-E26 | Node labels (3D text) toggle; node hover tooltips | Should |
+| FR-E27 | Camera fly-to animation on node click (ease-out cubic lerp) | Should |
+| FR-E28 | Idle auto-rotation after 60s inactivity | Could |
+
+#### E3 — UI panels and interaction
+
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| FR-E30 | Node detail panel: qualified name, element type, file path, relationship counts, code context snippet | Must |
+| FR-E31 | Edge-type filter panel: toggle visibility by relationship type | Must |
+| FR-E32 | Display settings menu: bloom intensity, edge brightness, label toggle, density scale | Should |
+| FR-E33 | Project selector / stats tab: list indexed projects, node/edge counts | Should |
+| FR-E34 | URL-based routing (tab + project params survive refresh) | Should |
+| FR-E35 | Highlight on hover: dim non-related nodes/edges when a node is selected | Should |
+| FR-E36 | Multi-repo / cross-repo satellite galaxies for registry projects | Could |
+
+#### E4 — Integration
+
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| FR-E40 | Frontend calls LeanKG HTTP/SSE server (`/rpc` or `/api/graph`) using JSON-RPC 2.0 `tools/call` or REST | Must |
+| FR-E41 | Production build embedded into Rust binary (analogous to `src/embed/` pattern) or served as static files | Must |
+| FR-E42 | Existing 2D web UI (`ui/`) remains untouched and functional | Must |
+| FR-E43 | 3D UI accessible at separate route (e.g., `/3d` or separate port) | Must |
+
 ---
 
 ## 16. Acceptance Criteria
@@ -631,6 +832,22 @@ graph TB
 - **Then** P50 ≤ 10ms (stretch ≤ 5ms)  
 - **When** Phase 3 completes  
 - **Then** published Go/TS vs CBM report + scale ceiling
+
+### US-E1 / US-E2 — 3D graph visualization
+
+- **Given** an indexed project with nodes and edges in CozoDB  
+- **When** the 3D graph UI loads and calls `get_graph_layout` (or `/api/graph`)  
+- **Then** nodes rendered as 3D spheres with Bloom glow; edges rendered as additive-blended lines; orbit/zoom/pan functional  
+- **When** a node is clicked  
+- **Then** camera flies to node; detail panel shows qualified name, type, file path, relationship counts  
+- **When** an edge-type filter is toggled off  
+- **Then** edges of that type disappear from the scene
+
+### US-E3 — Adaptive rendering at scale
+
+- **Given** a project with >= 75,000 nodes  
+- **When** the 3D graph UI loads  
+- **Then** nodes render as point sprites (not instanced spheres); FPS remains >= 30 on mid-range GPU
 
 ---
 
@@ -691,6 +908,7 @@ Selective languages · Python/Rust typed · data-flow/traces · IaC/ADR/snapshot
 | CBM comparison + scale report | Must/Should | M | 3 | 7–8 |
 | Selective languages | Should | M each | 4 | 1 |
 | Windows / pkg / SLSA | Could | M–L | 4 | 5 |
+| 3D graph visualization UI (Track E) | Should | L | 2-3 | New |
 | 158-language chase | Won’t | — | — | Rejected |
 
 ---
@@ -731,6 +949,8 @@ Selective languages · Python/Rust typed · data-flow/traces · IaC/ADR/snapshot
 | freepeak still → be | High | Phase 0 gate |
 | Embeddings image size | Medium | Smaller model / volume cache |
 | Cozo latency ceiling | Medium | Cache; document limits honestly |
+| 3D layout computation cost at scale | Medium | Cache layout; incremental on re-index; cap node count for full reflow |
+| WebGL / Three.js bundle size | Low | Code-split; lazy-load 3D view; keep 2D UI as default |
 
 ---
 
@@ -747,6 +967,9 @@ Selective languages · Python/Rust typed · data-flow/traces · IaC/ADR/snapshot
 9. Selective language priority (C/C++ vs C# vs Swift)?  
 10. Target LeanKG versions for Phase 1 / 2 / 3?  
 11. Keep BGE+reranker or evaluate code-specialized embed model (nomic-like)?  
+12. 3D graph UI: embed in Rust binary (like `src/embed/`) or serve as separate static files?  
+13. 3D layout: force-directed vs Fruchterman-Reingold vs CBM-style custom? Compute on index or on-demand?  
+14. New `get_graph_layout` MCP tool vs dedicated REST `/api/graph` endpoint for the 3D UI?
 
 ---
 
@@ -762,6 +985,8 @@ Selective languages · Python/Rust typed · data-flow/traces · IaC/ADR/snapshot
 | `docs/roadmap.md` | Phase 0–4 status |
 | `docs/architecture.md` | Routes, resolution_method, HTTP_CALLS, clones, CROSS_* |
 | Benchmark reports | Phase 3 CBM comparison; scale; language tiers |
+| `docs/mcp-tools.md` (Track E) | `get_graph_layout` tool or `/api/graph` REST endpoint |
+| `docs/architecture.md` (Track E) | 3D layout module, graph-ui frontend stack, embed strategy |
 
 ### Rollout gates
 
@@ -796,6 +1021,7 @@ Selective languages · Python/Rust typed · data-flow/traces · IaC/ADR/snapshot
 | HTTP/SSE + REST + Docker/RocksDB | **Protect** |
 | Obsidian + RTK + Claude hooks | **Protect** |
 | 67+ domain relationship types | **Protect** |
+| 3D graph visualization UI (Track E) | **Should build** (new, alongside existing 2D UI) |
 
 ### Appendix B — Sources
 
@@ -814,3 +1040,5 @@ Selective languages · Python/Rust typed · data-flow/traces · IaC/ADR/snapshot
 | 2026-07-10 | v1.0 Initial structural-parity PRD |
 | 2026-07-10 | v1.1 Expanded from separate analysis doc |
 | 2026-07-10 | **v2.0 Merged** competitive analysis + PRD into this single file; analysis doc retired to redirect stub |
+| 2026-07-10 | **v2.1 Added Phase 1 partial** implementation status (FR-B01/B02/20/21/23 done, PR #67) |
+| 2026-07-10 | **v2.2 Added Track E** — 3D graph visualization UI: section 10.1 (CBM `graph-ui` deep dive), US-E1-E6, FR-E01-E43, acceptance criteria, MVP matrix, risks, open questions |

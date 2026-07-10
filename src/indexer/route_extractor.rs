@@ -270,47 +270,70 @@ impl RouteExtractor {
     }
 
     fn try_ts_route(source: &[u8], node: tree_sitter::Node, file_path: &str) -> Option<RouteInfo> {
-        let mut method_call: Option<String> = None;
-        let mut args: Vec<String> = Vec::new();
+        let method_call = match node.child(0) {
+            Some(c) if c.kind() == "member_expression" => Self::node_text(source, c),
+            _ => return None,
+        };
 
-        if let Some(first_child) = node.child(0) {
-            if first_child.kind() == "member_expression" {
-                method_call = Some(Self::node_text(source, first_child));
-            }
-        }
-
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if child.kind() == "arguments" {
-                let mut inner = child.walk();
-                for arg in child.children(&mut inner) {
-                    let ak = arg.kind();
-                    if ak == "string" || ak == "template_string" {
-                        args.push(
-                            Self::node_text(source, arg)
-                                .trim_matches('"')
-                                .trim_matches('\'')
-                                .trim_matches('`')
-                                .to_string(),
-                        );
-                    }
-                }
-            }
-        }
-
-        let method_call_str = method_call?;
-        if args.is_empty() {
+        // Defer middleware `use(...)` calls to try_ts_mount to avoid duplication.
+        let (_, http_method) = Self::parse_ts_member_expr(&method_call)?;
+        if http_method == "USE" {
             return None;
         }
-        let (receiver, http_method) = Self::parse_ts_member_expr(&method_call_str)?;
+
+        let mut strings: Vec<String> = Vec::new();
+        let mut handler: Option<String> = None;
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() != "arguments" {
+                continue;
+            }
+            let mut inner = child.walk();
+            let mut arg_index = 0usize;
+            for arg in child.children(&mut inner) {
+                if Self::is_punctuation(arg.kind()) {
+                    continue;
+                }
+                let ak = arg.kind();
+                match ak {
+                    "string" | "template_string" => {
+                        let raw = Self::node_text(source, arg);
+                        strings.push(Self::unquote(&raw));
+                    }
+                    "identifier" | "member_expression"
+                        if (arg_index == 1 || (arg_index == 0 && strings.is_empty()))
+                            && handler.is_none() =>
+                    {
+                        handler = Some(Self::node_text(source, arg));
+                    }
+                    "arrow_function" | "function" | "function_expression"
+                        if (arg_index == 1 || (arg_index == 0 && strings.is_empty()))
+                            && handler.is_none() =>
+                    {
+                        handler = Some("anonymous".to_string());
+                    }
+                    _ => {}
+                }
+                arg_index += 1;
+            }
+        }
+
+        if strings.is_empty() {
+            return None;
+        }
+
+        let (receiver, method) = {
+            let dot = method_call.rfind('.')?;
+            (
+                method_call[..dot].to_string(),
+                method_call[dot + 1..].to_uppercase(),
+            )
+        };
 
         Some(RouteInfo {
-            method: http_method,
-            path: Self::clean_path(&args[0]),
-            handler: args
-                .get(1)
-                .cloned()
-                .unwrap_or_else(|| "anonymous".to_string()),
+            method,
+            path: Self::clean_path(&strings[0]),
+            handler: handler.unwrap_or_else(|| "anonymous".to_string()),
             framework: Self::detect_ts_framework(&receiver),
             file_path: file_path.to_string(),
             line: node.start_position().row as u32 + 1,
@@ -318,48 +341,77 @@ impl RouteExtractor {
     }
 
     fn try_ts_mount(source: &[u8], node: tree_sitter::Node, file_path: &str) -> Option<RouteInfo> {
-        if let Some(first_child) = node.child(0) {
-            if first_child.kind() == "member_expression" {
-                let text = Self::node_text(source, first_child);
-                if let Some((receiver, method)) = Self::parse_ts_member_expr(&text) {
-                    if method.to_uppercase() == "USE" {
-                        let mut args: Vec<String> = Vec::new();
-                        let mut cursor = node.walk();
-                        for child in node.children(&mut cursor) {
-                            if child.kind() == "arguments" {
-                                let mut inner = child.walk();
-                                for arg in child.children(&mut inner) {
-                                    let ak = arg.kind();
-                                    if ak == "string" || ak == "template_string" {
-                                        args.push(
-                                            Self::node_text(source, arg)
-                                                .trim_matches('"')
-                                                .trim_matches('\'')
-                                                .trim_matches('`')
-                                                .to_string(),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        if !args.is_empty() {
-                            return Some(RouteInfo {
-                                method: "USE".to_string(),
-                                path: Self::clean_path(&args[0]),
-                                handler: args
-                                    .get(1)
-                                    .cloned()
-                                    .unwrap_or_else(|| "router".to_string()),
-                                framework: Self::detect_ts_framework(&receiver),
-                                file_path: file_path.to_string(),
-                                line: node.start_position().row as u32 + 1,
-                            });
-                        }
-                    }
+        let first_child = node.child(0)?;
+        if first_child.kind() != "member_expression" {
+            return None;
+        }
+        let text = Self::node_text(source, first_child);
+        let (receiver, method) = Self::parse_ts_member_expr(&text)?;
+        if method != "USE" {
+            return None;
+        }
+
+        let mut strings: Vec<String> = Vec::new();
+        let mut handler: Option<String> = None;
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() != "arguments" {
+                continue;
+            }
+            let mut inner = child.walk();
+            let mut arg_index = 0usize;
+            for arg in child.children(&mut inner) {
+                if Self::is_punctuation(arg.kind()) {
+                    continue;
                 }
+                match arg.kind() {
+                    "string" | "template_string" => {
+                        let raw = Self::node_text(source, arg);
+                        strings.push(Self::unquote(&raw));
+                    }
+                    "identifier" | "member_expression"
+                        if (arg_index == 1 || (arg_index == 0 && strings.is_empty()))
+                            && handler.is_none() =>
+                    {
+                        handler = Some(Self::node_text(source, arg));
+                    }
+                    "arrow_function" | "function" | "function_expression"
+                        if (arg_index == 1 || (arg_index == 0 && strings.is_empty()))
+                            && handler.is_none() =>
+                    {
+                        handler = Some("anonymous".to_string());
+                    }
+                    _ => {}
+                }
+                arg_index += 1;
             }
         }
-        None
+
+        let first_path = strings
+            .into_iter()
+            .next()
+            .map(|p| Self::clean_path(&p))
+            .unwrap_or_else(|| "/".to_string());
+        Some(RouteInfo {
+            method: "USE".to_string(),
+            path: first_path,
+            handler: handler.unwrap_or_else(|| "router".to_string()),
+            framework: Self::detect_ts_framework(&receiver),
+            file_path: file_path.to_string(),
+            line: node.start_position().row as u32 + 1,
+        })
+    }
+
+    fn unquote(raw: &str) -> String {
+        raw.trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim_matches('`')
+            .to_string()
+    }
+
+    fn is_punctuation(kind: &str) -> bool {
+        matches!(kind, "(" | ")" | "," | ";" | "{" | "}")
     }
 
     fn parse_ts_member_expr(text: &str) -> Option<(String, String)> {
