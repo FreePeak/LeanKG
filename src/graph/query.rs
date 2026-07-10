@@ -3744,4 +3744,199 @@ mod tests {
             "search_by_content should return empty when nothing matches"
         );
     }
+
+    // Phase 1 structural parity tests
+
+    fn insert_test_element_full(
+        engine: &GraphEngine,
+        name: &str,
+        element_type: &str,
+        file_path: &str,
+        language: &str,
+        line_start: u32,
+        line_end: u32,
+    ) {
+        let elem = CodeElement {
+            qualified_name: format!("{}::{}", file_path, name),
+            element_type: element_type.to_string(),
+            name: name.to_string(),
+            file_path: file_path.to_string(),
+            line_start,
+            line_end,
+            language: language.to_string(),
+            ..Default::default()
+        };
+        engine.insert_element(&elem).unwrap();
+    }
+
+    fn insert_test_rel(
+        engine: &GraphEngine,
+        source: &str,
+        target: &str,
+        rel_type: &str,
+        confidence: f64,
+    ) {
+        let rel = Relationship {
+            source_qualified: source.to_string(),
+            target_qualified: target.to_string(),
+            rel_type: rel_type.to_string(),
+            confidence,
+            metadata: serde_json::json!({"resolution_method": "name", "line": 1}),
+            ..Default::default()
+        };
+        engine.insert_relationship(&rel).unwrap();
+    }
+
+    #[test]
+    fn test_graph_schema_counts() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "func_a", "function");
+        insert_test_element(&engine, "func_b", "function");
+        insert_test_element(&engine, "MyClass", "class");
+
+        let schema = engine.get_graph_schema().unwrap();
+        let obj = schema.as_object().unwrap();
+        assert!(obj.contains_key("element_types"));
+        assert!(obj.contains_key("relationship_types"));
+        assert_eq!(obj["total_elements"].as_u64().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_architecture_returns_languages() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "go_handler", "function");
+        insert_test_element_full(
+            &engine,
+            "ts_comp",
+            "function",
+            "src/app.ts",
+            "typescript",
+            1,
+            10,
+        );
+        let arch = engine.get_architecture().unwrap();
+        let obj = arch.as_object().unwrap();
+        assert!(obj.contains_key("languages"));
+        assert!(obj.contains_key("entry_points"));
+        assert!(obj.contains_key("hotspots"));
+        assert_eq!(obj["total_elements"].as_u64().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_architecture_finds_entry_points() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "helper", "function");
+        insert_test_element(&engine, "main", "function");
+        insert_test_element(&engine, "serve", "function");
+        insert_test_element(&engine, "Start", "function");
+        let arch = engine.get_architecture().unwrap();
+        let obj = arch.as_object().unwrap();
+        let eps = obj["entry_points"].as_array().unwrap();
+        assert_eq!(eps.len(), 3, "Should find main, serve, Start");
+    }
+
+    #[test]
+    fn test_architecture_finds_hotspots() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "hot1", "function", "src/hot.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "hot2", "function", "src/hot.rs", "rust", 6, 10);
+        insert_test_element_full(&engine, "hot3", "function", "src/hot.rs", "rust", 11, 15);
+        insert_test_element_full(&engine, "cold", "function", "src/cold.rs", "rust", 1, 5);
+        let arch = engine.get_architecture().unwrap();
+        let obj = arch.as_object().unwrap();
+        let hs = obj["hotspots"].as_array().unwrap();
+        assert!(!hs.is_empty(), "Should find hotspots");
+        let top = hs[0].as_object().unwrap();
+        assert_eq!(top["file_path"].as_str().unwrap(), "src/hot.rs");
+    }
+
+    #[test]
+    fn test_find_dead_code_finds_unused() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "used", "function", "src/lib.rs", "rust", 1, 15);
+        insert_test_element_full(&engine, "caller", "function", "src/lib.rs", "rust", 20, 25);
+        insert_test_rel(
+            &engine,
+            "src/lib.rs::caller",
+            "src/lib.rs::used",
+            "calls",
+            0.95,
+        );
+        insert_test_element_full(&engine, "unused", "function", "src/lib.rs", "rust", 30, 55);
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"unused"), "unused should be dead");
+        assert!(!names.contains(&"used"), "used should not be dead");
+    }
+
+    #[test]
+    fn test_find_dead_code_excludes_entry_points() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "main", "function", "src/main.rs", "rust", 1, 50);
+        insert_test_element_full(&engine, "dead", "function", "src/lib.rs", "rust", 1, 20);
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(!names.contains(&"main"), "main should be excluded");
+        assert!(names.contains(&"dead"), "dead should be listed");
+    }
+
+    #[test]
+    fn test_find_dead_code_excludes_tested() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "tested", "function", "src/lib.rs", "rust", 1, 20);
+        insert_test_rel(
+            &engine,
+            "src/test.rs::t",
+            "src/lib.rs::tested",
+            "tested_by",
+            0.90,
+        );
+        insert_test_element_full(
+            &engine,
+            "truly_dead",
+            "function",
+            "src/lib.rs",
+            "rust",
+            25,
+            45,
+        );
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(
+            !names.contains(&"tested"),
+            "tested function should not be dead"
+        );
+        assert!(names.contains(&"truly_dead"), "truly_dead should be listed");
+    }
+
+    #[test]
+    fn test_find_dead_code_respects_min_lines() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "short", "function", "src/lib.rs", "rust", 1, 3);
+        insert_test_element_full(
+            &engine,
+            "long_dead",
+            "function",
+            "src/lib.rs",
+            "rust",
+            10,
+            30,
+        );
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(
+            !names.contains(&"short"),
+            "short should be excluded by min_lines"
+        );
+        assert!(names.contains(&"long_dead"), "long_dead should be included");
+    }
+
+    #[test]
+    fn test_graph_schema_empty_db() {
+        let (engine, _tmp) = make_test_engine();
+        let schema = engine.get_graph_schema().unwrap();
+        let obj = schema.as_object().unwrap();
+        assert_eq!(obj["total_elements"].as_u64().unwrap(), 0);
+        assert_eq!(obj["total_relationships"].as_u64().unwrap(), 0);
+    }
 }
