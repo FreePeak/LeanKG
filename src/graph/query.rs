@@ -3154,6 +3154,276 @@ impl GraphEngine {
 
         Ok(conflicts)
     }
+
+    /// FR-B20: Get architecture overview - languages, packages, entry points,
+    /// routes, hotspots, clusters, knowledge counts
+    pub fn get_architecture(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+
+        let lang_query = format!(
+            r#"?[language, count(language)] := *code_elements[_, _, _, _, _, _, language, _, _, _, _{tail}]
+:order -count(language)"#
+        );
+        let lang_result = crate::db::schema::run_script(
+            &self.db,
+            &lang_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let languages: Vec<serde_json::Value> = lang_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "language": row[0].get_str().unwrap_or("unknown"),
+                    "element_count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let entry_query = format!(
+            r#"?[qualified_name, file_path, language] := *code_elements[
+                qualified_name, "function", name, file_path, _, _, language, _, _, _, _{tail}
+            ], (name = "main" or name = "Main" or name = "start" or name = "serve" or name = "Start")"#
+        );
+        let entry_result = crate::db::schema::run_script(
+            &self.db,
+            &entry_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let entry_points: Vec<serde_json::Value> = entry_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "qualified_name": row[0].get_str().unwrap_or(""),
+                    "file_path": row[1].get_str().unwrap_or(""),
+                    "language": row[2].get_str().unwrap_or(""),
+                })
+            })
+            .collect();
+
+        let cluster_query = format!(
+            r#"?[cluster_label, cluster_id, count(qn)] := *code_elements[
+                qn, _, _, _, _, _, _, _, cluster_id, cluster_label, _{tail}
+            ], cluster_id != null, cluster_id != """#,
+        );
+        let cluster_result = crate::db::schema::run_script(
+            &self.db,
+            &cluster_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let clusters: Vec<serde_json::Value> = cluster_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "label": row[0].get_str().unwrap_or(""),
+                    "cluster_id": row[1].get_str().unwrap_or(""),
+                    "element_count": row[2].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let rel_query =
+            r#"?[rel_type, count(rel_type)] := *relationships[_, _, rel_type, _, _, _]"#;
+        let rel_result =
+            crate::db::schema::run_script(&self.db, rel_query, std::collections::BTreeMap::new())?;
+        let relationship_counts: Vec<serde_json::Value> = rel_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "rel_type": row[0].get_str().unwrap_or(""),
+                    "count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let hotspot_query = format!(
+            r#"?[file_path, count(qualified_name)] := *code_elements[
+                qualified_name, "function", _, file_path, _, _, _, _, _, _, _{tail}
+            ], file_path != ""
+:order -count(qualified_name)
+:limit 10"#
+        );
+        let hotspot_result = crate::db::schema::run_script(
+            &self.db,
+            &hotspot_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let hotspots: Vec<serde_json::Value> = hotspot_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "file_path": row[0].get_str().unwrap_or(""),
+                    "function_count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        // Find routes
+        let route_query = format!(
+            r#"?[qualified_name, file_path, metadata] := *code_elements[
+                qualified_name, "route", name, file_path, _, _, language, _, _, metadata, _{tail}
+            ]"#
+        );
+        let route_result = crate::db::schema::run_script(
+            &self.db,
+            &route_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let routes: Vec<serde_json::Value> = route_result
+            .rows
+            .iter()
+            .map(|row| {
+                let metadata_str = row[2].get_str().unwrap_or("{}");
+                let metadata: serde_json::Value =
+                    serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({}));
+                serde_json::json!({
+                    "qualified_name": row[0].get_str().unwrap_or(""),
+                    "file_path": row[1].get_str().unwrap_or(""),
+                    "method": metadata.get("method").and_then(|v| v.as_str()).unwrap_or(""),
+                    "path": metadata.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+                    "framework": metadata.get("framework").and_then(|v| v.as_str()).unwrap_or(""),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "languages": languages,
+            "entry_points": entry_points,
+            "routes": routes,
+            "clusters": clusters,
+            "hotspots": hotspots,
+            "relationship_summary": relationship_counts,
+            "knowledge_count": self.count_knowledge().unwrap_or(0),
+            "total_elements": self.count_elements().unwrap_or(0),
+            "total_files": self.count_files().unwrap_or(0),
+        }))
+    }
+
+    fn count_knowledge(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(id)] := *knowledge_entries[id, _, _, _, _, _, _, _, _, _, _, _, _]"#;
+        let result =
+            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|row| row.first()?.get_int())
+            .unwrap_or(0) as usize)
+    }
+
+    /// FR-B21: Get graph schema - element type counts, relationship type counts
+    pub fn get_graph_schema(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let type_query = format!(
+            r#"?[element_type, count(element_type)] := *code_elements[
+                _, element_type, _, _, _, _, _, _, _, _, _{tail}
+            ]
+:order -count(element_type)"#
+        );
+        let type_result = crate::db::schema::run_script(
+            &self.db,
+            &type_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let element_types: Vec<serde_json::Value> = type_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "element_type": row[0].get_str().unwrap_or(""),
+                    "count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let rel_query = r#"?[rel_type, count(rel_type)] := *relationships[_, _, rel_type, _, _, _]
+:order -count(rel_type)"#;
+        let rel_result =
+            crate::db::schema::run_script(&self.db, rel_query, std::collections::BTreeMap::new())?;
+        let relationship_types: Vec<serde_json::Value> = rel_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "rel_type": row[0].get_str().unwrap_or(""),
+                    "count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "element_types": element_types,
+            "relationship_types": relationship_types,
+            "total_elements": self.count_elements().unwrap_or(0),
+            "total_relationships": self.count_relationships().unwrap_or(0),
+        }))
+    }
+
+    /// FR-B23: Find dead code - functions with zero callers, excluding entry points.
+    /// Implemented as a candidate fetch followed by an in-Rust set difference because
+    /// Cozo's negated rule application does not allow projecting the negated symbol in
+    /// the rule head. The set of "called or tested" qualified names is small relative
+    /// to the candidate set, so the materialised HashSet is cheap to build.
+    pub fn find_dead_code(
+        &self,
+        min_lines: u32,
+    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let candidate_query = format!(
+            r#"?[qualified_name, file_path, line_end, line_start, language, name, span] := *code_elements[qualified_name, "function", name, file_path, line_start, line_end, language, _, _, _, _{tail}], line_end >= 0, line_start >= 0, (line_end - line_start) >= {min_lines}, name != "main", name != "Main", name != "start", name != "serve", name != "Start", span = line_end - line_start:order -span"#,
+            min_lines = min_lines
+        );
+        let candidates = crate::db::schema::run_script(
+            &self.db,
+            &candidate_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let referenced_targets = self.referenced_qualified_names()?;
+        let mut dead: Vec<serde_json::Value> = candidates
+            .rows
+            .iter()
+            .filter(|row| {
+                let qn = row[0].get_str().unwrap_or("");
+                !referenced_targets.contains(qn)
+            })
+            .map(|row| {
+                serde_json::json!({
+                    "qualified_name": row[0].get_str().unwrap_or(""),
+                    "file_path": row[1].get_str().unwrap_or(""),
+                    "line_end": row[2].get_int().unwrap_or(0),
+                    "line_start": row[3].get_int().unwrap_or(0),
+                    "language": row[4].get_str().unwrap_or(""),
+                    "name": row[5].get_str().unwrap_or(""),
+                    "line_count": row[2].get_int().unwrap_or(0) - row[3].get_int().unwrap_or(0) + 1,
+                })
+            })
+            .collect();
+        dead.sort_by(|a, b| {
+            let al = a["line_count"].as_i64().unwrap_or(0);
+            let bl = b["line_count"].as_i64().unwrap_or(0);
+            bl.cmp(&al)
+        });
+        Ok(dead)
+    }
+
+    /// Returns the set of qualified names that appear as the `target_qualified` of
+    /// any `calls` or `tested_by` relationship. Used by `find_dead_code` to compute
+    /// the live-function complement in memory.
+    fn referenced_qualified_names(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
+        let query = r#"?[target] := *relationships[_, target, rel, _, _, _], (rel = "calls" or rel = "tested_by")"#;
+        let result =
+            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .iter()
+            .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+            .collect())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3495,5 +3765,200 @@ mod tests {
             results.is_empty(),
             "search_by_content should return empty when nothing matches"
         );
+    }
+
+    // Phase 1 structural parity tests
+
+    fn insert_test_element_full(
+        engine: &GraphEngine,
+        name: &str,
+        element_type: &str,
+        file_path: &str,
+        language: &str,
+        line_start: u32,
+        line_end: u32,
+    ) {
+        let elem = CodeElement {
+            qualified_name: format!("{}::{}", file_path, name),
+            element_type: element_type.to_string(),
+            name: name.to_string(),
+            file_path: file_path.to_string(),
+            line_start,
+            line_end,
+            language: language.to_string(),
+            ..Default::default()
+        };
+        engine.insert_element(&elem).unwrap();
+    }
+
+    fn insert_test_rel(
+        engine: &GraphEngine,
+        source: &str,
+        target: &str,
+        rel_type: &str,
+        confidence: f64,
+    ) {
+        let rel = Relationship {
+            source_qualified: source.to_string(),
+            target_qualified: target.to_string(),
+            rel_type: rel_type.to_string(),
+            confidence,
+            metadata: serde_json::json!({"resolution_method": "name", "line": 1}),
+            ..Default::default()
+        };
+        engine.insert_relationship(&rel).unwrap();
+    }
+
+    #[test]
+    fn test_graph_schema_counts() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "func_a", "function");
+        insert_test_element(&engine, "func_b", "function");
+        insert_test_element(&engine, "MyClass", "class");
+
+        let schema = engine.get_graph_schema().unwrap();
+        let obj = schema.as_object().unwrap();
+        assert!(obj.contains_key("element_types"));
+        assert!(obj.contains_key("relationship_types"));
+        assert_eq!(obj["total_elements"].as_u64().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_architecture_returns_languages() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "go_handler", "function");
+        insert_test_element_full(
+            &engine,
+            "ts_comp",
+            "function",
+            "src/app.ts",
+            "typescript",
+            1,
+            10,
+        );
+        let arch = engine.get_architecture().unwrap();
+        let obj = arch.as_object().unwrap();
+        assert!(obj.contains_key("languages"));
+        assert!(obj.contains_key("entry_points"));
+        assert!(obj.contains_key("hotspots"));
+        assert_eq!(obj["total_elements"].as_u64().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_architecture_finds_entry_points() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "helper", "function");
+        insert_test_element(&engine, "main", "function");
+        insert_test_element(&engine, "serve", "function");
+        insert_test_element(&engine, "Start", "function");
+        let arch = engine.get_architecture().unwrap();
+        let obj = arch.as_object().unwrap();
+        let eps = obj["entry_points"].as_array().unwrap();
+        assert_eq!(eps.len(), 3, "Should find main, serve, Start");
+    }
+
+    #[test]
+    fn test_architecture_finds_hotspots() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "hot1", "function", "src/hot.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "hot2", "function", "src/hot.rs", "rust", 6, 10);
+        insert_test_element_full(&engine, "hot3", "function", "src/hot.rs", "rust", 11, 15);
+        insert_test_element_full(&engine, "cold", "function", "src/cold.rs", "rust", 1, 5);
+        let arch = engine.get_architecture().unwrap();
+        let obj = arch.as_object().unwrap();
+        let hs = obj["hotspots"].as_array().unwrap();
+        assert!(!hs.is_empty(), "Should find hotspots");
+        let top = hs[0].as_object().unwrap();
+        assert_eq!(top["file_path"].as_str().unwrap(), "src/hot.rs");
+    }
+
+    #[test]
+    fn test_find_dead_code_finds_unused() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "used", "function", "src/lib.rs", "rust", 1, 15);
+        insert_test_element_full(&engine, "caller", "function", "src/lib.rs", "rust", 20, 25);
+        insert_test_rel(
+            &engine,
+            "src/lib.rs::caller",
+            "src/lib.rs::used",
+            "calls",
+            0.95,
+        );
+        insert_test_element_full(&engine, "unused", "function", "src/lib.rs", "rust", 30, 55);
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"unused"), "unused should be dead");
+        assert!(!names.contains(&"used"), "used should not be dead");
+    }
+
+    #[test]
+    fn test_find_dead_code_excludes_entry_points() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "main", "function", "src/main.rs", "rust", 1, 50);
+        insert_test_element_full(&engine, "dead", "function", "src/lib.rs", "rust", 1, 20);
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(!names.contains(&"main"), "main should be excluded");
+        assert!(names.contains(&"dead"), "dead should be listed");
+    }
+
+    #[test]
+    fn test_find_dead_code_excludes_tested() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "tested", "function", "src/lib.rs", "rust", 1, 20);
+        insert_test_rel(
+            &engine,
+            "src/test.rs::t",
+            "src/lib.rs::tested",
+            "tested_by",
+            0.90,
+        );
+        insert_test_element_full(
+            &engine,
+            "truly_dead",
+            "function",
+            "src/lib.rs",
+            "rust",
+            25,
+            45,
+        );
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(
+            !names.contains(&"tested"),
+            "tested function should not be dead"
+        );
+        assert!(names.contains(&"truly_dead"), "truly_dead should be listed");
+    }
+
+    #[test]
+    fn test_find_dead_code_respects_min_lines() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "short", "function", "src/lib.rs", "rust", 1, 3);
+        insert_test_element_full(
+            &engine,
+            "long_dead",
+            "function",
+            "src/lib.rs",
+            "rust",
+            10,
+            30,
+        );
+        let dead = engine.find_dead_code(10).unwrap();
+        let names: Vec<&str> = dead.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert!(
+            !names.contains(&"short"),
+            "short should be excluded by min_lines"
+        );
+        assert!(names.contains(&"long_dead"), "long_dead should be included");
+    }
+
+    #[test]
+    fn test_graph_schema_empty_db() {
+        let (engine, _tmp) = make_test_engine();
+        let schema = engine.get_graph_schema().unwrap();
+        let obj = schema.as_object().unwrap();
+        assert_eq!(obj["total_elements"].as_u64().unwrap(), 0);
+        assert_eq!(obj["total_relationships"].as_u64().unwrap(), 0);
     }
 }

@@ -68,6 +68,14 @@ pub enum RelationshipType {
     ConflictsWith,
     DeployedTo,
     Supersedes,
+    // Phase 1 structural parity (PRD: prd-structural-parity-cbm.md)
+    HttpCalls,
+    Emits,
+    ListensOn,
+    SimilarTo,
+    CrossRepoSimilar,
+    RoutesTo,
+    DefinesRoute,
 }
 
 impl RelationshipType {
@@ -133,6 +141,13 @@ impl RelationshipType {
             RelationshipType::ConflictsWith => "conflicts_with",
             RelationshipType::DeployedTo => "deployed_to",
             RelationshipType::Supersedes => "supersedes",
+            RelationshipType::HttpCalls => "http_calls",
+            RelationshipType::Emits => "emits",
+            RelationshipType::ListensOn => "listens_on",
+            RelationshipType::SimilarTo => "similar_to",
+            RelationshipType::CrossRepoSimilar => "cross_repo_similar",
+            RelationshipType::RoutesTo => "routes_to",
+            RelationshipType::DefinesRoute => "defines_route",
         }
     }
 
@@ -200,6 +215,13 @@ impl RelationshipType {
             "conflicts_with" => Some(RelationshipType::ConflictsWith),
             "deployed_to" => Some(RelationshipType::DeployedTo),
             "supersedes" | "supercedes" => Some(RelationshipType::Supersedes),
+            "http_calls" => Some(RelationshipType::HttpCalls),
+            "emits" => Some(RelationshipType::Emits),
+            "listens_on" => Some(RelationshipType::ListensOn),
+            "similar_to" => Some(RelationshipType::SimilarTo),
+            "cross_repo_similar" => Some(RelationshipType::CrossRepoSimilar),
+            "routes_to" => Some(RelationshipType::RoutesTo),
+            "defines_route" => Some(RelationshipType::DefinesRoute),
             _ => None,
         }
     }

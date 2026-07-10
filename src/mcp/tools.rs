@@ -841,6 +841,40 @@ impl ToolRegistry {
                     "required": ["query"]
                 }),
             },
+            ToolDefinition {
+                name: "get_architecture".to_string(),
+                description: "Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "get_graph_schema".to_string(),
+                description: "Get graph schema overview: element type counts, relationship type counts. Use to understand database structure and find available element/relationship patterns.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "find_dead_code".to_string(),
+                description: "Find potentially dead code: functions with zero callers and zero tests, excluding known entry points (main, Main). Filter by minimum line count to avoid trivial getters/setters.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "min_lines": {"type": "integer", "default": 10, "description": "Minimum line count threshold (default: 10). Functions shorter than this are excluded."},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": []
+                }),
+            },
         ]
     }
 }

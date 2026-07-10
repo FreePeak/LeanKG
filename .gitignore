@@ -11,6 +11,7 @@ test-results/
 node_modules/
 .leankg
 .leankg.bak-pre-cozo-upgrade/
+.leankg.bak-pre-0.17.8-upgrade
 .clauge-worktrees/
 # Local-only docker compose overrides. Holds absolute host paths to
 # the user's other repos so they never get committed. The committed
