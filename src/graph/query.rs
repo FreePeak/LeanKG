@@ -3161,7 +3161,7 @@ impl GraphEngine {
         let tail = self.code_elements_tail();
 
         let lang_query = format!(
-            r#"?[language, count(language)] := *code_elements[_, _, _, _, _, _, language{tail}]
+            r#"?[language, count(language)] := *code_elements[_, _, _, _, _, _, language, _, _, _, _{tail}]
 :order -count(language)"#
         );
         let lang_result = crate::db::schema::run_script(
@@ -3182,8 +3182,8 @@ impl GraphEngine {
 
         let entry_query = format!(
             r#"?[qualified_name, file_path, language] := *code_elements[
-                qualified_name, "function", name, file_path, _, _, language{tail}
-            ], (name = "main" or name = "Main" or name = "start" or name = "serve")"#
+                qualified_name, "function", name, file_path, _, _, language, _, _, _, _{tail}
+            ], (name = "main" or name = "Main" or name = "start" or name = "serve" or name = "Start")"#
         );
         let entry_result = crate::db::schema::run_script(
             &self.db,
@@ -3203,8 +3203,8 @@ impl GraphEngine {
             .collect();
 
         let cluster_query = format!(
-            r#"?[cluster_label, cluster_id, count(qualified_name)] := *code_elements[
-                _, _, _, _, _, _, _, _, cluster_id, cluster_label{tail}
+            r#"?[cluster_label, cluster_id, count(qn)] := *code_elements[
+                qn, _, _, _, _, _, _, _, cluster_id, cluster_label, _{tail}
             ], cluster_id != null, cluster_id != """#,
         );
         let cluster_result = crate::db::schema::run_script(
@@ -3241,7 +3241,7 @@ impl GraphEngine {
 
         let hotspot_query = format!(
             r#"?[file_path, count(qualified_name)] := *code_elements[
-                qualified_name, "function", _, file_path, _, _, _{tail}
+                qualified_name, "function", _, file_path, _, _, _, _, _, _, _{tail}
             ], file_path != ""
 :order -count(qualified_name)
 :limit 10"#
@@ -3265,7 +3265,7 @@ impl GraphEngine {
         // Find routes
         let route_query = format!(
             r#"?[qualified_name, file_path, metadata] := *code_elements[
-                qualified_name, "route", name, file_path, _, _, language{tail}
+                qualified_name, "route", name, file_path, _, _, language, _, _, metadata, _{tail}
             ]"#
         );
         let route_result = crate::db::schema::run_script(
@@ -3304,7 +3304,7 @@ impl GraphEngine {
     }
 
     fn count_knowledge(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"?[count(id)] := *knowledge_entries[id, _, _, _, _, _, _, _]"#;
+        let query = r#"?[count(id)] := *knowledge_entries[id, _, _, _, _, _, _, _, _, _, _, _, _]"#;
         let result =
             crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
         Ok(result
@@ -3319,7 +3319,7 @@ impl GraphEngine {
         let tail = self.code_elements_tail();
         let type_query = format!(
             r#"?[element_type, count(element_type)] := *code_elements[
-                _, element_type, _, _, _, _, _{tail}
+                _, element_type, _, _, _, _, _, _, _, _, _{tail}
             ]
 :order -count(element_type)"#
         );
@@ -3362,32 +3362,33 @@ impl GraphEngine {
         }))
     }
 
-    /// FR-B23: Find dead code - functions with zero callers, excluding entry points
+    /// FR-B23: Find dead code - functions with zero callers, excluding entry points.
+    /// Implemented as a candidate fetch followed by an in-Rust set difference because
+    /// Cozo's negated rule application does not allow projecting the negated symbol in
+    /// the rule head. The set of "called or tested" qualified names is small relative
+    /// to the candidate set, so the materialised HashSet is cheap to build.
     pub fn find_dead_code(
         &self,
         min_lines: u32,
     ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
         let tail = self.code_elements_tail();
-        let query = format!(
-            r#"?[qualified_name, file_path, line_end, line_start, language, name] :=
-    *code_elements[
-        qualified_name, "function", name, file_path, line_start, line_end, language{tail}
-    ],
-    line_end >= 0,
-    line_start >= 0,
-    (line_end - line_start) >= {min_lines},
-    not(*relationships[_, _, "calls", _, _, _], _ = qualified_name),
-    not(*relationships[_, _, "tested_by", _, _, _], _ = qualified_name),
-    name != "main",
-    name != "Main"
-:order -(line_end - line_start)"#,
+        let candidate_query = format!(
+            r#"?[qualified_name, file_path, line_end, line_start, language, name, span] := *code_elements[qualified_name, "function", name, file_path, line_start, line_end, language, _, _, _, _{tail}], line_end >= 0, line_start >= 0, (line_end - line_start) >= {min_lines}, name != "main", name != "Main", name != "start", name != "serve", name != "Start", span = line_end - line_start:order -span"#,
             min_lines = min_lines
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
-        let dead: Vec<serde_json::Value> = result
+        let candidates = crate::db::schema::run_script(
+            &self.db,
+            &candidate_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let referenced_targets = self.referenced_qualified_names()?;
+        let mut dead: Vec<serde_json::Value> = candidates
             .rows
             .iter()
+            .filter(|row| {
+                let qn = row[0].get_str().unwrap_or("");
+                !referenced_targets.contains(qn)
+            })
             .map(|row| {
                 serde_json::json!({
                     "qualified_name": row[0].get_str().unwrap_or(""),
@@ -3400,7 +3401,28 @@ impl GraphEngine {
                 })
             })
             .collect();
+        dead.sort_by(|a, b| {
+            let al = a["line_count"].as_i64().unwrap_or(0);
+            let bl = b["line_count"].as_i64().unwrap_or(0);
+            bl.cmp(&al)
+        });
         Ok(dead)
+    }
+
+    /// Returns the set of qualified names that appear as the `target_qualified` of
+    /// any `calls` or `tested_by` relationship. Used by `find_dead_code` to compute
+    /// the live-function complement in memory.
+    fn referenced_qualified_names(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
+        let query = r#"?[target] := *relationships[_, target, rel, _, _, _], (rel = "calls" or rel = "tested_by")"#;
+        let result =
+            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .iter()
+            .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+            .collect())
     }
 }
 
