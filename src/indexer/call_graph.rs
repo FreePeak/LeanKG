@@ -21,6 +21,7 @@ pub struct CallInfo {
     pub is_resolved: bool,
     pub is_extension: bool,
     pub is_scope_function: bool,
+    pub resolution_method: &'static str,
     pub line: u32,
 }
 
@@ -132,6 +133,7 @@ impl<'a> CallGraphBuilder<'a> {
                         "is_resolved": call.is_resolved,
                         "is_extension": call.is_extension,
                         "is_scope_function": call.is_scope_function,
+                        "resolution_method": call.resolution_method,
                         "line": call.line,
                     }),
                     ..Default::default()
@@ -204,12 +206,13 @@ impl<'a> CallGraphBuilder<'a> {
                 is_resolved: true,
                 is_extension: false,
                 is_scope_function: true,
+                resolution_method: "name",
                 line,
             });
         }
 
         // Try to resolve the call
-        let (resolved_target, confidence, is_resolved, is_extension) =
+        let (resolved_target, confidence, is_resolved, is_extension, resolution_method) =
             self.resolve_call(&target_name, receiver.as_deref(), current_class);
 
         Some(CallInfo {
@@ -219,6 +222,7 @@ impl<'a> CallGraphBuilder<'a> {
             is_resolved,
             is_extension,
             is_scope_function: is_scope,
+            resolution_method,
             line,
         })
     }
@@ -311,14 +315,14 @@ impl<'a> CallGraphBuilder<'a> {
         target_name: &str,
         receiver: Option<&str>,
         current_class: Option<&str>,
-    ) -> (String, f64, bool, bool) {
+    ) -> (String, f64, bool, bool, &'static str) {
         // 1. Check same-class method call (bare call within a class body)
         if receiver.is_none() {
             if let Some(cls) = current_class {
                 if let Some(methods) = self.class_methods.get(cls) {
                     if methods.contains(target_name) {
                         let qualified = format!("{}::{}::{}", self.file_path, cls, target_name);
-                        return (qualified, 0.95, true, false);
+                        return (qualified, 0.95, true, false, "name");
                     }
                 }
             }
@@ -330,7 +334,7 @@ impl<'a> CallGraphBuilder<'a> {
                 let methods = self.class_methods.get(rec).unwrap();
                 if methods.contains(target_name) {
                     let qualified = format!("{}::{}::{}", self.file_path, rec, target_name);
-                    return (qualified, 0.95, true, false);
+                    return (qualified, 0.95, true, false, "name");
                 }
             }
 
@@ -338,7 +342,7 @@ impl<'a> CallGraphBuilder<'a> {
                 for (class, methods) in &self.class_methods {
                     if methods.contains(target_name) {
                         let qualified = format!("{}::{}::{}", self.file_path, class, target_name);
-                        return (qualified, 0.95, true, false);
+                        return (qualified, 0.95, true, false, "name");
                     }
                 }
             }
@@ -347,20 +351,20 @@ impl<'a> CallGraphBuilder<'a> {
         // 3. Check top-level function in this file
         if let Some(qualified) = self.defined_functions.get(target_name) {
             let is_ext = self.extension_functions.contains(target_name);
-            return (qualified.clone(), 0.90, true, is_ext);
+            return (qualified.clone(), 0.90, true, is_ext, "name");
         }
 
         // 4. Fallback: any class method with this name
         for (class, methods) in &self.class_methods {
             if methods.contains(target_name) {
                 let qualified = format!("{}::{}::{}", self.file_path, class, target_name);
-                return (qualified, 0.85, true, false);
+                return (qualified, 0.85, true, false, "name_file_hint");
             }
         }
 
         // 5. Unresolved
         let unresolved = format!("__unresolved__{}", target_name);
-        (unresolved, 0.50, false, false)
+        (unresolved, 0.50, false, false, "unresolved")
     }
 
     fn is_scope_function(&self, name: &str) -> bool {

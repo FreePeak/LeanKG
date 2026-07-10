@@ -275,6 +275,9 @@ impl ToolHandler {
             "kg_trace_workflow" => self.kg_trace_workflow(arguments),
             "kg_ontology_status" => self.kg_ontology_status(arguments),
             "kg_self_test" => self.kg_self_test(arguments),
+            "get_architecture" => self.get_architecture(arguments),
+            "get_graph_schema" => self.get_graph_schema(arguments),
+            "find_dead_code" => self.find_dead_code(arguments),
             #[cfg(feature = "embeddings")]
             "kg_semantic_context" => self.kg_semantic_context(arguments),
             _ => Err(format!("Unknown tool: {}", tool_name)),
@@ -3105,6 +3108,34 @@ impl ToolHandler {
         Ok(json!({
             "context": summary,
             "source": "generated",
+        }))
+    }
+
+    /// FR-B20: Get architecture overview
+    fn get_architecture(&self, _args: &Value) -> Result<Value, String> {
+        self.graph_engine
+            .get_architecture()
+            .map_err(|e| format!("Failed to get architecture: {}", e))
+    }
+
+    /// FR-B21: Get graph schema overview
+    fn get_graph_schema(&self, _args: &Value) -> Result<Value, String> {
+        self.graph_engine
+            .get_graph_schema()
+            .map_err(|e| format!("Failed to get graph schema: {}", e))
+    }
+
+    /// FR-B23: Find dead code
+    fn find_dead_code(&self, args: &Value) -> Result<Value, String> {
+        let min_lines = args["min_lines"].as_u64().unwrap_or(10) as u32;
+        let dead = self
+            .graph_engine
+            .find_dead_code(min_lines)
+            .map_err(|e| format!("Failed to find dead code: {}", e))?;
+        Ok(json!({
+            "dead_functions": dead,
+            "count": dead.len(),
+            "min_lines": min_lines,
         }))
     }
 }

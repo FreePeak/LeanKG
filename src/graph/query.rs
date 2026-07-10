@@ -3154,6 +3154,254 @@ impl GraphEngine {
 
         Ok(conflicts)
     }
+
+    /// FR-B20: Get architecture overview - languages, packages, entry points,
+    /// routes, hotspots, clusters, knowledge counts
+    pub fn get_architecture(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+
+        let lang_query = format!(
+            r#"?[language, count(language)] := *code_elements[_, _, _, _, _, _, language{tail}]
+:order -count(language)"#
+        );
+        let lang_result = crate::db::schema::run_script(
+            &self.db,
+            &lang_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let languages: Vec<serde_json::Value> = lang_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "language": row[0].get_str().unwrap_or("unknown"),
+                    "element_count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let entry_query = format!(
+            r#"?[qualified_name, file_path, language] := *code_elements[
+                qualified_name, "function", name, file_path, _, _, language{tail}
+            ], (name = "main" or name = "Main" or name = "start" or name = "serve")"#
+        );
+        let entry_result = crate::db::schema::run_script(
+            &self.db,
+            &entry_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let entry_points: Vec<serde_json::Value> = entry_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "qualified_name": row[0].get_str().unwrap_or(""),
+                    "file_path": row[1].get_str().unwrap_or(""),
+                    "language": row[2].get_str().unwrap_or(""),
+                })
+            })
+            .collect();
+
+        let cluster_query = format!(
+            r#"?[cluster_label, cluster_id, count(qualified_name)] := *code_elements[
+                _, _, _, _, _, _, _, _, cluster_id, cluster_label{tail}
+            ], cluster_id != null, cluster_id != """#,
+        );
+        let cluster_result = crate::db::schema::run_script(
+            &self.db,
+            &cluster_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let clusters: Vec<serde_json::Value> = cluster_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "label": row[0].get_str().unwrap_or(""),
+                    "cluster_id": row[1].get_str().unwrap_or(""),
+                    "element_count": row[2].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let rel_query =
+            r#"?[rel_type, count(rel_type)] := *relationships[_, _, rel_type, _, _, _]"#;
+        let rel_result =
+            crate::db::schema::run_script(&self.db, rel_query, std::collections::BTreeMap::new())?;
+        let relationship_counts: Vec<serde_json::Value> = rel_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "rel_type": row[0].get_str().unwrap_or(""),
+                    "count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let hotspot_query = format!(
+            r#"?[file_path, count(qualified_name)] := *code_elements[
+                qualified_name, "function", _, file_path, _, _, _{tail}
+            ], file_path != ""
+:order -count(qualified_name)
+:limit 10"#
+        );
+        let hotspot_result = crate::db::schema::run_script(
+            &self.db,
+            &hotspot_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let hotspots: Vec<serde_json::Value> = hotspot_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "file_path": row[0].get_str().unwrap_or(""),
+                    "function_count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        // Find routes
+        let route_query = format!(
+            r#"?[qualified_name, file_path, metadata] := *code_elements[
+                qualified_name, "route", name, file_path, _, _, language{tail}
+            ]"#
+        );
+        let route_result = crate::db::schema::run_script(
+            &self.db,
+            &route_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let routes: Vec<serde_json::Value> = route_result
+            .rows
+            .iter()
+            .map(|row| {
+                let metadata_str = row[2].get_str().unwrap_or("{}");
+                let metadata: serde_json::Value =
+                    serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({}));
+                serde_json::json!({
+                    "qualified_name": row[0].get_str().unwrap_or(""),
+                    "file_path": row[1].get_str().unwrap_or(""),
+                    "method": metadata.get("method").and_then(|v| v.as_str()).unwrap_or(""),
+                    "path": metadata.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+                    "framework": metadata.get("framework").and_then(|v| v.as_str()).unwrap_or(""),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "languages": languages,
+            "entry_points": entry_points,
+            "routes": routes,
+            "clusters": clusters,
+            "hotspots": hotspots,
+            "relationship_summary": relationship_counts,
+            "knowledge_count": self.count_knowledge().unwrap_or(0),
+            "total_elements": self.count_elements().unwrap_or(0),
+            "total_files": self.count_files().unwrap_or(0),
+        }))
+    }
+
+    fn count_knowledge(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let query = r#"?[count(id)] := *knowledge_entries[id, _, _, _, _, _, _, _]"#;
+        let result =
+            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|row| row.first()?.get_int())
+            .unwrap_or(0) as usize)
+    }
+
+    /// FR-B21: Get graph schema - element type counts, relationship type counts
+    pub fn get_graph_schema(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let type_query = format!(
+            r#"?[element_type, count(element_type)] := *code_elements[
+                _, element_type, _, _, _, _, _{tail}
+            ]
+:order -count(element_type)"#
+        );
+        let type_result = crate::db::schema::run_script(
+            &self.db,
+            &type_query,
+            std::collections::BTreeMap::new(),
+        )?;
+        let element_types: Vec<serde_json::Value> = type_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "element_type": row[0].get_str().unwrap_or(""),
+                    "count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        let rel_query = r#"?[rel_type, count(rel_type)] := *relationships[_, _, rel_type, _, _, _]
+:order -count(rel_type)"#;
+        let rel_result =
+            crate::db::schema::run_script(&self.db, rel_query, std::collections::BTreeMap::new())?;
+        let relationship_types: Vec<serde_json::Value> = rel_result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "rel_type": row[0].get_str().unwrap_or(""),
+                    "count": row[1].get_int().unwrap_or(0),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "element_types": element_types,
+            "relationship_types": relationship_types,
+            "total_elements": self.count_elements().unwrap_or(0),
+            "total_relationships": self.count_relationships().unwrap_or(0),
+        }))
+    }
+
+    /// FR-B23: Find dead code - functions with zero callers, excluding entry points
+    pub fn find_dead_code(
+        &self,
+        min_lines: u32,
+    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, file_path, line_end, line_start, language, name] :=
+    *code_elements[
+        qualified_name, "function", name, file_path, line_start, line_end, language{tail}
+    ],
+    line_end >= 0,
+    line_start >= 0,
+    (line_end - line_start) >= {min_lines},
+    not(*relationships[_, _, "calls", _, _, _], _ = qualified_name),
+    not(*relationships[_, _, "tested_by", _, _, _], _ = qualified_name),
+    name != "main",
+    name != "Main"
+:order -(line_end - line_start)"#,
+            min_lines = min_lines
+        );
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let dead: Vec<serde_json::Value> = result
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "qualified_name": row[0].get_str().unwrap_or(""),
+                    "file_path": row[1].get_str().unwrap_or(""),
+                    "line_end": row[2].get_int().unwrap_or(0),
+                    "line_start": row[3].get_int().unwrap_or(0),
+                    "language": row[4].get_str().unwrap_or(""),
+                    "name": row[5].get_str().unwrap_or(""),
+                    "line_count": row[2].get_int().unwrap_or(0) - row[3].get_int().unwrap_or(0) + 1,
+                })
+            })
+            .collect();
+        Ok(dead)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
