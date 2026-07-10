@@ -81,6 +81,16 @@ cargo test       # Run tests
 cargo run -- <cmd>  # Run CLI commands
 ```
 
+## Phase 1 Structural Parity Tools (v2.0 PRD)
+
+Three new MCP tools are available once a project is indexed:
+
+- `get_architecture` — single-call overview (languages, entry points, routes, clusters, hotspots, relationship summary, knowledge count).
+- `get_graph_schema` — element type and relationship type counts.
+- `find_dead_code` — functions with no callers and no `tested_by` edge, with a `min_lines` threshold.
+
+See [`docs/mcp-tools.md`](docs/mcp-tools.md) → Structure Tools and [`docs/roadmap.md`](docs/roadmap.md) → Phase 1 for details. PRD source: [`docs/requirement/prd-structural-parity-cbm.md`](docs/requirement/prd-structural-parity-cbm.md).
+
 ## MCP Server Transport Modes
 
 LeanKG supports two MCP transport modes:

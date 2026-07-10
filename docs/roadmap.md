@@ -1,5 +1,18 @@
 # Roadmap
 
+## Phase 1 -- Structural Parity vs codebase-memory-mcp (v2.0 PRD)
+
+PRD: [`prd-structural-parity-cbm.md`](requirement/prd-structural-parity-cbm.md)
+
+| Feature | PRD ID | Status | Description |
+|---------|--------|--------|-------------|
+| `resolution_method` on calls | FR-B01 | Done | Metadata now records `name` / `name_file_hint` / `unresolved` per call edge. `typed` is the reserved value for Phase 3. |
+| `get_architecture` MCP | FR-B20 | Done | Single-call overview: languages, entry points (`main`/`Main`/`start`/`serve`/`Start`), routes, clusters, hotspots (top 10), relationship summary, knowledge count, totals. |
+| `get_graph_schema` MCP | FR-B21 | Done | Element type counts and relationship type counts. |
+| `find_dead_code` MCP | FR-B23 | Done | Functions with zero callers and no `tested_by` edge, excluding common entry-point names. `min_lines` filter (default 10). |
+| `typed_resolve` feature flag | FR-B08 | Not done | Slipped to Phase 3 alongside the `typed` resolution method. |
+| `get_architecture` token budget | FR-B22 | Not done | Tool returns full result today. Add per-section `max_items` before Phase 1 close. |
+
 ## Phase 2 -- Enhanced MCP Tools (GitNexus-Inspired)
 
 Based on analysis of GitNexus architecture, LeanKG is adopting **precomputed relational intelligence**: structure computed at index time, not at query time. This converts LeanKG from a raw-edge graph query engine into a high-confidence context engine.
