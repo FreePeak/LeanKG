@@ -121,11 +121,7 @@ impl RouteExtractor {
         }
     }
 
-    fn try_go_route(
-        source: &[u8],
-        node: tree_sitter::Node,
-        file_path: &str,
-    ) -> Option<RouteInfo> {
+    fn try_go_route(source: &[u8], node: tree_sitter::Node, file_path: &str) -> Option<RouteInfo> {
         let mut selector: Option<(String, String)> = None;
         let mut args: Vec<String> = Vec::new();
         let mut cursor = node.walk();
@@ -273,11 +269,7 @@ impl RouteExtractor {
         }
     }
 
-    fn try_ts_route(
-        source: &[u8],
-        node: tree_sitter::Node,
-        file_path: &str,
-    ) -> Option<RouteInfo> {
+    fn try_ts_route(source: &[u8], node: tree_sitter::Node, file_path: &str) -> Option<RouteInfo> {
         let mut method_call: Option<String> = None;
         let mut args: Vec<String> = Vec::new();
 
@@ -325,11 +317,7 @@ impl RouteExtractor {
         })
     }
 
-    fn try_ts_mount(
-        source: &[u8],
-        node: tree_sitter::Node,
-        file_path: &str,
-    ) -> Option<RouteInfo> {
+    fn try_ts_mount(source: &[u8], node: tree_sitter::Node, file_path: &str) -> Option<RouteInfo> {
         if let Some(first_child) = node.child(0) {
             if first_child.kind() == "member_expression" {
                 let text = Self::node_text(source, first_child);
@@ -448,8 +436,7 @@ func getUser(w http.ResponseWriter, r *http.Request) {}
 func createUser(w http.ResponseWriter, r *http.Request) {}
 "#;
         let tree = parse_go(source);
-        let routes =
-            RouteExtractor::extract_routes(source.as_bytes(), &tree, "src/main.go", "go");
+        let routes = RouteExtractor::extract_routes(source.as_bytes(), &tree, "src/main.go", "go");
         assert!(!routes.is_empty());
         let get_route = routes.iter().find(|r| r.method == "GET");
         assert!(get_route.is_some());
@@ -473,8 +460,7 @@ func healthCheck(c *gin.Context) {}
 func createOrder(c *gin.Context) {}
 "#;
         let tree = parse_go(source);
-        let routes =
-            RouteExtractor::extract_routes(source.as_bytes(), &tree, "src/main.go", "go");
+        let routes = RouteExtractor::extract_routes(source.as_bytes(), &tree, "src/main.go", "go");
         assert!(!routes.is_empty());
         let post = routes.iter().find(|r| r.method == "POST");
         assert!(post.is_some());
