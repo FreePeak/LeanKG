@@ -580,7 +580,7 @@ fn bench_architecture_returns_all_keys() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
     let arch = engine
-        .get_architecture()
+        .get_architecture(None)
         .expect("get_architecture should succeed");
     let obj = arch.as_object().unwrap();
 
@@ -594,6 +594,8 @@ fn bench_architecture_returns_all_keys() {
         "knowledge_count",
         "total_elements",
         "total_files",
+        "max_items",
+        "truncated_sections",
     ];
     for key in &required {
         assert!(obj.contains_key(*key), "Missing key: {}", key);
@@ -604,7 +606,7 @@ fn bench_architecture_returns_all_keys() {
 fn bench_architecture_detects_rust_language() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     let langs = obj["languages"].as_array().unwrap();
     let rust = langs
@@ -618,7 +620,7 @@ fn bench_architecture_detects_rust_language() {
 fn bench_architecture_finds_main_entry_point() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     let eps = obj["entry_points"].as_array().unwrap();
     assert!(!eps.is_empty(), "Should find entry points");
@@ -632,7 +634,7 @@ fn bench_architecture_finds_main_entry_point() {
 fn bench_architecture_finds_hotspots() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     let hs = obj["hotspots"].as_array().unwrap();
     assert!(!hs.is_empty(), "Should find hotspots");
@@ -647,7 +649,7 @@ fn bench_architecture_finds_hotspots() {
 fn bench_architecture_finds_clusters() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     let clusters = obj["clusters"].as_array().unwrap();
     assert_eq!(
@@ -661,7 +663,7 @@ fn bench_architecture_finds_clusters() {
 fn bench_architecture_counts_relationships() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     let rels = obj["relationship_summary"].as_array().unwrap();
     let calls = rels
@@ -681,7 +683,7 @@ fn bench_architecture_counts_relationships() {
 fn bench_schema_counts_element_types() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let schema = engine.get_graph_schema().unwrap();
+    let schema = engine.get_graph_schema(None).unwrap();
     let obj = schema.as_object().unwrap();
     let types = obj["element_types"].as_array().unwrap();
 
@@ -706,7 +708,7 @@ fn bench_schema_counts_element_types() {
 fn bench_schema_counts_relationship_types() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let schema = engine.get_graph_schema().unwrap();
+    let schema = engine.get_graph_schema(None).unwrap();
     let obj = schema.as_object().unwrap();
     let rels = obj["relationship_types"].as_array().unwrap();
 
@@ -727,7 +729,7 @@ fn bench_schema_counts_relationship_types() {
 fn bench_schema_totals_correct() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
-    let schema = engine.get_graph_schema().unwrap();
+    let schema = engine.get_graph_schema(None).unwrap();
     let obj = schema.as_object().unwrap();
     assert_eq!(obj["total_elements"].as_u64().unwrap(), 39);
     assert_eq!(obj["total_relationships"].as_u64().unwrap(), 19);
@@ -825,7 +827,7 @@ fn bench_resolution_method_present_in_metadata() {
     let (engine, _tmp) = make_engine();
     index_leankg_self(&engine);
     // The calls we inserted have resolution_method in metadata
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     let rels = obj["relationship_summary"].as_array().unwrap();
     let calls_count = rels
@@ -1035,7 +1037,7 @@ fn bench_routes_appear_in_architecture() {
     };
     engine.insert_element(&route_elem).unwrap();
 
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     let routes = obj["routes"].as_array().unwrap();
     assert!(!routes.is_empty(), "Architecture should include routes");
@@ -1043,4 +1045,170 @@ fn bench_routes_appear_in_architecture() {
         .iter()
         .find(|r| r["path"].as_str().unwrap() == "/health");
     assert!(health.is_some(), "Should find /health route");
+}
+
+// ── FR-B22: Token budget truncation benchmark tests ──
+
+#[test]
+fn bench_arch_max_items_truncates_hotspots() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let full = engine.get_architecture(None).unwrap();
+    let full_hs = full["hotspots"].as_array().unwrap().len();
+
+    let arch = engine.get_architecture(Some(2)).unwrap();
+    let obj = arch.as_object().unwrap();
+    assert_eq!(obj["hotspots"].as_array().unwrap().len(), 2);
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+    let hs = trunc
+        .iter()
+        .find(|t| t["section"].as_str() == Some("hotspots"));
+    assert!(hs.is_some());
+    assert_eq!(hs.unwrap()["original_count"].as_u64(), Some(full_hs as u64));
+}
+
+#[test]
+fn bench_arch_max_items_truncates_relationships() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let arch = engine.get_architecture(Some(1)).unwrap();
+    let obj = arch.as_object().unwrap();
+    assert_eq!(obj["relationship_summary"].as_array().unwrap().len(), 1);
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+    let rs = trunc
+        .iter()
+        .find(|t| t["section"].as_str() == Some("relationship_summary"));
+    assert!(rs.is_some());
+    assert_eq!(rs.unwrap()["original_count"].as_u64(), Some(2));
+}
+
+#[test]
+fn bench_arch_max_items_reports_all_truncated() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let arch = engine.get_architecture(Some(1)).unwrap();
+    let obj = arch.as_object().unwrap();
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+    let names: Vec<&str> = trunc.iter().filter_map(|t| t["section"].as_str()).collect();
+    assert!(names.contains(&"hotspots"), "hotspots should be truncated");
+    assert!(names.contains(&"clusters"), "clusters should be truncated");
+}
+
+#[test]
+fn bench_arch_max_items_none_returns_full() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let arch = engine.get_architecture(None).unwrap();
+    let obj = arch.as_object().unwrap();
+    assert!(obj["truncated_sections"].as_array().unwrap().is_empty());
+    assert!(obj["max_items"].is_null());
+    assert_eq!(obj["relationship_summary"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn bench_arch_max_items_one_minimal() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let arch = engine.get_architecture(Some(1)).unwrap();
+    let obj = arch.as_object().unwrap();
+    for key in &[
+        "languages",
+        "entry_points",
+        "hotspots",
+        "clusters",
+        "relationship_summary",
+    ] {
+        assert!(
+            obj[*key].as_array().unwrap().len() <= 1,
+            "Section {} >1 item",
+            key
+        );
+    }
+    assert_eq!(obj["max_items"].as_u64(), Some(1));
+}
+
+#[test]
+fn bench_arch_truncation_reduces_token_size() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let full = engine.get_architecture(None).unwrap();
+    let truncated = engine.get_architecture(Some(1)).unwrap();
+    assert!(
+        truncated.to_string().len() < full.to_string().len(),
+        "Truncated should be smaller than full"
+    );
+}
+
+#[test]
+fn bench_schema_max_items_truncates_types() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let full = engine.get_graph_schema(None).unwrap();
+    let full_types = full["element_types"].as_array().unwrap().len();
+
+    let schema = engine.get_graph_schema(Some(2)).unwrap();
+    let obj = schema.as_object().unwrap();
+    assert_eq!(obj["element_types"].as_array().unwrap().len(), 2);
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+    let et = trunc
+        .iter()
+        .find(|t| t["section"].as_str() == Some("element_types"));
+    assert!(et.is_some());
+    assert_eq!(
+        et.unwrap()["original_count"].as_u64(),
+        Some(full_types as u64)
+    );
+}
+
+#[test]
+fn bench_schema_max_items_truncates_rel_types() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let schema = engine.get_graph_schema(Some(1)).unwrap();
+    let obj = schema.as_object().unwrap();
+    assert_eq!(obj["relationship_types"].as_array().unwrap().len(), 1);
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+    let rt = trunc
+        .iter()
+        .find(|t| t["section"].as_str() == Some("relationship_types"));
+    assert!(rt.is_some());
+    assert_eq!(rt.unwrap()["original_count"].as_u64(), Some(2));
+}
+
+#[test]
+fn bench_schema_truncation_preserves_totals() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let schema = engine.get_graph_schema(Some(1)).unwrap();
+    let obj = schema.as_object().unwrap();
+    assert_eq!(obj["total_elements"].as_u64().unwrap(), 39);
+    assert_eq!(obj["total_relationships"].as_u64().unwrap(), 19);
+}
+
+#[test]
+fn bench_arch_max_items_five_partial() {
+    let (engine, _tmp) = make_engine();
+    index_leankg_self(&engine);
+
+    let arch = engine.get_architecture(Some(5)).unwrap();
+    let obj = arch.as_object().unwrap();
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+
+    // languages has only 1 entry, should NOT be truncated with max_items=5
+    let lang_trunc = trunc
+        .iter()
+        .find(|t| t["section"].as_str() == Some("languages"));
+    assert!(
+        lang_trunc.is_none(),
+        "languages (1 item) should not be truncated with max_items=5"
+    );
 }

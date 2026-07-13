@@ -1000,6 +1000,83 @@ impl ToolHandler {
             .ok_or("Missing 'pattern' parameter")?;
 
         let element_type_filter = args["element_type"].as_str().map(String::from);
+        let limit = crate::ontology::safe_discover::clamp_limit(
+            args["limit"].as_i64().unwrap_or(50) as usize,
+        );
+        let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
+
+        // Mega-graph: ontology/semantic discover instead of full table scan.
+        if crate::ontology::safe_discover::is_mega_graph(&self.graph_engine) {
+            let page = crate::ontology::safe_discover::discover(
+                &self.graph_engine,
+                pattern,
+                args["env"].as_str().unwrap_or("local"),
+                limit,
+                offset,
+                true,
+            )
+            .map_err(|e| e.to_string())?;
+            let mut matches: Vec<Value> = page
+                .results
+                .iter()
+                .filter(|e| {
+                    let pattern_match = if pattern.contains('*') || pattern.contains('?') {
+                        self.glob_match(pattern, &e.file_path)
+                            || self.glob_match(pattern, &e.qualified_name)
+                    } else {
+                        e.file_path.contains(pattern) || e.qualified_name.contains(pattern)
+                    };
+                    let type_match = element_type_filter
+                        .as_ref()
+                        .map(|et| &e.element_type == et)
+                        .unwrap_or(true);
+                    pattern_match && type_match
+                })
+                .map(|e| {
+                    json!({
+                        "qualified_name": e.qualified_name,
+                        "name": e.name,
+                        "type": e.element_type,
+                        "file": e.file_path,
+                        "line": e.line_start
+                    })
+                })
+                .collect();
+            // If ontology path filtered everything, fall back to typed name search page.
+            if matches.is_empty() {
+                let probe = pattern.trim_matches(|c| c == '*' || c == '?' || c == '/');
+                let found = self
+                    .graph_engine
+                    .search_by_name_typed(probe, element_type_filter.as_deref(), limit + offset)
+                    .map_err(|e| e.to_string())?;
+                matches = found
+                    .into_iter()
+                    .skip(offset)
+                    .take(limit)
+                    .filter(|e| {
+                        e.file_path.contains(probe)
+                            || e.qualified_name.contains(probe)
+                            || probe.is_empty()
+                    })
+                    .map(|e| {
+                        json!({
+                            "qualified_name": e.qualified_name,
+                            "name": e.name,
+                            "type": e.element_type,
+                            "file": e.file_path,
+                            "line": e.line_start
+                        })
+                    })
+                    .collect();
+            }
+            return Ok(json!({
+                "results": matches,
+                "count": matches.len(),
+                "limit": limit,
+                "offset": offset,
+                "method": "ontology_or_name_paginated"
+            }));
+        }
 
         let elements = self
             .graph_engine
@@ -1021,7 +1098,8 @@ impl ToolHandler {
                     .unwrap_or(true);
                 pattern_match && type_match
             })
-            .take(50)
+            .skip(offset)
+            .take(limit)
             .map(|e| {
                 json!({
                     "qualified_name": e.qualified_name,
@@ -1033,7 +1111,13 @@ impl ToolHandler {
             })
             .collect();
 
-        Ok(json!({ "files": matches }))
+        Ok(json!({
+            "results": matches,
+            "count": matches.len(),
+            "limit": limit,
+            "offset": offset,
+            "method": "scan"
+        }))
     }
 
     fn get_dependencies(&self, args: &Value) -> Result<Value, String> {
@@ -1341,32 +1425,42 @@ impl ToolHandler {
 
     fn search_code(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
-        let limit = args["limit"].as_i64().unwrap_or(20).min(50) as usize;
+        let limit = args["limit"].as_i64().unwrap_or(20) as usize;
+        let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
         let element_type = args["element_type"].as_str();
-        let use_ontology = args["use_ontology"].as_bool().unwrap_or(false);
+        let env = args["env"].as_str().unwrap_or("local");
+        // Mega-graphs default to ontology-first; small graphs keep legacy opt-in.
+        let mega = crate::ontology::safe_discover::is_mega_graph(&self.graph_engine);
+        let use_ontology = args["use_ontology"].as_bool().unwrap_or(mega);
 
-        // Concept-gated workflow: extract keywords -> scan concept ontology ->
-        // load concept -> query db. Only used when explicitly requested; falls
-        // back to plain name search if no concept matches.
-        if use_ontology {
-            let env = args["env"].as_str().unwrap_or("local");
-            let query_engine =
-                crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
-            let result = query_engine
-                .concept_search(query, env, limit)
-                .map_err(|e| format!("Concept search failed: {}", e))?;
-            if result.concept_match_count > 0 || !result.linked_code.is_empty() {
-                return Ok(self.format_concept_search_result(&result));
+        if use_ontology || mega {
+            let mut page = crate::ontology::safe_discover::discover(
+                &self.graph_engine,
+                query,
+                env,
+                limit,
+                offset,
+                true,
+            )
+            .map_err(|e| format!("Ontology-first search failed: {}", e))?;
+
+            // Optional element_type filter on the page (already bounded).
+            if let Some(et) = element_type {
+                page.results.retain(|e| e.element_type == et);
+                page.total_estimate = page.results.len();
+                page.has_more = false;
             }
-            // else fall through to plain name search
+            return Ok(crate::ontology::safe_discover::discover_page_to_json(&page));
         }
 
+        let limit = crate::ontology::safe_discover::clamp_limit(limit);
         let elements = self
             .graph_engine
-            .search_by_name_typed(query, element_type, limit)
+            .search_by_name_typed(query, element_type, limit.saturating_add(offset))
             .map_err(|e| e.to_string())?;
-
-        let matches: Vec<_> = elements
+        let total_estimate = elements.len();
+        let page: Vec<_> = elements.into_iter().skip(offset).take(limit).collect();
+        let matches: Vec<_> = page
             .iter()
             .map(|e| {
                 json!({
@@ -1381,7 +1475,15 @@ impl ToolHandler {
             })
             .collect();
 
-        Ok(json!({ "results": matches }))
+        Ok(json!({
+            "results": matches,
+            "count": matches.len(),
+            "limit": limit,
+            "offset": offset,
+            "total_estimate": total_estimate,
+            "has_more": offset + matches.len() < total_estimate,
+            "method": "name"
+        }))
     }
 
     fn concept_search(&self, args: &Value) -> Result<Value, String> {
@@ -1471,6 +1573,13 @@ impl ToolHandler {
         let file_pattern = args["file_pattern"].as_str();
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
 
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "search_annotations",
+        ) {
+            return Ok(refusal);
+        }
+
         let all_elements = self
             .graph_engine
             .all_elements()
@@ -1537,117 +1646,44 @@ impl ToolHandler {
     fn semantic_search(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query'")?;
         let env = args["env"].as_str().unwrap_or("local");
-        let limit = args["limit"].as_i64().unwrap_or(5) as usize;
+        let limit = args["limit"].as_i64().unwrap_or(20) as usize;
+        let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
 
-        let results = self.perform_semantic_search(query, env, limit)?;
+        // Always ontology-first + paginated — never load env-wide element dumps.
+        let page = crate::ontology::safe_discover::discover(
+            &self.graph_engine,
+            query,
+            env,
+            limit,
+            offset,
+            true,
+        )
+        .map_err(|e| format!("Semantic search failed: {}", e))?;
 
-        Ok(json!({
-            "query": query,
-            "env": env,
-            "results": results,
-            "count": results.len(),
-            "method": "keyword+fuzzy"
-        }))
-    }
-
-    fn perform_semantic_search(
-        &self,
-        query: &str,
-        env: &str,
-        limit: usize,
-    ) -> Result<Vec<Value>, String> {
-        let query_lower = query.to_lowercase();
-        let keywords: Vec<&str> = query_lower.split_whitespace().collect();
-
-        let mut elements = db::get_elements_by_env(self.graph_engine.db(), env, 1000)
-            .map_err(|e| format!("DB error: {}", e))?;
-        let mut seen: std::collections::HashSet<String> = elements
-            .iter()
-            .map(|elem| elem.qualified_name.clone())
-            .collect();
-
-        for keyword in &keywords {
-            for elem in self
-                .graph_engine
-                .search_by_name_typed(keyword, None, 50)
-                .map_err(|e| format!("DB error: {}", e))?
-            {
-                if seen.insert(elem.qualified_name.clone()) {
-                    elements.push(elem);
-                }
-            }
+        let mut body = crate::ontology::safe_discover::discover_page_to_json(&page);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "method".to_string(),
+                json!(format!("ontology+semantic({})", page.method)),
+            );
         }
-
-        let mut scored: Vec<(f64, &db::models::CodeElement)> = elements
-            .iter()
-            .map(|elem| {
-                let name_lower = elem.name.to_lowercase();
-                let type_lower = elem.element_type.to_lowercase();
-                let qn_lower = elem.qualified_name.to_lowercase();
-                let file_lower = elem.file_path.to_lowercase();
-
-                let mut score = 0.0;
-                for kw in &keywords {
-                    if name_lower.contains(kw) {
-                        score += 3.0;
-                    }
-                    if type_lower.contains(kw) {
-                        score += 2.0;
-                    }
-                    if qn_lower.contains(kw) {
-                        score += 1.0;
-                    }
-                    if file_lower.contains(kw) {
-                        score += 1.0;
-                    }
-                }
-
-                if name_lower == query_lower {
-                    score += 10.0;
-                }
-
-                (-score, elem)
-            })
-            .filter(|(score, _)| *score < 0.0)
-            .collect();
-
-        scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-        let results: Vec<Value> = scored
-            .into_iter()
-            .take(limit)
-            .map(|(score, elem)| {
-                json!({
-                    "qualified_name": elem.qualified_name,
-                    "name": elem.name,
-                    "element_type": elem.element_type,
-                    "file_path": elem.file_path,
-                    "score": -score,
-                    "env": elem.env,
-                })
-            })
-            .collect();
-
-        Ok(results)
+        Ok(body)
     }
 
     fn generate_doc(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
-        let elements = self
+        // File-scoped DB query — never all_elements().
+        let file_elements = self
             .graph_engine
-            .all_elements()
-            .map_err(|e| e.to_string())?;
-
-        let file_elements: Vec<CodeElement> = elements
+            .get_elements_by_file(file)
+            .map_err(|e| e.to_string())?
             .into_iter()
             .filter(|e| {
                 let fp = &e.file_path;
-                fp.contains(file)
-                    && !fp.contains("/.claude/worktrees/")
-                    && !fp.contains("/.worktrees/")
+                !fp.contains("/.claude/worktrees/") && !fp.contains("/.worktrees/")
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         let doc = generate_documentation(file, &file_elements);
 
@@ -1656,45 +1692,44 @@ impl ToolHandler {
 
     fn find_large_functions(&self, args: &Value) -> Result<Value, String> {
         let min_lines = args["min_lines"].as_u64().unwrap_or(50) as u32;
-        let limit = args["limit"].as_i64().unwrap_or(50) as usize;
+        let limit = crate::ontology::safe_discover::clamp_limit(
+            args["limit"].as_i64().unwrap_or(50) as usize,
+        );
+        let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
 
-        let elements = self
+        // DB-filtered oversized query — never all_elements(). Cap fetch for memory.
+        let fetch_cap = (limit + offset).min(500).max(limit);
+        let mut elements = self
             .graph_engine
-            .all_elements()
+            .find_oversized_functions(min_lines)
             .map_err(|e| e.to_string())?;
-
-        let total: usize = elements
-            .iter()
-            .filter(|e| {
-                e.element_type == "function"
-                    && (e.line_end.saturating_sub(e.line_start)) >= min_lines
-                    && !e.file_path.contains("/.claude/worktrees/")
-                    && !e.file_path.contains("/.worktrees/")
-            })
-            .count();
-
+        elements.retain(|e| {
+            !e.file_path.contains("/.claude/worktrees/") && !e.file_path.contains("/.worktrees/")
+        });
+        let total = elements.len();
         let large_functions: Vec<_> = elements
-            .iter()
-            .filter(|e| {
-                e.element_type == "function"
-                    && (e.line_end.saturating_sub(e.line_start)) >= min_lines
-                    && !e.file_path.contains("/.claude/worktrees/")
-                    && !e.file_path.contains("/.worktrees/")
-            })
+            .into_iter()
+            .skip(offset)
+            .take(fetch_cap.min(limit))
             .map(|e| {
                 json!({
                     "qualified_name": e.qualified_name,
                     "name": e.name,
                     "file": e.file_path,
-                    "lines": e.line_end - e.line_start,
+                    "lines": e.line_end.saturating_sub(e.line_start),
                     "line_start": e.line_start,
                     "line_end": e.line_end
                 })
             })
-            .take(limit)
             .collect();
 
-        Ok(json!({ "large_functions": large_functions, "total": total, "limit": limit }))
+        Ok(json!({
+            "large_functions": large_functions,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + large_functions.len() < total
+        }))
     }
 
     fn get_tested_by(&self, args: &Value) -> Result<Value, String> {
@@ -1769,6 +1804,13 @@ impl ToolHandler {
     }
 
     fn get_doc_structure(&self, _args: &Value) -> Result<Value, String> {
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_doc_structure",
+        ) {
+            return Ok(refusal);
+        }
+
         let elements = self
             .graph_engine
             .all_elements()
@@ -1875,6 +1917,13 @@ impl ToolHandler {
     }
 
     fn get_doc_tree(&self, _args: &Value) -> Result<Value, String> {
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_doc_tree",
+        ) {
+            return Ok(refusal);
+        }
+
         let elements = self
             .graph_engine
             .all_elements()
@@ -1923,24 +1972,47 @@ impl ToolHandler {
         let limit = args["limit"].as_i64().unwrap_or(100) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0) as usize;
 
+        // Prefer ontology/semantic discovery on mega-graphs instead of tree dumps.
+        if let Some(q) = args["query"].as_str() {
+            if !q.is_empty() {
+                let page = crate::ontology::safe_discover::discover(
+                    &self.graph_engine,
+                    q,
+                    args["env"].as_str().unwrap_or("local"),
+                    limit,
+                    offset,
+                    true,
+                )
+                .map_err(|e| e.to_string())?;
+                let mut body = crate::ontology::safe_discover::discover_page_to_json(&page);
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("code_tree_mode".to_string(), json!("ontology_discover"));
+                }
+                return Ok(body);
+            }
+        }
+
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_code_tree",
+        ) {
+            return Ok(refusal);
+        }
+
+        // Small graphs: DB-level filtered query with hard cap (no all_elements).
+        let cap = std::env::var("LEANKG_CODE_TREE_CAP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50_000);
         let elements = self
             .graph_engine
-            .all_elements()
+            .get_code_elements_for_tree(cap)
             .map_err(|e| e.to_string())?;
 
-        // Group elements by file, keeping file_path with each group
         let mut files_map: std::collections::BTreeMap<String, (String, Vec<Value>)> =
             std::collections::BTreeMap::new();
 
         for elem in &elements {
-            let is_code_element = matches!(
-                elem.element_type.as_str(),
-                "function" | "struct" | "class" | "module" | "interface" | "enum" | "trait"
-            );
-            if !is_code_element {
-                continue;
-            }
-
             let parts: Vec<&str> = elem.file_path.split('/').collect();
             if parts.is_empty() {
                 continue;
@@ -1961,8 +2033,8 @@ impl ToolHandler {
             }));
         }
 
-        // Convert to array of {file, file_path, elements} objects for TOON optimization
         let total = files_map.len();
+        let truncated = elements.len() >= cap;
         let code_tree: Vec<Value> = files_map
             .into_iter()
             .skip(offset)
@@ -1976,7 +2048,14 @@ impl ToolHandler {
             })
             .collect();
 
-        Ok(json!({ "code_tree": code_tree, "total": total, "offset": offset, "limit": limit }))
+        Ok(json!({
+            "code_tree": code_tree,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "truncated": truncated,
+            "cap": cap
+        }))
     }
 
     fn find_related_docs(&self, args: &Value) -> Result<Value, String> {
@@ -2006,6 +2085,38 @@ impl ToolHandler {
         use crate::graph::clustering::{Cluster, CommunityDetector};
 
         let limit = args["limit"].as_i64().unwrap_or(100) as usize;
+
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_clusters",
+        ) {
+            return Ok(refusal);
+        }
+
+        let max_cluster_elements = std::env::var("LEANKG_MAX_CLUSTER_ELEMENTS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50_000);
+        let element_count = self
+            .graph_engine
+            .count_elements()
+            .map_err(|e| e.to_string())?;
+        if element_count > max_cluster_elements {
+            tracing::warn!(
+                target: "leankg::mem",
+                elements = element_count,
+                max = max_cluster_elements,
+                "get_clusters refused: graph too large"
+            );
+            return Ok(json!({
+                "clusters": [],
+                "stats": { "total_clusters": 0, "total_members": 0, "avg_cluster_size": 0.0 },
+                "error": format!(
+                    "Clustering refused: graph has {} elements (max {}). Use concept_search / semantic_search with pagination, or shard the project.",
+                    element_count, max_cluster_elements
+                )
+            }));
+        }
 
         let detector = CommunityDetector::new(self.graph_engine.db());
         let clusters = match detector.detect_communities() {
@@ -2110,6 +2221,13 @@ impl ToolHandler {
         let file = args["file"].as_str();
         let graph_id = args["graph_id"].as_str();
 
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_nav_graph",
+        ) {
+            return Ok(refusal);
+        }
+
         let all_elements = self
             .graph_engine
             .all_elements()
@@ -2168,6 +2286,13 @@ impl ToolHandler {
     fn find_route(&self, args: &Value) -> Result<Value, String> {
         let route = args["route"].as_str().ok_or("Missing 'route' parameter")?;
 
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "find_route",
+        ) {
+            return Ok(refusal);
+        }
+
         let all_elements = self
             .graph_engine
             .all_elements()
@@ -2197,6 +2322,13 @@ impl ToolHandler {
     fn get_screen_args(&self, args: &Value) -> Result<Value, String> {
         let destination = args["destination"].as_str().unwrap_or("");
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
+
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_screen_args",
+        ) {
+            return Ok(refusal);
+        }
 
         let all_elements = self
             .graph_engine
@@ -2236,6 +2368,13 @@ impl ToolHandler {
             .as_str()
             .ok_or("Missing 'destination' parameter")?;
 
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_nav_callers",
+        ) {
+            return Ok(refusal);
+        }
+
         let all_rels = self
             .graph_engine
             .all_relationships()
@@ -2263,6 +2402,13 @@ impl ToolHandler {
 
         let cluster_id = args["cluster_id"].as_str();
         let cluster_label = args["cluster_label"].as_str();
+
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_cluster_context",
+        ) {
+            return Ok(refusal);
+        }
 
         let detector = CommunityDetector::new(self.graph_engine.db());
         let clusters = match detector.detect_communities() {
@@ -3111,17 +3257,31 @@ impl ToolHandler {
         }))
     }
 
-    /// FR-B20: Get architecture overview
-    fn get_architecture(&self, _args: &Value) -> Result<Value, String> {
+    /// FR-B20: Get architecture overview (paginated / truncated sections).
+    fn get_architecture(&self, args: &Value) -> Result<Value, String> {
+        let max_items = args["max_items"].as_u64().map(|v| v as usize).or_else(|| {
+            if crate::ontology::safe_discover::is_mega_graph(&self.graph_engine) {
+                Some(20)
+            } else {
+                None
+            }
+        });
         self.graph_engine
-            .get_architecture()
+            .get_architecture(max_items)
             .map_err(|e| format!("Failed to get architecture: {}", e))
     }
 
-    /// FR-B21: Get graph schema overview
-    fn get_graph_schema(&self, _args: &Value) -> Result<Value, String> {
+    /// FR-B21: Get graph schema overview (paginated / truncated sections).
+    fn get_graph_schema(&self, args: &Value) -> Result<Value, String> {
+        let max_items = args["max_items"].as_u64().map(|v| v as usize).or_else(|| {
+            if crate::ontology::safe_discover::is_mega_graph(&self.graph_engine) {
+                Some(20)
+            } else {
+                None
+            }
+        });
         self.graph_engine
-            .get_graph_schema()
+            .get_graph_schema(max_items)
             .map_err(|e| format!("Failed to get graph schema: {}", e))
     }
 

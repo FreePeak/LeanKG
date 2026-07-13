@@ -225,7 +225,7 @@ fn test_get_architecture_on_leankg_patterns() {
     let (engine, _tmp) = make_engine();
     populate_with_leankg_patterns(&engine);
     let arch = engine
-        .get_architecture()
+        .get_architecture(None)
         .expect("get_architecture should succeed");
     let obj = arch.as_object().unwrap();
 
@@ -265,7 +265,7 @@ fn test_get_graph_schema_on_leankg_patterns() {
     let (engine, _tmp) = make_engine();
     populate_with_leankg_patterns(&engine);
     let schema = engine
-        .get_graph_schema()
+        .get_graph_schema(None)
         .expect("get_graph_schema should succeed");
     let obj = schema.as_object().unwrap();
 
@@ -347,7 +347,7 @@ fn test_find_dead_code_on_leankg_patterns() {
 #[test]
 fn test_architecture_structure_contract() {
     let (engine, _tmp) = make_engine();
-    let arch = engine.get_architecture().unwrap();
+    let arch = engine.get_architecture(None).unwrap();
     let obj = arch.as_object().unwrap();
     for key in &[
         "languages",
@@ -359,6 +359,8 @@ fn test_architecture_structure_contract() {
         "knowledge_count",
         "total_elements",
         "total_files",
+        "max_items",
+        "truncated_sections",
     ] {
         assert!(obj.contains_key(*key), "Architecture missing key: {}", key);
     }
@@ -367,13 +369,15 @@ fn test_architecture_structure_contract() {
 #[test]
 fn test_graph_schema_structure_contract() {
     let (engine, _tmp) = make_engine();
-    let schema = engine.get_graph_schema().unwrap();
+    let schema = engine.get_graph_schema(None).unwrap();
     let obj = schema.as_object().unwrap();
     for key in &[
         "element_types",
         "relationship_types",
         "total_elements",
         "total_relationships",
+        "max_items",
+        "truncated_sections",
     ] {
         assert!(obj.contains_key(*key), "Schema missing key: {}", key);
     }
@@ -420,4 +424,129 @@ fn test_resolution_method_in_metadata() {
         .get_callers("validate", Some("src/utils.rs"))
         .unwrap();
     assert!(!callers.is_empty(), "Should find callers");
+}
+
+// ── FR-B22: Token budget truncation integration tests ──
+
+#[test]
+fn test_arch_truncation_with_leankg_patterns() {
+    let (engine, _tmp) = make_engine();
+    populate_with_leankg_patterns(&engine);
+    let arch = engine.get_architecture(Some(1)).unwrap();
+    let obj = arch.as_object().unwrap();
+
+    // Each array section should have at most 1 item
+    for key in &[
+        "languages",
+        "entry_points",
+        "hotspots",
+        "clusters",
+        "relationship_summary",
+    ] {
+        let arr = obj[*key].as_array().unwrap();
+        assert!(
+            arr.len() <= 1,
+            "Section {} should have <=1 item with max_items=1, got {}",
+            key,
+            arr.len()
+        );
+    }
+    // truncated_sections should not be empty (multiple sections have >1 item)
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+    assert!(!trunc.is_empty(), "Should report truncated sections");
+}
+
+#[test]
+fn test_schema_truncation_with_leankg_patterns() {
+    let (engine, _tmp) = make_engine();
+    populate_with_leankg_patterns(&engine);
+    let schema = engine.get_graph_schema(Some(1)).unwrap();
+    let obj = schema.as_object().unwrap();
+
+    // element_types has multiple types (function, struct, enum), should be truncated to 1
+    assert_eq!(obj["element_types"].as_array().unwrap().len(), 1);
+    // relationship_types has calls + tested_by, should be truncated to 1
+    assert_eq!(obj["relationship_types"].as_array().unwrap().len(), 1);
+
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+    assert!(!trunc.is_empty(), "Should report truncated sections");
+}
+
+#[test]
+fn test_arch_truncation_preserves_structure() {
+    let (engine, _tmp) = make_engine();
+    populate_with_leankg_patterns(&engine);
+    let arch = engine.get_architecture(Some(1)).unwrap();
+    let obj = arch.as_object().unwrap();
+    for key in &[
+        "languages",
+        "entry_points",
+        "routes",
+        "clusters",
+        "hotspots",
+        "relationship_summary",
+        "knowledge_count",
+        "total_elements",
+        "total_files",
+        "max_items",
+        "truncated_sections",
+    ] {
+        assert!(
+            obj.contains_key(*key),
+            "Missing key after truncation: {}",
+            key
+        );
+    }
+}
+
+#[test]
+fn test_arch_truncation_reports_original_counts() {
+    let (engine, _tmp) = make_engine();
+    populate_with_leankg_patterns(&engine);
+
+    // First get full result to know original counts
+    let full = engine.get_architecture(None).unwrap();
+    let full_obj = full.as_object().unwrap();
+    let full_clusters = full_obj["clusters"].as_array().unwrap().len();
+
+    // Now truncate to 1
+    let arch = engine.get_architecture(Some(1)).unwrap();
+    let obj = arch.as_object().unwrap();
+    let trunc = obj["truncated_sections"].as_array().unwrap();
+
+    let cluster_trunc = trunc
+        .iter()
+        .find(|t| t["section"].as_str() == Some("clusters"));
+    if full_clusters > 1 {
+        assert!(
+            cluster_trunc.is_some(),
+            "clusters should be in truncated_sections"
+        );
+        assert_eq!(
+            cluster_trunc.unwrap()["original_count"].as_u64(),
+            Some(full_clusters as u64)
+        );
+    }
+}
+
+#[test]
+fn test_arch_none_no_truncation_with_patterns() {
+    let (engine, _tmp) = make_engine();
+    populate_with_leankg_patterns(&engine);
+    let arch = engine.get_architecture(None).unwrap();
+    let obj = arch.as_object().unwrap();
+    assert!(obj["truncated_sections"].as_array().unwrap().is_empty());
+    assert!(obj["max_items"].is_null());
+}
+
+#[test]
+fn test_schema_truncation_preserves_scalars() {
+    let (engine, _tmp) = make_engine();
+    populate_with_leankg_patterns(&engine);
+    let schema = engine.get_graph_schema(Some(1)).unwrap();
+    let obj = schema.as_object().unwrap();
+    assert!(obj.contains_key("total_elements"));
+    assert!(obj.contains_key("total_relationships"));
+    // total_elements should still be 20 (not affected by truncation)
+    assert_eq!(obj["total_elements"].as_u64().unwrap(), 20);
 }
