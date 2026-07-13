@@ -61,8 +61,8 @@ LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowle
 | Tool | Description |
 |------|-------------|
 | `get_code_tree` | Get codebase structure |
-| `get_architecture` | Single-call architecture overview: languages, entry points, routes, clusters, hotspots, relationship summary, knowledge count, total element/file counts. Replaces running 5+ individual queries. No arguments required. |
-| `get_graph_schema` | Single-call graph schema overview: element type counts and relationship type counts. Use to discover available patterns before running targeted queries. No arguments required. |
+| `get_architecture` | Single-call architecture overview: languages, entry points, routes, clusters, hotspots, relationship summary, knowledge count, total element/file counts. Replaces running 5+ individual queries. Optional `max_items` argument caps each array section for token budget control; `truncated_sections` reports which sections were trimmed. |
+| `get_graph_schema` | Single-call graph schema overview: element type counts and relationship type counts. Use to discover available patterns before running targeted queries. Optional `max_items` argument caps each array section for token budget control; `truncated_sections` reports which sections were trimmed. |
 | `find_dead_code` | Find functions with zero callers and no `tested_by` edge, excluding common entry-point names (`main`, `Main`, `start`, `serve`, `Start`) and trivial bodies. Returns `dead_functions[]`, `count`, and the `min_lines` threshold that was applied. Argument: `min_lines` (default 10). |
 
 ## Call-edge Resolution Method

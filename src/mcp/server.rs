@@ -12,7 +12,7 @@ use axum::{
     extract::State,
     http::{header, HeaderMap, Method, StatusCode},
     response::Response,
-    routing::{get, post},
+    routing::get,
     Router,
 };
 // use futures_util::StreamExt;  // Reserved for future streaming support
@@ -911,8 +911,11 @@ impl MCPServer {
             .allow_headers(Any)
             .expose_headers([header::CONTENT_TYPE]);
 
+        // Keep both SSE entrypoints:
+        // - GET /mcp        — streamable-HTTP / modern Cursor clients
+        // - GET /mcp/stream — legacy SSE fallback (Cursor falls back here)
         let app = Router::new()
-            .route("/mcp", post(handle_mcp_request))
+            .route("/mcp", get(handle_sse_stream).post(handle_mcp_request))
             .route("/mcp/stream", get(handle_sse_stream))
             .route("/health", get(health_check))
             .layer(cors)

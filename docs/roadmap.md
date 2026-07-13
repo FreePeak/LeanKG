@@ -14,7 +14,7 @@
 | Route + `http_calls` extractors | FR-B10..B12, B14 | **Done** | Go chi/gin/echo; TS express/fastify (`route_extractor.rs`) |
 | `typed_resolve` feature flag | FR-B08 | Not done | With typed resolve (Phase 3) |
 | Typed resolve Go/TS | FR-B03..B05 | Not done | Hybrid-LSP-style MVP |
-| Architecture token budget | FR-B22 | Not done | Per-section `max_items` / truncation |
+| Architecture token budget | FR-B22 | **Done** | Per-section `max_items` truncation + `truncated_sections` metadata |
 | Clones / cross-repo | FR-B30..B33 | Not done | Rel-type stubs only in `models.rs` |
 | Event edges | FR-B15 | Not done | EMITS / LISTENS_ON |
 | 3D graph UI (Track E) | FR-E* | Not done | New `graph-ui/`; keep 2D `ui/` |

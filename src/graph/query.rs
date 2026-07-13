@@ -3573,14 +3573,26 @@ impl GraphEngine {
     fn referenced_qualified_names(
         &self,
     ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
-        let query = r#"?[target] := *relationships[_, target, rel, _, _, _], (rel = "calls" or rel = "tested_by")"#;
+        // Bind column 2 (target_qualified) to `tgt` and column 3 (rel_type) to `r`
+        // to avoid shadowing/keyword issues. We project `tgt` (target_qualified) of
+        // every `calls` or `tested_by` relationship.
+        let query =
+            r#"?[tgt] := *relationships[_, tgt, r, _, _, _], (r = "calls" or r = "tested_by")"#;
         let result =
             crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
-        Ok(result
+        let set: std::collections::HashSet<String> = result
             .rows
             .iter()
             .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
-            .collect())
+            .collect();
+        tracing::debug!(
+            target: "leankg::dead_code",
+            rows = result.rows.len(),
+            set_size = set.len(),
+            sample = ?set.iter().take(5).collect::<Vec<_>>(),
+            "referenced_qualified_names"
+        );
+        Ok(set)
     }
 }
 

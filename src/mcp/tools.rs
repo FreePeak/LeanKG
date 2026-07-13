@@ -849,7 +849,7 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "max_items": {"type": "integer", "description": "Optional: per-section item cap for token budget control."},
+                        "max_items": {"type": "integer", "description": "Optional: per-section item cap. When set, each array section (languages, entry_points, routes, clusters, hotspots, relationship_summary) is truncated to this many entries. truncated_sections reports which were trimmed."},
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
@@ -861,7 +861,7 @@ impl ToolRegistry {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "max_items": {"type": "integer", "description": "Optional: per-section item cap for token budget control."},
+                        "max_items": {"type": "integer", "description": "Optional: per-section item cap. When set, each array section (element_types, relationship_types) is truncated to this many entries. truncated_sections reports which were trimmed."},
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []

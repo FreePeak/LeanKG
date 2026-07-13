@@ -104,14 +104,23 @@ fi
 # pushed containers past their memory limit (exit 137 = OOM kill).
 export LEANKG_MMAP_SIZE="${LEANKG_MMAP_SIZE:-67108864}"
 
-# Sync ontology from the MCP project's YAML files (fallback to /workspace)
-ONTOLOGY_DIR="$MCP_PROJECT/ontology"
-if [ -d "$ONTOLOGY_DIR" ] && [ -f "$ONTOLOGY_DIR/concepts.yaml" ]; then
-    echo "=== Syncing ontology from $ONTOLOGY_DIR ==="
-    ( cd "$MCP_PROJECT" && leankg ontology sync )
+# Sync ontology into the MCP project's database, using ontology files from
+# the MCP project if present, otherwise falling back to /workspace/ontology
+# (the LeanKG source tree ships concepts.yaml + workflows.yaml there).
+# The sync target is always $MCP_PROJECT so the served DB has the ontology.
+ONTOLOGY_SOURCE_DIR=""
+for candidate in "$MCP_PROJECT" "/workspace"; do
+    if [ -d "$candidate/ontology" ] && [ -f "$candidate/ontology/concepts.yaml" ]; then
+        ONTOLOGY_SOURCE_DIR="$candidate/ontology"
+        break
+    fi
+done
+if [ -n "$ONTOLOGY_SOURCE_DIR" ]; then
+    echo "=== Syncing ontology from $ONTOLOGY_SOURCE_DIR into $MCP_PROJECT ==="
+    ( cd "$MCP_PROJECT" && leankg ontology sync --path "$ONTOLOGY_SOURCE_DIR" )
     echo "=== Ontology sync done ==="
 else
-    echo "No ontology directory found at $ONTOLOGY_DIR, skipping ontology sync"
+    echo "No ontology directory found in $MCP_PROJECT or /workspace, skipping ontology sync"
 fi
 
 echo "=== Starting MCP HTTP on port $MCP_PORT for project $MCP_PROJECT ==="

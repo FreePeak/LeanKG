@@ -799,7 +799,7 @@ Palace Mapping:
 |---------|----------|-------|
 | Typed call resolve Go/TS (US-CBM-B1, FR-B03..05) | Must Have | `typed` method not produced yet |
 | `typed_resolve` feature flag (FR-B08) | Must Have | Slipped with typed resolve |
-| Architecture token budget (FR-B22) | Must Have | Truncation / max_items |
+| Architecture token budget (FR-B22) | Must Have | DONE (per-section max_items truncation + truncated_sections metadata) |
 | MCP project routing smoke (US-CBM-A1/A4) | Must Have | Ops / multi-mount |
 | Graphify path/explain/query (US-GF-01..03) | Must Have | Agent graph primitives |
 | Edge provenance labels (US-GF-04) | Must Have | EXTRACTED/INFERRED/AMBIGUOUS |
@@ -1001,7 +1001,7 @@ Palace Mapping:
 - [ ] **FR-B16**: Runtime trace ingestion (Could)
 - [x] **FR-B20**: `get_architecture`
 - [x] **FR-B21**: `get_graph_schema`
-- [ ] **FR-B22**: Honor token budgets / truncation on architecture/schema
+- [x] **FR-B22**: Honor token budgets / truncation on architecture/schema
 - [x] **FR-B23**: `find_dead_code`
 - [ ] **FR-B30**: Near-clone detection → similarity edges (Should)
 - [ ] **FR-B31**: `find_clones` MCP (Should)

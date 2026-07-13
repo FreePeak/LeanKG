@@ -1972,34 +1972,8 @@ impl ToolHandler {
         let limit = args["limit"].as_i64().unwrap_or(100) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0) as usize;
 
-        // Prefer ontology/semantic discovery on mega-graphs instead of tree dumps.
-        if let Some(q) = args["query"].as_str() {
-            if !q.is_empty() {
-                let page = crate::ontology::safe_discover::discover(
-                    &self.graph_engine,
-                    q,
-                    args["env"].as_str().unwrap_or("local"),
-                    limit,
-                    offset,
-                    true,
-                )
-                .map_err(|e| e.to_string())?;
-                let mut body = crate::ontology::safe_discover::discover_page_to_json(&page);
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("code_tree_mode".to_string(), json!("ontology_discover"));
-                }
-                return Ok(body);
-            }
-        }
-
-        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
-            &self.graph_engine,
-            "get_code_tree",
-        ) {
-            return Ok(refusal);
-        }
-
-        // Small graphs: DB-level filtered query with hard cap (no all_elements).
+        // Use DB-level filtered query instead of all_elements() to avoid
+        // loading the entire graph into memory (RC1 fix).
         let cap = std::env::var("LEANKG_CODE_TREE_CAP")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -2086,13 +2060,9 @@ impl ToolHandler {
 
         let limit = args["limit"].as_i64().unwrap_or(100) as usize;
 
-        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
-            &self.graph_engine,
-            "get_clusters",
-        ) {
-            return Ok(refusal);
-        }
-
+        // Guard: refuse clustering on huge graphs to avoid OOM.
+        // Louvain over 600k nodes pushed RSS to 5.64 GiB / 6 GiB (94%).
+        // See root_cause_docker_memory_2026-07-13.md RC1/RC2.
         let max_cluster_elements = std::env::var("LEANKG_MAX_CLUSTER_ELEMENTS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -2106,13 +2076,13 @@ impl ToolHandler {
                 target: "leankg::mem",
                 elements = element_count,
                 max = max_cluster_elements,
-                "get_clusters refused: graph too large"
+                "get_clusters refused: graph too large (set LEANKG_MAX_CLUSTER_ELEMENTS to override)"
             );
             return Ok(json!({
                 "clusters": [],
                 "stats": { "total_clusters": 0, "total_members": 0, "avg_cluster_size": 0.0 },
                 "error": format!(
-                    "Clustering refused: graph has {} elements (max {}). Use concept_search / semantic_search with pagination, or shard the project.",
+                    "Clustering refused: graph has {} elements (max {}). Set LEANKG_MAX_CLUSTER_ELEMENTS to override or shard the project.",
                     element_count, max_cluster_elements
                 )
             }));
@@ -3257,29 +3227,19 @@ impl ToolHandler {
         }))
     }
 
-    /// FR-B20: Get architecture overview (paginated / truncated sections).
+    /// FR-B20: Get architecture overview.
+    /// FR-B22: Honors per-section max_items token budget.
     fn get_architecture(&self, args: &Value) -> Result<Value, String> {
-        let max_items = args["max_items"].as_u64().map(|v| v as usize).or_else(|| {
-            if crate::ontology::safe_discover::is_mega_graph(&self.graph_engine) {
-                Some(20)
-            } else {
-                None
-            }
-        });
+        let max_items = args["max_items"].as_u64().map(|v| v as usize);
         self.graph_engine
             .get_architecture(max_items)
             .map_err(|e| format!("Failed to get architecture: {}", e))
     }
 
-    /// FR-B21: Get graph schema overview (paginated / truncated sections).
+    /// FR-B21: Get graph schema overview.
+    /// FR-B22: Honors per-section max_items token budget.
     fn get_graph_schema(&self, args: &Value) -> Result<Value, String> {
-        let max_items = args["max_items"].as_u64().map(|v| v as usize).or_else(|| {
-            if crate::ontology::safe_discover::is_mega_graph(&self.graph_engine) {
-                Some(20)
-            } else {
-                None
-            }
-        });
+        let max_items = args["max_items"].as_u64().map(|v| v as usize);
         self.graph_engine
             .get_graph_schema(max_items)
             .map_err(|e| format!("Failed to get graph schema: {}", e))
