@@ -217,6 +217,30 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "temporal_query".to_string(),
+                description: "US-MP-01: Return the graph state as of a given epoch (seconds). Edges with valid_from <= now <= valid_to are included.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "at": {"type": "integer", "description": "Epoch seconds (e.g. 1718000000)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["at"]
+                }),
+            },
+            ToolDefinition {
+                name: "timeline".to_string(),
+                description: "US-MP-01: Return the chronological evolution of a code element's relationships (added / invalidated events with timestamps).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "qualified_name": {"type": "string", "description": "Code element qualified_name"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["qualified_name"]
+                }),
+            },
+            ToolDefinition {
                 name: "load_layer".to_string(),
                 description: "US-MP-02: Load a context layer. layer=L0 -> identity (~50 tok). L1 -> critical facts (~120 tok). L2 -> cluster context (requires cluster_id). L3 -> deep subgraph search (requires query).".to_string(),
                 input_schema: json!({

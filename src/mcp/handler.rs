@@ -229,6 +229,8 @@ impl ToolHandler {
             "explain_node" => self.explain_node(arguments),
             "get_god_nodes" => self.get_god_nodes(arguments),
             "load_layer" => self.load_layer(arguments),
+            "temporal_query" => self.temporal_query(arguments),
+            "timeline" => self.timeline(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1433,6 +1435,30 @@ impl ToolHandler {
         Ok(json!({
             "report": report,
             "markdown": markdown,
+        }))
+    }
+
+    fn temporal_query(&self, args: &Value) -> Result<Value, String> {
+        let at = args["at"].as_i64().ok_or("Missing 'at' (epoch seconds)")?;
+        let rels = self
+            .graph_engine
+            .temporal_query(at)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "at": at,
+            "count": rels.len(),
+            "relationships": rels,
+        }))
+    }
+
+    fn timeline(&self, args: &Value) -> Result<Value, String> {
+        let qn = args["qualified_name"]
+            .as_str()
+            .ok_or("Missing 'qualified_name'")?;
+        let events = self.graph_engine.timeline(qn).map_err(|e| e.to_string())?;
+        Ok(json!({
+            "qualified_name": qn,
+            "events": events,
         }))
     }
 

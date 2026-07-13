@@ -3709,6 +3709,14 @@ pub struct LabelCount {
     pub pct: f64,
 }
 
+/// US-MP-01: Single event in a code element's relationship timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEvent {
+    pub timestamp: i64,
+    pub action: String, // "added" | "invalidated"
+    pub edge: Relationship,
+}
+
 /// US-MP-08: Parsed directory metadata from a directory element.
 #[derive(Debug, Clone)]
 pub struct DirectoryMetadata {
@@ -4312,6 +4320,70 @@ impl GraphEngine {
             confidence_distribution: confidence_dist,
             suggested_questions,
         })
+    }
+
+    /// US-MP-01 / FR-MP-01..02: read the optional valid_from timestamp
+    /// from relationship metadata (epoch seconds). Returns None for
+    /// edges that pre-date the temporal feature.
+    pub fn valid_from(rel: &Relationship) -> Option<i64> {
+        rel.metadata.get("valid_from").and_then(|v| v.as_i64())
+    }
+
+    /// US-MP-01: read the valid_to timestamp; non-null means the edge
+    /// has been invalidated but is retained for historical queries.
+    pub fn valid_to(rel: &Relationship) -> Option<i64> {
+        rel.metadata.get("valid_to").and_then(|v| v.as_i64())
+    }
+
+    /// US-MP-01 / FR-MP-03: temporal_query — return the graph state
+    /// as of a given epoch (seconds). An edge is "live" at that
+    /// moment if `valid_from <= now <= valid_to` (or valid_to is
+    /// unset and valid_from <= now).
+    pub fn temporal_query(
+        &self,
+        at_epoch: i64,
+    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        let rels = self.all_relationships()?;
+        Ok(rels
+            .into_iter()
+            .filter(|r| {
+                let valid_from = Self::valid_from(r).unwrap_or(0);
+                let valid_to = Self::valid_to(r).unwrap_or(i64::MAX);
+                valid_from <= at_epoch && at_epoch <= valid_to
+            })
+            .collect())
+    }
+
+    /// US-MP-01 / FR-MP-04: timeline — chronological evolution of a
+    /// single code element's relationships. Returns a sorted list of
+    /// events (added / invalidated) with timestamps.
+    pub fn timeline(
+        &self,
+        qualified_name: &str,
+    ) -> Result<Vec<TimelineEvent>, Box<dyn std::error::Error>> {
+        let rels = self.all_relationships()?;
+        let mut events: Vec<TimelineEvent> = Vec::new();
+        for r in &rels {
+            if r.source_qualified != qualified_name && r.target_qualified != qualified_name {
+                continue;
+            }
+            if let Some(vf) = Self::valid_from(r) {
+                events.push(TimelineEvent {
+                    timestamp: vf,
+                    action: "added".into(),
+                    edge: r.clone(),
+                });
+            }
+            if let Some(vt) = Self::valid_to(r) {
+                events.push(TimelineEvent {
+                    timestamp: vt,
+                    action: "invalidated".into(),
+                    edge: r.clone(),
+                });
+            }
+        }
+        events.sort_by_key(|e| e.timestamp);
+        Ok(events)
     }
 
     /// US-MP-08 / FR-MP-25: list all directory nodes that are direct
@@ -5157,5 +5229,41 @@ mod tests {
             ..Default::default()
         };
         assert!(folder_gn::metadata(&elem).is_none());
+    }
+
+    // US-MP-01: temporal helpers
+    #[test]
+    fn temporal_helpers_read_metadata_fields() {
+        let mut rel = Relationship {
+            source_qualified: "a".into(),
+            target_qualified: "b".into(),
+            rel_type: "calls".into(),
+            confidence: 1.0,
+            ..Default::default()
+        };
+        assert!(GraphEngine::valid_from(&rel).is_none());
+        assert!(GraphEngine::valid_to(&rel).is_none());
+
+        rel.metadata = serde_json::json!({"valid_from": 100, "valid_to": 200});
+        assert_eq!(GraphEngine::valid_from(&rel), Some(100));
+        assert_eq!(GraphEngine::valid_to(&rel), Some(200));
+    }
+
+    #[test]
+    fn timeline_event_serializes_action_and_edge() {
+        let ev = TimelineEvent {
+            timestamp: 1234,
+            action: "added".into(),
+            edge: Relationship {
+                source_qualified: "a".into(),
+                target_qualified: "b".into(),
+                rel_type: "calls".into(),
+                ..Default::default()
+            },
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["action"], "added");
+        assert_eq!(v["timestamp"], 1234);
+        assert_eq!(v["edge"]["rel_type"], "calls");
     }
 }
