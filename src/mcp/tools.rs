@@ -217,6 +217,17 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "get_team_map".to_string(),
+                description: "US-V2-12: Aggregated team / ownership map (team name, on-call, services owned) for a given environment.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "env": {"type": "string", "default": "local", "description": "Environment scope (local/staging/production)"},
+                        "project": {"type": "string"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "report_query_outcome".to_string(),
                 description: "US-GF-09: Record whether a graph query result was useful (useful | dead_end | corrected). Appends an entry to .leankg/reflections/LESSONS.md so future agents can bias ranking toward previously-useful nodes.".to_string(),
                 input_schema: json!({

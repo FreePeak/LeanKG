@@ -238,6 +238,7 @@ impl ToolHandler {
             "agent_diary_write" => self.agent_diary_write(arguments),
             "agent_diary_read" => self.agent_diary_read(arguments),
             "report_query_outcome" => self.report_query_outcome(arguments),
+            "get_team_map" => self.get_team_map(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1591,6 +1592,19 @@ impl ToolHandler {
         GraphEngine::report_query_outcome(project_path, question, &nodes, outcome, note)
             .map_err(|e| e.to_string())?;
         Ok(json!({ "recorded": true }))
+    }
+
+    fn get_team_map(&self, args: &Value) -> Result<Value, String> {
+        let env = args["env"].as_str().unwrap_or("local");
+        let teams = self
+            .graph_engine
+            .get_team_map(env)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "env": env,
+            "count": teams.len(),
+            "teams": teams,
+        }))
     }
 
     fn load_layer(&self, args: &Value) -> Result<Value, String> {

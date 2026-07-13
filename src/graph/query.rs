@@ -3778,6 +3778,14 @@ pub struct AgentFocus {
     pub relationships: Vec<Relationship>,
 }
 
+/// US-V2-12: One entry in the team map (team name, on-call, services owned).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMapEntry {
+    pub team: String,
+    pub on_call: String,
+    pub services: Vec<String>,
+}
+
 /// US-MP-06: A cross-cluster tunnel edge (relationship between two
 /// elements belonging to different Leiden clusters).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4698,6 +4706,79 @@ impl GraphEngine {
             .open(&lessons)?;
         f.write_all(entry.as_bytes())?;
         Ok(())
+    }
+
+    /// US-V2-12 / FR-V2-12: aggregated team / ownership map across
+    /// all services in a given environment. Returns one entry per
+    /// team with the on-call rotation and a list of services the
+    /// team owns.
+    pub fn get_team_map(&self, env: &str) -> Result<Vec<TeamMapEntry>, Box<dyn std::error::Error>> {
+        let services = self.get_all_service_metadata(env)?;
+        let mut by_team: std::collections::HashMap<String, TeamMapEntry> =
+            std::collections::HashMap::new();
+        for svc in services {
+            let team = svc.team.unwrap_or_else(|| "(unassigned)".into());
+            let on_call = svc.on_call.unwrap_or_else(|| "(none)".into());
+            let entry = by_team.entry(team.clone()).or_insert_with(|| TeamMapEntry {
+                team: team.clone(),
+                on_call: on_call.clone(),
+                services: Vec::new(),
+            });
+            if entry.on_call == "(none)" && on_call != "(none)" {
+                entry.on_call = on_call;
+            }
+            entry.services.push(svc.service_name.clone());
+        }
+        let mut result: Vec<TeamMapEntry> = by_team.into_values().collect();
+        result.sort_by(|a, b| a.team.cmp(&b.team));
+        Ok(result)
+    }
+
+    /// US-V2-12 helper: fetch all service metadata rows for an env.
+    fn get_all_service_metadata(
+        &self,
+        env: &str,
+    ) -> Result<Vec<crate::db::models::ServiceMetadata>, Box<dyn std::error::Error>> {
+        let query = "?[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at] := *service_metadata[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at], env = $env";
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "env".to_string(),
+            serde_json::Value::String(env.to_string()),
+        );
+        let result = crate::db::schema::run_script(&self.db, query, params)?;
+        let mut out = Vec::new();
+        for row in &result.rows {
+            out.push(crate::db::models::ServiceMetadata {
+                service_name: row
+                    .first()
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string(),
+                env: env.to_string(),
+                team: row.get(2).and_then(|v| v.get_str()).map(String::from),
+                on_call: row.get(3).and_then(|v| v.get_str()).map(String::from),
+                repo_url: row.get(4).and_then(|v| v.get_str()).map(String::from),
+                language: row.get(5).and_then(|v| v.get_str()).map(String::from),
+                health_endpoint: row.get(6).and_then(|v| v.get_str()).map(String::from),
+                slo_p99_ms: row.get(7).and_then(|v| v.get_int()).map(|n| n as i32),
+                incident_count: row.get(8).and_then(|v| v.get_int()).unwrap_or(0) as i32,
+                last_incident: row.get(9).and_then(|v| v.get_int()),
+                tags: row
+                    .get(10)
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string(),
+                version: row.get(11).and_then(|v| v.get_str()).map(String::from),
+                deploy_envs: row
+                    .get(12)
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string(),
+                created_at: row.get(13).and_then(|v| v.get_int()).unwrap_or(0),
+                updated_at: row.get(14).and_then(|v| v.get_int()).unwrap_or(0),
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -5624,5 +5705,19 @@ mod tests {
         let v = serde_json::to_value(&entry).unwrap();
         assert_eq!(v["agent"], "reviewer");
         assert_eq!(v["tags"][0], "review");
+    }
+
+    // US-V2-12: TeamMapEntry serialization
+    #[test]
+    fn team_map_entry_serializes_services() {
+        let e = TeamMapEntry {
+            team: "platform".into(),
+            on_call: "alice".into(),
+            services: vec!["svc-a".into(), "svc-b".into()],
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["team"], "platform");
+        assert_eq!(v["on_call"], "alice");
+        assert_eq!(v["services"].as_array().unwrap().len(), 2);
     }
 }
