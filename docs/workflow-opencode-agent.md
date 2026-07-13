@@ -40,11 +40,14 @@ grep(pattern="BusinessLogic", path="src")
 
 **Always update documentation BEFORE writing any code.**
 
-#### 1.1 Update PRD (`docs/requirement/prd-leankg.md`)
+#### 1.1 Update consolidated PRD+HLD (`docs/prd.md`)
+
+Edit the single SoT document. Add/update user stories, FRs, and HLD sections (§6) as needed. Do **not** recreate `docs/requirement/prd-*.md` or `docs/design/hld-leankg.md`.
 
 - Bump version number and update changelog
 - Add new User Story (US-XX)
 - Add new Functional Requirements (FR-XX)
+- Update HLD diagrams / data flows in §6 when architecture changes
 - Update roadmap if needed
 - Add new terms to glossary
 
@@ -55,15 +58,9 @@ grep(pattern="BusinessLogic", path="src")
   - FR-XX to FR-XX: New functional requirements
 ```
 
-#### 1.2 Update HLD (`docs/design/hld-leankg.md`)
+#### 1.2 Update related docs
 
-- Update version and changelog
-- Update C4 Container diagram with new components
-- Add new component to component table
-- Add new data flow diagrams (sequence diagrams)
-- Add new relationship types to data model
-- Add new CLI commands and MCP tools to interface specs
-- Update glossary with new terms
+Update `docs/roadmap.md`, `docs/mcp-tools.md`, `docs/cli-reference.md`, and `README.md` when commands or tools change.
 
 #### 1.3 Update README
 
@@ -354,8 +351,9 @@ After merging, verify:
 task(description="Explore db module", prompt="Explore src/db/ to understand data models...")
 
 # 2. Update docs first
-edit(filePath="docs/requirement/prd-leankg.md", oldString="...", newString="...")
-edit(filePath="docs/design/hld-leankg.md", oldString="...", newString="...")
+edit(filePath="docs/prd.md", oldString="...", newString="...")
+# (optional) docs/roadmap.md, docs/mcp-tools.md, README.md
+
 edit(filePath="README.md", oldString="...", newString="...")
 
 # 3. Implement
