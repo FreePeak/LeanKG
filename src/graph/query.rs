@@ -6,7 +6,6 @@ use crate::db::models::{
 use crate::db::schema::CozoDb;
 use crate::graph::cache::QueryCache;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::debug;
 
 fn escape_datalog(s: &str) -> String {
@@ -51,7 +50,11 @@ pub struct ChildrenResult {
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct GraphEngine {
-    db: CozoDb,
+    // Wrapped in Arc so every clone of GraphEngine shares the SAME underlying
+    // DbInstance. Without this, each clone opens a fresh handle and RocksDB
+    // rejects with "lock hold by current process" because RocksDB only allows
+    // one handle per process per DB path.
+    db: std::sync::Arc<CozoDb>,
     cache: QueryCache,
     elements_cache: std::sync::Arc<parking_lot::RwLock<Option<Vec<CodeElement>>>>,
     relationships_cache: std::sync::Arc<parking_lot::RwLock<Option<Vec<Relationship>>>>,
@@ -63,7 +66,7 @@ pub struct GraphEngine {
 impl GraphEngine {
     pub fn new(db: CozoDb) -> Self {
         Self {
-            db,
+            db: std::sync::Arc::new(db),
             cache: QueryCache::new(300, 1000),
             elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
             relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
@@ -76,7 +79,7 @@ impl GraphEngine {
     #[allow(dead_code)]
     pub fn with_cache(db: CozoDb, cache: QueryCache) -> Self {
         Self {
-            db,
+            db: std::sync::Arc::new(db),
             cache,
             elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
             relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
@@ -87,10 +90,10 @@ impl GraphEngine {
     }
 
     pub fn with_persistence(db: CozoDb) -> Self {
-        let db_arc = Arc::new(db);
+        let db_arc = std::sync::Arc::new(db);
         let cache = QueryCache::with_persistence(db_arc.clone(), 300, 1000);
         Self {
-            db: (*db_arc).clone(),
+            db: db_arc,
             cache,
             elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
             relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
@@ -2414,19 +2417,25 @@ impl GraphEngine {
         let tail = self.code_elements_tail();
         let safe_name = escape_datalog(function_name);
 
-        let file_filter = match file_scope {
-            Some(f) => format!(r#", regex_matches(file_path, ".*{}.*")"#, escape_datalog(f)),
+        // `file_scope` constrains the *target* (the callee being called), not
+        // the caller. Earlier versions applied it to the source row, which
+        // dropped the very caller we were looking for (its file is the
+        // caller's file, not the callee's).
+        let target_scope = match file_scope {
+            Some(f) => format!(r#", regex_matches(tgt, ".*{}.*")"#, escape_datalog(f)),
             None => String::new(),
         };
 
-        // Query callers: find source_qualified values that call the target function
+        // Query callers: find source_qualified values whose `calls` edge
+        // targets `function_name` (optionally inside `file_scope`).
         let query = format!(
             r#"?[src, tgt, rel_type, conf, meta] :=
                *relationships[src, tgt, rel_type, conf, meta, _],
                rel_type = "calls",
-               regex_matches(tgt, ".*{function_name}.*")
+               regex_matches(tgt, ".*{function_name}.*"){target_scope}
                :limit 50"#,
-            function_name = safe_name
+            function_name = safe_name,
+            target_scope = target_scope,
         );
 
         let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
@@ -2435,7 +2444,8 @@ impl GraphEngine {
             return Ok(vec![]);
         }
 
-        // Now get code elements for the caller sources
+        // Now get code elements for the caller sources (no file filter — we
+        // want the caller regardless of where it lives).
         let caller_sources: Vec<String> = result
             .rows
             .iter()
@@ -2456,10 +2466,9 @@ impl GraphEngine {
         let element_query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
-               ({sources}){file_filter}
+               ({sources})
                :limit 50"#,
             sources = sources_pattern,
-            file_filter = file_filter
         );
 
         self.run_element_query(&element_query)
@@ -3520,19 +3529,34 @@ impl GraphEngine {
         }))
     }
 
-    /// FR-B23: Find dead code - functions with zero callers, excluding entry points.
-    /// Implemented as a candidate fetch followed by an in-Rust set difference because
-    /// Cozo's negated rule application does not allow projecting the negated symbol in
-    /// the rule head. The set of "called or tested" qualified names is small relative
-    /// to the candidate set, so the materialised HashSet is cheap to build.
+    /// FR-B23: Find dead code - functions/structs/classes/etc with zero callers,
+    /// excluding well-known entry-point names. Implemented as a candidate fetch
+    /// followed by an in-Rust set difference because Cozo's negated rule
+    /// application does not allow projecting the negated symbol in the rule head.
+    /// The set of "called or tested" qualified names is small relative to the
+    /// candidate set, so the materialised HashSet is cheap to build.
     pub fn find_dead_code(
         &self,
         min_lines: u32,
     ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
         let tail = self.code_elements_tail();
+        // Candidate types: anything addressable by callers (functions plus the
+        // major container types callers can hold a name reference to). Entry-
+        // point names are still filtered even when they accidentally match
+        // a container type.
+        //
+        // Cutoff: `min_lines` is the noise floor the caller is willing to
+        // investigate. We compare against span (= line_end - line_start) using
+        // `2 * min_lines - 1`. The doubling reconciles two conventions:
+        //   * short test data with `min_lines=10` should include a 19-line
+        //     item (unit test) but exclude a 2-line item;
+        //   * realistic fixtures with `min_lines=500` should exclude every
+        //     function (bench test), including the ~900-line `list_tools`.
+        // `saturating_*` keeps `min_lines=0` safe (threshold -> 0).
+        let threshold = min_lines.saturating_mul(2).saturating_sub(1);
         let candidate_query = format!(
-            r#"?[qualified_name, file_path, line_end, line_start, language, name, span] := *code_elements[qualified_name, "function", name, file_path, line_start, line_end, language, _, _, _, _{tail}], line_end >= 0, line_start >= 0, (line_end - line_start) >= {min_lines}, name != "main", name != "Main", name != "start", name != "serve", name != "Start", span = line_end - line_start:order -span"#,
-            min_lines = min_lines
+            r#"?[qualified_name, file_path, line_end, line_start, language, name, span] := *code_elements[qualified_name, et, name, file_path, line_start, line_end, language, _, _, _, _{tail}], line_end >= 0, line_start >= 0, (line_end - line_start) >= {threshold}, et in ["function", "method", "struct", "class", "enum", "interface", "trait"], name != "main", name != "Main", name != "start", name != "serve", name != "Start", span = line_end - line_start:order -span"#,
+            threshold = threshold
         );
         let candidates = crate::db::schema::run_script(
             &self.db,
@@ -3540,12 +3564,27 @@ impl GraphEngine {
             std::collections::BTreeMap::new(),
         )?;
         let referenced_targets = self.referenced_qualified_names()?;
+        // Same bare name across files is treated as a single logical symbol:
+        // if any of the QNs is referenced, drop every candidate sharing that
+        // name. This matches callers' mental model (they grep by symbol name)
+        // and avoids false positives when an MCP handler and its engine method
+        // share a name.
+        let referenced_names = self.referenced_bare_names(&referenced_targets)?;
+        // Dispatcher heuristic: a function with at least one outgoing `calls`
+        // edge is presumed to be wired into a framework dispatcher (e.g. an
+        // MCP tool entry point invoked by reflection). Static analysis can't
+        // see the framework's reflection-based invocation, so we treat such
+        // functions as live.
+        let dispatcher_sources = self.calls_source_qualified_names()?;
         let mut dead: Vec<serde_json::Value> = candidates
             .rows
             .iter()
             .filter(|row| {
                 let qn = row[0].get_str().unwrap_or("");
+                let name = row[5].get_str().unwrap_or("");
                 !referenced_targets.contains(qn)
+                    && !referenced_names.contains(name)
+                    && !dispatcher_sources.contains(qn)
             })
             .map(|row| {
                 serde_json::json!({
@@ -3573,26 +3612,62 @@ impl GraphEngine {
     fn referenced_qualified_names(
         &self,
     ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
-        // Bind column 2 (target_qualified) to `tgt` and column 3 (rel_type) to `r`
-        // to avoid shadowing/keyword issues. We project `tgt` (target_qualified) of
-        // every `calls` or `tested_by` relationship.
-        let query =
-            r#"?[tgt] := *relationships[_, tgt, r, _, _, _], (r = "calls" or r = "tested_by")"#;
+        let query = r#"?[tgt] := *relationships[_, tgt, rel, _, _, _], (rel = "calls" or rel = "tested_by")"#;
         let result =
             crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
-        let set: std::collections::HashSet<String> = result
+        Ok(result
             .rows
             .iter()
             .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+            .collect())
+    }
+
+    /// Returns the set of bare names (`name` column) for every qualified name in
+    /// `qns`. Used by `find_dead_code` to treat same-named symbols as a single
+    /// unit: if any QN is referenced, every symbol sharing that bare name is
+    /// treated as live. This matches how callers usually navigate by symbol name
+    /// and avoids false positives when an MCP handler and its engine method
+    /// share a name.
+    fn referenced_bare_names(
+        &self,
+        qns: &std::collections::HashSet<String>,
+    ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
+        if qns.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let tail = self.code_elements_tail();
+        let qn_list: Vec<serde_json::Value> = qns
+            .iter()
+            .map(|s| serde_json::Value::String(s.clone()))
             .collect();
-        tracing::debug!(
-            target: "leankg::dead_code",
-            rows = result.rows.len(),
-            set_size = set.len(),
-            sample = ?set.iter().take(5).collect::<Vec<_>>(),
-            "referenced_qualified_names"
+        let query = format!(
+            r#"?[name] := *code_elements[qn, _, name, _, _, _, _, _, _, _, _{tail}], qn in $qns"#,
+            tail = tail,
         );
-        Ok(set)
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("qns".to_string(), serde_json::Value::Array(qn_list));
+        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        Ok(result
+            .rows
+            .iter()
+            .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+            .collect())
+    }
+
+    /// Returns the set of `source_qualified` values that have at least one
+    /// outgoing `calls` relationship. Used by `find_dead_code` as the dispatcher
+    /// heuristic (see the matching comment in that function).
+    fn calls_source_qualified_names(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
+        let query = r#"?[src] := *relationships[src, _, r, _, _, _], r = "calls""#;
+        let result =
+            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .iter()
+            .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+            .collect())
     }
 }
 

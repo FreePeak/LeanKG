@@ -277,33 +277,12 @@ impl MCPServer {
     }
 
     fn get_graph_engine(&self) -> Result<GraphEngine, String> {
-        {
-            let guard = self.graph_engine.lock();
-            if let Some(ref ge) = *guard {
-                return Ok(ge.clone());
-            }
-        }
-        let db_path = self.get_db_path();
-        let db_path = db_path
-            .canonicalize()
-            .or_else(|_| std::env::current_dir().map(|d| d.join(&db_path)))
-            .map_err(|e| format!("Failed to resolve db path: {}", e))?;
-
-        if !db_path.exists() {
-            return Err(format!(
-                "LeanKG not initialized in this directory. Run 'leankg init' first, or ensure a .leankg directory exists at: {}",
-                db_path.display()
-            ));
-        }
-
-        tracing::debug!("Initializing database at: {}", db_path.display());
-        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
-        let ge = GraphEngine::with_persistence(db);
-        {
-            let mut guard = self.graph_engine.lock();
-            *guard = Some(ge.clone());
-        }
-        Ok(ge)
+        // Route through the path-keyed cache so request handlers and the
+        // background auto-index share the SAME DbInstance handle. Without
+        // this unification, two separate caches each open their own
+        // RocksDB handle to the same path and the second handle fails with
+        // "lock hold by current process".
+        self.get_graph_engine_for_path(None)
     }
 
     /// Run kg_self_test and log the result. Designed to be called once at
@@ -1102,7 +1081,18 @@ impl MCPServer {
                 "LeanKG project already initialized at {}",
                 project_root.display()
             );
-            return self.auto_index_if_needed().await;
+            // Run the (potentially long-running) auto-index in the background
+            // so the HTTP listener can bind immediately. Without this,
+            // freshness-triggered incremental reindexes over a polyrepo
+            // block the listener for tens of minutes and /health fails for
+            // the entire duration.
+            let me = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = me.auto_index_if_needed().await {
+                    tracing::warn!("Background auto-index failed: {}", e);
+                }
+            });
+            return Ok(());
         } else if leankg_yaml_exists {
             tracing::info!(
                 "LeanKG config exists at {}, creating missing .leankg directory",
@@ -1273,8 +1263,9 @@ impl MCPServer {
             db_modified
         );
 
-        let db = init_db(&self.get_db_path()).map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = crate::graph::GraphEngine::new(db);
+        let graph_engine = self
+            .get_graph_engine()
+            .map_err(|e| format!("Database error: {}", e))?;
         let mut parser_manager = crate::indexer::ParserManager::new();
         parser_manager
             .init_parsers()
@@ -1461,8 +1452,9 @@ impl MCPServer {
 
     async fn trigger_reindex(&self) -> Result<(), String> {
         let project_root = self.find_project_root()?;
-        let db = init_db(&self.get_db_path()).map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = crate::graph::GraphEngine::new(db);
+        let graph_engine = self
+            .get_graph_engine()
+            .map_err(|e| format!("Database error: {}", e))?;
         let mut parser_manager = crate::indexer::ParserManager::new();
         parser_manager
             .init_parsers()
