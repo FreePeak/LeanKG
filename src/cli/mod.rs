@@ -133,6 +133,12 @@ pub enum CLICommand {
         #[arg(long)]
         out: Option<String>,
     },
+    /// US-MP-05: Check graph for broken / stale links
+    CheckConsistency {
+        /// Filter by severity: BROKEN | STALE | CURRENT
+        #[arg(long)]
+        severity: Option<String>,
+    },
     /// Auto-install MCP config
     Install,
     /// Show index status

@@ -217,6 +217,16 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "check_consistency".to_string(),
+                description: "US-MP-05: Detect broken or stale relationships (missing targets, invalidated edges). Returns BROKEN / STALE / CURRENT findings plus counts.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "temporal_query".to_string(),
                 description: "US-MP-01: Return the graph state as of a given epoch (seconds). Edges with valid_from <= now <= valid_to are included.".to_string(),
                 input_schema: json!({

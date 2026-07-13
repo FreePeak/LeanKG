@@ -270,6 +270,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &db_path,
             )?;
         }
+        cli::CLICommand::CheckConsistency { severity } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_check_consistency(severity.as_deref(), &db_path)?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1140,6 +1145,34 @@ fn run_graph_report(
     }
     std::fs::write(&out_path, &markdown)?;
     println!("Wrote graph report to {}", out_path.display());
+    Ok(())
+}
+
+fn run_check_consistency(
+    severity_filter: Option<&str>,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let report = graph_engine.check_consistency()?;
+    println!(
+        "Total relationships: {} | BROKEN: {} | STALE: {}",
+        report.total_relationships, report.broken, report.stale
+    );
+    let findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| severity_filter.is_none_or(|s| f.severity == s))
+        .collect();
+    for f in findings.iter().take(50) {
+        println!(
+            "  [{}] {} --[{}]--> {} :: {}",
+            f.severity, f.source, f.rel_type, f.target, f.message
+        );
+    }
+    if findings.len() > 50 {
+        println!("  ... and {} more", findings.len() - 50);
+    }
     Ok(())
 }
 

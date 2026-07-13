@@ -230,6 +230,7 @@ impl ToolHandler {
             "get_god_nodes" => self.get_god_nodes(arguments),
             "load_layer" => self.load_layer(arguments),
             "temporal_query" => self.temporal_query(arguments),
+            "check_consistency" => self.check_consistency(arguments),
             "timeline" => self.timeline(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
@@ -1459,6 +1460,19 @@ impl ToolHandler {
         Ok(json!({
             "qualified_name": qn,
             "events": events,
+        }))
+    }
+
+    fn check_consistency(&self, _args: &Value) -> Result<Value, String> {
+        let report = self
+            .graph_engine
+            .check_consistency()
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "total_relationships": report.total_relationships,
+            "broken": report.broken,
+            "stale": report.stale,
+            "findings": report.findings,
         }))
     }
 

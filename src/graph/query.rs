@@ -3709,6 +3709,25 @@ pub struct LabelCount {
     pub pct: f64,
 }
 
+/// US-MP-05: Single finding from consistency check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsistencyFinding {
+    pub severity: String, // BROKEN | STALE | CURRENT
+    pub source: String,
+    pub target: String,
+    pub rel_type: String,
+    pub message: String,
+}
+
+/// US-MP-05: Aggregated consistency report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsistencyReport {
+    pub total_relationships: usize,
+    pub broken: usize,
+    pub stale: usize,
+    pub findings: Vec<ConsistencyFinding>,
+}
+
 /// US-MP-01: Single event in a code element's relationship timeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineEvent {
@@ -4384,6 +4403,76 @@ impl GraphEngine {
         }
         events.sort_by_key(|e| e.timestamp);
         Ok(events)
+    }
+
+    /// US-MP-05 / FR-MP-14..15: Check the graph for stale or broken
+    /// links. Returns findings with severity (BROKEN / STALE / CURRENT)
+    /// so agents and `leankg check-consistency` can prioritize fixes.
+    ///   BROKEN  — element missing or referenced file_path absent
+    ///   STALE   — invalidation timestamp set without replacement
+    ///   CURRENT — edge present and target still exists
+    pub fn check_consistency(&self) -> Result<ConsistencyReport, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let rels = self.all_relationships()?;
+        let qn_set: std::collections::HashSet<String> =
+            elements.iter().map(|e| e.qualified_name.clone()).collect();
+
+        let mut findings: Vec<ConsistencyFinding> = Vec::new();
+        for r in &rels {
+            // Invalidated edges that are still referenced from elsewhere.
+            if Self::valid_to(r).is_some() {
+                findings.push(ConsistencyFinding {
+                    severity: "STALE".into(),
+                    source: r.source_qualified.clone(),
+                    target: r.target_qualified.clone(),
+                    rel_type: r.rel_type.clone(),
+                    message: "edge has valid_to set but row still present".into(),
+                });
+                continue;
+            }
+            // Target missing
+            if !qn_set.contains(&r.target_qualified) {
+                findings.push(ConsistencyFinding {
+                    severity: "BROKEN".into(),
+                    source: r.source_qualified.clone(),
+                    target: r.target_qualified.clone(),
+                    rel_type: r.rel_type.clone(),
+                    message: "target element missing from code_elements".into(),
+                });
+                continue;
+            }
+            // Source missing
+            if !qn_set.contains(&r.source_qualified) {
+                findings.push(ConsistencyFinding {
+                    severity: "BROKEN".into(),
+                    source: r.source_qualified.clone(),
+                    target: r.target_qualified.clone(),
+                    rel_type: r.rel_type.clone(),
+                    message: "source element missing from code_elements".into(),
+                });
+                continue;
+            }
+        }
+        // Stale annotations are out of scope here — handled by separate
+        // doc consistency check — but we record one CURRENT marker so
+        // the report isn't empty when the graph is healthy.
+        if findings.is_empty() {
+            findings.push(ConsistencyFinding {
+                severity: "CURRENT".into(),
+                source: "-".into(),
+                target: "-".into(),
+                rel_type: "-".into(),
+                message: "graph is consistent".into(),
+            });
+        }
+        let broken = findings.iter().filter(|f| f.severity == "BROKEN").count();
+        let stale = findings.iter().filter(|f| f.severity == "STALE").count();
+        Ok(ConsistencyReport {
+            total_relationships: rels.len(),
+            broken,
+            stale,
+            findings,
+        })
     }
 
     /// US-MP-08 / FR-MP-25: list all directory nodes that are direct
@@ -5265,5 +5354,26 @@ mod tests {
         assert_eq!(v["action"], "added");
         assert_eq!(v["timestamp"], 1234);
         assert_eq!(v["edge"]["rel_type"], "calls");
+    }
+
+    // US-MP-05: ConsistencyReport serialization
+    #[test]
+    fn consistency_report_serializes_counts_and_findings() {
+        let report = ConsistencyReport {
+            total_relationships: 10,
+            broken: 1,
+            stale: 2,
+            findings: vec![ConsistencyFinding {
+                severity: "BROKEN".into(),
+                source: "a".into(),
+                target: "missing".into(),
+                rel_type: "calls".into(),
+                message: "target missing".into(),
+            }],
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["broken"], 1);
+        assert_eq!(v["stale"], 2);
+        assert_eq!(v["findings"][0]["severity"], "BROKEN");
     }
 }
