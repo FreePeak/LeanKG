@@ -157,6 +157,14 @@ Environment variables for RocksDB (defaults are built into compose):
 
 The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-other`).
 
+### Multi-repo workspace roots (nested git)
+
+Some mounts (e.g. a polyrepo directory that contains many service repos under `platform-*/*`) are **not** a git repository at the root. MCP auto-index still treats them as git-backed when nested `.git` directories are found (bounded depth scan). Freshness uses the latest `HEAD` commit time across nested repos; incremental indexing unions changed/untracked files from each nested repo with paths prefixed relative to the workspace root.
+
+`require_git_for_auto_index: true` in `leankg.yaml` therefore passes when either:
+- the project root itself is a git work tree, or
+- nested git repositories exist under that root.
+
 ### Multi-project (side-by-side repos)
 
 To serve additional repos (e.g. another project mounted at `/workspace-other` alongside the LeanKG source tree at `/workspace`):

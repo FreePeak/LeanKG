@@ -1,6 +1,7 @@
 pub mod cicd;
 pub mod extractor;
 pub mod git;
+pub mod git_workspace;
 pub mod microservice;
 pub mod parser;
 pub mod process_processor;
@@ -1063,13 +1064,21 @@ pub async fn incremental_index_sync(
     parser_manager: &mut ParserManager,
     root_path: &str,
 ) -> Result<IncrementalIndexResult, Box<dyn std::error::Error>> {
-    if !GitAnalyzer::is_git_repo() {
-        return Err("Not a git repository. Cannot perform incremental indexing.".into());
+    let root = std::path::Path::new(root_path);
+    if !crate::indexer::git_workspace::has_git_context(root) {
+        return Err(
+            "Not a git repository (and no nested git repos found). Cannot perform incremental indexing."
+                .into(),
+        );
     }
 
-    let repo_root = GitAnalyzer::get_repo_root().unwrap_or_else(|| root_path.to_string());
+    let workspace_root = if GitAnalyzer::is_git_repo_at(root) {
+        GitAnalyzer::get_repo_root_at(root).unwrap_or_else(|| root_path.to_string())
+    } else {
+        root_path.to_string()
+    };
 
-    let changed = GitAnalyzer::get_changed_files_since_last_commit()?;
+    let changed = crate::indexer::git_workspace::workspace_changed_files(root)?;
 
     let deleted_files: Vec<String> = changed
         .deleted
@@ -1078,7 +1087,7 @@ pub async fn incremental_index_sync(
             if std::path::Path::new(f).is_absolute() {
                 f.clone()
             } else {
-                format!("{}/{}", repo_root, f)
+                format!("{}/{}", workspace_root, f)
             }
         })
         .collect();
@@ -1088,7 +1097,7 @@ pub async fn incremental_index_sync(
     all_changed.extend(changed.added);
     all_changed.extend(changed.deleted);
 
-    let untracked = GitAnalyzer::get_untracked_files()?;
+    let untracked = crate::indexer::git_workspace::workspace_untracked_files(root)?;
     let indexable_untracked = filter_indexable_files(&untracked);
     all_changed.extend(indexable_untracked);
 
@@ -1098,7 +1107,7 @@ pub async fn incremental_index_sync(
             if std::path::Path::new(f).is_absolute() {
                 f.clone()
             } else {
-                format!("{}/{}", repo_root, f)
+                format!("{}/{}", workspace_root, f)
             }
         })
         .collect();
@@ -1125,7 +1134,7 @@ pub async fn incremental_index_sync(
         for dep in deps {
             let dep_path = std::path::Path::new(&dep);
             if !dep_path.is_absolute() {
-                dependent_files.push(format!("{}/{}", repo_root, dep));
+                dependent_files.push(format!("{}/{}", workspace_root, dep));
             } else {
                 dependent_files.push(dep);
             }

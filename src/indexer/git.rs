@@ -43,7 +43,14 @@ impl GitAnalyzer {
 
     pub fn get_changed_files_since_last_commit(
     ) -> Result<GitChangedFiles, Box<dyn std::error::Error>> {
+        Self::get_changed_files_since_last_commit_at(Path::new("."))
+    }
+
+    pub fn get_changed_files_since_last_commit_at(
+        path: &Path,
+    ) -> Result<GitChangedFiles, Box<dyn std::error::Error>> {
         let output = Command::new("git")
+            .current_dir(path)
             .args(["diff", "--name-status", "HEAD"])
             .output()?;
 
@@ -86,8 +93,15 @@ impl GitAnalyzer {
     }
 
     pub fn get_untracked_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        Self::get_untracked_files_at(Path::new("."))
+    }
+
+    pub fn get_untracked_files_at(path: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        // Note: historically used the invalid subcommand `ls_files` (underscore),
+        // which always failed and returned no untracked files.
         let output = Command::new("git")
-            .args(["ls_files", "--others", "--exclude-standard"])
+            .current_dir(path)
+            .args(["ls-files", "--others", "--exclude-standard"])
             .output()?;
 
         if !output.status.success() {
@@ -130,7 +144,13 @@ impl GitAnalyzer {
     }
 
     pub fn is_git_repo() -> bool {
+        Self::is_git_repo_at(Path::new("."))
+    }
+
+    /// True when `path` is inside a git work tree (uses `git -C`).
+    pub fn is_git_repo_at(path: &Path) -> bool {
         Command::new("git")
+            .current_dir(path)
             .args(["rev-parse", "--is-inside-work-tree"])
             .output()
             .map(|o| o.status.success())
@@ -138,7 +158,12 @@ impl GitAnalyzer {
     }
 
     pub fn get_repo_root() -> Option<String> {
+        Self::get_repo_root_at(Path::new("."))
+    }
+
+    pub fn get_repo_root_at(path: &Path) -> Option<String> {
         let output = Command::new("git")
+            .current_dir(path)
             .args(["rev-parse", "--show-toplevel"])
             .output()
             .ok()?;
@@ -151,7 +176,12 @@ impl GitAnalyzer {
     }
 
     pub fn get_last_commit_time() -> Result<i64, Box<dyn std::error::Error>> {
+        Self::get_last_commit_time_at(Path::new("."))
+    }
+
+    pub fn get_last_commit_time_at(path: &Path) -> Result<i64, Box<dyn std::error::Error>> {
         let output = Command::new("git")
+            .current_dir(path)
             .args(["log", "-1", "--format=%ct", "HEAD"])
             .output()?;
 

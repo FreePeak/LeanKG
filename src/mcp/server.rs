@@ -1212,18 +1212,31 @@ impl MCPServer {
             return Ok(());
         }
 
-        let is_git = crate::indexer::GitAnalyzer::is_git_repo();
+        let is_git = crate::indexer::git_workspace::has_git_context(&project_root);
         if config.mcp.require_git_for_auto_index && !is_git {
-            tracing::info!("Not a git repo, skipping auto-index");
+            tracing::info!(
+                "No git repo (or nested repos) under {}, skipping auto-index",
+                project_root.display()
+            );
             return Ok(());
         }
 
         let last_commit_time = if !is_git {
-            tracing::info!("Not a git repo but require_git_for_auto_index=false, forcing reindex");
+            tracing::info!(
+                "No git context under {} but require_git_for_auto_index=false, forcing reindex",
+                project_root.display()
+            );
             i64::MAX
         } else {
-            match crate::indexer::GitAnalyzer::get_last_commit_time() {
-                Ok(t) => t,
+            match crate::indexer::git_workspace::workspace_last_commit_time(&project_root) {
+                Ok(t) => {
+                    tracing::info!(
+                        "Git workspace freshness: last nested/root commit ts={} at {}",
+                        t,
+                        project_root.display()
+                    );
+                    t
+                }
                 Err(e) => {
                     tracing::warn!("Failed to get last commit time: {}", e);
                     return Ok(());
@@ -1356,9 +1369,16 @@ impl MCPServer {
             return Ok(());
         }
 
-        // Check git status to determine if indexing is needed
+        // Check git status to determine if indexing is needed (supports nested multi-repo roots)
         let last_commit_time = if config.mcp.require_git_for_auto_index {
-            match Self::get_git_commit_time_for_path(&project_root) {
+            if !crate::indexer::git_workspace::has_git_context(&project_root) {
+                tracing::debug!(
+                    "No git context under {}, skipping auto-index",
+                    project_root.display()
+                );
+                return Ok(());
+            }
+            match crate::indexer::git_workspace::workspace_last_commit_time(&project_root) {
                 Ok(t) => t,
                 Err(e) => {
                     tracing::debug!(
@@ -1434,24 +1454,6 @@ impl MCPServer {
 
         tracing::debug!("Auto-index complete for {}", project_root.display());
         Ok(())
-    }
-
-    /// Get last git commit timestamp for a specific path
-    fn get_git_commit_time_for_path(path: &PathBuf) -> Result<i64, String> {
-        let output = std::process::Command::new("git")
-            .current_dir(path)
-            .args(["log", "-1", "--format=%ct", "HEAD"])
-            .output()
-            .map_err(|e| format!("Failed to run git: {}", e))?;
-
-        if !output.status.success() {
-            return Err("Failed to get last commit time".to_string());
-        }
-
-        let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        timestamp_str
-            .parse::<i64>()
-            .map_err(|e| format!("Failed to parse timestamp: {}", e))
     }
 
     async fn trigger_reindex(&self) -> Result<(), String> {
