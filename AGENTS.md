@@ -29,7 +29,7 @@ cargo run -- mcp-http --port 9699
 
 ### Pattern: Update Docs -> Implement -> Test -> Commit -> Push -> Bump Version -> Tag
 
-1. **Update docs first** - PRD (`docs/requirement/prd-leankg.md`) -> HLD (`docs/design/hld-leankg.md`) -> README
+1. **Update docs first** - Consolidated PRD+HLD (`docs/prd.md`) → README as needed
 2. **Implement** - Follow patterns in `docs/workflow-opencode-agent.md`
 3. **Build & test** - `cargo build && cargo test`
 4. **Commit** - `git commit -m "feat: description"` (one feature per commit)
@@ -89,7 +89,7 @@ Three new MCP tools are available once a project is indexed:
 - `get_graph_schema` — element type and relationship type counts.
 - `find_dead_code` — functions with no callers and no `tested_by` edge, with a `min_lines` threshold.
 
-See [`docs/mcp-tools.md`](docs/mcp-tools.md) → Structure Tools and [`docs/roadmap.md`](docs/roadmap.md) → Phase 1 for details. PRD source: [`docs/requirement/prd-structural-parity-cbm.md`](docs/requirement/prd-structural-parity-cbm.md).
+See [`docs/mcp-tools.md`](docs/mcp-tools.md) → Structure Tools and [`docs/roadmap.md`](docs/roadmap.md) → Phase 1. Requirements: [`docs/prd.md`](docs/prd.md) Sections 3.11 / 5.10.
 
 ## MCP Server Transport Modes
 
@@ -130,7 +130,15 @@ Environment variables:
 
 The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects.
 
-### Single-project (default)
+### One-line run (published image)
+
+```bash
+docker run -d --name leankg -p 9699:9699 -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb freepeak/leankg:latest
+```
+
+Hub: https://hub.docker.com/r/freepeak/leankg (`linux/arm64` tags `:latest` / `:0.17.8`).
+
+### Single-project (build from source)
 
 ```bash
 # Start with RocksDB in Docker
