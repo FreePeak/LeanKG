@@ -139,6 +139,12 @@ pub enum CLICommand {
         #[arg(long)]
         severity: Option<String>,
     },
+    /// US-MP-06: List cross-domain tunnels (cross-cluster relationships)
+    Tunnels {
+        /// Limit
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
     /// Auto-install MCP config
     Install,
     /// Show index status

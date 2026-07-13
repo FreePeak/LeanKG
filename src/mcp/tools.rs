@@ -217,6 +217,17 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "find_tunnels".to_string(),
+                description: "US-MP-06: Find cross-domain tunnels — relationships where source and target belong to different Leiden clusters. Sorted by confidence descending.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "check_consistency".to_string(),
                 description: "US-MP-05: Detect broken or stale relationships (missing targets, invalidated edges). Returns BROKEN / STALE / CURRENT findings plus counts.".to_string(),
                 input_schema: json!({

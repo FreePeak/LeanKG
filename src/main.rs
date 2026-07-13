@@ -275,6 +275,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             run_check_consistency(severity.as_deref(), &db_path)?;
         }
+        cli::CLICommand::Tunnels { limit } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_tunnels(limit, &db_path)?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1172,6 +1177,27 @@ fn run_check_consistency(
     }
     if findings.len() > 50 {
         println!("  ... and {} more", findings.len() - 50);
+    }
+    Ok(())
+}
+
+fn run_tunnels(limit: usize, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let mut tunnels = graph_engine.find_tunnels()?;
+    tunnels.truncate(limit);
+    println!("Found {} cross-cluster tunnels:", tunnels.len());
+    for (i, t) in tunnels.iter().enumerate() {
+        println!(
+            "  {}. {} --[{}]--> {}  ({:.2})  [{} -> {}]",
+            i + 1,
+            t.source,
+            t.rel_type,
+            t.target,
+            t.confidence,
+            t.source_cluster,
+            t.target_cluster,
+        );
     }
     Ok(())
 }

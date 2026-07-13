@@ -3744,6 +3744,18 @@ pub struct DirectoryMetadata {
     pub language_distribution: std::collections::HashMap<String, usize>,
 }
 
+/// US-MP-06: A cross-cluster tunnel edge (relationship between two
+/// elements belonging to different Leiden clusters).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tunnel {
+    pub source: String,
+    pub target: String,
+    pub rel_type: String,
+    pub confidence: f64,
+    pub source_cluster: String,
+    pub target_cluster: String,
+}
+
 /// US-MP-08 / FR-MP-21..23: helpers for folder-as-graph conventions.
 pub mod folder_gn {
     use super::CodeElement;
@@ -4504,6 +4516,44 @@ impl GraphEngine {
         children.retain(|e| folder_gn::strip(&e.qualified_name).matches('/').count() == depth);
         children.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(children)
+    }
+
+    /// US-MP-06 / FR-MP-16..17: detect cross-domain tunnels between
+    /// clusters. A tunnel is a `Relationship` whose source and target
+    /// belong to different Leiden clusters — i.e. a cross-cluster
+    /// dependency that an agent should know about.
+    pub fn find_tunnels(&self) -> Result<Vec<Tunnel>, Box<dyn std::error::Error>> {
+        let rels = self.all_relationships()?;
+        let elements = self.all_elements()?;
+        let cluster_of: std::collections::HashMap<String, Option<String>> = elements
+            .iter()
+            .map(|e| (e.qualified_name.clone(), e.cluster_id.clone()))
+            .collect();
+
+        let mut tunnels: Vec<Tunnel> = Vec::new();
+        for r in &rels {
+            let src_cluster = cluster_of.get(&r.source_qualified).and_then(|c| c.clone());
+            let tgt_cluster = cluster_of.get(&r.target_qualified).and_then(|c| c.clone());
+            // Only count when both ends are clustered and clusters differ.
+            if let (Some(sc), Some(tc)) = (src_cluster.as_ref(), tgt_cluster.as_ref()) {
+                if sc != tc {
+                    tunnels.push(Tunnel {
+                        source: r.source_qualified.clone(),
+                        target: r.target_qualified.clone(),
+                        rel_type: r.rel_type.clone(),
+                        confidence: r.confidence,
+                        source_cluster: sc.clone(),
+                        target_cluster: tc.clone(),
+                    });
+                }
+            }
+        }
+        tunnels.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(tunnels)
     }
 }
 
@@ -5375,5 +5425,22 @@ mod tests {
         assert_eq!(v["broken"], 1);
         assert_eq!(v["stale"], 2);
         assert_eq!(v["findings"][0]["severity"], "BROKEN");
+    }
+
+    // US-MP-06: Tunnel serialization
+    #[test]
+    fn tunnel_serializes_cluster_pair() {
+        let t = Tunnel {
+            source: "a".into(),
+            target: "b".into(),
+            rel_type: "calls".into(),
+            confidence: 0.9,
+            source_cluster: "c1".into(),
+            target_cluster: "c2".into(),
+        };
+        let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v["source_cluster"], "c1");
+        assert_eq!(v["target_cluster"], "c2");
+        assert_eq!(v["confidence"], 0.9);
     }
 }

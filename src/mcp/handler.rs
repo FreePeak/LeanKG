@@ -232,6 +232,7 @@ impl ToolHandler {
             "temporal_query" => self.temporal_query(arguments),
             "check_consistency" => self.check_consistency(arguments),
             "timeline" => self.timeline(arguments),
+            "find_tunnels" => self.find_tunnels(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1473,6 +1474,19 @@ impl ToolHandler {
             "broken": report.broken,
             "stale": report.stale,
             "findings": report.findings,
+        }))
+    }
+
+    fn find_tunnels(&self, args: &Value) -> Result<Value, String> {
+        let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+        let mut tunnels = self
+            .graph_engine
+            .find_tunnels()
+            .map_err(|e| e.to_string())?;
+        tunnels.truncate(limit);
+        Ok(json!({
+            "count": tunnels.len(),
+            "tunnels": tunnels,
         }))
     }
 
