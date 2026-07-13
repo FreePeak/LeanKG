@@ -217,6 +217,17 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "get_overview_context".to_string(),
+                description: "US-GN-08: Return the project overview context (identity, critical facts, recent hotspots) as a single MCP-callable resource. Acts as an MCP-Resources-style agent context shortcut for wake_up + L0/L1 layers.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string"},
+                        "project_name": {"type": "string", "default": "project"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "get_team_map".to_string(),
                 description: "US-V2-12: Aggregated team / ownership map (team name, on-call, services owned) for a given environment.".to_string(),
                 input_schema: json!({

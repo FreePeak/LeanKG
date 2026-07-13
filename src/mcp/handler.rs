@@ -239,6 +239,7 @@ impl ToolHandler {
             "agent_diary_read" => self.agent_diary_read(arguments),
             "report_query_outcome" => self.report_query_outcome(arguments),
             "get_team_map" => self.get_team_map(arguments),
+            "get_overview_context" => self.get_overview_context(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1604,6 +1605,34 @@ impl ToolHandler {
             "env": env,
             "count": teams.len(),
             "teams": teams,
+        }))
+    }
+
+    /// US-GN-08: Aggregate wake_up + L0 identity + L1 critical facts
+    /// into a single resource-like MCP response that an agent can
+    /// consume at session start. Equivalent to MCP Resources for
+    /// overview context (leankg-mcp doesn't currently expose the
+    /// RMCP resources API; this provides the same ergonomics via a
+    /// tool call).
+    fn get_overview_context(&self, args: &Value) -> Result<Value, String> {
+        let project_name = args["project_name"].as_str().unwrap_or("project");
+        let l0 = self
+            .graph_engine
+            .identity_context(project_name)
+            .unwrap_or_default();
+        let l1 = self
+            .graph_engine
+            .critical_facts_context()
+            .unwrap_or_default();
+        let wake = self
+            .graph_engine
+            .wake_up_summary()
+            .unwrap_or_else(|e| format!("LeanKG project (wake_up error: {})", e));
+        Ok(json!({
+            "project": project_name,
+            "l0_identity": l0,
+            "l1_critical_facts": l1,
+            "wake_up": wake,
         }))
     }
 
