@@ -736,7 +736,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "semantic_search".to_string(),
-                description: "Ontology-first semantic discovery with pagination. Scans concept ontology then falls back to bounded name search. Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables).".to_string(),
+                description: "Natural language semantic discovery with pagination. Ontology-first: scans concept ontology then falls back to bounded name search. Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
