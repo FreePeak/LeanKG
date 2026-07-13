@@ -3649,7 +3649,165 @@ pub struct ServiceGraph {
     pub total_connections: usize,
 }
 
+/// US-GF-01: A single hop in a shortest_path result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathHop {
+    pub from: String,
+    pub to: String,
+    pub rel_type: String,
+    pub confidence: f64,
+    pub confidence_label: String,
+    pub source_file: String,
+}
+
+/// US-GF-01: Result of a shortest-path query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShortestPathResult {
+    pub source: String,
+    pub target: String,
+    pub hops: usize,
+    pub path: Vec<PathHop>,
+}
+
+/// Element-type ranking for resolve_to_qualified: more specific types win
+/// over files / directories when names collide.
+fn rank_element_type(t: &str) -> u8 {
+    match t {
+        "function" | "method" | "constructor" => 0,
+        "class" | "struct" | "interface" | "enum" | "trait" => 1,
+        "route" | "module" | "property" | "field" => 2,
+        "file" => 3,
+        "directory" | "folder" => 4,
+        _ => 5,
+    }
+}
+
 impl GraphEngine {
+    /// US-GF-01 / FR-GF-01: BFS shortest path between two symbols.
+    ///
+    /// Returns an ordered list of hops from `source` to `target`. Each hop
+    /// carries the relation, confidence and provenance label so agents can
+    /// see how A connects to B and whether each edge is explicit (EXTRACTED)
+    /// or resolver-derived (INFERRED / AMBIGUOUS).
+    ///
+    /// Inputs are resolved by qualified_name, exact element name, or
+    /// fuzzy suffix match. Returns `Ok(None)` when no path exists within
+    /// `max_hops`.
+    pub fn shortest_path(
+        &self,
+        source: &str,
+        target: &str,
+        max_hops: usize,
+    ) -> Result<Option<ShortestPathResult>, Box<dyn std::error::Error>> {
+        let max_hops = max_hops.clamp(1, 10);
+
+        let source_qn = self
+            .resolve_to_qualified(source)
+            .ok_or_else(|| format!("source '{}' not found", source))?;
+        let target_qn = self
+            .resolve_to_qualified(target)
+            .ok_or_else(|| format!("target '{}' not found", target))?;
+
+        if source_qn == target_qn {
+            return Ok(Some(ShortestPathResult {
+                source: source_qn,
+                target: target_qn,
+                hops: 0,
+                path: Vec::new(),
+            }));
+        }
+
+        // BFS over (qualified_name) using all relationships as edges.
+        let all_rels = self.all_relationships()?;
+        let mut adjacency: std::collections::HashMap<String, Vec<(String, Relationship)>> =
+            std::collections::HashMap::new();
+        for rel in &all_rels {
+            adjacency
+                .entry(rel.source_qualified.clone())
+                .or_default()
+                .push((rel.target_qualified.clone(), rel.clone()));
+            // Treat graph as undirected for path-finding so callers can
+            // express either "X calls Y" or "Y is called by X" intent.
+            adjacency
+                .entry(rel.target_qualified.clone())
+                .or_default()
+                .push((rel.source_qualified.clone(), rel.clone()));
+        }
+
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut queue: std::collections::VecDeque<(String, Vec<PathHop>)> =
+            std::collections::VecDeque::new();
+        queue.push_back((source_qn.clone(), Vec::new()));
+        visited.insert(source_qn.clone());
+
+        while let Some((current, path)) = queue.pop_front() {
+            if path.len() >= max_hops {
+                continue;
+            }
+            if let Some(neighbors) = adjacency.get(&current) {
+                for (next, rel) in neighbors {
+                    if !visited.insert(next.clone()) {
+                        continue;
+                    }
+                    let mut new_path = path.clone();
+                    new_path.push(PathHop {
+                        from: current.clone(),
+                        to: next.clone(),
+                        rel_type: rel.rel_type.clone(),
+                        confidence: rel.confidence,
+                        confidence_label: rel.confidence_label().to_string(),
+                        source_file: rel
+                            .metadata
+                            .get("source_file")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    });
+                    if next == &target_qn {
+                        return Ok(Some(ShortestPathResult {
+                            source: source_qn,
+                            target: target_qn,
+                            hops: new_path.len(),
+                            path: new_path,
+                        }));
+                    }
+                    queue.push_back((next.clone(), new_path));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Resolve a free-form input (qualified_name, exact name, or fuzzy
+    /// suffix match) to a single qualified_name. Returns the first match
+    /// by priority: exact qualified_name > exact element name > suffix.
+    fn resolve_to_qualified(&self, input: &str) -> Option<String> {
+        let elements = self.all_elements().ok()?;
+        // 1. Exact qualified_name
+        if elements.iter().any(|e| e.qualified_name == input) {
+            return Some(input.to_string());
+        }
+        // 2. Exact element name
+        let mut by_name: Vec<&CodeElement> = elements.iter().filter(|e| e.name == input).collect();
+        if !by_name.is_empty() {
+            // Prefer functions / classes over files / directories when names collide.
+            by_name.sort_by(|a, b| {
+                rank_element_type(&a.element_type).cmp(&rank_element_type(&b.element_type))
+            });
+            return Some(by_name[0].qualified_name.clone());
+        }
+        // 3. Suffix match
+        let suffix_matches: Vec<&CodeElement> = elements
+            .iter()
+            .filter(|e| e.qualified_name.ends_with(input) || e.qualified_name.contains(input))
+            .collect();
+        if !suffix_matches.is_empty() {
+            return Some(suffix_matches[0].qualified_name.clone());
+        }
+        None
+    }
+
     pub fn wake_up_summary(&self) -> Result<String, String> {
         let elements = self.all_elements().map_err(|e| e.to_string())?;
 
@@ -4377,5 +4535,29 @@ mod tests {
         let obj = schema.as_object().unwrap();
         assert!(obj.contains_key("total_elements"));
         assert!(obj.contains_key("total_relationships"));
+    }
+
+    // US-GF-01: rank_element_type + PathHop serialization
+    #[test]
+    fn rank_function_wins_over_file() {
+        assert!(rank_element_type("function") < rank_element_type("file"));
+        assert!(rank_element_type("class") < rank_element_type("file"));
+        assert!(rank_element_type("method") < rank_element_type("directory"));
+    }
+
+    #[test]
+    fn path_hop_serializes_with_provenance_label() {
+        let hop = PathHop {
+            from: "a".into(),
+            to: "b".into(),
+            rel_type: "calls".into(),
+            confidence: 0.9,
+            confidence_label: "EXTRACTED".into(),
+            source_file: "src/main.rs".into(),
+        };
+        let v = serde_json::to_value(&hop).unwrap();
+        assert_eq!(v["from"], "a");
+        assert_eq!(v["to"], "b");
+        assert_eq!(v["confidence_label"], "EXTRACTED");
     }
 }

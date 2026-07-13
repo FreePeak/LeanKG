@@ -205,6 +205,20 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "shortest_path".to_string(),
+                description: "US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string", "description": "Source qualified_name, name, or fuzzy suffix"},
+                        "target": {"type": "string", "description": "Target qualified_name, name, or fuzzy suffix"},
+                        "max_hops": {"type": "integer", "default": 6, "minimum": 1, "maximum": 10, "description": "Maximum hops (1-10)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["source", "target"]
+                }),
+            },
+            ToolDefinition {
                 name: "find_function".to_string(),
                 description: "Locate function definition by name. Optionally scope to a file.".to_string(),
                 input_schema: json!({

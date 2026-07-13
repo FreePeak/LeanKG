@@ -226,6 +226,7 @@ impl ToolHandler {
             "ctx_read" => self.ctx_read(arguments),
             "orchestrate" => self.orchestrate_tool(arguments),
             "find_function" => self.find_function(arguments),
+            "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
@@ -1368,6 +1369,25 @@ impl ToolHandler {
             .collect();
 
         Ok(json!({ "functions": matches }))
+    }
+
+    fn shortest_path(&self, args: &Value) -> Result<Value, String> {
+        let source = args["source"]
+            .as_str()
+            .ok_or("Missing 'source' parameter")?;
+        let target = args["target"]
+            .as_str()
+            .ok_or("Missing 'target' parameter")?;
+        let max_hops = args["max_hops"].as_u64().unwrap_or(6) as usize;
+
+        let result = self
+            .graph_engine
+            .shortest_path(source, target, max_hops)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "found": result.is_some(),
+            "result": result,
+        }))
     }
 
     fn get_callers(&self, args: &Value) -> Result<Value, String> {

@@ -100,6 +100,16 @@ pub enum CLICommand {
         #[arg(long, default_value = "3")]
         depth: u32,
     },
+    /// US-GF-01: Find shortest path between two symbols in the graph
+    Path {
+        /// Source symbol (qualified_name, name, or fuzzy suffix)
+        source: String,
+        /// Target symbol (qualified_name, name, or fuzzy suffix)
+        target: String,
+        /// Maximum number of hops (1-10)
+        #[arg(long, default_value = "6")]
+        max_hops: usize,
+    },
     /// Auto-install MCP config
     Install,
     /// Show index status

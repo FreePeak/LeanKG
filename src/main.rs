@@ -238,6 +238,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        cli::CLICommand::Path {
+            source,
+            target,
+            max_hops,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_shortest_path(&source, &target, max_hops, &db_path)?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -991,6 +1000,40 @@ fn calculate_impact(
 
     let result = analyzer.calculate_impact_radius(file, depth)?;
     Ok(result)
+}
+
+fn run_shortest_path(
+    source: &str,
+    target: &str,
+    max_hops: usize,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    match graph_engine.shortest_path(source, target, max_hops)? {
+        Some(result) => {
+            println!(
+                "{} -> {} ({} hops)",
+                result.source, result.target, result.hops
+            );
+            for (i, hop) in result.path.iter().enumerate() {
+                println!(
+                    "  {}. {} --[{} conf={:.2} {}]--> {}",
+                    i + 1,
+                    hop.from,
+                    hop.rel_type,
+                    hop.confidence,
+                    hop.confidence_label,
+                    hop.to,
+                );
+            }
+        }
+        None => println!(
+            "No path found between '{}' and '{}' within {} hops",
+            source, target, max_hops
+        ),
+    }
+    Ok(())
 }
 
 fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
