@@ -1112,6 +1112,7 @@ impl ToolHandler {
                     .collect();
             }
             return Ok(json!({
+                "files": matches,
                 "results": matches,
                 "count": matches.len(),
                 "limit": limit,
@@ -1154,6 +1155,7 @@ impl ToolHandler {
             .collect();
 
         Ok(json!({
+            "files": matches,
             "results": matches,
             "count": matches.len(),
             "limit": limit,
