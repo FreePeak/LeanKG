@@ -247,15 +247,16 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_code".to_string(),
-                description: "Search code elements by name/type. Set use_ontology=true to run the concept-gated workflow first (extract keywords -> scan concept ontology -> load concept -> query db); falls back to name search if no concept matches.".to_string(),
+                description: "Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search query string (raw words/concepts allowed when use_ontology=true)"},
+                        "query": {"type": "string", "description": "Search query string (raw words/concepts allowed)"},
                         "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module", "import"], "description": "Filter by element type"},
-                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20, max: 50)"},
-                        "use_ontology": {"type": "boolean", "default": false, "description": "If true, first scan the concept ontology and resolve matched concept code_refs against the DB before falling back to name search."},
-                        "env": {"type": "string", "default": "local", "description": "Environment scope for the ontology scan (used only when use_ontology=true)"},
+                        "limit": {"type": "integer", "default": 20, "description": "Page size (default: 20, max: 50)"},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
+                        "use_ontology": {"type": "boolean", "default": true, "description": "Concept-gated workflow first. Defaults true on mega-graphs; set false only for tiny projects."},
+                        "env": {"type": "string", "default": "local", "description": "Environment scope for the ontology scan"},
                         "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
                     },
                     "required": ["query"]
@@ -735,13 +736,14 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "semantic_search".to_string(),
-                description: "Natural language search for graph nodes. Falls back to keyword and fuzzy matching when exact names are unknown. Returns top matching nodes with similarity scores.".to_string(),
+                description: "Ontology-first semantic discovery with pagination. Scans concept ontology then falls back to bounded name search. Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Natural language query (e.g., 'service that handles refunds')"},
                         "env": {"type": "string", "enum": ["production", "staging", "local"], "default": "local", "description": "Environment to search"},
-                        "limit": {"type": "integer", "default": 5, "description": "Maximum results (default: 5)"},
+                        "limit": {"type": "integer", "default": 20, "description": "Page size (default: 20, max: 50)"},
+                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["query"]
@@ -843,10 +845,11 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_architecture".to_string(),
-                description: "Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries.".to_string(),
+                description: "Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries. Supports max_items to cap each section for token budget control.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
+                        "max_items": {"type": "integer", "description": "Optional: per-section item cap for token budget control."},
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
@@ -854,10 +857,11 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_graph_schema".to_string(),
-                description: "Get graph schema overview: element type counts, relationship type counts. Use to understand database structure and find available element/relationship patterns.".to_string(),
+                description: "Get graph schema overview: element type counts, relationship type counts. Use to understand database structure and find available element/relationship patterns. Supports max_items to cap each section for token budget control.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
+                        "max_items": {"type": "integer", "description": "Optional: per-section item cap for token budget control."},
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []

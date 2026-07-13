@@ -2,6 +2,7 @@ pub mod concept;
 pub mod loader;
 pub mod procedural;
 pub mod query;
+pub mod safe_discover;
 
 // Re-export for convenience
 #[allow(unused_imports)]
@@ -22,6 +23,12 @@ pub use query::{
     calculate_match_score, extract_keywords, normalize_path, ConceptSearchResult, KgSelfTestEntry,
     KgSelfTestReport, MatchedConcept, OntologyContextResult, OntologyNodeInfo, OntologyQueryEngine,
     OntologyStatus,
+};
+#[allow(unused_imports)]
+pub use safe_discover::{
+    clamp_limit, discover, discover_page_to_json, is_mega_graph, mega_graph_refusal,
+    mega_graph_threshold, refuse_full_scan_if_mega, skip_incremental_dependents, DiscoverPage,
+    DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
 };
 
 use serde::{Deserialize, Serialize};

@@ -1117,31 +1117,41 @@ pub async fn incremental_index_sync(
         graph.remove_relationships_by_source(deleted_file)?;
     }
 
-    let all_relationships = graph.all_relationships()?;
-    let rel_tuples: Vec<(String, String)> = all_relationships
-        .iter()
-        .map(|r| (r.source_qualified.clone(), r.target_qualified.clone()))
-        .collect();
-
+    // Mega-graphs (nested multi-repo workspaces like BE): never load all
+    // relationships just to expand dependents — that alone can add ~0.5–0.8 GiB
+    // and OOM a 6 GiB Docker container. See research_docker_memory_impact_2026-07-13.md.
     let mut dependent_files: Vec<String> = Vec::new();
-    for changed_file in &changed_files {
-        let file_name = std::path::Path::new(changed_file)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(changed_file);
+    if crate::ontology::safe_discover::skip_incremental_dependents(graph) {
+        tracing::warn!(
+            target: "leankg::mem",
+            changed = changed_files.len(),
+            "incremental_index: skipping full-graph dependent expansion on mega-graph / LEANKG_INCREMENTAL_SKIP_DEPENDENTS"
+        );
+    } else {
+        let all_relationships = graph.all_relationships()?;
+        let rel_tuples: Vec<(String, String)> = all_relationships
+            .iter()
+            .map(|r| (r.source_qualified.clone(), r.target_qualified.clone()))
+            .collect();
 
-        let deps = find_dependents(file_name, &rel_tuples);
-        for dep in deps {
-            let dep_path = std::path::Path::new(&dep);
-            if !dep_path.is_absolute() {
-                dependent_files.push(format!("{}/{}", workspace_root, dep));
-            } else {
-                dependent_files.push(dep);
+        for changed_file in &changed_files {
+            let file_name = std::path::Path::new(changed_file)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(changed_file);
+
+            let deps = find_dependents(file_name, &rel_tuples);
+            for dep in deps {
+                let dep_path = std::path::Path::new(&dep);
+                if !dep_path.is_absolute() {
+                    dependent_files.push(format!("{}/{}", workspace_root, dep));
+                } else {
+                    dependent_files.push(dep);
+                }
             }
         }
+        dependent_files.dedup();
     }
-
-    dependent_files.dedup();
 
     let mut all_files_to_process: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();

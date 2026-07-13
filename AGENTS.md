@@ -165,6 +165,24 @@ Some mounts (e.g. a polyrepo directory that contains many service repos under `p
 - the project root itself is a git work tree, or
 - nested git repositories exist under that root.
 
+### Mega-graph / OOM-safe querying
+
+Workspaces above `LEANKG_MAX_CACHE_ELEMENTS` (default **50_000** elements) are treated as mega-graphs:
+
+- Discovery tools (`search_code`, `semantic_search`, `concept_search`, `query_file`) use **ontology-first + paginated** paths (`limit`/`offset`, max page 50).
+- Full-scan tools (`get_clusters`, `get_code_tree` without query, nav dumps, annotation full scans) **refuse** with a redirect hint instead of loading 600k+ rows.
+- Incremental auto-index **skips** full-graph dependent expansion on mega-graphs (override with `LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1` to force skip always).
+- Prefer: `concept_search` → `semantic_search` → `search_code` → `kg_context` / `find_function`.
+
+Env knobs:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LEANKG_MAX_CACHE_ELEMENTS` | 50000 | Mega-graph threshold + in-memory cache gate |
+| `LEANKG_MAX_CLUSTER_ELEMENTS` | 50000 | Refuse Louvain clustering above this |
+| `LEANKG_CODE_TREE_CAP` | 50000 | Cap for small-graph code tree DB fetch |
+| `LEANKG_INCREMENTAL_SKIP_DEPENDENTS` | auto | Force-skip dependents in incremental index |
+
 ### Multi-project (side-by-side repos)
 
 To serve additional repos (e.g. another project mounted at `/workspace-other` alongside the LeanKG source tree at `/workspace`):

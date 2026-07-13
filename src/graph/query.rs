@@ -29,6 +29,17 @@ fn normalize_path(path: &str) -> String {
     }
 }
 
+/// Maximum number of elements/relationships to cache in memory.
+/// Mega-graphs above this threshold skip the permanent cache to avoid
+/// unbounded RSS growth (see root_cause_docker_memory_2026-07-13.md RC1).
+/// Override via LEANKG_MAX_CACHE_ELEMENTS env var.
+fn max_cache_elements() -> usize {
+    std::env::var("LEANKG_MAX_CACHE_ELEMENTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50_000)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChildrenResult {
     pub elements: Vec<CodeElement>,
@@ -470,6 +481,59 @@ impl GraphEngine {
         Ok((elements, total_count))
     }
 
+    /// Memory-efficient code element query for get_code_tree.
+    /// Filters by element_type at the database level (avoids loading all elements)
+    /// and caps results to prevent excessive memory on mega-graphs.
+    /// See root_cause_docker_memory_2026-07-13.md RC1.
+    pub fn get_code_elements_for_tree(
+        &self,
+        cap: usize,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let cap = cap.min(50_000); // hard cap to protect memory
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end] :=
+                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+                element_type in ["function", "struct", "class", "module", "interface", "enum", "trait"]
+                :limit {}"#,
+            cap
+        );
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let elements: Vec<CodeElement> = result
+            .rows
+            .iter()
+            .map(|row| CodeElement {
+                qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                element_type: row[1].get_str().unwrap_or("").to_string(),
+                name: row[2].get_str().unwrap_or("").to_string(),
+                file_path: row[3].get_str().unwrap_or("").to_string(),
+                line_start: row[4].get_int().unwrap_or(0) as u32,
+                line_end: row[5].get_int().unwrap_or(0) as u32,
+                ..Default::default()
+            })
+            .collect();
+        Ok(elements)
+    }
+
+    /// Count code elements (function/struct/class/module/interface/enum/trait)
+    /// for accurate pagination metadata in get_code_tree.
+    pub fn count_code_elements(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[count(n)] :=
+                *code_elements[n, et, a, b, c, d, e, f, g, h, i, j{tail}],
+                et in ["function", "struct", "class", "module", "interface", "enum", "trait"]"#
+        );
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
+    }
+
     /// Get relationships with pagination - memory efficient alternative to all_relationships()
     /// Avoids loading entire relationship set + building secondary index in memory
     pub fn get_relationships_paginated(
@@ -625,9 +689,19 @@ impl GraphEngine {
             })
             .collect();
 
-        // Store in cache ONLY when we have data
-        if !elements.is_empty() {
+        // Store in cache ONLY when we have data AND graph is not too large.
+        // Mega-graphs (> LEANKG_MAX_CACHE_ELEMENTS) are never cached to avoid
+        // unbounded RSS growth (see root_cause_docker_memory_2026-07-13.md RC1).
+        let max_cache = max_cache_elements();
+        if !elements.is_empty() && elements.len() <= max_cache {
             *self.elements_cache.write() = Some(elements.clone());
+        } else if elements.len() > max_cache {
+            tracing::warn!(
+                target: "leankg::mem",
+                elements = elements.len(),
+                max_cache,
+                "skipping elements_cache for large graph (LEANKG_MAX_CACHE_ELEMENTS)"
+            );
         }
 
         Ok(elements)
@@ -1100,9 +1174,21 @@ impl GraphEngine {
                 .push(idx);
         }
 
-        // Store in cache
-        *self.relationships_cache.write() = Some(relationships.clone());
-        *self.relationships_by_element.write() = Some(index);
+        // Store in cache ONLY when graph is not too large.
+        // Mega-graphs (> LEANKG_MAX_CACHE_ELEMENTS) skip cache to avoid
+        // unbounded RSS growth (see root_cause_docker_memory_2026-07-13.md RC1).
+        let max_cache = max_cache_elements();
+        if relationships.len() <= max_cache {
+            *self.relationships_cache.write() = Some(relationships.clone());
+            *self.relationships_by_element.write() = Some(index);
+        } else {
+            tracing::warn!(
+                target: "leankg::mem",
+                relationships = relationships.len(),
+                max_cache,
+                "skipping relationships_cache for large graph (LEANKG_MAX_CACHE_ELEMENTS)"
+            );
+        }
 
         Ok(relationships)
     }
@@ -3155,10 +3241,40 @@ impl GraphEngine {
         Ok(conflicts)
     }
 
+    /// FR-B22: Truncate a JSON array section to max_items entries, recording
+    /// truncation metadata if any items were dropped.
+    fn truncate_section(
+        section_name: &str,
+        items: Vec<serde_json::Value>,
+        max_items: Option<usize>,
+        truncated_sections: &mut Vec<serde_json::Value>,
+    ) -> Vec<serde_json::Value> {
+        match max_items {
+            Some(n) if items.len() > n => {
+                let original_count = items.len();
+                let truncated: Vec<serde_json::Value> = items.into_iter().take(n).collect();
+                truncated_sections.push(serde_json::json!({
+                    "section": section_name,
+                    "original_count": original_count,
+                    "returned_count": n,
+                }));
+                truncated
+            }
+            _ => items,
+        }
+    }
+
     /// FR-B20: Get architecture overview - languages, packages, entry points,
-    /// routes, hotspots, clusters, knowledge counts
-    pub fn get_architecture(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    /// routes, hotspots, clusters, knowledge counts.
+    /// FR-B22: Honors token budgets via per-section max_items truncation.
+    /// When max_items is Some(n), each array section is capped at n entries and
+    /// truncated_sections reports which sections were trimmed and their original counts.
+    pub fn get_architecture(
+        &self,
+        max_items: Option<usize>,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let tail = self.code_elements_tail();
+        let mut truncated_sections: Vec<serde_json::Value> = Vec::new();
 
         let lang_query = format!(
             r#"?[language, count(language)] := *code_elements[_, _, _, _, _, _, language, _, _, _, _{tail}]
@@ -3290,6 +3406,26 @@ impl GraphEngine {
             })
             .collect();
 
+        let languages =
+            Self::truncate_section("languages", languages, max_items, &mut truncated_sections);
+        let entry_points = Self::truncate_section(
+            "entry_points",
+            entry_points,
+            max_items,
+            &mut truncated_sections,
+        );
+        let routes = Self::truncate_section("routes", routes, max_items, &mut truncated_sections);
+        let clusters =
+            Self::truncate_section("clusters", clusters, max_items, &mut truncated_sections);
+        let hotspots =
+            Self::truncate_section("hotspots", hotspots, max_items, &mut truncated_sections);
+        let relationship_counts = Self::truncate_section(
+            "relationship_summary",
+            relationship_counts,
+            max_items,
+            &mut truncated_sections,
+        );
+
         Ok(serde_json::json!({
             "languages": languages,
             "entry_points": entry_points,
@@ -3300,6 +3436,8 @@ impl GraphEngine {
             "knowledge_count": self.count_knowledge().unwrap_or(0),
             "total_elements": self.count_elements().unwrap_or(0),
             "total_files": self.count_files().unwrap_or(0),
+            "max_items": max_items,
+            "truncated_sections": truncated_sections,
         }))
     }
 
@@ -3314,9 +3452,14 @@ impl GraphEngine {
             .unwrap_or(0) as usize)
     }
 
-    /// FR-B21: Get graph schema - element type counts, relationship type counts
-    pub fn get_graph_schema(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    /// FR-B21: Get graph schema - element type counts, relationship type counts.
+    /// FR-B22: Honors token budgets via per-section max_items truncation.
+    pub fn get_graph_schema(
+        &self,
+        max_items: Option<usize>,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let tail = self.code_elements_tail();
+        let mut truncated_sections: Vec<serde_json::Value> = Vec::new();
         let type_query = format!(
             r#"?[element_type, count(element_type)] := *code_elements[
                 _, element_type, _, _, _, _, _, _, _, _, _{tail}
@@ -3354,11 +3497,26 @@ impl GraphEngine {
             })
             .collect();
 
+        let element_types = Self::truncate_section(
+            "element_types",
+            element_types,
+            max_items,
+            &mut truncated_sections,
+        );
+        let relationship_types = Self::truncate_section(
+            "relationship_types",
+            relationship_types,
+            max_items,
+            &mut truncated_sections,
+        );
+
         Ok(serde_json::json!({
             "element_types": element_types,
             "relationship_types": relationship_types,
             "total_elements": self.count_elements().unwrap_or(0),
             "total_relationships": self.count_relationships().unwrap_or(0),
+            "max_items": max_items,
+            "truncated_sections": truncated_sections,
         }))
     }
 
@@ -3816,7 +3974,7 @@ mod tests {
         insert_test_element(&engine, "func_b", "function");
         insert_test_element(&engine, "MyClass", "class");
 
-        let schema = engine.get_graph_schema().unwrap();
+        let schema = engine.get_graph_schema(None).unwrap();
         let obj = schema.as_object().unwrap();
         assert!(obj.contains_key("element_types"));
         assert!(obj.contains_key("relationship_types"));
@@ -3836,7 +3994,7 @@ mod tests {
             1,
             10,
         );
-        let arch = engine.get_architecture().unwrap();
+        let arch = engine.get_architecture(None).unwrap();
         let obj = arch.as_object().unwrap();
         assert!(obj.contains_key("languages"));
         assert!(obj.contains_key("entry_points"));
@@ -3851,7 +4009,7 @@ mod tests {
         insert_test_element(&engine, "main", "function");
         insert_test_element(&engine, "serve", "function");
         insert_test_element(&engine, "Start", "function");
-        let arch = engine.get_architecture().unwrap();
+        let arch = engine.get_architecture(None).unwrap();
         let obj = arch.as_object().unwrap();
         let eps = obj["entry_points"].as_array().unwrap();
         assert_eq!(eps.len(), 3, "Should find main, serve, Start");
@@ -3864,7 +4022,7 @@ mod tests {
         insert_test_element_full(&engine, "hot2", "function", "src/hot.rs", "rust", 6, 10);
         insert_test_element_full(&engine, "hot3", "function", "src/hot.rs", "rust", 11, 15);
         insert_test_element_full(&engine, "cold", "function", "src/cold.rs", "rust", 1, 5);
-        let arch = engine.get_architecture().unwrap();
+        let arch = engine.get_architecture(None).unwrap();
         let obj = arch.as_object().unwrap();
         let hs = obj["hotspots"].as_array().unwrap();
         assert!(!hs.is_empty(), "Should find hotspots");
@@ -3956,9 +4114,256 @@ mod tests {
     #[test]
     fn test_graph_schema_empty_db() {
         let (engine, _tmp) = make_test_engine();
-        let schema = engine.get_graph_schema().unwrap();
+        let schema = engine.get_graph_schema(None).unwrap();
         let obj = schema.as_object().unwrap();
         assert_eq!(obj["total_elements"].as_u64().unwrap(), 0);
         assert_eq!(obj["total_relationships"].as_u64().unwrap(), 0);
+    }
+
+    // ── FR-B22: Token budget / max_items truncation tests ──
+
+    #[test]
+    fn test_arch_max_items_truncates_languages() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "f1", "function", "src/a.rs", "rust", 1, 10);
+        insert_test_element_full(&engine, "f2", "function", "src/b.go", "go", 1, 10);
+        insert_test_element_full(&engine, "f3", "function", "src/c.ts", "typescript", 1, 10);
+        insert_test_element_full(&engine, "f4", "function", "src/d.py", "python", 1, 10);
+        insert_test_element_full(&engine, "f5", "function", "src/e.java", "java", 1, 10);
+
+        let arch = engine.get_architecture(Some(2)).unwrap();
+        let obj = arch.as_object().unwrap();
+        assert_eq!(obj["languages"].as_array().unwrap().len(), 2);
+        let trunc = obj["truncated_sections"].as_array().unwrap();
+        let lt = trunc
+            .iter()
+            .find(|t| t["section"].as_str() == Some("languages"));
+        assert!(lt.is_some());
+        assert_eq!(lt.unwrap()["original_count"].as_u64(), Some(5));
+        assert_eq!(lt.unwrap()["returned_count"].as_u64(), Some(2));
+    }
+
+    #[test]
+    fn test_arch_max_items_truncates_hotspots() {
+        let (engine, _tmp) = make_test_engine();
+        for i in 0..5 {
+            insert_test_element_full(
+                &engine,
+                &format!("f{}", i),
+                "function",
+                &format!("src/file_{}.rs", i),
+                "rust",
+                1,
+                10,
+            );
+        }
+        let arch = engine.get_architecture(Some(2)).unwrap();
+        let obj = arch.as_object().unwrap();
+        assert_eq!(obj["hotspots"].as_array().unwrap().len(), 2);
+        let trunc = obj["truncated_sections"].as_array().unwrap();
+        assert!(trunc
+            .iter()
+            .any(|t| t["section"].as_str() == Some("hotspots")));
+    }
+
+    #[test]
+    fn test_arch_max_items_truncates_entry_points() {
+        let (engine, _tmp) = make_test_engine();
+        for ep in &["main", "Main", "start", "serve", "Start"] {
+            insert_test_element_full(
+                &engine,
+                ep,
+                "function",
+                &format!("src/{}.rs", ep),
+                "rust",
+                1,
+                10,
+            );
+        }
+        let arch = engine.get_architecture(Some(2)).unwrap();
+        let obj = arch.as_object().unwrap();
+        assert_eq!(obj["entry_points"].as_array().unwrap().len(), 2);
+        let trunc = obj["truncated_sections"].as_array().unwrap();
+        let et = trunc
+            .iter()
+            .find(|t| t["section"].as_str() == Some("entry_points"));
+        assert!(et.is_some());
+        assert_eq!(et.unwrap()["original_count"].as_u64(), Some(5));
+    }
+
+    #[test]
+    fn test_arch_none_max_items_no_truncation() {
+        let (engine, _tmp) = make_test_engine();
+        for i in 0..10 {
+            insert_test_element_full(
+                &engine,
+                &format!("f{}", i),
+                "function",
+                &format!("src/f{}.rs", i),
+                "rust",
+                1,
+                10,
+            );
+        }
+        let arch = engine.get_architecture(None).unwrap();
+        let obj = arch.as_object().unwrap();
+        assert!(obj["truncated_sections"].as_array().unwrap().is_empty());
+        assert!(obj["max_items"].is_null());
+    }
+
+    #[test]
+    fn test_arch_max_items_larger_than_data() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "f1", "function", "src/a.rs", "rust", 1, 10);
+        let arch = engine.get_architecture(Some(100)).unwrap();
+        let obj = arch.as_object().unwrap();
+        assert!(obj["truncated_sections"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_arch_max_items_includes_field() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "func1", "function");
+        let arch = engine.get_architecture(Some(5)).unwrap();
+        let obj = arch.as_object().unwrap();
+        assert_eq!(obj["max_items"].as_u64(), Some(5));
+    }
+
+    #[test]
+    fn test_arch_max_items_one_minimal() {
+        let (engine, _tmp) = make_test_engine();
+        for i in 0..5 {
+            insert_test_element_full(
+                &engine,
+                &format!("f{}", i),
+                "function",
+                &format!("src/f{}.rs", i),
+                "rust",
+                1,
+                10,
+            );
+        }
+        let arch = engine.get_architecture(Some(1)).unwrap();
+        let obj = arch.as_object().unwrap();
+        for key in &[
+            "languages",
+            "entry_points",
+            "hotspots",
+            "clusters",
+            "relationship_summary",
+        ] {
+            assert!(
+                obj[*key].as_array().unwrap().len() <= 1,
+                "Section {} has >1 item",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn test_arch_max_items_preserves_scalars() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "f1", "function");
+        let arch = engine.get_architecture(Some(1)).unwrap();
+        let obj = arch.as_object().unwrap();
+        assert!(obj.contains_key("knowledge_count"));
+        assert!(obj.contains_key("total_elements"));
+        assert!(obj.contains_key("total_files"));
+    }
+
+    #[test]
+    fn test_arch_truncation_preserves_all_keys() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "f1", "function");
+        let arch = engine.get_architecture(Some(1)).unwrap();
+        let obj = arch.as_object().unwrap();
+        for key in &[
+            "languages",
+            "entry_points",
+            "routes",
+            "clusters",
+            "hotspots",
+            "relationship_summary",
+            "knowledge_count",
+            "total_elements",
+            "total_files",
+            "max_items",
+            "truncated_sections",
+        ] {
+            assert!(
+                obj.contains_key(*key),
+                "Missing key after truncation: {}",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn test_schema_max_items_truncates_element_types() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "f1", "function");
+        insert_test_element(&engine, "s1", "struct");
+        insert_test_element(&engine, "e1", "enum");
+        insert_test_element(&engine, "c1", "class");
+        insert_test_element(&engine, "i1", "interface");
+        let schema = engine.get_graph_schema(Some(2)).unwrap();
+        let obj = schema.as_object().unwrap();
+        assert_eq!(obj["element_types"].as_array().unwrap().len(), 2);
+        let trunc = obj["truncated_sections"].as_array().unwrap();
+        let et = trunc
+            .iter()
+            .find(|t| t["section"].as_str() == Some("element_types"));
+        assert!(et.is_some());
+        assert_eq!(et.unwrap()["original_count"].as_u64(), Some(5));
+    }
+
+    #[test]
+    fn test_schema_max_items_truncates_rel_types() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "a", "function", "src/a.rs", "rust", 1, 10);
+        insert_test_element_full(&engine, "b", "function", "src/b.rs", "rust", 1, 10);
+        insert_test_element_full(&engine, "c", "function", "src/c.rs", "rust", 1, 10);
+        insert_test_element_full(&engine, "d", "function", "src/d.rs", "rust", 1, 10);
+        insert_test_rel(&engine, "src/a.rs::a", "src/b.rs::b", "calls", 0.9);
+        insert_test_rel(&engine, "src/c.rs::c", "src/d.rs::d", "imports", 0.8);
+        insert_test_rel(&engine, "src/a.rs::a", "src/c.rs::c", "references", 0.7);
+        let schema = engine.get_graph_schema(Some(1)).unwrap();
+        let obj = schema.as_object().unwrap();
+        assert_eq!(obj["relationship_types"].as_array().unwrap().len(), 1);
+        let trunc = obj["truncated_sections"].as_array().unwrap();
+        let rt = trunc
+            .iter()
+            .find(|t| t["section"].as_str() == Some("relationship_types"));
+        assert!(rt.is_some());
+        assert_eq!(rt.unwrap()["original_count"].as_u64(), Some(3));
+    }
+
+    #[test]
+    fn test_schema_none_max_items_no_truncation() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "f1", "function");
+        let schema = engine.get_graph_schema(None).unwrap();
+        let obj = schema.as_object().unwrap();
+        assert!(obj["truncated_sections"].as_array().unwrap().is_empty());
+        assert!(obj["max_items"].is_null());
+    }
+
+    #[test]
+    fn test_schema_max_items_includes_field() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "f1", "function");
+        let schema = engine.get_graph_schema(Some(5)).unwrap();
+        let obj = schema.as_object().unwrap();
+        assert_eq!(obj["max_items"].as_u64(), Some(5));
+    }
+
+    #[test]
+    fn test_schema_max_items_preserves_scalars() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "f1", "function");
+        let schema = engine.get_graph_schema(Some(1)).unwrap();
+        let obj = schema.as_object().unwrap();
+        assert!(obj.contains_key("total_elements"));
+        assert!(obj.contains_key("total_relationships"));
     }
 }
