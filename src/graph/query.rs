@@ -3744,6 +3744,40 @@ pub struct DirectoryMetadata {
     pub language_distribution: std::collections::HashMap<String, usize>,
 }
 
+/// US-MP-04: Agent persona config stored in `.leankg/agents/<name>.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPersona {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub focus_areas: Vec<String>,
+    #[serde(default)]
+    pub path_filters: Vec<String>,
+    #[serde(default)]
+    pub cluster_id: Option<String>,
+    #[serde(default)]
+    pub element_types: Vec<String>,
+}
+
+/// US-MP-04: Diary entry appended to `.leankg/agents/<name>.diary.jsonl`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiaryEntry {
+    pub timestamp: i64,
+    pub agent: String,
+    pub note: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// US-MP-04: Focused subgraph returned for a persona.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentFocus {
+    pub agent: String,
+    pub elements: Vec<CodeElement>,
+    pub relationships: Vec<Relationship>,
+}
+
 /// US-MP-06: A cross-cluster tunnel edge (relationship between two
 /// elements belonging to different Leiden clusters).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4554,6 +4588,81 @@ impl GraphEngine {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(tunnels)
+    }
+
+    /// US-MP-04 / FR-MP-18: List agent personas defined in
+    /// `.leankg/agents/*.json`.
+    pub fn list_agents(
+        project_path: &std::path::Path,
+    ) -> Result<Vec<AgentPersona>, Box<dyn std::error::Error>> {
+        let dir = project_path.join(".leankg").join("agents");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut agents = Vec::new();
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path)?;
+            if let Ok(p) = serde_json::from_str::<AgentPersona>(&raw) {
+                agents.push(p);
+            }
+        }
+        agents.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(agents)
+    }
+
+    /// US-MP-04 / FR-MP-19: focus the graph for a specialist agent
+    /// persona, returning only elements matching path/cluster/type
+    /// filters and relationships entirely within that subset.
+    pub fn agent_focus(
+        &self,
+        persona: &AgentPersona,
+    ) -> Result<AgentFocus, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let rels = self.all_relationships()?;
+        let qn_keep: std::collections::HashSet<String> = elements
+            .iter()
+            .filter(|e| {
+                if !persona.element_types.is_empty()
+                    && !persona.element_types.contains(&e.element_type)
+                {
+                    return false;
+                }
+                if let Some(ref cid) = persona.cluster_id {
+                    if e.cluster_id.as_deref() != Some(cid.as_str()) {
+                        return false;
+                    }
+                }
+                if !persona.path_filters.is_empty()
+                    && !persona
+                        .path_filters
+                        .iter()
+                        .any(|p| e.file_path.starts_with(p))
+                {
+                    return false;
+                }
+                true
+            })
+            .map(|e| e.qualified_name.clone())
+            .collect();
+        let focused_rels: Vec<Relationship> = rels
+            .into_iter()
+            .filter(|r| {
+                qn_keep.contains(&r.source_qualified) && qn_keep.contains(&r.target_qualified)
+            })
+            .collect();
+        Ok(AgentFocus {
+            agent: persona.name.clone(),
+            elements: elements
+                .into_iter()
+                .filter(|e| qn_keep.contains(&e.qualified_name))
+                .collect(),
+            relationships: focused_rels,
+        })
     }
 }
 
@@ -5442,5 +5551,36 @@ mod tests {
         assert_eq!(v["source_cluster"], "c1");
         assert_eq!(v["target_cluster"], "c2");
         assert_eq!(v["confidence"], 0.9);
+    }
+
+    // US-MP-04: AgentPersona roundtrip + DiaryEntry
+    #[test]
+    fn agent_persona_roundtrip_and_filters() {
+        let persona = AgentPersona {
+            name: "reviewer".into(),
+            description: "code review specialist".into(),
+            focus_areas: vec!["correctness".into(), "style".into()],
+            path_filters: vec!["src/".into()],
+            cluster_id: Some("c1".into()),
+            element_types: vec!["function".into(), "class".into()],
+        };
+        let json = serde_json::to_string(&persona).unwrap();
+        let back: AgentPersona = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "reviewer");
+        assert_eq!(back.path_filters, vec!["src/".to_string()]);
+        assert_eq!(back.cluster_id.as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn diary_entry_serializes_with_tags() {
+        let entry = DiaryEntry {
+            timestamp: 1700000000,
+            agent: "reviewer".into(),
+            note: "looked at foo.rs".into(),
+            tags: vec!["review".into(), "blocking".into()],
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert_eq!(v["agent"], "reviewer");
+        assert_eq!(v["tags"][0], "review");
     }
 }

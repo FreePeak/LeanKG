@@ -217,6 +217,45 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "agent_focus".to_string(),
+                description: "US-MP-04: Return a focused subgraph filtered by agent persona (path filters, cluster_id, element_types). Persona config lives in .leankg/agents/<name>.json.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Agent persona name"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["name"]
+                }),
+            },
+            ToolDefinition {
+                name: "agent_diary_write".to_string(),
+                description: "US-MP-04: Append a note to an agent's diary (.leankg/agents/<name>.diary.jsonl).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "note": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["name", "note"]
+                }),
+            },
+            ToolDefinition {
+                name: "agent_diary_read".to_string(),
+                description: "US-MP-04: Read recent diary entries for an agent.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "limit": {"type": "integer", "default": 50},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["name"]
+                }),
+            },
+            ToolDefinition {
                 name: "get_cluster_skill".to_string(),
                 description: "US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
                 input_schema: json!({

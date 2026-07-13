@@ -234,6 +234,9 @@ impl ToolHandler {
             "timeline" => self.timeline(arguments),
             "find_tunnels" => self.find_tunnels(arguments),
             "get_cluster_skill" => self.get_cluster_skill(arguments),
+            "agent_focus" => self.agent_focus(arguments),
+            "agent_diary_write" => self.agent_diary_write(arguments),
+            "agent_diary_read" => self.agent_diary_read(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1489,6 +1492,85 @@ impl ToolHandler {
             "count": tunnels.len(),
             "tunnels": tunnels,
         }))
+    }
+
+    fn agent_focus(&self, args: &Value) -> Result<Value, String> {
+        use crate::graph::query::AgentPersona;
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let dir = std::path::Path::new(project).join(".leankg").join("agents");
+        let path = dir.join(format!("{}.json", name));
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("persona {} not found: {}", name, e))?;
+        let persona: AgentPersona =
+            serde_json::from_str(&raw).map_err(|e| format!("invalid persona JSON: {}", e))?;
+        let focus = self
+            .graph_engine
+            .agent_focus(&persona)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "agent": focus.agent,
+            "element_count": focus.elements.len(),
+            "relationship_count": focus.relationships.len(),
+            "elements": focus.elements,
+            "relationships": focus.relationships,
+        }))
+    }
+
+    fn agent_diary_write(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let note = args["note"].as_str().ok_or("Missing 'note'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let tags: Vec<String> = args["tags"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let dir = std::path::Path::new(project).join(".leankg").join("agents");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let entry = serde_json::json!({
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+            "agent": name,
+            "note": note,
+            "tags": tags,
+        });
+        let path = dir.join(format!("{}.diary.jsonl", name));
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| e.to_string())?;
+        writeln!(f, "{}", entry).map_err(|e| e.to_string())?;
+        Ok(json!({ "written": true, "path": path.display().to_string() }))
+    }
+
+    fn agent_diary_read(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+        let project = args["project"].as_str().unwrap_or(".");
+        let path = std::path::Path::new(project)
+            .join(".leankg")
+            .join("agents")
+            .join(format!("{}.diary.jsonl", name));
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => return Ok(json!({ "entries": [] })),
+        };
+        let mut entries: Vec<serde_json::Value> = raw
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        if entries.len() > limit {
+            entries = entries.split_off(entries.len() - limit);
+        }
+        Ok(json!({ "count": entries.len(), "entries": entries }))
     }
 
     fn load_layer(&self, args: &Value) -> Result<Value, String> {
