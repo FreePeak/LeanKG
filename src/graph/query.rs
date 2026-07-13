@@ -3709,6 +3709,75 @@ pub struct LabelCount {
     pub pct: f64,
 }
 
+/// US-MP-08: Parsed directory metadata from a directory element.
+#[derive(Debug, Clone)]
+pub struct DirectoryMetadata {
+    pub child_count: usize,
+    pub total_lines: usize,
+    pub language_distribution: std::collections::HashMap<String, usize>,
+}
+
+/// US-MP-08 / FR-MP-21..23: helpers for folder-as-graph conventions.
+pub mod folder_gn {
+    use super::CodeElement;
+    use super::DirectoryMetadata;
+
+    /// Canonical directory qualified_name with trailing slash.
+    /// E.g. `"src/graph"` -> `"src/graph/"`. The trailing slash
+    /// distinguishes directories from files whose qualified_name is
+    /// their full path.
+    pub fn qualified_name(path: &str) -> String {
+        let trimmed = path.trim_end_matches('/');
+        format!("{}/", trimmed)
+    }
+
+    /// Strip the trailing slash for filesystem comparisons.
+    pub fn strip(qn: &str) -> &str {
+        qn.trim_end_matches('/')
+    }
+
+    /// True when the qualified_name follows the directory convention
+    /// (trailing slash). Used by `search_code` / `query_file` folder
+    /// scoping and impact analysis at directory level.
+    pub fn is_directory(qn: &str) -> bool {
+        qn.ends_with('/')
+    }
+
+    /// Read child_count / language_distribution / total_lines from a
+    /// directory element's metadata. Returns None for non-directory
+    /// nodes or nodes missing the metadata block.
+    pub fn metadata(elem: &CodeElement) -> Option<DirectoryMetadata> {
+        if elem.element_type != "directory" {
+            return None;
+        }
+        let child_count = elem
+            .metadata
+            .get("child_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let total_lines = elem
+            .metadata
+            .get("total_lines")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let language_distribution: std::collections::HashMap<String, usize> = elem
+            .metadata
+            .get("language_distribution")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n as usize)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(DirectoryMetadata {
+            child_count,
+            total_lines,
+            language_distribution,
+        })
+    }
+}
+
 /// US-GF-06: Aggregated graph report. Renders to `GRAPH_REPORT.md`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphReport {
@@ -4243,6 +4312,37 @@ impl GraphEngine {
             confidence_distribution: confidence_dist,
             suggested_questions,
         })
+    }
+
+    /// US-MP-08 / FR-MP-25: list all directory nodes that are direct
+    /// children of the given folder qualified_name (with trailing
+    /// slash). Returns them sorted by name. Used by folder-scoped
+    /// search and impact analysis at directory level.
+    pub fn subdirectories(
+        &self,
+        folder_qn: &str,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let prefix = folder_gn::strip(folder_qn);
+        let depth = prefix.matches('/').count() + 1; // children are one level deeper
+        let elements = self.all_elements()?;
+        let mut children: Vec<CodeElement> = elements
+            .into_iter()
+            .filter(|e| e.element_type == "directory")
+            .filter(|e| {
+                let p = folder_gn::strip(&e.qualified_name);
+                p.starts_with(prefix)
+                    && p.len() > prefix.len()
+                    && p[prefix.len()..]
+                        .trim_start_matches('/')
+                        .matches('/')
+                        .count()
+                        == 0
+            })
+            .collect();
+        // Sanity: limit depth
+        children.retain(|e| folder_gn::strip(&e.qualified_name).matches('/').count() == depth);
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(children)
     }
 }
 
@@ -5013,5 +5113,49 @@ mod tests {
         assert!(md.contains("EXTRACTED"));
         assert!(md.contains("Suggested Questions"));
         assert!(md.contains("Question 1?"));
+    }
+
+    // US-MP-08: folder_gn helpers
+    #[test]
+    fn folder_qualified_name_adds_trailing_slash() {
+        assert_eq!(folder_gn::qualified_name("src"), "src/");
+        assert_eq!(folder_gn::qualified_name("src/graph"), "src/graph/");
+        assert_eq!(folder_gn::qualified_name("src/graph/"), "src/graph/");
+    }
+
+    #[test]
+    fn folder_is_directory_detects_trailing_slash() {
+        assert!(folder_gn::is_directory("src/"));
+        assert!(!folder_gn::is_directory("src/main.rs"));
+        assert!(!folder_gn::is_directory(""));
+    }
+
+    #[test]
+    fn folder_metadata_reads_known_fields() {
+        let elem = CodeElement {
+            qualified_name: "src/".into(),
+            element_type: "directory".into(),
+            name: "src".into(),
+            file_path: "src/".into(),
+            metadata: serde_json::json!({
+                "child_count": 5,
+                "total_lines": 1234,
+                "language_distribution": {"rust": 3, "toml": 2}
+            }),
+            ..Default::default()
+        };
+        let m = folder_gn::metadata(&elem).expect("directory metadata");
+        assert_eq!(m.child_count, 5);
+        assert_eq!(m.total_lines, 1234);
+        assert_eq!(m.language_distribution.get("rust"), Some(&3));
+    }
+
+    #[test]
+    fn folder_metadata_returns_none_for_non_directory() {
+        let elem = CodeElement {
+            element_type: "function".into(),
+            ..Default::default()
+        };
+        assert!(folder_gn::metadata(&elem).is_none());
     }
 }
