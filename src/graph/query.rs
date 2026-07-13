@@ -3265,7 +3265,7 @@ impl GraphEngine {
         // Find routes
         let route_query = format!(
             r#"?[qualified_name, file_path, metadata] := *code_elements[
-                qualified_name, "route", name, file_path, _, _, language, _, _, metadata, _{tail}
+                qualified_name, "route", name, file_path, _, _, language, _, _, _, metadata{tail}
             ]"#
         );
         let route_result = crate::db::schema::run_script(

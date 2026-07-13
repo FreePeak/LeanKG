@@ -1,12 +1,9 @@
 project:
-  name: my-project
-  root: .
+  name: .leankg
+  root: ./src
   languages:
-  - go
-  - typescript
-  - python
-  - java
-  - kotlin
+  - javascript
+  - rust
 indexer:
   exclude:
   - '**/node_modules/**'

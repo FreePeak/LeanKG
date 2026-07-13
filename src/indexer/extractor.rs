@@ -268,6 +268,27 @@ impl<'a> EntityExtractor<'a> {
             }
         }
 
+        // Phase 1: Extract HTTP routes from Go and TS/JS files
+        if self.language == "go"
+            || self.language == "typescript"
+            || self.language == "javascript"
+            || self.language == "tsx"
+            || self.language == "jsx"
+        {
+            let routes = crate::indexer::route_extractor::RouteExtractor::extract_routes(
+                self.source,
+                tree,
+                self.file_path,
+                self.language,
+            );
+            let (route_elements, route_rels) =
+                crate::indexer::route_extractor::RouteExtractor::routes_to_elements_and_rels(
+                    &routes,
+                );
+            elements.extend(route_elements);
+            relationships.extend(route_rels);
+        }
+
         if self.language == "kotlin" || self.language == "java" {
             self.extract_android_bindings(&mut relationships);
         }

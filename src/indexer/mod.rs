@@ -5,6 +5,7 @@ pub mod microservice;
 pub mod parser;
 pub mod process_processor;
 pub mod regex_cache;
+pub mod route_extractor;
 pub mod terraform;
 
 pub mod android_hilt;
