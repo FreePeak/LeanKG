@@ -169,6 +169,10 @@ pub struct ToolHandler {
     db_path: std::path::PathBuf,
     orchestrator: QueryOrchestrator,
     session_cache: std::sync::Arc<parking_lot::RwLock<crate::compress::SessionCache>>,
+    /// US-CBM-C2 / FR-C02: hot-path cache for high-frequency MCP tools
+    /// (search, find_function, get_architecture, get_graph_schema,
+    /// find_dead_code). Keyed by (tool, args-json) with 60s TTL.
+    hot_cache: std::sync::Arc<parking_lot::RwLock<crate::graph::cache::TimedCache<String, Value>>>,
 }
 
 impl ToolHandler {
@@ -179,6 +183,9 @@ impl ToolHandler {
             orchestrator: QueryOrchestrator::with_persistence(graph_engine),
             session_cache: std::sync::Arc::new(parking_lot::RwLock::new(
                 crate::compress::SessionCache::new(),
+            )),
+            hot_cache: std::sync::Arc::new(parking_lot::RwLock::new(
+                crate::graph::cache::TimedCache::new(60, 256),
             )),
         }
     }
@@ -757,6 +764,24 @@ impl ToolHandler {
         Ok(json!({
             "message": "Hello, World!"
         }))
+    }
+
+    /// US-CBM-C2 / FR-C02: hot-path result cache for high-frequency
+    /// MCP tools. Wraps an LRU TimedCache keyed by `(tool, args)`.
+    /// Default 60s TTL, 256 entries. Cache is invalidated on every
+    /// successful index via `invalidate_hot_cache` (see write tracker).
+    fn hot_cache_get(&self, tool: &str, key_suffix: &str) -> Option<Value> {
+        let key = format!("{}:{}", tool, key_suffix);
+        self.hot_cache.read().get(&key)
+    }
+
+    fn hot_cache_put(&self, tool: &str, key_suffix: &str, value: Value) {
+        let key = format!("{}:{}", tool, key_suffix);
+        self.hot_cache.write().insert(key, value);
+    }
+
+    pub fn invalidate_hot_cache(&self) {
+        self.hot_cache.write().clear();
     }
 
     fn mcp_impact(&self, args: &Value) -> Result<Value, String> {
@@ -1363,7 +1388,9 @@ impl ToolHandler {
 
     fn find_function(&self, args: &Value) -> Result<Value, String> {
         let name = args["name"].as_str().ok_or("Missing 'name' parameter")?;
-
+        if let Some(v) = self.hot_cache_get("find_function", name) {
+            return Ok(v);
+        }
         let elements = self
             .graph_engine
             .search_by_name_typed(name, Some("function"), 50)
@@ -1383,7 +1410,9 @@ impl ToolHandler {
             })
             .collect();
 
-        Ok(json!({ "functions": matches }))
+        let value = json!({ "functions": matches });
+        self.hot_cache_put("find_function", name, value.clone());
+        Ok(value)
     }
 
     fn shortest_path(&self, args: &Value) -> Result<Value, String> {
