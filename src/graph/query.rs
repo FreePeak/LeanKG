@@ -3786,6 +3786,24 @@ pub struct TeamMapEntry {
     pub services: Vec<String>,
 }
 
+/// US-GF-08: per-file impact (cluster_id, label) for changed files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrFileImpact {
+    pub file: String,
+    pub cluster_id: Option<String>,
+    pub cluster_label: Option<String>,
+}
+
+/// US-GF-08: aggregated PR impact report (severity + touched clusters).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrImpactReport {
+    pub env: String,
+    pub changed_file_count: usize,
+    pub touched_clusters: Vec<String>,
+    pub severity: String,
+    pub files: Vec<PrFileImpact>,
+}
+
 /// US-MP-06: A cross-cluster tunnel edge (relationship between two
 /// elements belonging to different Leiden clusters).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4780,6 +4798,54 @@ impl GraphEngine {
         }
         Ok(out)
     }
+
+    /// US-GF-08 / FR-GF-17..18: PR impact dashboard. Given a list of
+    /// changed files (typically from `git diff --name-only`), return
+    /// each file's cluster membership and a severity rating based on
+    /// the number of distinct clusters touched. Useful for
+    /// merge-order risk assessment and conflict triage.
+    pub fn pr_impact(
+        &self,
+        changed_files: &[String],
+        env: &str,
+    ) -> Result<PrImpactReport, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let mut touched_clusters: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut per_file: Vec<PrFileImpact> = Vec::new();
+        for f in changed_files {
+            let cluster = elements
+                .iter()
+                .find(|e| e.file_path == *f && e.cluster_id.is_some())
+                .and_then(|e| e.cluster_id.clone());
+            let label = elements
+                .iter()
+                .find(|e| e.file_path == *f)
+                .and_then(|e| e.cluster_label.clone());
+            if let Some(ref c) = cluster {
+                touched_clusters.insert(c.clone());
+            }
+            per_file.push(PrFileImpact {
+                file: f.clone(),
+                cluster_id: cluster,
+                cluster_label: label,
+            });
+        }
+        let severity = if touched_clusters.len() >= 5 {
+            "HIGH"
+        } else if touched_clusters.len() >= 2 {
+            "MEDIUM"
+        } else {
+            "LOW"
+        };
+        Ok(PrImpactReport {
+            env: env.to_string(),
+            changed_file_count: changed_files.len(),
+            touched_clusters: touched_clusters.into_iter().collect(),
+            severity: severity.to_string(),
+            files: per_file,
+        })
+    }
 }
 
 fn chrono_unix() -> i64 {
@@ -5719,5 +5785,25 @@ mod tests {
         assert_eq!(v["team"], "platform");
         assert_eq!(v["on_call"], "alice");
         assert_eq!(v["services"].as_array().unwrap().len(), 2);
+    }
+
+    // US-GF-08: PrImpactReport serialization
+    #[test]
+    fn pr_impact_report_severity_serialization() {
+        let report = PrImpactReport {
+            env: "local".into(),
+            changed_file_count: 3,
+            touched_clusters: vec!["c1".into(), "c2".into()],
+            severity: "MEDIUM".into(),
+            files: vec![PrFileImpact {
+                file: "src/main.rs".into(),
+                cluster_id: Some("c1".into()),
+                cluster_label: Some("entry".into()),
+            }],
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["severity"], "MEDIUM");
+        assert_eq!(v["changed_file_count"], 3);
+        assert_eq!(v["files"].as_array().unwrap().len(), 1);
     }
 }

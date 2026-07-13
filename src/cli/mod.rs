@@ -158,6 +158,15 @@ pub enum CLICommand {
         #[arg(long)]
         note: Option<String>,
     },
+    /// US-GF-08: PR impact dashboard (severity + touched clusters)
+    Prs {
+        /// Environment scope (default: local)
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// Comma-separated changed file paths (overrides git diff auto-detect)
+        #[arg(long)]
+        files: Option<String>,
+    },
     /// Auto-install MCP config
     Install,
     /// Show index status

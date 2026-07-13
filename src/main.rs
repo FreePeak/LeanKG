@@ -306,6 +306,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &db_path,
             )?;
         }
+        cli::CLICommand::Prs { env, files } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            let files_vec: Vec<String> = files
+                .as_deref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            run_prs(&project_path, &env, &files_vec, &db_path)?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1238,6 +1252,28 @@ fn run_reflect(
 ) -> Result<(), Box<dyn std::error::Error>> {
     graph::GraphEngine::report_query_outcome(project_path, question, nodes, outcome, note)?;
     println!("Recorded reflection for outcome '{}'", outcome);
+    Ok(())
+}
+
+fn run_prs(
+    _project_path: &std::path::Path,
+    env: &str,
+    files: &[String],
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let report = graph_engine.pr_impact(files, env)?;
+    println!(
+        "PR impact: severity={} | touched_clusters={} | changed_files={}",
+        report.severity,
+        report.touched_clusters.len(),
+        report.changed_file_count
+    );
+    for f in report.files.iter().take(50) {
+        let cluster = f.cluster_label.as_deref().unwrap_or("(none)");
+        println!("  {} -> cluster={}", f.file, cluster);
+    }
     Ok(())
 }
 

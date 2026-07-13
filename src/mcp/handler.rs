@@ -247,6 +247,7 @@ impl ToolHandler {
             "report_query_outcome" => self.report_query_outcome(arguments),
             "get_team_map" => self.get_team_map(arguments),
             "get_overview_context" => self.get_overview_context(arguments),
+            "get_pr_impact" => self.get_pr_impact(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1663,6 +1664,24 @@ impl ToolHandler {
             "l1_critical_facts": l1,
             "wake_up": wake,
         }))
+    }
+
+    fn get_pr_impact(&self, args: &Value) -> Result<Value, String> {
+        let files: Vec<String> = args["files"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let env = args["env"].as_str().unwrap_or("local");
+        let report = self
+            .graph_engine
+            .pr_impact(&files, env)
+            .map_err(|e| e.to_string())?;
+        let value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        Ok(value)
     }
 
     fn load_layer(&self, args: &Value) -> Result<Value, String> {

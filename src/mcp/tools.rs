@@ -217,6 +217,19 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "get_pr_impact".to_string(),
+                description: "US-GF-08: PR impact dashboard. Given changed files, returns cluster overlap and severity (LOW / MEDIUM / HIGH). Use to triage merge-order risk before pushing.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "files": {"type": "array", "items": {"type": "string"}, "description": "Changed file paths (e.g. from git diff --name-only)"},
+                        "env": {"type": "string", "default": "local"},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["files"]
+                }),
+            },
+            ToolDefinition {
                 name: "get_overview_context".to_string(),
                 description: "US-GN-08: Return the project overview context (identity, critical facts, recent hotspots) as a single MCP-callable resource. Acts as an MCP-Resources-style agent context shortcut for wake_up + L0/L1 layers.".to_string(),
                 input_schema: json!({
