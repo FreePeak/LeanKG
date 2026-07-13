@@ -233,6 +233,7 @@ impl ToolHandler {
             "check_consistency" => self.check_consistency(arguments),
             "timeline" => self.timeline(arguments),
             "find_tunnels" => self.find_tunnels(arguments),
+            "get_cluster_skill" => self.get_cluster_skill(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -2260,6 +2261,7 @@ impl ToolHandler {
         use crate::graph::clustering::{Cluster, CommunityDetector};
 
         let limit = args["limit"].as_i64().unwrap_or(100) as usize;
+        let _skill_format = args["skill_format"].as_str().unwrap_or("none");
 
         // Guard: refuse clustering on huge graphs to avoid OOM.
         // Louvain over 600k nodes pushed RSS to 5.64 GiB / 6 GiB (94%).
@@ -2667,6 +2669,111 @@ impl ToolHandler {
                 Err("Cluster not found. Try get_clusters to see available cluster IDs.".to_string())
             }
         }
+    }
+
+    /// US-GN-07 / Cluster-level SKILL.md generator. Builds a per-cluster
+    /// SKILL.md summary including label, member count, top files, key
+    /// entry points, and usage hints. Useful when an agent's context
+    /// is scoped to a single cluster.
+    fn get_cluster_skill(&self, args: &Value) -> Result<Value, String> {
+        use crate::graph::clustering::CommunityDetector;
+
+        let cluster_id = args["cluster_id"].as_str().ok_or("Missing 'cluster_id'")?;
+
+        let detector = CommunityDetector::new(self.graph_engine.db());
+        let clusters = detector
+            .detect_communities()
+            .map_err(|e| format!("Failed to detect clusters: {}", e))?;
+        let cluster = clusters
+            .get(cluster_id)
+            .cloned()
+            .ok_or_else(|| format!("Cluster {} not found", cluster_id))?;
+
+        let elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let rels = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+
+        let member_set: std::collections::HashSet<String> =
+            cluster.members.iter().cloned().collect();
+        let member_elements: Vec<_> = elements
+            .iter()
+            .filter(|e| member_set.contains(&e.qualified_name))
+            .collect();
+
+        // Top files by member count
+        let mut file_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for e in &member_elements {
+            *file_counts.entry(e.file_path.clone()).or_insert(0) += 1;
+        }
+        let mut top_files: Vec<(String, usize)> = file_counts.into_iter().collect();
+        top_files.sort_by_key(|f| std::cmp::Reverse(f.1));
+        top_files.truncate(5);
+
+        // Entry points: members with inbound edges from outside the cluster
+        let entry_points: Vec<String> = member_elements
+            .iter()
+            .filter(|e| {
+                rels.iter().any(|r| {
+                    r.target_qualified == e.qualified_name
+                        && !member_set.contains(&r.source_qualified)
+                })
+            })
+            .take(5)
+            .map(|e| e.qualified_name.clone())
+            .collect();
+
+        let mut md = String::new();
+        md.push_str(&format!(
+            "# SKILL: {} ({})\n\n",
+            if cluster.label.is_empty() {
+                "(unlabeled)"
+            } else {
+                cluster.label.as_str()
+            },
+            cluster.id
+        ));
+        md.push_str(&format!(
+            "Cluster with **{}** members.\n\n",
+            cluster.members.len()
+        ));
+        if !top_files.is_empty() {
+            md.push_str("## Top files\n\n");
+            for (f, c) in &top_files {
+                md.push_str(&format!("- `{}` ({} elements)\n", f, c));
+            }
+            md.push('\n');
+        }
+        if !cluster.representative_files.is_empty() {
+            md.push_str("## Representative files\n\n");
+            for f in &cluster.representative_files {
+                md.push_str(&format!("- `{}`\n", f));
+            }
+            md.push('\n');
+        }
+        if !entry_points.is_empty() {
+            md.push_str("## Entry points\n\n");
+            for e in &entry_points {
+                md.push_str(&format!("- `{}`\n", e));
+            }
+            md.push('\n');
+        }
+        md.push_str("## Usage hints\n\n");
+        md.push_str(
+            "- Use `search_code` scoped to one of the top files to find related symbols.\n",
+        );
+        md.push_str("- Use `explain_node` on an entry point to get cluster-level context.\n");
+        md.push_str("- Use `find_tunnels` and filter by source_cluster/target_cluster to see cross-cluster edges.\n");
+
+        Ok(json!({
+            "cluster_id": cluster.id,
+            "markdown": md,
+        }))
     }
 
     // ========================================================================

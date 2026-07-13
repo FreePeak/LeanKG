@@ -217,6 +217,18 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "get_cluster_skill".to_string(),
+                description: "US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "cluster_id": {"type": "string", "description": "Cluster ID (from get_clusters)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["cluster_id"]
+                }),
+            },
+            ToolDefinition {
                 name: "find_tunnels".to_string(),
                 description: "US-MP-06: Find cross-domain tunnels — relationships where source and target belong to different Leiden clusters. Sorted by confidence descending.".to_string(),
                 input_schema: json!({
