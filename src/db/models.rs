@@ -298,6 +298,36 @@ impl Relationship {
             "MAY BE AFFECTED"
         }
     }
+
+    /// US-GF-04 / FR-GF-07..08: Derive the edge provenance label
+    /// (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`) from the
+    /// `resolution_method` field in metadata. Used by `shortest_path`,
+    /// `query_graph`, `explain_node`, and Web UI edge tooltips so agents
+    /// can see whether an edge was explicit in source or resolver-derived.
+    pub fn confidence_label(&self) -> &'static str {
+        let method = self
+            .metadata
+            .get("resolution_method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        match method {
+            "typed" => "EXTRACTED",
+            "name" if self.confidence >= 0.8 => "EXTRACTED",
+            "name_file_hint" if self.confidence >= 0.6 => "INFERRED",
+            "name" => "INFERRED",
+            "unresolved" => "AMBIGUOUS",
+            _ if self.confidence >= 0.8 => "EXTRACTED",
+            _ if self.confidence >= 0.5 => "INFERRED",
+            _ => "AMBIGUOUS",
+        }
+    }
+}
+
+/// US-GF-04: Canonical edge provenance labels for documentation and tests.
+pub mod confidence_labels {
+    pub const EXTRACTED: &str = "EXTRACTED";
+    pub const INFERRED: &str = "INFERRED";
+    pub const AMBIGUOUS: &str = "AMBIGUOUS";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -817,5 +847,78 @@ mod tests {
         assert_eq!(invite.team_id, "team-1");
         assert!(invite.email.is_some());
         assert!(!invite.accepted);
+    }
+
+    // US-GF-04: edge provenance label mapping
+    #[test]
+    fn typed_resolution_is_extracted() {
+        let rel = Relationship {
+            confidence: 1.0,
+            metadata: serde_json::json!({"resolution_method": "typed"}),
+            ..Default::default()
+        };
+        assert_eq!(rel.confidence_label(), "EXTRACTED");
+    }
+
+    #[test]
+    fn name_high_confidence_is_extracted() {
+        let rel = Relationship {
+            confidence: 0.9,
+            metadata: serde_json::json!({"resolution_method": "name"}),
+            ..Default::default()
+        };
+        assert_eq!(rel.confidence_label(), "EXTRACTED");
+    }
+
+    #[test]
+    fn name_low_confidence_is_inferred() {
+        let rel = Relationship {
+            confidence: 0.5,
+            metadata: serde_json::json!({"resolution_method": "name"}),
+            ..Default::default()
+        };
+        assert_eq!(rel.confidence_label(), "INFERRED");
+    }
+
+    #[test]
+    fn file_hint_is_inferred() {
+        let rel = Relationship {
+            confidence: 0.7,
+            metadata: serde_json::json!({"resolution_method": "name_file_hint"}),
+            ..Default::default()
+        };
+        assert_eq!(rel.confidence_label(), "INFERRED");
+    }
+
+    #[test]
+    fn unresolved_is_ambiguous() {
+        let rel = Relationship {
+            confidence: 0.2,
+            metadata: serde_json::json!({"resolution_method": "unresolved"}),
+            ..Default::default()
+        };
+        assert_eq!(rel.confidence_label(), "AMBIGUOUS");
+    }
+
+    #[test]
+    fn unknown_method_falls_back_to_confidence_band() {
+        let high = Relationship {
+            confidence: 0.95,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+        assert_eq!(high.confidence_label(), "EXTRACTED");
+        let mid = Relationship {
+            confidence: 0.6,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+        assert_eq!(mid.confidence_label(), "INFERRED");
+        let low = Relationship {
+            confidence: 0.2,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+        assert_eq!(low.confidence_label(), "AMBIGUOUS");
     }
 }
