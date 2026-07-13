@@ -457,7 +457,9 @@ impl<'a> EntityExtractor<'a> {
             | "method_signature"
             | "constructor_declaration"
             | "constructor_signature"
-            | "secondary_constructor" => {
+            | "secondary_constructor"
+            | "getter"
+            | "setter" => {
                 self.extract_function(node, parent, elements, relationships);
             }
             "class_declaration"
@@ -544,6 +546,10 @@ impl<'a> EntityExtractor<'a> {
                         | "mixin_declaration"
                         | "extension_declaration"
                         | "type_alias"
+                        | "getter"
+                        | "setter"
+                        | "getter_signature"
+                        | "setter_signature"
                 ) {
                     self.get_node_name(node)
                 } else {
@@ -1591,6 +1597,68 @@ impl<'a> EntityExtractor<'a> {
                         .map(String::from);
                 }
             }
+        }
+
+        // Dart getter_signature / setter_signature: the inner child is an
+        // identifier (the member name). The outer method_signature wraps a
+        // type_identifier + getter_signature/setter_signature child.
+        if node_type == "getter_signature" || node_type == "setter_signature" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "identifier" | "property_identifier" | "field_identifier"
+                ) {
+                    return std::str::from_utf8(self.source.get(child.byte_range())?)
+                        .ok()
+                        .map(String::from);
+                }
+            }
+        }
+
+        // Dart getter/setter: the trailing identifier is the member name.
+        // Skip the return type, the get/set keyword, and any primitive-type
+        // tokens so we land on the actual identifier.
+        let mut identifier_candidate: Option<String> = None;
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            // Recurse into Dart's getter_signature / setter_signature wrapper.
+            if child.kind() == "getter_signature" || child.kind() == "setter_signature" {
+                let mut inner_cursor = child.walk();
+                for inner in child.children(&mut inner_cursor) {
+                    if matches!(
+                        inner.kind(),
+                        "identifier" | "property_identifier" | "field_identifier"
+                    ) {
+                        let text = std::str::from_utf8(self.source.get(inner.byte_range())?)
+                            .ok()
+                            .map(String::from);
+                        if let Some(t) = text {
+                            return Some(t);
+                        }
+                    }
+                }
+            }
+            if matches!(
+                child.kind(),
+                "get" | "set" | "primitive_type" | "type_identifier" | "void"
+            ) {
+                continue;
+            }
+            if matches!(
+                child.kind(),
+                "identifier" | "property_identifier" | "field_identifier"
+            ) {
+                let text = std::str::from_utf8(self.source.get(child.byte_range())?)
+                    .ok()
+                    .map(String::from);
+                if text.is_some() {
+                    identifier_candidate = text;
+                }
+            }
+        }
+        if let Some(name) = identifier_candidate {
+            return Some(name);
         }
 
         let mut cursor = node.walk();
@@ -2923,6 +2991,53 @@ class _MyHomePageState extends State<MyHomePage> {
                 .filter(|e| e.element_type == "class")
                 .collect();
             assert!(classes.len() >= 2, "Should extract both widget classes");
+        }
+    }
+
+    #[test]
+    fn test_extract_dart_enum() {
+        let source = br#"
+enum Color { red, green, blue }
+"#;
+        if let Some(tree) = parse_dart(source) {
+            let extractor = EntityExtractor::new(source, "color.dart", "dart");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                elements
+                    .iter()
+                    .any(|e| e.element_type == "enum" && e.name == "Color"),
+                "Should extract enum Color: {:?}",
+                elements
+                    .iter()
+                    .map(|e| (&e.element_type, &e.name))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_dart_getter_setter() {
+        let source = br#"
+class Box {
+  int get value => 42;
+  set value(int v) {}
+}
+"#;
+        if let Some(tree) = parse_dart(source) {
+            let extractor = EntityExtractor::new(source, "box.dart", "dart");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                elements
+                    .iter()
+                    .any(|e| e.element_type == "class" && e.name == "Box"),
+                "Should extract Box class"
+            );
+            assert!(
+                elements
+                    .iter()
+                    .any(|e| e.name == "value" && e.element_type != "class"),
+                "Should extract value getter/setter"
+            );
         }
     }
 }
