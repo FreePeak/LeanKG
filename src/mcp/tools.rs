@@ -217,6 +217,18 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "get_graph_report".to_string(),
+                description: "US-GF-06: Return the full graph report (god nodes, confidence distribution, suggested questions). Writes `.leankg/GRAPH_REPORT.md` on disk.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"},
+                        "project_name": {"type": "string", "default": "project", "description": "Display name for the report header"},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "get_god_nodes".to_string(),
                 description: "US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs.".to_string(),
                 input_schema: json!({

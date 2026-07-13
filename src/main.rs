@@ -260,6 +260,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             run_god_nodes(limit, exclude_hubs_percentile, &db_path)?;
         }
+        cli::CLICommand::Report { project_name, out } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_graph_report(
+                &project_path,
+                project_name.as_deref(),
+                out.as_deref(),
+                &db_path,
+            )?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1101,6 +1111,35 @@ fn run_god_nodes(
             n.name
         );
     }
+    Ok(())
+}
+
+fn run_graph_report(
+    project_path: &std::path::Path,
+    project_name: Option<&str>,
+    out: Option<&str>,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let name = project_name.map(String::from).unwrap_or_else(|| {
+        project_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string()
+    });
+    let report = graph_engine.generate_graph_report(&name)?;
+    let markdown = report.to_markdown();
+    let out_path = match out {
+        Some(p) => std::path::PathBuf::from(p),
+        None => project_path.join(".leankg").join("GRAPH_REPORT.md"),
+    };
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&out_path, &markdown)?;
+    println!("Wrote graph report to {}", out_path.display());
     Ok(())
 }
 

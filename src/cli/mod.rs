@@ -124,6 +124,15 @@ pub enum CLICommand {
         #[arg(long)]
         exclude_hubs_percentile: Option<u8>,
     },
+    /// US-GF-06: Generate GRAPH_REPORT.md (god nodes, confidence, suggested questions)
+    Report {
+        /// Project display name (default: directory name)
+        #[arg(long)]
+        project_name: Option<String>,
+        /// Output file path (default: .leankg/GRAPH_REPORT.md)
+        #[arg(long)]
+        out: Option<String>,
+    },
     /// Auto-install MCP config
     Install,
     /// Show index status

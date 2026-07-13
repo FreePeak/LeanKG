@@ -3701,6 +3701,72 @@ pub struct GodNode {
     pub degree: usize,
 }
 
+/// US-GF-06: Per-label count + percentage for confidence distribution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelCount {
+    pub label: String,
+    pub count: usize,
+    pub pct: f64,
+}
+
+/// US-GF-06: Aggregated graph report. Renders to `GRAPH_REPORT.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphReport {
+    pub project: String,
+    pub total_elements: usize,
+    pub total_relationships: usize,
+    pub file_count: usize,
+    pub function_count: usize,
+    pub class_count: usize,
+    pub god_nodes: Vec<GodNode>,
+    pub confidence_distribution: Vec<LabelCount>,
+    pub suggested_questions: Vec<String>,
+}
+
+impl GraphReport {
+    /// Render the report to markdown for `.leankg/GRAPH_REPORT.md`.
+    pub fn to_markdown(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("# Graph Report: {}\n\n", self.project));
+        out.push_str("## Overview\n\n");
+        out.push_str(&format!("- Total elements: {}\n", self.total_elements));
+        out.push_str(&format!(
+            "- Total relationships: {}\n",
+            self.total_relationships
+        ));
+        out.push_str(&format!("- Files: {}\n", self.file_count));
+        out.push_str(&format!("- Functions: {}\n", self.function_count));
+        out.push_str(&format!("- Classes/Structs: {}\n\n", self.class_count));
+
+        out.push_str("## Confidence Distribution\n\n");
+        out.push_str("| Label | Count | % |\n|---|---|---|\n");
+        for c in &self.confidence_distribution {
+            out.push_str(&format!("| {} | {} | {:.1}% |\n", c.label, c.count, c.pct));
+        }
+        out.push('\n');
+
+        out.push_str("## Top God Nodes\n\n");
+        if self.god_nodes.is_empty() {
+            out.push_str("_No relationships indexed yet._\n\n");
+        } else {
+            out.push_str("| Qualified Name | Type | Degree |\n|---|---|---|\n");
+            for n in &self.god_nodes {
+                out.push_str(&format!(
+                    "| {} | {} | {} |\n",
+                    n.qualified_name, n.element_type, n.degree
+                ));
+            }
+            out.push('\n');
+        }
+
+        out.push_str("## Suggested Questions\n\n");
+        for (i, q) in self.suggested_questions.iter().enumerate() {
+            out.push_str(&format!("{}. {}\n", i + 1, q));
+        }
+        out
+    }
+}
+
 /// Element-type ranking for resolve_to_qualified: more specific types win
 /// over files / directories when names collide.
 fn rank_element_type(t: &str) -> u8 {
@@ -4036,6 +4102,81 @@ impl GraphEngine {
                 }
             })
             .collect())
+    }
+
+    /// US-GF-06 / FR-GF-13: Build a `GRAPH_REPORT.md` summary of the
+    /// indexed codebase: top god-nodes, confidence label distribution,
+    /// and 4-5 suggested agent questions. Returns a `GraphReport`
+    /// struct that can be serialized to JSON or markdown.
+    pub fn generate_graph_report(
+        &self,
+        project_name: &str,
+    ) -> Result<GraphReport, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let rels = self.all_relationships()?;
+        let god_nodes = self.get_god_nodes(10, Some(90))?;
+
+        // Confidence label distribution
+        let mut by_label: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
+        for r in &rels {
+            let label = r.confidence_label();
+            *by_label.entry(label).or_default() += 1;
+        }
+
+        let total = rels.len();
+        let confidence_dist: Vec<LabelCount> = ["EXTRACTED", "INFERRED", "AMBIGUOUS"]
+            .into_iter()
+            .map(|l| LabelCount {
+                label: l.to_string(),
+                count: *by_label.get(l).unwrap_or(&0),
+                pct: if total == 0 {
+                    0.0
+                } else {
+                    (*by_label.get(l).unwrap_or(&0) as f64 * 100.0) / total as f64
+                },
+            })
+            .collect();
+
+        let total_elements = elements.len();
+        let file_count = elements.iter().filter(|e| e.element_type == "file").count();
+        let func_count = elements
+            .iter()
+            .filter(|e| e.element_type == "function")
+            .count();
+        let class_count = elements
+            .iter()
+            .filter(|e| e.element_type == "class" || e.element_type == "struct")
+            .count();
+
+        let suggested_questions = vec![
+            format!(
+                "Which functions in {} are most central to the call graph? (use explain_node on top god nodes)",
+                project_name
+            ),
+            "Find the shortest path from a hot entry point to a low-level helper (use shortest_path)".to_string(),
+            format!(
+                "How many of the {} relationships are AMBIGUOUS vs EXTRACTED? Where are the AMBIGUOUS edges clustered?",
+                total
+            ),
+            "Which directories hold the most cross-cluster traffic (use query_graph or shortest_path across cluster boundaries)?".to_string(),
+            format!(
+                "What is the impact radius of the highest-degree {} (use get_impact_radius)?",
+                god_nodes.first().map(|g| g.name.clone()).unwrap_or_default()
+            ),
+        ];
+
+        Ok(GraphReport {
+            project: project_name.to_string(),
+            total_elements,
+            total_relationships: total,
+            file_count,
+            function_count: func_count,
+            class_count,
+            god_nodes,
+            confidence_distribution: confidence_dist,
+            suggested_questions,
+        })
     }
 }
 
@@ -4768,5 +4909,43 @@ mod tests {
         v.sort_by(|x, y| y.degree.cmp(&x.degree));
         assert_eq!(v[0].degree, 10);
         assert_eq!(v[1].degree, 5);
+    }
+
+    // US-GF-06: GraphReport markdown rendering
+    #[test]
+    fn graph_report_markdown_contains_required_sections() {
+        let report = GraphReport {
+            project: "demo".into(),
+            total_elements: 10,
+            total_relationships: 5,
+            file_count: 4,
+            function_count: 6,
+            class_count: 1,
+            god_nodes: vec![GodNode {
+                qualified_name: "a".into(),
+                name: "a".into(),
+                element_type: "file".into(),
+                degree: 4,
+            }],
+            confidence_distribution: vec![
+                LabelCount {
+                    label: "EXTRACTED".into(),
+                    count: 3,
+                    pct: 60.0,
+                },
+                LabelCount {
+                    label: "INFERRED".into(),
+                    count: 2,
+                    pct: 40.0,
+                },
+            ],
+            suggested_questions: vec!["Question 1?".into()],
+        };
+        let md = report.to_markdown();
+        assert!(md.contains("# Graph Report: demo"));
+        assert!(md.contains("Total elements: 10"));
+        assert!(md.contains("EXTRACTED"));
+        assert!(md.contains("Suggested Questions"));
+        assert!(md.contains("Question 1?"));
     }
 }

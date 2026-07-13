@@ -228,6 +228,7 @@ impl ToolHandler {
             "find_function" => self.find_function(arguments),
             "explain_node" => self.explain_node(arguments),
             "get_god_nodes" => self.get_god_nodes(arguments),
+            "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
@@ -1414,6 +1415,23 @@ impl ToolHandler {
         Ok(json!({
             "count": nodes.len(),
             "nodes": nodes,
+        }))
+    }
+
+    fn get_graph_report(&self, args: &Value) -> Result<Value, String> {
+        let project_name = args["project_name"].as_str().unwrap_or("project");
+        let format = args["format"].as_str().unwrap_or("markdown");
+        let report = self
+            .graph_engine
+            .generate_graph_report(project_name)
+            .map_err(|e| e.to_string())?;
+        if format == "json" {
+            return Ok(json!({ "report": report }));
+        }
+        let markdown = report.to_markdown();
+        Ok(json!({
+            "report": report,
+            "markdown": markdown,
         }))
     }
 
