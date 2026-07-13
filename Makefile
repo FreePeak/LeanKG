@@ -1,6 +1,10 @@
 # LeanKG Makefile
 
-.PHONY: help build test lint run clean mcp-stdio mcp-http mcp-http-auth mcp-http-watch kill
+.PHONY: help build test lint run clean mcp-stdio mcp-http mcp-http-auth mcp-http-watch kill docker-build docker-push docker-run
+
+DOCKER_IMAGE ?= freepeak/leankg
+DOCKER_TAG ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+HOST_DIR ?= $(PWD)
 
 # Default target
 help:
@@ -13,6 +17,11 @@ help:
 	@echo "  run             Run dev (stdio mode)"
 	@echo "  clean           Clean build artifacts"
 	@echo "  kill            Kill all leankg MCP processes"
+	@echo ""
+	@echo "Docker targets:"
+	@echo "  docker-build    Build freepeak/leankg image (Dockerfile.rocksdb)"
+	@echo "  docker-push     Push freepeak/leankg:VERSION and :latest"
+	@echo "  docker-run      Run with HOST_DIR mounted at /workspace (default: \$$PWD)"
 	@echo ""
 	@echo "MCP Server targets (HTTP mode):"
 	@echo "  mcp-http        Start MCP HTTP server on port 9699"
@@ -76,6 +85,29 @@ mcp-http-port:
 
 dev:
 	RUST_LOG=debug cargo run --release -- mcp-stdio --watch
+
+# === Docker ===
+
+docker-build:
+	docker build -f Dockerfile.rocksdb \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+
+docker-push: docker-build
+	docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
+	docker push $(DOCKER_IMAGE):latest
+
+# One-line equivalent:
+#   docker run -d --name leankg -p 9699:9699 -v "$$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb freepeak/leankg:latest
+docker-run:
+	docker rm -f leankg 2>/dev/null || true
+	docker run -d --name leankg -p 9699:9699 \
+		-v "$(HOST_DIR):/workspace" \
+		-v leankg-rocksdb:/data/leankg-rocksdb \
+		$(DOCKER_IMAGE):latest
+	@echo "LeanKG MCP listening on http://localhost:9699 (project: $(HOST_DIR))"
+	@echo "Health: curl http://localhost:9699/health"
 
 # === Installation ===
 

@@ -72,11 +72,41 @@ git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG && cargo build --r
 
 ### Docker (Recommended for Teams)
 
+One command — mount your codebase and start the MCP HTTP server on port 9699 (auto-indexes on first start):
+
 ```bash
-docker compose -f docker-compose.rocksdb.yml up
+docker run -d --name leankg -p 9699:9699 -v /absolute/path/to/your/project:/workspace -v leankg-rocksdb:/data/leankg-rocksdb freepeak/leankg:latest
 ```
 
-This starts the LeanKG MCP HTTP server on port 9699 with auto-indexing enabled. Requires [Docker](https://docs.docker.com/engine/install/) or [OrbStack](https://orbstack.dev).
+Use the current directory:
+
+```bash
+docker run -d --name leankg -p 9699:9699 -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb freepeak/leankg:latest
+```
+
+Verify:
+
+```bash
+curl http://localhost:9699/health
+```
+
+Stop / remove:
+
+```bash
+docker rm -f leankg
+```
+
+Requires [Docker](https://docs.docker.com/engine/install/) or [OrbStack](https://orbstack.dev). Point your AI tool MCP config at `http://localhost:9699/mcp`.
+
+> **Note:** Published image tags (`freepeak/leankg:latest`, `:0.17.8`) currently target `linux/arm64` (Apple Silicon / ARM hosts). On `linux/amd64`, build locally with compose below.
+
+#### Build from source (compose)
+
+```bash
+docker compose -f docker-compose.rocksdb.yml up --build
+```
+
+For multi-project mounts and local overrides, see [AGENTS.md](AGENTS.md) → RocksDB Docker Deployment.
 
 ---
 

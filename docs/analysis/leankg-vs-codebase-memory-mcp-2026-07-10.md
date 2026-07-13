@@ -1,12 +1,7 @@
 # Moved: LeanKG vs codebase-memory-mcp
 
-This document has been **merged** into the single PRD:
+Merged into the consolidated PRD:
 
-**[../requirement/prd-structural-parity-cbm.md](../requirement/prd-structural-parity-cbm.md)** (v2.0)
+**[`docs/prd.md`](../prd.md)** — Sections **3.11 (US-CBM)** and **5.10 (FR-A/B/C/D/E)**.
 
-That file contains:
-
-- Part I — full competitive comparison (architecture, languages, tools, graph depth, semantic search, performance, distribution, exclusives, positioning)
-- Part II — product requirements, tracks A–D, metrics, phasing, and build/borrow/protect appendix
-
-Do not update this stub; edit the PRD instead.
+Do not recreate a separate structural-parity PRD.

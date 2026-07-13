@@ -26,7 +26,7 @@ cargo run -- serve
 
 ### Pattern: Update Docs → Implement → Test → Commit → Push → Bump Version → Tag
 
-1. **Update docs first** - PRD (`docs/requirement/prd-leankg.md`) → HLD (`docs/design/hld-leankg.md`) → README
+1. **Update docs first** - Consolidated PRD+HLD (`docs/prd.md`) → README as needed
 2. **Implement** - Follow patterns in `docs/workflow-opencode-agent.md`
 3. **Build & test** - `cargo build && cargo test`
 4. **Commit** - `git commit -m "feat: description"` (one feature per commit)

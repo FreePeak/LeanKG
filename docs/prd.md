@@ -1,15 +1,38 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.2-toon-format
-**Date:** 2026-04-18
-**Status:** Active Development
+**Version:** 3.5-unified
+**Date:** 2026-07-13
+**Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.11.1
+**Codebase Version:** 0.17.8
+
+> All prior PRD/HLD files under `docs/requirement/`, `docs/design/hld-leankg.md`, and duplicate `.docs/` PRDs have been merged here. Do not recreate split PRDs — update this file only.
 
 ---
 
 ## Changelog
+
+### v3.5-unified - Single PRD+HLD document
+- Merged `docs/requirement/prd-leankg.md` (v2 team infrastructure) → Section 3.12 / 5.11
+- Merged `docs/design/hld-leankg.md` → Section 6.4–6.9 (HLD)
+- Merged `leankg update` CLI PRD → US-UPD-01
+- Confirmed CBM structural parity already in 3.11 / 5.10; deleted redundant source files
+- Codebase status refresh: env/incident/service tools, vacuum scheduler, `kg_self_test`, `leankg update` marked DONE where implemented
+- Removed: `docs/requirement/prd-*.md`, `docs/design/hld-leankg.md`, `docs/LeanKG_v2_PRD.html`, duplicate `.docs` PRD stubs
+
+### v3.4-cbm-structural-merge - Merge structural parity (CBM) PRD + codebase status refresh
+- Merged CBM structural parity into this document (Section 3.11 US-CBM, Section 5.10 FR-CBM); source file removed in v3.5
+- Codebase audit (2026-07-13, v0.17.8): **65 MCP tools** in `src/mcp/tools.rs`; Phase 1 aggregators DONE; Routes/HTTP_CALLS extractors DONE; typed resolve / clones / cross-repo / 3D UI still PENDING
+- Updated executive metrics, pending table, and roadmap Phase 1 status to match code
+- Source CBM PRD retained as archive with pointer to this document as SoT
+
+### v3.3-graphify-parity - Graphify competitive enhancements
+- Competitive analysis of [Graphify](https://github.com/Graphify-Labs/graphify) (v8 / ~83k stars) vs LeanKG deploy + agent tooling
+- Full comparison: `docs/analysis/graphify-comparison-2026-07-13.md`
+- Added US-GF-01..12 user stories for Graphify-inspired agent graph UX, edge provenance, reports, PRs, and learning loop
+- Added FR-GF-01..20 functional requirements (Section 5.9)
+- Priority focus: shortest-path / explain / NL subgraph query, EXTRACTED|INFERRED|AMBIGUOUS edge labels, god-node ranking, GRAPH_REPORT.md — not rewriting LeanKG's stronger RocksDB multi-project deploy
 
 ### v3.2-toon-format - TOON response format for MCP tools (~40% token reduction)
 - Added US-TOON-01 user story for TOON (Token-Oriented Object Notation) format adoption
@@ -49,16 +72,25 @@ LeanKG is a lightweight, local-first knowledge graph solution designed for devel
 
 Unlike heavy frameworks like Graphiti that require external databases (Neo4j) and cloud infrastructure, LeanKG runs entirely locally on macOS and Linux with minimal resource consumption. It automatically generates and maintains documentation while mapping business logic to the existing codebase.
 
-**Key Metrics (v0.11.1):**
-- 35 MCP tools (all fully implemented)
+**Key Metrics (v0.17.8 — audited 2026-07-13):**
+- **65 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
 - 28+ CLI commands
-- 10 languages with full extraction + 3 parser-only
-- 8 compression/read modes
+- 10+ languages with extraction (Go, TS/JS, Python, Rust, Java, Kotlin, C++/C, C#, Ruby, PHP) + Dart/Swift/XML partial + Terraform/CI/Android
+- 8 compression/read modes + TOON responses
 - Smart orchestrator with persistent cache
 - Git hooks (pre-commit, post-commit, post-checkout)
 - REST API server with auth
 - Context metrics tracking
 - Global multi-repo registry
+- RocksDB multi-project HTTP deploy
+- Structural aggregators: `get_architecture`, `get_graph_schema`, `find_dead_code` (DONE)
+- Route + `http_calls` extractors for Go (chi/gin/echo) and TS (express/fastify) (DONE)
+- `wake_up` MCP tool (DONE)
+- Call edges carry `resolution_method` + numeric `confidence` (`name` / `name_file_hint` / `unresolved`; `typed` not yet produced)
+
+**Competitive notes:**
+- vs [Graphify](https://github.com/Graphify-Labs/graphify): see Section 3.10 / `docs/analysis/graphify-comparison-2026-07-13.md`
+- vs [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): see Section 3.11 / 5.10 — Lean into business-context depth; close structural gaps; do **not** chase 158-language / Pure-C parity
 
 ---
 
@@ -77,6 +109,10 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | **Impact radius lacks confidence grades** | `get_impact_radius` returns all edges at equal weight; LLM cannot distinguish "WILL BREAK" from "MIGHT BE AFFECTED" |
 | **No pre-commit risk signal** | No tool exists to assess change risk before commit |
 | **Flat search results** | `search_code` returns symbol matches with no grouping by functional area |
+| **No shortest-path / explain verbs** | Agents cannot ask "how do A and B connect?" or get a single-node dossier (Graphify gap) |
+| **Opaque edge provenance** | Agents cannot tell EXTRACTED vs INFERRED vs AMBIGUOUS relationships at a glance |
+| **No architecture brief artifact** | Missing god-node + surprising-connection report (`GRAPH_REPORT.md`) after index |
+| **No query outcome learning** | Context metrics exist, but agents cannot report whether a graph answer was useful |
 
 ---
 
@@ -329,7 +365,7 @@ TOON (187 tokens, 40% reduction):
 | US-MP-04 | Specialist Agent Contexts — define agent personas (reviewer, architect, ops) each with a focused lens on the codebase and their own session diary | Should Have | PENDING |
 | US-MP-05 | Contradiction & Staleness Detection — detect when stored context contradicts current code state; flag stale annotations, outdated docs, broken traceability chains | Should Have | PENDING |
 | US-MP-06 | Cross-Domain Tunnels — auto-link clusters across projects/modules that share the same domain concept (e.g., "auth" in both user-service and gateway) | Could Have | PENDING |
-| US-MP-07 | Wake-up Context Protocol — standardized `wake_up` MCP tool that loads ~170 tokens of critical project facts at session start | Should Have | PENDING |
+| US-MP-07 | Wake-up Context Protocol — standardized `wake_up` MCP tool that loads ~170 tokens of critical project facts at session start | Should Have | DONE |
 | US-MP-08 | Folder Structure as Graph Edges — directories as first-class `directory` nodes with `contains` edges (dir→dir, dir→file, file→element), mirroring MemPalace's wing/room/closet/drawer hierarchy | Must Have | PENDING |
 
 **Detailed Feature Descriptions:**
@@ -451,6 +487,271 @@ Palace Mapping:
 ```
 </details>
 
+### 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12)
+
+> **Source:** Competitive analysis of [Graphify](https://github.com/Graphify-Labs/graphify) — AI coding-assistant skill that builds a queryable knowledge graph from code (tree-sitter, no LLM) plus optional docs/media. Key differentiators: `path` / `explain` / `query` agent verbs, every edge tagged `EXTRACTED|INFERRED|AMBIGUOUS`, god-node + surprising-connection reports, WHY/ADR rationale nodes, PR community conflict triage, and a work-memory reflect loop. Full matrix: `docs/analysis/graphify-comparison-2026-07-13.md`.
+>
+> **LeanKG keep / do not regress:** TOON/RTK token compression, requirement↔code traceability, microservice topology, severity-graded impact radius, CozoDB/RocksDB persistence, multi-project HTTP deploy.
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-GF-01 | Shortest path between two symbols/concepts (`leankg path A B` + MCP `shortest_path`) | Must Have | PENDING |
+| US-GF-02 | Explain a node: source location, community/cluster, degree, labeled neighbors | Must Have | PENDING |
+| US-GF-03 | Natural-language scoped subgraph query (`query_graph "what connects auth to DB?"`) | Must Have | PENDING |
+| US-GF-04 | Edge provenance labels `EXTRACTED` / `INFERRED` / `AMBIGUOUS` on all relationships (unify with `resolution_method`) | Must Have | PENDING |
+| US-GF-05 | God-node / hub ranking exposed via CLI + MCP (top-degree concepts; exclude utility super-hubs) | Must Have | PENDING |
+| US-GF-06 | Generate `GRAPH_REPORT.md`: god nodes, surprising cross-module links, suggested questions, confidence summary | Should Have | PENDING |
+| US-GF-07 | Extract rationale nodes from `# WHY:` / `# NOTE:` / `# HACK:` comments and ADR/RFC citations; link to code | Should Have | PENDING |
+| US-GF-08 | PR impact dashboard: graph-aware PR review, community overlap / merge-order risk | Should Have | PENDING |
+| US-GF-09 | Work-memory reflect loop: record Q&A outcomes; aggregate lessons that bias future query ranking | Should Have | PENDING |
+| US-GF-10 | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Apex, …) | Could Have | PENDING |
+| US-GF-11 | Portable graph snapshot export + optional git merge driver for team-committed graph artifacts | Could Have | PENDING |
+| US-GF-12 | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app code) | Could Have | PENDING |
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-GF-01: Shortest Path</summary>
+
+**Graphify inspiration:** `graphify path "FastAPI" "ModelField"` returns hop-by-hop edges with relation + confidence tags.
+
+**LeanKG adaptation:**
+- New MCP tool: `shortest_path(source, target, max_hops?)`
+- New CLI: `leankg path <a> <b> [--max-hops N]`
+- Resolve inputs by qualified_name, symbol name, or fuzzy label
+- Return ordered hops: `{from, to, relation, confidence_label, source_file}`
+- Prefer EXTRACTED edges when multiple equal-length paths exist
+</details>
+
+<details>
+<summary>US-GF-02: Explain Node</summary>
+
+**Graphify inspiration:** `graphify explain "APIRouter"` shows source, community, degree, and neighbor list.
+
+**LeanKG adaptation:**
+- New MCP tool: `explain_node(name_or_qn)`
+- Aggregate: definition site, cluster membership, degree (in/out), top neighbors by relation type, importance/god-node rank if available
+- Reuse `get_clusters`, dependents/dependencies, call graph — single agent-facing response
+</details>
+
+<details>
+<summary>US-GF-03: NL Scoped Subgraph Query</summary>
+
+**Graphify inspiration:** `graphify query "what connects auth to the database?"` returns a budgeted subgraph, not a full dump.
+
+**LeanKG adaptation:**
+- New MCP tool: `query_graph(question, token_budget?)`
+- Pipeline: seed retrieval (keyword + optional embeddings) → bounded BFS/DFS expand → budget trim → TOON response
+- Distinct from `orchestrate` (routing) and `kg_semantic_context` (embed pipeline): oriented to *connection* questions
+- Surface confidence_label on every returned edge
+</details>
+
+<details>
+<summary>US-GF-04: Edge Provenance Labels</summary>
+
+**Graphify inspiration:** Every edge is `EXTRACTED` (explicit in source), `INFERRED` (resolver-derived), or `AMBIGUOUS` (needs review).
+
+**LeanKG adaptation:**
+- Map existing `resolution_method` (`name`, `name_file_hint`, `unresolved`, future `typed`) to provenance labels
+- Store `confidence_label` on Relationship metadata; keep numeric confidence for impact severity
+- Propagate labels through `get_impact_radius`, `get_call_graph`, `shortest_path`, `query_graph`, Web UI edge tooltips
+</details>
+
+<details>
+<summary>US-GF-05: God-Node Ranking</summary>
+
+**Graphify inspiration:** Report highlights most-connected concepts; optional hub exclusion for utilities.
+
+**LeanKG adaptation:**
+- Precompute degree / PageRank-like importance at index time (aligns with enhancement-analysis Priority 2)
+- Expose via `get_architecture` hotspots and new `get_god_nodes(limit, exclude_hubs_percentile?)`
+- CLI: `leankg gods [--limit N]`
+</details>
+
+<details>
+<summary>US-GF-06: GRAPH_REPORT.md</summary>
+
+**Graphify inspiration:** Three artifacts after build: `graph.html`, `GRAPH_REPORT.md`, `graph.json`.
+
+**LeanKG adaptation:**
+- On `index` / `leankg report`: write `.leankg/GRAPH_REPORT.md`
+- Sections: god nodes, surprising cross-cluster edges, confidence distribution, 4–5 suggested agent questions
+- Web UI link + MCP `get_graph_report`
+</details>
+
+<details>
+<summary>US-GF-07: Rationale / WHY Nodes</summary>
+
+**Graphify inspiration:** `# NOTE:` / `# WHY:` / `# HACK:` and ADR/RFC citations become first-class nodes linked to code.
+
+**LeanKG adaptation:**
+- Extractor pass for comment markers + markdown ADR/RFC links
+- New element type: `rationale` with `explains` relationship to code elements
+- Searchable via `search_code` / `search_annotations` / `query_graph`
+</details>
+
+<details>
+<summary>US-GF-08: PR Impact Dashboard</summary>
+
+**Graphify inspiration:** `graphify prs`, `--triage`, `--conflicts` (PRs sharing communities = merge-order risk).
+
+**LeanKG adaptation:**
+- CLI: `leankg prs [number] [--triage] [--conflicts]`
+- MCP: `list_prs`, `get_pr_impact`, `triage_prs`
+- Combine `detect_changes` + cluster membership of touched files
+- Conflicts: PRs whose changed files share clusters
+</details>
+
+<details>
+<summary>US-GF-09: Work-Memory Reflect Loop</summary>
+
+**Graphify inspiration:** `save-result` + `reflect` → `LESSONS.md` and learning overlay that biases `explain` / `query`.
+
+**LeanKG adaptation:**
+- MCP: `report_query_outcome(question, nodes[], outcome: useful|dead_end|corrected)`
+- Aggregate into `.leankg/reflections/LESSONS.md`
+- Optional overlay tags on nodes: preferred / tentative / contested
+- Feeds context-quality loop from enhancement-analysis Priority 6
+</details>
+
+<details>
+<summary>US-GF-10..12: Coverage & Portability</summary>
+
+**US-GF-10 Languages:** Prioritize high-demand gaps (Vue/Svelte/Astro, shell, Scala) before long-tail grammars.
+
+**US-GF-11 Portable snapshot:** Export merge-friendly `graph-snapshot.json` (relative paths); optional git merge driver. Complements RocksDB deploy — does not replace it.
+
+**US-GF-12 SQL schema:** Optional extractor for `.sql` + `leankg extract --postgres <dsn>` creating table/FK nodes linked to ORM/repository code when detectable.
+</details>
+
+### 3.11 CBM Structural Parity Stories (US-CBM) — merged from `prd-structural-parity-cbm.md`
+
+> **Source:** Competitive analysis of [codebase-memory-mcp (CBM)](https://github.com/DeusData/codebase-memory-mcp) v0.9.0 vs LeanKG 0.17.8. Deep comparison notes also in `docs/analysis/` historical stubs.
+>
+> **Product rule:** Lean into business-context depth (ontology, knowledge, env, Android, req↔code). Close structural gaps that erode agent trust. Do **not** chase Pure-C / 158-language parity.
+>
+> **Tracks:** A Activate · B Structural · C Platform · D Dual-run escape hatch · E 3D graph UI
+>
+> **Codebase status audit:** 2026-07-13 against `src/` (v0.17.8)
+
+#### Positioning (summary)
+
+| Dimension | LeanKG | CBM |
+|-----------|--------|-----|
+| Stack | Rust + CozoDB/RocksDB | Pure C + SQLite |
+| MCP | 65 tools, stdio + HTTP/SSE + REST | ~14 tools, stdio |
+| Strength | Ontology, knowledge, env/incidents, Android, Docker+RocksDB, RTK | Speed, 158 langs, Hybrid LSP, clones, CROSS_*, static binary |
+| Call resolve today | `name` / `name_file_hint` / `unresolved` + confidence | Hybrid LSP Tier 1/2/3 |
+
+#### User stories — Track A Activate
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-CBM-A1 | Correct MCP `project` routing (multi-mount ≠ wrong RocksDB project) | Must Have | PENDING (ops; freepeak≠be historically) |
+| US-CBM-A2 | Ontology online (`kg_ontology_status`, `concept_search` non-empty after sync) | Must Have | PARTIAL (tools exist; sync/activation ops-dependent) |
+| US-CBM-A3 | Default call-edge resolution on index for Go/TS | Must Have | DONE (`src/indexer/call_graph.rs`) |
+| US-CBM-A4 | Moat smoke (ontology + routing) gates Phase 1 “done” | Must Have | PENDING |
+
+#### User stories — Track B Structural
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-CBM-B1 | Typed call resolution Go + TypeScript MVP (`resolution_method=typed`) | Must Have | PENDING |
+| US-CBM-B2 | HTTP Route nodes + `http_calls` edges (≥2 Go + ≥2 TS frameworks) | Must Have | DONE (`src/indexer/route_extractor.rs`: chi/gin/echo + express/fastify) |
+| US-CBM-B3 | `get_architecture` single-call overview | Must Have | DONE |
+| US-CBM-B4 | `get_graph_schema` label/edge counts | Must Have | DONE |
+| US-CBM-B5 | Dead code detection (`find_dead_code`) | Should Have | DONE |
+| US-CBM-B6 | Event channel edges (EMITS / LISTENS_ON) | Should Have | PENDING |
+| US-CBM-B7 | Clone / near-duplicate detection (`find_clones`, `similar_to`) | Should Have | PENDING (rel types stubbed in `models.rs` only) |
+| US-CBM-B8 | Cross-repo edges on multi-repo registry | Should Have | PENDING (`cross_repo_similar` stub only) |
+| US-CBM-B9 | Call `resolution_method` + numeric `confidence` on edges | Must Have | DONE (`name`/`name_file_hint`/`unresolved`; `typed` reserved) |
+| US-CBM-B10 | Feature flag `typed_resolve=off\|go,ts\|all` | Must Have | PENDING |
+| US-CBM-B11 | Architecture/schema honor token budgets / truncation | Must Have | PENDING (FR-B22) |
+| US-CBM-B12 | ≥10 `run_raw_query` recipes in skills/docs | Should Have | PENDING |
+
+#### User stories — Track C Platform
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-CBM-C1 | Docker image: embeddings / semantic tools OOTB | Should Have | PENDING |
+| US-CBM-C2 | Query hot-path cache (search/schema/architecture/find_function) | Should Have | PENDING |
+| US-CBM-C3 | Selective language expansion with quality tiers | Should Have | PENDING |
+| US-CBM-C4 | Large-scale + Go/TS vs CBM benchmarks | Must/Should | PENDING |
+| US-CBM-C5 | Windows build + smoke | Could Have | PENDING |
+
+#### User stories — Track D Dual-run
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-CBM-D1 | Skills remain LeanKG-first; optional CBM escape hatch only | Must Have | DONE (policy in AGENTS/skills) |
+| US-CBM-D2 | Do not auto-install CBM into default `.mcp.json` | Must Have | DONE |
+| US-CBM-D3 | Re-evaluate dual-run after typed-resolve Phase | Must Have | PENDING |
+
+#### User stories — Track E 3D Visualization
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-CBM-E1 | New 3D graph UI (`graph-ui/`) with WebGL galaxy + Bloom (keep existing 2D `ui/`) | Should Have | PENDING (`graph-ui/` absent; `ui/` is 2D) |
+| US-CBM-E2 | Server-computed 3D layout in Rust + `get_graph_layout` / `/api/graph` | Should Have | PENDING |
+| US-CBM-E3 | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | Should Have | PENDING |
+| US-CBM-E4 | Node detail + edge-type filter panels | Should Have | PENDING |
+
+<details>
+<summary>US-CBM detailed notes (implementation evidence)</summary>
+
+**DONE evidence:**
+- `get_architecture` / `get_graph_schema` / `find_dead_code` — `src/mcp/tools.rs`, `src/mcp/handler.rs`, `src/graph/query.rs`
+- `resolution_method` + `confidence` — `src/indexer/call_graph.rs`
+- Routes + `http_calls` — `src/indexer/route_extractor.rs`, `RelationshipType::HttpCalls` in `src/db/models.rs`
+- `wake_up` — `src/mcp/handler.rs` (also closes MemPalace US-MP-07)
+
+**PENDING evidence:**
+- No `typed` / `typed_resolve` matches in `src/`
+- No `find_clones` MCP tool; `SimilarTo` / `CrossRepoSimilar` enum-only
+- No `graph-ui/` directory; no `get_graph_layout`
+
+**Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace Cozo/RocksDB; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path.
+</details>
+
+### 3.12 Team Knowledge Infrastructure (US-V2) — merged from `prd-leankg.md` v2
+
+> **Vision:** Evolve from local-first single-dev tool to shared knowledge backbone for multi-service teams: environment-scoped graph, incident knowledge, CI freshness, token-budgeted MCP tools.
+>
+> **Codebase status audit:** 2026-07-13 (v0.17.8)
+
+| ID | User Story | Priority | Status |
+|----|------------|----------|--------|
+| US-V2-01 | Environment namespacing (`local` / `staging` / `production` / `upcoming`) on nodes/edges; env-scoped queries | Must Have | DONE (`env` on models; MCP `env` args) |
+| US-V2-02 | Incident knowledge layer — contribute/query incidents linked to services | Must Have | DONE (`query_incidents`, `leankg incident add`) |
+| US-V2-03 | Enhanced service context (deps, incidents, env) in one MCP call | Must Have | DONE (`get_service_context`) |
+| US-V2-04 | Surface environment conflicts before promote/push | Must Have | DONE (`find_env_conflicts`) |
+| US-V2-05 | Team/knowledge contribution via MCP (`add_knowledge`, annotations) | Must Have | DONE |
+| US-V2-06 | Semantic search natural language → graph nodes | Should Have | DONE (`semantic_search`; embeddings optional) |
+| US-V2-07 | Token budget enforcement on MCP responses | Must Have | DONE (TOON + token_budget + RTK) |
+| US-V2-08 | Scheduled DB vacuum on long-lived MCP servers | Should Have | DONE (`LEANKG_VACUUM_INTERVAL_HOURS`) |
+| US-V2-09 | Ontology `kg_self_test` + HTTP startup self-test WARN | Should Have | DONE (`kg_self_test`) |
+| US-V2-10 | Multi-repo / shared RocksDB HTTP backend for teams | Must Have | DONE (registry + mcp-http + RocksDB compose) |
+| US-UPD-01 | `leankg update` installs latest GitHub release binary | Should Have | DONE (`Update` CLI subcommand) |
+
+**v2 success metrics (targets):**
+
+| Metric | Target |
+|--------|--------|
+| Full service context in Cursor | < 5s |
+| Context tokens per session (LeanKG queries) | < 2,000 |
+| Graph freshness after release hook | < 3 minutes |
+| Env conflict catch rate (schema) | > 80% |
+
+<details>
+<summary>US-V2 data model (from HLD/PRD v2)</summary>
+
+**Incident node fields:** id, env, title, severity (P0–P3), occurred_at, resolved_at, root_cause, resolution, affected services, trigger_pattern, prevention, tags, author, linked_ticket
+
+**v2 edges:** `caused_incident`, `resolved_by`, `conflicts_with`, `deployed_to`, `supercedes`
+
+**Service metadata:** version, deploy_env, slo_p99_ms, health_endpoint, on_call, incident_count, last_incident, tags
+</details>
+
 ---
 
 ## 4. Implementation Status Summary
@@ -459,27 +760,30 @@ Palace Mapping:
 
 | Feature | Implementation Detail |
 |---------|-----------------------|
-| Core indexing | 10 languages fully extracted: Go, TS/JS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP |
-| Dependency graph | Imports, Calls, References, TestedBy, Tests, Contains, Defines, Implements, Implementations edges |
-| CLI interface | 28+ commands including init, index, query, generate, web, mcp-stdio, impact, export, annotate, trace, benchmark, register, api-serve, hooks, wiki, metrics, run |
-| MCP server | 35 tools via stdio transport using rmcp crate |
+| Core indexing | 10+ languages extracted: Go, TS/JS, Python, Rust, Java, Kotlin, C++/C, C#, Ruby, PHP (+ Android/Terraform/CI) |
+| Dependency graph | Imports, Calls, References, TestedBy, Contains, Defines, Implements, HttpCalls, … |
+| CLI interface | 28+ commands including init, index, query, generate, web, mcp-stdio, mcp-http, impact, export, annotate, trace, benchmark, register, api-serve, hooks, wiki, metrics, run |
+| MCP server | **65 tools** via stdio + HTTP/SSE (`src/mcp/tools.rs`) |
+| Structural aggregators | `get_architecture`, `get_graph_schema`, `find_dead_code` (CBM Phase 1) |
+| Call edge metadata | `resolution_method` + numeric `confidence` on CALLS |
+| HTTP routes | `route` elements + `http_calls` for Go (chi/gin/echo) and TS (express/fastify) |
+| Wake-up context | `wake_up` MCP tool (~L0/L1 identity summary) |
 | Documentation generation | AGENTS.md, CLAUDE.md generation with template engine |
 | Business logic annotations | Create, update, delete, search, traceability |
 | Impact radius analysis | BFS traversal with confidence scores, severity classification |
-| Auto-install MCP config | .mcp.json generation for Cursor, OpenCode, Claude, Gemini, Kilo, Codex |
-| Web UI | 20+ routes: dashboard, graph viewer, code browser, docs, annotate, quality, export, settings |
+| Auto-install MCP config | .mcp.json generation for Cursor, OpenCode, Claude, Gemini, Kilo, Codex, Antigravity |
+| Web UI | 2D force-directed graph (`ui/`); 20+ routes |
 | Terraform indexing | .tf file parsing with resource, data, variable, output, module extraction |
 | CI/CD YAML indexing | GitHub Actions, GitLab CI, Azure Pipelines |
-| Pipeline impact analysis | Blast radius extended to pipelines and deployment targets |
 | Documentation mapping | docs/ directory indexing, documented_by/references edges |
 | Traceability | Requirements -> documentation -> code chain |
 | Confidence scoring | 0.0-1.0 confidence + WILL_BREAK/LIKELY_AFFECTED/MAY_BE_AFFECTED severity |
 | Change detection | Pre-commit risk analysis with critical/high/medium/low classification |
 | Cluster detection | Community detection with Leiden algorithm, cluster-grouped search |
 | 360-degree context | get_review_context + orchestrate with cache-graph-compress flow |
-| RTK compression | 8 read modes, 3 specialized compressors, entropy analysis, response compression |
-| Orchestrator | Intent parsing (7 query types), persistent cache, adaptive compression |
-| Git hooks | pre-commit (critical file blocking), post-commit (auto-reindex), post-checkout (branch switch) |
+| RTK compression | 8 read modes, specialized compressors, entropy analysis, response compression, TOON |
+| Orchestrator | Intent parsing, persistent cache, adaptive compression |
+| Git hooks | pre-commit, post-commit, post-checkout, GitWatcher |
 | Context metrics | 18-field schema with tool_name, tokens, savings, F1 score |
 | REST API | Health, status, search endpoints with CORS and auth middleware |
 | Global registry | Multi-repo management: register, unregister, list, status-repo, setup |
@@ -487,19 +791,32 @@ Palace Mapping:
 | Graph export | JSON, DOT/Mermaid, HTML (interactive), SVG, GraphML, Neo4j |
 | API keys | Argon2-hashed key store with create, list, revoke |
 | Shell runner | `leankg run` with optional RTK compression |
+| Ontology / semantic | Concept tools + optional embeddings (`--features embeddings`) |
 
 ### 4.2 Pending Features
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
+| Typed call resolve Go/TS (US-CBM-B1, FR-B03..05) | Must Have | `typed` method not produced yet |
+| `typed_resolve` feature flag (FR-B08) | Must Have | Slipped with typed resolve |
+| Architecture token budget (FR-B22) | Must Have | Truncation / max_items |
+| MCP project routing smoke (US-CBM-A1/A4) | Must Have | Ops / multi-mount |
+| Graphify path/explain/query (US-GF-01..03) | Must Have | Agent graph primitives |
+| Edge provenance labels (US-GF-04) | Must Have | EXTRACTED/INFERRED/AMBIGUOUS |
+| God-node ranking (US-GF-05) | Must Have | Hub ranking at index time |
+| Event edges EMITS/LISTENS (US-CBM-B6) | Should Have | Phase 2 CBM |
+| Clone detection (US-CBM-B7) | Should Have | Enum stub only |
+| Cross-repo edges (US-CBM-B8) | Should Have | Enum stub only |
+| Embeddings Docker default (US-CBM-C1) | Should Have | Platform friction |
+| Hot-path query cache (US-CBM-C2) | Should Have | Latency |
+| 3D graph UI Track E (US-CBM-E*) | Should Have | New `graph-ui/`; keep 2D |
+| GRAPH_REPORT.md / WHY / PR / reflect (US-GF-06..09) | Should Have | Graphify |
+| MemPalace temporal/layers (US-MP-* except wake_up) | Must/Should | US-MP-07 wake_up DONE |
 | npm-based installation (US-14) | Must Have | Binary distribution via npm |
 | Single-repo root expansion (FR-MG-03) | Must Have | Treat root as service on double-click |
-| Cluster-level SKILL.md generation (US-GN-07) | Could Have | Depends on stable cluster detection |
-| MCP Resources (US-GN-08) | Could Have | MCP resource endpoints |
-| Dart entity extraction (US-LANG-01) | Should Have | Parser exists, needs extractor |
-| Swift entity extraction (US-LANG-02) | Should Have | Parser exists, needs extractor |
-| XML entity extraction (US-LANG-03) | Could Have | Parser exists, needs extractor |
-| REST API completion | Should Have | Auth wiring, mutation endpoints |
+| Cluster-level SKILL.md (US-GN-07) | Could Have | |
+| MCP Resources (US-GN-08) | Could Have | |
+| Language breadth / Windows / SLSA | Could Have | CBM Track C/B4 |
 
 ---
 
@@ -626,9 +943,119 @@ Palace Mapping:
 | CI/CD YAML | `.yml`, `.yaml` | DONE (custom) | GitHub Actions, GitLab CI, Azure Pipelines |
 | Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
 
+### 5.9 Graphify-Inspired Features (PENDING)
+
+> Evidence: `docs/analysis/graphify-comparison-2026-07-13.md`. Deploy parity with Graphify HTTP MCP is **not** a gap — LeanKG RocksDB multi-project compose is competitive. Focus requirements on agent query UX and edge honesty.
+
+- [ ] **FR-GF-01**: MCP tool `shortest_path(source, target, max_hops?)` returns ordered hops with relation + `confidence_label`
+- [ ] **FR-GF-02**: CLI `leankg path <a> <b>` wrapping FR-GF-01
+- [ ] **FR-GF-03**: MCP tool `explain_node(name_or_qn)` — definition, cluster, degree, neighbors
+- [ ] **FR-GF-04**: CLI `leankg explain <name>` wrapping FR-GF-03
+- [ ] **FR-GF-05**: MCP tool `query_graph(question, token_budget?)` — seed → expand → budget trim → TOON
+- [ ] **FR-GF-06**: CLI `leankg query "<question>"` wrapping FR-GF-05
+- [ ] **FR-GF-07**: Relationship metadata field `confidence_label` ∈ {EXTRACTED, INFERRED, AMBIGUOUS}
+- [ ] **FR-GF-08**: Map `resolution_method` → `confidence_label` at edge write time; backfill on reindex
+- [ ] **FR-GF-09**: Propagate `confidence_label` in impact, call_graph, path, query_graph, Web UI
+- [ ] **FR-GF-10**: Index-time god-node / importance scoring (degree + optional PageRank-like)
+- [ ] **FR-GF-11**: MCP `get_god_nodes(limit, exclude_hubs_percentile?)` + CLI `leankg gods`
+- [ ] **FR-GF-12**: Include god nodes in `get_architecture` hotspots section
+- [ ] **FR-GF-13**: Generate `.leankg/GRAPH_REPORT.md` on index/report (god nodes, surprises, suggested questions)
+- [ ] **FR-GF-14**: MCP `get_graph_report` returns report markdown or structured sections
+- [ ] **FR-GF-15**: Extractor for `# WHY:` / `# NOTE:` / `# HACK:` → `rationale` elements + `explains` edges
+- [ ] **FR-GF-16**: ADR/RFC citation extraction from docs → rationale nodes linked to code
+- [ ] **FR-GF-17**: CLI `leankg prs` + MCP `list_prs` / `get_pr_impact` / `triage_prs` using clusters + detect_changes
+- [ ] **FR-GF-18**: Community conflict detection: PRs whose changed files share clusters (merge-order risk)
+- [ ] **FR-GF-19**: MCP `report_query_outcome` + `leankg reflect` → `.leankg/reflections/LESSONS.md` + optional node overlay
+- [ ] **FR-GF-20**: Portable `graph-snapshot.json` export (relative paths) + documented optional git merge driver
+
+### 5.10 CBM Structural Parity Requirements (merged)
+
+> Canonical FR IDs retained from `prd-structural-parity-cbm.md` (FR-A/B/C/D/E). Status audited 2026-07-13.
+
+#### Track A — Activate
+
+- [ ] **FR-A01**: MCP `project` resolves to correct RocksDB project for multi-mount setups
+- [ ] **FR-A02**: Automate/document ontology sync for concepts + workflows YAML
+- [ ] **FR-A03**: Verify ontology/knowledge tools after sync
+- [ ] **FR-A04**: Index per `leankg.yaml`; expose counts
+- [x] **FR-A05**: Default call-edge resolution for Go/TS on index
+- [ ] **FR-A06**: Smoke: ontology + routing must pass before Phase 1 “fully done”
+- [x] **FR-A07**: Agent operating-model: LeanKG-first; moat tools mandatory
+
+#### Track B — Structural
+
+- [x] **FR-B01**: `resolution_method`: unresolved \| name \| name_file_hint \| typed (typed reserved, not produced)
+- [x] **FR-B02**: Numeric `confidence` consistent with method
+- [ ] **FR-B03**: Go typed resolve MVP
+- [ ] **FR-B04**: TS/TSX typed resolve MVP
+- [ ] **FR-B05**: Benchmark harness vs CBM (50-edge samples)
+- [ ] **FR-B06**: Python + Rust typed resolve (Could)
+- [x] **FR-B07**: Fail soft: fall back to name resolve; never block index
+- [ ] **FR-B08**: Feature flag `typed_resolve=off\|go,ts\|all`
+- [x] **FR-B10**: `route` element type (method, path, handler, framework)
+- [x] **FR-B11**: ≥ 2 Go + ≥ 2 TS framework extractors (chi/gin/echo + express/fastify)
+- [x] **FR-B12**: `http_calls` edges with confidence
+- [ ] **FR-B13**: Extend `service_calls` beyond k8s DNS regex (Should)
+- [x] **FR-B14**: Routes searchable; included in `get_architecture`
+- [ ] **FR-B15**: EMITS / LISTENS_ON for Go/TS (Should)
+- [ ] **FR-B16**: Runtime trace ingestion (Could)
+- [x] **FR-B20**: `get_architecture`
+- [x] **FR-B21**: `get_graph_schema`
+- [ ] **FR-B22**: Honor token budgets / truncation on architecture/schema
+- [x] **FR-B23**: `find_dead_code`
+- [ ] **FR-B30**: Near-clone detection → similarity edges (Should)
+- [ ] **FR-B31**: `find_clones` MCP (Should)
+- [ ] **FR-B32**: Cross-repo edges across registry (Should)
+- [ ] **FR-B33**: Cross-repo summary in tool or architecture (Should)
+- [ ] **FR-B40..B44**: IaC Resource/Module, ADR, snapshot, DATA_FLOWS (Could)
+- [ ] **FR-B50**: ≥ 10 `run_raw_query` recipes (Should)
+- [ ] **FR-B51**: Optional openCypher→Cozo subset (Could)
+
+#### Track C — Platform
+
+- [ ] **FR-C01**: Docker embeddings OOTB (Should)
+- [ ] **FR-C02**: Document smaller-model / batch-size options (Should)
+- [ ] **FR-C03**: Hot-path cache (Should)
+- [ ] **FR-C04**: Profile impact-radius latency (Should)
+- [ ] **FR-C05**: Incremental languages with tier notes (Should)
+- [ ] **FR-C06**: Per-language quality tier template; Go/TS first (Must Go/TS)
+- [ ] **FR-C07**: Large-repo benchmark ≥ 1M nodes or documented ceiling (Should)
+- [ ] **FR-C08..C11**: Windows, pkg channel, SLSA, install targets (Could)
+
+#### Track D — Dual-run
+
+- [x] **FR-D01**: Skills remain LeanKG-first
+- [x] **FR-D02**: Documented CBM escape hatch when confidence low / lang unsupported (Should — documented as policy)
+- [x] **FR-D03**: No auto-install CBM into default `.mcp.json`
+- [ ] **FR-D04**: Re-evaluate dual-run after Phase 3 typed resolve
+
+#### Track E — 3D Graph UI (all PENDING)
+
+- [ ] **FR-E01..E05**: Vite/React/R3F/shadcn stack in `graph-ui/`
+- [ ] **FR-E10..E14**: Rust 3D layout + `get_graph_layout` / `/api/graph`
+- [ ] **FR-E20..E28**: R3F scene, Bloom, adaptive LOD, edge colors
+- [ ] **FR-E30..E36**: Detail/filter panels, settings, multi-repo galaxies
+- [ ] **FR-E40..E43**: HTTP integration; embed or static serve; keep 2D `ui/` untouched
+
+### 5.11 Team Infrastructure / v2 Requirements (merged from `prd-leankg.md`)
+
+- [x] **FR-V2-01**: `env` field on elements/relationships; default `local`
+- [x] **FR-V2-02**: Incident data model + CLI/MCP contribute & query
+- [x] **FR-V2-03**: `get_service_context` with env + incident summary
+- [x] **FR-V2-04**: `find_env_conflicts` with risk levels
+- [x] **FR-V2-05**: Knowledge contribution (`add_knowledge` / annotations)
+- [x] **FR-V2-06**: `semantic_search` (embeddings feature-flagged)
+- [x] **FR-V2-07**: Per-tool token budgets / TOON compression
+- [x] **FR-V2-08**: Vacuum scheduler (`LEANKG_VACUUM_INTERVAL_HOURS`; RocksDB no-op)
+- [x] **FR-V2-09**: `kg_self_test` MCP + HTTP startup WARN (non-gating)
+- [x] **FR-V2-10**: Multi-project RocksDB HTTP deploy + registry
+- [x] **FR-UPD-01**: `leankg update` from GitHub releases
+- [ ] **FR-V2-11**: CI/CD auto-graph update on release (< 3 min freshness) — PARTIAL (hooks exist; formal GHA template may need docs)
+- [ ] **FR-V2-12**: `get_team_map` ownership/on-call tool — PENDING (if not covered by knowledge)
+
 ---
 
-## 6. Technical Architecture
+## 6. Technical Architecture / HLD
 
 ### 6.1 Technology Stack
 
@@ -738,7 +1165,7 @@ src/
 ├── doc_indexer/         # Documentation indexing (docs/ → documented_by edges)
 ├── graph/               # GraphEngine, queries, context, traversal, clustering, cache, export (HTML/SVG/GraphML/Neo4j)
 ├── indexer/             # tree-sitter parsers (13), extractors, git analysis, Terraform, CI/CD
-├── mcp/                 # MCP tools (35), handler, server (rmcp), auth, write tracker
+├── mcp/                 # MCP tools (65), handler, server (rmcp), auth, write tracker
 ├── orchestrator/        # Query orchestration with intent parsing and persistent cache
 ├── compress/            # RTK-style compression: 8 read modes, response/shell/cargo/git compressors, entropy analysis
 ├── web/                 # Axum web UI (20+ routes, embedded HTML/CSS/JS)
@@ -750,9 +1177,88 @@ src/
 └── runtime.rs           # Tokio runtime utilities
 ```
 
+### 6.4 HLD — System Overview (merged from `hld-leankg.md`)
+
+```
++-----------------------------------------------------+
+|                   LeanKG Backend                    |
+|            (Axum + CozoDB / RocksDB)                |
+|                                                     |
+|  +--------------+  +--------------+  +----------+  |
+|  |  production  |  |   staging    |  |  local   |  |
+|  |  namespace   |  |  namespace   |  |namespace |  |
+|  +--------------+  +--------------+  +----------+  |
+|                                                     |
+|  +-----------------------------------------------+  |
+|  |  CozoDB (Datalog) + optional HNSW embeddings  |  |
+|  +-----------------------------------------------+  |
++-----------------------------------------------------+
+         ^                    ^                ^
+         |                    |                |
+  +------+------+    +--------+-----+   +------+------+
+  |  MCP server |    |  REST API    |   |  Web UI     |
+  |  stdio/HTTP |    |  /api/...    |   |  2D (+3D E) |
+  +------+------+    +--------+-----+   +-------------+
+         |                    |
+  +------+------+    +--------+---------------------+
+  | AI assistants|   | CI/CD hooks / GitHub Actions |
+  +--------------+   +------------------------------+
+```
+
+### 6.5 HLD — Component Design
+
+**Data layer:** `env` on `code_elements` / `relationships`; incidents + service metadata tables; all queries filter by env (default `local`).
+
+**Graph engine tools (v2):** `get_service_context`, `find_env_conflicts`, `query_incidents`, env-aware impact.
+
+**MCP auth headers (HTTP):** `X-LeanKG-Token` / Bearer; optional engineer + env headers.
+
+**CLI (v2):** `leankg incident add|list|show`, `leankg update`, note/pattern/env helpers as implemented.
+
+**Vacuum scheduler:** tokio task; `LEANKG_VACUUM_INTERVAL_HOURS` (default 1, `0` disables); Sqlite VACUUM; RocksDB debug no-op; invalidate caches after success.
+
+**Ontology self-test:** `kg_self_test` + HTTP startup WARN (non-gating) for arity/schema drift on `kg_*` tools.
+
+### 6.6 HLD — Key Data Flows
+
+**Incident contribution:** CLI/API → validate Incident → CozoDB → available to MCP queries.
+
+**Env conflicts:** fetch service across envs → compare schema/config/endpoints/deploy → risk HIGH/MEDIUM/LOW.
+
+**Vacuum:** boot → spawn loop → vacuum → log → sleep.
+
+**kg_self_test:** bind HTTP → run OntologyQueryEngine::self_test → info if OK, warn per failure → still serve.
+
+### 6.7 HLD — Implementation Phases (v2)
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 Data model & schema (`env`, Incident) | Schema | DONE |
+| 2 Graph engine env/incident queries | Engine | DONE |
+| 3 MCP tools + token budgets | MCP | DONE |
+| 4 CLI incident/update | CLI | DONE |
+| 5 Integration tests / CI template | Test/Docs | PARTIAL |
+
+### 6.8 HLD — Interface Sketches
+
+`query_incidents` input: `{service, pattern?, env, limit}` → incidents[].  
+`find_env_conflicts` input: `{service}` → conflicts[{type, detail, risk}].  
+`leankg incident add --title … --severity P1 --affected svc --env production`.
+
+### 6.9 HLD — Risks & Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Schema migration breaks v1 data | High | Default `env=local` for existing rows |
+| Token budgets too tight | Medium | Configurable budgets + TOON |
+| Scale to large multi-service graphs | High | RocksDB, caches, pagination |
+| Concurrent writes | Medium | Cozo transactions |
+| Unbounded DB growth | Medium | Hourly vacuum |
+| Ontology arity drift → MCP -32603 | High | `kg_self_test` startup WARN |
+
 ---
 
-## 7. MCP Tools (35 total)
+## 7. MCP Tools (65 total — audited 2026-07-13)
 
 ### Project Management (5)
 | Tool | Description |
@@ -938,7 +1444,7 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 - [x] Code indexing works for 10 languages
 - [x] Dependency graph builds correctly with 10 relationship types
 - [x] CLI commands functional (28+ commands)
-- [x] MCP server exposes 35 query tools
+- [x] MCP server exposes 65 tools (audited 2026-07-13 in `src/mcp/tools.rs`)
 - [x] Documentation generation produces valid markdown
 - [x] Business logic annotations can be created and queried
 - [x] Impact radius analysis works with confidence scores
@@ -989,18 +1495,20 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | get_context enhanced response size | < 4000 tokens | TBD |
 | Batch insert size | 5000 rows/batch | DONE |
 | Supported parser count | 13 parsers (10 fully extracted) | DONE |
-| MCP tool count | 35 tools (0 stubs) | DONE |
+| MCP tool count | 65 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-13) |
 
 ---
 
 ## 10. Out of Scope
 
-1. **Vector embeddings / semantic search** - Rule-based only
-2. **Cloud sync** - Fully local
-3. **Multi-user / team features** - Single user only
+1. **Full multi-modal PDF/image/video graph ingest (Graphify-style)** - Code + docs + infra first
+2. **Cloud SaaS hosting of LeanKG** - Self-hosted only (team HTTP MCP / RocksDB is in scope)
+3. **Multi-user collaborative editing of the graph** - Single writer per project DB; shared read via HTTP MCP is OK
 4. **Plugin system** - Future consideration
-5. **Enterprise integrations** - Future consideration
-6. **Raw Datalog query passthrough** - Security risk
+5. **Raw Datalog query passthrough** - Security risk (except controlled `run_raw_query`)
+6. **Replacing CozoDB/RocksDB with NetworkX-only primary store** - Snapshot export is additive
+7. **Full 158-language / Pure-C rewrite (CBM chase)** - Selective languages only
+8. **Split PRD/HLD documents** - This file is the only SoT; do not recreate `docs/requirement/prd-*.md` or `docs/design/hld-leankg.md`
 
 ---
 
@@ -1014,22 +1522,21 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Context Window | AI model's input capacity; LeanKG minimizes tokens needed |
 | Business Logic Mapping | Linking code to business requirements |
 | Qualified Name | Natural node identifier: `file_path::parent::name` format |
-| Blast Radius | All files affected by a change within N hops |
-| Impact Radius | Same as blast radius |
+| Blast Radius / Impact Radius | All files affected by a change within N hops |
 | Confidence Score | Float 0.0-1.0 indicating edge reliability |
+| Confidence Label | EXTRACTED / INFERRED / AMBIGUOUS provenance |
 | Severity Classification | WILL BREAK / LIKELY AFFECTED / MAY BE AFFECTED |
-| Cluster | Functional community of code elements (Leiden algorithm) |
-| RTK (Rust Token Killer) | Compression module reducing LLM token consumption by 60-90% |
-| Orchestrator | Smart query routing with intent parsing and persistent cache |
-| Read Mode | File compression mode: adaptive, full, map, signatures, diff, aggressive, entropy, lines |
-| GitWatcher | Component that monitors git events and triggers reindexing |
-| Global Registry | Multi-repo management system for cross-project queries |
-| Entropy Analysis | Shannon entropy, Jaccard similarity, Kolmogorov adjustment for information density |
-| Temporal Graph | Relationships with valid_from/valid_to timestamps enabling historical queries |
-| Context Layer (L0-L3) | L0: Identity (~50 tok), L1: Critical facts (~120 tok), L2: Cluster (on demand), L3: Deep search (on demand) |
-| Tunnel | Cross-cluster relationship linking the same domain concept across different modules |
-| Consistency Check | Detection of stale/broken links between graph elements and actual code state |
-| Wake-up Protocol | Loading minimal L0+L1 context (~170 tokens) at session start for instant project awareness |
+| Cluster | Functional community (Leiden) |
+| God Node | High-degree hub concept |
+| Environment Namespace | `local` / `staging` / `production` / `upcoming` partition of graph data |
+| Incident Node | Structured outage/knowledge record linked to services |
+| Vacuum Scheduler | Periodic SQLite VACUUM on long-lived MCP servers |
+| RTK | Rust Token Killer — compression reducing LLM tokens |
+| Orchestrator | Intent parsing + persistent cache |
+| Global Registry | Multi-repo management for cross-project queries |
+| Temporal Graph | Relationships with valid_from/valid_to |
+| Wake-up Protocol | Minimal L0+L1 context at session start |
+| HLD | High-Level Design — architecture and flows in Section 6.4–6.9 |
 
 ---
 
@@ -1040,8 +1547,14 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 - MCP Protocol: https://modelcontextprotocol.io/
 - rmcp: https://crates.io/crates/rmcp
 - Leiden Algorithm: https://en.wikipedia.org/wiki/Leiden_algorithm
-- MemPalace: https://github.com/milla-jovovich/mempalace (competitive analysis source for US-MP stories)
+- MemPalace: https://github.com/milla-jovovich/mempalace
+- Graphify: https://github.com/Graphify-Labs/graphify — `docs/analysis/graphify-comparison-2026-07-13.md`
+- codebase-memory-mcp: https://github.com/DeusData/codebase-memory-mcp — see Section 3.11 / 5.10
+- Context enhancement analysis: `docs/analysis/enhancement-analysis-2026-07-09.md`
+- Roadmap: `docs/roadmap.md`
+- MCP tool reference: `docs/mcp-tools.md`
+- CLI reference: `docs/cli-reference.md`
 
 ---
 
-*Last updated: 2026-04-16 (v3.1-massive-graph, service expand optimization + filter UI)*
+*Last updated: 2026-07-13 (v3.5-unified — single PRD+HLD SoT; redundant PRD/HLD files removed)*

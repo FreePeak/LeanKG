@@ -1,4 +1,15 @@
-FROM rust:1-bookworm
+# LeanKG MCP HTTP server (RocksDB backend)
+# Multi-stage build for a slim runtime image suitable for Docker Hub.
+#
+# Published Hub image (linux/arm64): freepeak/leankg:latest
+#
+# One-line run (replace HOST_DIR with your codebase path):
+#   docker run -d --name leankg -p 9699:9699 \
+#     -v HOST_DIR:/workspace \
+#     -v leankg-rocksdb:/data/leankg-rocksdb \
+#     freepeak/leankg:latest
+
+FROM rust:1-bookworm AS builder
 WORKDIR /app
 
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
@@ -6,15 +17,51 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     && apt-get install -y clang libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Optional local patches (no-op if empty). Keep for offline/build reproducibility.
 COPY vendor/ ./vendor/
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY ontology/ ./ontology/
 
-RUN cargo build --release && strip target/release/leankg && cp target/release/leankg /usr/local/bin/
+RUN cargo build --release \
+    && strip target/release/leankg \
+    && cp target/release/leankg /usr/local/bin/leankg
 
-COPY entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
+FROM debian:bookworm-slim
 
+# Seed CA bundle from the builder so apt can use https mirrors (slim has none
+# yet; plain http to deb.debian.org often fails behind corporate/CDN paths).
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/leankg /usr/local/bin/leankg
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh \
+    && mkdir -p /data/leankg-rocksdb /workspace
+
+# Defaults so `docker run -v HOST_DIR:/workspace ... freepeak/leankg` works
+# without an env file. Compose can still override these.
+ENV LEANKG_DB_ENGINE=rocksdb \
+    LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
+    LEANKG_MCP_PROJECT=/workspace \
+    LEANKG_AUTO_INDEX=1 \
+    MCP_HTTP_PORT=9699 \
+    LEANKG_MMAP_SIZE=67108864 \
+    LEANKG_WATCHER_DEBOUNCE_MS=2000 \
+    LEANKG_WATCHER_BURST_LIMIT=256 \
+    RUST_LOG=leankg=info
+
+VOLUME ["/data/leankg-rocksdb"]
 EXPOSE 9699
+WORKDIR /workspace
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${MCP_HTTP_PORT}/health" || exit 1
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
