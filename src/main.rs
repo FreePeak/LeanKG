@@ -247,6 +247,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             run_shortest_path(&source, &target, max_hops, &db_path)?;
         }
+        cli::CLICommand::Explain { name } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_explain_node(&name, &db_path)?;
+        }
+        cli::CLICommand::Gods {
+            limit,
+            exclude_hubs_percentile,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_god_nodes(limit, exclude_hubs_percentile, &db_path)?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1032,6 +1045,61 @@ fn run_shortest_path(
             "No path found between '{}' and '{}' within {} hops",
             source, target, max_hops
         ),
+    }
+    Ok(())
+}
+
+fn run_explain_node(
+    name: &str,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    match graph_engine.explain_node(name)? {
+        Some(expl) => {
+            println!(
+                "{} [{}] {} (lines {}-{})",
+                expl.qualified_name, expl.element_type, expl.name, expl.line_start, expl.line_end
+            );
+            println!("  file: {}", expl.file_path);
+            if let Some(label) = expl.cluster_label {
+                println!(
+                    "  cluster: {} ({})",
+                    label,
+                    expl.cluster_id.unwrap_or_default()
+                );
+            }
+            println!(
+                "  in_degree: {}  out_degree: {}",
+                expl.in_degree, expl.out_degree
+            );
+            for n in expl.top_neighbors.iter().take(8) {
+                println!("    {} -> {}", n.rel_type, n.count);
+            }
+        }
+        None => println!("Symbol '{}' not found in graph", name),
+    }
+    Ok(())
+}
+
+fn run_god_nodes(
+    limit: usize,
+    exclude_hubs_percentile: Option<u8>,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let nodes = graph_engine.get_god_nodes(limit, exclude_hubs_percentile)?;
+    println!("Top {} god nodes:", nodes.len());
+    for (i, n) in nodes.iter().enumerate() {
+        println!(
+            "  {}. {} [{}] degree={} ({})",
+            i + 1,
+            n.qualified_name,
+            n.element_type,
+            n.degree,
+            n.name
+        );
     }
     Ok(())
 }

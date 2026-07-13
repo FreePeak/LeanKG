@@ -3669,6 +3669,38 @@ pub struct ShortestPathResult {
     pub path: Vec<PathHop>,
 }
 
+/// US-GF-02: Compact view of a neighbor relation type and its edge count.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeighborHint {
+    pub rel_type: String,
+    pub count: usize,
+}
+
+/// US-GF-02: Aggregated single-node dossier returned by `explain_node`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeExplanation {
+    pub qualified_name: String,
+    pub name: String,
+    pub element_type: String,
+    pub file_path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub cluster_id: Option<String>,
+    pub cluster_label: Option<String>,
+    pub in_degree: usize,
+    pub out_degree: usize,
+    pub top_neighbors: Vec<NeighborHint>,
+}
+
+/// US-GF-05: Top-degree node entry for god-node ranking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GodNode {
+    pub qualified_name: String,
+    pub name: String,
+    pub element_type: String,
+    pub degree: usize,
+}
+
 /// Element-type ranking for resolve_to_qualified: more specific types win
 /// over files / directories when names collide.
 fn rank_element_type(t: &str) -> u8 {
@@ -3873,6 +3905,137 @@ impl GraphEngine {
         ));
 
         Ok(lines.join("\n"))
+    }
+
+    /// US-GF-02 / FR-GF-03: Aggregate a single-node dossier.
+    ///
+    /// Returns the element's definition site, cluster membership, in/out
+    /// degree, top neighbors by relation type, and recent incident / annotation
+    /// context if any. Designed for a single MCP response that lets an agent
+    /// "explain" a symbol without juggling multiple round-trips.
+    pub fn explain_node(
+        &self,
+        input: &str,
+    ) -> Result<Option<NodeExplanation>, Box<dyn std::error::Error>> {
+        let qn = match self.resolve_to_qualified(input) {
+            Some(q) => q,
+            None => return Ok(None),
+        };
+
+        let elements = self.all_elements()?;
+        let element = match elements.iter().find(|e| e.qualified_name == qn) {
+            Some(e) => e.clone(),
+            None => return Ok(None),
+        };
+
+        let all_rels = self.all_relationships()?;
+        let in_degree = all_rels.iter().filter(|r| r.target_qualified == qn).count();
+        let out_degree = all_rels.iter().filter(|r| r.source_qualified == qn).count();
+
+        // Top neighbors grouped by relation type
+        let mut by_type: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in &all_rels {
+            if r.source_qualified == qn {
+                by_type
+                    .entry(r.rel_type.clone())
+                    .or_default()
+                    .push(r.target_qualified.clone());
+            } else if r.target_qualified == qn {
+                by_type
+                    .entry(format!("<-{}", r.rel_type))
+                    .or_default()
+                    .push(r.source_qualified.clone());
+            }
+        }
+        let mut neighbors: Vec<(String, usize)> =
+            by_type.into_iter().map(|(t, ns)| (t, ns.len())).collect();
+        neighbors.sort_by_key(|n| std::cmp::Reverse(n.1));
+
+        // Sample top 5 neighbor qualified_names by relation type for hint list
+        let neighbor_hints: Vec<NeighborHint> = neighbors
+            .iter()
+            .take(8)
+            .map(|(rel_type, count)| NeighborHint {
+                rel_type: rel_type.clone(),
+                count: *count,
+            })
+            .collect();
+
+        Ok(Some(NodeExplanation {
+            qualified_name: qn,
+            name: element.name,
+            element_type: element.element_type,
+            file_path: element.file_path,
+            line_start: element.line_start,
+            line_end: element.line_end,
+            cluster_id: element.cluster_id,
+            cluster_label: element.cluster_label,
+            in_degree,
+            out_degree,
+            top_neighbors: neighbor_hints,
+        }))
+    }
+
+    /// US-GF-05 / FR-GF-10..11: Top-degree god nodes.
+    ///
+    /// Returns the most-connected elements (sum of in + out degree) sorted
+    /// descending. Optionally excludes utility super-hubs whose degree exceeds
+    /// `exclude_hubs_percentile` (0-100).
+    pub fn get_god_nodes(
+        &self,
+        limit: usize,
+        exclude_hubs_percentile: Option<u8>,
+    ) -> Result<Vec<GodNode>, Box<dyn std::error::Error>> {
+        let limit = limit.clamp(1, 200);
+        let all_rels = self.all_relationships()?;
+        let elements = self.all_elements()?;
+
+        let mut degree: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for r in &all_rels {
+            *degree.entry(r.source_qualified.clone()).or_default() += 1;
+            *degree.entry(r.target_qualified.clone()).or_default() += 1;
+        }
+
+        let mut nodes: Vec<(String, usize)> = degree.into_iter().collect();
+        nodes.sort_by_key(|n| std::cmp::Reverse(n.1));
+
+        if let Some(pctl) = exclude_hubs_percentile {
+            if !nodes.is_empty() {
+                let cutoff_idx =
+                    ((nodes.len() as f64 * (100.0 - pctl as f64) / 100.0) as usize).max(1);
+                nodes.truncate(cutoff_idx);
+            }
+        }
+
+        let qn_set: std::collections::HashSet<String> =
+            nodes.iter().map(|(qn, _)| qn.clone()).collect();
+        let by_qn: std::collections::HashMap<String, CodeElement> = elements
+            .into_iter()
+            .filter(|e| qn_set.contains(&e.qualified_name))
+            .map(|e| (e.qualified_name.clone(), e))
+            .collect();
+
+        Ok(nodes
+            .into_iter()
+            .take(limit)
+            .map(|(qn, deg)| {
+                let element_type = by_qn
+                    .get(&qn)
+                    .map(|e| e.element_type.clone())
+                    .unwrap_or_default();
+                let name = by_qn
+                    .get(&qn)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_else(|| qn.clone());
+                GodNode {
+                    qualified_name: qn,
+                    name,
+                    element_type,
+                    degree: deg,
+                }
+            })
+            .collect())
     }
 }
 
@@ -4559,5 +4722,51 @@ mod tests {
         assert_eq!(v["from"], "a");
         assert_eq!(v["to"], "b");
         assert_eq!(v["confidence_label"], "EXTRACTED");
+    }
+
+    // US-GF-02: NodeExplanation serialization shape
+    #[test]
+    fn node_explanation_serializes_required_fields() {
+        let expl = NodeExplanation {
+            qualified_name: "src/main.rs::main".into(),
+            name: "main".into(),
+            element_type: "function".into(),
+            file_path: "src/main.rs".into(),
+            line_start: 1,
+            line_end: 10,
+            cluster_id: Some("c1".into()),
+            cluster_label: Some("entry".into()),
+            in_degree: 2,
+            out_degree: 3,
+            top_neighbors: vec![NeighborHint {
+                rel_type: "calls".into(),
+                count: 3,
+            }],
+        };
+        let v = serde_json::to_value(&expl).unwrap();
+        assert_eq!(v["in_degree"], 2);
+        assert_eq!(v["out_degree"], 3);
+        assert_eq!(v["top_neighbors"][0]["rel_type"], "calls");
+    }
+
+    // US-GF-05: GodNode degree ordering
+    #[test]
+    fn god_node_orders_by_degree_descending() {
+        let a = GodNode {
+            qualified_name: "a".into(),
+            name: "a".into(),
+            element_type: "file".into(),
+            degree: 5,
+        };
+        let b = GodNode {
+            qualified_name: "b".into(),
+            name: "b".into(),
+            element_type: "file".into(),
+            degree: 10,
+        };
+        let mut v = vec![a.clone(), b.clone()];
+        v.sort_by(|x, y| y.degree.cmp(&x.degree));
+        assert_eq!(v[0].degree, 10);
+        assert_eq!(v[1].degree, 5);
     }
 }

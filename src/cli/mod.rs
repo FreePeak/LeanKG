@@ -110,6 +110,20 @@ pub enum CLICommand {
         #[arg(long, default_value = "6")]
         max_hops: usize,
     },
+    /// US-GF-02: Explain a node (definition, cluster, degree, neighbors)
+    Explain {
+        /// Symbol qualified_name, exact name, or fuzzy suffix
+        name: String,
+    },
+    /// US-GF-05: List god nodes (most-connected symbols)
+    Gods {
+        /// Limit number of results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Exclude top-N% super-hubs (0-100)
+        #[arg(long)]
+        exclude_hubs_percentile: Option<u8>,
+    },
     /// Auto-install MCP config
     Install,
     /// Show index status

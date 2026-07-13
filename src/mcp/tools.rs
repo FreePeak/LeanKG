@@ -205,6 +205,30 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "explain_node".to_string(),
+                description: "US-GF-02: Return a single-node dossier (definition site, cluster, in/out degree, top neighbors by relation type). Accepts qualified_name, exact name, or fuzzy suffix.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Qualified_name, exact name, or fuzzy suffix"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["name"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_god_nodes".to_string(),
+                description: "US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+                        "exclude_hubs_percentile": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Exclude top-N% super-hubs (e.g. 90 keeps bottom 90%)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "shortest_path".to_string(),
                 description: "US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix.".to_string(),
                 input_schema: json!({

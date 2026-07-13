@@ -226,6 +226,8 @@ impl ToolHandler {
             "ctx_read" => self.ctx_read(arguments),
             "orchestrate" => self.orchestrate_tool(arguments),
             "find_function" => self.find_function(arguments),
+            "explain_node" => self.explain_node(arguments),
+            "get_god_nodes" => self.get_god_nodes(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
@@ -1387,6 +1389,31 @@ impl ToolHandler {
         Ok(json!({
             "found": result.is_some(),
             "result": result,
+        }))
+    }
+
+    fn explain_node(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name' parameter")?;
+        let explanation = self
+            .graph_engine
+            .explain_node(name)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "found": explanation.is_some(),
+            "explanation": explanation,
+        }))
+    }
+
+    fn get_god_nodes(&self, args: &Value) -> Result<Value, String> {
+        let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+        let exclude = args["exclude_hubs_percentile"].as_u64().map(|v| v as u8);
+        let nodes = self
+            .graph_engine
+            .get_god_nodes(limit, exclude)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "count": nodes.len(),
+            "nodes": nodes,
         }))
     }
 
