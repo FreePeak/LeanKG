@@ -4664,6 +4664,48 @@ impl GraphEngine {
             relationships: focused_rels,
         })
     }
+
+    /// US-GF-09 / FR-GF-19: Record a query outcome (useful /
+    /// dead_end / corrected) for a graph answer and append to the
+    /// reflections journal at `.leankg/reflections/LESSONS.md`.
+    pub fn report_query_outcome(
+        project_path: &std::path::Path,
+        question: &str,
+        nodes: &[String],
+        outcome: &str,
+        note: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = project_path.join(".leankg").join("reflections");
+        std::fs::create_dir_all(&dir)?;
+        let lessons = dir.join("LESSONS.md");
+        let entry = format!(
+            "\n## {} — {}\n\n- Question: {}\n- Nodes: {}\n- Outcome: {}\n{}\n",
+            chrono_unix(),
+            outcome,
+            question,
+            if nodes.is_empty() {
+                "(none)".to_string()
+            } else {
+                nodes.join(", ")
+            },
+            outcome,
+            note.map(|n| format!("- Note: {}", n)).unwrap_or_default(),
+        );
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&lessons)?;
+        f.write_all(entry.as_bytes())?;
+        Ok(())
+    }
+}
+
+fn chrono_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

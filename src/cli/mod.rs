@@ -145,6 +145,19 @@ pub enum CLICommand {
         #[arg(long, default_value = "50")]
         limit: usize,
     },
+    /// US-GF-09: Record a query outcome lesson (useful | dead_end | corrected)
+    Reflect {
+        /// Original question
+        question: String,
+        /// Outcome classification
+        outcome: String,
+        /// Optional comma-separated qualified_names that were returned
+        #[arg(long)]
+        nodes: Option<String>,
+        /// Optional free-form note
+        #[arg(long)]
+        note: Option<String>,
+    },
     /// Auto-install MCP config
     Install,
     /// Show index status

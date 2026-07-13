@@ -280,6 +280,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             run_tunnels(limit, &db_path)?;
         }
+        cli::CLICommand::Reflect {
+            question,
+            outcome,
+            nodes,
+            note,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            let nodes_vec: Vec<String> = nodes
+                .as_deref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            run_reflect(
+                &project_path,
+                &question,
+                &outcome,
+                &nodes_vec,
+                note.as_deref(),
+                &db_path,
+            )?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1199,6 +1225,19 @@ fn run_tunnels(limit: usize, db_path: &std::path::Path) -> Result<(), Box<dyn st
             t.target_cluster,
         );
     }
+    Ok(())
+}
+
+fn run_reflect(
+    project_path: &std::path::Path,
+    question: &str,
+    outcome: &str,
+    nodes: &[String],
+    note: Option<&str>,
+    _db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    graph::GraphEngine::report_query_outcome(project_path, question, nodes, outcome, note)?;
+    println!("Recorded reflection for outcome '{}'", outcome);
     Ok(())
 }
 

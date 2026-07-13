@@ -217,6 +217,21 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "report_query_outcome".to_string(),
+                description: "US-GF-09: Record whether a graph query result was useful (useful | dead_end | corrected). Appends an entry to .leankg/reflections/LESSONS.md so future agents can bias ranking toward previously-useful nodes.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "Original question"},
+                        "nodes": {"type": "array", "items": {"type": "string"}, "description": "Qualified_names that were returned"},
+                        "outcome": {"type": "string", "enum": ["useful", "dead_end", "corrected"]},
+                        "note": {"type": "string", "description": "Optional free-form lesson learned"},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["question", "outcome"]
+                }),
+            },
+            ToolDefinition {
                 name: "agent_focus".to_string(),
                 description: "US-MP-04: Return a focused subgraph filtered by agent persona (path filters, cluster_id, element_types). Persona config lives in .leankg/agents/<name>.json.".to_string(),
                 input_schema: json!({

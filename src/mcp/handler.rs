@@ -237,6 +237,7 @@ impl ToolHandler {
             "agent_focus" => self.agent_focus(arguments),
             "agent_diary_write" => self.agent_diary_write(arguments),
             "agent_diary_read" => self.agent_diary_read(arguments),
+            "report_query_outcome" => self.report_query_outcome(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1571,6 +1572,25 @@ impl ToolHandler {
             entries = entries.split_off(entries.len() - limit);
         }
         Ok(json!({ "count": entries.len(), "entries": entries }))
+    }
+
+    fn report_query_outcome(&self, args: &Value) -> Result<Value, String> {
+        let question = args["question"].as_str().ok_or("Missing 'question'")?;
+        let outcome = args["outcome"].as_str().ok_or("Missing 'outcome'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let nodes: Vec<String> = args["nodes"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let note = args["note"].as_str();
+        let project_path = std::path::Path::new(project);
+        GraphEngine::report_query_outcome(project_path, question, &nodes, outcome, note)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({ "recorded": true }))
     }
 
     fn load_layer(&self, args: &Value) -> Result<Value, String> {
