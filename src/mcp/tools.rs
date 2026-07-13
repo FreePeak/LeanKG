@@ -217,6 +217,22 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "load_layer".to_string(),
+                description: "US-MP-02: Load a context layer. layer=L0 -> identity (~50 tok). L1 -> critical facts (~120 tok). L2 -> cluster context (requires cluster_id). L3 -> deep subgraph search (requires query).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "layer": {"type": "string", "enum": ["L0", "L1", "L2", "L3"], "description": "Context layer to load"},
+                        "project": {"type": "string", "description": "Optional: project path"},
+                        "project_name": {"type": "string", "default": "project"},
+                        "cluster_id": {"type": "string", "description": "Required for L2"},
+                        "query": {"type": "string", "description": "Required for L3"},
+                        "limit": {"type": "integer", "default": 20}
+                    },
+                    "required": ["layer"]
+                }),
+            },
+            ToolDefinition {
                 name: "get_graph_report".to_string(),
                 description: "US-GF-06: Return the full graph report (god nodes, confidence distribution, suggested questions). Writes `.leankg/GRAPH_REPORT.md` on disk.".to_string(),
                 input_schema: json!({

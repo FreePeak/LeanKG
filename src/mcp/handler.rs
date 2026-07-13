@@ -228,6 +228,7 @@ impl ToolHandler {
             "find_function" => self.find_function(arguments),
             "explain_node" => self.explain_node(arguments),
             "get_god_nodes" => self.get_god_nodes(arguments),
+            "load_layer" => self.load_layer(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1433,6 +1434,87 @@ impl ToolHandler {
             "report": report,
             "markdown": markdown,
         }))
+    }
+
+    fn load_layer(&self, args: &Value) -> Result<Value, String> {
+        let layer = args["layer"].as_str().unwrap_or("L0");
+        let project_name = args["project_name"].as_str().unwrap_or("project");
+        match layer {
+            "L0" => {
+                let text = self
+                    .graph_engine
+                    .identity_context(project_name)
+                    .map_err(|e| e.to_string())?;
+                // Persist for next session to skip regeneration.
+                let project = args["project"].as_str().unwrap_or(".");
+                let path = std::path::Path::new(project)
+                    .join(".leankg")
+                    .join("identity.md");
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&path, &text);
+                Ok(json!({ "layer": "L0", "context": text }))
+            }
+            "L1" => {
+                let text = self
+                    .graph_engine
+                    .critical_facts_context()
+                    .map_err(|e| e.to_string())?;
+                let project = args["project"].as_str().unwrap_or(".");
+                let path = std::path::Path::new(project)
+                    .join(".leankg")
+                    .join("critical_facts.md");
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&path, &text);
+                Ok(json!({ "layer": "L1", "context": text }))
+            }
+            "L2" => {
+                let cluster_id = args["cluster_id"]
+                    .as_str()
+                    .ok_or("L2 requires cluster_id")?;
+                let elements = self
+                    .graph_engine
+                    .all_elements()
+                    .map_err(|e| e.to_string())?;
+                let members: Vec<_> = elements
+                    .into_iter()
+                    .filter(|e| e.cluster_id.as_deref() == Some(cluster_id))
+                    .take(args["limit"].as_u64().unwrap_or(20) as usize)
+                    .map(|e| {
+                        json!({
+                            "qualified_name": e.qualified_name,
+                            "element_type": e.element_type,
+                            "name": e.name,
+                        })
+                    })
+                    .collect();
+                Ok(json!({ "layer": "L2", "cluster_id": cluster_id, "members": members }))
+            }
+            "L3" => {
+                let query = args["query"].as_str().ok_or("L3 requires query")?;
+                let _limit = args["limit"].as_u64().unwrap_or(20) as usize;
+                let elements = self
+                    .graph_engine
+                    .search_by_name(query)
+                    .map_err(|e| e.to_string())?;
+                let hits: Vec<_> = elements
+                    .into_iter()
+                    .map(|e| {
+                        json!({
+                            "qualified_name": e.qualified_name,
+                            "element_type": e.element_type,
+                            "name": e.name,
+                            "file": e.file_path,
+                        })
+                    })
+                    .collect();
+                Ok(json!({ "layer": "L3", "query": query, "results": hits }))
+            }
+            other => Err(format!("Unknown layer: {}", other)),
+        }
     }
 
     fn get_callers(&self, args: &Value) -> Result<Value, String> {

@@ -3973,6 +3973,72 @@ impl GraphEngine {
         Ok(lines.join("\n"))
     }
 
+    /// US-MP-02 / FR-MP-05: Generate L0 context (~50 tokens).
+    /// Project identity: name, languages, top-level directories,
+    /// architecture pattern. Stored at `.leankg/identity.md`.
+    pub fn identity_context(&self, project_name: &str) -> Result<String, String> {
+        let elements = self.all_elements().map_err(|e| e.to_string())?;
+        let langs: std::collections::BTreeSet<String> = elements
+            .iter()
+            .map(|e| e.language.clone())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        let top_dirs: std::collections::BTreeSet<String> = elements
+            .iter()
+            .filter_map(|e| {
+                let p = e.file_path.trim_start_matches("./").trim_start_matches('/');
+                p.split('/').next().map(String::from)
+            })
+            .filter(|d| !d.is_empty())
+            .collect();
+
+        let mut out = String::new();
+        out.push_str(&format!("# {}\n\n", project_name));
+        if !langs.is_empty() {
+            out.push_str(&format!(
+                "Languages: {}\n",
+                langs.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
+        if !top_dirs.is_empty() {
+            let dirs = top_dirs.into_iter().take(8).collect::<Vec<_>>();
+            out.push_str(&format!("Top-level: {}\n", dirs.join(", ")));
+        }
+        Ok(out)
+    }
+
+    /// US-MP-02 / FR-MP-06: Generate L1 context (~120 tokens).
+    /// Critical facts: hot modules (top god nodes), element counts,
+    /// relationship counts. Stored at `.leankg/critical_facts.md`.
+    pub fn critical_facts_context(&self) -> Result<String, String> {
+        let elements = self.all_elements().map_err(|e| e.to_string())?;
+        let rels = self.all_relationships().map_err(|e| e.to_string())?;
+        let gods = self.get_god_nodes(5, Some(90)).map_err(|e| e.to_string())?;
+
+        let total = elements.len();
+        let rel_count = rels.len();
+        let func_count = elements
+            .iter()
+            .filter(|e| e.element_type == "function")
+            .count();
+
+        let mut out = String::new();
+        out.push_str("## Critical facts\n\n");
+        out.push_str(&format!(
+            "Elements: {} (functions: {}). Relationships: {}.\n",
+            total, func_count, rel_count
+        ));
+        if !gods.is_empty() {
+            let names: Vec<String> = gods
+                .iter()
+                .map(|g| format!("`{}` (degree {})", g.qualified_name, g.degree))
+                .collect();
+            out.push_str(&format!("Hot modules: {}.\n", names.join(", ")));
+        }
+        Ok(out)
+    }
+
     /// US-GF-02 / FR-GF-03: Aggregate a single-node dossier.
     ///
     /// Returns the element's definition site, cluster membership, in/out
