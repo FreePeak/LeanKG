@@ -13,6 +13,7 @@ pub mod embeddings;
 pub mod graph;
 pub mod hooks;
 pub mod indexer;
+pub mod lsp;
 pub mod mcp;
 pub mod obsidian;
 pub mod ontology;
