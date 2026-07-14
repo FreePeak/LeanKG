@@ -1,4 +1,5 @@
 pub mod cicd;
+pub mod event_edges;
 pub mod extractor;
 pub mod git;
 pub mod git_workspace;
@@ -1454,6 +1455,15 @@ pub fn generate_physical_structure(
     let (rat_elements, rat_relationships) = extract_rationale_markers(files);
     elements.extend(rat_elements);
     relationships.extend(rat_relationships);
+
+    // US-CBM-B6 / FR-B15: emit / listen event channel edges.
+    for file in files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let edges = crate::indexer::event_edges::detect_event_edges(&content);
+            let edge_rels = crate::indexer::event_edges::to_relationships(&edges);
+            relationships.extend(edge_rels);
+        }
+    }
 
     (elements, relationships)
 }
