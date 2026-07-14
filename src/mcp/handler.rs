@@ -240,6 +240,7 @@ impl ToolHandler {
             "check_consistency" => self.check_consistency(arguments),
             "timeline" => self.timeline(arguments),
             "find_tunnels" => self.find_tunnels(arguments),
+            "resolve_with_lsp" => self.resolve_with_lsp(arguments),
             "get_cluster_skill" => self.get_cluster_skill(arguments),
             "agent_focus" => self.agent_focus(arguments),
             "agent_diary_write" => self.agent_diary_write(arguments),
@@ -1668,6 +1669,58 @@ impl ToolHandler {
             "l1_critical_facts": l1,
             "wake_up": wake,
         }))
+    }
+
+    fn resolve_with_lsp(&self, args: &Value) -> Result<Value, String> {
+        use crate::lsp::{LspBridge, LspRequest};
+        let language = args["language"]
+            .as_str()
+            .ok_or("Missing 'language' parameter")?;
+        let file_path = args["file_path"]
+            .as_str()
+            .ok_or("Missing 'file_path' parameter")?;
+        let line = args["line"].as_u64().unwrap_or(0) as u32;
+        let character = args["character"].as_u64().unwrap_or(0) as u32;
+        let request_str = args["request"].as_str().unwrap_or("definition");
+        let project_root = args["project"].as_str().unwrap_or(".");
+
+        let request = match request_str {
+            "references" => LspRequest::References,
+            "hover" => LspRequest::Hover,
+            _ => LspRequest::Definition,
+        };
+
+        // Build the bridge from <project>/leankg.yaml if it exists,
+        // otherwise use defaults.
+        let config_path = std::path::Path::new(project_root).join("leankg.yaml");
+        let bridge = LspBridge::from_leankg_yaml_or_default(&config_path);
+        let result = bridge.resolve(
+            language,
+            std::path::Path::new(file_path),
+            line,
+            character,
+            request,
+        );
+        match result {
+            Ok(Some(locations)) => Ok(json!({
+                "found": true,
+                "language": language,
+                "request": request_str,
+                "locations": locations,
+            })),
+            Ok(None) => Ok(json!({
+                "found": false,
+                "language": language,
+                "request": request_str,
+                "reason": "no LSP server configured for this language (caller should fall back to tree-sitter typed resolve)",
+            })),
+            Err(e) => Ok(json!({
+                "found": false,
+                "error": e,
+                "language": language,
+                "request": request_str,
+            })),
+        }
     }
 
     fn get_pr_impact(&self, args: &Value) -> Result<Value, String> {

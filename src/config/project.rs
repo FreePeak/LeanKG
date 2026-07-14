@@ -87,11 +87,36 @@ pub fn typed_resolve_enabled(setting: &str, language: &str) -> bool {
     match s.as_str() {
         "off" | "" | "false" | "no" => false,
         "all" | "true" | "yes" | "on" => true,
-        // CSV of language names: "go,ts,py"
-        other => other
-            .split(&[',', ' ', ';'][..])
-            .filter(|s| !s.is_empty())
-            .any(|s| s == language.to_lowercase() || s == "all"),
+        // CSV of language names: "go,ts,py". We also accept common
+        // aliases (ts -> typescript, js -> javascript, etc.) so the
+        // user's config is forgiving.
+        other => {
+            let aliases: &[(&str, &[&str])] = &[
+                ("typescript", &["ts", "tsx", "typescript", "javascript", "js", "jsx"]),
+                ("javascript", &["js", "jsx", "javascript"]),
+                ("python", &["py", "python"]),
+                ("rust", &["rs", "rust"]),
+                ("ruby", &["rb", "ruby"]),
+                ("csharp", &["cs", "csharp", "c#"]),
+            ];
+            let lang_lower = language.to_lowercase();
+            let mut accepted: std::collections::HashSet<String> = std::collections::HashSet::new();
+            accepted.insert(lang_lower.clone());
+            for (canonical, alias_list) in aliases {
+                if alias_list.iter().any(|a| *a == lang_lower) {
+                    accepted.insert(canonical.to_string());
+                }
+                if *canonical == lang_lower {
+                    for a in *alias_list {
+                        accepted.insert(a.to_string());
+                    }
+                }
+            }
+            other
+                .split(&[',', ' ', ';'][..])
+                .filter(|s| !s.is_empty())
+                .any(|s| accepted.contains(s) || s == "all")
+        }
     }
 }
 

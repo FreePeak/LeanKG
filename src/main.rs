@@ -23,6 +23,9 @@ mod runtime;
 mod watcher;
 mod web;
 
+#[path = "lsp/mod.rs"]
+mod lsp;
+
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -274,6 +277,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
             run_check_consistency(severity.as_deref(), &db_path)?;
+        }
+        cli::CLICommand::LspResolve {
+            language,
+            file_path,
+            line,
+            character,
+            request,
+            project,
+        } => {
+            run_lsp_resolve(&language, &file_path, line, character, &request, &project)?;
         }
         cli::CLICommand::Tunnels { limit } => {
             let project_path = find_project_root()?;
@@ -1278,6 +1291,46 @@ fn run_prs(
     for f in report.files.iter().take(50) {
         let cluster = f.cluster_label.as_deref().unwrap_or("(none)");
         println!("  {} -> cluster={}", f.file, cluster);
+    }
+    Ok(())
+}
+
+fn run_lsp_resolve(
+    language: &str,
+    file_path: &str,
+    line: u32,
+    character: u32,
+    request: &str,
+    project: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::lsp::{LspBridge, LspRequest};
+    let config_path = std::path::Path::new(project).join("leankg.yaml");
+    let bridge = LspBridge::from_leankg_yaml_or_default(&config_path);
+    let lsp_request = match request {
+        "references" => LspRequest::References,
+        "hover" => LspRequest::Hover,
+        _ => LspRequest::Definition,
+    };
+    match bridge.resolve(
+        language,
+        std::path::Path::new(file_path),
+        line,
+        character,
+        lsp_request,
+    )? {
+        Some(locations) => {
+            println!("LSP returned {} location(s):", locations.len());
+            for loc in locations {
+                println!(
+                    "  {}:{}:{} - {}:{}",
+                    loc.uri, loc.line, loc.character, loc.end_line, loc.end_character
+                );
+            }
+        }
+        None => println!(
+            "No LSP server configured for '{}' (or no server at {}). Falling back to tree-sitter.",
+            language, config_path.display()
+        ),
     }
     Ok(())
 }

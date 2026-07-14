@@ -139,6 +139,25 @@ pub enum CLICommand {
         #[arg(long)]
         severity: Option<String>,
     },
+    /// US-CBM-B1: Resolve a symbol via the configured LSP server
+    LspResolve {
+        /// Source language (go, typescript, python, ...)
+        language: String,
+        /// File containing the symbol
+        file_path: String,
+        /// 0-indexed line
+        #[arg(long, default_value = "0")]
+        line: u32,
+        /// 0-indexed character (column)
+        #[arg(long, default_value = "0")]
+        character: u32,
+        /// LSP request kind
+        #[arg(long, default_value = "definition", value_parser = ["definition", "references", "hover"])]
+        request: String,
+        /// Project root (where leankg.yaml lives)
+        #[arg(long, default_value = ".")]
+        project: String,
+    },
     /// US-MP-06: List cross-domain tunnels (cross-cluster relationships)
     Tunnels {
         /// Limit

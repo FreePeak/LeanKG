@@ -253,6 +253,22 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "resolve_with_lsp".to_string(),
+                description: "US-CBM-B1: Resolve a symbol via the configured LSP server for the file's language. Walks up to the nearest .git / manifest to pick the right workspace, so multi-repo and nested service directories are routed correctly. Falls back to None when no server is configured or the request times out (US-CBM-B07).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "language": {"type": "string", "description": "Source language (go, typescript, python, rust, java, kotlin, ...)"},
+                        "file_path": {"type": "string", "description": "Absolute path of the file containing the symbol"},
+                        "line": {"type": "integer", "minimum": 0},
+                        "character": {"type": "integer", "minimum": 0},
+                        "request": {"type": "string", "enum": ["definition", "references", "hover"], "default": "definition"},
+                        "project": {"type": "string", "description": "Project root for leankg.yaml lookup (defaults to .)"}
+                    },
+                    "required": ["language", "file_path", "line", "character"]
+                }),
+            },
+            ToolDefinition {
                 name: "get_overview_context".to_string(),
                 description: "US-GN-08: Return the project overview context (identity, critical facts, recent hotspots) as a single MCP-callable resource. Acts as an MCP-Resources-style agent context shortcut for wake_up + L0/L1 layers.".to_string(),
                 input_schema: json!({
