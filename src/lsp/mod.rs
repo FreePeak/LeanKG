@@ -11,6 +11,8 @@
 pub mod bridge;
 pub mod client;
 pub mod config;
+pub mod registry;
 
 pub use bridge::LspBridge;
 pub use client::LspRequest;
+pub use registry::{detect_language, LspServerSpec};

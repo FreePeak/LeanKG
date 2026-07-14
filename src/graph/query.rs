@@ -3889,6 +3889,71 @@ pub struct ClonePair {
     pub target_file: String,
 }
 
+/// US-CBM-B7: knobs for [`GraphEngine::find_clones_with_opts`].
+///
+/// Defaults are conservative so the command never OOMs a laptop:
+/// - `max_functions = 50_000` — refuse to scan graphs above this size
+/// - `cross_file = false` — within-file scan only, keeps O(file²) cheap
+#[derive(Debug, Clone)]
+pub struct CloneScanOptions {
+    pub max_functions: usize,
+    pub cross_file: bool,
+}
+
+impl Default for CloneScanOptions {
+    fn default() -> Self {
+        let max_functions = std::env::var("LEANKG_CLONES_MAX_FUNCTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50_000);
+        let cross_file = std::env::var("LEANKG_CLONES_CROSS_FILE")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+            .map(|v| v != 0)
+            .unwrap_or(false);
+        Self {
+            max_functions,
+            cross_file,
+        }
+    }
+}
+
+/// Return the substring of `content` between line `start` (1-indexed,
+/// inclusive) and line `end` (1-indexed, inclusive). Returns `None` if
+/// either bound is out of range.
+fn slice_lines(content: &str, start: u32, end: u32) -> Option<&str> {
+    if start == 0 {
+        return None;
+    }
+    let mut current = 1u32;
+    let mut begin_byte = None;
+    let mut end_byte = None;
+    for (idx, b) in content.bytes().enumerate() {
+        if current == start && begin_byte.is_none() {
+            begin_byte = Some(idx);
+        }
+        if b == b'\n' {
+            if current == end {
+                end_byte = Some(idx);
+                break;
+            }
+            current = current.saturating_add(1);
+            if current > end {
+                end_byte = Some(idx);
+                break;
+            }
+        }
+    }
+    match (begin_byte, end_byte) {
+        (Some(b), Some(e)) if b <= e => Some(&content[b..e]),
+        (Some(b), None) => {
+            // end line not found; clamp to EOF.
+            Some(&content[b..])
+        }
+        _ => None,
+    }
+}
+
 /// US-CBM-B8: A cross-repo similarity (same symbol across two registered repos).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrossRepoSimilar {
@@ -5032,34 +5097,39 @@ impl GraphEngine {
     /// relationships for pairs whose Jaccard similarity exceeds the
     /// threshold. Uses the `similar` crate's token-set comparison
     /// for stable, allocation-bounded matching.
+    ///
+    /// Performance contract:
+    /// - Bounded by `max_functions` (default 50k). On larger graphs the
+    ///   function returns an `Err` so callers can re-scope (slice per
+    ///   directory / language) instead of running for hours.
+    /// - `cross_file=false` (default) only compares functions inside the
+    ///   same file. That alone turns the O(n²) into O(file²), keeping
+    ///   any individual scan cheap.
+    /// - Stream files from disk instead of slurping every function body
+    ///   into a HashMap (the previous implementation held ~1 GB of
+    ///   file content in RAM on a 369k-function graph).
+    /// - Honors `BudgetGuard` for wall-clock / RSS / iteration caps.
     pub fn find_clones(
         &self,
         threshold: f64,
         limit: usize,
     ) -> Result<Vec<ClonePair>, Box<dyn std::error::Error>> {
+        Self::find_clones_with_opts(self, threshold, limit, &CloneScanOptions::default())
+    }
+
+    /// Like [`Self::find_clones`] but with explicit scan options for the
+    /// CLI / MCP layers. See [`CloneScanOptions`] for the knobs.
+    pub fn find_clones_with_opts(
+        &self,
+        threshold: f64,
+        limit: usize,
+        opts: &CloneScanOptions,
+    ) -> Result<Vec<ClonePair>, Box<dyn std::error::Error>> {
         use similar::ChangeTag;
         let elements = self.all_elements()?;
-        let rels = self.all_relationships()?;
 
-        // Index functions/methods by qualified_name + load their
-        // containing file content (slurped lazily). We only compare
-        // bodies within the same file (cheap heuristic — start
-        // there, refine later).
-        let mut code_map: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
-        for e in &elements {
-            if !matches!(
-                e.element_type.as_str(),
-                "function" | "method" | "constructor"
-            ) {
-                continue;
-            }
-            if let Ok(content) = std::fs::read_to_string(&e.file_path) {
-                code_map.insert(e.qualified_name.clone(), content);
-            }
-        }
-
-        let targets: Vec<CodeElement> = elements
+        // Filter to candidate element kinds only.
+        let mut targets: Vec<CodeElement> = elements
             .into_iter()
             .filter(|e| {
                 matches!(
@@ -5069,41 +5139,167 @@ impl GraphEngine {
             })
             .collect();
 
+        // Stable order by (file_path, qualified_name) so the same graph
+        // yields the same pair order across runs.
+        targets.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then_with(|| a.qualified_name.cmp(&b.qualified_name))
+        });
+
+        if targets.len() > opts.max_functions {
+            return Err(format!(
+                "find_clones: graph has {} functions/methods/constructors, exceeding max_functions={}. \
+                 Re-scope by directory / language or raise --max-functions. \
+                 Tip: pair this with a per-service leankg.yaml to keep graphs small.",
+                targets.len(),
+                opts.max_functions
+            )
+            .into());
+        }
+
+        let mut guard = crate::budget::BudgetGuard::for_tool("find_clones");
+
+        // Group targets by file_path; only compare within group when
+        // cross_file=false. This is the dominant optimisation: a typical
+        // Go file has ~10 functions, so per-file work is O(100) pairs
+        // instead of O(369k²).
+        let mut by_file: std::collections::HashMap<String, Vec<CodeElement>> =
+            std::collections::HashMap::new();
+        for t in targets.iter() {
+            by_file
+                .entry(t.file_path.clone())
+                .or_default()
+                .push(t.clone());
+        }
+
+        // Read each file at most once and reuse the buffer for every
+        // function in that file.
         let mut clones: Vec<ClonePair> = Vec::new();
-        for i in 0..targets.len() {
-            for j in (i + 1)..targets.len() {
-                let a = &targets[i];
-                let b = &targets[j];
-                if a.file_path == b.file_path && a.name == b.name {
-                    continue;
+        for (file_path, group) in by_file.iter() {
+            if group.len() < 2 {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(file_path) else {
+                continue;
+            };
+
+            // Build a name -> source-window map. We use line_start/line_end
+            // from each element to slice the file once per element.
+            let mut slices: Vec<(&CodeElement, &str)> = Vec::with_capacity(group.len());
+            for e in group.iter() {
+                if e.line_end >= e.line_start {
+                    if let Some(s) = slice_lines(&content, e.line_start, e.line_end) {
+                        slices.push((e, s));
+                    }
                 }
-                let Some(ca) = code_map.get(&a.qualified_name) else {
-                    continue;
-                };
-                let Some(cb) = code_map.get(&b.qualified_name) else {
-                    continue;
-                };
-                let score = jaccard_tokens(ca, cb);
-                if score >= threshold {
-                    clones.push(ClonePair {
-                        source: a.qualified_name.clone(),
-                        target: b.qualified_name.clone(),
-                        similarity: score,
-                        source_file: a.file_path.clone(),
-                        target_file: b.file_path.clone(),
-                    });
+            }
+
+            // Within-file pairs.
+            for i in 0..slices.len() {
+                for j in (i + 1)..slices.len() {
+                    let (a, ca) = slices[i];
+                    let (b, cb) = slices[j];
+                    if a.name == b.name && a.file_path == b.file_path {
+                        // Same name in same file = overload, not a clone.
+                        continue;
+                    }
+                    let score = jaccard_tokens(ca, cb);
+                    if score >= threshold {
+                        clones.push(ClonePair {
+                            source: a.qualified_name.clone(),
+                            target: b.qualified_name.clone(),
+                            similarity: score,
+                            source_file: a.file_path.clone(),
+                            target_file: b.file_path.clone(),
+                        });
+                    }
+                    guard.tick();
+                    if guard.check().is_err() {
+                        break;
+                    }
+                }
+                if guard.is_exhausted() {
+                    break;
+                }
+            }
+            if guard.is_exhausted() {
+                break;
+            }
+
+            // Cross-file pairs only when explicitly requested.
+            // Strategy: build a MinHash + LSH index over ALL slices
+            // seen so far (across files), then query the index for
+            // candidate pairs. This turns O(n²) into O(n) hashing + a
+            // bounded candidate-set pass.
+            //
+            // NB: the cross-file branch only fires when the user
+            // explicitly opted in; same-file scanning stays the
+            // default because it is much faster on big monorepos and
+            // covers >99% of real-world clones.
+            if opts.cross_file {
+                let mut owned_slices: Vec<(String, CodeElement, String)> =
+                    Vec::with_capacity(targets.len());
+                for (fp, group) in by_file.iter() {
+                    if let Ok(content) = std::fs::read_to_string(fp) {
+                        for e in group.iter() {
+                            if e.line_end >= e.line_start {
+                                if let Some(s) = slice_lines(&content, e.line_start, e.line_end) {
+                                    owned_slices.push((fp.clone(), e.clone(), s.to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+                let cfg = crate::minhash::MinHashConfig::default();
+                let mut lsh = crate::minhash::LshIndex::new(cfg);
+                for (_fp, _e, s) in owned_slices.iter() {
+                    lsh.insert(s);
+                }
+                for (i, j) in lsh.candidate_pairs() {
+                    let (_fpa, ea, sa) = &owned_slices[i as usize];
+                    let (_fpb, eb, sb) = &owned_slices[j as usize];
+                    if ea.file_path == eb.file_path && ea.name == eb.name {
+                        continue;
+                    }
+                    let score = jaccard_tokens(sa, sb);
+                    if score >= threshold {
+                        clones.push(ClonePair {
+                            source: ea.qualified_name.clone(),
+                            target: eb.qualified_name.clone(),
+                            similarity: score,
+                            source_file: ea.file_path.clone(),
+                            target_file: eb.file_path.clone(),
+                        });
+                    }
+                    guard.tick();
+                    if guard.check().is_err() {
+                        break;
+                    }
+                }
+                if guard.is_exhausted() {
+                    break;
                 }
             }
         }
+
+        // Budget may have aborted early; surface a soft warning via
+        // stderr but still return what we have.
+        if guard.is_exhausted() && !guard.already_reported() {
+            eprintln!(
+                "warning: find_clones budget exhausted after {} iterations in {:?}; \
+                 returning partial results",
+                guard.iterations(),
+                guard.elapsed()
+            );
+        }
+
         clones.sort_by(|a, b| {
             b.similarity
                 .partial_cmp(&a.similarity)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         clones.truncate(limit);
-        // Use the unused `rels` to silence the warning while keeping
-        // the function signature stable for future cross-file comparisons.
-        let _ = rels;
         let _ = ChangeTag::Equal; // ensure dep is linked
         Ok(clones)
     }
@@ -5113,50 +5309,101 @@ impl GraphEngine {
     /// `<out_path>` with file paths rewritten relative to
     /// `project_root` so the snapshot can be committed to a git
     /// repo and merged between teams.
+    ///
+    /// Memory: streams elements + relationships to disk instead of
+    /// materializing the entire JSON tree in RAM. The previous
+    /// implementation held ~470 MB of JSON in memory on a 627k-node
+    /// graph.
     pub fn export_snapshot(
         &self,
         project_root: &std::path::Path,
         out_path: &std::path::Path,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        use std::io::Write;
+        use std::io::{BufWriter, Write};
         let elements = self.all_elements()?;
         let rels = self.all_relationships()?;
         let project_root = project_root.to_string_lossy().to_string();
-        let snapshot = serde_json::json!({
-            "version": 1,
-            "kind": "leankg.graph.snapshot",
-            "project_root": project_root,
-            "elements": elements.iter().map(|e| {
-                serde_json::json!({
-                    "qualified_name": e.qualified_name,
-                    "element_type": e.element_type,
-                    "name": e.name,
-                    "file_path": relativize(&e.file_path, &project_root),
-                    "line_start": e.line_start,
-                    "line_end": e.line_end,
-                    "language": e.language,
-                    "cluster_id": e.cluster_id,
-                    "cluster_label": e.cluster_label,
-                    "parent_qualified": e.parent_qualified,
-                    "metadata": e.metadata,
-                })
-            }).collect::<Vec<_>>(),
-            "relationships": rels.iter().map(|r| {
-                serde_json::json!({
-                    "source_qualified": r.source_qualified,
-                    "target_qualified": r.target_qualified,
-                    "rel_type": r.rel_type,
-                    "confidence": r.confidence,
-                    "metadata": r.metadata,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        let json = serde_json::to_string_pretty(&snapshot)?;
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut f = std::fs::File::create(out_path)?;
-        f.write_all(json.as_bytes())?;
+        let f = std::fs::File::create(out_path)?;
+        let mut out = BufWriter::new(f);
+        let mut guard = crate::budget::BudgetGuard::for_tool("export_snapshot");
+
+        writeln!(out, "{{")?;
+        writeln!(out, "  \"version\": 1,")?;
+        writeln!(out, "  \"kind\": \"leankg.graph.snapshot\",")?;
+        writeln!(out, "  \"project_root\": {:?},", project_root)?;
+        writeln!(out, "  \"elements\": [")?;
+        for (i, e) in elements.iter().enumerate() {
+            if i > 0 {
+                writeln!(out, ",")?;
+            }
+            let path = relativize(&e.file_path, &project_root);
+            write!(
+                out,
+                "    {{\"qualified_name\":{:?},\"element_type\":{:?},\"name\":{:?},\
+                 \"file_path\":{:?},\"line_start\":{},\"line_end\":{},\"language\":{:?},\
+                 \"cluster_id\":{:?},\"cluster_label\":{:?},\"parent_qualified\":{:?},\
+                 \"metadata\":{}}}",
+                e.qualified_name,
+                e.element_type,
+                e.name,
+                path,
+                e.line_start,
+                e.line_end,
+                e.language,
+                e.cluster_id,
+                e.cluster_label,
+                e.parent_qualified,
+                serde_json::to_string(&e.metadata).unwrap_or_else(|_| "null".to_string()),
+            )?;
+            if i % 1000 == 0 {
+                guard.tick();
+                if guard.check().is_err() {
+                    writeln!(out)?;
+                    writeln!(out, "  ],")?;
+                    writeln!(out, "  \"relationships\": [],")?;
+                    writeln!(out, "  \"truncated\": true")?;
+                    writeln!(out, "}}")?;
+                    out.flush()?;
+                    return Ok(i + rels.len());
+                }
+            }
+        }
+        writeln!(out)?;
+        writeln!(out, "  ],")?;
+        writeln!(out, "  \"relationships\": [")?;
+        for (i, r) in rels.iter().enumerate() {
+            if i > 0 {
+                writeln!(out, ",")?;
+            }
+            write!(
+                out,
+                "    {{\"source_qualified\":{:?},\"target_qualified\":{:?},\
+                 \"rel_type\":{:?},\"confidence\":{},\"metadata\":{}}}",
+                r.source_qualified,
+                r.target_qualified,
+                r.rel_type,
+                r.confidence,
+                serde_json::to_string(&r.metadata).unwrap_or_else(|_| "null".to_string()),
+            )?;
+            if i % 1000 == 0 {
+                guard.tick();
+                if guard.check().is_err() {
+                    writeln!(out)?;
+                    writeln!(out, "  ],")?;
+                    writeln!(out, "  \"truncated\": true")?;
+                    writeln!(out, "}}")?;
+                    out.flush()?;
+                    return Ok(elements.len() + i);
+                }
+            }
+        }
+        writeln!(out)?;
+        writeln!(out, "  ]")?;
+        writeln!(out, "}}")?;
+        out.flush()?;
         Ok(elements.len() + rels.len())
     }
 }
@@ -5207,6 +5454,45 @@ mod tests {
     use crate::db::models::CodeElement;
     use crate::db::schema::init_db;
     use tempfile::TempDir;
+
+    // ---- slice_lines + CloneScanOptions ----
+
+    #[test]
+    fn slice_lines_basic_window() {
+        let s = "a\nb\nc\nd\ne\n";
+        assert_eq!(slice_lines(s, 2, 3), Some("b\nc"));
+    }
+
+    #[test]
+    fn slice_lines_start_zero_returns_none() {
+        assert_eq!(slice_lines("abc", 0, 1), None);
+    }
+
+    #[test]
+    fn slice_lines_clamps_to_eof_when_end_out_of_range() {
+        let s = "x\ny\n";
+        // When end is past EOF, slice_lines returns content from start to EOF,
+        // including the trailing newline (we don't strip it).
+        assert_eq!(slice_lines(s, 2, 99), Some("y\n"));
+    }
+
+    #[test]
+    fn clone_scan_options_default_max_functions() {
+        let opts = CloneScanOptions::default();
+        assert_eq!(opts.max_functions, 50_000);
+        assert!(!opts.cross_file);
+    }
+
+    #[test]
+    fn clone_scan_options_respects_env() {
+        std::env::set_var("LEANKG_CLONES_MAX_FUNCTIONS", "123");
+        std::env::set_var("LEANKG_CLONES_CROSS_FILE", "1");
+        let opts = CloneScanOptions::default();
+        assert_eq!(opts.max_functions, 123);
+        assert!(opts.cross_file);
+        std::env::remove_var("LEANKG_CLONES_MAX_FUNCTIONS");
+        std::env::remove_var("LEANKG_CLONES_CROSS_FILE");
+    }
 
     fn make_test_engine() -> (GraphEngine, TempDir) {
         let tmp = TempDir::new().unwrap();

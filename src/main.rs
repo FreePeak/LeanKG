@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 mod api;
 mod benchmark;
+mod budget;
 mod cli;
 mod compress;
 mod config;
@@ -25,6 +26,7 @@ mod web;
 
 #[path = "lsp/mod.rs"]
 mod lsp;
+mod minhash;
 
 use clap::Parser;
 
@@ -225,11 +227,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("MCP HTTP server error: {}", e);
             }
         }
-        cli::CLICommand::Impact { file, depth } => {
+        cli::CLICommand::Impact {
+            file,
+            depth,
+            max_affected,
+        } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            let result = calculate_impact(&file, depth, &db_path)?;
-            println!("Impact radius for {} (depth={}):", file, depth);
+            let result = calculate_impact(&file, depth, max_affected, &db_path)?;
+            println!(
+                "Impact radius for {} (depth={}, max_affected={}):",
+                file, depth, max_affected
+            );
+            if result.truncated {
+                println!(
+                    "  WARNING: result truncated at max_affected={}; re-run with --max-affected higher or smaller depth.",
+                    max_affected
+                );
+            }
             if result.affected_elements.is_empty() {
                 println!("  No affected elements found");
             } else {
@@ -273,10 +288,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &db_path,
             )?;
         }
-        cli::CLICommand::CheckConsistency { severity } => {
+        cli::CLICommand::CheckConsistency { severity, limit } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            run_check_consistency(severity.as_deref(), &db_path)?;
+            run_check_consistency(severity.as_deref(), limit, &db_path)?;
         }
         cli::CLICommand::LspResolve {
             language,
@@ -286,7 +301,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             request,
             project,
         } => {
-            run_lsp_resolve(&language, &file_path, line, character, &request, &project)?;
+            run_lsp_resolve(
+                language.as_deref(),
+                &file_path,
+                line,
+                character,
+                &request,
+                &project,
+            )?;
+        }
+        cli::CLICommand::LspInstall {
+            language,
+            project,
+            dry_run,
+        } => {
+            run_lsp_install(&language, &project, dry_run)?;
+        }
+        cli::CLICommand::LspList => {
+            run_lsp_list()?;
         }
         cli::CLICommand::Tunnels { limit } => {
             let project_path = find_project_root()?;
@@ -333,10 +365,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_default();
             run_prs(&project_path, &env, &files_vec, &db_path)?;
         }
-        cli::CLICommand::Clones { threshold, limit } => {
+        cli::CLICommand::Clones {
+            threshold,
+            limit,
+            max_functions,
+            cross_file,
+        } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            run_clones(threshold, limit, &db_path)?;
+            run_clones(threshold, limit, max_functions, cross_file, &db_path)?;
         }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
@@ -1083,13 +1120,15 @@ async fn incremental_index_codebase(
 fn calculate_impact(
     file: &str,
     depth: u32,
+    max_affected: usize,
     db_path: &std::path::Path,
 ) -> Result<graph::ImpactResult, Box<dyn std::error::Error>> {
     let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let analyzer = graph::ImpactAnalyzer::new(&graph_engine);
+    let opts = graph::ImpactScanOptions { max_affected };
 
-    let result = analyzer.calculate_impact_radius(file, depth)?;
+    let result = analyzer.calculate_impact_radius_with_options(file, depth, 0.0, &opts)?;
     Ok(result)
 }
 
@@ -1213,6 +1252,7 @@ fn run_graph_report(
 
 fn run_check_consistency(
     severity_filter: Option<&str>,
+    limit: usize,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = db::schema::init_db(db_path)?;
@@ -1222,19 +1262,25 @@ fn run_check_consistency(
         "Total relationships: {} | BROKEN: {} | STALE: {}",
         report.total_relationships, report.broken, report.stale
     );
-    let findings: Vec<_> = report
+    let mut findings: Vec<_> = report
         .findings
         .iter()
         .filter(|f| severity_filter.is_none_or(|s| f.severity == s))
         .collect();
-    for f in findings.iter().take(50) {
+    let total_after_filter = findings.len();
+    let effective_limit = if limit == 0 { usize::MAX } else { limit };
+    findings.truncate(effective_limit);
+    for f in findings.iter().take(effective_limit) {
         println!(
             "  [{}] {} --[{}]--> {} :: {}",
             f.severity, f.source, f.rel_type, f.target, f.message
         );
     }
-    if findings.len() > 50 {
-        println!("  ... and {} more", findings.len() - 50);
+    if total_after_filter > findings.len() {
+        println!(
+            "  ... and {} more (raise --limit to see more)",
+            total_after_filter - findings.len()
+        );
     }
     Ok(())
 }
@@ -1296,7 +1342,7 @@ fn run_prs(
 }
 
 fn run_lsp_resolve(
-    language: &str,
+    language: Option<&str>,
     file_path: &str,
     line: u32,
     character: u32,
@@ -1306,13 +1352,25 @@ fn run_lsp_resolve(
     use crate::lsp::{LspBridge, LspRequest};
     let config_path = std::path::Path::new(project).join("leankg.yaml");
     let bridge = LspBridge::from_leankg_yaml_or_default(&config_path);
+
+    // Auto-detect language from file extension when not given.
+    let detected = language
+        .map(String::from)
+        .or_else(|| crate::lsp::detect_language(std::path::Path::new(file_path)).map(String::from))
+        .ok_or_else(|| {
+            format!(
+                "Could not detect language from '{file_path}'. Pass --language explicitly \
+                 (e.g. --language go)."
+            )
+        })?;
+
     let lsp_request = match request {
         "references" => LspRequest::References,
         "hover" => LspRequest::Hover,
         _ => LspRequest::Definition,
     };
     match bridge.resolve(
-        language,
+        &detected,
         std::path::Path::new(file_path),
         line,
         character,
@@ -1327,27 +1385,197 @@ fn run_lsp_resolve(
                 );
             }
         }
-        None => println!(
-            "No LSP server configured for '{}' (or no server at {}). Falling back to tree-sitter.",
-            language,
-            config_path.display()
-        ),
+        None => {
+            // Surface a helpful hint instead of a silent fallback.
+            println!(
+                "No LSP server configured for '{detected}' (or no server at {}. Falling back to tree-sitter.",
+                config_path.display()
+            );
+            if let Some(spec) = crate::lsp::LspServerSpec::for_language(&detected) {
+                println!(
+                    "Hint: run `leankg lsp-install {detected}` to install '{}'.",
+                    spec.command
+                );
+            } else {
+                println!(
+                    "Hint: '{detected}' is not in the LSP registry yet. \
+                     Add a `lsp:` block to leankg.yaml."
+                );
+            }
+        }
     }
     Ok(())
+}
+
+/// Install LSP server(s) for one language or "all".
+fn run_lsp_install(
+    language: &str,
+    project: &str,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::lsp::registry::LspServerSpec;
+    let targets: Vec<&'static LspServerSpec> = if language.eq_ignore_ascii_case("all") {
+        crate::lsp::registry::ALL_LSP_SERVERS.iter().collect()
+    } else {
+        match LspServerSpec::for_language(language) {
+            Some(s) => vec![s],
+            None => {
+                return Err(format!(
+                "Unknown language '{language}'. Run `leankg lsp-list` to see supported languages."
+            )
+                .into())
+            }
+        }
+    };
+    let mut installed = 0usize;
+    let mut already_on_path = 0usize;
+    let mut manual = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for spec in targets {
+        println!("[{}]  command = {}", spec.language, spec.command);
+        if is_on_path(spec.command) {
+            println!("  ✓ already on PATH, skipping");
+            already_on_path += 1;
+            continue;
+        }
+        // Pick the best automatic install method.
+        let method = spec
+            .install
+            .iter()
+            .find(|m| m.is_automatic())
+            .unwrap_or(spec.install.first().unwrap());
+        let cmd_str = method.hint();
+        println!("  → {cmd_str}");
+        if dry_run {
+            manual += 1;
+            continue;
+        }
+        let result = run_install_command(method);
+        match result {
+            Ok(()) => {
+                installed += 1;
+                println!("  ✓ installed");
+            }
+            Err(e) => {
+                eprintln!("  ✗ failed: {e}");
+                failed.push(format!("{}: {}", spec.language, e));
+            }
+        }
+    }
+    println!();
+    println!(
+        "Done: {} installed, {} already present, {} manual/dry-run, {} failed.",
+        installed,
+        already_on_path,
+        manual,
+        failed.len()
+    );
+    if !failed.is_empty() {
+        eprintln!("Failures:\n  - {}", failed.join("\n  - "));
+    }
+    let _ = project;
+    Ok(())
+}
+
+/// Print every language the LSP registry knows about.
+fn run_lsp_list() -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "LSP server catalog ({} entries):",
+        crate::lsp::registry::ALL_LSP_SERVERS.len()
+    );
+    for spec in crate::lsp::registry::ALL_LSP_SERVERS {
+        let on_path = if is_on_path(spec.command) { "✓" } else { " " };
+        let extensions = spec.extensions.join(", ");
+        println!(
+            "  [{on_path}] {:<14} {:<32} {}",
+            spec.language, spec.command, extensions
+        );
+    }
+    Ok(())
+}
+
+fn is_on_path(cmd: &str) -> bool {
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in paths.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            let candidate = std::path::Path::new(dir).join(cmd);
+            if candidate.is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn run_install_command(method: &crate::lsp::registry::InstallMethod) -> Result<(), String> {
+    use crate::lsp::registry::InstallMethod;
+    let (program, args) = match method {
+        InstallMethod::Npm { package } => (
+            "npm",
+            vec!["install".to_string(), "-g".to_string(), package.to_string()],
+        ),
+        InstallMethod::Pip { package } => ("pip", vec!["install".to_string(), package.to_string()]),
+        InstallMethod::Cargo { crate_name } => {
+            ("cargo", vec!["install".to_string(), crate_name.to_string()])
+        }
+        InstallMethod::Brew { formula } => {
+            ("brew", vec!["install".to_string(), formula.to_string()])
+        }
+        InstallMethod::GoInstall { pkg } => ("go", vec!["install".to_string(), pkg.to_string()]),
+        InstallMethod::Gem { gem } => ("gem", vec!["install".to_string(), gem.to_string()]),
+        InstallMethod::Opam { pkg } => ("opam", vec!["install".to_string(), pkg.to_string()]),
+        InstallMethod::Dotnet { tool } => (
+            "dotnet",
+            vec![
+                "tool".to_string(),
+                "install".to_string(),
+                "-g".to_string(),
+                tool.to_string(),
+            ],
+        ),
+        InstallMethod::Manual { url, note } => {
+            return Err(format!("manual install required: {note} ({url})"));
+        }
+    };
+    let status = std::process::Command::new(program)
+        .args(&args)
+        .status()
+        .map_err(|e| format!("failed to spawn `{program}`: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{program} {}` exited with status {}",
+            args.join(" "),
+            status
+        ))
+    }
 }
 
 fn run_clones(
     threshold: f64,
     limit: usize,
+    max_functions: usize,
+    cross_file: bool,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
-    let pairs = graph_engine.find_clones(threshold, limit)?;
+    let opts = graph::CloneScanOptions {
+        max_functions,
+        cross_file,
+    };
+    let started = std::time::Instant::now();
+    let pairs = graph_engine.find_clones_with_opts(threshold, limit, &opts)?;
     println!(
-        "Found {} clone pairs (threshold={}):",
+        "Found {} clone pairs (threshold={}, max_functions={}, cross_file={}) in {:?}:",
         pairs.len(),
-        threshold
+        threshold,
+        opts.max_functions,
+        opts.cross_file,
+        started.elapsed()
     );
     for p in pairs.iter().take(50) {
         println!("  {:.2}  {}  <==>  {}", p.similarity, p.source, p.target);

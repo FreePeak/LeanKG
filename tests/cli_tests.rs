@@ -259,9 +259,14 @@ fn test_cli_serve() {
 fn test_cli_impact_basic() {
     let args = TestArgs::try_parse_from(["leankg", "impact", "src/main.rs"]).unwrap();
     match args.command {
-        CLICommand::Impact { file, depth } => {
+        CLICommand::Impact {
+            file,
+            depth,
+            max_affected,
+        } => {
             assert_eq!(file, "src/main.rs");
             assert_eq!(depth, 3);
+            assert_eq!(max_affected, 10_000);
         }
         _ => panic!("expected Impact command"),
     }
@@ -272,9 +277,14 @@ fn test_cli_impact_custom_depth() {
     let args =
         TestArgs::try_parse_from(["leankg", "impact", "src/main.rs", "--depth", "5"]).unwrap();
     match args.command {
-        CLICommand::Impact { file, depth } => {
+        CLICommand::Impact {
+            file,
+            depth,
+            max_affected,
+        } => {
             assert_eq!(file, "src/main.rs");
             assert_eq!(depth, 5);
+            assert_eq!(max_affected, 10_000);
         }
         _ => panic!("expected Impact command"),
     }

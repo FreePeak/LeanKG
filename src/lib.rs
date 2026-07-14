@@ -2,6 +2,7 @@
 // This library contains the core modules for the knowledge graph system
 
 pub mod benchmark;
+pub mod budget;
 pub mod cli;
 pub mod compress;
 pub mod config;
@@ -15,6 +16,7 @@ pub mod hooks;
 pub mod indexer;
 pub mod lsp;
 pub mod mcp;
+pub mod minhash;
 pub mod obsidian;
 pub mod ontology;
 pub mod orchestrator;

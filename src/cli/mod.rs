@@ -99,6 +99,10 @@ pub enum CLICommand {
         /// Depth of analysis
         #[arg(long, default_value = "3")]
         depth: u32,
+        /// Maximum affected elements to return (default 10000).
+        /// Bounded to keep memory + output size predictable on big monorepos.
+        #[arg(long, default_value = "10000")]
+        max_affected: usize,
     },
     /// US-GF-01: Find shortest path between two symbols in the graph
     Path {
@@ -138,11 +142,17 @@ pub enum CLICommand {
         /// Filter by severity: BROKEN | STALE | CURRENT
         #[arg(long)]
         severity: Option<String>,
+        /// Limit findings shown (default 50). Use 0 for unlimited,
+        /// but be ready for big output on a large graph.
+        #[arg(long, default_value = "50")]
+        limit: usize,
     },
     /// US-CBM-B1: Resolve a symbol via the configured LSP server
     LspResolve {
         /// Source language (go, typescript, python, ...)
-        language: String,
+        /// If omitted, the bridge auto-detects from the file extension.
+        #[arg(long)]
+        language: Option<String>,
         /// File containing the symbol
         file_path: String,
         /// 0-indexed line
@@ -158,6 +168,20 @@ pub enum CLICommand {
         #[arg(long, default_value = ".")]
         project: String,
     },
+    /// US-CBM-B1: Install the LSP server for a language (or "all").
+    /// Runs the best install method we know for the host OS.
+    LspInstall {
+        /// Language id or "all" to install every known server.
+        language: String,
+        /// Project root (where leankg.yaml lives)
+        #[arg(long, default_value = ".")]
+        project: String,
+        /// Print commands instead of running them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// US-CBM-B1: List every language the LSP registry knows about.
+    LspList,
     /// US-MP-06: List cross-domain tunnels (cross-cluster relationships)
     Tunnels {
         /// Limit
@@ -194,6 +218,17 @@ pub enum CLICommand {
         /// Limit
         #[arg(long, default_value = "50")]
         limit: usize,
+        /// Maximum functions/methods/constructors to scan. Default 50000;
+        /// raise this only on graphs you control (e.g. single-service
+        /// subgraphs). The previous O(n²) all-pairs scan would otherwise
+        /// run for hours on big monorepos.
+        #[arg(long, default_value = "50000")]
+        max_functions: usize,
+        /// Compare across files. Default false: only scan within each
+        /// file, which is O(file²) instead of O(graph²). Cross-file is
+        /// not yet implemented; flag is reserved.
+        #[arg(long)]
+        cross_file: bool,
     },
     /// Auto-install MCP config
     Install,
