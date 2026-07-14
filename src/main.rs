@@ -320,6 +320,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_default();
             run_prs(&project_path, &env, &files_vec, &db_path)?;
         }
+        cli::CLICommand::Clones { threshold, limit } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_clones(threshold, limit, &db_path)?;
+        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1273,6 +1278,25 @@ fn run_prs(
     for f in report.files.iter().take(50) {
         let cluster = f.cluster_label.as_deref().unwrap_or("(none)");
         println!("  {} -> cluster={}", f.file, cluster);
+    }
+    Ok(())
+}
+
+fn run_clones(
+    threshold: f64,
+    limit: usize,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let pairs = graph_engine.find_clones(threshold, limit)?;
+    println!(
+        "Found {} clone pairs (threshold={}):",
+        pairs.len(),
+        threshold
+    );
+    for p in pairs.iter().take(50) {
+        println!("  {:.2}  {}  <==>  {}", p.similarity, p.source, p.target);
     }
     Ok(())
 }
