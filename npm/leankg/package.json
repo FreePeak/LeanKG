@@ -1,0 +1,34 @@
+{
+  "name": "leankg",
+  "version": "0.17.9",
+  "description": "LeanKG — a lightweight knowledge graph for AI-assisted development. npm wrapper that downloads the right prebuilt binary for your platform.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FreePeak/LeanKG.git"
+  },
+  "bin": {
+    "leankg": "bin/leankg.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "keywords": [
+    "knowledge-graph",
+    "ai",
+    "mcp",
+    "code-intelligence"
+  ],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
