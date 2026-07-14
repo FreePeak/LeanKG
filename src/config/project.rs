@@ -92,7 +92,10 @@ pub fn typed_resolve_enabled(setting: &str, language: &str) -> bool {
         // user's config is forgiving.
         other => {
             let aliases: &[(&str, &[&str])] = &[
-                ("typescript", &["ts", "tsx", "typescript", "javascript", "js", "jsx"]),
+                (
+                    "typescript",
+                    &["ts", "tsx", "typescript", "javascript", "js", "jsx"],
+                ),
                 ("javascript", &["js", "jsx", "javascript"]),
                 ("python", &["py", "python"]),
                 ("rust", &["rs", "rust"]),

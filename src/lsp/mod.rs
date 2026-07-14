@@ -13,5 +13,4 @@ pub mod client;
 pub mod config;
 
 pub use bridge::LspBridge;
-pub use client::{LspClient, LspLocation, LspRequest};
-pub use config::{LspConfig, LspServerConfig};
+pub use client::LspRequest;

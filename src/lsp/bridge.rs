@@ -16,7 +16,9 @@
 //! `Cargo.toml`. The detection reuses `git_workspace::find_workspace`
 //! so behavior matches the indexer's git-workspace logic.
 use super::client::{LspClient, LspLocation, LspRequest};
-use super::config::{LspConfig, LspServerConfig};
+use super::config::LspConfig;
+#[cfg(test)]
+use super::config::LspServerConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -348,8 +350,16 @@ mod tests {
         // integration: the bridge lookup is only attempted for
         // languages the flag enables.
         for lang in &["go", "typescript", "python", "rust", "java", "kotlin"] {
-            assert!(typed_resolve_enabled("all", lang), "all should enable {}", lang);
-            assert!(!typed_resolve_enabled("off", lang), "off should disable {}", lang);
+            assert!(
+                typed_resolve_enabled("all", lang),
+                "all should enable {}",
+                lang
+            );
+            assert!(
+                !typed_resolve_enabled("off", lang),
+                "off should disable {}",
+                lang
+            );
         }
         assert!(typed_resolve_enabled("go,ts", "go"));
         assert!(typed_resolve_enabled("go,ts", "typescript"));
@@ -387,9 +397,14 @@ mod tests {
         //    leankg repo root (which has Cargo.toml).
         let ws = find_workspace_root(&target);
         let canonical_root = std::fs::canonicalize(&codebase).unwrap();
-        eprintln!("e2e: ws={} canonical={}", ws.display(), canonical_root.display());
+        eprintln!(
+            "e2e: ws={} canonical={}",
+            ws.display(),
+            canonical_root.display()
+        );
         assert_eq!(
-            ws, canonical_root,
+            ws,
+            canonical_root,
             "workspace_for({}) should equal {}",
             target.display(),
             canonical_root.display()
@@ -504,7 +519,8 @@ mod tests {
                 "php" => Some("php"),
                 "swift" => Some("swift"),
                 "dart" => Some("dart"),
-                "yaml" | "yml" | "toml" | "md" | "json" | "html" | "css" | "sh" | "sql" | "vue" | "svelte" => Some("config"),
+                "yaml" | "yml" | "toml" | "md" | "json" | "html" | "css" | "sh" | "sql" | "vue"
+                | "svelte" => Some("config"),
                 _ => None,
             };
             let Some(lang) = lang else { continue };
@@ -530,21 +546,5 @@ mod tests {
         // e2e_runs_against_leankg_codebase test above.)
         assert!(seen.len() >= 4, "saw only {:?}", seen);
         eprintln!("e2e typed_resolve: saw {:?}", seen);
-    }
-
-    fn which(cmd: &str) -> Option<String> {
-        // Minimal `which` to avoid pulling in the `which` crate here.
-        // Try the bare command name first, then each PATH entry.
-        if std::path::Path::new(cmd).is_file() {
-            return Some(cmd.to_string());
-        }
-        let paths = std::env::var_os("PATH")?;
-        for p in std::env::split_paths(&paths) {
-            let full = p.join(cmd);
-            if full.is_file() {
-                return Some(full.to_string_lossy().to_string());
-            }
-        }
-        None
     }
 }

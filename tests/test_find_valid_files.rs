@@ -29,7 +29,7 @@ async fn test_find_valid_files_for_relationships() {
 
     println!("=== Files with indexed call targets ===");
     let mut sorted: Vec<_> = calls_by_source.iter().collect();
-    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
 
     for (source, targets) in sorted.iter().take(10) {
         println!("{}: {} call targets", source, targets.len());

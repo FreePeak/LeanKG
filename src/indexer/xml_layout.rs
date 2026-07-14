@@ -624,7 +624,7 @@ mod tests {
     <Button android:layout_toStartOf="@id/text1" />
 </ConstraintLayout>"#;
         let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/item.xml");
-        let (elements, relationships) = extractor.extract();
+        let (elements, _relationships) = extractor.extract();
 
         let refs: Vec<_> = elements
             .iter()
@@ -855,7 +855,7 @@ mod tests {
 
 </LinearLayout>"#;
         let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/activity_main.xml");
-        let (elements, relationships) = extractor.extract();
+        let (elements, _relationships) = extractor.extract();
 
         let resource_refs: Vec<_> = elements
             .iter()
@@ -920,7 +920,7 @@ mod tests {
         android:onClick="onCancelClicked" />
 </LinearLayout>"#;
         let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/activity_main.xml");
-        let (elements, relationships) = extractor.extract();
+        let (_elements, relationships) = extractor.extract();
 
         let on_click_rels: Vec<_> = relationships
             .iter()
@@ -944,7 +944,7 @@ mod tests {
     </LinearLayout>
 </LinearLayout>"#;
         let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/activity_main.xml");
-        let (elements, relationships) = extractor.extract();
+        let (elements, _relationships) = extractor.extract();
 
         let widgets: Vec<_> = elements
             .iter()
@@ -971,7 +971,7 @@ mod tests {
         android:layout_height="48dp" />
 </androidx.constraintlayout.widget.ConstraintLayout>"#;
         let extractor = XmlLayoutExtractor::new(source.as_slice(), "res/layout/main.xml");
-        let (elements, relationships) = extractor.extract();
+        let (elements, _relationships) = extractor.extract();
 
         let widgets: Vec<_> = elements
             .iter()

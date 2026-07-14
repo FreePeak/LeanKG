@@ -5183,6 +5183,24 @@ fn chrono_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// US-CBM-B7 helper: token-set Jaccard similarity between two strings.
+/// Returns 0.0 when both inputs are empty.
+fn jaccard_tokens(a: &str, b: &str) -> f64 {
+    use std::collections::HashSet;
+    let ta: HashSet<&str> = a.split_whitespace().collect();
+    let tb: HashSet<&str> = b.split_whitespace().collect();
+    if ta.is_empty() && tb.is_empty() {
+        return 0.0;
+    }
+    let inter = ta.intersection(&tb).count();
+    let union = ta.union(&tb).count();
+    if union == 0 {
+        0.0
+    } else {
+        inter as f64 / union as f64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5908,8 +5926,8 @@ mod tests {
             element_type: "file".into(),
             degree: 10,
         };
-        let mut v = vec![a.clone(), b.clone()];
-        v.sort_by(|x, y| y.degree.cmp(&x.degree));
+        let mut v = [a.clone(), b.clone()];
+        v.sort_by_key(|x| std::cmp::Reverse(x.degree));
         assert_eq!(v[0].degree, 10);
         assert_eq!(v[1].degree, 5);
     }
@@ -6189,23 +6207,5 @@ mod tests {
     fn relativize_handles_already_relative() {
         assert_eq!(relativize("./src/main.rs", "/anywhere"), "./src/main.rs");
         assert_eq!(relativize("src/main.rs", "/anywhere"), "./src/main.rs");
-    }
-}
-
-/// US-CBM-B7 helper: token-set Jaccard similarity between two strings.
-/// Returns 0.0 when both inputs are empty.
-fn jaccard_tokens(a: &str, b: &str) -> f64 {
-    use std::collections::HashSet;
-    let ta: HashSet<&str> = a.split_whitespace().collect();
-    let tb: HashSet<&str> = b.split_whitespace().collect();
-    if ta.is_empty() && tb.is_empty() {
-        return 0.0;
-    }
-    let inter = ta.intersection(&tb).count();
-    let union = ta.union(&tb).count();
-    if union == 0 {
-        0.0
-    } else {
-        inter as f64 / union as f64
     }
 }

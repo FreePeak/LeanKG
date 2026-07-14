@@ -1,6 +1,6 @@
 use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
-use leankg::mcp::auth::{hash_token, AuthManager, LegacyAuthConfig};
+use leankg::mcp::auth::{hash_token, LegacyAuthConfig};
 use leankg::mcp::handler::ToolHandler;
 use leankg::mcp::server::MCPServer;
 use leankg::mcp::tools::ToolRegistry;

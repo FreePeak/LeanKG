@@ -35,7 +35,7 @@ fn test_orchestrate_context_intent_real_file() {
         .expect("orchestrate failed");
 
     assert_eq!(result.query_type, "context");
-    assert!(result.content.len() > 0, "should have content");
+    assert!(!result.content.is_empty(), "should have content");
 
     eprintln!("Context Result:");
     eprintln!("  Query type: {}", result.query_type);

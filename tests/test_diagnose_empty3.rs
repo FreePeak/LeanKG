@@ -1,7 +1,6 @@
 // Check what relationship types exist
 use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
-use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_check_relationship_types() {

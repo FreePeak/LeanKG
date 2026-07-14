@@ -159,8 +159,8 @@ fn test_layout_extraction() {
     ];
 
     for path in layout_files {
-        let content =
-            fs::read_to_string(&path).expect(&format!("Layout fixture not found: {}", path));
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("Layout fixture not found: {}", path));
 
         // Basic XML validation
         assert!(

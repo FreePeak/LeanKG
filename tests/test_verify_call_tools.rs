@@ -40,7 +40,7 @@ async fn test_verify_call_tools() {
 
     // Find targets that have callers
     let mut sorted_callers: Vec<_> = callers_by_target.iter().collect();
-    sorted_callers.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted_callers.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
 
     println!("\n=== Functions with most callers ===");
     for (target, callers) in sorted_callers.iter().take(5) {

@@ -584,7 +584,7 @@ async fn test_get_relationships_with_real_db() {
     let count_result =
         leankg::db::schema::run_script(&db, count_query, std::collections::BTreeMap::new());
     let has_data = count_result
-        .map(|r| !r.rows.is_empty() && r.rows[0].len() > 0)
+        .map(|r| !r.rows.is_empty() && !r.rows[0].is_empty())
         .unwrap_or(false);
     if !has_data {
         println!("Skipping - .leankg database appears empty or unindexed");

@@ -82,7 +82,7 @@ fn test_hilt_module_extraction() {
         .expect("Fixture file not found");
 
     let extractor = AndroidHiltExtractor::new(source.as_bytes(), "./hilt_module.kt");
-    let (elements, relationships) = extractor.extract();
+    let (elements, _relationships) = extractor.extract();
 
     // Should extract AppModule (or object AppModule)
     let modules: Vec<_> = elements

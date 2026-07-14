@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_estimate_tokens_precise() {
         let text = "fn main() {\n    println!(\"hello\");\n}";
-        let tokens = estimate_tokens_precise(&text);
+        let tokens = estimate_tokens_precise(text);
         assert!(tokens > 0);
     }
 

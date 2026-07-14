@@ -306,7 +306,7 @@ async fn test_pipeline_constructor_inference() {
     let tree = parser.parse(source_ts, None).unwrap();
 
     let extractor = EntityExtractor::new(source_ts.as_bytes(), "api.ts", "typescript");
-    let (elements, relationships) = extractor.extract(&tree);
+    let (elements, _relationships) = extractor.extract(&tree);
 
     // Check if properties baseUrl and timeout were correctly inferred
     let properties: Vec<_> = elements

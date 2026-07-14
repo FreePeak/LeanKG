@@ -11,15 +11,6 @@ use leankg::mcp::handler::ToolHandler;
 use serde_json::json;
 use tempfile::TempDir;
 
-/// Creates a test handler with a temporary database
-async fn create_test_handler() -> (ToolHandler, TempDir) {
-    let tmp = TempDir::new().unwrap();
-    let db_path = tmp.path().join("leankg.db");
-    let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
-    (ToolHandler::new(graph, db_path), tmp)
-}
-
 /// Creates a test handler with the real .leankg database
 async fn create_real_handler() -> (ToolHandler, TempDir) {
     let tmp = TempDir::new().unwrap();
@@ -41,7 +32,7 @@ fn seed_test_data(db: &leankg::db::schema::CozoDb) {
     ]
     :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}
     "#;
-    leankg::db::schema::run_script(&db, elements, Default::default()).unwrap();
+    leankg::db::schema::run_script(db, elements, Default::default()).unwrap();
 
     let relationships = r#"
     ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] <-
@@ -53,7 +44,7 @@ fn seed_test_data(db: &leankg::db::schema::CozoDb) {
     ]
     :put relationships {source_qualified, target_qualified, rel_type, confidence, metadata, env}
     "#;
-    leankg::db::schema::run_script(&db, relationships, Default::default()).unwrap();
+    leankg::db::schema::run_script(db, relationships, Default::default()).unwrap();
 }
 
 // ============================================================================
@@ -121,8 +112,7 @@ mod mcp_core_tools {
             .execute_tool("mcp_index_docs", &json!({"path": "./docs"}))
             .await;
         // May fail if docs don't exist, but should not panic
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             assert!(
                 err.contains("not found") || err.contains("empty") || err.contains("no doc"),
                 "mcp_index_docs error should be expected for empty docs: {}",
@@ -375,8 +365,7 @@ mod dependency_tools {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler.execute_tool("get_callers", &json!({})).await;
         // get_callers might require function parameter
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             assert!(
                 err.contains("function") || err.contains("name"),
                 "Error should mention 'function' or 'name'"
@@ -701,8 +690,7 @@ mod cluster_tools {
             .execute_tool("get_cluster_context", &json!({"cluster_id": "1"}))
             .await;
         // May fail if cluster doesn't exist
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             assert!(
                 err.contains("not found") || err.contains("Cluster"),
                 "Expected cluster not found error: {}",
@@ -906,8 +894,7 @@ mod error_handling {
             .execute_tool("mcp_status", &serde_json::Value::Null)
             .await;
         // Should either succeed with defaults or fail gracefully
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             assert!(
                 err.contains("param") || err.contains("argument"),
                 "Error should be about parameters"

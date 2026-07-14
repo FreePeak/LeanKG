@@ -25,7 +25,6 @@ use lsp_types::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -142,7 +141,14 @@ impl LspClient {
             client_info: None,
             locale: None,
             work_done_progress_params: WorkDoneProgressParams::default(),
+            // `root_uri` is the field lsp-types 0.97 accepts; the
+            // newer `workspace_folders` would be more general but
+            // every server we test against still understands
+            // `root_uri`. The deprecation warning is suppressed so
+            // the CI gate stays clean.
+            #[allow(deprecated)]
             root_path: None,
+            #[allow(deprecated)]
             root_uri: Some(workspace_uri),
             workspace_folders: None,
             trace: None,
@@ -194,14 +200,13 @@ impl LspClient {
         if value.is_null() {
             return Ok(out);
         }
-        if let Some(loc) = serde_json::from_value::<Location>(value.clone()).ok() {
+        if let Ok(loc) = serde_json::from_value::<Location>(value.clone()) {
             out.push(loc.into());
-        } else if let Some(arr) = serde_json::from_value::<Vec<Location>>(value.clone()).ok() {
+        } else if let Ok(arr) = serde_json::from_value::<Vec<Location>>(value.clone()) {
             for l in arr {
                 out.push(l.into());
             }
-        } else if let Some(arr) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(value).ok()
-        {
+        } else if let Ok(arr) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(value) {
             for link in arr {
                 if let Some(range) = link.target_range.into() {
                     out.push(LspLocation {

@@ -1329,7 +1329,8 @@ fn run_lsp_resolve(
         }
         None => println!(
             "No LSP server configured for '{}' (or no server at {}). Falling back to tree-sitter.",
-            language, config_path.display()
+            language,
+            config_path.display()
         ),
     }
     Ok(())
