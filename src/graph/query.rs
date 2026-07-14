@@ -3889,6 +3889,18 @@ pub struct ClonePair {
     pub target_file: String,
 }
 
+/// US-CBM-B8: A cross-repo similarity (same symbol across two registered repos).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossRepoSimilar {
+    pub symbol: String,
+    pub source_repo: String,
+    pub source_qualified: String,
+    pub source_file: String,
+    pub target_repo: String,
+    pub target_qualified: String,
+    pub target_file: String,
+}
+
 /// US-MP-06: A cross-cluster tunnel edge (relationship between two
 /// elements belonging to different Leiden clusters).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4930,6 +4942,89 @@ impl GraphEngine {
             severity: severity.to_string(),
             files: per_file,
         })
+    }
+
+    /// US-CBM-B8 / FR-B32..33: find near-duplicate code elements
+    /// across the multi-repo registry. Walks each registered repo's
+    /// own .leankg database, collects every function / method
+    /// qualified_name + file_path, and emits `cross_repo_similar`
+    /// relationships between pairs whose qualified_name (sans
+    /// repo prefix) shares a common suffix.
+    pub fn find_cross_repo_similar(
+        &self,
+        project_path: &std::path::Path,
+        limit: usize,
+    ) -> Result<Vec<CrossRepoSimilar>, Box<dyn std::error::Error>> {
+        let _ = self; // signature stability for future engine-based lookup
+        let registry = crate::registry::Registry::load().unwrap_or_default();
+        let current_root = project_path.to_string_lossy().to_string();
+
+        // Build (suffix, repo_name, qualified_name, file_path) index.
+        let mut entries: Vec<(String, String, String, String)> = Vec::new();
+        for (name, repo) in registry.list_repos() {
+            if repo.path == current_root {
+                continue; // skip self
+            }
+            let db_path = std::path::Path::new(&repo.path).join(".leankg");
+            let Ok(db) = crate::db::schema::init_db(&db_path) else {
+                continue;
+            };
+            let engine = crate::graph::GraphEngine::new(db);
+            let Ok(elements) = engine.all_elements() else {
+                continue;
+            };
+            for e in elements {
+                if matches!(e.element_type.as_str(), "function" | "method" | "class") {
+                    // Strip the file_path prefix to get the symbol suffix.
+                    let suffix = e
+                        .qualified_name
+                        .rsplit_once("::")
+                        .map(|(_, s)| s.to_string())
+                        .unwrap_or_else(|| e.qualified_name.clone());
+                    entries.push((
+                        suffix,
+                        name.clone(),
+                        e.qualified_name.clone(),
+                        e.file_path.clone(),
+                    ));
+                }
+            }
+        }
+
+        // Group by suffix, then create pairs.
+        use std::collections::HashMap;
+        let mut by_suffix: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
+        for (suffix, repo, qn, file) in entries {
+            by_suffix.entry(suffix).or_default().push((repo, qn, file));
+        }
+        let mut out: Vec<CrossRepoSimilar> = Vec::new();
+        for (suffix, group) in by_suffix {
+            if group.len() < 2 {
+                continue;
+            }
+            for i in 0..group.len() {
+                for j in (i + 1)..group.len() {
+                    let (a_repo, a_qn, a_file) = &group[i];
+                    let (b_repo, b_qn, b_file) = &group[j];
+                    if a_repo == b_repo {
+                        continue;
+                    }
+                    out.push(CrossRepoSimilar {
+                        symbol: suffix.clone(),
+                        source_repo: a_repo.clone(),
+                        source_qualified: a_qn.clone(),
+                        source_file: a_file.clone(),
+                        target_repo: b_repo.clone(),
+                        target_qualified: b_qn.clone(),
+                        target_file: b_file.clone(),
+                    });
+                    if out.len() >= limit {
+                        return Ok(out);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// US-CBM-B7 / FR-B30..31: find near-duplicate code blocks.
@@ -5996,6 +6091,24 @@ mod tests {
         // Shared tokens: the, brown. Union: the, quick, brown, fox, slow, dog = 6.
         let s = jaccard_tokens(a, b);
         assert!(s > 0.3 && s < 0.4, "expected ~0.333 got {}", s);
+    }
+
+    // US-CBM-B8: CrossRepoSimilar serialization
+    #[test]
+    fn cross_repo_similar_serializes_symbol_pair() {
+        let s = CrossRepoSimilar {
+            symbol: "authenticate".into(),
+            source_repo: "svc-a".into(),
+            source_qualified: "svc-a/auth.rs::authenticate".into(),
+            source_file: "svc-a/auth.rs".into(),
+            target_repo: "svc-b".into(),
+            target_qualified: "svc-b/auth.rs::authenticate".into(),
+            target_file: "svc-b/auth.rs".into(),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["symbol"], "authenticate");
+        assert_eq!(v["source_repo"], "svc-a");
+        assert_eq!(v["target_repo"], "svc-b");
     }
 }
 
