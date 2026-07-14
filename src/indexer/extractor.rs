@@ -43,6 +43,8 @@ pub fn is_test_file(file_path: &str) -> bool {
                 || file_name.ends_with("_widget_test.dart")
                 || path.components().any(|c| c.as_os_str() == "test")
         }
+        "vue" => file_name.ends_with(".spec.vue") || file_name.ends_with(".test.vue"),
+        "svelte" => file_name.ends_with(".spec.svelte") || file_name.ends_with(".test.svelte"),
         _ => false,
     }
 }
