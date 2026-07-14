@@ -217,6 +217,17 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "export_graph_snapshot".to_string(),
+                description: "US-GF-11: Write a portable graph snapshot (elements + relationships with relative paths) to a JSON file. Useful for committing the graph artifact to git so teams can merge work-in-progress knowledge.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "out_path": {"type": "string", "default": ".leankg/graph-snapshot.json"},
+                        "project": {"type": "string"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "find_clones".to_string(),
                 description: "US-CBM-B7: Find near-duplicate functions / methods using Jaccard token-set similarity. Returns pairs whose similarity >= threshold (default 0.6).".to_string(),
                 input_schema: json!({

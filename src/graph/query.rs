@@ -5107,6 +5107,73 @@ impl GraphEngine {
         let _ = ChangeTag::Equal; // ensure dep is linked
         Ok(clones)
     }
+
+    /// US-GF-11 / FR-GF-20: portable graph snapshot export. Writes
+    /// every code element + relationship to a JSON file at
+    /// `<out_path>` with file paths rewritten relative to
+    /// `project_root` so the snapshot can be committed to a git
+    /// repo and merged between teams.
+    pub fn export_snapshot(
+        &self,
+        project_root: &std::path::Path,
+        out_path: &std::path::Path,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        use std::io::Write;
+        let elements = self.all_elements()?;
+        let rels = self.all_relationships()?;
+        let project_root = project_root.to_string_lossy().to_string();
+        let snapshot = serde_json::json!({
+            "version": 1,
+            "kind": "leankg.graph.snapshot",
+            "project_root": project_root,
+            "elements": elements.iter().map(|e| {
+                serde_json::json!({
+                    "qualified_name": e.qualified_name,
+                    "element_type": e.element_type,
+                    "name": e.name,
+                    "file_path": relativize(&e.file_path, &project_root),
+                    "line_start": e.line_start,
+                    "line_end": e.line_end,
+                    "language": e.language,
+                    "cluster_id": e.cluster_id,
+                    "cluster_label": e.cluster_label,
+                    "parent_qualified": e.parent_qualified,
+                    "metadata": e.metadata,
+                })
+            }).collect::<Vec<_>>(),
+            "relationships": rels.iter().map(|r| {
+                serde_json::json!({
+                    "source_qualified": r.source_qualified,
+                    "target_qualified": r.target_qualified,
+                    "rel_type": r.rel_type,
+                    "confidence": r.confidence,
+                    "metadata": r.metadata,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        let json = serde_json::to_string_pretty(&snapshot)?;
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut f = std::fs::File::create(out_path)?;
+        f.write_all(json.as_bytes())?;
+        Ok(elements.len() + rels.len())
+    }
+}
+
+fn relativize(path: &str, root: &str) -> String {
+    if let Some(rest) = path.strip_prefix(root) {
+        let rest = rest.trim_start_matches('/');
+        if rest.is_empty() {
+            ".".to_string()
+        } else {
+            format!("./{}", rest)
+        }
+    } else if path.starts_with("./") || path.starts_with("/") {
+        path.to_string()
+    } else {
+        format!("./{}", path.trim_start_matches('/'))
+    }
 }
 
 fn chrono_unix() -> i64 {
@@ -6109,6 +6176,19 @@ mod tests {
         assert_eq!(v["symbol"], "authenticate");
         assert_eq!(v["source_repo"], "svc-a");
         assert_eq!(v["target_repo"], "svc-b");
+    }
+
+    // US-GF-11: relativize helper
+    #[test]
+    fn relativize_strips_project_root() {
+        let r = relativize("/Users/me/proj/src/main.rs", "/Users/me/proj");
+        assert_eq!(r, "./src/main.rs");
+    }
+
+    #[test]
+    fn relativize_handles_already_relative() {
+        assert_eq!(relativize("./src/main.rs", "/anywhere"), "./src/main.rs");
+        assert_eq!(relativize("src/main.rs", "/anywhere"), "./src/main.rs");
     }
 }
 

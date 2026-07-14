@@ -249,6 +249,7 @@ impl ToolHandler {
             "get_overview_context" => self.get_overview_context(arguments),
             "get_pr_impact" => self.get_pr_impact(arguments),
             "find_clones" => self.find_clones(arguments),
+            "export_graph_snapshot" => self.export_graph_snapshot(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
@@ -1698,6 +1699,22 @@ impl ToolHandler {
             "count": pairs.len(),
             "threshold": threshold,
             "pairs": pairs,
+        }))
+    }
+
+    fn export_graph_snapshot(&self, args: &Value) -> Result<Value, String> {
+        let out_path = args["out_path"]
+            .as_str()
+            .unwrap_or(".leankg/graph-snapshot.json");
+        let project = args["project"].as_str().unwrap_or(".");
+        let out = std::path::Path::new(out_path);
+        let written = self
+            .graph_engine
+            .export_snapshot(std::path::Path::new(project), out)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "written": written,
+            "path": out.display().to_string(),
         }))
     }
 
