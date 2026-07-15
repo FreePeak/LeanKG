@@ -98,7 +98,7 @@ docker rm -f leankg
 
 Requires [Docker](https://docs.docker.com/engine/install/) or [OrbStack](https://orbstack.dev). Point your AI tool MCP config at `http://localhost:9699/mcp`.
 
-> **Note:** Published image tags (`freepeak/leankg:latest`, `:0.17.8`) currently target `linux/arm64` (Apple Silicon / ARM hosts). On `linux/amd64`, build locally with compose below.
+> **Note:** Published image tags (`freepeak/leankg:latest`, `:0.18.0`) currently target `linux/arm64` (Apple Silicon / ARM hosts). On `linux/amd64`, build locally with compose below. The image builds with `--features embeddings` so CozoDB HNSW semantic search works out of the box.
 
 #### Build from source (compose)
 
@@ -116,15 +116,40 @@ For multi-project mounts and local overrides, see [AGENTS.md](AGENTS.md) → Roc
 leankg init                              # Initialize LeanKG in your project
 leankg index ./src                        # Index your codebase
 leankg watch ./src                        # Auto-index on file changes
-leankg impact src/main.rs --depth 3       # Calculate blast radius
+leankg impact src/main.rs --depth 3       # Calculate blast radius (with confidence + severity)
 leankg status                             # Check index status
 leankg metrics                            # View token savings
+leankg doctor                             # Diagnose index health
+leankg smoke-test                         # Run self-test (also runs at MCP HTTP startup)
 leankg web                                # Start Web UI at http://localhost:8080
-leankg export --format mermaid            # Export graph as Mermaid, DOT, or JSON
+leankg export --format mermaid            # Export graph as Mermaid, DOT, HTML, SVG, GraphML, Neo4j
 leankg quality --min-lines 50             # Find oversized functions
 leankg detect-clusters                    # Identify functional code communities
 leankg trace --all                        # Show feature-to-code traceability
 leankg annotate src/main.rs::main -d "Entry point"  # Annotate code elements
+
+# Smart agent verbs (Graphify-style)
+leankg path "FastAPI" "ModelField"        # Shortest path between two symbols
+leankg explain "APIRouter"                # Definition, cluster, degree, neighbors
+leankg gods --limit 20                    # Top god nodes / hub ranking
+leankg report --out .leankg/GRAPH_REPORT.md  # Generate architecture brief
+
+# LSP bridge (uses your configured language server)
+leankg lsp-list                           # List supported languages
+leankg lsp-install go                     # Print install command for gopls (or run it)
+leankg lsp-resolve --language go src/foo.go 42 5   # textDocument/definition via gopls
+
+# Graph quality + reasoning
+leankg check-consistency --severity BROKEN   # Detect broken / stale / current links
+leankg tunnels --limit 50                 # List cross-domain tunnels
+leankg clones --min-similarity 0.8        # Same-file near-duplicate detection
+leankg prs --triage --conflicts           # PR impact + community-conflict triage
+leankg reflect "auth flow?" useful --nodes src/auth.rs,src/jwt.rs  # Record query outcome
+
+# Semantic search (build with --features embeddings; Docker ships it OOTB)
+leankg embed --init                       # One-time model download
+leankg embed                              # Incremental embedding build
+leankg semantic-context "auth token validation" --top-k 100
 
 # Run shell commands with RTK compression
 leankg run -- cargo test -- --compress
@@ -148,10 +173,18 @@ leankg obsidian status                    # Show vault status
 leankg web                                # Start Web UI at http://localhost:8080
                                           # Then visit http://localhost:8080/services
 
-# Multi-repo registry
+# Team knowledge: incidents, env, services
+leankg incident add --title "DB timeout" --severity P1 --affected checkout --env production
+leankg incident list --env staging
+leankg env-conflicts --service checkout   # Find promote-time drift across envs
+leankg team                                # Show team + on-call + environment map
+
+# Multi-repo registry + auto-install
 leankg register my-project                # Register a repository
 leankg list                               # List all registered repos
+leankg status-repo my-project             # Show repo health + freshness
 leankg setup                              # Configure MCP for all repos + install Claude hooks
+leankg update                             # Self-update to latest GitHub release
 ```
 
 See [docs/cli-reference.md](docs/cli-reference.md) for all commands.
@@ -298,19 +331,35 @@ graph LR
 - **Auto-Init** -- Install script configures MCP, rules, skills, and hooks automatically
 - **Auto-Trigger** -- Session hooks inject LeanKG context into every AI tool session
 - **Token Optimized** -- Targeted subgraph retrieval vs full file scanning
-- **Impact Radius** -- Compute blast radius before making changes
+- **Impact Radius** -- Compute blast radius before making changes with confidence + severity
 - **Pre-Commit Risk Analysis** -- `detect_changes` classifies risk as critical/high/medium/low
-- **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, `TESTED_BY` edges
-- **MCP Server** -- Expose graph via MCP protocol for AI tool integration (40 tools)
-- **Orchestration** -- Smart context routing with caching via natural language intent
-- **Community Detection** -- Auto-detect functional clusters in your codebase
-- **Multi-Language** -- Index Go, TypeScript, Python, Rust, Java, Kotlin, Ruby, PHP, Perl, R, Elixir, Bash with tree-sitter
-- **Android** -- Extract XML layouts, resources, manifest relationships, and navigation graphs
-- **Service Topology** -- Microservice call graph visualization
+- **Dependency Graph** -- Build call graphs with `IMPORTS`, `CALLS`, `TESTED_BY`, `EMITS`, `LISTENS_ON`, `HTTP_CALLS`, `TUNNEL`, `EXPLAINS` edges
+- **MCP Server** -- Expose graph via MCP protocol for AI tool integration (85 tools)
+- **Orchestration** -- Smart context routing with persistent + hot-path caching via natural language intent
+- **Community Detection** -- Auto-detect functional clusters (Leiden) with per-cluster `SKILL.md`
+- **Smart Agent Verbs** -- `shortest_path`, `explain_node`, `god_nodes`, `get_graph_report` for connection questions
+- **LSP Bridge** -- Generic JSON-RPC client for `gopls` / `typescript-language-server` / `pyright` / `dart-language-server` / `rust-analyzer` with per-(language, workspace) cache; `resolve_with_lsp` MCP + `leankg lsp-resolve` / `lsp-install` / `lsp-list`
+- **Semantic Search (HNSW)** -- CozoDB native `::hnsw` over dense embeddings (`--features embeddings`); Docker ships it OOTB
+- **Ontology & Knowledge** -- Concept (`concepts.yaml`) + procedural workflow (`workflows.yaml`) layer with `kg_*` MCP tools
+- **Agent Personas** -- `agent_focus`, `agent_diary_read/write` for specialist reviewer/architect/ops contexts
+- **Temporal Graph** -- `valid_from` / `valid_to` on relationships with `temporal_query` + `timeline`
+- **Rationale Extraction** -- `# WHY:` / `# NOTE:` / `# HACK:` / `# FIXME:` / `# XXX:` comments become first-class `rationale` nodes linked via `explains` edges
+- **Consistency Checker** -- `check_consistency` flags BROKEN / STALE / CURRENT links against current code
+- **Cross-Domain Tunnels** -- Auto-link clusters sharing the same domain concept across projects
+- **PR Impact Dashboard** -- `leankg prs` + `triage_prs` use cluster overlap to spot merge-order risk
+- **Work-Memory Reflect Loop** -- `report_query_outcome` + `leankg reflect` aggregate into `.leankg/reflections/LESSONS.md`
+- **Portable Graph Snapshot** -- `export_graph_snapshot` for merge-friendly team-committed graph artifacts
+- **Wake-up Protocol** -- `wake_up` MCP loads ~170 tokens of L0+L1 identity at session start
+- **Multi-Language** -- Index Go, TypeScript, JavaScript, Python, Rust, Java, Kotlin, Dart, Android XML, Terraform, CI/CD YAML with tree-sitter
+- **Android** -- Extract XML layouts, resources, manifest relationships, Room, Hilt, Navigation, and WorkManager
+- **Service Topology** -- Microservice call graph with env namespacing (`local` / `staging` / `production` / `upcoming`)
+- **Incidents & Env Conflicts** -- Link outage postmortems to services; `find_env_conflicts` surfaces promote-time drift
 - **Annotation Search** -- Search code by `@Entity`, `@HiltViewModel`, and other annotations
-- **Graph Export** -- Export as JSON, DOT, or Mermaid formats
-- **REST API** -- Full REST API with auth and API key management
-- **RTK Compression** -- Run shell commands with token-saving compression
+- **Graph Export** -- Export as JSON, DOT, Mermaid, HTML, SVG, GraphML, Neo4j, or portable snapshot
+- **REST API** -- Axum HTTP API with Argon2 API keys + team multi-project RocksDB deploy
+- **RTK Compression** -- 8 read modes + response compressor + `--compress` shell wrapper
+- **TOON Responses** -- MCP responses use Token-Oriented Object Notation (~40% token reduction)
+- **CI/CD Auto-Update** -- GitHub Actions workflow reindexes + commits portable snapshot on release
 
 See [docs/architecture.md](docs/architecture.md) for system design and data model details.
 
@@ -387,8 +436,6 @@ leankg obsidian pull                      # Pull annotation edits from Obsidian
 | [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings module internals (vector index, pipelines, native HNSW rationale) |
 
 ---
-
-## Troubleshooting
 
 ## Troubleshooting
 
