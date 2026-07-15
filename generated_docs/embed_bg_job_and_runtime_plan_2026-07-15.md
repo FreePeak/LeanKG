@@ -221,6 +221,8 @@ ETA at 85 vec/sec on 371,094 functions = **~4,365 s = ~73 min** cold. The plan's
 | 12 | 2 | 128 | 5000 | `DirectEmbedder` intra=5 + `import_relations` | ~170 vec/sec | workers=2 with higher intra doesn't help |
 | 13 | 4 | 512 | 5000 | `DirectEmbedder` intra=3 + `import_relations` | ~110 vec/sec | batch=512 is slower than 128 |
 | 14 | 4 | 128 | 1000 | `DirectEmbedder` intra=3 + `import_relations` | ~110 vec/sec | smaller UPSERT_CHUNK worse |
+| 15 | 8 | 64 | 5000 | `DirectEmbedder` intra=3 + `import_relations` | ~159 vec/sec | more workers doesn't help (intra_threads contention) |
+| 16 | 4 | 128 | 20000 | `DirectEmbedder` intra=3 + `import_relations` | ~137 vec/sec | larger UPSERT_CHUNK doesn't help (commit per-call) |
 
 ETA at 170 vec/sec on 371,094 functions = **~2,183 s = ~36 min** cold. **2× improvement** over the first iteration's 73 min ETA, but still well above the plan's <10 min target. The writer's per-commit fsync (CozoDB transaction over RocksDB) and the ONNX session's `intra_threads` are now balanced at this rate — neither can be made faster without changing the storage or model layer (see [Hard ceiling on BGE-small](#hard-ceiling-on-bge-small)).
 
