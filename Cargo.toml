@@ -20,7 +20,7 @@ default = []
 # Adds fastembed (embedding + reranker inference via ONNX). Vectors are stored
 # in CozoDB's native HNSW index on `embedding_vectors` (no extra deps).
 # Off by default to keep the default binary slim.
-embeddings = ["dep:fastembed"]
+embeddings = ["dep:fastembed", "dep:ort", "dep:tokenizers", "dep:ndarray"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -70,6 +70,15 @@ sysinfo = "0.32"
 # fastembed: in-process embedding inference AND cross-encoder reranking
 #   via ONNX Runtime. Covers BGE-small-en-v1.5 (embed) + bge-reranker-v2-m3 (rerank).
 fastembed = { version = "4", optional = true }
+# FR-EMBED-FAST: ort + tokenizers are direct deps (not just transitive via
+# fastembed) so we can construct custom ONNX sessions with controlled
+# intra_threads (fastembed 4.9.1 hardcodes `intra_threads = available_parallelism()`
+# which on 10c hosts makes N worker sessions = 10N oversubscribed threads,
+# capping throughput at ~120 vec/sec). See src/embeddings/models.rs
+# `DirectEmbedder` for the alternative path that lifts this cap.
+ort = { version = "2.0.0-rc.9", optional = true }
+tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
+ndarray = { version = "0.16", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

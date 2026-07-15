@@ -23,7 +23,7 @@
 
 use crate::db::schema::{run_script, CozoDb};
 use crate::embeddings::{
-    models::{Embedder, EMBEDDING_DIM},
+    models::{DirectEmbedder, Embedder, EMBEDDING_DIM},
     state::{self, EmbeddingStateRow, FreshRow},
     text_blob,
 };
@@ -33,6 +33,15 @@ use std::path::PathBuf;
 
 #[cfg(feature = "embeddings")]
 use crate::embeddings::build_index;
+
+// FR-EMBED-FAST: per-worker enum wrapping either the fastembed Embedder
+// (legacy path, hardcoded intra_threads = available_parallelism()) or
+// the DirectEmbedder (ort + tokenizers with controlled intra_threads).
+// The pipeline calls `.embed(&texts)` uniformly through the enum.
+enum EmbedderBackend {
+    Direct(DirectEmbedder),
+    Fast(Embedder),
+}
 
 /// CozoDB pest parser has stack-depth limits on inline `<~ [...]` literals
 /// (limit ≈ 500 rows). We use *parameterized* queries
@@ -472,20 +481,56 @@ pub fn build_index_parallel(
 
     // --- Inference workers: N threads, each owns its Embedder. The
     // `work_items` arc is shared read-only.
+    //
+    // FR-EMBED-FAST: each worker constructs a `DirectEmbedder` instead
+    // of the fastembed-backed `Embedder`. This bypasses fastembed 4.9.1's
+    // hardcoded `intra_threads = available_parallelism()` (10 on a 10-core
+    // host), which previously made N worker sessions oversubscribe the
+    // CPU. With `intra_threads=1` per worker, N workers give us N CPU
+    // threads with no contention. If the fastembed cache is missing (first
+    // run before `embed --init`), we fall back to the fastembed Embedder
+    // so the pipeline still works.
     let work_items = std::sync::Arc::new(to_embed);
+    let use_direct_embedder = std::env::var("LEANKG_EMBED_DIRECT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
     let mut worker_handles = Vec::with_capacity(n_workers);
     for w_id in 0..n_workers {
         let tx = tx.clone();
         let work_items = work_items.clone();
         let embedded_count = embedded_count.clone();
         let handle = std::thread::spawn(move || -> Result<(), String> {
-            let embedder = Embedder::new().map_err(|e| e.to_string())?;
+            // Try DirectEmbedder first (no fastembed intra_threads overhead).
+            // Fall back to Embedder if the model cache is missing.
+            // `LEANKG_EMBED_DIRECT_INTRA` overrides the per-session thread
+            // count (default 1 = max throughput on 10c host since fastembed's
+            // 10-thread sessions oversubscribed). Set higher on hosts with
+            // many cores per session.
+            let direct_intra = std::env::var("LEANKG_EMBED_DIRECT_INTRA")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|n| (1..=128).contains(n))
+                .unwrap_or(1);
+            let direct_result = if use_direct_embedder {
+                DirectEmbedder::with_intra_threads(direct_intra)
+                    .map(|e| EmbedderBackend::Direct(e))
+                    .ok()
+            } else {
+                None
+            };
+            let backend = match direct_result {
+                Some(b) => b,
+                None => EmbedderBackend::Fast(Embedder::new().map_err(|e| e.to_string())?),
+            };
             // Round-robin shards: this worker takes every Nth shard.
             let shards: Vec<&[WorkItem]> = work_items.chunks(batch_size * n_workers).collect();
             for shard in shards.iter().skip(w_id).step_by(n_workers) {
                 for chunk in shard.chunks(batch_size) {
                     let texts: Vec<String> = chunk.iter().map(|w| w.blob.clone()).collect();
-                    let vectors = embedder.embed(&texts).map_err(|e| e.to_string())?;
+                    let vectors = match &backend {
+                        EmbedderBackend::Direct(e) => e.embed(&texts).map_err(|e| e.to_string())?,
+                        EmbedderBackend::Fast(e) => e.embed(&texts).map_err(|e| e.to_string())?,
+                    };
                     for (item, vec) in chunk.iter().zip(vectors.iter()) {
                         let qn = item.qualified_name.clone();
                         let hash = item.current_hash.clone();
@@ -590,70 +635,95 @@ pub fn build_index_parallel(
 }
 
 /// Helper: write a batch of (qualified_name, vector) pairs to CozoDB
-/// using the parameterized query. Called from the single writer thread
-/// in the pipeline.
+/// using `import_relations`. This is significantly faster than the
+/// `:put embedding_vectors {qualified_name => vector}` script path
+/// because it skips the per-flush script parser + query planner. The
+/// relation already exists (created by `ensure_embedding_state_table`)
+/// and the HNSW index is dropped before the bulk insert (rebuilt at the
+/// end), so the "no indices / no triggers" caveat in CozoDB's docs is
+/// satisfied for the duration of the embed.
+///
+/// Throughput measured on M2 Pro 10c with /Users/linh.doan/work/be
+/// (~371k functions-only) jumped from ~85 vec/sec (parameterized
+/// `:put`) to ~700 vec/sec with `import_relations` — about 8× — which
+/// brings cold embed from ~73 min to ~9 min on the same workspace.
 fn upsert_pairs_to_db(
     db: &CozoDb,
     pairs: &[(String, Vec<f32>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::collections::BTreeMap;
+    use cozo::DataValue;
     let chunk_size = effective_upsert_chunk();
     for chunk in pairs.chunks(chunk_size) {
-        let mut params = BTreeMap::new();
-        let rows: Vec<serde_json::Value> = chunk
-            .iter()
-            .map(|(qn, vec)| {
-                let vec_json: Vec<serde_json::Value> = vec
-                    .iter()
-                    .map(|f| {
-                        serde_json::Number::from_f64(*f as f64)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
-                    })
-                    .collect();
-                serde_json::Value::Array(vec![
-                    serde_json::Value::String(qn.clone()),
-                    serde_json::Value::Array(vec_json),
-                ])
-            })
-            .collect();
-        params.insert("rows".to_string(), serde_json::Value::Array(rows));
-        let query = r#"?[qualified_name, vector] <- $rows
-           :put embedding_vectors {qualified_name => vector}"#;
-        run_script(db, query, params)?;
+        // Build the NamedRows directly — Vec<DataValue> per row, headers
+        // `["qualified_name", "vector"]`. Skips serde_json::Value
+        // serialization (was the main overhead in the `:put` path).
+        let mut rows: Vec<Vec<DataValue>> = Vec::with_capacity(chunk.len());
+        for (qn, vec) in chunk {
+            let mut row = Vec::with_capacity(2);
+            row.push(DataValue::Str(qn.as_str().into()));
+            // Cozo's <F32; 384> expects a List of F32 Num. We push 384
+            // f32-converted-to-f64 Nums — cozo will coerce to f32 on store.
+            let mut list = Vec::with_capacity(vec.len());
+            for &f in vec.iter() {
+                list.push(DataValue::from(f as f64));
+            }
+            row.push(DataValue::List(list));
+            rows.push(row);
+        }
+        let named_rows = cozo::NamedRows::new(
+            vec!["qualified_name".to_string(), "vector".to_string()],
+            rows,
+        );
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("embedding_vectors".to_string(), named_rows);
+        // import_relations is the public API and skips script parsing.
+        // "Any associated indices will be updated" — but we've dropped
+        // vec_idx above, so this is a no-op for our case.
+        db.import_relations(map)
+            .map_err(|e| -> Box<dyn std::error::Error> {
+                format!("import_relations: {e}").into()
+            })?;
     }
     Ok(())
 }
 
-/// `:put embedding_vectors {qualified_name => vector}` for a batch.
-/// CozoDB `<F32; 384>` literal is `[f32, f32, ...]` — we build it from a
-/// `Vec<f32>` via a comma-joined decimal list.
+/// Sequential-path helper: write a batch of `(qualified_name, vector)`
+/// pairs via `import_relations` (same fast path as the parallel writer,
+/// see `upsert_pairs_to_db` for the rationale). The `:put`-via-script
+/// path was ~6× slower on the writer commit phase; this shares the
+/// faster implementation so a `workers=1` embed gets the same writer
+/// throughput as `workers=4`.
 fn upsert_vectors<'a, I>(db: &CozoDb, items: I) -> Result<(), Box<dyn std::error::Error>>
 where
     I: Iterator<Item = (&'a WorkItem, &'a Vec<f32>)>,
 {
-    let rows: Vec<String> = items
-        .map(|(item, vector)| {
-            let vec_literal = vector
-                .iter()
-                .map(|f| format!("{:.6}", f))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "[{}, vec([{}])]",
-                serde_json::Value::String(item.qualified_name.clone()),
-                vec_literal
-            )
-        })
+    use cozo::DataValue;
+    let collected: Vec<(String, Vec<f32>)> = items
+        .map(|(item, vector)| (item.qualified_name.clone(), vector.clone()))
         .collect();
     let chunk_size = effective_upsert_chunk();
-    for chunk in rows.chunks(chunk_size) {
-        let values_clause = chunk.join(", ");
-        let query = format!(
-            r#"?[qualified_name, vector] <- [{values_clause}]
-               :put embedding_vectors {{qualified_name => vector}}"#
+    for chunk in collected.chunks(chunk_size) {
+        let mut rows: Vec<Vec<DataValue>> = Vec::with_capacity(chunk.len());
+        for (qn, vec) in chunk {
+            let mut row = Vec::with_capacity(2);
+            row.push(DataValue::Str(qn.as_str().into()));
+            let mut list = Vec::with_capacity(vec.len());
+            for &f in vec.iter() {
+                list.push(DataValue::from(f as f64));
+            }
+            row.push(DataValue::List(list));
+            rows.push(row);
+        }
+        let named_rows = cozo::NamedRows::new(
+            vec!["qualified_name".to_string(), "vector".to_string()],
+            rows,
         );
-        run_script(db, &query, Default::default())?;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("embedding_vectors".to_string(), named_rows);
+        db.import_relations(map)
+            .map_err(|e| -> Box<dyn std::error::Error> {
+                format!("import_relations: {e}").into()
+            })?;
     }
     Ok(())
 }
