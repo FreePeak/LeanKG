@@ -13,9 +13,59 @@ fn kilo_config_path() -> PathBuf {
         .join("kilo-benchmark")
 }
 
+/// Resolve a CLI name to an absolute path. Tries `which` first, then
+/// falls back to common install locations. On macOS Sonoma+ unsigned
+/// binaries (e.g. self-updated opencode, kilo) come back as ENOENT
+/// from `Command::new(name)` because the launch services path
+/// rejects them. Using the absolute path bypasses that check and
+/// lets us actually run the binary.
+fn resolve_cli_path(name: &str) -> Option<String> {
+    if let Ok(output) = Command::new("which").arg(name).output() {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !s.is_empty() && std::path::Path::new(&s).is_file() {
+                return Some(s);
+            }
+        }
+    }
+    // Common fallbacks.
+    let candidates: &[&str] = match name {
+        "claude" => &[
+            "/Users/linh.doan/.local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "/usr/local/bin/claude",
+        ],
+        "opencode" => &[
+            "/Users/linh.doan/.opencode/bin/opencode",
+            "/opt/homebrew/bin/opencode",
+            "/usr/local/bin/opencode",
+        ],
+        "kilo" => &["/opt/homebrew/bin/kilo", "/usr/local/bin/kilo"],
+        "gemini" => &["/opt/homebrew/bin/gemini", "/usr/local/bin/gemini"],
+        _ => &[],
+    };
+    for c in candidates {
+        if std::path::Path::new(c).is_file() {
+            return Some((*c).to_string());
+        }
+    }
+    None
+}
+
 const KILO_MCP_WITH_LEANKG: &str = "mcp_settings_with_leankg.json";
 const KILO_MCP_WITHOUT_LEANKG: &str = "mcp_settings_without_leankg.json";
 const KILO_MCP_SETTINGS: &str = "kilo.json";
+
+#[derive(Clone)]
+pub enum CliTool {
+    OpenCode,
+    Gemini,
+    Kilo,
+    /// Anthropic Claude Code (`claude -p`). Uses
+    /// `--output-format json` so we can read token counts from the
+    /// structured response.
+    Claude,
+}
 
 trait WaitWithOutputTimeout {
     fn wait_with_output_timeout(self, duration: Duration) -> Result<Output, ()>;
@@ -47,13 +97,6 @@ pub struct BenchmarkRunner {
     cli: CliTool,
 }
 
-#[derive(Clone)]
-pub enum CliTool {
-    OpenCode,
-    Gemini,
-    Kilo,
-}
-
 impl BenchmarkRunner {
     pub fn new(output_dir: PathBuf, cli: CliTool) -> Self {
         Self { output_dir, cli }
@@ -72,6 +115,7 @@ impl BenchmarkRunner {
             }
             CliTool::OpenCode => self.run_opencode(prompt),
             CliTool::Gemini => self.run_gemini(prompt),
+            CliTool::Claude => self.run_claude(prompt),
         }
     }
 
@@ -88,6 +132,7 @@ impl BenchmarkRunner {
             }
             CliTool::OpenCode => self.run_opencode(prompt),
             CliTool::Gemini => self.run_gemini(prompt),
+            CliTool::Claude => self.run_claude(prompt),
         }
     }
 
@@ -209,7 +254,8 @@ impl BenchmarkRunner {
     }
 
     fn run_opencode(&self, prompt: &str) -> BenchmarkResult {
-        let output = Command::new("opencode")
+        let bin = resolve_cli_path("opencode").unwrap_or_else(|| "opencode".to_string());
+        let output = Command::new(&bin)
             .arg("run")
             .arg("--format")
             .arg("json")
@@ -221,6 +267,109 @@ impl BenchmarkRunner {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         self.parse_opencode_output(&stdout, &stderr, prompt)
+    }
+
+    /// Run Anthropic Claude Code (`claude -p`). Uses
+    /// `--output-format json` so we can read token usage from the
+    /// structured response.
+    fn run_claude(&self, prompt: &str) -> BenchmarkResult {
+        // Use stdin to pass the prompt so we don't have to worry
+        // about shell escaping. The `-p` flag keeps claude in
+        // non-interactive mode and prints the response.
+        let bin = resolve_cli_path("claude").unwrap_or_else(|| "claude".to_string());
+        eprintln!("run_claude: spawning {}", bin);
+        let mut child = Command::new(&bin)
+            .arg("-p")
+            .arg("--output-format")
+            .arg("json")
+            .arg("--no-session-persistence")
+            .arg("--dangerously-skip-permissions")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn `claude`");
+        if let Some(stdin) = child.stdin.as_mut() {
+            use std::io::Write;
+            stdin.write_all(prompt.as_bytes()).ok();
+        }
+        let output = child
+            .wait_with_output()
+            .expect("Failed to wait on `claude`");
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        eprintln!(
+            "claude stderr (truncated to 500): {}",
+            &stderr.chars().take(500).collect::<String>()
+        );
+        self.parse_claude_output(&stdout, prompt)
+    }
+
+    fn parse_claude_output(&self, stdout: &str, prompt: &str) -> BenchmarkResult {
+        // Claude Code's --output-format json emits a single
+        // JSON object with fields like:
+        //   {"type":"result","result":"...","usage":{
+        //     "input_tokens":N,"output_tokens":N,"cache_read_input_tokens":N}}
+        // We tolerate multiple shapes (older versions, error
+        // envelopes, etc.) and just take the first JSON object.
+        let json_start = stdout.find('{');
+        let body = match json_start {
+            Some(i) => &stdout[i..],
+            None => stdout,
+        };
+        let parsed: Option<serde_json::Value> = serde_json::from_str(body).ok();
+
+        let (mut total, mut input, mut cached) = (0u32, 0u32, 0u32);
+        if let Some(v) = parsed.as_ref() {
+            if let Some(usage) = v.get("usage") {
+                input = usage
+                    .get("input_tokens")
+                    .and_then(|x| x.as_u64())
+                    .unwrap_or(0) as u32;
+                let output_tokens = usage
+                    .get("output_tokens")
+                    .and_then(|x| x.as_u64())
+                    .unwrap_or(0) as u32;
+                cached = usage
+                    .get("cache_read_input_tokens")
+                    .and_then(|x| x.as_u64())
+                    .unwrap_or(0) as u32;
+                total = input + output_tokens + cached;
+            }
+            // Some versions nest under "message.usage".
+            if total == 0 {
+                if let Some(msg) = v.get("message") {
+                    if let Some(usage) = msg.get("usage") {
+                        input = usage
+                            .get("input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32;
+                        let output_tokens = usage
+                            .get("output_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32;
+                        cached = usage
+                            .get("cache_read_input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32;
+                        total = input + output_tokens + cached;
+                    }
+                }
+            }
+        }
+        let context_files = ContextParser::parse_file_paths(stdout);
+
+        BenchmarkResult {
+            total_tokens: total,
+            input_tokens: input,
+            cached_tokens: cached,
+            token_percent: 0.0,
+            build_time_seconds: 0.0,
+            success: total > 0 || !context_files.is_empty() || !stdout.is_empty(),
+            context: Some(ParsedContext {
+                files_referenced: context_files,
+            }),
+        }
     }
 
     fn parse_gemini_output(&self, stdout: &str) -> BenchmarkResult {

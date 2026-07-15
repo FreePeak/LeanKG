@@ -531,6 +531,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cli_tool = match cli.as_str() {
                 "opencode" => benchmark::CliTool::OpenCode,
                 "gemini" => benchmark::CliTool::Gemini,
+                "claude" => benchmark::CliTool::Claude,
                 _ => benchmark::CliTool::Kilo,
             };
             benchmark::run(category, cli_tool)?;
