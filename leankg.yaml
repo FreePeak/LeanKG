@@ -1,9 +1,12 @@
 project:
-  name: .leankg
-  root: ./src
+  name: my-project
+  root: .
   languages:
-  - javascript
-  - rust
+  - go
+  - typescript
+  - python
+  - java
+  - kotlin
 indexer:
   exclude:
   - '**/node_modules/**'
@@ -15,6 +18,7 @@ indexer:
   - '*.java'
   - '*.kt'
   - '*.xml'
+  typed_resolve: off
 mcp:
   enabled: true
   port: 3000

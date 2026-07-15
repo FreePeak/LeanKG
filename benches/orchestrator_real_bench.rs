@@ -2,7 +2,7 @@ use leankg::graph::GraphEngine;
 use leankg::orchestrator::QueryOrchestrator;
 use std::env;
 use std::fs;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 fn get_db_path() -> std::path::PathBuf {
     let counter = env::var("BENCH_COUNTER").unwrap_or_else(|_| "0".to_string());
@@ -296,10 +296,7 @@ fn main() {
     // Different intents on large file
     println!();
     print_separator();
-    println!(
-        "{}",
-        "[Intent comparison on large file: src/mcp/handler.rs]"
-    );
+    println!("[Intent comparison on large file: src/mcp/handler.rs]");
     print_separator();
 
     let intents = vec![
@@ -325,10 +322,7 @@ fn main() {
     // Cache performance on large file
     println!();
     print_separator();
-    println!(
-        "{}",
-        "[Cache performance on large file: src/mcp/handler.rs]"
-    );
+    println!("[Cache performance on large file: src/mcp/handler.rs]");
     print_separator();
 
     let r_cold_large = run_benchmark(

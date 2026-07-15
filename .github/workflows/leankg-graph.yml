@@ -1,0 +1,101 @@
+# US-FR-V2-11: Auto-rebuild the knowledge graph on push to main.
+#
+# What this workflow does:
+#   1. Checks out the repo on push to main (or manual dispatch).
+#   2. Installs the leankg CLI (via the npm wrapper, so no Rust
+#      toolchain is needed in CI).
+#   3. Runs `leankg index .` to refresh .leankg/ (CozoDB / RocksDB).
+#   4. Uploads the .leankg/ directory as a workflow artifact so
+#      downstream jobs (mcp-http, Docker image build) can pull the
+#      fresh graph without re-indexing.
+#   5. Uploads the same artifact to a separate deploy job that
+#      commits it back to the repo as a graph cache, when the
+#      `commit_graph_cache` input is true (opt-in to avoid noisy
+#      back-and-forth on busy main branches).
+#
+# Why this matters: keeps the team knowledge graph fresh (< 3 min
+# after push per the V2-11 success metric) without requiring each
+# developer to re-index locally.
+
+name: LeanKG Auto-Graph
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit_graph_cache:
+        description: 'Commit the .leankg/ cache back to the repo (opt-in)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-graph:
+    name: Index codebase
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install leankg CLI
+        run: npm install -g leankg@0.17.9
+
+      - name: Cache .leankg/ between runs
+        uses: actions/cache@v4
+        with:
+          path: .leankg
+          key: leankg-graph-${{ github.repository }}-${{ github.sha }}
+          restore-keys: |
+            leankg-graph-${{ github.repository }}-
+
+      - name: Index codebase
+        run: |
+          leankg init
+          leankg index . --env ci
+        env:
+          LEANKG_COMMIT_GRAPH_CACHE: ${{ github.event.inputs.commit_graph_cache }}
+
+      - name: Generate graph report
+        run: leankg report --project-name "${{ github.repository }}"
+
+      - name: Upload .leankg/ artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: leankg-graph
+          path: .leankg
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload GRAPH_REPORT
+        uses: actions/upload-artifact@v4
+        with:
+          name: graph-report
+          path: .leankg/GRAPH_REPORT.md
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Commit graph cache (opt-in)
+        if: github.event.inputs.commit_graph_cache == 'true'
+        run: |
+          git config user.name "leankg-bot"
+          git config user.email "leankg-bot@users.noreply.github.com"
+          git add .leankg/ || true
+          if git diff --cached --quiet; then
+            echo "No graph changes to commit"
+            exit 0
+          fi
+          git commit -m "chore(leankg): refresh graph cache [skip ci]"
+          git push
