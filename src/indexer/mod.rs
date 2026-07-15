@@ -1742,6 +1742,11 @@ mod tests {
 
     #[test]
     fn test_max_file_size_default_is_2_mib() {
+        // Acquire the lock so we don't race with
+        // `test_max_file_size_env_override` which sets the env var.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Make sure no other test left the env var set.
+        std::env::remove_var("LEANKG_MAX_FILE_SIZE");
         // Sanity check: the default cap should be 2 MiB unless overridden by
         // env. This is the cap that protects the indexer from accidentally
         // slurping a 60 MB checked-in binary or a huge generated XML.
