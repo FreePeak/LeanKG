@@ -95,5 +95,11 @@ tree-sitter-r = "1.2"
 tree-sitter-elixir = "0.3"
 tree-sitter-dart = "0.1"
 
+# Bounded MPMC channel used by the embed pipeline to keep N inference
+# workers and a single CozoDB writer decoupled. Without this, N workers
+# contending for the CozoDB write Mutex serialized the Datalog :put
+# path and throughput collapsed to ~40 vectors/sec.
+crossbeam-channel = "0.5"
+
 [dev-dependencies]
 

@@ -15,6 +15,15 @@ services:
       LEANKG_ROCKSDB_ROOT: /data/leankg-rocksdb
       MCP_HTTP_PORT: "9699"
       LEANKG_AUTO_INDEX: "1"
+      # Plan §"Part B" defaults: never block MCP on embed. The MCP server
+      # owns the in-process background embed; LEANKG_EMBED_BACKGROUND_* knobs
+      # let operators tune workers/batch/full-rebuild at runtime. Set
+      # LEANKG_EMBED_BACKGROUND=0 to opt out and rely on the legacy
+      # foreground `leankg embed --wait` (off by default).
+      LEANKG_EMBED_ON_BOOT: "0"
+      LEANKG_EMBED_BACKGROUND: "1"
+      LEANKG_EMBED_BACKGROUND_WORKERS: "2"
+      LEANKG_EMBED_BACKGROUND_BATCH: "64"
       # `LEANKG_MCP_PROJECT` and `LEANKG_PROJECT_DIRS` are intentionally
       # NOT set here. With both `env_file` (`.dockerfile`) and `environment:`
       # declaring the same key, Compose lets `environment:` win, which silently

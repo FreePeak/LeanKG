@@ -2298,6 +2298,7 @@ dependencies = [
  "axum",
  "clap",
  "cozo",
+ "crossbeam-channel",
  "dirs 5.0.1",
  "fastembed",
  "flate2",

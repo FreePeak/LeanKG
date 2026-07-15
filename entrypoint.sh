@@ -12,6 +12,13 @@ echo "RocksDB root: $ROCKSDB_ROOT"
 # LEANKG_MCP_PROJECT takes precedence; fall back to /workspace
 MCP_PROJECT="${LEANKG_MCP_PROJECT:-/workspace}"
 
+# Plan §"Part B Option 3" defaults: never block MCP on embed. Operators
+# can opt-in to in-process background embed by setting
+# LEANKG_EMBED_BACKGROUND=1; the MCP server picks it up after bind.
+# LEANKG_EMBED_ON_BOOT=0 keeps the legacy synchronous path off (the
+# legacy path blocks `mcp-http` start for hours on mega-graphs).
+export LEANKG_EMBED_ON_BOOT="${LEANKG_EMBED_ON_BOOT:-0}"
+
 rocksdb_dir_for() {
     local project_dir="$1"
     local canonical=$(realpath "$project_dir" 2>/dev/null || readlink -f "$project_dir" 2>/dev/null || echo "$project_dir")
@@ -81,15 +88,22 @@ YAML
     echo "  Index done."
 }
 
-# FR-HNSW-C: build the embedding index after `leankg index` so semantic
-# tools (semantic_search, kg_semantic_context, embed, smoke-test) work
-# out of the box on a fresh container. Honors `LEANKG_EMBED_ON_BOOT`
-# (default: 1). Set to 0 to skip on slow/constrained hosts.
+# Plan §"Part B" — by default we DO NOT block MCP on embed. The legacy
+# `embed_if_needed` path that used to run synchronously here is replaced
+# by two layered mechanisms:
+#
+#   1. `LEANKG_EMBED_BACKGROUND=1` (recommended) — `mcp-http` spawns
+#      an in-process worker thread that shares the CozoDb handle.
+#      MCP stays healthy while HNSW catches up.
+#   2. Legacy foreground embed — only runs when explicitly opted in
+#      via `LEANKG_EMBED_ON_BOOT=1`. This was the default before the
+#      Plan was implemented; we keep it as an escape hatch for users
+#      who want a deterministic "embed complete before mcp-http" flow.
 embed_if_needed() {
     local project_dir="$1"
 
     if [ "${LEANKG_EMBED_ON_BOOT:-1}" != "1" ]; then
-        echo "  LEANKG_EMBED_ON_BOOT!=1, skipping embed build."
+        echo "  LEANKG_EMBED_ON_BOOT!=1, skipping legacy foreground embed."
         return
     fi
 
@@ -112,8 +126,8 @@ embed_if_needed() {
         fi
     fi
 
-    echo "  Building embedding index (incremental)..."
-    ( cd "$project_dir" && leankg embed --project "$project_dir" ) || \
+    echo "  Building embedding index (foreground; will block mcp-http)..."
+    ( cd "$project_dir" && leankg embed --wait --project "$project_dir" ) || \
         echo "  WARN: leankg embed failed; semantic tools may be unavailable."
 }
 
