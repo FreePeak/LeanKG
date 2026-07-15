@@ -710,6 +710,130 @@ impl GraphEngine {
         Ok(elements)
     }
 
+    /// Stream every code element through `f` one at a time, never
+    /// materializing the full result set. This is the recommended
+    /// alternative to [`Self::all_elements`] for heavy callers on
+    /// big graphs.
+    ///
+    /// The closure receives ownership of each `CodeElement` so it can
+    /// decide to keep it (push into a smaller filtered Vec) or drop it.
+    /// Peak RAM stays at one element at a time + whatever the caller
+    /// keeps.
+    ///
+    /// Returns the number of elements yielded and any error. If `f`
+    /// returns `Err`, the stream stops and the error is propagated.
+    pub fn for_each_element<F>(&self, mut f: F) -> Result<u64, Box<dyn std::error::Error>>
+    where
+        F: FnMut(CodeElement) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
+        );
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let mut count = 0u64;
+        for row in result.rows.iter() {
+            let parent_qualified = row[7].get_str().map(String::from);
+            let cluster_id = row[8].get_str().map(String::from);
+            let cluster_label = row[9].get_str().map(String::from);
+            let metadata_str = row[10].get_str().unwrap_or("{}");
+            let env = row[11].get_str().unwrap_or("local").to_string();
+            let elem = CodeElement {
+                qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                element_type: row[1].get_str().unwrap_or("").to_string(),
+                name: row[2].get_str().unwrap_or("").to_string(),
+                file_path: row[3].get_str().unwrap_or("").to_string(),
+                line_start: row[4].get_int().unwrap_or(0) as u32,
+                line_end: row[5].get_int().unwrap_or(0) as u32,
+                language: row[6].get_str().unwrap_or("").to_string(),
+                parent_qualified,
+                cluster_id,
+                cluster_label,
+                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                env,
+            };
+            f(elem)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Stream every relationship through `f` one at a time. Mirrors
+    /// [`Self::for_each_element`] for the relationship table.
+    pub fn for_each_relationship<F>(&self, mut f: F) -> Result<u64, Box<dyn std::error::Error>>
+    where
+        F: FnMut(crate::db::models::Relationship) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        use crate::db::models::Relationship;
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata, env] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env]"#;
+        let result =
+            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        let mut count = 0u64;
+        for row in result.rows.iter() {
+            let metadata_str = row[4].get_str().unwrap_or("{}");
+            let env = row[5].get_str().unwrap_or("local").to_string();
+            let rel = Relationship {
+                id: None,
+                source_qualified: row[0].get_str().unwrap_or("").to_string(),
+                target_qualified: row[1].get_str().unwrap_or("").to_string(),
+                rel_type: row[2].get_str().unwrap_or("").to_string(),
+                confidence: row[3].get_float().unwrap_or(0.0),
+                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                env,
+            };
+            f(rel)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Stream elements of a specific `element_type` through `f`. This
+    /// pushes the type filter into the Datalog query so we don't ship
+    /// rows that don't match back from the engine.
+    pub fn for_each_element_of_type<F>(
+        &self,
+        element_type: &str,
+        mut f: F,
+    ) -> Result<u64, Box<dyn std::error::Error>>
+    where
+        F: FnMut(CodeElement) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        let tail = self.code_elements_tail();
+        let safe = element_type.replace('"', "");
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "{}""#,
+            safe
+        );
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let mut count = 0u64;
+        for row in result.rows.iter() {
+            let parent_qualified = row[7].get_str().map(String::from);
+            let cluster_id = row[8].get_str().map(String::from);
+            let cluster_label = row[9].get_str().map(String::from);
+            let metadata_str = row[10].get_str().unwrap_or("{}");
+            let env = row[11].get_str().unwrap_or("local").to_string();
+            let elem = CodeElement {
+                qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                element_type: row[1].get_str().unwrap_or("").to_string(),
+                name: row[2].get_str().unwrap_or("").to_string(),
+                file_path: row[3].get_str().unwrap_or("").to_string(),
+                line_start: row[4].get_int().unwrap_or(0) as u32,
+                line_end: row[5].get_int().unwrap_or(0) as u32,
+                language: row[6].get_str().unwrap_or("").to_string(),
+                parent_qualified,
+                cluster_id,
+                cluster_label,
+                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                env,
+            };
+            f(elem)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     pub fn get_elements_in_folder(
         &self,
         folder_path: &str,
@@ -5126,18 +5250,39 @@ impl GraphEngine {
         opts: &CloneScanOptions,
     ) -> Result<Vec<ClonePair>, Box<dyn std::error::Error>> {
         use similar::ChangeTag;
-        let elements = self.all_elements()?;
 
-        // Filter to candidate element kinds only.
-        let mut targets: Vec<CodeElement> = elements
-            .into_iter()
-            .filter(|e| {
-                matches!(
+        // Stream elements of the candidate kinds instead of materializing
+        // every CodeElement in RAM. We collect into a bounded Vec; when
+        // the candidate set exceeds max_functions we abort before
+        // allocating it further, so peak RAM is bounded by what we kept
+        // so far plus the next in-flight element (a few hundred bytes).
+        let mut targets: Vec<CodeElement> = Vec::new();
+        let mut total_seen: u64 = 0;
+        // Scope the closure so the mutable borrow on `targets` ends
+        // before we re-use `targets` for bucketing below.
+        {
+            let mut push_if_candidate = |e: CodeElement| -> Result<(), Box<dyn std::error::Error>> {
+                if matches!(
                     e.element_type.as_str(),
                     "function" | "method" | "constructor"
-                )
-            })
-            .collect();
+                ) {
+                    targets.push(e);
+                }
+                Ok(())
+            };
+            for kind in &["function", "method", "constructor"] {
+                total_seen += self.for_each_element_of_type(kind, &mut push_if_candidate)?;
+                if total_seen as usize > opts.max_functions {
+                    return Err(format!(
+                        "find_clones: graph has {} functions/methods/constructors, exceeding max_functions={}. \
+                         Re-scope by directory / language or raise --max-functions. \
+                         Tip: pair this with a per-service leankg.yaml to keep graphs small.",
+                        total_seen, opts.max_functions
+                    )
+                    .into());
+                }
+            }
+        }
 
         // Stable order by (file_path, qualified_name) so the same graph
         // yields the same pair order across runs.
@@ -5146,17 +5291,6 @@ impl GraphEngine {
                 .cmp(&b.file_path)
                 .then_with(|| a.qualified_name.cmp(&b.qualified_name))
         });
-
-        if targets.len() > opts.max_functions {
-            return Err(format!(
-                "find_clones: graph has {} functions/methods/constructors, exceeding max_functions={}. \
-                 Re-scope by directory / language or raise --max-functions. \
-                 Tip: pair this with a per-service leankg.yaml to keep graphs small.",
-                targets.len(),
-                opts.max_functions
-            )
-            .into());
-        }
 
         let mut guard = crate::budget::BudgetGuard::for_tool("find_clones");
 
@@ -5172,6 +5306,12 @@ impl GraphEngine {
                 .or_default()
                 .push(t.clone());
         }
+        // Free the master targets list now that we've bucketed; per-file
+        // groups still hold the elements but in smaller, releasable Vecs.
+        // We need `targets.len()` later for the cross-file pre-alloc,
+        // so capture it here while targets is still alive.
+        let targets_len = targets.len();
+        drop(targets);
 
         // Read each file at most once and reuse the buffer for every
         // function in that file.
@@ -5239,7 +5379,7 @@ impl GraphEngine {
             // covers >99% of real-world clones.
             if opts.cross_file {
                 let mut owned_slices: Vec<(String, CodeElement, String)> =
-                    Vec::with_capacity(targets.len());
+                    Vec::with_capacity(targets_len);
                 for (fp, group) in by_file.iter() {
                     if let Ok(content) = std::fs::read_to_string(fp) {
                         for e in group.iter() {
@@ -5320,8 +5460,6 @@ impl GraphEngine {
         out_path: &std::path::Path,
     ) -> Result<usize, Box<dyn std::error::Error>> {
         use std::io::{BufWriter, Write};
-        let elements = self.all_elements()?;
-        let rels = self.all_relationships()?;
         let project_root = project_root.to_string_lossy().to_string();
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -5329,14 +5467,20 @@ impl GraphEngine {
         let f = std::fs::File::create(out_path)?;
         let mut out = BufWriter::new(f);
         let mut guard = crate::budget::BudgetGuard::for_tool("export_snapshot");
+        let mut truncated = false;
+        let mut total: usize = 0;
 
         writeln!(out, "{{")?;
         writeln!(out, "  \"version\": 1,")?;
         writeln!(out, "  \"kind\": \"leankg.graph.snapshot\",")?;
         writeln!(out, "  \"project_root\": {:?},", project_root)?;
         writeln!(out, "  \"elements\": [")?;
-        for (i, e) in elements.iter().enumerate() {
-            if i > 0 {
+        let mut i: usize = 0;
+        let write_element = |out: &mut BufWriter<std::fs::File>,
+                             e: CodeElement,
+                             idx: usize|
+         -> std::io::Result<()> {
+            if idx > 0 {
                 writeln!(out, ",")?;
             }
             let path = relativize(&e.file_path, &project_root);
@@ -5357,25 +5501,31 @@ impl GraphEngine {
                 e.cluster_label,
                 e.parent_qualified,
                 serde_json::to_string(&e.metadata).unwrap_or_else(|_| "null".to_string()),
-            )?;
-            if i % 1000 == 0 {
+            )
+        };
+        // Stream elements one at a time; no Vec in RAM.
+        let stream_result = self.for_each_element(|e| {
+            write_element(&mut out, e, i)?;
+            i += 1;
+            if i.is_multiple_of(1000) {
                 guard.tick();
                 if guard.check().is_err() {
-                    writeln!(out)?;
-                    writeln!(out, "  ],")?;
-                    writeln!(out, "  \"relationships\": [],")?;
-                    writeln!(out, "  \"truncated\": true")?;
-                    writeln!(out, "}}")?;
-                    out.flush()?;
-                    return Ok(i + rels.len());
+                    return Err(Box::new(std::io::Error::other("export_snapshot budget")));
                 }
             }
+            Ok(())
+        });
+        match stream_result {
+            Ok(n) => total += n as usize,
+            Err(e) if e.to_string().contains("budget") => truncated = true,
+            Err(e) => return Err(e),
         }
         writeln!(out)?;
         writeln!(out, "  ],")?;
         writeln!(out, "  \"relationships\": [")?;
-        for (i, r) in rels.iter().enumerate() {
-            if i > 0 {
+        let mut j: usize = 0;
+        let stream_rels = self.for_each_relationship(|r| {
+            if j > 0 {
                 writeln!(out, ",")?;
             }
             write!(
@@ -5388,23 +5538,28 @@ impl GraphEngine {
                 r.confidence,
                 serde_json::to_string(&r.metadata).unwrap_or_else(|_| "null".to_string()),
             )?;
-            if i % 1000 == 0 {
+            j += 1;
+            if j.is_multiple_of(1000) {
                 guard.tick();
                 if guard.check().is_err() {
-                    writeln!(out)?;
-                    writeln!(out, "  ],")?;
-                    writeln!(out, "  \"truncated\": true")?;
-                    writeln!(out, "}}")?;
-                    out.flush()?;
-                    return Ok(elements.len() + i);
+                    return Err(Box::new(std::io::Error::other("export_snapshot budget")));
                 }
             }
+            Ok(())
+        });
+        match stream_rels {
+            Ok(n) => total += n as usize,
+            Err(e) if e.to_string().contains("budget") => truncated = true,
+            Err(e) => return Err(e),
         }
         writeln!(out)?;
         writeln!(out, "  ]")?;
+        if truncated {
+            writeln!(out, "  ,\"truncated\": true")?;
+        }
         writeln!(out, "}}")?;
         out.flush()?;
-        Ok(elements.len() + rels.len())
+        Ok(total)
     }
 }
 

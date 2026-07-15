@@ -216,6 +216,11 @@ impl ToolHandler {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
+        // Reset the GC idle timer so the daemon's memory-pressure
+        // watchdog only fires when the process has truly gone
+        // quiet. The touch is cheap (one atomic store).
+        crate::gc::MemoryGuard::touch();
+
         let result = match tool_name {
             "mcp_init" => self.mcp_init(arguments),
             "mcp_index" => self.mcp_index(arguments).await,

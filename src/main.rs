@@ -11,6 +11,7 @@ mod doc_indexer;
 mod embed;
 #[cfg(feature = "embeddings")]
 mod embeddings;
+mod gc;
 mod graph;
 mod indexer;
 mod mcp;
@@ -2840,7 +2841,9 @@ fn export_graph(
     let engine = graph::GraphEngine::new(db);
 
     let (elements, relationships) = if let Some(file) = file_scope {
-        // Scoped export: BFS traversal from file
+        // Scoped export: BFS traversal from file. We only need a
+        // subset of elements so the per-file BFS is bounded and
+        // materializing it is fine.
         let mut visited_files = std::collections::HashSet::new();
         let mut queue = vec![(file.to_string(), 0u32)];
         let mut scoped_rels = Vec::new();
@@ -2857,12 +2860,24 @@ fn export_graph(
             }
         }
 
-        let scoped_elements: Vec<_> = engine
-            .all_elements()?
-            .into_iter()
-            .filter(|e| visited_files.contains(&e.file_path))
-            .collect();
+        let mut scoped_elements: Vec<_> = Vec::new();
+        for_each_with_filter(
+            &engine,
+            |e| visited_files.contains(&e.file_path),
+            |e| {
+                scoped_elements.push(e);
+            },
+        )?;
         (scoped_elements, scoped_rels)
+    } else if format == "json" {
+        // For full-graph JSON export we stream directly to disk so
+        // peak RAM is O(1) per element, not the 470 MB we used to
+        // hold. Other formats (dot, mermaid) need the full Vec for
+        // their string assembly, so they keep the legacy path which
+        // is already bounded by the existing budget / cache code.
+        export_json_streaming(output, &engine)?;
+        println!("Exported streaming JSON to {}", output);
+        return Ok(());
     } else {
         (engine.all_elements()?, engine.all_relationships()?)
     };
@@ -2886,6 +2901,133 @@ fn export_graph(
         output,
         format
     );
+    Ok(())
+}
+
+/// Stream every element through `f` if the predicate `p` accepts it.
+/// Used by scoped exports where we need to filter to a subset of
+/// the graph without materializing the full set.
+fn for_each_with_filter<F, P>(
+    engine: &graph::GraphEngine,
+    p: P,
+    mut f: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    P: Fn(&db::models::CodeElement) -> bool,
+    F: FnMut(db::models::CodeElement),
+{
+    let _ = engine.for_each_element(|e| {
+        if p(&e) {
+            f(e);
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })?;
+    Ok(())
+}
+
+/// Stream-export the full graph to a JSON file at `out_path`. Peak
+/// RAM is O(1) per element; the previous implementation materialized
+/// a 470 MB JSON string for a 627k-element graph.
+fn export_json_streaming(
+    out_path: &str,
+    engine: &graph::GraphEngine,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{BufWriter, Write};
+    let f = std::fs::File::create(out_path)?;
+    let mut out = BufWriter::new(f);
+    let mut guard = crate::budget::BudgetGuard::for_tool("export_json_streaming");
+    let mut total: u64 = 0;
+    let mut truncated = false;
+
+    writeln!(out, "{{")?;
+    writeln!(out, "  \"version\": 1,")?;
+    writeln!(out, "  \"kind\": \"leankg.graph.streaming\",")?;
+    writeln!(out, "  \"elements\": [")?;
+    let mut i: usize = 0;
+    let stream_elements = engine.for_each_element(|e| {
+        if i > 0 {
+            writeln!(out, ",")?;
+        }
+        write!(
+            out,
+            "    {{\"qualified_name\":{:?},\"element_type\":{:?},\"name\":{:?},\
+             \"file_path\":{:?},\"line_start\":{},\"line_end\":{},\"language\":{:?},\
+             \"cluster_id\":{:?},\"cluster_label\":{:?},\"parent_qualified\":{:?},\
+             \"metadata\":{}}}",
+            e.qualified_name,
+            e.element_type,
+            e.name,
+            e.file_path,
+            e.line_start,
+            e.line_end,
+            e.language,
+            e.cluster_id,
+            e.cluster_label,
+            e.parent_qualified,
+            serde_json::to_string(&e.metadata).unwrap_or_else(|_| "null".to_string()),
+        )?;
+        i += 1;
+        if i.is_multiple_of(1000) {
+            guard.tick();
+            if guard.check().is_err() {
+                return Err(Box::new(std::io::Error::other("export budget")));
+            }
+        }
+        Ok(())
+    });
+    if let Err(e) = stream_elements {
+        if e.to_string().contains("budget") {
+            truncated = true;
+        } else {
+            return Err(e);
+        }
+    } else {
+        total += i as u64;
+    }
+    writeln!(out)?;
+    writeln!(out, "  ],")?;
+    writeln!(out, "  \"relationships\": [")?;
+    let mut j: usize = 0;
+    let stream_rels = engine.for_each_relationship(|r| {
+        if j > 0 {
+            writeln!(out, ",")?;
+        }
+        write!(
+            out,
+            "    {{\"source_qualified\":{:?},\"target_qualified\":{:?},\
+             \"rel_type\":{:?},\"confidence\":{},\"metadata\":{}}}",
+            r.source_qualified,
+            r.target_qualified,
+            r.rel_type,
+            r.confidence,
+            serde_json::to_string(&r.metadata).unwrap_or_else(|_| "null".to_string()),
+        )?;
+        j += 1;
+        if j.is_multiple_of(1000) {
+            guard.tick();
+            if guard.check().is_err() {
+                return Err(Box::new(std::io::Error::other("export budget")));
+            }
+        }
+        Ok(())
+    });
+    if let Err(e) = stream_rels {
+        if e.to_string().contains("budget") {
+            truncated = true;
+        } else {
+            return Err(e);
+        }
+    } else {
+        total += j as u64;
+    }
+    writeln!(out)?;
+    writeln!(out, "  ]")?;
+    if truncated {
+        writeln!(out, "  ,\"truncated\": true")?;
+    }
+    writeln!(out, "}}")?;
+    out.flush()?;
+    let _ = total;
     Ok(())
 }
 

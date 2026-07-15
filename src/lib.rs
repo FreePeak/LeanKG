@@ -11,6 +11,7 @@ pub mod doc;
 pub mod doc_indexer;
 #[cfg(feature = "embeddings")]
 pub mod embeddings;
+pub mod gc;
 pub mod graph;
 pub mod hooks;
 pub mod indexer;
