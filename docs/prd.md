@@ -26,6 +26,7 @@
 - LeanKG already depends on `cozo = "0.7.6"` and already uses `::hnsw create embedding_vectors:vec_idx` (`src/embeddings/state.rs`, `src/retrieval/pipeline.rs`). Pattern to double down on: **LeanKG extracts features → Cozo indexes**.
 - New FRs: Section **5.12** (HNSW expansion) + Section **5.13** (LSP-only remainder from former CBM adoption track).
 - **Implementation landed on `integration/prd-pending` (2026-07-15):** FR-HNSW-A..F + FR-BENCH-HNSW + US-CBM-C1 / FR-C01 (Docker `--features embeddings` + `entrypoint.sh` `embed_if_needed`; HNSW `semantic_search` dispatch; `LEANKG_HNSW_{M,EF_CONST,EF}` knobs; `tests/hnsw_recall_e2e.rs` synthetic recall@k smoke).
+- **PRD hygiene (2026-07-15):** corrected language / Graphify / MemPalace status rows that overclaimed “DONE” for extractors that exist as modules but are **not hooked into the index walk** (Swift, Vue/Svelte, SQL DDL). Softened “17 languages fully extracted” claims to match `find_files_sync` + `get_language`.
 - Research record: `generated_docs/research_cozo_native_lsh_vs_custom_minhash_2026-07-15.md` (main tree) — Cozo already ships both `::hnsw` and `::lsh`; we choose HNSW only.
 
 **CBM deep-compare (v3.6.1) still valid for LSP gaps** (FR-LSP-A..D). MinHash / LSH “wins” from that compare are explicitly **not** adopted.
@@ -34,12 +35,12 @@
 - LSP infrastructure shipped (US-CBM-B1 infra, FR-B03..B07 scaffolding): new `src/lsp/{bridge,client,config,mod}.rs` — generic JSON-RPC bridge that spawns any configured language server, answers `textDocument/definition` and `/references`; per-(language, workspace_root) client cache; 12-language manifest detection (go.mod / package.json / Cargo.toml / pyproject.toml / pom.xml / build.gradle* / tsconfig.json / Gemfile / mix.exs / pubspec.yaml / Project.toml / Package.swift). Wired through MCP `resolve_with_lsp` (`src/mcp/handler.rs:1674`) and CLI `leankg lsp-resolve` (`src/main.rs:lsp_resolve`). Commits `534cd7f` + `64b0fa6`.
 - `typed_resolve` feature flag landed (US-CBM-B10 / FR-B08, `8971dc5`). Default `LspConfig` is still empty (`src/lsp/config.rs:57`); LSP server bootstrap (default `lsp:` block for gopls + tsserver + pyright) remains the open follow-up.
 - Codebase version: 0.17.8 → 0.17.9 (`3e103b1 chore(release): regen Cargo.lock for 0.17.9` + `1c6f1eb chore(release): bump version to 0.17.9`).
-- Language breadth — full entity extraction now DONE for:
-  - US-LANG-01 Dart — getter/setter/enum support (`7ec6484`)
-  - US-LANG-02 Swift — regex-based (`7027d6b`)
-  - US-LANG-03 XML — child elements + attributes (`92db9aa`)
-  - US-GF-10 partial — Vue + Svelte SFC extractors (`e617a49`)
-  - US-GF-12 partial — SQL DDL parser (tables, columns, FKs) (`de314eb`)
+- Language breadth — **status corrected 2026-07-15 (wiring audit):**
+  - US-LANG-01 Dart — **DONE and indexed** (in `find_files_sync` + `get_language`) (`7ec6484`)
+  - US-LANG-02 Swift — **PARTIAL**: regex extractor in `src/indexer/swift.rs` (`7027d6b`); **not wired** into `find_files_sync` / index walk (`.swift` not scanned)
+  - US-LANG-03 XML — **DONE and indexed** (`.xml` + Android path) (`92db9aa`)
+  - US-GF-10 Vue/Svelte — **PARTIAL**: regex extractors in `src/indexer/sfc.rs` (`e617a49`); **not wired** into index walk (`.vue` / `.svelte` not scanned)
+  - US-GF-12 SQL DDL — **PARTIAL**: parser in `src/indexer/sql.rs` (`de314eb`); **not wired** into index walk (`.sql` not scanned)
 - Agent-graph UX series — DONE:
   - US-GF-07 rationale extraction (`# WHY:` / `# NOTE:` / `# HACK:` / `# FIXME:` / `# XXX:` markers) → `rationale` elements with `explains` edges (`b0c9477`)
   - US-GF-08 PR impact dashboard — `get_pr_impact` MCP + `leankg prs` CLI (`30e41f0`)
@@ -146,7 +147,7 @@
 
 ### v3.0-consolidated - Full codebase audit
 - Deep dive codebase analysis: 35 MCP tools verified (0 stubs), 28+ CLI commands, 10 language extractors
-- Updated language support: 10 fully extracted (Go, TS/JS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) + 3 parser-only (Dart, Swift, XML)
+- Updated language support: 10 fully extracted (Go, TS/JS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) + 3 parser-only (Dart, Swift, XML) — **superseded by 2026-07-15 wiring audit:** only Go/TS/JS/Python/Rust/Java/Kotlin/Dart (+XML/TF/CI) are in the current index walk; C++/C#/Ruby/PHP/Swift not scanned
 - Updated all user story statuses based on actual implementation
 - Added missing feature sections: Git Hooks, Context Metrics, REST API, Wiki Generation, Global Registry, Graph Export, Orchestrator
 - Unified RTK Compression status: ResponseCompressor (FR-RTK-11..15) now marked DONE
@@ -171,7 +172,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 **Key Metrics (v0.17.9 — audited 2026-07-14):**
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
 - 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg clones`, `leankg reflect`)
-- **17 languages with full entity extraction** (Go, TS/JS, Python, Rust, Java, Kotlin, C++/C, C#, Ruby, PHP, Dart, Swift, XML, Vue, Svelte, SQL DDL, Terraform/CI/Android) + Markdown docs
+- **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests. **Extractor modules exist but not indexed yet:** Swift (`swift.rs`), Vue/Svelte (`sfc.rs`), SQL DDL (`sql.rs`). Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
 - 8 compression/read modes + TOON responses
 - Smart orchestrator with persistent cache + hot-path cache for high-frequency MCP tools (`836f0a3`)
 - Git hooks (pre-commit, post-commit, post-checkout) + CI/CD auto-graph update GitHub Actions workflow (`eb3d331`)
@@ -236,7 +237,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | US-05 | Full CLI interface with query and MCP server commands | Must Have | DONE |
 | US-06 | Minimal resource usage | Must Have | DONE |
 | US-07 | Lightweight Web UI for graph visualization | Should Have | DONE |
-| US-08 | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | Must Have | DONE |
+| US-08 | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | Must Have | PARTIAL — Go/TS/Python/Rust/Java/Kotlin (+Dart/XML/TF/CI) indexed; C++/C#/Ruby/PHP parsers may exist but are **not** in current `find_files_sync` |
 | US-09 | Pipeline information extraction from CI/CD configs | Should Have | DONE |
 | US-10 | Documentation-structure mapping | Should Have | DONE |
 | US-11 | Enhanced business logic tagging with doc links | Should Have | DONE |
@@ -320,9 +321,9 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 | ID | User Story | Priority | Status |
 |----|------------|----------|--------|
-| US-LANG-01 | Dart parser (tree-sitter-dart) with getter/setter/enum extraction | Should Have | DONE (`7ec6484`) |
-| US-LANG-02 | Swift parser (tree-sitter-swift) with regex entity extraction | Should Have | DONE (`7027d6b`) |
-| US-LANG-03 | XML parser (tree-sitter-xml) with child-elements + attributes | Could Have | DONE (`92db9aa`) |
+| US-LANG-01 | Dart parser (tree-sitter-dart) with getter/setter/enum extraction | Should Have | DONE — indexed (`7ec6484`; in `find_files_sync` + `get_language`) |
+| US-LANG-02 | Swift parser (tree-sitter-swift) with regex entity extraction | Should Have | PARTIAL — `src/indexer/swift.rs` + unit tests (`7027d6b`); **not wired** into index walk (`.swift` absent from `find_files_sync`) |
+| US-LANG-03 | XML parser (tree-sitter-xml) with child-elements + attributes | Could Have | DONE — indexed (`92db9aa`; `.xml` + Android paths) |
 
 ### 3.8 Massive Graph Stories (US-MG-01 to US-MG-05)
 
@@ -473,7 +474,7 @@ TOON (187 tokens, 40% reduction):
 | US-MP-05 | Contradiction & Staleness Detection — detect when stored context contradicts current code state; flag stale annotations, outdated docs, broken traceability chains | Should Have | DONE (`60a6111`: `check_consistency` MCP + `leankg check-consistency` CLI) |
 | US-MP-06 | Cross-Domain Tunnels — auto-link clusters across projects/modules that share the same domain concept (e.g., "auth" in both user-service and gateway) | Could Have | DONE (`5b6547e`: `find_tunnels` MCP + `leankg tunnels` CLI + `tunnel` relationship type) |
 | US-MP-07 | Wake-up Context Protocol — standardized `wake_up` MCP tool that loads ~170 tokens of critical project facts at session start | Should Have | DONE |
-| US-MP-08 | Folder Structure as Graph Edges — directories as first-class `directory` nodes with `contains` edges (dir→dir, dir→file, file→element), mirroring MemPalace's wing/room/closet/drawer hierarchy | Must Have | PENDING |
+| US-MP-08 | Folder Structure as Graph Edges — directories as first-class `directory` nodes with `contains` edges (dir→dir, dir→file, file→element), mirroring MemPalace's wing/room/closet/drawer hierarchy | Must Have | PARTIAL — `generate_physical_structure` creates `directory` / `File` / `Project` + `contains` + metadata (`child_count` / language / lines); FR-MP-24/25 folder-scoped impact/search still open |
 
 **Detailed Feature Descriptions:**
 
@@ -602,18 +603,18 @@ Palace Mapping:
 
 | ID | User Story | Priority | Status |
 |----|------------|----------|--------|
-| US-GF-01 | Shortest path between two symbols/concepts (`leankg path A B` + MCP `shortest_path`) | Must Have | PARTIAL (`shortest_path` MCP registered but limited path-length guard; CLI command not wired) |
-| US-GF-02 | Explain a node: source location, community/cluster, degree, labeled neighbors | Must Have | PARTIAL (`explain_node` MCP registered; CLI `leankg explain` not wired) |
+| US-GF-01 | Shortest path between two symbols/concepts (`leankg path A B` + MCP `shortest_path`) | Must Have | DONE (`shortest_path` MCP + `leankg path` CLI wired) |
+| US-GF-02 | Explain a node: source location, community/cluster, degree, labeled neighbors | Must Have | DONE (`explain_node` MCP + `leankg explain` CLI wired) |
 | US-GF-03 | Natural-language scoped subgraph query (`query_graph "what connects auth to DB?"`) | Must Have | PENDING (no NL→seed → bounded-expand pipeline yet) |
-| US-GF-04 | Edge provenance labels `EXTRACTED` / `INFERRED` / `AMBIGUOUS` on all relationships (unify with `resolution_method`) | Must Have | PENDING |
-| US-GF-05 | God-node / hub ranking exposed via CLI + MCP (top-degree concepts; exclude utility super-hubs) | Must Have | PARTIAL (`get_god_nodes` MCP registered; CLI `leankg gods` not wired) |
-| US-GF-06 | Generate `GRAPH_REPORT.md`: god nodes, surprising cross-module links, suggested questions, confidence summary | Should Have | PARTIAL (`get_graph_report` MCP registered; on-disk `GRAPH_REPORT.md` writer not wired) |
+| US-GF-04 | Edge provenance labels `EXTRACTED` / `INFERRED` / `AMBIGUOUS` on all relationships (unify with `resolution_method`) | Must Have | PARTIAL — `Relationship::confidence_label()` helper exists; most edges still `resolution_method=name`; not applied uniformly on all relationship types |
+| US-GF-05 | God-node / hub ranking exposed via CLI + MCP (top-degree concepts; exclude utility super-hubs) | Must Have | DONE (`get_god_nodes` MCP + `leankg gods` CLI wired) |
+| US-GF-06 | Generate `GRAPH_REPORT.md`: god nodes, surprising cross-module links, suggested questions, confidence summary | Should Have | PARTIAL (`get_graph_report` MCP + `leankg report` CLI can write `.leankg/GRAPH_REPORT.md`; not auto-generated on every index) |
 | US-GF-07 | Extract rationale nodes from `# WHY:` / `# NOTE:` / `# HACK:` / `# FIXME:` / `# XXX:` comments and link to code | Should Have | DONE (`b0c9477`: rationale element kind + `explains` relationship) |
 | US-GF-08 | PR impact dashboard: graph-aware PR review, community overlap / merge-order risk | Should Have | DONE (`30e41f0`: `get_pr_impact` MCP + `leankg prs` CLI; community-conflict detection shipped) |
 | US-GF-09 | Work-memory reflect loop: record Q&A outcomes; aggregate lessons that bias future query ranking | Should Have | DONE (`373e808`: `report_query_outcome` + `.leankg/reflections/LESSONS.md`) |
-| US-GF-10 | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Apex, …) | Could Have | PARTIAL (Vue + Svelte DONE `e617a49`; Scala / Lua / Zig / shell / Apex still PENDING) |
+| US-GF-10 | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Apex, …) | Could Have | PARTIAL — Vue/Svelte extractors in `src/indexer/sfc.rs` (`e617a49`) **not wired** into index walk; Scala / Lua / Zig / shell / Apex still absent |
 | US-GF-11 | Portable graph snapshot export + optional git merge driver for team-committed graph artifacts | Could Have | DONE (`0087991`: `export_graph_snapshot` MCP) |
-| US-GF-12 | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app code) | Could Have | PARTIAL (SQL DDL parser DONE `de314eb`; live Postgres introspection not wired) |
+| US-GF-12 | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app code) | Could Have | PARTIAL — SQL DDL parser in `src/indexer/sql.rs` (`de314eb`) **not wired** into index walk; live Postgres DSN introspection not wired |
 
 **Detailed Feature Descriptions:**
 
@@ -828,12 +829,15 @@ Palace Mapping:
 - Cluster SKILL — `get_cluster_skill` MCP (`10b15a0`)
 - Overview context — `get_overview_context` MCP (`9124959`)
 - CI/CD auto-update — `.github/workflows/leankg-graph-update.yml` (`eb3d331`)
-- Vue + Svelte + SQL DDL — `src/indexer/vue_extractor.rs`, `svelte_extractor.rs`, `sql_ddl_extractor.rs`
+- Vue + Svelte — `src/indexer/sfc.rs` (regex; **not called from index walk**) (`e617a49`)
+- SQL DDL — `src/indexer/sql.rs` (**not called from index walk**) (`de314eb`)
+- Swift — `src/indexer/swift.rs` (**not called from index walk**) (`7027d6b`)
 
 **PENDING evidence:**
 - No `typed` `resolution_method` produced at index time; LSP bridge returns `LspLocation[]` but does not yet write CALLS edges with `resolution_method=typed`
 - No `graph-ui/` directory; no `get_graph_layout` / 3D scene
 - No formal `resources/read` endpoint for `get_overview_context` (tool-only)
+- Swift / Vue / Svelte / SQL extractors exist as modules but `.swift` / `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`
 
 **Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace Cozo/RocksDB; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path; **custom MinHash/LSH or Cozo `::lsh` clone ANN** (v3.6.2 — semantic HNSW only).
 </details>
@@ -885,7 +889,7 @@ Palace Mapping:
 
 | Feature | Implementation Detail |
 |---------|-----------------------|
-| Core indexing | 17 languages extracted: Go, TS/JS, Python, Rust, Java, Kotlin, C++/C, C#, Ruby, PHP, Dart, Swift, XML, Vue, Svelte, SQL DDL (+ Android/Terraform/CI) |
+| Core indexing | **Indexed walk:** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI + config manifests. **Modules not wired:** Swift (`swift.rs`), Vue/Svelte (`sfc.rs`), SQL DDL (`sql.rs`). C++/C/C#/Ruby/PHP claimed historically — verify before treating as indexed. |
 | Dependency graph | Imports, Calls, References, TestedBy, Contains, Defines, Implements, HttpCalls, Emits, ListensOn, SimilarTo, CrossRepoSimilar, Tunnel, Explains, … |
 | CLI interface | 30+ commands including init, index, query, generate, web, mcp-stdio, mcp-http, impact, export, annotate, trace, benchmark, register, api-serve, hooks, wiki, metrics, run, lsp-resolve, check-consistency, tunnels, prs, clones, reflect |
 | MCP server | **85 tools** via stdio + HTTP/SSE (`src/mcp/tools.rs`) |
@@ -949,15 +953,18 @@ Palace Mapping:
 | Cross-file type registry (FR-LSP-D) | Must Have | Mirror CBM `type_registry.c` + per-file overlay pattern for parallel workers |
 | MCP project routing smoke (US-CBM-A1/A4) | Must Have | Ops / multi-mount |
 | Graphify NL subgraph (US-GF-03) | Must Have | NL→seed → bounded-expand pipeline |
-| Edge provenance labels (US-GF-04) | Must Have | EXTRACTED/INFERRED/AMBIGUOUS |
+| Edge provenance labels (US-GF-04) | Must Have | Helper exists; not applied on all relationship types |
 | Single-repo root expansion (FR-MG-03) | Must Have | Treat root as service on double-click |
-| Folder Structure as Graph Edges (US-MP-08) | Must Have | First-class `directory` nodes; FR-MP-21..26 |
+| Folder Structure as Graph Edges (US-MP-08) | Must Have | PARTIAL — directory nodes + contains + metadata wired; FR-MP-24/25 folder-scoped impact/search still open |
 | Layered Context Loading (US-MP-02) | Must Have | `load_layer` MCP registered but minimal L2/L3 paths |
 | Conversation/Decision Mining (US-MP-03) | Should Have | FR-MP-09..13 still PENDING |
+| Wire Swift into index walk (US-LANG-02) | Should Have | `src/indexer/swift.rs` present; add `.swift` to `find_files_sync` + extract path |
+| Wire Vue/Svelte into index walk (US-GF-10) | Could Have | `src/indexer/sfc.rs` present; add `.vue` / `.svelte` to index walk |
+| Wire SQL DDL into index walk (US-GF-12) | Could Have | `src/indexer/sql.rs` present; add `.sql` to index walk; live Postgres DSN still open |
 | 3D graph UI Track E (US-CBM-E*) | Should Have | New `graph-ui/`; keep 2D |
-| GRAPH_REPORT.md on-disk writer (US-GF-06) | Should Have | `get_graph_report` MCP shipped `9124959`; on-disk `.leankg/GRAPH_REPORT.md` generator not wired |
-| GF-10 Scala / Lua / Zig / shell / Apex | Could Have | Vue + Svelte + SQL DDL DONE; long tail still to land |
-| GF-12 Postgres live introspection | Could Have | SQL DDL parser DONE; DSN-driven schema ingest not wired |
+| GRAPH_REPORT.md auto on index (US-GF-06) | Should Have | MCP + `leankg report` can write file; not auto on every index |
+| GF-10 Scala / Lua / Zig / shell / Apex | Could Have | Long-tail langs still absent |
+| GF-12 Postgres live introspection | Could Have | DSN-driven schema ingest not wired |
 | ≥10 `run_raw_query` recipes (US-CBM-B12) | Should Have | FR-B50 |
 | Formal MCP `resources/read` for `get_overview_context` (US-GN-08) | Could Have | Tool form shipped; resource form not yet |
 | Language breadth / Windows / SLSA | Could Have | CBM Track C/B4 |
@@ -1048,9 +1055,9 @@ Palace Mapping:
 - [x] **FR-MP-18**: Agent config system: `.leankg/agents/*.json` with focus and filter definitions (`1ea4bcd`)
 - [x] **FR-MP-19**: MCP tools `agent_focus`, `agent_diary_write`, `agent_diary_read` (`1ea4bcd`)
 - [ ] **FR-MP-20**: Enhance `orchestrate` intent parser to follow tunnels and use L0-L3 layer strategy (deferred)
-- [ ] **FR-MP-21**: `directory` element type — every indexed directory becomes a first-class graph node
-- [ ] **FR-MP-22**: `contains` edges for full hierarchy: directory→directory, directory→file
-- [ ] **FR-MP-23**: Directory metadata: `child_count`, `language_distribution`, `total_lines` in metadata JSON
+- [x] **FR-MP-21**: `directory` element type — every indexed directory becomes a first-class graph node (`generate_physical_structure`)
+- [x] **FR-MP-22**: `contains` edges for full hierarchy: directory→directory, directory→file (`generate_physical_structure`)
+- [x] **FR-MP-23**: Directory metadata: `child_count`, `language_distribution`, `total_lines` in metadata JSON (`populate_directory_metadata`)
 - [ ] **FR-MP-24**: `get_impact_radius` accepts directory qualified names (e.g., `"src/indexer/"`)
 - [ ] **FR-MP-25**: `search_code` and `query_file` accept directory nodes for folder-scoped search
 - [ ] **FR-MP-26**: Cluster-to-directory alignment via `cluster_directory` metadata
@@ -1068,46 +1075,48 @@ Palace Mapping:
 
 ### 5.8 Multi-Language Support
 
-| Language | Extensions | Extractor Status | Parser |
-|----------|-----------|-----------------|--------|
-| Go | `.go` | DONE | tree-sitter-go |
-| TypeScript/JavaScript | `.ts`, `.tsx`, `.js`, `.jsx` | DONE | tree-sitter-typescript |
-| Python | `.py` | DONE | tree-sitter-python |
-| Rust | `.rs` | DONE | tree-sitter-rust |
-| Java | `.java` | DONE | tree-sitter-java |
-| Kotlin | `.kt`, `.kts` | DONE | tree-sitter-kotlin-ng |
-| C/C++ | `.cpp`, `.cxx`, `.cc`, `.hpp`, `.h`, `.c` | DONE | tree-sitter-cpp |
-| C# | `.cs` | DONE | tree-sitter-c-sharp |
-| Ruby | `.rb` | DONE | tree-sitter-ruby |
-| PHP | `.php` | DONE | tree-sitter-php |
-| Dart | `.dart` | DONE (getter/setter/enum) (`7ec6484`) | tree-sitter-dart |
-| Swift | `.swift` | DONE (regex entity extraction) (`7027d6b`) | tree-sitter-swift |
-| XML | `.xml` | DONE (child elements + attributes) (`92db9aa`) | tree-sitter-xml |
-| Vue (SFC) | `.vue` | DONE (`e617a49`) | tree-sitter-vue |
-| Svelte (SFC) | `.svelte` | DONE (`e617a49`) | tree-sitter-svelte |
-| SQL DDL | `.sql` | DONE (tables, columns, FKs) (`de314eb`) | tree-sitter-sql |
-| Terraform | `.tf` | DONE (regex) | Custom extractor |
-| CI/CD YAML | `.yml`, `.yaml` | DONE (custom) | GitHub Actions, GitLab CI, Azure Pipelines |
+> **Indexed vs module-only (audit 2026-07-15):** “DONE (indexed)” means the extension is in `find_files_sync` and extraction runs on index. “PARTIAL (unwired)” means an extractor module/tests exist but the extension is **not** scanned.
+
+| Language | Extensions | Extractor Status | Parser / module |
+|----------|-----------|-----------------|-----------------|
+| Go | `.go` | DONE (indexed) | tree-sitter-go |
+| TypeScript/JavaScript | `.ts`, `.tsx`, `.js`, `.jsx` | DONE (indexed) | tree-sitter-typescript |
+| Python | `.py` | DONE (indexed) | tree-sitter-python |
+| Rust | `.rs` | DONE (indexed) | tree-sitter-rust |
+| Java | `.java` | DONE (indexed) | tree-sitter-java |
+| Kotlin | `.kt`, `.kts` | DONE (indexed) + Android depth | tree-sitter-kotlin-ng |
+| Dart | `.dart` | DONE (indexed) (`7ec6484`) | tree-sitter-dart |
+| XML | `.xml` | DONE (indexed) (`92db9aa`) + Android | tree-sitter-xml / Android extractors |
+| Terraform | `.tf` | DONE (indexed) | Custom extractor |
+| CI/CD YAML | `.yml`, `.yaml` | DONE (indexed) | GitHub Actions, GitLab CI, Azure Pipelines |
 | Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
+| Swift | `.swift` | PARTIAL (unwired) — `src/indexer/swift.rs` (`7027d6b`) | regex stub |
+| Vue (SFC) | `.vue` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
+| Svelte (SFC) | `.svelte` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
+| SQL DDL | `.sql` | PARTIAL (unwired) — `src/indexer/sql.rs` (`de314eb`) | regex stub |
+| C/C++ | `.cpp`, `.cxx`, `.cc`, `.hpp`, `.h`, `.c` | PARTIAL — tree-sitter parser present; **not** in current `find_files_sync` extensions list | tree-sitter-cpp |
+| C# | `.cs` | PARTIAL — parser present; **not** in current index walk | tree-sitter-c-sharp |
+| Ruby | `.rb` | PARTIAL — parser present; **not** in current index walk | tree-sitter-ruby |
+| PHP | `.php` | PARTIAL — parser present; **not** in current index walk | tree-sitter-php |
 
 ### 5.9 Graphify-Inspired Features
 
 > Evidence: `docs/analysis/graphify-comparison-2026-07-13.md`. Deploy parity with Graphify HTTP MCP is **not** a gap — LeanKG RocksDB multi-project compose is competitive. Focus requirements on agent query UX and edge honesty.
 
-- [ ] **FR-GF-01**: MCP tool `shortest_path(source, target, max_hops?)` returns ordered hops with relation + `confidence_label`
-- [ ] **FR-GF-02**: CLI `leankg path <a> <b>` wrapping FR-GF-01
-- [ ] **FR-GF-03**: MCP tool `explain_node(name_or_qn)` — definition, cluster, degree, neighbors
-- [ ] **FR-GF-04**: CLI `leankg explain <name>` wrapping FR-GF-03
+- [x] **FR-GF-01**: MCP tool `shortest_path(source, target, max_hops?)` returns ordered hops with relation + `confidence_label`
+- [x] **FR-GF-02**: CLI `leankg path <a> <b>` wrapping FR-GF-01
+- [x] **FR-GF-03**: MCP tool `explain_node(name_or_qn)` — definition, cluster, degree, neighbors
+- [x] **FR-GF-04**: CLI `leankg explain <name>` wrapping FR-GF-03
 - [ ] **FR-GF-05**: MCP tool `query_graph(question, token_budget?)` — seed → expand → budget trim → TOON
-- [ ] **FR-GF-06**: CLI `leankg query "<question>"` wrapping FR-GF-05
-- [ ] **FR-GF-07**: Relationship metadata field `confidence_label` ∈ {EXTRACTED, INFERRED, AMBIGUOUS}
+- [ ] **FR-GF-06**: CLI `leankg query "<question>"` wrapping FR-GF-05 (note: existing `leankg query` is name/content search, not NL subgraph)
+- [ ] **FR-GF-07**: Relationship metadata field `confidence_label` ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written on all edges
 - [ ] **FR-GF-08**: Map `resolution_method` → `confidence_label` at edge write time; backfill on reindex
 - [ ] **FR-GF-09**: Propagate `confidence_label` in impact, call_graph, path, query_graph, Web UI
 - [ ] **FR-GF-10**: Index-time god-node / importance scoring (degree + optional PageRank-like)
-- [ ] **FR-GF-11**: MCP `get_god_nodes(limit, exclude_hubs_percentile?)` + CLI `leankg gods`
+- [x] **FR-GF-11**: MCP `get_god_nodes(limit, exclude_hubs_percentile?)` + CLI `leankg gods`
 - [ ] **FR-GF-12**: Include god nodes in `get_architecture` hotspots section
-- [ ] **FR-GF-13**: Generate `.leankg/GRAPH_REPORT.md` on index/report (god nodes, surprises, suggested questions)
-- [ ] **FR-GF-14**: MCP `get_graph_report` returns report markdown or structured sections
+- [ ] **FR-GF-13**: Auto-generate `.leankg/GRAPH_REPORT.md` on every index (CLI `leankg report` / MCP `get_graph_report` already exist)
+- [x] **FR-GF-14**: MCP `get_graph_report` returns report markdown or structured sections
 - [x] **FR-GF-15**: Extractor for `# WHY:` / `# NOTE:` / `# HACK:` / `# FIXME:` / `# XXX:` → `rationale` elements + `explains` edges (`b0c9477`)
 - [ ] **FR-GF-16**: ADR/RFC citation extraction from docs → rationale nodes linked to code (parser done in `b0c9477`; ADR-citation extractor still PENDING)
 - [x] **FR-GF-17**: CLI `leankg prs` + MCP `get_pr_impact` / `triage_prs` using clusters + detect_changes (`30e41f0`)
@@ -1666,16 +1675,23 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 - [x] Pre-commit change detection with severity + PR impact dashboard + community-conflict triage
 - [x] Benchmark runner (vs OpenCode, Gemini, Kilo)
 - [x] npm-based installation (US-14 — `df0fec2`)
-- [x] Dart / Swift / XML / Vue / Svelte / SQL DDL entity extraction
+- [x] Dart + XML entity extraction (indexed)
+- [ ] Swift / Vue / Svelte / SQL DDL — extractors present (`swift.rs` / `sfc.rs` / `sql.rs`) but **not wired** into index walk
 - [x] LSP bridge infrastructure + `resolve_with_lsp` MCP + `leankg lsp-resolve` CLI (`534cd7f`, `64b0fa6`)
 - [x] Temporal knowledge graph + work-memory reflect loop + consistency checker + tunnels + agent personas
 - [x] Rationale extraction (`WHY:` / `NOTE:` / `HACK:` / `FIXME:` / `XXX:`) + ADR citations parsed
-- [x] Clone detection (`find_clones`) + cross-repo similar edges
+- [x] Clone detection (`find_clones` same-file Jaccard) + cross-repo similar edges
 - [x] Event-channel edges `emits` / `listens_on`
-- [ ] Default LSP server bootstrap (FR-B09 fanout — gopls + tsserver + pyright + dart + sourcekit + kotlin out-of-the-box)
-- [ ] FR-B03 / FR-B04 actual `typed` edge production for Go and TS
+- [x] CozoDB HNSW semantic track (FR-HNSW-A..F + FR-BENCH-HNSW) on `integration/prd-pending`
+- [ ] Default LSP server bootstrap (FR-LSP-B / FR-B09 fanout — gopls + tsserver + pyright + dart + sourcekit + kotlin out-of-the-box)
+- [ ] FR-LSP-A native Hybrid LSP tier
+- [ ] FR-LSP-C / FR-B03 / FR-B04 actual `typed` edge production for Go and TS
+- [ ] FR-LSP-D cross-file type registry
 - [ ] REST API auth wiring + mutation endpoints (mutation endpoints still partial)
 - [ ] 3D graph UI Track E (`graph-ui/`; keep 2D `ui/`)
+- [ ] US-GF-03 NL scoped subgraph (`query_graph`)
+- [ ] US-GF-04 provenance labels on all relationship types
+- [ ] FR-MP-24 / FR-MP-25 folder-scoped impact + search
 
 ---
 
@@ -1691,7 +1707,7 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | detect_changes response time | < 2 seconds | TBD |
 | get_context enhanced response size | < 4000 tokens | TBD |
 | Batch insert size | 5000 rows/batch | DONE |
-| Supported parser count | 17+ parsers (17 languages fully extracted) | DONE |
+| Supported parser / extractor count | Tree-sitter + specialized extractors; **indexed walk ≈ 8 code langs + Android/XML/TF/CI** (Swift/Vue/Svelte/SQL modules unwired) | PARTIAL |
 | MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14) |
 
 ---
@@ -1754,4 +1770,4 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ---
 
-*Last updated: 2026-07-15 (v3.6.2-hnsw-semantic — FR-HNSW-A..F + FR-BENCH-HNSW + US-CBM-C1/FR-C01 DONE on `integration/prd-pending`; LSP FRs remain in Section 5.13)*
+*Last updated: 2026-07-15 (PRD hygiene — language/wiring status match code; FR-HNSW DONE; FR-LSP-A..D + unwired Swift/Vue/Svelte/SQL still open)*
