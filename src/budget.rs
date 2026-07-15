@@ -81,6 +81,13 @@ impl std::fmt::Display for BudgetExceeded {
 
 impl std::error::Error for BudgetExceeded {}
 
+/// Serialize tests that mutate `LEANKG_TOOL_BUDGET_OFF`. The env
+/// var is process-wide, so without this lock two tests can race:
+/// one sets "1", another unsets it, and a third reads whichever
+/// value is current — not the one it expected.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Per-call guard that wraps an algorithm in a wall-clock + RSS + iteration
 /// budget. Cheap to construct and check; intended to be hit on every loop
 /// iteration.
@@ -342,7 +349,10 @@ mod tests {
 
     #[test]
     fn guard_disabled_via_env_var() {
-        // SAFETY: tests run sequentially in the same process.
+        // Lock to serialize against other tests that touch the
+        // same env var; otherwise one test can unset it between
+        // this test's set_var and the next assertion.
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("LEANKG_TOOL_BUDGET_OFF", "1");
         let mut g = BudgetGuard::with_caps("test", 0, 0, 1);
         // Even with iteration cap = 1, we shouldn't abort because disabled.
@@ -355,6 +365,7 @@ mod tests {
 
     #[test]
     fn guard_iteration_cap_aborts() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("LEANKG_TOOL_BUDGET_OFF");
         let mut g = BudgetGuard::with_caps("test", u64::MAX, u64::MAX, 3);
         g.tick();
@@ -373,6 +384,7 @@ mod tests {
 
     #[test]
     fn guard_timeout_aborts() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("LEANKG_TOOL_BUDGET_OFF");
         // 0-second cap = any non-zero elapsed time triggers.
         // But elapsed >= 0 right after construction so we use iters=0 cap=0.
@@ -383,6 +395,7 @@ mod tests {
 
     #[test]
     fn guard_unlimited_never_aborts() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("LEANKG_TOOL_BUDGET_OFF");
         let mut g = BudgetGuard::unlimited("test");
         for _ in 0..10_000 {
@@ -393,6 +406,7 @@ mod tests {
 
     #[test]
     fn guard_iter_only_no_time_or_rss() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("LEANKG_TOOL_BUDGET_OFF");
         let mut g = BudgetGuard::iter_only("test", 2);
         assert!(g.check().is_ok());
@@ -412,6 +426,7 @@ mod tests {
 
     #[test]
     fn guard_already_reported_flag_is_set_after_first_breach() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("LEANKG_TOOL_BUDGET_OFF");
         let mut g = BudgetGuard::with_caps("test", u64::MAX, u64::MAX, 1);
         g.tick();
