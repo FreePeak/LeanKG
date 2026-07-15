@@ -232,6 +232,15 @@ pub enum CLICommand {
     },
     /// Auto-install MCP config
     Install,
+    /// Diagnose stale leankg processes, mmap'd DB files, and current
+    /// RSS. Prints `leankg daemon kill` to clean them up. Safe to run
+    /// at any time.
+    Doctor {
+        /// Also kill stale leankg processes (default: report only).
+        /// Refuses to kill the current process and the caller's parent.
+        #[arg(long)]
+        kill: bool,
+    },
     /// Show index status
     Status,
     /// Start file watcher for incremental re-indexing

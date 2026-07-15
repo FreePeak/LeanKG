@@ -402,6 +402,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Install => {
             install_mcp_config()?;
         }
+        cli::CLICommand::Doctor { kill } => {
+            run_doctor(kill)?;
+        }
         cli::CLICommand::Status => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1595,6 +1598,155 @@ fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Er
     std::fs::create_dir_all("./docs")?;
     std::fs::write("./docs/AGENTS.md", &content)?;
     println!("\nSaved to docs/AGENTS.md");
+
+    Ok(())
+}
+
+/// Diagnose stale leankg processes and mmap'd DB files. With --kill,
+/// also terminates the stale processes (but never the current
+/// process or its parent).
+fn run_doctor(kill: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use std::process::Command;
+    let self_pid = std::process::id();
+    let parent_pid = std::env::var("PPID")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    // List every `leankg` process on the host.
+    let output = Command::new("pgrep").args(["-fl", "leankg"]).output();
+    let procs: Vec<(u32, String)> = match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(2, ' ');
+                let pid = parts.next()?.parse::<u32>().ok()?;
+                let cmd = parts.next()?.to_string();
+                Some((pid, cmd))
+            })
+            .collect(),
+        _ => {
+            // Fall back to `ps` if pgrep isn't available.
+            let out = Command::new("ps")
+                .args(["-axo", "pid=,command="])
+                .output()?;
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.splitn(2, ' ');
+                    let pid = parts.next()?.trim().parse::<u32>().ok()?;
+                    let cmd = parts.next()?.trim().to_string();
+                    if cmd.contains("leankg") {
+                        Some((pid, cmd))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+    };
+
+    let my_exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    // Heuristic: the leankg binary path itself is what we want.
+    // Match `argv[0]` ending in `leankg` (absolute or relative) but
+    // NOT paths that merely contain a directory named `leankg` (e.g.
+    // a cline daemon with `--cwd .../work/harvey/freepeak/leankg`).
+    let is_leankg = |cmd: &str| -> bool {
+        // Take the first token (argv[0]).
+        let argv0 = cmd.split_whitespace().next().unwrap_or("");
+        let bin = std::path::Path::new(argv0)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        bin == "leankg"
+    };
+    let others: Vec<_> = procs
+        .into_iter()
+        .filter(|(pid, cmd)| {
+            // Skip the current process and its parent (the shell that
+            // invoked us). Both can have "leankg" in their argv
+            // transitively.
+            *pid != self_pid
+                && *pid != parent_pid
+                && is_leankg(cmd)
+                && (cmd.contains(&my_exe) || !cmd.starts_with('/'))
+        })
+        .collect();
+
+    if others.is_empty() {
+        println!("No stale leankg processes detected.");
+    } else {
+        println!("Stale leankg processes (RSS reported by `ps`):");
+        for (pid, cmd) in &others {
+            // ps -o rss= -p <pid> for actual RSS.
+            let rss = Command::new("ps")
+                .args(["-o", "rss=", "-p", &pid.to_string()])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().parse::<u64>().unwrap_or(0))
+                .unwrap_or(0);
+            println!("  PID {:>6}  RSS {:>7} MB  {}", pid, rss / 1024, cmd);
+        }
+    }
+
+    // List mmap'd DB files.
+    let lsof_out = Command::new("lsof")
+        .args(["-nP", "+D", "/Users/linh.doan/work"])
+        .output();
+    if let Ok(out) = lsof_out {
+        if out.status.success() {
+            let mut found = 0usize;
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if line.contains("leankg.db") && line.contains("leankg") {
+                    println!("  {}", line);
+                    found += 1;
+                    if found > 20 {
+                        println!("  ... (truncated)");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if kill && !others.is_empty() {
+        println!();
+        println!("Killing {} stale process(es)...", others.len());
+        for (pid, _) in &others {
+            if *pid == self_pid || *pid == parent_pid {
+                continue;
+            }
+            // SIGTERM first; the daemon has a graceful shutdown path.
+            let _ = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output();
+        }
+        // Give them 2s to exit cleanly; SIGKILL stragglers.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        for (pid, _) in &others {
+            if *pid == self_pid || *pid == parent_pid {
+                continue;
+            }
+            let still_alive = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if still_alive {
+                eprintln!("  PID {} did not exit on SIGTERM; sending SIGKILL", pid);
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output();
+            }
+        }
+        println!("Done.");
+    } else if !others.is_empty() {
+        println!();
+        println!("Re-run with --kill to terminate these processes.");
+    }
 
     Ok(())
 }
