@@ -224,11 +224,6 @@ pub enum CLICommand {
         /// run for hours on big monorepos.
         #[arg(long, default_value = "50000")]
         max_functions: usize,
-        /// Compare across files. Default false: only scan within each
-        /// file, which is O(file²) instead of O(graph²). Cross-file is
-        /// not yet implemented; flag is reserved.
-        #[arg(long)]
-        cross_file: bool,
     },
     /// Auto-install MCP config
     Install,

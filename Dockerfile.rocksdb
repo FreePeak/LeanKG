@@ -23,7 +23,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY ontology/ ./ontology/
 
-RUN cargo build --release \
+# Build with the `embeddings` feature so the resulting binary ships
+# `leankg embed`, `leankg semantic-context`, `leankg smoke-test`, and the
+# HNSW-backed semantic_search MCP tool out of the box (US-CBM-C1 / FR-C01 /
+# FR-HNSW-C). See docs/prd.md §5.12.
+RUN cargo build --release --features embeddings \
     && strip target/release/leankg \
     && cp target/release/leankg /usr/local/bin/leankg
 

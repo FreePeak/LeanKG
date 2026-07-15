@@ -12,7 +12,9 @@ RUN npm install && npm run build
 WORKDIR /app
 COPY src ./src
 COPY ontology/ ./ontology/
-RUN cargo build --release && strip target/release/leankg
+# US-CBM-C1 / FR-HNSW-C: build with the `embeddings` feature so semantic
+# tools work out of the box (HNSW-backed semantic_search, embed, smoke-test).
+RUN cargo build --release --features embeddings && strip target/release/leankg
 
 ENV PORT=8080
 EXPOSE 8080 9699

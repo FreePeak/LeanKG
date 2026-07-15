@@ -4017,11 +4017,12 @@ pub struct ClonePair {
 ///
 /// Defaults are conservative so the command never OOMs a laptop:
 /// - `max_functions = 50_000` — refuse to scan graphs above this size
-/// - `cross_file = false` — within-file scan only, keeps O(file²) cheap
+///
+/// Note (v3.6.2): the legacy cross-file MinHash/LSH path is removed
+/// (see FR-HNSW-A). Same-file Jaccard is the only comparison mode.
 #[derive(Debug, Clone)]
 pub struct CloneScanOptions {
     pub max_functions: usize,
-    pub cross_file: bool,
 }
 
 impl Default for CloneScanOptions {
@@ -4030,15 +4031,7 @@ impl Default for CloneScanOptions {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(50_000);
-        let cross_file = std::env::var("LEANKG_CLONES_CROSS_FILE")
-            .ok()
-            .and_then(|v| v.parse::<u8>().ok())
-            .map(|v| v != 0)
-            .unwrap_or(false);
-        Self {
-            max_functions,
-            cross_file,
-        }
+        Self { max_functions }
     }
 }
 
@@ -5226,9 +5219,11 @@ impl GraphEngine {
     /// - Bounded by `max_functions` (default 50k). On larger graphs the
     ///   function returns an `Err` so callers can re-scope (slice per
     ///   directory / language) instead of running for hours.
-    /// - `cross_file=false` (default) only compares functions inside the
-    ///   same file. That alone turns the O(n²) into O(file²), keeping
-    ///   any individual scan cheap.
+    /// - Only compares functions inside the same file. That alone turns
+    ///   the O(n²) into O(file²), keeping any individual scan cheap.
+    ///   The legacy cross-file MinHash/LSH path was removed in v3.6.2
+    ///   (see FR-HNSW-A); clone ANN is out of product focus — semantic
+    ///   search via CozoDB `::hnsw` is the discovery path.
     /// - Stream files from disk instead of slurping every function body
     ///   into a HashMap (the previous implementation held ~1 GB of
     ///   file content in RAM on a 369k-function graph).
@@ -5249,8 +5244,6 @@ impl GraphEngine {
         limit: usize,
         opts: &CloneScanOptions,
     ) -> Result<Vec<ClonePair>, Box<dyn std::error::Error>> {
-        use similar::ChangeTag;
-
         // Stream elements of the candidate kinds instead of materializing
         // every CodeElement in RAM. We collect into a bounded Vec; when
         // the candidate set exceeds max_functions we abort before
@@ -5294,10 +5287,10 @@ impl GraphEngine {
 
         let mut guard = crate::budget::BudgetGuard::for_tool("find_clones");
 
-        // Group targets by file_path; only compare within group when
-        // cross_file=false. This is the dominant optimisation: a typical
-        // Go file has ~10 functions, so per-file work is O(100) pairs
-        // instead of O(369k²).
+        // Group targets by file_path; only compare within group. This
+        // is the dominant optimisation: a typical Go file has ~10
+        // functions, so per-file work is O(100) pairs instead of
+        // O(369k²).
         let mut by_file: std::collections::HashMap<String, Vec<CodeElement>> =
             std::collections::HashMap::new();
         for t in targets.iter() {
@@ -5306,11 +5299,6 @@ impl GraphEngine {
                 .or_default()
                 .push(t.clone());
         }
-        // Free the master targets list now that we've bucketed; per-file
-        // groups still hold the elements but in smaller, releasable Vecs.
-        // We need `targets.len()` later for the cross-file pre-alloc,
-        // so capture it here while targets is still alive.
-        let targets_len = targets.len();
         drop(targets);
 
         // Read each file at most once and reuse the buffer for every
@@ -5366,61 +5354,6 @@ impl GraphEngine {
             if guard.is_exhausted() {
                 break;
             }
-
-            // Cross-file pairs only when explicitly requested.
-            // Strategy: build a MinHash + LSH index over ALL slices
-            // seen so far (across files), then query the index for
-            // candidate pairs. This turns O(n²) into O(n) hashing + a
-            // bounded candidate-set pass.
-            //
-            // NB: the cross-file branch only fires when the user
-            // explicitly opted in; same-file scanning stays the
-            // default because it is much faster on big monorepos and
-            // covers >99% of real-world clones.
-            if opts.cross_file {
-                let mut owned_slices: Vec<(String, CodeElement, String)> =
-                    Vec::with_capacity(targets_len);
-                for (fp, group) in by_file.iter() {
-                    if let Ok(content) = std::fs::read_to_string(fp) {
-                        for e in group.iter() {
-                            if e.line_end >= e.line_start {
-                                if let Some(s) = slice_lines(&content, e.line_start, e.line_end) {
-                                    owned_slices.push((fp.clone(), e.clone(), s.to_string()));
-                                }
-                            }
-                        }
-                    }
-                }
-                let cfg = crate::minhash::MinHashConfig::default();
-                let mut lsh = crate::minhash::LshIndex::new(cfg);
-                for (_fp, _e, s) in owned_slices.iter() {
-                    lsh.insert(s);
-                }
-                for (i, j) in lsh.candidate_pairs() {
-                    let (_fpa, ea, sa) = &owned_slices[i as usize];
-                    let (_fpb, eb, sb) = &owned_slices[j as usize];
-                    if ea.file_path == eb.file_path && ea.name == eb.name {
-                        continue;
-                    }
-                    let score = jaccard_tokens(sa, sb);
-                    if score >= threshold {
-                        clones.push(ClonePair {
-                            source: ea.qualified_name.clone(),
-                            target: eb.qualified_name.clone(),
-                            similarity: score,
-                            source_file: ea.file_path.clone(),
-                            target_file: eb.file_path.clone(),
-                        });
-                    }
-                    guard.tick();
-                    if guard.check().is_err() {
-                        break;
-                    }
-                }
-                if guard.is_exhausted() {
-                    break;
-                }
-            }
         }
 
         // Budget may have aborted early; surface a soft warning via
@@ -5440,7 +5373,6 @@ impl GraphEngine {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         clones.truncate(limit);
-        let _ = ChangeTag::Equal; // ensure dep is linked
         Ok(clones)
     }
 
@@ -5635,18 +5567,14 @@ mod tests {
     fn clone_scan_options_default_max_functions() {
         let opts = CloneScanOptions::default();
         assert_eq!(opts.max_functions, 50_000);
-        assert!(!opts.cross_file);
     }
 
     #[test]
     fn clone_scan_options_respects_env() {
         std::env::set_var("LEANKG_CLONES_MAX_FUNCTIONS", "123");
-        std::env::set_var("LEANKG_CLONES_CROSS_FILE", "1");
         let opts = CloneScanOptions::default();
         assert_eq!(opts.max_functions, 123);
-        assert!(opts.cross_file);
         std::env::remove_var("LEANKG_CLONES_MAX_FUNCTIONS");
-        std::env::remove_var("LEANKG_CLONES_CROSS_FILE");
     }
 
     fn make_test_engine() -> (GraphEngine, TempDir) {

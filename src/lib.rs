@@ -17,7 +17,6 @@ pub mod hooks;
 pub mod indexer;
 pub mod lsp;
 pub mod mcp;
-pub mod minhash;
 pub mod obsidian;
 pub mod ontology;
 pub mod orchestrator;

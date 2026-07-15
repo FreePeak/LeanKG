@@ -1,6 +1,6 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.6-lsp-ontology + CBM compare
+**Version:** 3.6.2-hnsw-semantic
 **Date:** 2026-07-15
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
@@ -12,6 +12,23 @@
 ---
 
 ## Changelog
+
+### v3.6.2-hnsw-semantic - Drop LSH roadmap; expand CozoDB HNSW for semantic search (2026-07-15)
+
+> **Strategic decision:** LeanKG differentiates on **meaning-based retrieval** (dense embeddings + CozoDB native `::hnsw`), not on copy-paste / near-clone detection (MinHash / LSH). Agents need “what means like this,” not “which bodies are Jaccard-near.”
+
+**Cancel / Won’t Do (LSH track):**
+- FR-LSH-A..F and FR-BENCH-A (CBM MinHash parity) — **Won’t Do**. Do not expand MinHash/LSH; do not adopt Cozo `::lsh` for clones either (clone ANN is out of product focus).
+- Custom in-process LSH (`src/minhash.rs` + `find_clones --cross-file`) **removed** on `integration/prd-pending` (FR-HNSW-A). Same-file Jaccard `find_clones` remains as a light non-strategic tool.
+- US-CBM-B7 / FR-B30 / FR-B31 remain historically DONE for the light same-file Jaccard tool, but are **non-strategic** — no further LSH investment; optional later deprecation of `find_clones` / `leankg clones` if unused.
+
+**Adopt / Expand (HNSW track) — reuse CozoDB 0.7.x native index (already in tree):**
+- LeanKG already depends on `cozo = "0.7.6"` and already uses `::hnsw create embedding_vectors:vec_idx` (`src/embeddings/state.rs`, `src/retrieval/pipeline.rs`). Pattern to double down on: **LeanKG extracts features → Cozo indexes**.
+- New FRs: Section **5.12** (HNSW expansion) + Section **5.13** (LSP-only remainder from former CBM adoption track).
+- **Implementation landed on `integration/prd-pending` (2026-07-15):** FR-HNSW-A..F + FR-BENCH-HNSW + US-CBM-C1 / FR-C01 (Docker `--features embeddings` + `entrypoint.sh` `embed_if_needed`; HNSW `semantic_search` dispatch; `LEANKG_HNSW_{M,EF_CONST,EF}` knobs; `tests/hnsw_recall_e2e.rs` synthetic recall@k smoke).
+- Research record: `generated_docs/research_cozo_native_lsh_vs_custom_minhash_2026-07-15.md` (main tree) — Cozo already ships both `::hnsw` and `::lsh`; we choose HNSW only.
+
+**CBM deep-compare (v3.6.1) still valid for LSP gaps** (FR-LSP-A..D). MinHash / LSH “wins” from that compare are explicitly **not** adopted.
 
 ### v3.6-lsp-ontology - LSP infra, language breadth, status flips (integration/prd-pending push)
 - LSP infrastructure shipped (US-CBM-B1 infra, FR-B03..B07 scaffolding): new `src/lsp/{bridge,client,config,mod}.rs` — generic JSON-RPC bridge that spawns any configured language server, answers `textDocument/definition` and `/references`; per-(language, workspace_root) client cache; 12-language manifest detection (go.mod / package.json / Cargo.toml / pyproject.toml / pom.xml / build.gradle* / tsconfig.json / Gemfile / mix.exs / pubspec.yaml / Project.toml / Package.swift). Wired through MCP `resolve_with_lsp` (`src/mcp/handler.rs:1674`) and CLI `leankg lsp-resolve` (`src/main.rs:lsp_resolve`). Commits `534cd7f` + `64b0fa6`.
@@ -47,27 +64,23 @@
   - US-V2-12 `get_team_map` MCP — team + on-call ownership + environment map (`3368b5f`)
 - Quality gate: `cargo fmt --all -- --check`, `cargo clippy --release --all-targets -- -D warnings`, `cargo test --release --lib` (496), `cargo test --release --bin leankg` (491), `cargo test --release --test ontology_e2e` (16/16) all PASS (`docs/implementation/prd-integration-2026-07-14.md`).
 - MCP tool count: 65 → 85 (`src/mcp/tools.rs` — audit using `awk '/^[[:space:]]+name:[[:space:]]*"/{ print }' src/mcp/tools.rs | sort -u | wc -l` = 85 unique tool registrations as of 2026-07-14).
-- Open follow-ups: default `lsp:` block for gopls + tsserver + pyright + dart-language-server + sourcekit-lsp + kotlin-language-server; FR-B03 / FR-B04 actual `typed` resolution for Go and TS; FR-MG-03 single-repo root expansion; 3D graph UI (Track E).
+- Open follow-ups: default `lsp:` block for gopls + tsserver + pyright + dart-language-server + sourcekit-lsp + kotlin-language-server; FR-B03 / FR-B04 actual `typed` resolution for Go and TS; FR-MG-03 single-repo root expansion; 3D graph UI (Track E). **Superseded by v3.6.2 for LSH:** do not pursue FR-LSH-*; pursue FR-HNSW-* instead.
 
 ### v3.6.1-cbm-deep-compare - In-process read of CBM LSH + Hybrid LSP (2026-07-15)
 
-> Source: direct read of `DeusData/codebase-memory-mcp` at `/Users/linh.doan/work/harvey/freepeak/codebase-memory-mcp` (v0.9.x, Pure C, 158 languages, 15 MCP tools). Companion FRs in Section 5.12.
+> Source: direct read of `DeusData/codebase-memory-mcp` at `/Users/linh.doan/work/harvey/freepeak/codebase-memory-mcp` (v0.9.x, Pure C, 158 languages, 15 MCP tools).
 >
-> **TL;DR — CBM's "Hybrid LSP" is not actual LSP.** It is a lightweight C implementation of language type-resolution algorithms embedded in the binary (no spawn, no JSON-RPC). Their `LshIndex` for near-clones is a textbook MinHash+LSH pipeline (K=64, b=32, r=2) with AST leaf-node trigrams normalized to `I` / `S` / `N` / `T` token aliases — which is why it works on all 158 languages without per-language code.
+> **Superseded for LSH:** v3.6.2 cancels MinHash/LSH adoption. This section remains as competitive research only. **Still actionable:** Hybrid LSP gaps → FR-LSP-A..D in Section 5.13.
+>
+> **TL;DR — CBM's "Hybrid LSP" is not actual LSP.** It is a lightweight C implementation of language type-resolution algorithms embedded in the binary (no spawn, no JSON-RPC). Their `LshIndex` for near-clones is a textbook MinHash+LSH pipeline — useful for *their* clone-edge product; **LeanKG will not mirror it** (semantic HNSW focus instead).
 
-**CBM MinHash / LSH for `SIMILAR_TO` (clone) edges** — `src/simhash/minhash.{h,c}`:
+**CBM MinHash / LSH for `SIMILAR_TO` (clone) edges** — research only (`src/simhash/minhash.{h,c}`). Historical LeanKG comparison to `src/minhash.rs` is obsolete once that module is removed (v3.6.2).
 
-| Knob | CBM | LeanKG (`src/minhash.rs`) | Note |
-|------|-----|---------------------------|------|
-| `num_perm` | `CBM_MINHASH_K = 64` | `DEFAULT_NUM_PERM = 128` | CBM is **4× lighter on memory per signature** (256 B vs 1 KB) |
-| Hash family | xxHash64 with distinct seeds | FNV-1a 64-bit + SplitMix64 mixer | xxHash is ~5× faster on long keys |
-| Shingle unit | **AST leaf-node trigrams** with `I/S/N/T` normalization (`src/simhash/minhash.c:96-112`) and structural-weight (raw node types weight 1, normalized tokens weight 0) | Raw `5`-token whitespace shingles (`src/minhash.rs:79-101`) | CBM is **language-agnostic and noise-resistant**; LeanKG still treats identifiers like keywords |
-| Min length | `CBM_MINHASH_MIN_NODES = 30` leaf tokens (≈ BigCloneBench's 50 raw tokens; `src/simhash/minhash.h:30`) | Falls back to single-hash shingle (`src/minhash.rs:91-95`) | CBM rejects too-short bodies; we still emit one |
-| Bands × rows | `b=32, r=2` (threshold ≈ `(1/32)^(1/2)` ≈ 0.177; `src/simhash/minhash.h:39-40`) | `bands=32, rows_per_band=4` | Different S-curve shape — CBM tuned to ~0.95 emit; we to ~0.6 |
-| Jaccard emission threshold | `CBM_MINHASH_JACCARD_THRESHOLD = 0.95` (`src/simhash/minhash.h:33`) | Caller-chosen; `MinHashConfig::default()` targets Jaccard ≥ 0.6 | CBM is **conservative high-precision**; we are broad |
-| Per-node cap | `CBM_MINHASH_MAX_EDGES_PER_NODE = 10` (`src/simhash/minhash.h:36`) | None enforced | CBM blocks utility-function explosion; we don't |
-| Bucket-size guard | `MAX_BUCKET_SIZE = 200`, oversized buckets skipped (`src/simhash/minhash.c:53, 472`) | None | We emit noise from utility hubs |
-| Thread safety | Pure C functions, no shared state | `LshIndex::band_buckets` is a `Vec<HashMap>` guarded by caller | Both fine under per-call isolation |
+| Knob | CBM | LeanKG (pre-removal) | Note |
+|------|-----|----------------------|------|
+| Role | Core clone product | Non-strategic `find_clones` helper | **Won't adopt** further LSH |
+| Shingle unit | AST leaf trigrams `I/S/N/T` | Whitespace 5-grams | Irrelevant under HNSW strategy |
+| Index home | In-process C | Custom Rust `LshIndex` (also unused Cozo `::lsh`) | Prefer deleting custom LSH; do not wire Cozo `::lsh` |
 
 **CBM Hybrid LSP (pass over tree-sitter)** — `internal/cbm/lsp/{py,go,ts,java,kotlin,rust,c,cpp,cs,php,perl}_lsp.{c,h}` plus `type_rep.{c,h}`, `scope.{c,h}`, `type_registry.{c,h}`, `py_builtins.c`, `kotlin_builtins.c`, `rust_cargo.c`, `rust_proc_macros.c`, `rust_rustdoc.{c,h}`, `generated/python_stdlib_data.c` (12k lines of pre-baked stdlib metadata):
 
@@ -83,19 +96,18 @@
 **LeanKG wins (what CBM does not have):**
 - 85 MCP tools vs CBM's 15
 - Ontology / concept / workflow layer
+- **CozoDB native HNSW embeddings path** (semantic ANN) — primary differentiation going forward (v3.6.2)
 - `env` namespacing + incident knowledge + service context + env-conflict detection
 - Android / Kotlin / XML deep features, Graphify-inspired work-memory loop, tunnel detection, consistency checker, portable graph snapshot, npm install
 - Real language-server correctness (when a server is configured)
 - REST API + RocksDB multi-project HTTP team deploy
 - Per-cluster SKILL.md, overview-context, team-map
 
-**CBM wins (what to adopt):**
-- Zero-setup Hybrid LSP on 10 languages — LeanKG users today must populate `lsp.servers` themselves
-- AST-trigram shingles for MinHash — LeanKG currently shingles raw text tokens
-- Memory-efficient K=64 signature, big-bucket guard, MAX_EDGES_PER_NODE cap, structured Jaccard threshold default
-- Pre-baked Python stdlib metadata (12K lines, regenerated tool) lets them resolve `multiprocessing.Pool().apply_async()` without spawning Python
+**CBM wins — adopt vs ignore:**
+- **Adopt:** Zero-setup Hybrid LSP on 10 languages → FR-LSP-A..D (Section 5.13)
+- **Ignore (v3.6.2):** AST-trigram MinHash, K=64 signatures, big-bucket guards, clone Jaccard defaults — clone LSH is not LeanKG's bet
 
-**Adoption FRs captured:** see Section 5.12 (FR-LSP-A, FR-LSP-B, FR-LSH-A, FR-LSH-B, FR-LSH-C, FR-BENCH-A).
+**Adoption FRs:** LSP → Section 5.13 (FR-LSP-A..D). HNSW expansion → Section 5.12 (FR-HNSW-*). Former FR-LSH-* → Won't Do.
 
 ### v3.5-unified - Single PRD+HLD document
 - Merged `docs/requirement/prd-leankg.md` (v2 team infrastructure) → Section 3.12 / 5.11
@@ -757,7 +769,7 @@ Palace Mapping:
 | US-CBM-B4 | `get_graph_schema` label/edge counts | Must Have | DONE |
 | US-CBM-B5 | Dead code detection (`find_dead_code`) | Should Have | DONE |
 | US-CBM-B6 | Event channel edges (EMITS / LISTENS_ON) | Should Have | DONE (`25a3b37`: `emits` / `listens_on` relationships) |
-| US-CBM-B7 | Clone / near-duplicate detection (`find_clones`, `similar_to`) | Should Have | DONE (`55e6e72`: `find_clones` MCP + `leankg clones` CLI + `SimilarTo` relationship) |
+| US-CBM-B7 | Clone / near-duplicate detection (`find_clones`, `similar_to`) | Could Have | DONE historically (`55e6e72`); **non-strategic** after v3.6.2 — remove custom LSH; no further clone-ANN investment; optional later deprecate |
 | US-CBM-B8 | Cross-repo edges on multi-repo registry | Should Have | DONE (`ab16c9b`: `find_cross_repo_similar` MCP + `CrossRepoSimilar` relationship) |
 | US-CBM-B9 | Call `resolution_method` + numeric `confidence` on edges | Must Have | DONE (`name`/`name_file_hint`/`unresolved`; `typed` reserved) |
 | US-CBM-B10 | Feature flag `typed_resolve=off\|go,ts\|all` | Must Have | DONE (`8971dc5`: flag in `IndexerConfig`; aliases `ts`/`js`/`py` accepted; default value still empty) |
@@ -768,7 +780,7 @@ Palace Mapping:
 
 | ID | User Story | Priority | Status |
 |----|------------|----------|--------|
-| US-CBM-C1 | Docker image: embeddings / semantic tools OOTB | Should Have | PENDING |
+| US-CBM-C1 | Docker image: embeddings / semantic tools OOTB (Cozo HNSW) | Must Have | DONE (FR-HNSW-C / FR-C01 — Dockerfiles `--features embeddings`; `entrypoint.sh` `embed_if_needed`) |
 | US-CBM-C2 | Query hot-path cache (search/schema/architecture/find_function) | Should Have | DONE (`836f0a3`) |
 | US-CBM-C3 | Selective language expansion with quality tiers | Should Have | PENDING |
 | US-CBM-C4 | Large-scale + Go/TS vs CBM benchmarks | Must/Should | PENDING |
@@ -801,7 +813,7 @@ Palace Mapping:
 - `wake_up` — `src/mcp/handler.rs` (also closes MemPalace US-MP-07)
 - `LSP` module — `src/lsp/{bridge,client,config,mod}.rs`; `resolve_with_lsp` MCP; `leankg lsp-resolve` CLI; `IndexerConfig::typed_resolve` (`8971dc5`)
 - Event edges `emits` / `listens_on` — `src/db/models.rs` + `25a3b37`
-- Clones — `find_clones` MCP + `leankg clones` + `SimilarTo` (`55e6e72`)
+- Clones — `find_clones` MCP + `leankg clones` + `SimilarTo` (`55e6e72`); LSH path non-strategic / scheduled removal (v3.6.2)
 - Cross-repo similar — `find_cross_repo_similar` MCP + `CrossRepoSimilar` (`ab16c9b`)
 - Hot-path cache — `src/cache/hot_path.rs` + `836f0a3`
 - Temporal graph fields — `src/db/models.rs` `valid_from` / `valid_to` (`bc9cc53`)
@@ -823,7 +835,7 @@ Palace Mapping:
 - No `graph-ui/` directory; no `get_graph_layout` / 3D scene
 - No formal `resources/read` endpoint for `get_overview_context` (tool-only)
 
-**Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace Cozo/RocksDB; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path.
+**Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace Cozo/RocksDB; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path; **custom MinHash/LSH or Cozo `::lsh` clone ANN** (v3.6.2 — semantic HNSW only).
 </details>
 
 ### 3.12 Team Knowledge Infrastructure (US-V2) — merged from `prd-leankg.md` v2
@@ -888,7 +900,8 @@ Palace Mapping:
 | Consistency checker | `check_consistency` MCP + `leankg check-consistency` CLI; severities BROKEN/STALE/CURRENT |
 | Cross-domain tunnels | `find_tunnels` MCP + `leankg tunnels` CLI + `tunnel` relationship type |
 | Hot-path query cache | Caching layer for search/schema/architecture/find_function |
-| Clone detection | `find_clones` MCP + `leankg clones` CLI; `similar_to` edges |
+| Clone detection (non-strategic) | `find_clones` / `leankg clones` same-file Jaccard only; custom LSH path removed (FR-HNSW-A); prefer HNSW semantic search |
+| CozoDB HNSW semantic ANN | Sole ANN via `embedding_vectors:vec_idx`; Docker OOTB embed; HNSW `semantic_search`; mega-graph `LEANKG_HNSW_*` knobs; `tests/hnsw_recall_e2e.rs` (FR-HNSW-A..F + FR-BENCH-HNSW) |
 | Cross-repo similar | `find_cross_repo_similar` MCP; `cross_repo_similar` edges |
 | PR impact dashboard | `get_pr_impact` MCP + `leankg prs` CLI; community-conflict detection |
 | Rationale extraction | `rationale` element + `explains` edge for WHY/NOTE/HACK/FIXME/XXX markers + ADR citations |
@@ -922,7 +935,7 @@ Palace Mapping:
 | Graph export | JSON, DOT/Mermaid, HTML (interactive), SVG, GraphML, Neo4j, portable snapshot |
 | API keys | Argon2-hashed key store with create, list, revoke |
 | Shell runner | `leankg run` with optional RTK compression |
-| Ontology / semantic | Concept tools + optional embeddings (`--features embeddings`) |
+| Ontology / semantic | Concept tools + **CozoDB HNSW embeddings** (`src/embeddings/`, `--features embeddings`) — product focus |
 | Ontology e2e suite | 16 concept + procedural tests in `tests/ontology_e2e.rs` |
 
 ### 4.2 Pending Features
@@ -934,12 +947,6 @@ Palace Mapping:
 | Wire LSP/native resolver into indexer (FR-LSP-C) | Must Have | Run before `src/indexer/call_graph.rs` writes CALLS edges so `resolution_method=typed` actually lands (closes FR-B03/B04) |
 | Typed call resolve Go/TS (FR-B03..B05) | Must Have | Bridge + flag DONE; actual `resolution_method=typed` edges PENDING until FR-LSP-C lands |
 | Cross-file type registry (FR-LSP-D) | Must Have | Mirror CBM `type_registry.c` + per-file overlay pattern for parallel workers |
-| AST-aware MinHash shingles (FR-LSH-A) | Must Have | `shingle_kind=ast_trigrams` with `I/S/N/T` normalization (CBM `minhash.c:96-112`) — language-agnostic & noise-resistant |
-| MinHash threshold / per-node cap (FR-LSH-B) | Should Have | Default threshold = 0.95 (precision); `MAX_EDGES_PER_NODE = 10` to suppress utility hubs (CBM `minhash.h:33, 36`) |
-| `LEANKG_MINHASH_SIGNATURE_K` env (FR-LSH-C) | Should Have | Allow `num_perm=64` to halve signature memory on MegaGraph workloads (256 B vs 1 KB) |
-| Big-bucket guard (FR-LSH-D) | Should Have | Skip LSH buckets > `MAX_BUCKET_SIZE = 200` to block utility-function explosion |
-| Min function-body length 30 leaf tokens (FR-LSH-E) | Should Have | Reject short-body fingerprints (CBM `CBM_MINHASH_MIN_NODES`) |
-| Pre-baked stdlib metadata (FR-LSH-F) | Could Have | Generate Python stdlib JSON at build time so cross-package `multiprocessing.Pool` etc. resolve correctly |
 | MCP project routing smoke (US-CBM-A1/A4) | Must Have | Ops / multi-mount |
 | Graphify NL subgraph (US-GF-03) | Must Have | NL→seed → bounded-expand pipeline |
 | Edge provenance labels (US-GF-04) | Must Have | EXTRACTED/INFERRED/AMBIGUOUS |
@@ -947,14 +954,12 @@ Palace Mapping:
 | Folder Structure as Graph Edges (US-MP-08) | Must Have | First-class `directory` nodes; FR-MP-21..26 |
 | Layered Context Loading (US-MP-02) | Must Have | `load_layer` MCP registered but minimal L2/L3 paths |
 | Conversation/Decision Mining (US-MP-03) | Should Have | FR-MP-09..13 still PENDING |
-| Embeddings Docker default (US-CBM-C1) | Should Have | Platform friction |
 | 3D graph UI Track E (US-CBM-E*) | Should Have | New `graph-ui/`; keep 2D |
 | GRAPH_REPORT.md on-disk writer (US-GF-06) | Should Have | `get_graph_report` MCP shipped `9124959`; on-disk `.leankg/GRAPH_REPORT.md` generator not wired |
 | GF-10 Scala / Lua / Zig / shell / Apex | Could Have | Vue + Svelte + SQL DDL DONE; long tail still to land |
 | GF-12 Postgres live introspection | Could Have | SQL DDL parser DONE; DSN-driven schema ingest not wired |
 | ≥10 `run_raw_query` recipes (US-CBM-B12) | Should Have | FR-B50 |
 | Formal MCP `resources/read` for `get_overview_context` (US-GN-08) | Could Have | Tool form shipped; resource form not yet |
-| CBM head-to-head clone benchmark (FR-BENCH-A) | Must Have | Required before claiming FR-B03/B04/FR-LSH-A done |
 | Language breadth / Windows / SLSA | Could Have | CBM Track C/B4 |
 
 ---
@@ -1145,8 +1150,8 @@ Palace Mapping:
 - [x] **FR-B21**: `get_graph_schema`
 - [x] **FR-B22**: Honor token budgets / truncation on architecture/schema
 - [x] **FR-B23**: `find_dead_code`
-- [x] **FR-B30**: Near-clone detection → similarity edges (`55e6e72`)
-- [x] **FR-B31**: `find_clones` MCP + `leankg clones` CLI (`55e6e72`)
+- [x] **FR-B30**: Near-clone detection → similarity edges (`55e6e72`) — **non-strategic**; do not expand with LSH (v3.6.2)
+- [x] **FR-B31**: `find_clones` MCP + `leankg clones` CLI (`55e6e72`) — same-file Jaccard only after FR-HNSW-A; optional later deprecate
 - [x] **FR-B32**: Cross-repo edges across registry (`ab16c9b`)
 - [x] **FR-B33**: Cross-repo summary in tool or architecture (`ab16c9b`, surfaced via `find_cross_repo_similar`)
 - [ ] **FR-B40..B44**: IaC Resource/Module, ADR, snapshot (subset done), DATA_FLOWS (Could)
@@ -1155,7 +1160,7 @@ Palace Mapping:
 
 #### Track C — Platform
 
-- [ ] **FR-C01**: Docker embeddings OOTB (Should)
+- [x] **FR-C01**: Docker embeddings OOTB (Must — alias FR-HNSW-C; Dockerfiles `--features embeddings` + `entrypoint.sh` `embed_if_needed`)
 - [ ] **FR-C02**: Document smaller-model / batch-size options (Should)
 - [x] **FR-C03**: Hot-path cache — DONE (`836f0a3`)
 - [ ] **FR-C04**: Profile impact-radius latency (Should)
@@ -1195,9 +1200,32 @@ Palace Mapping:
 - [x] **FR-V2-11**: CI/CD auto-graph update on release (< 3 min freshness) — GitHub Actions workflow (`eb3d331`)
 - [x] **FR-V2-12**: `get_team_map` ownership/on-call tool (`3368b5f`)
 
-### 5.12 Adoption Track from CBM (deep compare 2026-07-15)
+### 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2)
 
-> Concrete FRs to close the gaps identified by the deep read of `DeusData/codebase-memory-mcp`. None of these change shipped code; they are TODOs sized for future PRs.
+> **Product bet:** LeanKG's strong path is **semantic search** via dense embeddings + CozoDB native `::hnsw`. Do **not** reimplement MinHash/LSH in-process, and do **not** wire Cozo `::lsh` for clones. Pattern already proven by embeddings: LeanKG builds text blobs → Cozo stores vectors + HNSW index.
+
+**Remove LSH complexity:**
+
+- [x] **FR-HNSW-A**: Remove custom MinHash/LSH — delete `src/minhash.rs`, drop `mod minhash` from `lib.rs` / `main.rs`, remove `find_clones --cross-file` LSH branch in `src/graph/query.rs`. Same-file Jaccard may remain temporarily or be deprecated; no Cozo `::lsh` index for clones. Mark FR-LSH-A..F / FR-BENCH-A as **Won't Do**.
+
+**Reuse & expand Cozo HNSW (already on `cozo 0.7.6`):**
+
+- [x] **FR-HNSW-B**: Sole ANN path = Cozo `::hnsw` on `embedding_vectors:vec_idx` (`src/embeddings/state.rs`). Document as canonical; forbid a second ANN stack for discovery.
+- [x] **FR-HNSW-C** (= FR-C01 / US-CBM-C1): Docker / RocksDB image builds with `--features embeddings`; entrypoint documents or runs `embed --init` so semantic tools work OOTB.
+- [x] **FR-HNSW-D**: Default agent discovery path — NL query → embed → HNSW top-k → optional rerank → graph traverse (`src/retrieval/pipeline.rs`); ensure MCP `semantic_search` / `kg_semantic_context` (or equivalent) are the recommended first tools in AGENTS/skills when embeddings are available.
+- [x] **FR-HNSW-E**: Incremental embed — indexer marks `embedding_state` stale; `leankg embed` (or auto) refreshes only dirty QNs; orphan reap stays in `embeddings/build.rs`.
+- [x] **FR-HNSW-F**: Mega-graph HNSW ops — expose/document `ef` / `m` / page `limit`+`offset`; keep RSS under existing `BudgetGuard` / `MemoryGuard` caps on large workspaces.
+- [x] **FR-BENCH-HNSW**: Semantic recall smoke — `tests/hnsw_recall_e2e.rs` (synthetic 384-d vectors + brute-force cosine ground truth; assert HNSW top-k contains golden `qualified_name`s; replaces cancelled clone FR-BENCH-A).
+
+**Won't Do (explicit):**
+
+- [x] **FR-LSH-A..F**: AST MinHash / bucket guards / signature K env — **Won't Do** (v3.6.2)
+- [x] **FR-BENCH-A**: CBM clone quality head-to-head — **Won't Do** (v3.6.2)
+- [x] **Cozo `::lsh` for `SIMILAR_TO`**: available in Cozo 0.7 but **not used** — clone ANN is out of scope
+
+### 5.13 LSP Adoption Track from CBM (moved from former 5.12; deep compare 2026-07-15)
+
+> LSP-only FRs retained from the CBM deep read. Clone/LSH FRs cancelled in Section 5.12.
 
 **LSP — closing the zero-setup gap (LeanKG currently requires user-configured LSP servers):**
 
@@ -1205,19 +1233,6 @@ Palace Mapping:
 - [ ] **FR-LSP-B**: Prefab `lsp:` block — `leankg init --with-lsp` writes a default block listing `gopls` / `typescript-language-server` / `pyright` / `rust-analyzer` / `dart-language-server` with `--command` + `--args`; the block is **commented out** so the existing tree-sitter default keeps running, plus `--install-hints` for each (e.g. `go install golang.org/x/tools/gopls@latest`).
 - [ ] **FR-LSP-C**: Wire `resolve_with_lsp` results into the indexer — when `typed_resolve=go,ts` (or `all`) is enabled, the LSP/native-resolver runs BEFORE `src/indexer/call_graph.rs` writes `CALLS` edges, so `resolution_method=typed` edges actually land in the graph (closes FR-B03 / FR-B04).
 - [ ] **FR-LSP-D**: Cross-file type registry shared across files in the same project (mirror `internal/cbm/lsp/type_registry.c` idea). Per-file overlay for mutable registries so worker threads don't race (mirrors `py_lsp.h:99-115` field_overlay pattern).
-
-**LSH / MinHash for `SIMILAR_TO` (clone) edges — borrow from CBM:**
-
-- [ ] **FR-LSH-A**: AST-aware MinHash shingles — add `shingle_kind=ast_trigrams` to `MinHashConfig` that walks tree-sitter leaf-node types, normalizes identifiers/strings/numbers/type-annotations to `I` / `S` / `N` / `T` (mirror of CBM `src/simhash/minhash.c:96-112`), hashes 3-grams with structural weight, falls back to the existing whitespace-shingle pipeline when AST walking fails. Replaces the current `5`-token whitespace shingles (`src/minhash.rs:79-101`) only when explicitly opted in.
-- [ ] **FR-LSH-B**: Default Jaccard threshold + per-node cap — surface in `leankg clones` config the equivalent of `CBM_MINHASH_JACCARD_THRESHOLD = 0.95` (precision mode) and `CBM_MINHASH_MAX_EDGES_PER_NODE = 10`. Drop a `leankg clones --threshold N --max-per-node K` flag today; record as config in `leankg.yaml`.
-- [ ] **FR-LSH-C**: `LEANKG_MINHASH_SIGNATURE_K` env-override for `num_perm`. Default 128 stays for accuracy; set to 64 on MegaGraph workloads (>500k functions) to halve memory (256 B per signature, matching CBM).
-- [ ] **FR-LSH-D**: Big-bucket guard — skip LSH buckets whose pair count exceeds `MAX_BUCKET_SIZE = 200` (CBM `src/simhash/minhash.c:53, 472`) to suppress utility-function explosion.
-- [ ] **FR-LSH-E**: Min function-body length — reject fingerprints from bodies with < 30 leaf tokens (CBM `CBM_MINHASH_MIN_NODES`) to keep noise out of `find_clones` results.
-- [ ] **FR-LSH-F**: Pre-baked stdlib metadata — generate `src/stdlibs/python_std.json` (and analogues for TS / Go stdlib) at build time so `find_clones` cross-package candidates include `multiprocessing.Pool.apply_async` → `BasePool.apply_async` rather than treating them as unrelated.
-
-**Benchmarks & rollout gates:**
-
-- [ ] **FR-BENCH-A**: Head-to-head `find_clones` quality benchmark vs CBM on the shared 50-pair clone sample (CBM `tests/test_simhash.c`). Required before claiming FR-B03 / FR-B04 / FR-LSH-A done.
 
 ---
 
@@ -1228,7 +1243,7 @@ Palace Mapping:
 | Component | Technology | Version |
 |-----------|------------|---------|
 | Core Language | Rust | 1.70+ (edition 2021) |
-| Database | CozoDB (embedded SQLite-backed) | 0.2 |
+| Database | CozoDB (SQLite / RocksDB) + native `::hnsw` | 0.7.6 |
 | Code Parsing | tree-sitter | 0.25 |
 | MCP Server | rmcp (Rust MCP library) | 1.2 |
 | CLI Framework | Clap | 4 |
@@ -1341,12 +1356,11 @@ src/
 ├── hooks/               # Git hooks (pre-commit, post-commit, post-checkout, GitWatcher)
 ├── benchmark/           # Benchmark runner (LeanKG vs OpenCode/Gemini/Kilo)
 ├── ontology/            # Concept + procedural ontology (concepts.yaml, workflows.yaml) — kg_* tools
-├── embeddings/          # Optional sentence-transformers embeddings (feature-gated)
-├── retrieval/           # Mix of lexical + semantic retrieval pipelines
-├── embed.rs             # Embedding vector wrappers
-├── minhash.rs           # MinHash signature utilities (used for clones / cross-repo similarity)
-├── budget.rs            # Per-tool token budget enforcement
-├── gc.rs                # Background GC / vacuum helpers
+├── embeddings/          # Semantic embeddings → CozoDB `embedding_vectors` + `::hnsw` (feature-gated; product focus)
+├── retrieval/           # embed → HNSW ANN → rerank → graph traverse
+├── embed.rs             # Legacy/compat embedding wrappers (prefer `embeddings/`)
+├── budget.rs            # Per-tool token / RSS / wall-clock budget enforcement
+├── gc.rs                # MemoryGuard for long-running MCP daemons
 ├── obsidian/            # Obsidian-vault doc adapter
 ├── registry.rs          # Global repository registry (multi-repo management)
 └── runtime.rs           # Tokio runtime utilities
@@ -1365,7 +1379,7 @@ src/
 |  +--------------+  +--------------+  +----------+  |
 |                                                     |
 |  +-----------------------------------------------+  |
-|  |  CozoDB (Datalog) + optional HNSW embeddings  |  |
+|  |  CozoDB (Datalog) + HNSW embeddings (semantic ANN focus)  |  |
 |  +-----------------------------------------------+  |
 +-----------------------------------------------------+
          ^                    ^                ^
@@ -1740,4 +1754,4 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ---
 
-*Last updated: 2026-07-15 (v3.6-lsp-ontology + CBM deep compare — Section 5.12 captures concrete FRs to adopt CBM's in-process Hybrid LSP pattern + AST-aware MinHash shingles + memory-efficient signatures; pending FR-LSP-A/B/C, FR-LSH-A..F, FR-BENCH-A)*
+*Last updated: 2026-07-15 (v3.6.2-hnsw-semantic — FR-HNSW-A..F + FR-BENCH-HNSW + US-CBM-C1/FR-C01 DONE on `integration/prd-pending`; LSP FRs remain in Section 5.13)*

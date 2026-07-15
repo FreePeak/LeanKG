@@ -17,6 +17,24 @@ LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first
 
 ---
 
+## Semantic Discovery (v3.6.2 — CozoDB HNSW preferred)
+
+When the binary was built with `--features embeddings` AND the embedding
+index has been built (`leankg embed` after `leankg index`), prefer the
+**HNSW-backed** vector retrieval tools. They return semantically similar
+code, ontology nodes, and graph context, ranked by cross-encoder rerank:
+
+1. `kg_semantic_context(query="...", env="local")` — best for natural-language questions ("where do we validate access rights", "how does the refund flow work"). Returns ranked seed nodes + 1-2 hop graph context.
+2. `semantic_search(query="...", limit=20, offset=0)` — paginated ontology+HNSW fallback; pagination is the safe default on mega-graphs.
+
+If `kg_semantic_context` returns "No embedded vectors found", fall back
+to the ontology layer:
+
+3. `kg_context(query="...")` — ontology-aware concept expansion (no embeddings required).
+4. `search_code(query="...")` / `find_function(name="...")` — bounded name search.
+
+---
+
 ## Tool Selection Flowchart
 
 ```
@@ -2136,6 +2154,16 @@ impl ToolHandler {
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
 
+        // FR-HNSW-D: when the embeddings feature is on AND an embedding
+        // index exists, route through CozoDB HNSW (BGE-small-en-v1.5) →
+        // cross-encoder rerank → graph traverse. Falls back to the
+        // ontology-first path when embeddings are not built (no index
+        // rows), so the tool stays useful on slim installs.
+        #[cfg(feature = "embeddings")]
+        if embeddings_index_available(self.graph_engine.db()) {
+            return run_hnsw_semantic_search(&self.graph_engine, query, env, limit, offset);
+        }
+
         // Always ontology-first + paginated — never load env-wide element dumps.
         let page = crate::ontology::safe_discover::discover(
             &self.graph_engine,
@@ -3647,7 +3675,7 @@ impl ToolHandler {
         let do_traverse = args["traverse"].as_bool().unwrap_or(true);
         let include_worktrees = args["include_worktrees"].as_bool().unwrap_or(false);
         let debug = args["debug"].as_bool().unwrap_or(false);
-        let project = args["project"].as_str().unwrap_or(".");
+        let _project = args["project"].as_str().unwrap_or(".");
 
         // Vectors live in CozoDB now; freshness check is a state-table count.
         let has_vectors = crate::embeddings::state::list_all(self.graph_engine.db())
@@ -3947,6 +3975,89 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
     }
 
     doc
+}
+
+// --- FR-HNSW-D: HNSW-backed `semantic_search` dispatch helpers ----------
+//
+// `semantic_search` historically runs an ontology-first discover and never
+// touches the embedding index. With the `embeddings` feature on and an
+// index built (`leankg embed`), we want to upgrade it in place so that
+// "natural-language → ranked code" is the default first tool an agent
+// reaches for (US-CBM-C1 / FR-HNSW-D). These helpers decide whether to
+// take the HNSW fast path and run it.
+
+#[cfg(feature = "embeddings")]
+fn embeddings_index_available(db: &crate::db::schema::CozoDb) -> bool {
+    // Cheap check: any non-empty row in `embedding_vectors` means an
+    // embedding index exists for this DB. Avoids spinning up the embedder
+    // when no `leankg embed` has been run yet.
+    crate::embeddings::state::list_all(db)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "embeddings")]
+fn run_hnsw_semantic_search(
+    engine: &GraphEngine,
+    query: &str,
+    env: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Value, String> {
+    use crate::retrieval::{RetrieveOptions, SemanticRetrievalPipeline};
+
+    // top_k must be ≥ limit + offset so pagination has headroom.
+    let top_k = (limit + offset).max(50);
+    let opts = RetrieveOptions {
+        env: Some(env.to_string()),
+        ann_top_k: Some(top_k),
+        rerank_top_n: top_k,
+        include_worktrees: false,
+        include_ontology_steps: false,
+        embeddings_stale: false,
+    };
+
+    let pipeline = SemanticRetrievalPipeline::new(engine.db().clone())
+        .map_err(|e| format!("Failed to init HNSW pipeline: {}", e))?;
+    let retrieval = pipeline
+        .retrieve(query, &opts)
+        .map_err(|e| format!("HNSW retrieve failed: {}", e))?;
+
+    let seeds_json: Vec<Value> = retrieval
+        .seeds
+        .iter()
+        .map(|s| {
+            json!({
+                "qualified_name": s.qualified_name,
+                "element_type": s.element_type,
+                "file_path": s.file_path,
+                "env": s.env,
+                "ann_distance": s.ann_distance,
+                "rerank_score": s.rerank_score,
+            })
+        })
+        .collect();
+
+    let total_estimate = seeds_json.len();
+    let page: Vec<Value> = seeds_json.into_iter().skip(offset).take(limit).collect();
+    let has_more = offset + page.len() < total_estimate;
+
+    Ok(json!({
+        "query": query,
+        "env": env,
+        "limit": limit,
+        "offset": offset,
+        "method": "hnsw+rerank",
+        "results": page,
+        "total_estimate": total_estimate,
+        "has_more": has_more,
+        "ann_candidate_count": retrieval.ann_candidate_count,
+        "ann_top_k_used": retrieval.ann_top_k_used,
+        "reranker_active": matches!(
+            retrieval.reranker_status,
+            crate::embeddings::RerankerStatus::Active
+        ),
+    }))
 }
 
 #[cfg(test)]

@@ -1,6 +1,12 @@
 //! Retrieval pipeline orchestration: query → embed → HNSW ANN → worktree/env
 //! filter → cross-encoder rerank. Returns a `RetrievalResult` ready for the
 //! MCP handler to hand off to the traversal stage.
+//!
+//! **FR-HNSW-B (v3.6.2)**: this pipeline is the canonical ANN path.
+//! `~embedding_vectors:vec_idx` (CozoDB native HNSW) is the only semantic
+//! index — there is no second ANN stack for discovery. Any caller that
+//! needs "find similar X by meaning" must construct a
+//! [`SemanticRetrievalPipeline`] and call [`SemanticRetrievalPipeline::retrieve`].
 
 use crate::db::models::CodeElement;
 use crate::db::schema::{run_script, CozoDb};
@@ -103,6 +109,28 @@ pub fn adaptive_k(index_size: usize) -> usize {
     }
 }
 
+/// Resolve the HNSW `ef` search-effort knob for a given `k`.
+///
+/// Default rule: `ef = max(k * 2, 50)` — gives the graph 2x headroom over
+/// the candidate count so recall stays high without unbounded search
+/// expansion.
+///
+/// Override knobs (FR-HNSW-F mega-graph tuning):
+/// - `LEANKG_HNSW_EF` env var — absolute ef. Use this on mega-graphs
+///   (1M+ vectors) where the default `k*2` rule undersizes ef.
+/// - For very small `k` we still floor at 50 because CozoDB's HNSW
+///   rejects ef < 1.
+fn resolve_ef(k: usize) -> usize {
+    if let Ok(env_ef) = std::env::var("LEANKG_HNSW_EF") {
+        if let Ok(parsed) = env_ef.parse::<usize>() {
+            if parsed > 0 {
+                return parsed.max(50);
+            }
+        }
+    }
+    (k * 2).max(50)
+}
+
 #[cfg(test)]
 mod adaptive_k_tests {
     use super::*;
@@ -137,6 +165,40 @@ mod adaptive_k_tests {
     fn million_plus_capped_at_300() {
         assert_eq!(adaptive_k(1_000_001), 300);
         assert_eq!(adaptive_k(10_000_000), 300);
+    }
+
+    // FR-HNSW-F: ef knob tests. Defaults to 2k floored at 50; env var
+    // override wins; invalid env values are ignored.
+    #[test]
+    fn resolve_ef_default_scales_with_k() {
+        std::env::remove_var("LEANKG_HNSW_EF");
+        assert_eq!(resolve_ef(25), 50); // floor
+        assert_eq!(resolve_ef(50), 100); // k*2
+        assert_eq!(resolve_ef(100), 200);
+        assert_eq!(resolve_ef(500), 1000);
+    }
+
+    #[test]
+    fn resolve_ef_env_override_wins() {
+        std::env::set_var("LEANKG_HNSW_EF", "400");
+        assert_eq!(resolve_ef(10), 400);
+        std::env::remove_var("LEANKG_HNSW_EF");
+    }
+
+    #[test]
+    fn resolve_ef_env_invalid_falls_back() {
+        std::env::set_var("LEANKG_HNSW_EF", "not-a-number");
+        // Falls back to default rule.
+        assert_eq!(resolve_ef(25), 50);
+        std::env::remove_var("LEANKG_HNSW_EF");
+    }
+
+    #[test]
+    fn resolve_ef_env_zero_falls_back() {
+        std::env::set_var("LEANKG_HNSW_EF", "0");
+        // Zero is rejected (would underflow CozoDB's min ef).
+        assert_eq!(resolve_ef(25), 50);
+        std::env::remove_var("LEANKG_HNSW_EF");
     }
 }
 
@@ -281,8 +343,8 @@ impl SemanticRetrievalPipeline {
                     ef: {ef},
                     bind_distance: dist
                 }}"#,
-            // ef (search effort) — bump with k so the index has headroom.
-            ef = (k * 2).max(50)
+            // FR-HNSW-F: ef is tunable via LEANKG_HNSW_EF. See `resolve_ef`.
+            ef = resolve_ef(k)
         );
         let result = run_script(&self.db, &query, Default::default())?;
         let mut out = Vec::with_capacity(result.rows.len());

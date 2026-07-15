@@ -297,15 +297,10 @@ impl BenchmarkRunner {
             .wait_with_output()
             .expect("Failed to wait on `claude`");
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        eprintln!(
-            "claude stderr (truncated to 500): {}",
-            &stderr.chars().take(500).collect::<String>()
-        );
         self.parse_claude_output(&stdout, prompt)
     }
 
-    fn parse_claude_output(&self, stdout: &str, prompt: &str) -> BenchmarkResult {
+    fn parse_claude_output(&self, stdout: &str, _prompt: &str) -> BenchmarkResult {
         // Claude Code's --output-format json emits a single
         // JSON object with fields like:
         //   {"type":"result","result":"...","usage":{

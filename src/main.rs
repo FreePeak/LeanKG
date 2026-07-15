@@ -27,7 +27,6 @@ mod web;
 
 #[path = "lsp/mod.rs"]
 mod lsp;
-mod minhash;
 
 use clap::Parser;
 
@@ -370,11 +369,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             threshold,
             limit,
             max_functions,
-            cross_file,
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            run_clones(threshold, limit, max_functions, cross_file, &db_path)?;
+            run_clones(threshold, limit, max_functions, &db_path)?;
         }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
@@ -1563,23 +1561,18 @@ fn run_clones(
     threshold: f64,
     limit: usize,
     max_functions: usize,
-    cross_file: bool,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
-    let opts = graph::CloneScanOptions {
-        max_functions,
-        cross_file,
-    };
+    let opts = graph::CloneScanOptions { max_functions };
     let started = std::time::Instant::now();
     let pairs = graph_engine.find_clones_with_opts(threshold, limit, &opts)?;
     println!(
-        "Found {} clone pairs (threshold={}, max_functions={}, cross_file={}) in {:?}:",
+        "Found {} clone pairs (threshold={}, max_functions={}) in {:?}:",
         pairs.len(),
         threshold,
         opts.max_functions,
-        opts.cross_file,
         started.elapsed()
     );
     for p in pairs.iter().take(50) {

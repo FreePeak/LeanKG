@@ -81,6 +81,42 @@ YAML
     echo "  Index done."
 }
 
+# FR-HNSW-C: build the embedding index after `leankg index` so semantic
+# tools (semantic_search, kg_semantic_context, embed, smoke-test) work
+# out of the box on a fresh container. Honors `LEANKG_EMBED_ON_BOOT`
+# (default: 1). Set to 0 to skip on slow/constrained hosts.
+embed_if_needed() {
+    local project_dir="$1"
+
+    if [ "${LEANKG_EMBED_ON_BOOT:-1}" != "1" ]; then
+        echo "  LEANKG_EMBED_ON_BOOT!=1, skipping embed build."
+        return
+    fi
+
+    if [ ! -x "$(command -v leankg)" ]; then
+        echo "  leankg binary not found on PATH, skipping embed build."
+        return
+    fi
+
+    local cache_dir="${LEANKG_FASTEMBED_CACHE:-$HOME/.cache/leankg}"
+    local marker="$cache_dir/.embed_init_done"
+
+    if [ ! -f "$marker" ]; then
+        echo "  Downloading embedding + reranker models (first run only)..."
+        if ( cd "$project_dir" && leankg embed --init --project "$project_dir" ); then
+            mkdir -p "$cache_dir"
+            touch "$marker"
+        else
+            echo "  WARN: leankg embed --init failed; semantic tools may be unavailable."
+            return
+        fi
+    fi
+
+    echo "  Building embedding index (incremental)..."
+    ( cd "$project_dir" && leankg embed --project "$project_dir" ) || \
+        echo "  WARN: leankg embed failed; semantic tools may be unavailable."
+}
+
 if [ "${LEANKG_AUTO_INDEX:-1}" = "1" ]; then
     echo "=== Scanning for projects ==="
     if [ -n "$LEANKG_PROJECT_DIRS" ]; then
@@ -88,12 +124,14 @@ if [ "${LEANKG_AUTO_INDEX:-1}" = "1" ]; then
         for dir in "${DIRS[@]}"; do
             if [ -d "$dir" ]; then
                 index_if_needed "$dir"
+                embed_if_needed "$dir"
             fi
         done
     else
         for dir in /workspace* /test-project*; do
             if [ -d "$dir" ]; then
                 index_if_needed "$dir"
+                embed_if_needed "$dir"
             fi
         done
     fi
