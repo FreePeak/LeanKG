@@ -1,7 +1,6 @@
 // Check if import targets exist in code_elements
 use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
-use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_check_import_targets() {

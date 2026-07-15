@@ -99,9 +99,143 @@ pub enum CLICommand {
         /// Depth of analysis
         #[arg(long, default_value = "3")]
         depth: u32,
+        /// Maximum affected elements to return (default 10000).
+        /// Bounded to keep memory + output size predictable on big monorepos.
+        #[arg(long, default_value = "10000")]
+        max_affected: usize,
+    },
+    /// US-GF-01: Find shortest path between two symbols in the graph
+    Path {
+        /// Source symbol (qualified_name, name, or fuzzy suffix)
+        source: String,
+        /// Target symbol (qualified_name, name, or fuzzy suffix)
+        target: String,
+        /// Maximum number of hops (1-10)
+        #[arg(long, default_value = "6")]
+        max_hops: usize,
+    },
+    /// US-GF-02: Explain a node (definition, cluster, degree, neighbors)
+    Explain {
+        /// Symbol qualified_name, exact name, or fuzzy suffix
+        name: String,
+    },
+    /// US-GF-05: List god nodes (most-connected symbols)
+    Gods {
+        /// Limit number of results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Exclude top-N% super-hubs (0-100)
+        #[arg(long)]
+        exclude_hubs_percentile: Option<u8>,
+    },
+    /// US-GF-06: Generate GRAPH_REPORT.md (god nodes, confidence, suggested questions)
+    Report {
+        /// Project display name (default: directory name)
+        #[arg(long)]
+        project_name: Option<String>,
+        /// Output file path (default: .leankg/GRAPH_REPORT.md)
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// US-MP-05: Check graph for broken / stale links
+    CheckConsistency {
+        /// Filter by severity: BROKEN | STALE | CURRENT
+        #[arg(long)]
+        severity: Option<String>,
+        /// Limit findings shown (default 50). Use 0 for unlimited,
+        /// but be ready for big output on a large graph.
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// US-CBM-B1: Resolve a symbol via the configured LSP server
+    LspResolve {
+        /// Source language (go, typescript, python, ...)
+        /// If omitted, the bridge auto-detects from the file extension.
+        #[arg(long)]
+        language: Option<String>,
+        /// File containing the symbol
+        file_path: String,
+        /// 0-indexed line
+        #[arg(long, default_value = "0")]
+        line: u32,
+        /// 0-indexed character (column)
+        #[arg(long, default_value = "0")]
+        character: u32,
+        /// LSP request kind
+        #[arg(long, default_value = "definition", value_parser = ["definition", "references", "hover"])]
+        request: String,
+        /// Project root (where leankg.yaml lives)
+        #[arg(long, default_value = ".")]
+        project: String,
+    },
+    /// US-CBM-B1: Install the LSP server for a language (or "all").
+    /// Runs the best install method we know for the host OS.
+    LspInstall {
+        /// Language id or "all" to install every known server.
+        language: String,
+        /// Project root (where leankg.yaml lives)
+        #[arg(long, default_value = ".")]
+        project: String,
+        /// Print commands instead of running them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// US-CBM-B1: List every language the LSP registry knows about.
+    LspList,
+    /// US-MP-06: List cross-domain tunnels (cross-cluster relationships)
+    Tunnels {
+        /// Limit
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// US-GF-09: Record a query outcome lesson (useful | dead_end | corrected)
+    Reflect {
+        /// Original question
+        question: String,
+        /// Outcome classification
+        outcome: String,
+        /// Optional comma-separated qualified_names that were returned
+        #[arg(long)]
+        nodes: Option<String>,
+        /// Optional free-form note
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// US-GF-08: PR impact dashboard (severity + touched clusters)
+    Prs {
+        /// Environment scope (default: local)
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// Comma-separated changed file paths (overrides git diff auto-detect)
+        #[arg(long)]
+        files: Option<String>,
+    },
+    /// US-CBM-B7: Find near-duplicate functions / methods
+    Clones {
+        /// Similarity threshold (0.0 - 1.0)
+        #[arg(long, default_value = "0.6")]
+        threshold: f64,
+        /// Limit
+        #[arg(long, default_value = "50")]
+        limit: usize,
+        /// Maximum functions/methods/constructors to scan. Default 50000;
+        /// raise this only on graphs you control (e.g. single-service
+        /// subgraphs). The previous O(n²) all-pairs scan would otherwise
+        /// run for hours on big monorepos.
+        #[arg(long, default_value = "50000")]
+        max_functions: usize,
     },
     /// Auto-install MCP config
     Install,
+    /// Diagnose stale leankg processes, mmap'd DB files, and current
+    /// RSS. Prints `leankg daemon kill` to clean them up. Safe to run
+    /// at any time.
+    Doctor {
+        /// Also kill stale leankg processes (default: report only).
+        /// Refuses to kill the current process and the caller's parent.
+        #[arg(long)]
+        kill: bool,
+    },
     /// Show index status
     Status,
     /// Start file watcher for incremental re-indexing
@@ -256,7 +390,7 @@ pub enum CLICommand {
         /// Specific category to run (optional)
         #[arg(long)]
         category: Option<String>,
-        /// CLI tool to use: opencode, gemini, or kilo (default: kilo)
+        /// CLI tool to use: opencode, gemini, kilo, or claude (default: kilo)
         #[arg(long, default_value = "kilo")]
         cli: String,
     },

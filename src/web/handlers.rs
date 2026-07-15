@@ -1996,7 +1996,7 @@ pub async fn api_graph_expand_service(
     let limit: Option<usize> = params.get("limit").and_then(|s| s.parse().ok());
     let offset: Option<usize> = params.get("offset").and_then(|s| s.parse().ok());
     // When all=true, load ALL content under the folder (not just direct children)
-    let all_content: bool = params
+    let mut all_content: bool = params
         .get("all")
         .map(|s| s == "true" || s == "1")
         .unwrap_or(false);
@@ -2016,6 +2016,17 @@ pub async fn api_graph_expand_service(
     } else {
         folder_path.clone()
     };
+
+    // FR-MG-03: For single-repo projects, treat the root path as the "service".
+    // Auto-enable all_content when the user expands the project root in single-repo
+    // mode so the entire graph loads in a single API call.
+    if !all_content && (relative_folder.is_empty() || relative_folder == ".") {
+        let project_root = std::path::Path::new(&project_path);
+        let is_single_repo = detect_single_repo(project_root);
+        if is_single_repo {
+            all_content = true;
+        }
+    }
 
     let graph_engine = match state.get_graph_engine().await {
         Ok(g) => g,
@@ -2098,6 +2109,33 @@ pub async fn api_graph_expand_service(
         }),
         error: None,
     }
+}
+
+/// Detect whether the given project root is a single-repo layout
+/// (no nested .git directories under the root).
+fn detect_single_repo(root: &std::path::Path) -> bool {
+    use walkdir::WalkDir;
+
+    // Walk the project looking for any .git directory. If there is exactly one
+    // (the root's own .git), treat as single-repo. Nested .git directories
+    // indicate a multi-repo / polyrepo layout.
+    let mut git_count = 0usize;
+    for entry in WalkDir::new(root)
+        .max_depth(4)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.file_type().is_dir() && entry.file_name() == ".git" {
+            git_count += 1;
+            if git_count > 1 {
+                return false;
+            }
+        }
+    }
+    // No nested .git found (or none at all). Treat as single-repo so the root
+    // service expansion returns the full content in one API call.
+    true
 }
 
 /// Find the folder path for a given service name
@@ -4368,5 +4406,45 @@ pub async fn api_team_permissions(
             Err(e) => ApiResponse::error(&e.to_string()),
         },
         Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod fr_mg_03_tests {
+    use super::detect_single_repo;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("leankg-mg03-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn single_repo_with_no_git_is_detected() {
+        let dir = fresh_dir("no-git");
+        // Plain directory with no .git anywhere -> single-repo
+        assert!(detect_single_repo(&dir));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn single_repo_with_only_root_git() {
+        let dir = fresh_dir("root-git");
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        assert!(detect_single_repo(&dir));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn multi_repo_with_nested_git_is_rejected() {
+        let dir = fresh_dir("multi");
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::create_dir_all(dir.join("platform").join("svc-a").join(".git")).unwrap();
+        assert!(!detect_single_repo(&dir));
+        fs::remove_dir_all(&dir).ok();
     }
 }

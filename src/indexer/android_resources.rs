@@ -441,7 +441,7 @@ mod tests {
     <color name="secondary">#FF03DAC5</color>
 </resources>"#;
         let extractor = AndroidResourcesExtractor::new(source.as_slice(), "res/values/colors.xml");
-        let (elements, relationships) = extractor.extract();
+        let (elements, _relationships) = extractor.extract();
 
         let colors: Vec<_> = elements
             .iter()

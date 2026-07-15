@@ -37,7 +37,7 @@ fn insert_service(
         "env".to_string(),
         serde_json::Value::String(env.to_string()),
     );
-    leankg::db::schema::run_script(&db, query, params).unwrap();
+    leankg::db::schema::run_script(db, query, params).unwrap();
 }
 
 fn insert_call(db: &leankg::db::schema::CozoDb, source: &str, target: &str, env: &str) {
@@ -59,7 +59,7 @@ fn insert_call(db: &leankg::db::schema::CozoDb, source: &str, target: &str, env:
         "env".to_string(),
         serde_json::Value::String(env.to_string()),
     );
-    leankg::db::schema::run_script(&db, query, params).unwrap();
+    leankg::db::schema::run_script(db, query, params).unwrap();
 }
 
 #[test]

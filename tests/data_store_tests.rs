@@ -110,7 +110,7 @@ pub fn check_relationship_validity(
     for rel in &relationships {
         if rel.rel_type == "calls" {
             let target_file = source_root.join(
-                &rel.target_qualified
+                rel.target_qualified
                     .split("::")
                     .next()
                     .unwrap_or(&rel.target_qualified),
@@ -119,7 +119,7 @@ pub fn check_relationship_validity(
                 let content = fs::read_to_string(&target_file)?;
                 let target_name = rel.target_qualified.split("::").last().unwrap_or("");
 
-                if content.contains(&format!("{}", target_name)) {
+                if content.contains(target_name) {
                     relationships_valid += 1;
                 } else {
                     relationships_invalid.push(format!(

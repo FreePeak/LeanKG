@@ -286,7 +286,7 @@ mod tests {
             .iter()
             .filter(|e| e.element_type == "repository" || e.element_type == "repository_impl")
             .collect();
-        assert!(repos.len() >= 1, "Should find at least 1 repository");
+        assert!(!repos.is_empty(), "Should find at least 1 repository");
     }
 
     #[test]

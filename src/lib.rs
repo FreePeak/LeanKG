@@ -2,6 +2,7 @@
 // This library contains the core modules for the knowledge graph system
 
 pub mod benchmark;
+pub mod budget;
 pub mod cli;
 pub mod compress;
 pub mod config;
@@ -10,9 +11,11 @@ pub mod doc;
 pub mod doc_indexer;
 #[cfg(feature = "embeddings")]
 pub mod embeddings;
+pub mod gc;
 pub mod graph;
 pub mod hooks;
 pub mod indexer;
+pub mod lsp;
 pub mod mcp;
 pub mod obsidian;
 pub mod ontology;

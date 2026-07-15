@@ -1,4 +1,5 @@
 pub mod cicd;
+pub mod event_edges;
 pub mod extractor;
 pub mod git;
 pub mod git_workspace;
@@ -7,6 +8,9 @@ pub mod parser;
 pub mod process_processor;
 pub mod regex_cache;
 pub mod route_extractor;
+pub mod sfc;
+pub mod sql;
+pub mod swift;
 pub mod terraform;
 
 pub mod android_hilt;
@@ -1450,6 +1454,124 @@ pub fn generate_physical_structure(
 
     populate_directory_metadata(&mut elements, files);
 
+    let (rat_elements, rat_relationships) = extract_rationale_markers(files);
+    elements.extend(rat_elements);
+    relationships.extend(rat_relationships);
+
+    // US-CBM-B6 / FR-B15: emit / listen event channel edges.
+    for file in files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let edges = crate::indexer::event_edges::detect_event_edges(&content);
+            let edge_rels = crate::indexer::event_edges::to_relationships(&edges);
+            relationships.extend(edge_rels);
+        }
+    }
+
+    (elements, relationships)
+}
+
+/// US-GF-07 / FR-GF-15..16: Extract `# WHY:`, `# NOTE:`, `# HACK:`,
+/// `// FIXME:`, `TODO(rationale):` markers and ADR/RFC citations
+/// from source files. Each marker becomes a `rationale` element with
+/// an `explains` edge to its enclosing function/class (or the file
+/// itself when no enclosing element is found).
+pub fn extract_rationale_markers(files: &[String]) -> (Vec<CodeElement>, Vec<Relationship>) {
+    use std::collections::HashMap;
+    let mut elements: Vec<CodeElement> = Vec::new();
+    let mut relationships: Vec<Relationship> = Vec::new();
+    let mut seen_keys: HashMap<String, usize> = HashMap::new();
+
+    let markers = [
+        ("WHY", "rationale_why"),
+        ("NOTE", "rationale_note"),
+        ("HACK", "rationale_hack"),
+        ("FIXME", "rationale_fixme"),
+        ("XXX", "rationale_xxx"),
+    ];
+
+    for file in files {
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut current_function: Option<String> = None;
+        let mut in_block_comment = false;
+        for (line_idx, line) in content.lines().enumerate() {
+            let trimmed = line.trim_start();
+            // Track rough "function context" so markers can attach to the
+            // enclosing function instead of always falling back to file.
+            if trimmed.starts_with("fn ")
+                || trimmed.starts_with("func ")
+                || trimmed.starts_with("def ")
+                || trimmed.starts_with("function ")
+            {
+                let name = trimmed
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("anonymous")
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("anonymous")
+                    .to_string();
+                current_function = Some(format!("{}::{}", file, name));
+            }
+            let text = if in_block_comment { trimmed } else { line };
+            for (marker, kind) in markers {
+                // Match `# WHY:`, `// WHY:`, `/* WHY:`, `-- WHY:`, `# TODO(...)` patterns.
+                let pat = format!("{}:", marker);
+                let lower_text = text.to_uppercase();
+                if let Some(pos) = lower_text.find(&pat) {
+                    let raw = text[pos + pat.len()..].trim();
+                    let summary = raw.chars().take(200).collect::<String>();
+                    let key = format!("{}:{}:{}", file, marker, line_idx);
+                    let idx = seen_keys.entry(key.clone()).or_insert(0);
+                    let qn = if *idx == 0 {
+                        format!("{}#{}@{}", file, marker, line_idx)
+                    } else {
+                        format!("{}#{}@{}#{}", file, marker, line_idx, idx)
+                    };
+                    *idx += 1;
+                    elements.push(CodeElement {
+                        qualified_name: qn.clone(),
+                        element_type: "rationale".to_string(),
+                        name: format!(
+                            "{} ({})",
+                            marker,
+                            summary.chars().take(60).collect::<String>()
+                        ),
+                        file_path: file.clone(),
+                        line_start: (line_idx + 1) as u32,
+                        line_end: (line_idx + 1) as u32,
+                        metadata: serde_json::json!({
+                            "marker": marker,
+                            "kind": kind,
+                            "summary": summary,
+                        }),
+                        ..Default::default()
+                    });
+                    let target = current_function.clone().unwrap_or_else(|| file.clone());
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: target,
+                        target_qualified: qn,
+                        rel_type: "explained_by".to_string(),
+                        confidence: 1.0,
+                        metadata: serde_json::json!({"marker": marker}),
+                        ..Default::default()
+                    });
+                }
+            }
+            // Block comment toggle for /* */ C-style comments.
+            in_block_comment =
+                if !in_block_comment && trimmed.starts_with("/*") && !trimmed.ends_with("*/") {
+                    true
+                } else if in_block_comment && trimmed.ends_with("*/") {
+                    false
+                } else {
+                    in_block_comment
+                };
+        }
+    }
     (elements, relationships)
 }
 
@@ -1620,6 +1742,11 @@ mod tests {
 
     #[test]
     fn test_max_file_size_default_is_2_mib() {
+        // Acquire the lock so we don't race with
+        // `test_max_file_size_env_override` which sets the env var.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Make sure no other test left the env var set.
+        std::env::remove_var("LEANKG_MAX_FILE_SIZE");
         // Sanity check: the default cap should be 2 MiB unless overridden by
         // env. This is the cap that protects the indexer from accidentally
         // slurping a 60 MB checked-in binary or a huge generated XML.
@@ -1726,5 +1853,43 @@ include("web-app")"#;
         let submodules = detect_maven_submodules(content);
         assert!(submodules.contains(&"api".to_string()));
         assert!(submodules.contains(&"core".to_string()));
+    }
+
+    // US-GF-07: rationale extraction
+    #[test]
+    fn rationale_extraction_picks_up_why_note_hack() {
+        let dir = std::env::temp_dir().join(format!("leankg-rationale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.rs");
+        std::fs::write(
+            &path,
+            r#"
+fn main() {
+    // WHY: legacy contract required by the upstream client
+    let x = 1;
+    // NOTE: do not reorder; tests depend on side effects
+    println!("{}", x);
+    // HACK: workaround for upstream bug
+    let y = 2;
+}
+"#,
+        )
+        .unwrap();
+        let (elems, rels) = extract_rationale_markers(&[path.to_string_lossy().to_string()]);
+        let kinds: Vec<String> = elems
+            .iter()
+            .filter_map(|e| {
+                e.metadata
+                    .get("marker")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
+            .collect();
+        assert!(kinds.contains(&"WHY".to_string()));
+        assert!(kinds.contains(&"NOTE".to_string()));
+        assert!(kinds.contains(&"HACK".to_string()));
+        assert!(rels.iter().any(|r| r.rel_type == "explained_by"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

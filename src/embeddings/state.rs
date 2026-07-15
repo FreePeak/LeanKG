@@ -12,6 +12,13 @@
 //! 3. `embed` also reaps orphans: state rows whose qualified_name is no longer
 //!    in `code_elements`. Their usearch vectors are removed and the state row
 //!    is deleted.
+//!
+//! FR-HNSW-B (v3.6.2): `embedding_vectors:vec_idx` is the **canonical ANN**
+//! for all discovery. LeanKG does not run a parallel ANN stack (no
+//! `Cozo ::lsh`, no custom LSH — those were removed in FR-HNSW-A). Any
+//! new feature that needs "find similar X by meaning" must route through
+//! `~embedding_vectors:vec_idx` plus cross-encoder rerank
+//! (`src/retrieval/pipeline.rs::SemanticRetrievalPipeline`).
 
 use crate::db::schema::CozoDb;
 
@@ -71,11 +78,12 @@ pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::erro
     // but failed silently on HNSW (e.g., the index create is not idempotent
     // and gets skipped if the relation check is coupled to it).
     if !existing.contains("embedding_vectors:vec_idx") {
-        match crate::db::schema::run_script(db, CREATE_EMBEDDING_VECTORS_HNSW, Default::default()) {
+        let hnsw_create = build_hnsw_create_stmt();
+        match crate::db::schema::run_script(db, &hnsw_create, Default::default()) {
             Ok(_) => tracing::info!("created HNSW index embedding_vectors:vec_idx"),
             Err(e) => tracing::warn!(
                 "failed to create HNSW index on embedding_vectors (query len={}): {:?}",
-                CREATE_EMBEDDING_VECTORS_HNSW.len(),
+                hnsw_create.len(),
                 e
             ),
         }
@@ -87,16 +95,42 @@ pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::erro
 const CREATE_EMBEDDING_VECTORS: &str =
     r#":create embedding_vectors {qualified_name: String => vector: <F32; 384>}"#;
 
-const CREATE_EMBEDDING_VECTORS_HNSW: &str = r#"::hnsw create embedding_vectors:vec_idx {
+// FR-HNSW-F mega-graph HNSW knobs (build-time).
+//
+// `m` (max connections per node) and `ef_construction` are baked into the
+// `::hnsw create` statement built by `build_hnsw_create_stmt` and cannot
+// be retuned without re-creating the index. For a one-shot re-tune on a
+// mega-graph workspace, delete the `.leankg` directory and re-run
+// `leankg index` + `leankg embed`. The defaults target a recall/footprint
+// sweet spot for ≤ 1M vectors; raise `m` for higher recall at the cost of
+// RAM, or lower it for tighter RSS on memory-bound containers.
+//
+// `ef` (search-time, query-side) lives in `src/retrieval/pipeline.rs` and
+// is overridable via the `LEANKG_HNSW_EF` env var without re-indexing.
+fn build_hnsw_create_stmt() -> String {
+    let m = std::env::var("LEANKG_HNSW_M")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| (4..=256).contains(v))
+        .unwrap_or(50);
+    let ef_construction = std::env::var("LEANKG_HNSW_EF_CONST")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| (1..=2000).contains(v))
+        .unwrap_or(20);
+    format!(
+        r#"::hnsw create embedding_vectors:vec_idx {{
     dim: 384,
     dtype: F32,
     fields: [vector],
     distance: Cosine,
-    ef_construction: 20,
-    m: 50,
+    ef_construction: {ef_construction},
+    m: {m},
     extend_candidates: false,
     keep_pruned_connections: false
-}"#;
+}}"#
+    )
+}
 
 /// Mark a batch of qualified_names as stale. Idempotent: rows that already
 /// exist flip to `state="stale"`; rows that don't exist are inserted with a
@@ -341,7 +375,7 @@ mod tests {
     fn row_to_state_row_parses_valid_row() {
         let row = vec![
             cozo::DataValue::Str("qn".into()),
-            cozo::DataValue::Int(5),
+            cozo::DataValue::Num(cozo::Num::Int(5)),
             cozo::DataValue::Str("hash".into()),
             cozo::DataValue::Str("stale".into()),
             cozo::DataValue::Str("999".into()),
@@ -363,7 +397,10 @@ mod tests {
     #[test]
     fn row_to_state_row_returns_none_for_short_row() {
         // Only 2 columns instead of 5 — missing fields.
-        let row = vec![cozo::DataValue::Str("qn".into()), cozo::DataValue::Int(5)];
+        let row = vec![
+            cozo::DataValue::Str("qn".into()),
+            cozo::DataValue::Num(cozo::Num::Int(5)),
+        ];
         assert!(row_to_state_row(&row).is_none());
     }
 }

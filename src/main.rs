@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 mod api;
 mod benchmark;
+mod budget;
 mod cli;
 mod compress;
 mod config;
@@ -10,6 +11,7 @@ mod doc_indexer;
 mod embed;
 #[cfg(feature = "embeddings")]
 mod embeddings;
+mod gc;
 mod graph;
 mod indexer;
 mod mcp;
@@ -22,6 +24,9 @@ mod retrieval;
 mod runtime;
 mod watcher;
 mod web;
+
+#[path = "lsp/mod.rs"]
+mod lsp;
 
 use clap::Parser;
 
@@ -222,11 +227,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("MCP HTTP server error: {}", e);
             }
         }
-        cli::CLICommand::Impact { file, depth } => {
+        cli::CLICommand::Impact {
+            file,
+            depth,
+            max_affected,
+        } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            let result = calculate_impact(&file, depth, &db_path)?;
-            println!("Impact radius for {} (depth={}):", file, depth);
+            let result = calculate_impact(&file, depth, max_affected, &db_path)?;
+            println!(
+                "Impact radius for {} (depth={}, max_affected={}):",
+                file, depth, max_affected
+            );
+            if result.truncated {
+                println!(
+                    "  WARNING: result truncated at max_affected={}; re-run with --max-affected higher or smaller depth.",
+                    max_affected
+                );
+            }
             if result.affected_elements.is_empty() {
                 println!("  No affected elements found");
             } else {
@@ -237,6 +255,124 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("  ... and {} more", result.affected_elements.len() - 20);
                 }
             }
+        }
+        cli::CLICommand::Path {
+            source,
+            target,
+            max_hops,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_shortest_path(&source, &target, max_hops, &db_path)?;
+        }
+        cli::CLICommand::Explain { name } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_explain_node(&name, &db_path)?;
+        }
+        cli::CLICommand::Gods {
+            limit,
+            exclude_hubs_percentile,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_god_nodes(limit, exclude_hubs_percentile, &db_path)?;
+        }
+        cli::CLICommand::Report { project_name, out } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_graph_report(
+                &project_path,
+                project_name.as_deref(),
+                out.as_deref(),
+                &db_path,
+            )?;
+        }
+        cli::CLICommand::CheckConsistency { severity, limit } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_check_consistency(severity.as_deref(), limit, &db_path)?;
+        }
+        cli::CLICommand::LspResolve {
+            language,
+            file_path,
+            line,
+            character,
+            request,
+            project,
+        } => {
+            run_lsp_resolve(
+                language.as_deref(),
+                &file_path,
+                line,
+                character,
+                &request,
+                &project,
+            )?;
+        }
+        cli::CLICommand::LspInstall {
+            language,
+            project,
+            dry_run,
+        } => {
+            run_lsp_install(&language, &project, dry_run)?;
+        }
+        cli::CLICommand::LspList => {
+            run_lsp_list()?;
+        }
+        cli::CLICommand::Tunnels { limit } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_tunnels(limit, &db_path)?;
+        }
+        cli::CLICommand::Reflect {
+            question,
+            outcome,
+            nodes,
+            note,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            let nodes_vec: Vec<String> = nodes
+                .as_deref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            run_reflect(
+                &project_path,
+                &question,
+                &outcome,
+                &nodes_vec,
+                note.as_deref(),
+                &db_path,
+            )?;
+        }
+        cli::CLICommand::Prs { env, files } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            let files_vec: Vec<String> = files
+                .as_deref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            run_prs(&project_path, &env, &files_vec, &db_path)?;
+        }
+        cli::CLICommand::Clones {
+            threshold,
+            limit,
+            max_functions,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_clones(threshold, limit, max_functions, &db_path)?;
         }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
@@ -263,6 +399,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         cli::CLICommand::Install => {
             install_mcp_config()?;
+        }
+        cli::CLICommand::Doctor { kill } => {
+            run_doctor(kill)?;
         }
         cli::CLICommand::Status => {
             let project_path = find_project_root()?;
@@ -390,6 +529,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cli_tool = match cli.as_str() {
                 "opencode" => benchmark::CliTool::OpenCode,
                 "gemini" => benchmark::CliTool::Gemini,
+                "claude" => benchmark::CliTool::Claude,
                 _ => benchmark::CliTool::Kilo,
             };
             benchmark::run(category, cli_tool)?;
@@ -983,14 +1123,462 @@ async fn incremental_index_codebase(
 fn calculate_impact(
     file: &str,
     depth: u32,
+    max_affected: usize,
     db_path: &std::path::Path,
 ) -> Result<graph::ImpactResult, Box<dyn std::error::Error>> {
     let db = db::schema::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let analyzer = graph::ImpactAnalyzer::new(&graph_engine);
+    let opts = graph::ImpactScanOptions { max_affected };
 
-    let result = analyzer.calculate_impact_radius(file, depth)?;
+    let result = analyzer.calculate_impact_radius_with_options(file, depth, 0.0, &opts)?;
     Ok(result)
+}
+
+fn run_shortest_path(
+    source: &str,
+    target: &str,
+    max_hops: usize,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    match graph_engine.shortest_path(source, target, max_hops)? {
+        Some(result) => {
+            println!(
+                "{} -> {} ({} hops)",
+                result.source, result.target, result.hops
+            );
+            for (i, hop) in result.path.iter().enumerate() {
+                println!(
+                    "  {}. {} --[{} conf={:.2} {}]--> {}",
+                    i + 1,
+                    hop.from,
+                    hop.rel_type,
+                    hop.confidence,
+                    hop.confidence_label,
+                    hop.to,
+                );
+            }
+        }
+        None => println!(
+            "No path found between '{}' and '{}' within {} hops",
+            source, target, max_hops
+        ),
+    }
+    Ok(())
+}
+
+fn run_explain_node(
+    name: &str,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    match graph_engine.explain_node(name)? {
+        Some(expl) => {
+            println!(
+                "{} [{}] {} (lines {}-{})",
+                expl.qualified_name, expl.element_type, expl.name, expl.line_start, expl.line_end
+            );
+            println!("  file: {}", expl.file_path);
+            if let Some(label) = expl.cluster_label {
+                println!(
+                    "  cluster: {} ({})",
+                    label,
+                    expl.cluster_id.unwrap_or_default()
+                );
+            }
+            println!(
+                "  in_degree: {}  out_degree: {}",
+                expl.in_degree, expl.out_degree
+            );
+            for n in expl.top_neighbors.iter().take(8) {
+                println!("    {} -> {}", n.rel_type, n.count);
+            }
+        }
+        None => println!("Symbol '{}' not found in graph", name),
+    }
+    Ok(())
+}
+
+fn run_god_nodes(
+    limit: usize,
+    exclude_hubs_percentile: Option<u8>,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let nodes = graph_engine.get_god_nodes(limit, exclude_hubs_percentile)?;
+    println!("Top {} god nodes:", nodes.len());
+    for (i, n) in nodes.iter().enumerate() {
+        println!(
+            "  {}. {} [{}] degree={} ({})",
+            i + 1,
+            n.qualified_name,
+            n.element_type,
+            n.degree,
+            n.name
+        );
+    }
+    Ok(())
+}
+
+fn run_graph_report(
+    project_path: &std::path::Path,
+    project_name: Option<&str>,
+    out: Option<&str>,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let name = project_name.map(String::from).unwrap_or_else(|| {
+        project_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string()
+    });
+    let report = graph_engine.generate_graph_report(&name)?;
+    let markdown = report.to_markdown();
+    let out_path = match out {
+        Some(p) => std::path::PathBuf::from(p),
+        None => project_path.join(".leankg").join("GRAPH_REPORT.md"),
+    };
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&out_path, &markdown)?;
+    println!("Wrote graph report to {}", out_path.display());
+    Ok(())
+}
+
+fn run_check_consistency(
+    severity_filter: Option<&str>,
+    limit: usize,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let report = graph_engine.check_consistency()?;
+    println!(
+        "Total relationships: {} | BROKEN: {} | STALE: {}",
+        report.total_relationships, report.broken, report.stale
+    );
+    let mut findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| severity_filter.is_none_or(|s| f.severity == s))
+        .collect();
+    let total_after_filter = findings.len();
+    let effective_limit = if limit == 0 { usize::MAX } else { limit };
+    findings.truncate(effective_limit);
+    for f in findings.iter().take(effective_limit) {
+        println!(
+            "  [{}] {} --[{}]--> {} :: {}",
+            f.severity, f.source, f.rel_type, f.target, f.message
+        );
+    }
+    if total_after_filter > findings.len() {
+        println!(
+            "  ... and {} more (raise --limit to see more)",
+            total_after_filter - findings.len()
+        );
+    }
+    Ok(())
+}
+
+fn run_tunnels(limit: usize, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let mut tunnels = graph_engine.find_tunnels()?;
+    tunnels.truncate(limit);
+    println!("Found {} cross-cluster tunnels:", tunnels.len());
+    for (i, t) in tunnels.iter().enumerate() {
+        println!(
+            "  {}. {} --[{}]--> {}  ({:.2})  [{} -> {}]",
+            i + 1,
+            t.source,
+            t.rel_type,
+            t.target,
+            t.confidence,
+            t.source_cluster,
+            t.target_cluster,
+        );
+    }
+    Ok(())
+}
+
+fn run_reflect(
+    project_path: &std::path::Path,
+    question: &str,
+    outcome: &str,
+    nodes: &[String],
+    note: Option<&str>,
+    _db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    graph::GraphEngine::report_query_outcome(project_path, question, nodes, outcome, note)?;
+    println!("Recorded reflection for outcome '{}'", outcome);
+    Ok(())
+}
+
+fn run_prs(
+    _project_path: &std::path::Path,
+    env: &str,
+    files: &[String],
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let report = graph_engine.pr_impact(files, env)?;
+    println!(
+        "PR impact: severity={} | touched_clusters={} | changed_files={}",
+        report.severity,
+        report.touched_clusters.len(),
+        report.changed_file_count
+    );
+    for f in report.files.iter().take(50) {
+        let cluster = f.cluster_label.as_deref().unwrap_or("(none)");
+        println!("  {} -> cluster={}", f.file, cluster);
+    }
+    Ok(())
+}
+
+fn run_lsp_resolve(
+    language: Option<&str>,
+    file_path: &str,
+    line: u32,
+    character: u32,
+    request: &str,
+    project: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::lsp::{LspBridge, LspRequest};
+    let config_path = std::path::Path::new(project).join("leankg.yaml");
+    let bridge = LspBridge::from_leankg_yaml_or_default(&config_path);
+
+    // Auto-detect language from file extension when not given.
+    let detected = language
+        .map(String::from)
+        .or_else(|| crate::lsp::detect_language(std::path::Path::new(file_path)).map(String::from))
+        .ok_or_else(|| {
+            format!(
+                "Could not detect language from '{file_path}'. Pass --language explicitly \
+                 (e.g. --language go)."
+            )
+        })?;
+
+    let lsp_request = match request {
+        "references" => LspRequest::References,
+        "hover" => LspRequest::Hover,
+        _ => LspRequest::Definition,
+    };
+    match bridge.resolve(
+        &detected,
+        std::path::Path::new(file_path),
+        line,
+        character,
+        lsp_request,
+    )? {
+        Some(locations) => {
+            println!("LSP returned {} location(s):", locations.len());
+            for loc in locations {
+                println!(
+                    "  {}:{}:{} - {}:{}",
+                    loc.uri, loc.line, loc.character, loc.end_line, loc.end_character
+                );
+            }
+        }
+        None => {
+            // Surface a helpful hint instead of a silent fallback.
+            println!(
+                "No LSP server configured for '{detected}' (or no server at {}. Falling back to tree-sitter.",
+                config_path.display()
+            );
+            if let Some(spec) = crate::lsp::LspServerSpec::for_language(&detected) {
+                println!(
+                    "Hint: run `leankg lsp-install {detected}` to install '{}'.",
+                    spec.command
+                );
+            } else {
+                println!(
+                    "Hint: '{detected}' is not in the LSP registry yet. \
+                     Add a `lsp:` block to leankg.yaml."
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Install LSP server(s) for one language or "all".
+fn run_lsp_install(
+    language: &str,
+    project: &str,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::lsp::registry::LspServerSpec;
+    let targets: Vec<&'static LspServerSpec> = if language.eq_ignore_ascii_case("all") {
+        crate::lsp::registry::ALL_LSP_SERVERS.iter().collect()
+    } else {
+        match LspServerSpec::for_language(language) {
+            Some(s) => vec![s],
+            None => {
+                return Err(format!(
+                "Unknown language '{language}'. Run `leankg lsp-list` to see supported languages."
+            )
+                .into())
+            }
+        }
+    };
+    let mut installed = 0usize;
+    let mut already_on_path = 0usize;
+    let mut manual = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for spec in targets {
+        println!("[{}]  command = {}", spec.language, spec.command);
+        if is_on_path(spec.command) {
+            println!("  ✓ already on PATH, skipping");
+            already_on_path += 1;
+            continue;
+        }
+        // Pick the best automatic install method.
+        let method = spec
+            .install
+            .iter()
+            .find(|m| m.is_automatic())
+            .unwrap_or(spec.install.first().unwrap());
+        let cmd_str = method.hint();
+        println!("  → {cmd_str}");
+        if dry_run {
+            manual += 1;
+            continue;
+        }
+        let result = run_install_command(method);
+        match result {
+            Ok(()) => {
+                installed += 1;
+                println!("  ✓ installed");
+            }
+            Err(e) => {
+                eprintln!("  ✗ failed: {e}");
+                failed.push(format!("{}: {}", spec.language, e));
+            }
+        }
+    }
+    println!();
+    println!(
+        "Done: {} installed, {} already present, {} manual/dry-run, {} failed.",
+        installed,
+        already_on_path,
+        manual,
+        failed.len()
+    );
+    if !failed.is_empty() {
+        eprintln!("Failures:\n  - {}", failed.join("\n  - "));
+    }
+    let _ = project;
+    Ok(())
+}
+
+/// Print every language the LSP registry knows about.
+fn run_lsp_list() -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "LSP server catalog ({} entries):",
+        crate::lsp::registry::ALL_LSP_SERVERS.len()
+    );
+    for spec in crate::lsp::registry::ALL_LSP_SERVERS {
+        let on_path = if is_on_path(spec.command) { "✓" } else { " " };
+        let extensions = spec.extensions.join(", ");
+        println!(
+            "  [{on_path}] {:<14} {:<32} {}",
+            spec.language, spec.command, extensions
+        );
+    }
+    Ok(())
+}
+
+fn is_on_path(cmd: &str) -> bool {
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in paths.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            let candidate = std::path::Path::new(dir).join(cmd);
+            if candidate.is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn run_install_command(method: &crate::lsp::registry::InstallMethod) -> Result<(), String> {
+    use crate::lsp::registry::InstallMethod;
+    let (program, args) = match method {
+        InstallMethod::Npm { package } => (
+            "npm",
+            vec!["install".to_string(), "-g".to_string(), package.to_string()],
+        ),
+        InstallMethod::Pip { package } => ("pip", vec!["install".to_string(), package.to_string()]),
+        InstallMethod::Cargo { crate_name } => {
+            ("cargo", vec!["install".to_string(), crate_name.to_string()])
+        }
+        InstallMethod::Brew { formula } => {
+            ("brew", vec!["install".to_string(), formula.to_string()])
+        }
+        InstallMethod::GoInstall { pkg } => ("go", vec!["install".to_string(), pkg.to_string()]),
+        InstallMethod::Gem { gem } => ("gem", vec!["install".to_string(), gem.to_string()]),
+        InstallMethod::Opam { pkg } => ("opam", vec!["install".to_string(), pkg.to_string()]),
+        InstallMethod::Dotnet { tool } => (
+            "dotnet",
+            vec![
+                "tool".to_string(),
+                "install".to_string(),
+                "-g".to_string(),
+                tool.to_string(),
+            ],
+        ),
+        InstallMethod::Manual { url, note } => {
+            return Err(format!("manual install required: {note} ({url})"));
+        }
+    };
+    let status = std::process::Command::new(program)
+        .args(&args)
+        .status()
+        .map_err(|e| format!("failed to spawn `{program}`: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{program} {}` exited with status {}",
+            args.join(" "),
+            status
+        ))
+    }
+}
+
+fn run_clones(
+    threshold: f64,
+    limit: usize,
+    max_functions: usize,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let opts = graph::CloneScanOptions { max_functions };
+    let started = std::time::Instant::now();
+    let pairs = graph_engine.find_clones_with_opts(threshold, limit, &opts)?;
+    println!(
+        "Found {} clone pairs (threshold={}, max_functions={}) in {:?}:",
+        pairs.len(),
+        threshold,
+        opts.max_functions,
+        started.elapsed()
+    );
+    for p in pairs.iter().take(50) {
+        println!("  {:.2}  {}  <==>  {}", p.similarity, p.source, p.target);
+    }
+    Ok(())
 }
 
 fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -1004,6 +1592,155 @@ fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Er
     std::fs::create_dir_all("./docs")?;
     std::fs::write("./docs/AGENTS.md", &content)?;
     println!("\nSaved to docs/AGENTS.md");
+
+    Ok(())
+}
+
+/// Diagnose stale leankg processes and mmap'd DB files. With --kill,
+/// also terminates the stale processes (but never the current
+/// process or its parent).
+fn run_doctor(kill: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use std::process::Command;
+    let self_pid = std::process::id();
+    let parent_pid = std::env::var("PPID")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    // List every `leankg` process on the host.
+    let output = Command::new("pgrep").args(["-fl", "leankg"]).output();
+    let procs: Vec<(u32, String)> = match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(2, ' ');
+                let pid = parts.next()?.parse::<u32>().ok()?;
+                let cmd = parts.next()?.to_string();
+                Some((pid, cmd))
+            })
+            .collect(),
+        _ => {
+            // Fall back to `ps` if pgrep isn't available.
+            let out = Command::new("ps")
+                .args(["-axo", "pid=,command="])
+                .output()?;
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.splitn(2, ' ');
+                    let pid = parts.next()?.trim().parse::<u32>().ok()?;
+                    let cmd = parts.next()?.trim().to_string();
+                    if cmd.contains("leankg") {
+                        Some((pid, cmd))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+    };
+
+    let my_exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    // Heuristic: the leankg binary path itself is what we want.
+    // Match `argv[0]` ending in `leankg` (absolute or relative) but
+    // NOT paths that merely contain a directory named `leankg` (e.g.
+    // a cline daemon with `--cwd .../work/harvey/freepeak/leankg`).
+    let is_leankg = |cmd: &str| -> bool {
+        // Take the first token (argv[0]).
+        let argv0 = cmd.split_whitespace().next().unwrap_or("");
+        let bin = std::path::Path::new(argv0)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        bin == "leankg"
+    };
+    let others: Vec<_> = procs
+        .into_iter()
+        .filter(|(pid, cmd)| {
+            // Skip the current process and its parent (the shell that
+            // invoked us). Both can have "leankg" in their argv
+            // transitively.
+            *pid != self_pid
+                && *pid != parent_pid
+                && is_leankg(cmd)
+                && (cmd.contains(&my_exe) || !cmd.starts_with('/'))
+        })
+        .collect();
+
+    if others.is_empty() {
+        println!("No stale leankg processes detected.");
+    } else {
+        println!("Stale leankg processes (RSS reported by `ps`):");
+        for (pid, cmd) in &others {
+            // ps -o rss= -p <pid> for actual RSS.
+            let rss = Command::new("ps")
+                .args(["-o", "rss=", "-p", &pid.to_string()])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().parse::<u64>().unwrap_or(0))
+                .unwrap_or(0);
+            println!("  PID {:>6}  RSS {:>7} MB  {}", pid, rss / 1024, cmd);
+        }
+    }
+
+    // List mmap'd DB files.
+    let lsof_out = Command::new("lsof")
+        .args(["-nP", "+D", "/Users/linh.doan/work"])
+        .output();
+    if let Ok(out) = lsof_out {
+        if out.status.success() {
+            let mut found = 0usize;
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if line.contains("leankg.db") && line.contains("leankg") {
+                    println!("  {}", line);
+                    found += 1;
+                    if found > 20 {
+                        println!("  ... (truncated)");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if kill && !others.is_empty() {
+        println!();
+        println!("Killing {} stale process(es)...", others.len());
+        for (pid, _) in &others {
+            if *pid == self_pid || *pid == parent_pid {
+                continue;
+            }
+            // SIGTERM first; the daemon has a graceful shutdown path.
+            let _ = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output();
+        }
+        // Give them 2s to exit cleanly; SIGKILL stragglers.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        for (pid, _) in &others {
+            if *pid == self_pid || *pid == parent_pid {
+                continue;
+            }
+            let still_alive = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if still_alive {
+                eprintln!("  PID {} did not exit on SIGTERM; sending SIGKILL", pid);
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output();
+            }
+        }
+        println!("Done.");
+    } else if !others.is_empty() {
+        println!();
+        println!("Re-run with --kill to terminate these processes.");
+    }
 
     Ok(())
 }
@@ -2250,7 +2987,9 @@ fn export_graph(
     let engine = graph::GraphEngine::new(db);
 
     let (elements, relationships) = if let Some(file) = file_scope {
-        // Scoped export: BFS traversal from file
+        // Scoped export: BFS traversal from file. We only need a
+        // subset of elements so the per-file BFS is bounded and
+        // materializing it is fine.
         let mut visited_files = std::collections::HashSet::new();
         let mut queue = vec![(file.to_string(), 0u32)];
         let mut scoped_rels = Vec::new();
@@ -2267,12 +3006,24 @@ fn export_graph(
             }
         }
 
-        let scoped_elements: Vec<_> = engine
-            .all_elements()?
-            .into_iter()
-            .filter(|e| visited_files.contains(&e.file_path))
-            .collect();
+        let mut scoped_elements: Vec<_> = Vec::new();
+        for_each_with_filter(
+            &engine,
+            |e| visited_files.contains(&e.file_path),
+            |e| {
+                scoped_elements.push(e);
+            },
+        )?;
         (scoped_elements, scoped_rels)
+    } else if format == "json" {
+        // For full-graph JSON export we stream directly to disk so
+        // peak RAM is O(1) per element, not the 470 MB we used to
+        // hold. Other formats (dot, mermaid) need the full Vec for
+        // their string assembly, so they keep the legacy path which
+        // is already bounded by the existing budget / cache code.
+        export_json_streaming(output, &engine)?;
+        println!("Exported streaming JSON to {}", output);
+        return Ok(());
     } else {
         (engine.all_elements()?, engine.all_relationships()?)
     };
@@ -2296,6 +3047,133 @@ fn export_graph(
         output,
         format
     );
+    Ok(())
+}
+
+/// Stream every element through `f` if the predicate `p` accepts it.
+/// Used by scoped exports where we need to filter to a subset of
+/// the graph without materializing the full set.
+fn for_each_with_filter<F, P>(
+    engine: &graph::GraphEngine,
+    p: P,
+    mut f: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    P: Fn(&db::models::CodeElement) -> bool,
+    F: FnMut(db::models::CodeElement),
+{
+    let _ = engine.for_each_element(|e| {
+        if p(&e) {
+            f(e);
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })?;
+    Ok(())
+}
+
+/// Stream-export the full graph to a JSON file at `out_path`. Peak
+/// RAM is O(1) per element; the previous implementation materialized
+/// a 470 MB JSON string for a 627k-element graph.
+fn export_json_streaming(
+    out_path: &str,
+    engine: &graph::GraphEngine,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{BufWriter, Write};
+    let f = std::fs::File::create(out_path)?;
+    let mut out = BufWriter::new(f);
+    let mut guard = crate::budget::BudgetGuard::for_tool("export_json_streaming");
+    let mut total: u64 = 0;
+    let mut truncated = false;
+
+    writeln!(out, "{{")?;
+    writeln!(out, "  \"version\": 1,")?;
+    writeln!(out, "  \"kind\": \"leankg.graph.streaming\",")?;
+    writeln!(out, "  \"elements\": [")?;
+    let mut i: usize = 0;
+    let stream_elements = engine.for_each_element(|e| {
+        if i > 0 {
+            writeln!(out, ",")?;
+        }
+        write!(
+            out,
+            "    {{\"qualified_name\":{:?},\"element_type\":{:?},\"name\":{:?},\
+             \"file_path\":{:?},\"line_start\":{},\"line_end\":{},\"language\":{:?},\
+             \"cluster_id\":{:?},\"cluster_label\":{:?},\"parent_qualified\":{:?},\
+             \"metadata\":{}}}",
+            e.qualified_name,
+            e.element_type,
+            e.name,
+            e.file_path,
+            e.line_start,
+            e.line_end,
+            e.language,
+            e.cluster_id,
+            e.cluster_label,
+            e.parent_qualified,
+            serde_json::to_string(&e.metadata).unwrap_or_else(|_| "null".to_string()),
+        )?;
+        i += 1;
+        if i.is_multiple_of(1000) {
+            guard.tick();
+            if guard.check().is_err() {
+                return Err(Box::new(std::io::Error::other("export budget")));
+            }
+        }
+        Ok(())
+    });
+    if let Err(e) = stream_elements {
+        if e.to_string().contains("budget") {
+            truncated = true;
+        } else {
+            return Err(e);
+        }
+    } else {
+        total += i as u64;
+    }
+    writeln!(out)?;
+    writeln!(out, "  ],")?;
+    writeln!(out, "  \"relationships\": [")?;
+    let mut j: usize = 0;
+    let stream_rels = engine.for_each_relationship(|r| {
+        if j > 0 {
+            writeln!(out, ",")?;
+        }
+        write!(
+            out,
+            "    {{\"source_qualified\":{:?},\"target_qualified\":{:?},\
+             \"rel_type\":{:?},\"confidence\":{},\"metadata\":{}}}",
+            r.source_qualified,
+            r.target_qualified,
+            r.rel_type,
+            r.confidence,
+            serde_json::to_string(&r.metadata).unwrap_or_else(|_| "null".to_string()),
+        )?;
+        j += 1;
+        if j.is_multiple_of(1000) {
+            guard.tick();
+            if guard.check().is_err() {
+                return Err(Box::new(std::io::Error::other("export budget")));
+            }
+        }
+        Ok(())
+    });
+    if let Err(e) = stream_rels {
+        if e.to_string().contains("budget") {
+            truncated = true;
+        } else {
+            return Err(e);
+        }
+    } else {
+        total += j as u64;
+    }
+    writeln!(out)?;
+    writeln!(out, "  ]")?;
+    if truncated {
+        writeln!(out, "  ,\"truncated\": true")?;
+    }
+    writeln!(out, "}}")?;
+    out.flush()?;
+    let _ = total;
     Ok(())
 }
 

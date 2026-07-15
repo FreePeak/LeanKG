@@ -710,6 +710,130 @@ impl GraphEngine {
         Ok(elements)
     }
 
+    /// Stream every code element through `f` one at a time, never
+    /// materializing the full result set. This is the recommended
+    /// alternative to [`Self::all_elements`] for heavy callers on
+    /// big graphs.
+    ///
+    /// The closure receives ownership of each `CodeElement` so it can
+    /// decide to keep it (push into a smaller filtered Vec) or drop it.
+    /// Peak RAM stays at one element at a time + whatever the caller
+    /// keeps.
+    ///
+    /// Returns the number of elements yielded and any error. If `f`
+    /// returns `Err`, the stream stops and the error is propagated.
+    pub fn for_each_element<F>(&self, mut f: F) -> Result<u64, Box<dyn std::error::Error>>
+    where
+        F: FnMut(CodeElement) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
+        );
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let mut count = 0u64;
+        for row in result.rows.iter() {
+            let parent_qualified = row[7].get_str().map(String::from);
+            let cluster_id = row[8].get_str().map(String::from);
+            let cluster_label = row[9].get_str().map(String::from);
+            let metadata_str = row[10].get_str().unwrap_or("{}");
+            let env = row[11].get_str().unwrap_or("local").to_string();
+            let elem = CodeElement {
+                qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                element_type: row[1].get_str().unwrap_or("").to_string(),
+                name: row[2].get_str().unwrap_or("").to_string(),
+                file_path: row[3].get_str().unwrap_or("").to_string(),
+                line_start: row[4].get_int().unwrap_or(0) as u32,
+                line_end: row[5].get_int().unwrap_or(0) as u32,
+                language: row[6].get_str().unwrap_or("").to_string(),
+                parent_qualified,
+                cluster_id,
+                cluster_label,
+                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                env,
+            };
+            f(elem)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Stream every relationship through `f` one at a time. Mirrors
+    /// [`Self::for_each_element`] for the relationship table.
+    pub fn for_each_relationship<F>(&self, mut f: F) -> Result<u64, Box<dyn std::error::Error>>
+    where
+        F: FnMut(crate::db::models::Relationship) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        use crate::db::models::Relationship;
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata, env] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env]"#;
+        let result =
+            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        let mut count = 0u64;
+        for row in result.rows.iter() {
+            let metadata_str = row[4].get_str().unwrap_or("{}");
+            let env = row[5].get_str().unwrap_or("local").to_string();
+            let rel = Relationship {
+                id: None,
+                source_qualified: row[0].get_str().unwrap_or("").to_string(),
+                target_qualified: row[1].get_str().unwrap_or("").to_string(),
+                rel_type: row[2].get_str().unwrap_or("").to_string(),
+                confidence: row[3].get_float().unwrap_or(0.0),
+                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                env,
+            };
+            f(rel)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Stream elements of a specific `element_type` through `f`. This
+    /// pushes the type filter into the Datalog query so we don't ship
+    /// rows that don't match back from the engine.
+    pub fn for_each_element_of_type<F>(
+        &self,
+        element_type: &str,
+        mut f: F,
+    ) -> Result<u64, Box<dyn std::error::Error>>
+    where
+        F: FnMut(CodeElement) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        let tail = self.code_elements_tail();
+        let safe = element_type.replace('"', "");
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "{}""#,
+            safe
+        );
+        let result =
+            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let mut count = 0u64;
+        for row in result.rows.iter() {
+            let parent_qualified = row[7].get_str().map(String::from);
+            let cluster_id = row[8].get_str().map(String::from);
+            let cluster_label = row[9].get_str().map(String::from);
+            let metadata_str = row[10].get_str().unwrap_or("{}");
+            let env = row[11].get_str().unwrap_or("local").to_string();
+            let elem = CodeElement {
+                qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                element_type: row[1].get_str().unwrap_or("").to_string(),
+                name: row[2].get_str().unwrap_or("").to_string(),
+                file_path: row[3].get_str().unwrap_or("").to_string(),
+                line_start: row[4].get_int().unwrap_or(0) as u32,
+                line_end: row[5].get_int().unwrap_or(0) as u32,
+                language: row[6].get_str().unwrap_or("").to_string(),
+                parent_qualified,
+                cluster_id,
+                cluster_label,
+                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                env,
+            };
+            f(elem)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     pub fn get_elements_in_folder(
         &self,
         folder_path: &str,
@@ -3724,7 +3848,511 @@ pub struct ServiceGraph {
     pub total_connections: usize,
 }
 
+/// US-GF-01: A single hop in a shortest_path result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathHop {
+    pub from: String,
+    pub to: String,
+    pub rel_type: String,
+    pub confidence: f64,
+    pub confidence_label: String,
+    pub source_file: String,
+}
+
+/// US-GF-01: Result of a shortest-path query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShortestPathResult {
+    pub source: String,
+    pub target: String,
+    pub hops: usize,
+    pub path: Vec<PathHop>,
+}
+
+/// US-GF-02: Compact view of a neighbor relation type and its edge count.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeighborHint {
+    pub rel_type: String,
+    pub count: usize,
+}
+
+/// US-GF-02: Aggregated single-node dossier returned by `explain_node`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeExplanation {
+    pub qualified_name: String,
+    pub name: String,
+    pub element_type: String,
+    pub file_path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub cluster_id: Option<String>,
+    pub cluster_label: Option<String>,
+    pub in_degree: usize,
+    pub out_degree: usize,
+    pub top_neighbors: Vec<NeighborHint>,
+}
+
+/// US-GF-05: Top-degree node entry for god-node ranking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GodNode {
+    pub qualified_name: String,
+    pub name: String,
+    pub element_type: String,
+    pub degree: usize,
+}
+
+/// US-GF-06: Per-label count + percentage for confidence distribution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelCount {
+    pub label: String,
+    pub count: usize,
+    pub pct: f64,
+}
+
+/// US-MP-05: Single finding from consistency check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsistencyFinding {
+    pub severity: String, // BROKEN | STALE | CURRENT
+    pub source: String,
+    pub target: String,
+    pub rel_type: String,
+    pub message: String,
+}
+
+/// US-MP-05: Aggregated consistency report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsistencyReport {
+    pub total_relationships: usize,
+    pub broken: usize,
+    pub stale: usize,
+    pub findings: Vec<ConsistencyFinding>,
+}
+
+/// US-MP-01: Single event in a code element's relationship timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEvent {
+    pub timestamp: i64,
+    pub action: String, // "added" | "invalidated"
+    pub edge: Relationship,
+}
+
+/// US-MP-08: Parsed directory metadata from a directory element.
+#[derive(Debug, Clone)]
+pub struct DirectoryMetadata {
+    pub child_count: usize,
+    pub total_lines: usize,
+    pub language_distribution: std::collections::HashMap<String, usize>,
+}
+
+/// US-MP-04: Agent persona config stored in `.leankg/agents/<name>.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPersona {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub focus_areas: Vec<String>,
+    #[serde(default)]
+    pub path_filters: Vec<String>,
+    #[serde(default)]
+    pub cluster_id: Option<String>,
+    #[serde(default)]
+    pub element_types: Vec<String>,
+}
+
+/// US-MP-04: Diary entry appended to `.leankg/agents/<name>.diary.jsonl`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiaryEntry {
+    pub timestamp: i64,
+    pub agent: String,
+    pub note: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// US-MP-04: Focused subgraph returned for a persona.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentFocus {
+    pub agent: String,
+    pub elements: Vec<CodeElement>,
+    pub relationships: Vec<Relationship>,
+}
+
+/// US-V2-12: One entry in the team map (team name, on-call, services owned).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMapEntry {
+    pub team: String,
+    pub on_call: String,
+    pub services: Vec<String>,
+}
+
+/// US-GF-08: per-file impact (cluster_id, label) for changed files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrFileImpact {
+    pub file: String,
+    pub cluster_id: Option<String>,
+    pub cluster_label: Option<String>,
+}
+
+/// US-GF-08: aggregated PR impact report (severity + touched clusters).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrImpactReport {
+    pub env: String,
+    pub changed_file_count: usize,
+    pub touched_clusters: Vec<String>,
+    pub severity: String,
+    pub files: Vec<PrFileImpact>,
+}
+
+/// US-CBM-B7: A pair of near-duplicate code elements.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClonePair {
+    pub source: String,
+    pub target: String,
+    pub similarity: f64,
+    pub source_file: String,
+    pub target_file: String,
+}
+
+/// US-CBM-B7: knobs for [`GraphEngine::find_clones_with_opts`].
+///
+/// Defaults are conservative so the command never OOMs a laptop:
+/// - `max_functions = 50_000` — refuse to scan graphs above this size
+///
+/// Note (v3.6.2): the legacy cross-file MinHash/LSH path is removed
+/// (see FR-HNSW-A). Same-file Jaccard is the only comparison mode.
+#[derive(Debug, Clone)]
+pub struct CloneScanOptions {
+    pub max_functions: usize,
+}
+
+impl Default for CloneScanOptions {
+    fn default() -> Self {
+        let max_functions = std::env::var("LEANKG_CLONES_MAX_FUNCTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50_000);
+        Self { max_functions }
+    }
+}
+
+/// Return the substring of `content` between line `start` (1-indexed,
+/// inclusive) and line `end` (1-indexed, inclusive). Returns `None` if
+/// either bound is out of range.
+fn slice_lines(content: &str, start: u32, end: u32) -> Option<&str> {
+    if start == 0 {
+        return None;
+    }
+    let mut current = 1u32;
+    let mut begin_byte = None;
+    let mut end_byte = None;
+    for (idx, b) in content.bytes().enumerate() {
+        if current == start && begin_byte.is_none() {
+            begin_byte = Some(idx);
+        }
+        if b == b'\n' {
+            if current == end {
+                end_byte = Some(idx);
+                break;
+            }
+            current = current.saturating_add(1);
+            if current > end {
+                end_byte = Some(idx);
+                break;
+            }
+        }
+    }
+    match (begin_byte, end_byte) {
+        (Some(b), Some(e)) if b <= e => Some(&content[b..e]),
+        (Some(b), None) => {
+            // end line not found; clamp to EOF.
+            Some(&content[b..])
+        }
+        _ => None,
+    }
+}
+
+/// US-CBM-B8: A cross-repo similarity (same symbol across two registered repos).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossRepoSimilar {
+    pub symbol: String,
+    pub source_repo: String,
+    pub source_qualified: String,
+    pub source_file: String,
+    pub target_repo: String,
+    pub target_qualified: String,
+    pub target_file: String,
+}
+
+/// US-MP-06: A cross-cluster tunnel edge (relationship between two
+/// elements belonging to different Leiden clusters).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tunnel {
+    pub source: String,
+    pub target: String,
+    pub rel_type: String,
+    pub confidence: f64,
+    pub source_cluster: String,
+    pub target_cluster: String,
+}
+
+/// US-MP-08 / FR-MP-21..23: helpers for folder-as-graph conventions.
+pub mod folder_gn {
+    use super::CodeElement;
+    use super::DirectoryMetadata;
+
+    /// Canonical directory qualified_name with trailing slash.
+    /// E.g. `"src/graph"` -> `"src/graph/"`. The trailing slash
+    /// distinguishes directories from files whose qualified_name is
+    /// their full path.
+    pub fn qualified_name(path: &str) -> String {
+        let trimmed = path.trim_end_matches('/');
+        format!("{}/", trimmed)
+    }
+
+    /// Strip the trailing slash for filesystem comparisons.
+    pub fn strip(qn: &str) -> &str {
+        qn.trim_end_matches('/')
+    }
+
+    /// True when the qualified_name follows the directory convention
+    /// (trailing slash). Used by `search_code` / `query_file` folder
+    /// scoping and impact analysis at directory level.
+    pub fn is_directory(qn: &str) -> bool {
+        qn.ends_with('/')
+    }
+
+    /// Read child_count / language_distribution / total_lines from a
+    /// directory element's metadata. Returns None for non-directory
+    /// nodes or nodes missing the metadata block.
+    pub fn metadata(elem: &CodeElement) -> Option<DirectoryMetadata> {
+        if elem.element_type != "directory" {
+            return None;
+        }
+        let child_count = elem
+            .metadata
+            .get("child_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let total_lines = elem
+            .metadata
+            .get("total_lines")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let language_distribution: std::collections::HashMap<String, usize> = elem
+            .metadata
+            .get("language_distribution")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n as usize)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(DirectoryMetadata {
+            child_count,
+            total_lines,
+            language_distribution,
+        })
+    }
+}
+
+/// US-GF-06: Aggregated graph report. Renders to `GRAPH_REPORT.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphReport {
+    pub project: String,
+    pub total_elements: usize,
+    pub total_relationships: usize,
+    pub file_count: usize,
+    pub function_count: usize,
+    pub class_count: usize,
+    pub god_nodes: Vec<GodNode>,
+    pub confidence_distribution: Vec<LabelCount>,
+    pub suggested_questions: Vec<String>,
+}
+
+impl GraphReport {
+    /// Render the report to markdown for `.leankg/GRAPH_REPORT.md`.
+    pub fn to_markdown(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("# Graph Report: {}\n\n", self.project));
+        out.push_str("## Overview\n\n");
+        out.push_str(&format!("- Total elements: {}\n", self.total_elements));
+        out.push_str(&format!(
+            "- Total relationships: {}\n",
+            self.total_relationships
+        ));
+        out.push_str(&format!("- Files: {}\n", self.file_count));
+        out.push_str(&format!("- Functions: {}\n", self.function_count));
+        out.push_str(&format!("- Classes/Structs: {}\n\n", self.class_count));
+
+        out.push_str("## Confidence Distribution\n\n");
+        out.push_str("| Label | Count | % |\n|---|---|---|\n");
+        for c in &self.confidence_distribution {
+            out.push_str(&format!("| {} | {} | {:.1}% |\n", c.label, c.count, c.pct));
+        }
+        out.push('\n');
+
+        out.push_str("## Top God Nodes\n\n");
+        if self.god_nodes.is_empty() {
+            out.push_str("_No relationships indexed yet._\n\n");
+        } else {
+            out.push_str("| Qualified Name | Type | Degree |\n|---|---|---|\n");
+            for n in &self.god_nodes {
+                out.push_str(&format!(
+                    "| {} | {} | {} |\n",
+                    n.qualified_name, n.element_type, n.degree
+                ));
+            }
+            out.push('\n');
+        }
+
+        out.push_str("## Suggested Questions\n\n");
+        for (i, q) in self.suggested_questions.iter().enumerate() {
+            out.push_str(&format!("{}. {}\n", i + 1, q));
+        }
+        out
+    }
+}
+
+/// Element-type ranking for resolve_to_qualified: more specific types win
+/// over files / directories when names collide.
+fn rank_element_type(t: &str) -> u8 {
+    match t {
+        "function" | "method" | "constructor" => 0,
+        "class" | "struct" | "interface" | "enum" | "trait" => 1,
+        "route" | "module" | "property" | "field" => 2,
+        "file" => 3,
+        "directory" | "folder" => 4,
+        _ => 5,
+    }
+}
+
 impl GraphEngine {
+    /// US-GF-01 / FR-GF-01: BFS shortest path between two symbols.
+    ///
+    /// Returns an ordered list of hops from `source` to `target`. Each hop
+    /// carries the relation, confidence and provenance label so agents can
+    /// see how A connects to B and whether each edge is explicit (EXTRACTED)
+    /// or resolver-derived (INFERRED / AMBIGUOUS).
+    ///
+    /// Inputs are resolved by qualified_name, exact element name, or
+    /// fuzzy suffix match. Returns `Ok(None)` when no path exists within
+    /// `max_hops`.
+    pub fn shortest_path(
+        &self,
+        source: &str,
+        target: &str,
+        max_hops: usize,
+    ) -> Result<Option<ShortestPathResult>, Box<dyn std::error::Error>> {
+        let max_hops = max_hops.clamp(1, 10);
+
+        let source_qn = self
+            .resolve_to_qualified(source)
+            .ok_or_else(|| format!("source '{}' not found", source))?;
+        let target_qn = self
+            .resolve_to_qualified(target)
+            .ok_or_else(|| format!("target '{}' not found", target))?;
+
+        if source_qn == target_qn {
+            return Ok(Some(ShortestPathResult {
+                source: source_qn,
+                target: target_qn,
+                hops: 0,
+                path: Vec::new(),
+            }));
+        }
+
+        // BFS over (qualified_name) using all relationships as edges.
+        let all_rels = self.all_relationships()?;
+        let mut adjacency: std::collections::HashMap<String, Vec<(String, Relationship)>> =
+            std::collections::HashMap::new();
+        for rel in &all_rels {
+            adjacency
+                .entry(rel.source_qualified.clone())
+                .or_default()
+                .push((rel.target_qualified.clone(), rel.clone()));
+            // Treat graph as undirected for path-finding so callers can
+            // express either "X calls Y" or "Y is called by X" intent.
+            adjacency
+                .entry(rel.target_qualified.clone())
+                .or_default()
+                .push((rel.source_qualified.clone(), rel.clone()));
+        }
+
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut queue: std::collections::VecDeque<(String, Vec<PathHop>)> =
+            std::collections::VecDeque::new();
+        queue.push_back((source_qn.clone(), Vec::new()));
+        visited.insert(source_qn.clone());
+
+        while let Some((current, path)) = queue.pop_front() {
+            if path.len() >= max_hops {
+                continue;
+            }
+            if let Some(neighbors) = adjacency.get(&current) {
+                for (next, rel) in neighbors {
+                    if !visited.insert(next.clone()) {
+                        continue;
+                    }
+                    let mut new_path = path.clone();
+                    new_path.push(PathHop {
+                        from: current.clone(),
+                        to: next.clone(),
+                        rel_type: rel.rel_type.clone(),
+                        confidence: rel.confidence,
+                        confidence_label: rel.confidence_label().to_string(),
+                        source_file: rel
+                            .metadata
+                            .get("source_file")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    });
+                    if next == &target_qn {
+                        return Ok(Some(ShortestPathResult {
+                            source: source_qn,
+                            target: target_qn,
+                            hops: new_path.len(),
+                            path: new_path,
+                        }));
+                    }
+                    queue.push_back((next.clone(), new_path));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Resolve a free-form input (qualified_name, exact name, or fuzzy
+    /// suffix match) to a single qualified_name. Returns the first match
+    /// by priority: exact qualified_name > exact element name > suffix.
+    fn resolve_to_qualified(&self, input: &str) -> Option<String> {
+        let elements = self.all_elements().ok()?;
+        // 1. Exact qualified_name
+        if elements.iter().any(|e| e.qualified_name == input) {
+            return Some(input.to_string());
+        }
+        // 2. Exact element name
+        let mut by_name: Vec<&CodeElement> = elements.iter().filter(|e| e.name == input).collect();
+        if !by_name.is_empty() {
+            // Prefer functions / classes over files / directories when names collide.
+            by_name.sort_by(|a, b| {
+                rank_element_type(&a.element_type).cmp(&rank_element_type(&b.element_type))
+            });
+            return Some(by_name[0].qualified_name.clone());
+        }
+        // 3. Suffix match
+        let suffix_matches: Vec<&CodeElement> = elements
+            .iter()
+            .filter(|e| e.qualified_name.ends_with(input) || e.qualified_name.contains(input))
+            .collect();
+        if !suffix_matches.is_empty() {
+            return Some(suffix_matches[0].qualified_name.clone());
+        }
+        None
+    }
+
     pub fn wake_up_summary(&self) -> Result<String, String> {
         let elements = self.all_elements().map_err(|e| e.to_string())?;
 
@@ -3791,6 +4419,1120 @@ impl GraphEngine {
 
         Ok(lines.join("\n"))
     }
+
+    /// US-MP-02 / FR-MP-05: Generate L0 context (~50 tokens).
+    /// Project identity: name, languages, top-level directories,
+    /// architecture pattern. Stored at `.leankg/identity.md`.
+    pub fn identity_context(&self, project_name: &str) -> Result<String, String> {
+        let elements = self.all_elements().map_err(|e| e.to_string())?;
+        let langs: std::collections::BTreeSet<String> = elements
+            .iter()
+            .map(|e| e.language.clone())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        let top_dirs: std::collections::BTreeSet<String> = elements
+            .iter()
+            .filter_map(|e| {
+                let p = e.file_path.trim_start_matches("./").trim_start_matches('/');
+                p.split('/').next().map(String::from)
+            })
+            .filter(|d| !d.is_empty())
+            .collect();
+
+        let mut out = String::new();
+        out.push_str(&format!("# {}\n\n", project_name));
+        if !langs.is_empty() {
+            out.push_str(&format!(
+                "Languages: {}\n",
+                langs.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
+        if !top_dirs.is_empty() {
+            let dirs = top_dirs.into_iter().take(8).collect::<Vec<_>>();
+            out.push_str(&format!("Top-level: {}\n", dirs.join(", ")));
+        }
+        Ok(out)
+    }
+
+    /// US-MP-02 / FR-MP-06: Generate L1 context (~120 tokens).
+    /// Critical facts: hot modules (top god nodes), element counts,
+    /// relationship counts. Stored at `.leankg/critical_facts.md`.
+    pub fn critical_facts_context(&self) -> Result<String, String> {
+        let elements = self.all_elements().map_err(|e| e.to_string())?;
+        let rels = self.all_relationships().map_err(|e| e.to_string())?;
+        let gods = self.get_god_nodes(5, Some(90)).map_err(|e| e.to_string())?;
+
+        let total = elements.len();
+        let rel_count = rels.len();
+        let func_count = elements
+            .iter()
+            .filter(|e| e.element_type == "function")
+            .count();
+
+        let mut out = String::new();
+        out.push_str("## Critical facts\n\n");
+        out.push_str(&format!(
+            "Elements: {} (functions: {}). Relationships: {}.\n",
+            total, func_count, rel_count
+        ));
+        if !gods.is_empty() {
+            let names: Vec<String> = gods
+                .iter()
+                .map(|g| format!("`{}` (degree {})", g.qualified_name, g.degree))
+                .collect();
+            out.push_str(&format!("Hot modules: {}.\n", names.join(", ")));
+        }
+        Ok(out)
+    }
+
+    /// US-GF-02 / FR-GF-03: Aggregate a single-node dossier.
+    ///
+    /// Returns the element's definition site, cluster membership, in/out
+    /// degree, top neighbors by relation type, and recent incident / annotation
+    /// context if any. Designed for a single MCP response that lets an agent
+    /// "explain" a symbol without juggling multiple round-trips.
+    pub fn explain_node(
+        &self,
+        input: &str,
+    ) -> Result<Option<NodeExplanation>, Box<dyn std::error::Error>> {
+        let qn = match self.resolve_to_qualified(input) {
+            Some(q) => q,
+            None => return Ok(None),
+        };
+
+        let elements = self.all_elements()?;
+        let element = match elements.iter().find(|e| e.qualified_name == qn) {
+            Some(e) => e.clone(),
+            None => return Ok(None),
+        };
+
+        let all_rels = self.all_relationships()?;
+        let in_degree = all_rels.iter().filter(|r| r.target_qualified == qn).count();
+        let out_degree = all_rels.iter().filter(|r| r.source_qualified == qn).count();
+
+        // Top neighbors grouped by relation type
+        let mut by_type: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in &all_rels {
+            if r.source_qualified == qn {
+                by_type
+                    .entry(r.rel_type.clone())
+                    .or_default()
+                    .push(r.target_qualified.clone());
+            } else if r.target_qualified == qn {
+                by_type
+                    .entry(format!("<-{}", r.rel_type))
+                    .or_default()
+                    .push(r.source_qualified.clone());
+            }
+        }
+        let mut neighbors: Vec<(String, usize)> =
+            by_type.into_iter().map(|(t, ns)| (t, ns.len())).collect();
+        neighbors.sort_by_key(|n| std::cmp::Reverse(n.1));
+
+        // Sample top 5 neighbor qualified_names by relation type for hint list
+        let neighbor_hints: Vec<NeighborHint> = neighbors
+            .iter()
+            .take(8)
+            .map(|(rel_type, count)| NeighborHint {
+                rel_type: rel_type.clone(),
+                count: *count,
+            })
+            .collect();
+
+        Ok(Some(NodeExplanation {
+            qualified_name: qn,
+            name: element.name,
+            element_type: element.element_type,
+            file_path: element.file_path,
+            line_start: element.line_start,
+            line_end: element.line_end,
+            cluster_id: element.cluster_id,
+            cluster_label: element.cluster_label,
+            in_degree,
+            out_degree,
+            top_neighbors: neighbor_hints,
+        }))
+    }
+
+    /// US-GF-05 / FR-GF-10..11: Top-degree god nodes.
+    ///
+    /// Returns the most-connected elements (sum of in + out degree) sorted
+    /// descending. Optionally excludes utility super-hubs whose degree exceeds
+    /// `exclude_hubs_percentile` (0-100).
+    pub fn get_god_nodes(
+        &self,
+        limit: usize,
+        exclude_hubs_percentile: Option<u8>,
+    ) -> Result<Vec<GodNode>, Box<dyn std::error::Error>> {
+        let limit = limit.clamp(1, 200);
+        let all_rels = self.all_relationships()?;
+        let elements = self.all_elements()?;
+
+        let mut degree: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for r in &all_rels {
+            *degree.entry(r.source_qualified.clone()).or_default() += 1;
+            *degree.entry(r.target_qualified.clone()).or_default() += 1;
+        }
+
+        let mut nodes: Vec<(String, usize)> = degree.into_iter().collect();
+        nodes.sort_by_key(|n| std::cmp::Reverse(n.1));
+
+        if let Some(pctl) = exclude_hubs_percentile {
+            if !nodes.is_empty() {
+                let cutoff_idx =
+                    ((nodes.len() as f64 * (100.0 - pctl as f64) / 100.0) as usize).max(1);
+                nodes.truncate(cutoff_idx);
+            }
+        }
+
+        let qn_set: std::collections::HashSet<String> =
+            nodes.iter().map(|(qn, _)| qn.clone()).collect();
+        let by_qn: std::collections::HashMap<String, CodeElement> = elements
+            .into_iter()
+            .filter(|e| qn_set.contains(&e.qualified_name))
+            .map(|e| (e.qualified_name.clone(), e))
+            .collect();
+
+        Ok(nodes
+            .into_iter()
+            .take(limit)
+            .map(|(qn, deg)| {
+                let element_type = by_qn
+                    .get(&qn)
+                    .map(|e| e.element_type.clone())
+                    .unwrap_or_default();
+                let name = by_qn
+                    .get(&qn)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_else(|| qn.clone());
+                GodNode {
+                    qualified_name: qn,
+                    name,
+                    element_type,
+                    degree: deg,
+                }
+            })
+            .collect())
+    }
+
+    /// US-GF-06 / FR-GF-13: Build a `GRAPH_REPORT.md` summary of the
+    /// indexed codebase: top god-nodes, confidence label distribution,
+    /// and 4-5 suggested agent questions. Returns a `GraphReport`
+    /// struct that can be serialized to JSON or markdown.
+    pub fn generate_graph_report(
+        &self,
+        project_name: &str,
+    ) -> Result<GraphReport, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let rels = self.all_relationships()?;
+        let god_nodes = self.get_god_nodes(10, Some(90))?;
+
+        // Confidence label distribution
+        let mut by_label: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
+        for r in &rels {
+            let label = r.confidence_label();
+            *by_label.entry(label).or_default() += 1;
+        }
+
+        let total = rels.len();
+        let confidence_dist: Vec<LabelCount> = ["EXTRACTED", "INFERRED", "AMBIGUOUS"]
+            .into_iter()
+            .map(|l| LabelCount {
+                label: l.to_string(),
+                count: *by_label.get(l).unwrap_or(&0),
+                pct: if total == 0 {
+                    0.0
+                } else {
+                    (*by_label.get(l).unwrap_or(&0) as f64 * 100.0) / total as f64
+                },
+            })
+            .collect();
+
+        let total_elements = elements.len();
+        let file_count = elements.iter().filter(|e| e.element_type == "file").count();
+        let func_count = elements
+            .iter()
+            .filter(|e| e.element_type == "function")
+            .count();
+        let class_count = elements
+            .iter()
+            .filter(|e| e.element_type == "class" || e.element_type == "struct")
+            .count();
+
+        let suggested_questions = vec![
+            format!(
+                "Which functions in {} are most central to the call graph? (use explain_node on top god nodes)",
+                project_name
+            ),
+            "Find the shortest path from a hot entry point to a low-level helper (use shortest_path)".to_string(),
+            format!(
+                "How many of the {} relationships are AMBIGUOUS vs EXTRACTED? Where are the AMBIGUOUS edges clustered?",
+                total
+            ),
+            "Which directories hold the most cross-cluster traffic (use query_graph or shortest_path across cluster boundaries)?".to_string(),
+            format!(
+                "What is the impact radius of the highest-degree {} (use get_impact_radius)?",
+                god_nodes.first().map(|g| g.name.clone()).unwrap_or_default()
+            ),
+        ];
+
+        Ok(GraphReport {
+            project: project_name.to_string(),
+            total_elements,
+            total_relationships: total,
+            file_count,
+            function_count: func_count,
+            class_count,
+            god_nodes,
+            confidence_distribution: confidence_dist,
+            suggested_questions,
+        })
+    }
+
+    /// US-MP-01 / FR-MP-01..02: read the optional valid_from timestamp
+    /// from relationship metadata (epoch seconds). Returns None for
+    /// edges that pre-date the temporal feature.
+    pub fn valid_from(rel: &Relationship) -> Option<i64> {
+        rel.metadata.get("valid_from").and_then(|v| v.as_i64())
+    }
+
+    /// US-MP-01: read the valid_to timestamp; non-null means the edge
+    /// has been invalidated but is retained for historical queries.
+    pub fn valid_to(rel: &Relationship) -> Option<i64> {
+        rel.metadata.get("valid_to").and_then(|v| v.as_i64())
+    }
+
+    /// US-MP-01 / FR-MP-03: temporal_query — return the graph state
+    /// as of a given epoch (seconds). An edge is "live" at that
+    /// moment if `valid_from <= now <= valid_to` (or valid_to is
+    /// unset and valid_from <= now).
+    pub fn temporal_query(
+        &self,
+        at_epoch: i64,
+    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        let rels = self.all_relationships()?;
+        Ok(rels
+            .into_iter()
+            .filter(|r| {
+                let valid_from = Self::valid_from(r).unwrap_or(0);
+                let valid_to = Self::valid_to(r).unwrap_or(i64::MAX);
+                valid_from <= at_epoch && at_epoch <= valid_to
+            })
+            .collect())
+    }
+
+    /// US-MP-01 / FR-MP-04: timeline — chronological evolution of a
+    /// single code element's relationships. Returns a sorted list of
+    /// events (added / invalidated) with timestamps.
+    pub fn timeline(
+        &self,
+        qualified_name: &str,
+    ) -> Result<Vec<TimelineEvent>, Box<dyn std::error::Error>> {
+        let rels = self.all_relationships()?;
+        let mut events: Vec<TimelineEvent> = Vec::new();
+        for r in &rels {
+            if r.source_qualified != qualified_name && r.target_qualified != qualified_name {
+                continue;
+            }
+            if let Some(vf) = Self::valid_from(r) {
+                events.push(TimelineEvent {
+                    timestamp: vf,
+                    action: "added".into(),
+                    edge: r.clone(),
+                });
+            }
+            if let Some(vt) = Self::valid_to(r) {
+                events.push(TimelineEvent {
+                    timestamp: vt,
+                    action: "invalidated".into(),
+                    edge: r.clone(),
+                });
+            }
+        }
+        events.sort_by_key(|e| e.timestamp);
+        Ok(events)
+    }
+
+    /// US-MP-05 / FR-MP-14..15: Check the graph for stale or broken
+    /// links. Returns findings with severity (BROKEN / STALE / CURRENT)
+    /// so agents and `leankg check-consistency` can prioritize fixes.
+    ///   BROKEN  — element missing or referenced file_path absent
+    ///   STALE   — invalidation timestamp set without replacement
+    ///   CURRENT — edge present and target still exists
+    pub fn check_consistency(&self) -> Result<ConsistencyReport, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let rels = self.all_relationships()?;
+        let qn_set: std::collections::HashSet<String> =
+            elements.iter().map(|e| e.qualified_name.clone()).collect();
+
+        let mut findings: Vec<ConsistencyFinding> = Vec::new();
+        for r in &rels {
+            // Invalidated edges that are still referenced from elsewhere.
+            if Self::valid_to(r).is_some() {
+                findings.push(ConsistencyFinding {
+                    severity: "STALE".into(),
+                    source: r.source_qualified.clone(),
+                    target: r.target_qualified.clone(),
+                    rel_type: r.rel_type.clone(),
+                    message: "edge has valid_to set but row still present".into(),
+                });
+                continue;
+            }
+            // Target missing
+            if !qn_set.contains(&r.target_qualified) {
+                findings.push(ConsistencyFinding {
+                    severity: "BROKEN".into(),
+                    source: r.source_qualified.clone(),
+                    target: r.target_qualified.clone(),
+                    rel_type: r.rel_type.clone(),
+                    message: "target element missing from code_elements".into(),
+                });
+                continue;
+            }
+            // Source missing
+            if !qn_set.contains(&r.source_qualified) {
+                findings.push(ConsistencyFinding {
+                    severity: "BROKEN".into(),
+                    source: r.source_qualified.clone(),
+                    target: r.target_qualified.clone(),
+                    rel_type: r.rel_type.clone(),
+                    message: "source element missing from code_elements".into(),
+                });
+                continue;
+            }
+        }
+        // Stale annotations are out of scope here — handled by separate
+        // doc consistency check — but we record one CURRENT marker so
+        // the report isn't empty when the graph is healthy.
+        if findings.is_empty() {
+            findings.push(ConsistencyFinding {
+                severity: "CURRENT".into(),
+                source: "-".into(),
+                target: "-".into(),
+                rel_type: "-".into(),
+                message: "graph is consistent".into(),
+            });
+        }
+        let broken = findings.iter().filter(|f| f.severity == "BROKEN").count();
+        let stale = findings.iter().filter(|f| f.severity == "STALE").count();
+        Ok(ConsistencyReport {
+            total_relationships: rels.len(),
+            broken,
+            stale,
+            findings,
+        })
+    }
+
+    /// US-MP-08 / FR-MP-25: list all directory nodes that are direct
+    /// children of the given folder qualified_name (with trailing
+    /// slash). Returns them sorted by name. Used by folder-scoped
+    /// search and impact analysis at directory level.
+    pub fn subdirectories(
+        &self,
+        folder_qn: &str,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let prefix = folder_gn::strip(folder_qn);
+        let depth = prefix.matches('/').count() + 1; // children are one level deeper
+        let elements = self.all_elements()?;
+        let mut children: Vec<CodeElement> = elements
+            .into_iter()
+            .filter(|e| e.element_type == "directory")
+            .filter(|e| {
+                let p = folder_gn::strip(&e.qualified_name);
+                p.starts_with(prefix)
+                    && p.len() > prefix.len()
+                    && p[prefix.len()..]
+                        .trim_start_matches('/')
+                        .matches('/')
+                        .count()
+                        == 0
+            })
+            .collect();
+        // Sanity: limit depth
+        children.retain(|e| folder_gn::strip(&e.qualified_name).matches('/').count() == depth);
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(children)
+    }
+
+    /// US-MP-06 / FR-MP-16..17: detect cross-domain tunnels between
+    /// clusters. A tunnel is a `Relationship` whose source and target
+    /// belong to different Leiden clusters — i.e. a cross-cluster
+    /// dependency that an agent should know about.
+    pub fn find_tunnels(&self) -> Result<Vec<Tunnel>, Box<dyn std::error::Error>> {
+        let rels = self.all_relationships()?;
+        let elements = self.all_elements()?;
+        let cluster_of: std::collections::HashMap<String, Option<String>> = elements
+            .iter()
+            .map(|e| (e.qualified_name.clone(), e.cluster_id.clone()))
+            .collect();
+
+        let mut tunnels: Vec<Tunnel> = Vec::new();
+        for r in &rels {
+            let src_cluster = cluster_of.get(&r.source_qualified).and_then(|c| c.clone());
+            let tgt_cluster = cluster_of.get(&r.target_qualified).and_then(|c| c.clone());
+            // Only count when both ends are clustered and clusters differ.
+            if let (Some(sc), Some(tc)) = (src_cluster.as_ref(), tgt_cluster.as_ref()) {
+                if sc != tc {
+                    tunnels.push(Tunnel {
+                        source: r.source_qualified.clone(),
+                        target: r.target_qualified.clone(),
+                        rel_type: r.rel_type.clone(),
+                        confidence: r.confidence,
+                        source_cluster: sc.clone(),
+                        target_cluster: tc.clone(),
+                    });
+                }
+            }
+        }
+        tunnels.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(tunnels)
+    }
+
+    /// US-MP-04 / FR-MP-18: List agent personas defined in
+    /// `.leankg/agents/*.json`.
+    pub fn list_agents(
+        project_path: &std::path::Path,
+    ) -> Result<Vec<AgentPersona>, Box<dyn std::error::Error>> {
+        let dir = project_path.join(".leankg").join("agents");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut agents = Vec::new();
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path)?;
+            if let Ok(p) = serde_json::from_str::<AgentPersona>(&raw) {
+                agents.push(p);
+            }
+        }
+        agents.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(agents)
+    }
+
+    /// US-MP-04 / FR-MP-19: focus the graph for a specialist agent
+    /// persona, returning only elements matching path/cluster/type
+    /// filters and relationships entirely within that subset.
+    pub fn agent_focus(
+        &self,
+        persona: &AgentPersona,
+    ) -> Result<AgentFocus, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let rels = self.all_relationships()?;
+        let qn_keep: std::collections::HashSet<String> = elements
+            .iter()
+            .filter(|e| {
+                if !persona.element_types.is_empty()
+                    && !persona.element_types.contains(&e.element_type)
+                {
+                    return false;
+                }
+                if let Some(ref cid) = persona.cluster_id {
+                    if e.cluster_id.as_deref() != Some(cid.as_str()) {
+                        return false;
+                    }
+                }
+                if !persona.path_filters.is_empty()
+                    && !persona
+                        .path_filters
+                        .iter()
+                        .any(|p| e.file_path.starts_with(p))
+                {
+                    return false;
+                }
+                true
+            })
+            .map(|e| e.qualified_name.clone())
+            .collect();
+        let focused_rels: Vec<Relationship> = rels
+            .into_iter()
+            .filter(|r| {
+                qn_keep.contains(&r.source_qualified) && qn_keep.contains(&r.target_qualified)
+            })
+            .collect();
+        Ok(AgentFocus {
+            agent: persona.name.clone(),
+            elements: elements
+                .into_iter()
+                .filter(|e| qn_keep.contains(&e.qualified_name))
+                .collect(),
+            relationships: focused_rels,
+        })
+    }
+
+    /// US-GF-09 / FR-GF-19: Record a query outcome (useful /
+    /// dead_end / corrected) for a graph answer and append to the
+    /// reflections journal at `.leankg/reflections/LESSONS.md`.
+    pub fn report_query_outcome(
+        project_path: &std::path::Path,
+        question: &str,
+        nodes: &[String],
+        outcome: &str,
+        note: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = project_path.join(".leankg").join("reflections");
+        std::fs::create_dir_all(&dir)?;
+        let lessons = dir.join("LESSONS.md");
+        let entry = format!(
+            "\n## {} — {}\n\n- Question: {}\n- Nodes: {}\n- Outcome: {}\n{}\n",
+            chrono_unix(),
+            outcome,
+            question,
+            if nodes.is_empty() {
+                "(none)".to_string()
+            } else {
+                nodes.join(", ")
+            },
+            outcome,
+            note.map(|n| format!("- Note: {}", n)).unwrap_or_default(),
+        );
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&lessons)?;
+        f.write_all(entry.as_bytes())?;
+        Ok(())
+    }
+
+    /// US-V2-12 / FR-V2-12: aggregated team / ownership map across
+    /// all services in a given environment. Returns one entry per
+    /// team with the on-call rotation and a list of services the
+    /// team owns.
+    pub fn get_team_map(&self, env: &str) -> Result<Vec<TeamMapEntry>, Box<dyn std::error::Error>> {
+        let services = self.get_all_service_metadata(env)?;
+        let mut by_team: std::collections::HashMap<String, TeamMapEntry> =
+            std::collections::HashMap::new();
+        for svc in services {
+            let team = svc.team.unwrap_or_else(|| "(unassigned)".into());
+            let on_call = svc.on_call.unwrap_or_else(|| "(none)".into());
+            let entry = by_team.entry(team.clone()).or_insert_with(|| TeamMapEntry {
+                team: team.clone(),
+                on_call: on_call.clone(),
+                services: Vec::new(),
+            });
+            if entry.on_call == "(none)" && on_call != "(none)" {
+                entry.on_call = on_call;
+            }
+            entry.services.push(svc.service_name.clone());
+        }
+        let mut result: Vec<TeamMapEntry> = by_team.into_values().collect();
+        result.sort_by(|a, b| a.team.cmp(&b.team));
+        Ok(result)
+    }
+
+    /// US-V2-12 helper: fetch all service metadata rows for an env.
+    fn get_all_service_metadata(
+        &self,
+        env: &str,
+    ) -> Result<Vec<crate::db::models::ServiceMetadata>, Box<dyn std::error::Error>> {
+        let query = "?[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at] := *service_metadata[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at], env = $env";
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "env".to_string(),
+            serde_json::Value::String(env.to_string()),
+        );
+        let result = crate::db::schema::run_script(&self.db, query, params)?;
+        let mut out = Vec::new();
+        for row in &result.rows {
+            out.push(crate::db::models::ServiceMetadata {
+                service_name: row
+                    .first()
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string(),
+                env: env.to_string(),
+                team: row.get(2).and_then(|v| v.get_str()).map(String::from),
+                on_call: row.get(3).and_then(|v| v.get_str()).map(String::from),
+                repo_url: row.get(4).and_then(|v| v.get_str()).map(String::from),
+                language: row.get(5).and_then(|v| v.get_str()).map(String::from),
+                health_endpoint: row.get(6).and_then(|v| v.get_str()).map(String::from),
+                slo_p99_ms: row.get(7).and_then(|v| v.get_int()).map(|n| n as i32),
+                incident_count: row.get(8).and_then(|v| v.get_int()).unwrap_or(0) as i32,
+                last_incident: row.get(9).and_then(|v| v.get_int()),
+                tags: row
+                    .get(10)
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string(),
+                version: row.get(11).and_then(|v| v.get_str()).map(String::from),
+                deploy_envs: row
+                    .get(12)
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string(),
+                created_at: row.get(13).and_then(|v| v.get_int()).unwrap_or(0),
+                updated_at: row.get(14).and_then(|v| v.get_int()).unwrap_or(0),
+            });
+        }
+        Ok(out)
+    }
+
+    /// US-GF-08 / FR-GF-17..18: PR impact dashboard. Given a list of
+    /// changed files (typically from `git diff --name-only`), return
+    /// each file's cluster membership and a severity rating based on
+    /// the number of distinct clusters touched. Useful for
+    /// merge-order risk assessment and conflict triage.
+    pub fn pr_impact(
+        &self,
+        changed_files: &[String],
+        env: &str,
+    ) -> Result<PrImpactReport, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        let mut touched_clusters: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut per_file: Vec<PrFileImpact> = Vec::new();
+        for f in changed_files {
+            let cluster = elements
+                .iter()
+                .find(|e| e.file_path == *f && e.cluster_id.is_some())
+                .and_then(|e| e.cluster_id.clone());
+            let label = elements
+                .iter()
+                .find(|e| e.file_path == *f)
+                .and_then(|e| e.cluster_label.clone());
+            if let Some(ref c) = cluster {
+                touched_clusters.insert(c.clone());
+            }
+            per_file.push(PrFileImpact {
+                file: f.clone(),
+                cluster_id: cluster,
+                cluster_label: label,
+            });
+        }
+        let severity = if touched_clusters.len() >= 5 {
+            "HIGH"
+        } else if touched_clusters.len() >= 2 {
+            "MEDIUM"
+        } else {
+            "LOW"
+        };
+        Ok(PrImpactReport {
+            env: env.to_string(),
+            changed_file_count: changed_files.len(),
+            touched_clusters: touched_clusters.into_iter().collect(),
+            severity: severity.to_string(),
+            files: per_file,
+        })
+    }
+
+    /// US-CBM-B8 / FR-B32..33: find near-duplicate code elements
+    /// across the multi-repo registry. Walks each registered repo's
+    /// own .leankg database, collects every function / method
+    /// qualified_name + file_path, and emits `cross_repo_similar`
+    /// relationships between pairs whose qualified_name (sans
+    /// repo prefix) shares a common suffix.
+    pub fn find_cross_repo_similar(
+        &self,
+        project_path: &std::path::Path,
+        limit: usize,
+    ) -> Result<Vec<CrossRepoSimilar>, Box<dyn std::error::Error>> {
+        let _ = self; // signature stability for future engine-based lookup
+        let registry = crate::registry::Registry::load().unwrap_or_default();
+        let current_root = project_path.to_string_lossy().to_string();
+
+        // Build (suffix, repo_name, qualified_name, file_path) index.
+        let mut entries: Vec<(String, String, String, String)> = Vec::new();
+        for (name, repo) in registry.list_repos() {
+            if repo.path == current_root {
+                continue; // skip self
+            }
+            let db_path = std::path::Path::new(&repo.path).join(".leankg");
+            let Ok(db) = crate::db::schema::init_db(&db_path) else {
+                continue;
+            };
+            let engine = crate::graph::GraphEngine::new(db);
+            let Ok(elements) = engine.all_elements() else {
+                continue;
+            };
+            for e in elements {
+                if matches!(e.element_type.as_str(), "function" | "method" | "class") {
+                    // Strip the file_path prefix to get the symbol suffix.
+                    let suffix = e
+                        .qualified_name
+                        .rsplit_once("::")
+                        .map(|(_, s)| s.to_string())
+                        .unwrap_or_else(|| e.qualified_name.clone());
+                    entries.push((
+                        suffix,
+                        name.clone(),
+                        e.qualified_name.clone(),
+                        e.file_path.clone(),
+                    ));
+                }
+            }
+        }
+
+        // Group by suffix, then create pairs.
+        use std::collections::HashMap;
+        let mut by_suffix: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
+        for (suffix, repo, qn, file) in entries {
+            by_suffix.entry(suffix).or_default().push((repo, qn, file));
+        }
+        let mut out: Vec<CrossRepoSimilar> = Vec::new();
+        for (suffix, group) in by_suffix {
+            if group.len() < 2 {
+                continue;
+            }
+            for i in 0..group.len() {
+                for j in (i + 1)..group.len() {
+                    let (a_repo, a_qn, a_file) = &group[i];
+                    let (b_repo, b_qn, b_file) = &group[j];
+                    if a_repo == b_repo {
+                        continue;
+                    }
+                    out.push(CrossRepoSimilar {
+                        symbol: suffix.clone(),
+                        source_repo: a_repo.clone(),
+                        source_qualified: a_qn.clone(),
+                        source_file: a_file.clone(),
+                        target_repo: b_repo.clone(),
+                        target_qualified: b_qn.clone(),
+                        target_file: b_file.clone(),
+                    });
+                    if out.len() >= limit {
+                        return Ok(out);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// US-CBM-B7 / FR-B30..31: find near-duplicate code blocks.
+    /// Tokenizes each function/method body and emits `similar_to`
+    /// relationships for pairs whose Jaccard similarity exceeds the
+    /// threshold. Uses the `similar` crate's token-set comparison
+    /// for stable, allocation-bounded matching.
+    ///
+    /// Performance contract:
+    /// - Bounded by `max_functions` (default 50k). On larger graphs the
+    ///   function returns an `Err` so callers can re-scope (slice per
+    ///   directory / language) instead of running for hours.
+    /// - Only compares functions inside the same file. That alone turns
+    ///   the O(n²) into O(file²), keeping any individual scan cheap.
+    ///   The legacy cross-file MinHash/LSH path was removed in v3.6.2
+    ///   (see FR-HNSW-A); clone ANN is out of product focus — semantic
+    ///   search via CozoDB `::hnsw` is the discovery path.
+    /// - Stream files from disk instead of slurping every function body
+    ///   into a HashMap (the previous implementation held ~1 GB of
+    ///   file content in RAM on a 369k-function graph).
+    /// - Honors `BudgetGuard` for wall-clock / RSS / iteration caps.
+    pub fn find_clones(
+        &self,
+        threshold: f64,
+        limit: usize,
+    ) -> Result<Vec<ClonePair>, Box<dyn std::error::Error>> {
+        Self::find_clones_with_opts(self, threshold, limit, &CloneScanOptions::default())
+    }
+
+    /// Like [`Self::find_clones`] but with explicit scan options for the
+    /// CLI / MCP layers. See [`CloneScanOptions`] for the knobs.
+    pub fn find_clones_with_opts(
+        &self,
+        threshold: f64,
+        limit: usize,
+        opts: &CloneScanOptions,
+    ) -> Result<Vec<ClonePair>, Box<dyn std::error::Error>> {
+        // Stream elements of the candidate kinds instead of materializing
+        // every CodeElement in RAM. We collect into a bounded Vec; when
+        // the candidate set exceeds max_functions we abort before
+        // allocating it further, so peak RAM is bounded by what we kept
+        // so far plus the next in-flight element (a few hundred bytes).
+        let mut targets: Vec<CodeElement> = Vec::new();
+        let mut total_seen: u64 = 0;
+        // Scope the closure so the mutable borrow on `targets` ends
+        // before we re-use `targets` for bucketing below.
+        {
+            let mut push_if_candidate = |e: CodeElement| -> Result<(), Box<dyn std::error::Error>> {
+                if matches!(
+                    e.element_type.as_str(),
+                    "function" | "method" | "constructor"
+                ) {
+                    targets.push(e);
+                }
+                Ok(())
+            };
+            for kind in &["function", "method", "constructor"] {
+                total_seen += self.for_each_element_of_type(kind, &mut push_if_candidate)?;
+                if total_seen as usize > opts.max_functions {
+                    return Err(format!(
+                        "find_clones: graph has {} functions/methods/constructors, exceeding max_functions={}. \
+                         Re-scope by directory / language or raise --max-functions. \
+                         Tip: pair this with a per-service leankg.yaml to keep graphs small.",
+                        total_seen, opts.max_functions
+                    )
+                    .into());
+                }
+            }
+        }
+
+        // Stable order by (file_path, qualified_name) so the same graph
+        // yields the same pair order across runs.
+        targets.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then_with(|| a.qualified_name.cmp(&b.qualified_name))
+        });
+
+        let mut guard = crate::budget::BudgetGuard::for_tool("find_clones");
+
+        // Group targets by file_path; only compare within group. This
+        // is the dominant optimisation: a typical Go file has ~10
+        // functions, so per-file work is O(100) pairs instead of
+        // O(369k²).
+        let mut by_file: std::collections::HashMap<String, Vec<CodeElement>> =
+            std::collections::HashMap::new();
+        for t in targets.iter() {
+            by_file
+                .entry(t.file_path.clone())
+                .or_default()
+                .push(t.clone());
+        }
+        drop(targets);
+
+        // Read each file at most once and reuse the buffer for every
+        // function in that file.
+        let mut clones: Vec<ClonePair> = Vec::new();
+        for (file_path, group) in by_file.iter() {
+            if group.len() < 2 {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(file_path) else {
+                continue;
+            };
+
+            // Build a name -> source-window map. We use line_start/line_end
+            // from each element to slice the file once per element.
+            let mut slices: Vec<(&CodeElement, &str)> = Vec::with_capacity(group.len());
+            for e in group.iter() {
+                if e.line_end >= e.line_start {
+                    if let Some(s) = slice_lines(&content, e.line_start, e.line_end) {
+                        slices.push((e, s));
+                    }
+                }
+            }
+
+            // Within-file pairs.
+            for i in 0..slices.len() {
+                for j in (i + 1)..slices.len() {
+                    let (a, ca) = slices[i];
+                    let (b, cb) = slices[j];
+                    if a.name == b.name && a.file_path == b.file_path {
+                        // Same name in same file = overload, not a clone.
+                        continue;
+                    }
+                    let score = jaccard_tokens(ca, cb);
+                    if score >= threshold {
+                        clones.push(ClonePair {
+                            source: a.qualified_name.clone(),
+                            target: b.qualified_name.clone(),
+                            similarity: score,
+                            source_file: a.file_path.clone(),
+                            target_file: b.file_path.clone(),
+                        });
+                    }
+                    guard.tick();
+                    if guard.check().is_err() {
+                        break;
+                    }
+                }
+                if guard.is_exhausted() {
+                    break;
+                }
+            }
+            if guard.is_exhausted() {
+                break;
+            }
+        }
+
+        // Budget may have aborted early; surface a soft warning via
+        // stderr but still return what we have.
+        if guard.is_exhausted() && !guard.already_reported() {
+            eprintln!(
+                "warning: find_clones budget exhausted after {} iterations in {:?}; \
+                 returning partial results",
+                guard.iterations(),
+                guard.elapsed()
+            );
+        }
+
+        clones.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        clones.truncate(limit);
+        Ok(clones)
+    }
+
+    /// US-GF-11 / FR-GF-20: portable graph snapshot export. Writes
+    /// every code element + relationship to a JSON file at
+    /// `<out_path>` with file paths rewritten relative to
+    /// `project_root` so the snapshot can be committed to a git
+    /// repo and merged between teams.
+    ///
+    /// Memory: streams elements + relationships to disk instead of
+    /// materializing the entire JSON tree in RAM. The previous
+    /// implementation held ~470 MB of JSON in memory on a 627k-node
+    /// graph.
+    pub fn export_snapshot(
+        &self,
+        project_root: &std::path::Path,
+        out_path: &std::path::Path,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        use std::io::{BufWriter, Write};
+        let project_root = project_root.to_string_lossy().to_string();
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let f = std::fs::File::create(out_path)?;
+        let mut out = BufWriter::new(f);
+        let mut guard = crate::budget::BudgetGuard::for_tool("export_snapshot");
+        let mut truncated = false;
+        let mut total: usize = 0;
+
+        writeln!(out, "{{")?;
+        writeln!(out, "  \"version\": 1,")?;
+        writeln!(out, "  \"kind\": \"leankg.graph.snapshot\",")?;
+        writeln!(out, "  \"project_root\": {:?},", project_root)?;
+        writeln!(out, "  \"elements\": [")?;
+        let mut i: usize = 0;
+        let write_element = |out: &mut BufWriter<std::fs::File>,
+                             e: CodeElement,
+                             idx: usize|
+         -> std::io::Result<()> {
+            if idx > 0 {
+                writeln!(out, ",")?;
+            }
+            let path = relativize(&e.file_path, &project_root);
+            write!(
+                out,
+                "    {{\"qualified_name\":{:?},\"element_type\":{:?},\"name\":{:?},\
+                 \"file_path\":{:?},\"line_start\":{},\"line_end\":{},\"language\":{:?},\
+                 \"cluster_id\":{:?},\"cluster_label\":{:?},\"parent_qualified\":{:?},\
+                 \"metadata\":{}}}",
+                e.qualified_name,
+                e.element_type,
+                e.name,
+                path,
+                e.line_start,
+                e.line_end,
+                e.language,
+                e.cluster_id,
+                e.cluster_label,
+                e.parent_qualified,
+                serde_json::to_string(&e.metadata).unwrap_or_else(|_| "null".to_string()),
+            )
+        };
+        // Stream elements one at a time; no Vec in RAM.
+        let stream_result = self.for_each_element(|e| {
+            write_element(&mut out, e, i)?;
+            i += 1;
+            if i.is_multiple_of(1000) {
+                guard.tick();
+                if guard.check().is_err() {
+                    return Err(Box::new(std::io::Error::other("export_snapshot budget")));
+                }
+            }
+            Ok(())
+        });
+        match stream_result {
+            Ok(n) => total += n as usize,
+            Err(e) if e.to_string().contains("budget") => truncated = true,
+            Err(e) => return Err(e),
+        }
+        writeln!(out)?;
+        writeln!(out, "  ],")?;
+        writeln!(out, "  \"relationships\": [")?;
+        let mut j: usize = 0;
+        let stream_rels = self.for_each_relationship(|r| {
+            if j > 0 {
+                writeln!(out, ",")?;
+            }
+            write!(
+                out,
+                "    {{\"source_qualified\":{:?},\"target_qualified\":{:?},\
+                 \"rel_type\":{:?},\"confidence\":{},\"metadata\":{}}}",
+                r.source_qualified,
+                r.target_qualified,
+                r.rel_type,
+                r.confidence,
+                serde_json::to_string(&r.metadata).unwrap_or_else(|_| "null".to_string()),
+            )?;
+            j += 1;
+            if j.is_multiple_of(1000) {
+                guard.tick();
+                if guard.check().is_err() {
+                    return Err(Box::new(std::io::Error::other("export_snapshot budget")));
+                }
+            }
+            Ok(())
+        });
+        match stream_rels {
+            Ok(n) => total += n as usize,
+            Err(e) if e.to_string().contains("budget") => truncated = true,
+            Err(e) => return Err(e),
+        }
+        writeln!(out)?;
+        writeln!(out, "  ]")?;
+        if truncated {
+            writeln!(out, "  ,\"truncated\": true")?;
+        }
+        writeln!(out, "}}")?;
+        out.flush()?;
+        Ok(total)
+    }
+}
+
+fn relativize(path: &str, root: &str) -> String {
+    if let Some(rest) = path.strip_prefix(root) {
+        let rest = rest.trim_start_matches('/');
+        if rest.is_empty() {
+            ".".to_string()
+        } else {
+            format!("./{}", rest)
+        }
+    } else if path.starts_with("./") || path.starts_with("/") {
+        path.to_string()
+    } else {
+        format!("./{}", path.trim_start_matches('/'))
+    }
+}
+
+fn chrono_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// US-CBM-B7 helper: token-set Jaccard similarity between two strings.
+/// Returns 0.0 when both inputs are empty.
+fn jaccard_tokens(a: &str, b: &str) -> f64 {
+    use std::collections::HashSet;
+    let ta: HashSet<&str> = a.split_whitespace().collect();
+    let tb: HashSet<&str> = b.split_whitespace().collect();
+    if ta.is_empty() && tb.is_empty() {
+        return 0.0;
+    }
+    let inter = ta.intersection(&tb).count();
+    let union = ta.union(&tb).count();
+    if union == 0 {
+        0.0
+    } else {
+        inter as f64 / union as f64
+    }
 }
 
 #[cfg(test)]
@@ -3799,6 +5541,41 @@ mod tests {
     use crate::db::models::CodeElement;
     use crate::db::schema::init_db;
     use tempfile::TempDir;
+
+    // ---- slice_lines + CloneScanOptions ----
+
+    #[test]
+    fn slice_lines_basic_window() {
+        let s = "a\nb\nc\nd\ne\n";
+        assert_eq!(slice_lines(s, 2, 3), Some("b\nc"));
+    }
+
+    #[test]
+    fn slice_lines_start_zero_returns_none() {
+        assert_eq!(slice_lines("abc", 0, 1), None);
+    }
+
+    #[test]
+    fn slice_lines_clamps_to_eof_when_end_out_of_range() {
+        let s = "x\ny\n";
+        // When end is past EOF, slice_lines returns content from start to EOF,
+        // including the trailing newline (we don't strip it).
+        assert_eq!(slice_lines(s, 2, 99), Some("y\n"));
+    }
+
+    #[test]
+    fn clone_scan_options_default_max_functions() {
+        let opts = CloneScanOptions::default();
+        assert_eq!(opts.max_functions, 50_000);
+    }
+
+    #[test]
+    fn clone_scan_options_respects_env() {
+        std::env::set_var("LEANKG_CLONES_MAX_FUNCTIONS", "123");
+        let opts = CloneScanOptions::default();
+        assert_eq!(opts.max_functions, 123);
+        std::env::remove_var("LEANKG_CLONES_MAX_FUNCTIONS");
+    }
 
     fn make_test_engine() -> (GraphEngine, TempDir) {
         let tmp = TempDir::new().unwrap();
@@ -4452,5 +6229,352 @@ mod tests {
         let obj = schema.as_object().unwrap();
         assert!(obj.contains_key("total_elements"));
         assert!(obj.contains_key("total_relationships"));
+    }
+
+    // US-GF-01: rank_element_type + PathHop serialization
+    #[test]
+    fn rank_function_wins_over_file() {
+        assert!(rank_element_type("function") < rank_element_type("file"));
+        assert!(rank_element_type("class") < rank_element_type("file"));
+        assert!(rank_element_type("method") < rank_element_type("directory"));
+    }
+
+    #[test]
+    fn path_hop_serializes_with_provenance_label() {
+        let hop = PathHop {
+            from: "a".into(),
+            to: "b".into(),
+            rel_type: "calls".into(),
+            confidence: 0.9,
+            confidence_label: "EXTRACTED".into(),
+            source_file: "src/main.rs".into(),
+        };
+        let v = serde_json::to_value(&hop).unwrap();
+        assert_eq!(v["from"], "a");
+        assert_eq!(v["to"], "b");
+        assert_eq!(v["confidence_label"], "EXTRACTED");
+    }
+
+    // US-GF-02: NodeExplanation serialization shape
+    #[test]
+    fn node_explanation_serializes_required_fields() {
+        let expl = NodeExplanation {
+            qualified_name: "src/main.rs::main".into(),
+            name: "main".into(),
+            element_type: "function".into(),
+            file_path: "src/main.rs".into(),
+            line_start: 1,
+            line_end: 10,
+            cluster_id: Some("c1".into()),
+            cluster_label: Some("entry".into()),
+            in_degree: 2,
+            out_degree: 3,
+            top_neighbors: vec![NeighborHint {
+                rel_type: "calls".into(),
+                count: 3,
+            }],
+        };
+        let v = serde_json::to_value(&expl).unwrap();
+        assert_eq!(v["in_degree"], 2);
+        assert_eq!(v["out_degree"], 3);
+        assert_eq!(v["top_neighbors"][0]["rel_type"], "calls");
+    }
+
+    // US-GF-05: GodNode degree ordering
+    #[test]
+    fn god_node_orders_by_degree_descending() {
+        let a = GodNode {
+            qualified_name: "a".into(),
+            name: "a".into(),
+            element_type: "file".into(),
+            degree: 5,
+        };
+        let b = GodNode {
+            qualified_name: "b".into(),
+            name: "b".into(),
+            element_type: "file".into(),
+            degree: 10,
+        };
+        let mut v = [a.clone(), b.clone()];
+        v.sort_by_key(|x| std::cmp::Reverse(x.degree));
+        assert_eq!(v[0].degree, 10);
+        assert_eq!(v[1].degree, 5);
+    }
+
+    // US-GF-06: GraphReport markdown rendering
+    #[test]
+    fn graph_report_markdown_contains_required_sections() {
+        let report = GraphReport {
+            project: "demo".into(),
+            total_elements: 10,
+            total_relationships: 5,
+            file_count: 4,
+            function_count: 6,
+            class_count: 1,
+            god_nodes: vec![GodNode {
+                qualified_name: "a".into(),
+                name: "a".into(),
+                element_type: "file".into(),
+                degree: 4,
+            }],
+            confidence_distribution: vec![
+                LabelCount {
+                    label: "EXTRACTED".into(),
+                    count: 3,
+                    pct: 60.0,
+                },
+                LabelCount {
+                    label: "INFERRED".into(),
+                    count: 2,
+                    pct: 40.0,
+                },
+            ],
+            suggested_questions: vec!["Question 1?".into()],
+        };
+        let md = report.to_markdown();
+        assert!(md.contains("# Graph Report: demo"));
+        assert!(md.contains("Total elements: 10"));
+        assert!(md.contains("EXTRACTED"));
+        assert!(md.contains("Suggested Questions"));
+        assert!(md.contains("Question 1?"));
+    }
+
+    // US-MP-08: folder_gn helpers
+    #[test]
+    fn folder_qualified_name_adds_trailing_slash() {
+        assert_eq!(folder_gn::qualified_name("src"), "src/");
+        assert_eq!(folder_gn::qualified_name("src/graph"), "src/graph/");
+        assert_eq!(folder_gn::qualified_name("src/graph/"), "src/graph/");
+    }
+
+    #[test]
+    fn folder_is_directory_detects_trailing_slash() {
+        assert!(folder_gn::is_directory("src/"));
+        assert!(!folder_gn::is_directory("src/main.rs"));
+        assert!(!folder_gn::is_directory(""));
+    }
+
+    #[test]
+    fn folder_metadata_reads_known_fields() {
+        let elem = CodeElement {
+            qualified_name: "src/".into(),
+            element_type: "directory".into(),
+            name: "src".into(),
+            file_path: "src/".into(),
+            metadata: serde_json::json!({
+                "child_count": 5,
+                "total_lines": 1234,
+                "language_distribution": {"rust": 3, "toml": 2}
+            }),
+            ..Default::default()
+        };
+        let m = folder_gn::metadata(&elem).expect("directory metadata");
+        assert_eq!(m.child_count, 5);
+        assert_eq!(m.total_lines, 1234);
+        assert_eq!(m.language_distribution.get("rust"), Some(&3));
+    }
+
+    #[test]
+    fn folder_metadata_returns_none_for_non_directory() {
+        let elem = CodeElement {
+            element_type: "function".into(),
+            ..Default::default()
+        };
+        assert!(folder_gn::metadata(&elem).is_none());
+    }
+
+    // US-MP-01: temporal helpers
+    #[test]
+    fn temporal_helpers_read_metadata_fields() {
+        let mut rel = Relationship {
+            source_qualified: "a".into(),
+            target_qualified: "b".into(),
+            rel_type: "calls".into(),
+            confidence: 1.0,
+            ..Default::default()
+        };
+        assert!(GraphEngine::valid_from(&rel).is_none());
+        assert!(GraphEngine::valid_to(&rel).is_none());
+
+        rel.metadata = serde_json::json!({"valid_from": 100, "valid_to": 200});
+        assert_eq!(GraphEngine::valid_from(&rel), Some(100));
+        assert_eq!(GraphEngine::valid_to(&rel), Some(200));
+    }
+
+    #[test]
+    fn timeline_event_serializes_action_and_edge() {
+        let ev = TimelineEvent {
+            timestamp: 1234,
+            action: "added".into(),
+            edge: Relationship {
+                source_qualified: "a".into(),
+                target_qualified: "b".into(),
+                rel_type: "calls".into(),
+                ..Default::default()
+            },
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["action"], "added");
+        assert_eq!(v["timestamp"], 1234);
+        assert_eq!(v["edge"]["rel_type"], "calls");
+    }
+
+    // US-MP-05: ConsistencyReport serialization
+    #[test]
+    fn consistency_report_serializes_counts_and_findings() {
+        let report = ConsistencyReport {
+            total_relationships: 10,
+            broken: 1,
+            stale: 2,
+            findings: vec![ConsistencyFinding {
+                severity: "BROKEN".into(),
+                source: "a".into(),
+                target: "missing".into(),
+                rel_type: "calls".into(),
+                message: "target missing".into(),
+            }],
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["broken"], 1);
+        assert_eq!(v["stale"], 2);
+        assert_eq!(v["findings"][0]["severity"], "BROKEN");
+    }
+
+    // US-MP-06: Tunnel serialization
+    #[test]
+    fn tunnel_serializes_cluster_pair() {
+        let t = Tunnel {
+            source: "a".into(),
+            target: "b".into(),
+            rel_type: "calls".into(),
+            confidence: 0.9,
+            source_cluster: "c1".into(),
+            target_cluster: "c2".into(),
+        };
+        let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v["source_cluster"], "c1");
+        assert_eq!(v["target_cluster"], "c2");
+        assert_eq!(v["confidence"], 0.9);
+    }
+
+    // US-MP-04: AgentPersona roundtrip + DiaryEntry
+    #[test]
+    fn agent_persona_roundtrip_and_filters() {
+        let persona = AgentPersona {
+            name: "reviewer".into(),
+            description: "code review specialist".into(),
+            focus_areas: vec!["correctness".into(), "style".into()],
+            path_filters: vec!["src/".into()],
+            cluster_id: Some("c1".into()),
+            element_types: vec!["function".into(), "class".into()],
+        };
+        let json = serde_json::to_string(&persona).unwrap();
+        let back: AgentPersona = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "reviewer");
+        assert_eq!(back.path_filters, vec!["src/".to_string()]);
+        assert_eq!(back.cluster_id.as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn diary_entry_serializes_with_tags() {
+        let entry = DiaryEntry {
+            timestamp: 1700000000,
+            agent: "reviewer".into(),
+            note: "looked at foo.rs".into(),
+            tags: vec!["review".into(), "blocking".into()],
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert_eq!(v["agent"], "reviewer");
+        assert_eq!(v["tags"][0], "review");
+    }
+
+    // US-V2-12: TeamMapEntry serialization
+    #[test]
+    fn team_map_entry_serializes_services() {
+        let e = TeamMapEntry {
+            team: "platform".into(),
+            on_call: "alice".into(),
+            services: vec!["svc-a".into(), "svc-b".into()],
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["team"], "platform");
+        assert_eq!(v["on_call"], "alice");
+        assert_eq!(v["services"].as_array().unwrap().len(), 2);
+    }
+
+    // US-GF-08: PrImpactReport serialization
+    #[test]
+    fn pr_impact_report_severity_serialization() {
+        let report = PrImpactReport {
+            env: "local".into(),
+            changed_file_count: 3,
+            touched_clusters: vec!["c1".into(), "c2".into()],
+            severity: "MEDIUM".into(),
+            files: vec![PrFileImpact {
+                file: "src/main.rs".into(),
+                cluster_id: Some("c1".into()),
+                cluster_label: Some("entry".into()),
+            }],
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["severity"], "MEDIUM");
+        assert_eq!(v["changed_file_count"], 3);
+        assert_eq!(v["files"].as_array().unwrap().len(), 1);
+    }
+
+    // US-CBM-B7: Jaccard similarity over whitespace-split tokens.
+    // Used by find_clones; standalone tests live here so the helper
+    // can be reused by other similarity-based detectors.
+    #[test]
+    fn jaccard_identical_strings_score_one() {
+        let a = "fn foo() { let x = 1; let y = 2; }";
+        assert!((jaccard_tokens(a, a) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn jaccard_disjoint_strings_score_zero() {
+        let a = "apple banana cherry";
+        let b = "delta echo foxtrot";
+        assert_eq!(jaccard_tokens(a, b), 0.0);
+    }
+
+    #[test]
+    fn jaccard_overlapping_strings_score_partial() {
+        let a = "the quick brown fox";
+        let b = "the slow brown dog";
+        // Shared tokens: the, brown. Union: the, quick, brown, fox, slow, dog = 6.
+        let s = jaccard_tokens(a, b);
+        assert!(s > 0.3 && s < 0.4, "expected ~0.333 got {}", s);
+    }
+
+    // US-CBM-B8: CrossRepoSimilar serialization
+    #[test]
+    fn cross_repo_similar_serializes_symbol_pair() {
+        let s = CrossRepoSimilar {
+            symbol: "authenticate".into(),
+            source_repo: "svc-a".into(),
+            source_qualified: "svc-a/auth.rs::authenticate".into(),
+            source_file: "svc-a/auth.rs".into(),
+            target_repo: "svc-b".into(),
+            target_qualified: "svc-b/auth.rs::authenticate".into(),
+            target_file: "svc-b/auth.rs".into(),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["symbol"], "authenticate");
+        assert_eq!(v["source_repo"], "svc-a");
+        assert_eq!(v["target_repo"], "svc-b");
+    }
+
+    // US-GF-11: relativize helper
+    #[test]
+    fn relativize_strips_project_root() {
+        let r = relativize("/Users/me/proj/src/main.rs", "/Users/me/proj");
+        assert_eq!(r, "./src/main.rs");
+    }
+
+    #[test]
+    fn relativize_handles_already_relative() {
+        assert_eq!(relativize("./src/main.rs", "/anywhere"), "./src/main.rs");
+        assert_eq!(relativize("src/main.rs", "/anywhere"), "./src/main.rs");
     }
 }

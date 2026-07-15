@@ -17,6 +17,24 @@ LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first
 
 ---
 
+## Semantic Discovery (v3.6.2 — CozoDB HNSW preferred)
+
+When the binary was built with `--features embeddings` AND the embedding
+index has been built (`leankg embed` after `leankg index`), prefer the
+**HNSW-backed** vector retrieval tools. They return semantically similar
+code, ontology nodes, and graph context, ranked by cross-encoder rerank:
+
+1. `kg_semantic_context(query="...", env="local")` — best for natural-language questions ("where do we validate access rights", "how does the refund flow work"). Returns ranked seed nodes + 1-2 hop graph context.
+2. `semantic_search(query="...", limit=20, offset=0)` — paginated ontology+HNSW fallback; pagination is the safe default on mega-graphs.
+
+If `kg_semantic_context` returns "No embedded vectors found", fall back
+to the ontology layer:
+
+3. `kg_context(query="...")` — ontology-aware concept expansion (no embeddings required).
+4. `search_code(query="...")` / `find_function(name="...")` — bounded name search.
+
+---
+
 ## Tool Selection Flowchart
 
 ```
@@ -169,6 +187,10 @@ pub struct ToolHandler {
     db_path: std::path::PathBuf,
     orchestrator: QueryOrchestrator,
     session_cache: std::sync::Arc<parking_lot::RwLock<crate::compress::SessionCache>>,
+    /// US-CBM-C2 / FR-C02: hot-path cache for high-frequency MCP tools
+    /// (search, find_function, get_architecture, get_graph_schema,
+    /// find_dead_code). Keyed by (tool, args-json) with 60s TTL.
+    hot_cache: std::sync::Arc<parking_lot::RwLock<crate::graph::cache::TimedCache<String, Value>>>,
 }
 
 impl ToolHandler {
@@ -179,6 +201,9 @@ impl ToolHandler {
             orchestrator: QueryOrchestrator::with_persistence(graph_engine),
             session_cache: std::sync::Arc::new(parking_lot::RwLock::new(
                 crate::compress::SessionCache::new(),
+            )),
+            hot_cache: std::sync::Arc::new(parking_lot::RwLock::new(
+                crate::graph::cache::TimedCache::new(60, 256),
             )),
         }
     }
@@ -209,6 +234,11 @@ impl ToolHandler {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
+        // Reset the GC idle timer so the daemon's memory-pressure
+        // watchdog only fires when the process has truly gone
+        // quiet. The touch is cheap (one atomic store).
+        crate::gc::MemoryGuard::touch();
+
         let result = match tool_name {
             "mcp_init" => self.mcp_init(arguments),
             "mcp_index" => self.mcp_index(arguments).await,
@@ -226,6 +256,26 @@ impl ToolHandler {
             "ctx_read" => self.ctx_read(arguments),
             "orchestrate" => self.orchestrate_tool(arguments),
             "find_function" => self.find_function(arguments),
+            "explain_node" => self.explain_node(arguments),
+            "get_god_nodes" => self.get_god_nodes(arguments),
+            "load_layer" => self.load_layer(arguments),
+            "temporal_query" => self.temporal_query(arguments),
+            "check_consistency" => self.check_consistency(arguments),
+            "timeline" => self.timeline(arguments),
+            "find_tunnels" => self.find_tunnels(arguments),
+            "resolve_with_lsp" => self.resolve_with_lsp(arguments),
+            "get_cluster_skill" => self.get_cluster_skill(arguments),
+            "agent_focus" => self.agent_focus(arguments),
+            "agent_diary_write" => self.agent_diary_write(arguments),
+            "agent_diary_read" => self.agent_diary_read(arguments),
+            "report_query_outcome" => self.report_query_outcome(arguments),
+            "get_team_map" => self.get_team_map(arguments),
+            "get_overview_context" => self.get_overview_context(arguments),
+            "get_pr_impact" => self.get_pr_impact(arguments),
+            "find_clones" => self.find_clones(arguments),
+            "export_graph_snapshot" => self.export_graph_snapshot(arguments),
+            "get_graph_report" => self.get_graph_report(arguments),
+            "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
@@ -741,6 +791,24 @@ impl ToolHandler {
         Ok(json!({
             "message": "Hello, World!"
         }))
+    }
+
+    /// US-CBM-C2 / FR-C02: hot-path result cache for high-frequency
+    /// MCP tools. Wraps an LRU TimedCache keyed by `(tool, args)`.
+    /// Default 60s TTL, 256 entries. Cache is invalidated on every
+    /// successful index via `invalidate_hot_cache` (see write tracker).
+    fn hot_cache_get(&self, tool: &str, key_suffix: &str) -> Option<Value> {
+        let key = format!("{}:{}", tool, key_suffix);
+        self.hot_cache.read().get(&key)
+    }
+
+    fn hot_cache_put(&self, tool: &str, key_suffix: &str, value: Value) {
+        let key = format!("{}:{}", tool, key_suffix);
+        self.hot_cache.write().insert(key, value);
+    }
+
+    pub fn invalidate_hot_cache(&self) {
+        self.hot_cache.write().clear();
     }
 
     fn mcp_impact(&self, args: &Value) -> Result<Value, String> {
@@ -1349,7 +1417,9 @@ impl ToolHandler {
 
     fn find_function(&self, args: &Value) -> Result<Value, String> {
         let name = args["name"].as_str().ok_or("Missing 'name' parameter")?;
-
+        if let Some(v) = self.hot_cache_get("find_function", name) {
+            return Ok(v);
+        }
         let elements = self
             .graph_engine
             .search_by_name_typed(name, Some("function"), 50)
@@ -1369,7 +1439,440 @@ impl ToolHandler {
             })
             .collect();
 
-        Ok(json!({ "functions": matches }))
+        let value = json!({ "functions": matches });
+        self.hot_cache_put("find_function", name, value.clone());
+        Ok(value)
+    }
+
+    fn shortest_path(&self, args: &Value) -> Result<Value, String> {
+        let source = args["source"]
+            .as_str()
+            .ok_or("Missing 'source' parameter")?;
+        let target = args["target"]
+            .as_str()
+            .ok_or("Missing 'target' parameter")?;
+        let max_hops = args["max_hops"].as_u64().unwrap_or(6) as usize;
+
+        let result = self
+            .graph_engine
+            .shortest_path(source, target, max_hops)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "found": result.is_some(),
+            "result": result,
+        }))
+    }
+
+    fn explain_node(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name' parameter")?;
+        let explanation = self
+            .graph_engine
+            .explain_node(name)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "found": explanation.is_some(),
+            "explanation": explanation,
+        }))
+    }
+
+    fn get_god_nodes(&self, args: &Value) -> Result<Value, String> {
+        let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+        let exclude = args["exclude_hubs_percentile"].as_u64().map(|v| v as u8);
+        let nodes = self
+            .graph_engine
+            .get_god_nodes(limit, exclude)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "count": nodes.len(),
+            "nodes": nodes,
+        }))
+    }
+
+    fn get_graph_report(&self, args: &Value) -> Result<Value, String> {
+        let project_name = args["project_name"].as_str().unwrap_or("project");
+        let format = args["format"].as_str().unwrap_or("markdown");
+        let report = self
+            .graph_engine
+            .generate_graph_report(project_name)
+            .map_err(|e| e.to_string())?;
+        if format == "json" {
+            return Ok(json!({ "report": report }));
+        }
+        let markdown = report.to_markdown();
+        Ok(json!({
+            "report": report,
+            "markdown": markdown,
+        }))
+    }
+
+    fn temporal_query(&self, args: &Value) -> Result<Value, String> {
+        let at = args["at"].as_i64().ok_or("Missing 'at' (epoch seconds)")?;
+        let rels = self
+            .graph_engine
+            .temporal_query(at)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "at": at,
+            "count": rels.len(),
+            "relationships": rels,
+        }))
+    }
+
+    fn timeline(&self, args: &Value) -> Result<Value, String> {
+        let qn = args["qualified_name"]
+            .as_str()
+            .ok_or("Missing 'qualified_name'")?;
+        let events = self.graph_engine.timeline(qn).map_err(|e| e.to_string())?;
+        Ok(json!({
+            "qualified_name": qn,
+            "events": events,
+        }))
+    }
+
+    fn check_consistency(&self, _args: &Value) -> Result<Value, String> {
+        let report = self
+            .graph_engine
+            .check_consistency()
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "total_relationships": report.total_relationships,
+            "broken": report.broken,
+            "stale": report.stale,
+            "findings": report.findings,
+        }))
+    }
+
+    fn find_tunnels(&self, args: &Value) -> Result<Value, String> {
+        let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+        let mut tunnels = self
+            .graph_engine
+            .find_tunnels()
+            .map_err(|e| e.to_string())?;
+        tunnels.truncate(limit);
+        Ok(json!({
+            "count": tunnels.len(),
+            "tunnels": tunnels,
+        }))
+    }
+
+    fn agent_focus(&self, args: &Value) -> Result<Value, String> {
+        use crate::graph::query::AgentPersona;
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let dir = std::path::Path::new(project).join(".leankg").join("agents");
+        let path = dir.join(format!("{}.json", name));
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("persona {} not found: {}", name, e))?;
+        let persona: AgentPersona =
+            serde_json::from_str(&raw).map_err(|e| format!("invalid persona JSON: {}", e))?;
+        let focus = self
+            .graph_engine
+            .agent_focus(&persona)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "agent": focus.agent,
+            "element_count": focus.elements.len(),
+            "relationship_count": focus.relationships.len(),
+            "elements": focus.elements,
+            "relationships": focus.relationships,
+        }))
+    }
+
+    fn agent_diary_write(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let note = args["note"].as_str().ok_or("Missing 'note'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let tags: Vec<String> = args["tags"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let dir = std::path::Path::new(project).join(".leankg").join("agents");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let entry = serde_json::json!({
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+            "agent": name,
+            "note": note,
+            "tags": tags,
+        });
+        let path = dir.join(format!("{}.diary.jsonl", name));
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| e.to_string())?;
+        writeln!(f, "{}", entry).map_err(|e| e.to_string())?;
+        Ok(json!({ "written": true, "path": path.display().to_string() }))
+    }
+
+    fn agent_diary_read(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+        let project = args["project"].as_str().unwrap_or(".");
+        let path = std::path::Path::new(project)
+            .join(".leankg")
+            .join("agents")
+            .join(format!("{}.diary.jsonl", name));
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => return Ok(json!({ "entries": [] })),
+        };
+        let mut entries: Vec<serde_json::Value> = raw
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        if entries.len() > limit {
+            entries = entries.split_off(entries.len() - limit);
+        }
+        Ok(json!({ "count": entries.len(), "entries": entries }))
+    }
+
+    fn report_query_outcome(&self, args: &Value) -> Result<Value, String> {
+        let question = args["question"].as_str().ok_or("Missing 'question'")?;
+        let outcome = args["outcome"].as_str().ok_or("Missing 'outcome'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let nodes: Vec<String> = args["nodes"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let note = args["note"].as_str();
+        let project_path = std::path::Path::new(project);
+        GraphEngine::report_query_outcome(project_path, question, &nodes, outcome, note)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({ "recorded": true }))
+    }
+
+    fn get_team_map(&self, args: &Value) -> Result<Value, String> {
+        let env = args["env"].as_str().unwrap_or("local");
+        let teams = self
+            .graph_engine
+            .get_team_map(env)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "env": env,
+            "count": teams.len(),
+            "teams": teams,
+        }))
+    }
+
+    /// US-GN-08: Aggregate wake_up + L0 identity + L1 critical facts
+    /// into a single resource-like MCP response that an agent can
+    /// consume at session start. Equivalent to MCP Resources for
+    /// overview context (leankg-mcp doesn't currently expose the
+    /// RMCP resources API; this provides the same ergonomics via a
+    /// tool call).
+    fn get_overview_context(&self, args: &Value) -> Result<Value, String> {
+        let project_name = args["project_name"].as_str().unwrap_or("project");
+        let l0 = self
+            .graph_engine
+            .identity_context(project_name)
+            .unwrap_or_default();
+        let l1 = self
+            .graph_engine
+            .critical_facts_context()
+            .unwrap_or_default();
+        let wake = self
+            .graph_engine
+            .wake_up_summary()
+            .unwrap_or_else(|e| format!("LeanKG project (wake_up error: {})", e));
+        Ok(json!({
+            "project": project_name,
+            "l0_identity": l0,
+            "l1_critical_facts": l1,
+            "wake_up": wake,
+        }))
+    }
+
+    fn resolve_with_lsp(&self, args: &Value) -> Result<Value, String> {
+        use crate::lsp::{LspBridge, LspRequest};
+        let language = args["language"]
+            .as_str()
+            .ok_or("Missing 'language' parameter")?;
+        let file_path = args["file_path"]
+            .as_str()
+            .ok_or("Missing 'file_path' parameter")?;
+        let line = args["line"].as_u64().unwrap_or(0) as u32;
+        let character = args["character"].as_u64().unwrap_or(0) as u32;
+        let request_str = args["request"].as_str().unwrap_or("definition");
+        let project_root = args["project"].as_str().unwrap_or(".");
+
+        let request = match request_str {
+            "references" => LspRequest::References,
+            "hover" => LspRequest::Hover,
+            _ => LspRequest::Definition,
+        };
+
+        // Build the bridge from <project>/leankg.yaml if it exists,
+        // otherwise use defaults.
+        let config_path = std::path::Path::new(project_root).join("leankg.yaml");
+        let bridge = LspBridge::from_leankg_yaml_or_default(&config_path);
+        let result = bridge.resolve(
+            language,
+            std::path::Path::new(file_path),
+            line,
+            character,
+            request,
+        );
+        match result {
+            Ok(Some(locations)) => Ok(json!({
+                "found": true,
+                "language": language,
+                "request": request_str,
+                "locations": locations,
+            })),
+            Ok(None) => Ok(json!({
+                "found": false,
+                "language": language,
+                "request": request_str,
+                "reason": "no LSP server configured for this language (caller should fall back to tree-sitter typed resolve)",
+            })),
+            Err(e) => Ok(json!({
+                "found": false,
+                "error": e,
+                "language": language,
+                "request": request_str,
+            })),
+        }
+    }
+
+    fn get_pr_impact(&self, args: &Value) -> Result<Value, String> {
+        let files: Vec<String> = args["files"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let env = args["env"].as_str().unwrap_or("local");
+        let report = self
+            .graph_engine
+            .pr_impact(&files, env)
+            .map_err(|e| e.to_string())?;
+        let value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        Ok(value)
+    }
+
+    fn find_clones(&self, args: &Value) -> Result<Value, String> {
+        let threshold = args["threshold"].as_f64().unwrap_or(0.6);
+        let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+        let pairs = self
+            .graph_engine
+            .find_clones(threshold, limit)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "count": pairs.len(),
+            "threshold": threshold,
+            "pairs": pairs,
+        }))
+    }
+
+    fn export_graph_snapshot(&self, args: &Value) -> Result<Value, String> {
+        let out_path = args["out_path"]
+            .as_str()
+            .unwrap_or(".leankg/graph-snapshot.json");
+        let project = args["project"].as_str().unwrap_or(".");
+        let out = std::path::Path::new(out_path);
+        let written = self
+            .graph_engine
+            .export_snapshot(std::path::Path::new(project), out)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "written": written,
+            "path": out.display().to_string(),
+        }))
+    }
+
+    fn load_layer(&self, args: &Value) -> Result<Value, String> {
+        let layer = args["layer"].as_str().unwrap_or("L0");
+        let project_name = args["project_name"].as_str().unwrap_or("project");
+        match layer {
+            "L0" => {
+                let text = self
+                    .graph_engine
+                    .identity_context(project_name)
+                    .map_err(|e| e.to_string())?;
+                // Persist for next session to skip regeneration.
+                let project = args["project"].as_str().unwrap_or(".");
+                let path = std::path::Path::new(project)
+                    .join(".leankg")
+                    .join("identity.md");
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&path, &text);
+                Ok(json!({ "layer": "L0", "context": text }))
+            }
+            "L1" => {
+                let text = self
+                    .graph_engine
+                    .critical_facts_context()
+                    .map_err(|e| e.to_string())?;
+                let project = args["project"].as_str().unwrap_or(".");
+                let path = std::path::Path::new(project)
+                    .join(".leankg")
+                    .join("critical_facts.md");
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&path, &text);
+                Ok(json!({ "layer": "L1", "context": text }))
+            }
+            "L2" => {
+                let cluster_id = args["cluster_id"]
+                    .as_str()
+                    .ok_or("L2 requires cluster_id")?;
+                let elements = self
+                    .graph_engine
+                    .all_elements()
+                    .map_err(|e| e.to_string())?;
+                let members: Vec<_> = elements
+                    .into_iter()
+                    .filter(|e| e.cluster_id.as_deref() == Some(cluster_id))
+                    .take(args["limit"].as_u64().unwrap_or(20) as usize)
+                    .map(|e| {
+                        json!({
+                            "qualified_name": e.qualified_name,
+                            "element_type": e.element_type,
+                            "name": e.name,
+                        })
+                    })
+                    .collect();
+                Ok(json!({ "layer": "L2", "cluster_id": cluster_id, "members": members }))
+            }
+            "L3" => {
+                let query = args["query"].as_str().ok_or("L3 requires query")?;
+                let _limit = args["limit"].as_u64().unwrap_or(20) as usize;
+                let elements = self
+                    .graph_engine
+                    .search_by_name(query)
+                    .map_err(|e| e.to_string())?;
+                let hits: Vec<_> = elements
+                    .into_iter()
+                    .map(|e| {
+                        json!({
+                            "qualified_name": e.qualified_name,
+                            "element_type": e.element_type,
+                            "name": e.name,
+                            "file": e.file_path,
+                        })
+                    })
+                    .collect();
+                Ok(json!({ "layer": "L3", "query": query, "results": hits }))
+            }
+            other => Err(format!("Unknown layer: {}", other)),
+        }
     }
 
     fn get_callers(&self, args: &Value) -> Result<Value, String> {
@@ -1650,6 +2153,16 @@ impl ToolHandler {
         let env = args["env"].as_str().unwrap_or("local");
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
+
+        // FR-HNSW-D: when the embeddings feature is on AND an embedding
+        // index exists, route through CozoDB HNSW (BGE-small-en-v1.5) →
+        // cross-encoder rerank → graph traverse. Falls back to the
+        // ontology-first path when embeddings are not built (no index
+        // rows), so the tool stays useful on slim installs.
+        #[cfg(feature = "embeddings")]
+        if embeddings_index_available(self.graph_engine.db()) {
+            return run_hnsw_semantic_search(&self.graph_engine, query, env, limit, offset);
+        }
 
         // Always ontology-first + paginated — never load env-wide element dumps.
         let page = crate::ontology::safe_discover::discover(
@@ -2061,6 +2574,7 @@ impl ToolHandler {
         use crate::graph::clustering::{Cluster, CommunityDetector};
 
         let limit = args["limit"].as_i64().unwrap_or(100) as usize;
+        let _skill_format = args["skill_format"].as_str().unwrap_or("none");
 
         // Guard: refuse clustering on huge graphs to avoid OOM.
         // Louvain over 600k nodes pushed RSS to 5.64 GiB / 6 GiB (94%).
@@ -2468,6 +2982,111 @@ impl ToolHandler {
                 Err("Cluster not found. Try get_clusters to see available cluster IDs.".to_string())
             }
         }
+    }
+
+    /// US-GN-07 / Cluster-level SKILL.md generator. Builds a per-cluster
+    /// SKILL.md summary including label, member count, top files, key
+    /// entry points, and usage hints. Useful when an agent's context
+    /// is scoped to a single cluster.
+    fn get_cluster_skill(&self, args: &Value) -> Result<Value, String> {
+        use crate::graph::clustering::CommunityDetector;
+
+        let cluster_id = args["cluster_id"].as_str().ok_or("Missing 'cluster_id'")?;
+
+        let detector = CommunityDetector::new(self.graph_engine.db());
+        let clusters = detector
+            .detect_communities()
+            .map_err(|e| format!("Failed to detect clusters: {}", e))?;
+        let cluster = clusters
+            .get(cluster_id)
+            .cloned()
+            .ok_or_else(|| format!("Cluster {} not found", cluster_id))?;
+
+        let elements = self
+            .graph_engine
+            .all_elements()
+            .map_err(|e| e.to_string())?;
+        let rels = self
+            .graph_engine
+            .all_relationships()
+            .map_err(|e| e.to_string())?;
+
+        let member_set: std::collections::HashSet<String> =
+            cluster.members.iter().cloned().collect();
+        let member_elements: Vec<_> = elements
+            .iter()
+            .filter(|e| member_set.contains(&e.qualified_name))
+            .collect();
+
+        // Top files by member count
+        let mut file_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for e in &member_elements {
+            *file_counts.entry(e.file_path.clone()).or_insert(0) += 1;
+        }
+        let mut top_files: Vec<(String, usize)> = file_counts.into_iter().collect();
+        top_files.sort_by_key(|f| std::cmp::Reverse(f.1));
+        top_files.truncate(5);
+
+        // Entry points: members with inbound edges from outside the cluster
+        let entry_points: Vec<String> = member_elements
+            .iter()
+            .filter(|e| {
+                rels.iter().any(|r| {
+                    r.target_qualified == e.qualified_name
+                        && !member_set.contains(&r.source_qualified)
+                })
+            })
+            .take(5)
+            .map(|e| e.qualified_name.clone())
+            .collect();
+
+        let mut md = String::new();
+        md.push_str(&format!(
+            "# SKILL: {} ({})\n\n",
+            if cluster.label.is_empty() {
+                "(unlabeled)"
+            } else {
+                cluster.label.as_str()
+            },
+            cluster.id
+        ));
+        md.push_str(&format!(
+            "Cluster with **{}** members.\n\n",
+            cluster.members.len()
+        ));
+        if !top_files.is_empty() {
+            md.push_str("## Top files\n\n");
+            for (f, c) in &top_files {
+                md.push_str(&format!("- `{}` ({} elements)\n", f, c));
+            }
+            md.push('\n');
+        }
+        if !cluster.representative_files.is_empty() {
+            md.push_str("## Representative files\n\n");
+            for f in &cluster.representative_files {
+                md.push_str(&format!("- `{}`\n", f));
+            }
+            md.push('\n');
+        }
+        if !entry_points.is_empty() {
+            md.push_str("## Entry points\n\n");
+            for e in &entry_points {
+                md.push_str(&format!("- `{}`\n", e));
+            }
+            md.push('\n');
+        }
+        md.push_str("## Usage hints\n\n");
+        md.push_str(
+            "- Use `search_code` scoped to one of the top files to find related symbols.\n",
+        );
+        md.push_str("- Use `explain_node` on an entry point to get cluster-level context.\n");
+        md.push_str("- Use `find_tunnels` and filter by source_cluster/target_cluster to see cross-cluster edges.\n");
+
+        Ok(json!({
+            "cluster_id": cluster.id,
+            "markdown": md,
+        }))
     }
 
     // ========================================================================
@@ -3056,7 +3675,7 @@ impl ToolHandler {
         let do_traverse = args["traverse"].as_bool().unwrap_or(true);
         let include_worktrees = args["include_worktrees"].as_bool().unwrap_or(false);
         let debug = args["debug"].as_bool().unwrap_or(false);
-        let project = args["project"].as_str().unwrap_or(".");
+        let _project = args["project"].as_str().unwrap_or(".");
 
         // Vectors live in CozoDB now; freshness check is a state-table count.
         let has_vectors = crate::embeddings::state::list_all(self.graph_engine.db())
@@ -3356,6 +3975,89 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
     }
 
     doc
+}
+
+// --- FR-HNSW-D: HNSW-backed `semantic_search` dispatch helpers ----------
+//
+// `semantic_search` historically runs an ontology-first discover and never
+// touches the embedding index. With the `embeddings` feature on and an
+// index built (`leankg embed`), we want to upgrade it in place so that
+// "natural-language → ranked code" is the default first tool an agent
+// reaches for (US-CBM-C1 / FR-HNSW-D). These helpers decide whether to
+// take the HNSW fast path and run it.
+
+#[cfg(feature = "embeddings")]
+fn embeddings_index_available(db: &crate::db::schema::CozoDb) -> bool {
+    // Cheap check: any non-empty row in `embedding_vectors` means an
+    // embedding index exists for this DB. Avoids spinning up the embedder
+    // when no `leankg embed` has been run yet.
+    crate::embeddings::state::list_all(db)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "embeddings")]
+fn run_hnsw_semantic_search(
+    engine: &GraphEngine,
+    query: &str,
+    env: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Value, String> {
+    use crate::retrieval::{RetrieveOptions, SemanticRetrievalPipeline};
+
+    // top_k must be ≥ limit + offset so pagination has headroom.
+    let top_k = (limit + offset).max(50);
+    let opts = RetrieveOptions {
+        env: Some(env.to_string()),
+        ann_top_k: Some(top_k),
+        rerank_top_n: top_k,
+        include_worktrees: false,
+        include_ontology_steps: false,
+        embeddings_stale: false,
+    };
+
+    let pipeline = SemanticRetrievalPipeline::new(engine.db().clone())
+        .map_err(|e| format!("Failed to init HNSW pipeline: {}", e))?;
+    let retrieval = pipeline
+        .retrieve(query, &opts)
+        .map_err(|e| format!("HNSW retrieve failed: {}", e))?;
+
+    let seeds_json: Vec<Value> = retrieval
+        .seeds
+        .iter()
+        .map(|s| {
+            json!({
+                "qualified_name": s.qualified_name,
+                "element_type": s.element_type,
+                "file_path": s.file_path,
+                "env": s.env,
+                "ann_distance": s.ann_distance,
+                "rerank_score": s.rerank_score,
+            })
+        })
+        .collect();
+
+    let total_estimate = seeds_json.len();
+    let page: Vec<Value> = seeds_json.into_iter().skip(offset).take(limit).collect();
+    let has_more = offset + page.len() < total_estimate;
+
+    Ok(json!({
+        "query": query,
+        "env": env,
+        "limit": limit,
+        "offset": offset,
+        "method": "hnsw+rerank",
+        "results": page,
+        "total_estimate": total_estimate,
+        "has_more": has_more,
+        "ann_candidate_count": retrieval.ann_candidate_count,
+        "ann_top_k_used": retrieval.ann_top_k_used,
+        "reranker_active": matches!(
+            retrieval.reranker_status,
+            crate::embeddings::RerankerStatus::Active
+        ),
+    }))
 }
 
 #[cfg(test)]

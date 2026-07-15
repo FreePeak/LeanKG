@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn test_detect_root_element_simple() {
         let content = r#"<root>content</root>"#;
-        let extractor = GenericXmlExtractor::new(content.as_bytes(), "test.xml");
+        let _extractor = GenericXmlExtractor::new(content.as_bytes(), "test.xml");
 
         // Manually call detect_root_element since it's private
         let root = GenericXmlExtractor::detect_root_element(content);

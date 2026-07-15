@@ -28,7 +28,6 @@ use crate::embeddings::{
     text_blob,
 };
 use crate::graph::query::GraphEngine;
-use cozo::DataValue;
 use std::path::PathBuf;
 
 /// CozoDB pest parser has stack-depth limits on `<~ [...]` literals; keep

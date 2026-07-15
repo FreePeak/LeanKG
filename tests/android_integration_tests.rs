@@ -98,7 +98,7 @@ fn test_dao_with_queries() {
         .filter(|r| r.rel_type == "room_dao_queries_entity")
         .collect();
     assert!(
-        !query_rels.is_empty() || daos.len() > 0,
+        !query_rels.is_empty() || !daos.is_empty(),
         "Should have DAO query relationships or DAOs present"
     );
 }
@@ -132,7 +132,7 @@ fn test_hilt_module_providers() {
     // Just verify extraction ran - don't hard assert on results while extractor is being refined
     // The module is an "object" not "class" which may need different handling
     assert!(
-        modules.len() > 0 || providers.len() > 0 || relationships.len() > 0,
+        !modules.is_empty() || !providers.is_empty() || !relationships.is_empty(),
         "Should extract something from Hilt module"
     );
 }
@@ -149,7 +149,7 @@ fn test_repository_with_inject() {
     let (_, relationships) = hilt_extractor.extract();
 
     // Should detect @Inject if present
-    let inject_rels: Vec<_> = relationships
+    let _inject_rels: Vec<_> = relationships
         .iter()
         .filter(|r| r.rel_type.contains("injected"))
         .collect();
@@ -233,7 +233,7 @@ fn test_cross_file_relationships() {
     assert!(!databases.is_empty(), "Should extract Room database");
 
     // Database should have relationships to entities
-    let db_entity_rels: Vec<_> = relationships
+    let _db_entity_rels: Vec<_> = relationships
         .iter()
         .filter(|r| r.rel_type == "room_database_contains_entity")
         .collect();

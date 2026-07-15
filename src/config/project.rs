@@ -51,6 +51,16 @@ pub struct ProjectSettings {
 pub struct IndexerConfig {
     pub exclude: Vec<String>,
     pub include: Vec<String>,
+    /// US-CBM-B10 / FR-B08: typed call resolution feature flag.
+    /// `off`     - never attempt typed resolve
+    /// `go,ts`   - attempt typed resolve only for Go and TypeScript
+    /// `all`     - attempt typed resolve for every supported language
+    #[serde(default = "default_typed_resolve")]
+    pub typed_resolve: String,
+}
+
+fn default_typed_resolve() -> String {
+    "off".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +77,50 @@ pub struct McpConfig {
 
 fn default_true() -> bool {
     true
+}
+
+/// US-CBM-B10 / FR-B08: Interpret the typed_resolve feature flag.
+/// Returns true when typed call resolution should be attempted for
+/// the given language.
+pub fn typed_resolve_enabled(setting: &str, language: &str) -> bool {
+    let s = setting.trim().to_lowercase();
+    match s.as_str() {
+        "off" | "" | "false" | "no" => false,
+        "all" | "true" | "yes" | "on" => true,
+        // CSV of language names: "go,ts,py". We also accept common
+        // aliases (ts -> typescript, js -> javascript, etc.) so the
+        // user's config is forgiving.
+        other => {
+            let aliases: &[(&str, &[&str])] = &[
+                (
+                    "typescript",
+                    &["ts", "tsx", "typescript", "javascript", "js", "jsx"],
+                ),
+                ("javascript", &["js", "jsx", "javascript"]),
+                ("python", &["py", "python"]),
+                ("rust", &["rs", "rust"]),
+                ("ruby", &["rb", "ruby"]),
+                ("csharp", &["cs", "csharp", "c#"]),
+            ];
+            let lang_lower = language.to_lowercase();
+            let mut accepted: std::collections::HashSet<String> = std::collections::HashSet::new();
+            accepted.insert(lang_lower.clone());
+            for (canonical, alias_list) in aliases {
+                if alias_list.iter().any(|a| *a == lang_lower) {
+                    accepted.insert(canonical.to_string());
+                }
+                if *canonical == lang_lower {
+                    for a in *alias_list {
+                        accepted.insert(a.to_string());
+                    }
+                }
+            }
+            other
+                .split(&[',', ' ', ';'][..])
+                .filter(|s| !s.is_empty())
+                .any(|s| accepted.contains(s) || s == "all")
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +178,7 @@ impl Default for ProjectConfig {
                     "*.kt".to_string(),
                     "*.xml".to_string(),
                 ],
+                typed_resolve: default_typed_resolve(),
             },
             mcp: McpConfig {
                 enabled: true,
@@ -187,5 +242,32 @@ mod tests {
         let config = ProjectConfig::default();
         assert_eq!(config.documentation.output, PathBuf::from("./docs"));
         assert_eq!(config.documentation.templates, vec!["agents", "claude"]);
+    }
+
+    // US-CBM-B10: typed_resolve flag
+    #[test]
+    fn typed_resolve_off_disables_all() {
+        for lang in &["go", "ts", "python", "rust"] {
+            assert!(!typed_resolve_enabled("off", lang));
+            assert!(!typed_resolve_enabled("", lang));
+            assert!(!typed_resolve_enabled("false", lang));
+        }
+    }
+
+    #[test]
+    fn typed_resolve_all_enables_all() {
+        for lang in &["go", "ts", "python", "rust"] {
+            assert!(typed_resolve_enabled("all", lang));
+            assert!(typed_resolve_enabled("on", lang));
+            assert!(typed_resolve_enabled("yes", lang));
+        }
+    }
+
+    #[test]
+    fn typed_resolve_csv_enables_listed_only() {
+        assert!(typed_resolve_enabled("go,ts", "go"));
+        assert!(typed_resolve_enabled("go,ts", "ts"));
+        assert!(!typed_resolve_enabled("go,ts", "python"));
+        assert!(!typed_resolve_enabled("go,ts", "rust"));
     }
 }

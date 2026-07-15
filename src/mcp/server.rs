@@ -415,7 +415,49 @@ impl MCPServer {
                         }
                     }
                     None => {
-                        tracing::debug!("Vacuum tick: engine not initialized yet, skipping");
+                        tracing::debug!("Vacuum tick: engine not initialized");
+                    }
+                }
+            }
+        });
+    }
+
+    /// Spawn a memory-pressure watchdog. Polls RSS every
+    /// `LEANKG_GC_POLL_SECS` (default 10) and runs the in-RAM
+    /// release callback when the daemon has been idle past
+    /// `LEANKG_GC_IDLE_AFTER_SECS` (default 60) or when RSS exceeds
+    /// `LEANKG_GC_MAX_RSS_MB` (default 4096).
+    fn spawn_gc_watchdog(&self) {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let graph_engine = self.graph_engine.clone();
+        tokio::spawn(async move {
+            let mut guard = crate::gc::MemoryGuard::new(Some(Box::new(move || {
+                let guard = graph_engine.lock();
+                if let Some(engine) = guard.as_ref() {
+                    // Drop the elements + relationships caches;
+                    // the engine will re-load on next request.
+                    engine.invalidate_cache();
+                }
+            })));
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if shutdown_flag.load(Ordering::SeqCst) {
+                    break;
+                }
+                match guard.tick() {
+                    crate::gc::GcAction::Skipped | crate::gc::GcAction::NoOp { .. } => {}
+                    crate::gc::GcAction::IdleTrim { idle_secs, rss_mb } => {
+                        tracing::info!(
+                            "GC watchdog: idle {}s, RSS {} MB - released in-RAM caches",
+                            idle_secs,
+                            rss_mb
+                        );
+                    }
+                    crate::gc::GcAction::ForceTrim { rss_mb } => {
+                        tracing::warn!(
+                            "GC watchdog: RSS {} MB exceeded cap; released in-RAM caches",
+                            rss_mb
+                        );
                     }
                 }
             }
@@ -463,6 +505,7 @@ impl MCPServer {
         // Background maintenance: periodically reclaim free pages via VACUUM.
         // See HLD §2.5 / PRD FR-10.
         self.spawn_vacuum_scheduler();
+        self.spawn_gc_watchdog();
 
         // Setup graceful shutdown for stdio mode
         let shutdown_flag = self.shutdown_flag.clone();
@@ -877,6 +920,7 @@ impl MCPServer {
         // Background maintenance: periodically reclaim free pages via VACUUM.
         // See HLD §2.5 / PRD FR-10.
         self.spawn_vacuum_scheduler();
+        self.spawn_gc_watchdog();
 
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),

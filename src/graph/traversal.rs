@@ -25,17 +25,40 @@ impl<'a> ImpactAnalyzer<'a> {
         depth: u32,
         min_confidence: f64,
     ) -> Result<ImpactResult, Box<dyn std::error::Error>> {
+        self.calculate_impact_radius_with_options(
+            start_file,
+            depth,
+            min_confidence,
+            &ImpactScanOptions::default(),
+        )
+    }
+
+    /// Like [`Self::calculate_impact_radius_with_confidence`] but with
+    /// explicit scan options. See [`ImpactScanOptions`] for the knobs.
+    pub fn calculate_impact_radius_with_options(
+        &self,
+        start_file: &str,
+        depth: u32,
+        min_confidence: f64,
+        opts: &ImpactScanOptions,
+    ) -> Result<ImpactResult, Box<dyn std::error::Error>> {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut affected_with_confidence: Vec<AffectedElementWithConfidence> = Vec::new();
         let mut seen_qualified: HashSet<String> = HashSet::new();
+        let mut guard = crate::budget::BudgetGuard::for_tool("calculate_impact_radius");
 
         queue.push_back((start_file.to_string(), 0));
         visited.insert(start_file.to_string());
 
+        let mut truncated = false;
         while let Some((current, current_depth)) = queue.pop_front() {
             if current_depth >= depth {
                 continue;
+            }
+            if affected_with_confidence.len() >= opts.max_affected {
+                truncated = true;
+                break;
             }
 
             let relationships = self.graph.get_relationships(&current)?;
@@ -60,6 +83,18 @@ impl<'a> ImpactAnalyzer<'a> {
                         });
                     }
                 }
+                guard.tick();
+                if guard.check().is_err() {
+                    truncated = true;
+                    break;
+                }
+                if affected_with_confidence.len() >= opts.max_affected {
+                    truncated = true;
+                    break;
+                }
+            }
+            if truncated {
+                break;
             }
 
             let dependents = self.graph.get_dependents(&current)?;
@@ -83,6 +118,18 @@ impl<'a> ImpactAnalyzer<'a> {
                         });
                     }
                 }
+                guard.tick();
+                if guard.check().is_err() {
+                    truncated = true;
+                    break;
+                }
+                if affected_with_confidence.len() >= opts.max_affected {
+                    truncated = true;
+                    break;
+                }
+            }
+            if truncated {
+                break;
             }
         }
 
@@ -96,7 +143,26 @@ impl<'a> ImpactAnalyzer<'a> {
             max_depth: depth,
             affected_elements,
             affected_with_confidence,
+            truncated,
         })
+    }
+}
+
+/// Tunable knobs for [`ImpactAnalyzer::calculate_impact_radius_with_options`].
+#[derive(Debug, Clone)]
+pub struct ImpactScanOptions {
+    /// Hard cap on the number of affected elements returned. Defaults to
+    /// 10_000 to keep memory bounded on big monorepos.
+    pub max_affected: usize,
+}
+
+impl Default for ImpactScanOptions {
+    fn default() -> Self {
+        let max_affected = std::env::var("LEANKG_IMPACT_MAX_AFFECTED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10_000);
+        Self { max_affected }
     }
 }
 
@@ -114,6 +180,10 @@ pub struct ImpactResult {
     pub max_depth: u32,
     pub affected_elements: Vec<CodeElement>,
     pub affected_with_confidence: Vec<AffectedElementWithConfidence>,
+    /// True when the scan was aborted early because the budget /
+    /// max-affected cap was reached. Callers should re-scope (smaller
+    /// depth, fewer seeds, larger max_affected) and re-run.
+    pub truncated: bool,
 }
 
 // ===========================================================================
@@ -388,6 +458,20 @@ where
 #[cfg(test)]
 mod traverse_tests {
     use super::*;
+
+    #[test]
+    fn impact_scan_options_default_caps_at_10k() {
+        let opts = ImpactScanOptions::default();
+        assert_eq!(opts.max_affected, 10_000);
+    }
+
+    #[test]
+    fn impact_scan_options_respects_env_override() {
+        std::env::set_var("LEANKG_IMPACT_MAX_AFFECTED", "5");
+        let opts = ImpactScanOptions::default();
+        assert_eq!(opts.max_affected, 5);
+        std::env::remove_var("LEANKG_IMPACT_MAX_AFFECTED");
+    }
 
     #[test]
     fn rule_for_workflow_is_two_hops() {

@@ -85,7 +85,7 @@ fn load_test_insert_100k_elements() {
 
     println!("\n=== Load Test: Insert {} Elements ===", COUNT);
 
-    let t0 = Instant::now();
+    let _t0 = Instant::now();
     let duration = insert_elements_batched(&engine, COUNT);
     let rate = COUNT as f64 / duration.as_secs_f64();
 
@@ -117,7 +117,7 @@ fn load_test_insert_100k_relationships() {
 
     println!("\n=== Load Test: Insert {} Relationships ===", COUNT);
 
-    let t0 = Instant::now();
+    let _t0 = Instant::now();
     let duration = insert_relationships_batched(&engine, COUNT);
     let rate = COUNT as f64 / duration.as_secs_f64();
 

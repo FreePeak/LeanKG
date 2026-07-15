@@ -205,6 +205,257 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "explain_node".to_string(),
+                description: "US-GF-02: Return a single-node dossier (definition site, cluster, in/out degree, top neighbors by relation type). Accepts qualified_name, exact name, or fuzzy suffix.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Qualified_name, exact name, or fuzzy suffix"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["name"]
+                }),
+            },
+            ToolDefinition {
+                name: "export_graph_snapshot".to_string(),
+                description: "US-GF-11: Write a portable graph snapshot (elements + relationships with relative paths) to a JSON file. Useful for committing the graph artifact to git so teams can merge work-in-progress knowledge.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "out_path": {"type": "string", "default": ".leankg/graph-snapshot.json"},
+                        "project": {"type": "string"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "find_clones".to_string(),
+                description: "US-CBM-B7: Find near-duplicate functions / methods using Jaccard token-set similarity. Returns pairs whose similarity >= threshold (default 0.6).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "threshold": {"type": "number", "default": 0.6, "minimum": 0.0, "maximum": 1.0},
+                        "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+                        "project": {"type": "string"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "get_pr_impact".to_string(),
+                description: "US-GF-08: PR impact dashboard. Given changed files, returns cluster overlap and severity (LOW / MEDIUM / HIGH). Use to triage merge-order risk before pushing.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "files": {"type": "array", "items": {"type": "string"}, "description": "Changed file paths (e.g. from git diff --name-only)"},
+                        "env": {"type": "string", "default": "local"},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["files"]
+                }),
+            },
+            ToolDefinition {
+                name: "resolve_with_lsp".to_string(),
+                description: "US-CBM-B1: Resolve a symbol via the configured LSP server for the file's language. Walks up to the nearest .git / manifest to pick the right workspace, so multi-repo and nested service directories are routed correctly. Falls back to None when no server is configured or the request times out (US-CBM-B07).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "language": {"type": "string", "description": "Source language (go, typescript, python, rust, java, kotlin, ...)"},
+                        "file_path": {"type": "string", "description": "Absolute path of the file containing the symbol"},
+                        "line": {"type": "integer", "minimum": 0},
+                        "character": {"type": "integer", "minimum": 0},
+                        "request": {"type": "string", "enum": ["definition", "references", "hover"], "default": "definition"},
+                        "project": {"type": "string", "description": "Project root for leankg.yaml lookup (defaults to .)"}
+                    },
+                    "required": ["language", "file_path", "line", "character"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_overview_context".to_string(),
+                description: "US-GN-08: Return the project overview context (identity, critical facts, recent hotspots) as a single MCP-callable resource. Acts as an MCP-Resources-style agent context shortcut for wake_up + L0/L1 layers.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string"},
+                        "project_name": {"type": "string", "default": "project"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "get_team_map".to_string(),
+                description: "US-V2-12: Aggregated team / ownership map (team name, on-call, services owned) for a given environment.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "env": {"type": "string", "default": "local", "description": "Environment scope (local/staging/production)"},
+                        "project": {"type": "string"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "report_query_outcome".to_string(),
+                description: "US-GF-09: Record whether a graph query result was useful (useful | dead_end | corrected). Appends an entry to .leankg/reflections/LESSONS.md so future agents can bias ranking toward previously-useful nodes.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "Original question"},
+                        "nodes": {"type": "array", "items": {"type": "string"}, "description": "Qualified_names that were returned"},
+                        "outcome": {"type": "string", "enum": ["useful", "dead_end", "corrected"]},
+                        "note": {"type": "string", "description": "Optional free-form lesson learned"},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["question", "outcome"]
+                }),
+            },
+            ToolDefinition {
+                name: "agent_focus".to_string(),
+                description: "US-MP-04: Return a focused subgraph filtered by agent persona (path filters, cluster_id, element_types). Persona config lives in .leankg/agents/<name>.json.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Agent persona name"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["name"]
+                }),
+            },
+            ToolDefinition {
+                name: "agent_diary_write".to_string(),
+                description: "US-MP-04: Append a note to an agent's diary (.leankg/agents/<name>.diary.jsonl).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "note": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["name", "note"]
+                }),
+            },
+            ToolDefinition {
+                name: "agent_diary_read".to_string(),
+                description: "US-MP-04: Read recent diary entries for an agent.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "limit": {"type": "integer", "default": 50},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["name"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_cluster_skill".to_string(),
+                description: "US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "cluster_id": {"type": "string", "description": "Cluster ID (from get_clusters)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["cluster_id"]
+                }),
+            },
+            ToolDefinition {
+                name: "find_tunnels".to_string(),
+                description: "US-MP-06: Find cross-domain tunnels — relationships where source and target belong to different Leiden clusters. Sorted by confidence descending.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "check_consistency".to_string(),
+                description: "US-MP-05: Detect broken or stale relationships (missing targets, invalidated edges). Returns BROKEN / STALE / CURRENT findings plus counts.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "temporal_query".to_string(),
+                description: "US-MP-01: Return the graph state as of a given epoch (seconds). Edges with valid_from <= now <= valid_to are included.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "at": {"type": "integer", "description": "Epoch seconds (e.g. 1718000000)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["at"]
+                }),
+            },
+            ToolDefinition {
+                name: "timeline".to_string(),
+                description: "US-MP-01: Return the chronological evolution of a code element's relationships (added / invalidated events with timestamps).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "qualified_name": {"type": "string", "description": "Code element qualified_name"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["qualified_name"]
+                }),
+            },
+            ToolDefinition {
+                name: "load_layer".to_string(),
+                description: "US-MP-02: Load a context layer. layer=L0 -> identity (~50 tok). L1 -> critical facts (~120 tok). L2 -> cluster context (requires cluster_id). L3 -> deep subgraph search (requires query).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "layer": {"type": "string", "enum": ["L0", "L1", "L2", "L3"], "description": "Context layer to load"},
+                        "project": {"type": "string", "description": "Optional: project path"},
+                        "project_name": {"type": "string", "default": "project"},
+                        "cluster_id": {"type": "string", "description": "Required for L2"},
+                        "query": {"type": "string", "description": "Required for L3"},
+                        "limit": {"type": "integer", "default": 20}
+                    },
+                    "required": ["layer"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_graph_report".to_string(),
+                description: "US-GF-06: Return the full graph report (god nodes, confidence distribution, suggested questions). Writes `.leankg/GRAPH_REPORT.md` on disk.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"},
+                        "project_name": {"type": "string", "default": "project", "description": "Display name for the report header"},
+                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "get_god_nodes".to_string(),
+                description: "US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+                        "exclude_hubs_percentile": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Exclude top-N% super-hubs (e.g. 90 keeps bottom 90%)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "shortest_path".to_string(),
+                description: "US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string", "description": "Source qualified_name, name, or fuzzy suffix"},
+                        "target": {"type": "string", "description": "Target qualified_name, name, or fuzzy suffix"},
+                        "max_hops": {"type": "integer", "default": 6, "minimum": 1, "maximum": 10, "description": "Maximum hops (1-10)"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["source", "target"]
+                }),
+            },
+            ToolDefinition {
                 name: "find_function".to_string(),
                 description: "Locate function definition by name. Optionally scope to a file.".to_string(),
                 input_schema: json!({

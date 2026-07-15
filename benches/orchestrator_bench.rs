@@ -186,14 +186,14 @@ fn main() {
 
     // Cold start
     let start = Instant::now();
-    for i in 0..iterations {
+    for _i in 0..iterations {
         let _ = orchestrator.orchestrate("context for lib.rs", Some("src/lib.rs"), None, false);
     }
     let cold_time = start.elapsed();
 
     // Cached
     let start = Instant::now();
-    for i in 0..iterations {
+    for _i in 0..iterations {
         let _ = orchestrator.orchestrate("context for lib.rs", Some("src/lib.rs"), None, false);
     }
     let cached_time = start.elapsed();
