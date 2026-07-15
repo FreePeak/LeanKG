@@ -216,7 +216,7 @@ pub fn trim_heap() -> bool {
         extern "C" {
             fn malloc_trim(pad: usize) -> i32;
         }
-        return malloc_trim(0) == 1;
+        malloc_trim(0) == 1
     }
     #[cfg(not(target_os = "linux"))]
     {
