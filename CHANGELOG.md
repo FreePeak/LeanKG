@@ -16,6 +16,9 @@ All notable changes to this project are documented in this file.
 ### Added
 - `scripts/embed-all-workspaces-then-mcp.sh` — offline embed all
   `LEANKG_PROJECT_DIRS`, then start MCP and verify `hnsw+rerank`.
+- `scripts/docker-up.sh` and `install.sh … docker` — one-command Docker
+  setup (index + embed + MCP) with no Rust install.
+- Entrypoint passthrough for one-shot `embed` / `index` after auto-index.
 
 ### Changed
 - Rebuilt and republished Docker image `freepeak/leankg:0.18.2` (also
