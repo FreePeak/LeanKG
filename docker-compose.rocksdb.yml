@@ -20,10 +20,17 @@ services:
       # let operators tune workers/batch/full-rebuild at runtime. Set
       # LEANKG_EMBED_BACKGROUND=0 to opt out and rely on the legacy
       # foreground `leankg embed --wait` (off by default).
+      # Offline cold embed via docker-compose.embed.yml. Keep BACKGROUND off
+      # so MCP does not drop HNSW mid-query (override .dockerfile if needed).
       LEANKG_EMBED_ON_BOOT: "0"
-      LEANKG_EMBED_BACKGROUND: "1"
-      LEANKG_EMBED_BACKGROUND_WORKERS: "2"
-      LEANKG_EMBED_BACKGROUND_BATCH: "64"
+      LEANKG_EMBED_BACKGROUND: "0"
+      LEANKG_EMBED_FAST: "1"
+      LEANKG_EMBED_MODEL: "bge-q"
+      LEANKG_EMBED_MAX_SEQ: "128"
+      LEANKG_EMBED_MAX_BLOB_CHARS: "500"
+      LEANKG_EMBED_MAX_MB: "3072"
+      LEANKG_EMBED_BACKGROUND_WORKERS: "1"
+      LEANKG_EMBED_BACKGROUND_BATCH: "32"
       # `LEANKG_MCP_PROJECT` and `LEANKG_PROJECT_DIRS` are intentionally
       # NOT set here. With both `env_file` (`.dockerfile`) and `environment:`
       # declaring the same key, Compose lets `environment:` win, which silently
@@ -47,6 +54,8 @@ services:
       # (default: the current dir). Override via .dockerfile.
       - ${HOST_PROJECT_PATH:-./}:${CONTAINER_PROJECT_PATH:-/workspace}
       - leankg-rocksdb:/data/leankg-rocksdb
+      # Persist ONNX / tokenizer cache across restarts (Embedder + DirectEmbedder).
+      - leankg_models:/root/.cache/leankg
     working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
     # Resource limits — previously unset, which let the container consume the
     # full host memory and get OOM-killed (exit 137). Tune to your host.
@@ -58,3 +67,4 @@ services:
 
 volumes:
   leankg-rocksdb:
+  leankg_models:

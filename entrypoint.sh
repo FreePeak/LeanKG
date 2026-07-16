@@ -18,6 +18,13 @@ MCP_PROJECT="${LEANKG_MCP_PROJECT:-/workspace}"
 # LEANKG_EMBED_ON_BOOT=0 keeps the legacy synchronous path off (the
 # legacy path blocks `mcp-http` start for hours on mega-graphs).
 export LEANKG_EMBED_ON_BOOT="${LEANKG_EMBED_ON_BOOT:-0}"
+# Fast-path defaults for Docker (INT8). Background workers stay low via
+# compose/Dockerfile; ensure_quantized runs after cache warm in-process.
+export LEANKG_EMBED_FAST="${LEANKG_EMBED_FAST:-1}"
+export LEANKG_EMBED_MODEL="${LEANKG_EMBED_MODEL:-bge-q}"
+export LEANKG_EMBED_MAX_SEQ="${LEANKG_EMBED_MAX_SEQ:-128}"
+export LEANKG_EMBED_MAX_BLOB_CHARS="${LEANKG_EMBED_MAX_BLOB_CHARS:-500}"
+export LEANKG_EMBED_MAX_MB="${LEANKG_EMBED_MAX_MB:-3072}"
 
 rocksdb_dir_for() {
     local project_dir="$1"

@@ -548,15 +548,25 @@ pub fn build_index_parallel(
     }
     tracing::info!("HNSW dropped; running parallel bulk insert");
 
-    // Fast path: INT8 + explicit threads + fat batch + seq cap.
-    // Collapses N×1-thread sessions into 1×P-core session on M-series.
-    let runtime = crate::embeddings::runtime::resolve_embed_runtime(workers, opts.batch_size);
+    // Warm the fastembed / Xenova snapshot BEFORE INT8 ensure. Previously
+    // `ensure_quantized_onnx` ran first, failed with "cache missing", fell
+    // back to FP32, then warm created the Xenova tree too late — Docker
+    // background embed permanently stayed on heavy FP32 + fat batches.
+    {
+        let _warmer = Embedder::new().map_err(|e| e.to_string())?;
+        tracing::info!("fastembed model cache warmed for parallel workers");
+    }
+
+    // Fast path: INT8 + data-parallel workers + fat batch + seq cap.
+    let mut runtime = crate::embeddings::runtime::resolve_embed_runtime(workers, opts.batch_size);
     if runtime.kind == crate::embeddings::models::EmbedModelKind::BgeInt8 {
         if let Err(e) = crate::embeddings::runtime::ensure_quantized_onnx() {
             tracing::warn!(
                 "INT8 ONNX unavailable ({e}); falling back to FP32 — set LEANKG_EMBED_FAST=0 to silence"
             );
             std::env::set_var("LEANKG_EMBED_MODEL", "bge");
+            // Re-resolve so workers/batch match FP32 (no silent Int8 label).
+            runtime = crate::embeddings::runtime::resolve_embed_runtime(workers, opts.batch_size);
         }
     }
     runtime.apply_env();
@@ -574,19 +584,6 @@ pub fn build_index_parallel(
     );
     let workers = runtime.workers;
     let opts_batch = runtime.batch_size;
-
-    // Warm the fastembed model cache once on this thread before fanning
-    // out. Each worker constructs its own `TextEmbedding` (which is
-    // !Sync), and without this warm-up all N workers race to download
-    // the same ONNX weights into the shared cache dir — fastembed's
-    // hf-hub fetch is not concurrency-safe for the same file, and the
-    // loser surfaces as "Failed to retrieve onnx/model.onnx". Building
-    // a throwaway Embedder here populates the cache so the parallel
-    // sessions find the model already on disk.
-    {
-        let _warmer = Embedder::new().map_err(|e| e.to_string())?;
-        tracing::info!("fastembed model cache warmed for parallel workers");
-    }
     // OMP_NUM_THREADS already set by runtime.apply_env() to match the plan
     // (intra on single-session fast path; 1 when multi-worker).
 

@@ -24,3 +24,7 @@ services:
       # Example: serve a second repo at /workspace-other
       # (replace the host path with your actual repo location).
       # - /Users/you/work/other-repo:/workspace-other
+  # Same binds for the offline embed job (docker-compose.embed.yml).
+  leankg-embed:
+    volumes:
+      # - /Users/you/work/other-repo:/workspace-other

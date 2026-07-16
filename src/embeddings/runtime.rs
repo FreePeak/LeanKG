@@ -146,8 +146,16 @@ pub fn resolve_embed_runtime(requested_workers: usize, requested_batch: usize) -
         let omp = if w > 1 { 1 } else { intra };
         (w, intra, omp)
     } else if fast {
-        let w = requested_workers.max(1).max(cores.clamp(4, 8)); // at least P-core count
-        (w.min(8), 1, 1)
+        // Honor low worker counts (MCP background embed defaults to 1–2).
+        // Only bump toward P-core count when the caller already asked for
+        // parallelism (≥4) — otherwise Docker/background jobs OOM on FP32
+        // fallback or small mem_limit.
+        let w = if requested_workers <= 2 {
+            requested_workers.max(1)
+        } else {
+            requested_workers.max(1).max(cores.clamp(4, 8)).min(8)
+        };
+        (w, 1, 1)
     } else {
         let w = requested_workers.max(1);
         (w, 1, 1)
@@ -156,8 +164,13 @@ pub fn resolve_embed_runtime(requested_workers: usize, requested_batch: usize) -
     let batch_size = {
         let b = requested_batch.max(1);
         if fast {
-            // Prefer fat batches once seq is capped (128).
-            b.max(128).min(256)
+            // Prefer fat batches for cold CLI runs; keep small batches for
+            // background / memory-constrained callers (≤32).
+            if b <= 32 {
+                b
+            } else {
+                b.max(128).min(256)
+            }
         } else {
             b
         }
@@ -187,7 +200,7 @@ mod tests {
         assert!(plan.workers >= 4, "workers={}", plan.workers);
         assert_eq!(plan.intra_threads, 1);
         assert_eq!(plan.max_seq, 128);
-        assert!(plan.batch_size >= 128, "batch={}", plan.batch_size);
+        assert_eq!(plan.batch_size, 32, "small requested batch stays unchanged");
         assert_eq!(plan.kind, EmbedModelKind::BgeInt8);
         std::env::remove_var("LEANKG_EMBED_FAST");
         std::env::remove_var("LEANKG_EMBED_MAX_SEQ");

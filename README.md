@@ -98,7 +98,7 @@ docker rm -f leankg
 
 Requires [Docker](https://docs.docker.com/engine/install/) or [OrbStack](https://orbstack.dev). Point your AI tool MCP config at `http://localhost:9699/mcp`.
 
-> **Note:** Published image tags (`freepeak/leankg:latest`, `:0.18.0`) currently target `linux/arm64` (Apple Silicon / ARM hosts). On `linux/amd64`, build locally with compose below. The image builds with `--features embeddings` so CozoDB HNSW semantic search works out of the box.
+> **Note:** Published image tags (`freepeak/leankg:latest`, `:0.18.2`) currently target `linux/arm64` (Apple Silicon / ARM hosts). On `linux/amd64`, build locally with compose below. The image builds with `--features embeddings` so CozoDB HNSW semantic search works out of the box.
 
 #### Build from source (compose)
 

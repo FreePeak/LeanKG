@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.18.2] - 2026-07-16
+
+### Fixed
+- Docker MCP no longer enables background embed by default (it dropped
+  HNSW and broke `semantic_search` on mega-graphs).
+- INT8 fast path warms the Xenova cache before ensuring quantized ONNX;
+  MCP-safe worker/batch caps when callers request ≤2 workers / ≤32 batch.
+- Offline embed profile: INT8, workers 8 / batch 128, soft RSS pause off,
+  shared `leankg_models` volume, and multi-project mounts for
+  `leankg-embed`.
+
+### Added
+- `scripts/embed-all-workspaces-then-mcp.sh` — offline embed all
+  `LEANKG_PROJECT_DIRS`, then start MCP and verify `hnsw+rerank`.
+
+### Changed
+- Rebuilt and republished Docker image `freepeak/leankg:0.18.2` (also
+  tagged `latest`).
+
 ## [0.18.1] - 2026-07-16
 
 ### Fixed

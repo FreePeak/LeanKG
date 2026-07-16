@@ -9,32 +9,52 @@
 #     --profile embed run --rm leankg-embed
 #   docker compose -f docker-compose.rocksdb.yml start leankg
 #
-# Capped to 3 CPUs / 4 GiB so it doesn't fight the host's interactive
-# load while MCP is restarting. Tune cpus/mem_limit to your machine.
-#
-# In production we recommend `LEANKG_EMBED_BACKGROUND=1` on the main
-# service instead (Option 3) so MCP stays available during the rebuild.
+# Cold offline job: INT8 fast path. Needs ≥6g so batch 128 fits; raise
+# cpus/mem_limit on bigger hosts. Prefer BACKGROUND=1 on the main service
+# for day-2 so MCP stays up during rebuild.
 
 services:
   leankg-embed:
     profiles: ["embed"]
     image: leankg-leankg:latest
     entrypoint: ["leankg"]
-    command: ["embed", "--wait", "--workers", "4", "--batch-size", "64", "--types", "function,method"]
+    # LEANKG_MCP_PROJECT selects which mounted root to embed (override per run).
+    # Side mounts (e.g. /workspace-other) come from docker-compose.override.yml
+    # under services.leankg-embed.volumes — same binds as the MCP service.
+    command:
+      [
+        "embed",
+        "--wait",
+        "--project",
+        "${LEANKG_MCP_PROJECT:-/workspace}",
+        "--workers",
+        "8",
+        "--batch-size",
+        "128",
+        "--types",
+        "function,method",
+      ]
     environment:
       LEANKG_DB_ENGINE: rocksdb
       LEANKG_ROCKSDB_ROOT: /data/leankg-rocksdb
-      LEANKG_MCP_PROJECT: /workspace
+      LEANKG_MCP_PROJECT: ${LEANKG_MCP_PROJECT:-/workspace}
       LEANKG_MMAP_SIZE: "67108864"
+      LEANKG_EMBED_FAST: "1"
+      LEANKG_EMBED_MODEL: "bge-q"
+      LEANKG_EMBED_MAX_SEQ: "128"
+      LEANKG_EMBED_MAX_BLOB_CHARS: "500"
+      # Offline job: disable soft pause (0). 8×INT8 sessions sit ~5.5g RSS and
+      # never shrink; a tight MAX_MB stalls the whole run.
+      LEANKG_EMBED_MAX_MB: "0"
       OMP_NUM_THREADS: "1"
       RUST_LOG: leankg=info
     volumes:
       - leankg-rocksdb:/data/leankg-rocksdb
-      # Mount the same project the MCP server serves so the embed job
-      # can find .leankg/ + leankg.yaml. Operators override the project
-      # path via the .dockerfile env file.
+      - leankg_models:/root/.cache/leankg
+      # Primary project mount. Extra repos: docker-compose.override.yml →
+      # services.leankg-embed.volumes (mirror services.leankg.volumes).
       - ${HOST_PROJECT_PATH:-./}:${CONTAINER_PROJECT_PATH:-/workspace}
     working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
-    cpus: "3"
-    mem_limit: 4g
+    cpus: "6"
+    mem_limit: 10g
     restart: "no"
