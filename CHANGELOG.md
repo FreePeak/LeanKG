@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.18.1] - 2026-07-16
+
+### Fixed
+- Embedding fast path: correct HNSW route, MCP-decoupled lookup, and INT8
+  quantisation option (`#76`).
+- LeanKG graph workflow end-to-end (`#75`).
+
+### Changed
+- Rebuilt and republished Docker image `freepeak/leankg:0.18.1` (also
+  tagged `latest`).
+
 ## [0.17.2] - 2026-06-06
 
 ### Fixed
