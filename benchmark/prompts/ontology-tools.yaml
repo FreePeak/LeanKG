@@ -118,7 +118,7 @@ tools:
     description: "Get elements by file path"
     queries:
       - id: qf-be-toggle
-        query: "platform-food/be-restaurant/internal/external/be_toggle.go"
+        query: "platform-food/svc-restaurant/internal/external/feature_toggle.go"
         expected:
           min_results: 40
       - id: qf-order

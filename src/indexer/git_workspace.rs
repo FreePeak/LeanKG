@@ -1,6 +1,6 @@
 //! Multi-repo workspace helpers for LeanKG auto-index.
 //!
-//! Some project roots (e.g. a polyrepo mount like `/workspace-be`) are not
+//! Some project roots (e.g. a polyrepo mount like `/workspace-other`) are not
 //! themselves git repositories but contain many nested repos under platform
 //! folders. Auto-index previously required the CWD to be a single git root
 //! and skipped those workspaces entirely.
@@ -235,8 +235,8 @@ mod tests {
     fn discovers_nested_repos_under_platform_layout() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let nested_a = root.join("platform-food").join("be-restaurant");
-        let nested_b = root.join("platform-core").join("be-autos");
+        let nested_a = root.join("platform-food").join("svc-restaurant");
+        let nested_b = root.join("platform-core").join("svc-autos");
         init_repo(&nested_a);
         init_repo(&nested_b);
         // Non-git platform folder should not count.

@@ -147,11 +147,21 @@ pub(crate) fn central_project_storage_path(db_path: &Path) -> std::path::PathBuf
         .or_else(|| dirs::home_dir().map(|home| home.join(DEFAULT_ROCKSDB_ROOT)))
         .unwrap_or_else(|| std::path::PathBuf::from(DEFAULT_ROCKSDB_ROOT));
 
-    let project_root = if db_path.file_name().and_then(|name| name.to_str()) == Some(".leankg") {
-        db_path.parent().unwrap_or(db_path)
-    } else {
-        db_path
-    };
+    // Walk up to the project root regardless of which form the caller passed.
+    //
+    // Callers historically varied on what they passed to `init_db`:
+    //   * `Index` / `McpHttp`     -> `<project>/.leankg`        (the directory)
+    //   * `Embed` / `SemanticContext` / `SmokeTest` -> `<project>/.leankg/leankg.db` (the file)
+    //
+    // If we used the file path directly, the SHA-256 hash of the project key
+    // would differ from the indexer, so `leankg embed` would open a brand
+    // new (empty) RocksDB at a different path, find zero `code_elements`,
+    // and silently report "Embedded: 0" — leaving the agent with a working
+    // ontology-first `semantic_search` and a non-functional HNSW path.
+    //
+    // FR-HNSW-C fix: accept both forms and always hash the project root,
+    // not the .leankg directory or the database file inside it.
+    let project_root = project_root_from_db_path(db_path);
     let project_key = project_root
         .canonicalize()
         .unwrap_or_else(|_| project_root.to_path_buf());
@@ -175,6 +185,36 @@ pub(crate) fn central_project_storage_path(db_path: &Path) -> std::path::PathBuf
 
     root.join("projects")
         .join(format!("{}-{}", name, &hash[..12]))
+}
+
+/// Reduce a `db_path` to the project root, regardless of which form the
+/// caller passed (the `.leankg` directory, the `leankg.db` file inside it,
+/// or an unrelated path).
+///
+/// * `<project>/.leankg/leankg.db` -> `<project>`
+/// * `<project>/.leankg`           -> `<project>`
+/// * `<project>`                   -> `<project>`
+/// * `leankg.db`                   -> `.` (no parent anchor — caller error)
+fn project_root_from_db_path(db_path: &Path) -> std::path::PathBuf {
+    let file_name = db_path.file_name().and_then(|n| n.to_str());
+    if file_name == Some("leankg.db") {
+        // The file lives inside `.leankg/`. Walk up two levels to the
+        // project root, tolerating a missing `.leankg` parent (the file
+        // may have been moved out by a manual export).
+        if let Some(leankg_dir) = db_path.parent() {
+            if leankg_dir.file_name().and_then(|n| n.to_str()) == Some(".leankg") {
+                if let Some(project) = leankg_dir.parent() {
+                    return project.to_path_buf();
+                }
+            }
+            return leankg_dir.to_path_buf();
+        }
+        return std::path::PathBuf::from(".");
+    }
+    if file_name == Some(".leankg") {
+        return db_path.parent().unwrap_or(db_path).to_path_buf();
+    }
+    db_path.to_path_buf()
 }
 
 fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
@@ -1185,6 +1225,43 @@ mod tests {
         let path_str = path.to_string_lossy();
         assert!(path_str.contains("projects"), "path: {path_str}");
         assert!(path_str.contains("myproject"), "path: {path_str}");
+    }
+
+    /// FR-HNSW-C: the embed / semantic-context / smoke-test CLI commands pass
+    /// `<project>/.leankg/leankg.db` to `init_db` (the file path), while
+    /// `leankg index` and `leankg mcp-http` pass the `.leankg` directory.
+    /// Both must resolve to the SAME RocksDB project root, otherwise
+    /// `leankg embed` opens a fresh empty database and silently embeds
+    /// nothing — leaving `semantic_search` stuck on the ontology-only path.
+    #[test]
+    fn central_project_storage_path_resolves_leankg_db_to_same_root_as_dot_leankg() {
+        let dir_path =
+            central_project_storage_path(std::path::Path::new("/home/user/myproject/.leankg"));
+        let file_path = central_project_storage_path(std::path::Path::new(
+            "/home/user/myproject/.leankg/leankg.db",
+        ));
+        assert_eq!(
+            dir_path, file_path,
+            "leankg.db file path must resolve to the same project root as .leankg directory"
+        );
+        let path_str = dir_path.to_string_lossy();
+        assert!(path_str.contains("myproject"), "path: {path_str}");
+    }
+
+    /// Edge case: the database file is detached from `.leankg/` (e.g., a
+    /// manual copy). Falls back to the parent directory as the project root
+    /// rather than producing a hash of the file's actual location.
+    #[test]
+    fn central_project_storage_path_handles_detached_db_file() {
+        let file_path = central_project_storage_path(std::path::Path::new("/tmp/loose-leankg.db"));
+        let path_str = file_path.to_string_lossy();
+        // Falls back to "loose-leankg" as the project name; this is the
+        // graceful degradation path — caller will get a fresh DB at a
+        // distinct path, and the embed step will report 0 vectors.
+        assert!(
+            path_str.contains("loose-leankg"),
+            "expected detached db to use parent dir as project: {path_str}"
+        );
     }
 
     #[test]

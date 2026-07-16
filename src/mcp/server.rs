@@ -464,6 +464,83 @@ impl MCPServer {
         });
     }
 
+    /// Plan §"Part B Option 3" — in-process background embed.
+    ///
+    /// Spawns a detached thread that holds a clone of the same
+    /// `CozoDb`/`GraphEngine` MCP is using, so the embed runs against
+    /// the live DB without violating RocksDB's single-writer-per-process
+    /// rule. Defaults to 1 worker / batch 32 — conservative for macOS
+    /// RSS. Further capped by `LEANKG_EMBED_MAX_MB` (default 2048 on
+    /// macOS). Operators can tune via env:
+    ///
+    /// - `LEANKG_EMBED_MAX_MB` (default 2048 macOS / 3072 else)
+    /// - `LEANKG_EMBED_BACKGROUND_WORKERS` (default 1)
+    /// - `LEANKG_EMBED_BACKGROUND_BATCH` (default 32)
+    /// - `LEANKG_EMBED_BACKGROUND_TYPES` (default = heuristic)
+    /// - `LEANKG_EMBED_BACKGROUND_FULL=1` to force a full re-embed
+    #[cfg(feature = "embeddings")]
+    fn spawn_background_embed_in_process(&self) {
+        // Read tuning env once (default-friendly fallbacks).
+        let workers: usize = std::env::var("LEANKG_EMBED_BACKGROUND_WORKERS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &usize| (1..=32).contains(n))
+            .unwrap_or(1);
+        let batch_size: usize = std::env::var("LEANKG_EMBED_BACKGROUND_BATCH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &usize| (1..=2048).contains(n))
+            .unwrap_or(32);
+        let types_filter = std::env::var("LEANKG_EMBED_BACKGROUND_TYPES").unwrap_or_default();
+        let full = std::env::var("LEANKG_EMBED_BACKGROUND_FULL")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        // Try to get a shared GraphEngine clone. If we can't (DB not
+        // initialized yet, etc.), log a warning and skip — the next
+        // `leankg embed --wait` invocation can be used instead.
+        let graph = match self.get_graph_engine() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(
+                    "LEANKG_EMBED_BACKGROUND=1 but graph engine not ready ({}); skipping in-process embed",
+                    e
+                );
+                return;
+            }
+        };
+        let leankg_dir = self.get_db_path();
+        let cfg = crate::embeddings::BackgroundEmbedConfig {
+            batch_size,
+            workers,
+            full,
+            types_filter,
+        };
+        match crate::embeddings::spawn_background_embed(graph, leankg_dir.clone(), cfg) {
+            Ok(Some(handle)) => {
+                tracing::info!(
+                    "In-process background embed started (PID {}, {} workers, batch {}, leankg_dir={})",
+                    handle.pid,
+                    workers,
+                    batch_size,
+                    leankg_dir.display()
+                );
+            }
+            Ok(None) => {
+                tracing::info!("Background embed already running; not spawning a new one");
+            }
+            Err(e) => {
+                tracing::error!("Failed to spawn background embed: {}", e);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "embeddings"))]
+    fn spawn_background_embed_in_process(&self) {
+        // Embeddings feature off — nothing to do.
+    }
+
     pub async fn serve_stdio(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Err(e) = self.auto_init_if_needed().await {
             tracing::warn!(
@@ -921,6 +998,22 @@ impl MCPServer {
         // See HLD §2.5 / PRD FR-10.
         self.spawn_vacuum_scheduler();
         self.spawn_gc_watchdog();
+
+        // Plan §"Part B Option 3" — in-process background embed. We
+        // share the MCP's CozoDb handle (via GraphEngine::Arc<CozoDb>)
+        // so we don't open a second RocksDB writer in the same process,
+        // which RocksDB would reject. The worker is throttled (default
+        // 2 workers, batch 64) so request threads keep their latency
+        // budget while HNSW catches up. Progress is written to
+        // `<leankg_dir>/embed_status.json` — agents polling
+        // `leankg embed --status` see live numbers.
+        if std::env::var("LEANKG_EMBED_BACKGROUND")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            self.spawn_background_embed_in_process();
+        }
 
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),

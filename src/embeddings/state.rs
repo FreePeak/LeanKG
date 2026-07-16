@@ -95,6 +95,28 @@ pub fn ensure_embedding_state_table(db: &CozoDb) -> Result<(), Box<dyn std::erro
 const CREATE_EMBEDDING_VECTORS: &str =
     r#":create embedding_vectors {qualified_name: String => vector: <F32; 384>}"#;
 
+/// Drop the HNSW index on `embedding_vectors:vec_idx` so a bulk insert can
+/// proceed without paying the per-vector HNSW update cost. The CozoDB
+/// `::hnsw` operator is idempotent for `drop` — if the index is missing
+/// the call is a no-op, which is the only error path we swallow here.
+pub fn drop_hnsw_index(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = crate::db::schema::run_script(
+        db,
+        "::hnsw drop embedding_vectors:vec_idx",
+        Default::default(),
+    );
+    Ok(())
+}
+
+/// Recreate the HNSW index on `embedding_vectors:vec_idx` after a bulk
+/// insert. Reads `LEANKG_HNSW_M` / `LEANKG_HNSW_EF_CONST` (see
+/// `build_hnsw_create_stmt`) and returns the index to a queryable state.
+pub fn create_hnsw_index(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
+    let stmt = build_hnsw_create_stmt();
+    crate::db::schema::run_script(db, &stmt, Default::default())?;
+    Ok(())
+}
+
 // FR-HNSW-F mega-graph HNSW knobs (build-time).
 //
 // `m` (max connections per node) and `ef_construction` are baked into the

@@ -197,6 +197,21 @@ Optional feature: dense-vector retrieval + cross-encoder reranking + graph
 traversal. Off by default to keep the binary slim. Requires building with the
 `embeddings` Cargo feature.
 
+**Canonical store:** CozoDB `embedding_vectors` + native HNSW
+(`embedding_vectors:vec_idx`, Cosine, f32, 384-dim). Do not migrate the graph
+DB to Redis/FalkorDB to speed cold embed — measured writer-only throughput is
+already ~100k+ vec/sec; cold wall time is dominated by ONNX inference.
+
+**Measured cold rates (M2 Pro, `function,method`):**
+
+| Profile | Sustained e2e | ~371k ETA |
+|---------|---------------|-----------|
+| Legacy FP32 (pre-fast) | ~170 vec/s | ~36 min |
+| **Fast path** (`LEANKG_EMBED_FAST=1`, INT8) | **~480–500 vec/s** | **~12–15 min** |
+
+See PRD v3.6.3 (`FR-EMBED-R1..R4`) and
+`generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md`.
+
 ### Build & first-time setup
 
 ```bash
@@ -209,19 +224,71 @@ cargo build --release --features embeddings
 
 Models cache to `~/Library/Caches/leankg/models/` (macOS),
 `~/.cache/leankg/models/` (Linux), or `%LOCALAPPDATA%\leankg\models` (Windows).
+Fast path uses Xenova `onnx/model_quantized.onnx` (auto-downloaded if missing).
 
 ### Build the embedding index
 
 ```bash
-leankg embed                          # incremental (default): only changed/new nodes
-leankg embed --full                   # force re-embed every node
-leankg embed --batch-size 8           # lower peak RSS on memory-constrained hosts
+# Incremental (default): only changed/new nodes — day-2 path (seconds–minutes)
+# Defaults: --workers 2 --batch-size 32; further capped by LEANKG_EMBED_MAX_MB
+leankg embed --wait --workers 2 --batch-size 32
+
+# Mega-graph cold build: functions/methods only (default filter when >50k nodes)
+leankg embed --wait --types function,method
+
+# Force re-embed every selected node
+leankg embed --wait --full
+
+# Progress / cancel
+leankg embed --status
+leankg embed --cancel
 ```
 
-Index lives inside CozoDB as the `embedding_vectors` relation + native HNSW
-index (`embedding_vectors:vec_idx`, Cosine, f32, 384-dim). Incremental runs
-diff against the `embedding_state` table and skip rows whose content hash
-hasn't changed.
+Incremental runs diff against `embedding_state` and skip rows whose content
+hash hasn't changed. Prefer incremental after the first cold pass; avoid
+`--full` unless the model or schema changed.
+
+### Fast path (recommended for mega-graph cold builds)
+
+`LEANKG_EMBED_FAST` defaults **on**. It selects INT8 (Xenova quantized BGE-small),
+caps sequence length, and runs data-parallel workers (`intra_threads=1`). Raise
+`LEANKG_EMBED_MAX_MB` on large hosts so batch size is not clamped to 16:
+
+```bash
+export LEANKG_EMBED_FAST=1
+export LEANKG_EMBED_MODEL=bge-q          # Xenova INT8 (not Qdrant model_optimized)
+export LEANKG_EMBED_MAX_SEQ=128
+export LEANKG_EMBED_MAX_MB=6144          # allow batch≥64–128 (macOS default 2048 clamps hard)
+export LEANKG_EMBED_MAX_BLOB_CHARS=500   # shorter blobs → faster tokenize/infer
+
+./target/release/leankg embed --wait \
+  --project /path/to/project \
+  --types function,method \
+  --workers 8 \
+  --batch-size 128
+```
+
+Healthy logs should show `kind=bge-int8`, `max_seq=128`, and
+`...Xenova.../onnx/model_quantized.onnx` — **not** Qdrant `model_optimized.onnx`
+(that file fails on current ORT with a SkipLayerNorm missing-input error).
+
+Set `LEANKG_EMBED_FAST=0` and/or `LEANKG_EMBED_MODEL=bge` for the legacy FP32 path.
+
+### MCP / Docker: do not block boot on cold embed
+
+Cold embed on a mega-graph can take tens of minutes. Keep MCP healthy
+immediately and let vectors catch up in the background:
+
+```bash
+export LEANKG_EMBED_ON_BOOT=0              # entrypoint must not wait on embed
+export LEANKG_EMBED_BACKGROUND=1           # in-process embed inside mcp-http
+export LEANKG_EMBED_MAX_MB=2048            # soft RSS budget (macOS default)
+export LEANKG_EMBED_BACKGROUND_WORKERS=1
+export LEANKG_EMBED_BACKGROUND_BATCH=32
+```
+
+While the index is building, keyword/graph MCP tools work; semantic tools
+degrade until HNSW is ready (`leankg embed --status` to poll).
 
 ### Query
 
@@ -237,15 +304,32 @@ Via MCP, the `kg_semantic_context` tool exposes the same pipeline to AI tools.
 
 ### Memory tuning
 
-Peak RSS scales with `--batch-size` (ORT pre-allocates per-thread arenas).
-Defaults lowered to 32 in the current release. Use the table below if RSS is
-a problem:
+Embed auto-caps workers, batch size, upsert chunk, and the in-flight vector
+queue from `LEANKG_EMBED_MAX_MB` (default **2048** on macOS, **3072** elsewhere)
+so a cold run cannot balloon into swap and freeze the host. Inference also
+pauses briefly when RSS crosses 90% of that soft cap.
+
+| Knob | Effect |
+|------|--------|
+| `LEANKG_EMBED_MAX_MB=2048` | Soft RSS budget (set `0` to disable caps — not recommended) |
+| `LEANKG_EMBED_FAST=1` | INT8 + seq cap + data-parallel workers (default on) |
+| `LEANKG_EMBED_MODEL=bge-q` | Xenova quantized ONNX; `bge` = FP32 |
+| `LEANKG_EMBED_MAX_SEQ=128` | Token truncate for cold speed (fast path default) |
+| `LEANKG_EMBED_MAX_BLOB_CHARS` | Cap text blob length before tokenize (fast path ~500) |
+| `--workers` / `--batch-size` | Requested values; clamped by the memory plan |
+| `LEANKG_EMBED_UPSERT_CHUNK` | Writer flush size (also capped under a low budget) |
 
 | `--batch-size` | Approx peak RSS (10-core Mac) | When to use |
 |---------------|-------------------------------|------------|
-| 32 (default)  | ~1.3 GB                       | Workstation |
+| 128 (fast path) | needs `LEANKG_EMBED_MAX_MB` ≥ ~6g | Mega-graph cold on workstation |
+| 32 (CLI default) | ~1–2 GB with 1–2 workers      | Laptop / default |
+| 16            | lower                         | Tight `LEANKG_EMBED_MAX_MB` |
 | 8             | ~730 MB                       | Memory-pressured host |
 | 4             | ~400 MB                       | 1-vCPU container |
+
+For Docker cold embeds, prefer `mem_limit` ≥ 6g **or** set
+`LEANKG_EMBED_MAX_MB` below the container limit so backpressure engages
+before the OOM killer.
 
 ### Internals & design rationale
 
@@ -257,6 +341,9 @@ CozoDB's HNSW index.
 Design philosophy for the retrieve→rerank→traverse flow is in
 [docs/design/hybrid-retrieval-reranking.md](docs/design/hybrid-retrieval-reranking.md).
 
+Runtime measurements and rejected storage levers (WAL-off, Redis side-store):
+[generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md](generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md).
+
 ---
 
 ## Configuration (Environment Variables)
@@ -267,6 +354,16 @@ Design philosophy for the retrieve→rerank→traverse flow is in
 | `LEANKG_DB_ENGINE` | `sqlite` | `rocksdb` enables the RocksDB storage backend (recommended for teams). |
 | `LEANKG_ROCKSDB_ROOT` | `~/.leankg-rocksdb` | Centralized RocksDB project store. |
 | `LEANKG_AUTO_INDEX` | `1` | Enable index-if-needed on container startup. |
+| `LEANKG_EMBED_ON_BOOT` | `1` (image-dependent) | Set `0` so Docker entrypoint does **not** block MCP on cold embed. |
+| `LEANKG_EMBED_BACKGROUND` | unset | Set `1` to spawn in-process background embed inside `mcp-http` (shared DB). |
+| `LEANKG_EMBED_FAST` | `1` (on) | INT8 + seq cap + data-parallel workers. Set `0` for legacy FP32 profile. |
+| `LEANKG_EMBED_MODEL` | `bge` / fast→`bge-q` | `bge` = Xenova FP32; `bge-q`/`int8` = Xenova quantized; avoid Qdrant `model_optimized`. |
+| `LEANKG_EMBED_MAX_SEQ` | `512` / fast→`128` | Max tokens per blob for DirectEmbedder. |
+| `LEANKG_EMBED_MAX_BLOB_CHARS` | unset / fast→`500` | Cap blob text length before tokenize. |
+| `LEANKG_EMBED_MAX_MB` | `2048` (macOS) / `3072` | Soft RSS budget for embed: caps workers/batch/channel; pauses infer at 90%. `0` disables. |
+| `LEANKG_EMBED_BACKGROUND_WORKERS` | `1` | Worker count for in-process background embed (further capped by `LEANKG_EMBED_MAX_MB`). |
+| `LEANKG_EMBED_BACKGROUND_BATCH` | `32` | Batch size for in-process background embed (further capped by `LEANKG_EMBED_MAX_MB`). |
+| `LEANKG_EMBED_UPSERT_CHUNK` | `5000` | Rows per Cozo `import_relations` flush during embed (capped under a low RSS budget). |
 | `LEANKG_VACUUM_INTERVAL_HOURS` | `1` | Hourly tick that calls `GraphEngine.vacuum()`. Set `0` to disable. **No-op on RocksDB** (background compaction handles it). |
 | `LEANKG_WATCHER_DEBOUNCE_MS` | `2000` | File-watcher debounce window. |
 | `LEANKG_WATCHER_BURST_LIMIT` | `256` | Soft cap on pending file changes per debounce window. |
@@ -469,11 +566,15 @@ for full operational notes. Common issues:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `embed` peaks at 10+ GB RSS | ORT per-thread arenas × large batch | `leankg embed --batch-size 8` (or `4`) |
+| Cold embed still ~30–40+ min | Fast path off, or `LEANKG_EMBED_MAX_MB` clamps batch to 16 | Enable `LEANKG_EMBED_FAST=1` + `bge-q`; raise `LEANKG_EMBED_MAX_MB` (e.g. 6144); `--workers 8 --batch-size 128` |
+| ORT `SkipLayerNorm` / missing `LayerNorm.weight` | Loading Qdrant `model_optimized.onnx` | Rebuild binary; use Xenova `model_quantized.onnx` via `LEANKG_EMBED_MODEL=bge-q` |
+| MCP / Docker stuck unhealthy for hours | Entrypoint waiting on sync embed | Set `LEANKG_EMBED_ON_BOOT=0`; use `LEANKG_EMBED_BACKGROUND=1` |
+| `embed` peaks at 10+ GB RSS | ORT arenas × many workers × large batch/channel | Set `LEANKG_EMBED_MAX_MB=2048` (default on macOS); use `--workers 1 --batch-size 8` |
 | `semantic-context` returns 0 seeds, `Env-filtered: N` in `--debug` | elements' `env` doesn't match the requested env (default `local`) | pass `--env <value>`, or re-index with the right env |
 | `parser::pest` from `embed` | ran against an old build that uses `:delete` (CozoDB 0.2.2 only supports `:rm`) | rebuild from current `main` |
 | `semantic-context` says `Reranker: fallback` | bge-reranker-v2-m3 failed to init (corrupt cache, OOM) | `leankg embed --init` to re-download; lower `--batch-size` |
 | Searches miss elements that state says are `fresh` | DB was modified out-of-band (manual SQLite edit) without re-running `embed` | `leankg embed --full` |
+| Considering Redis/FalkorDB to “fix” cold embed | Writer is not the limiter (~100k+ vec/sec empty-DB) | Do not migrate; see plan doc / PRD v3.6.3 Won't Do |
 
 ### Database Lock Error
 

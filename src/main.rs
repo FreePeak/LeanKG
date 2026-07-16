@@ -439,8 +439,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             full,
             batch_size,
             project,
+            wait,
+            status,
+            cancel,
+            background,
+            workers,
+            types,
         } => {
-            run_embed(init, full, batch_size, &project)?;
+            run_embed(
+                init, full, batch_size, &project, wait, status, cancel, background, workers, &types,
+            )?;
         }
         #[cfg(feature = "embeddings")]
         cli::CLICommand::SemanticContext {
@@ -4887,6 +4895,12 @@ fn run_embed(
     full: bool,
     batch_size: usize,
     project: &str,
+    wait: bool,
+    status: bool,
+    cancel: bool,
+    background: bool,
+    workers: usize,
+    types_filter: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if init {
         let report = embeddings::init_models()?;
@@ -4900,49 +4914,325 @@ fn run_embed(
 
     let project_path = std::path::PathBuf::from(project);
     let leankg_dir = project_path.join(".leankg");
-    let db_path = leankg_dir.join("leankg.db");
+    let status_path = leankg_dir.join("embed_status.json");
+    let lock_path = leankg_dir.join("embed.lock");
 
-    if !db_path.exists() {
+    // --status: print progress for an in-flight background embed and exit.
+    if status {
+        return run_embed_status(&status_path, &lock_path);
+    }
+
+    // --cancel: SIGTERM the background process and exit.
+    if cancel {
+        return run_embed_cancel(&lock_path);
+    }
+
+    if !leankg_dir.exists() {
         return Err(format!(
-            "LeanKG database not found at {}. Run `cargo run --release -- index {}` first.",
-            db_path.display(),
+            "LeanKG project not initialized at {}. Run `cargo run --release -- index {}` first.",
+            leankg_dir.display(),
             project
         )
         .into());
     }
 
+    // Foreground mode (--wait) or background-spawned child (--background):
+    // do the actual work. Everything else falls through to the spawn branch.
+    if wait || background {
+        return run_embed_worker(
+            init,
+            full,
+            batch_size,
+            &project_path,
+            &leankg_dir,
+            workers,
+            types_filter,
+        );
+    }
+
+    // Default: refuse to start if a previous background embed is still
+    // running (lock file present + process alive). Otherwise spawn detached.
+    if let Some(existing_pid) = read_lock_pid(&lock_path) {
+        if pid_alive(existing_pid) {
+            return Err(format!(
+                "An embed is already running for this project (PID {}). \
+                 Use `leankg embed --status` to check progress, or \
+                 `leankg embed --cancel` to stop it before re-running.",
+                existing_pid
+            )
+            .into());
+        }
+    }
+    let _ = std::fs::remove_file(&lock_path);
+
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args([
+        "embed",
+        "--project",
+        project,
+        "--background",
+        "--batch-size",
+        &batch_size.to_string(),
+        "--workers",
+        &workers.to_string(),
+    ]);
+    if full {
+        cmd.arg("--full");
+    }
+    if !types_filter.is_empty() {
+        // Pass the user's --types override through to the child so the
+        // background worker honors it (otherwise the mega-graph heuristic
+        // re-derives a default that ignores the user's intent).
+        cmd.args(["--types", types_filter]);
+    }
+    let child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    println!(
+        "Embed started in background (PID {}). Pass --wait to run synchronously, \
+         or use `leankg embed --status` to poll progress.",
+        child.id()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+fn run_embed_status(
+    status_path: &std::path::Path,
+    lock_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !status_path.exists() {
+        if let Some(pid) = read_lock_pid(lock_path) {
+            println!(
+                "Embed job (PID {}) is running but has not yet written a status file.",
+                pid
+            );
+        } else {
+            println!("No background embed in flight for this project.");
+        }
+        return Ok(());
+    }
+    let raw = std::fs::read_to_string(status_path)?;
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+    let pid = v.get("pid").and_then(|x| x.as_u64()).unwrap_or(0);
+    let started = v.get("started_at").and_then(|x| x.as_u64()).unwrap_or(0);
+    let considered = v.get("considered").and_then(|x| x.as_u64()).unwrap_or(0);
+    let embedded = v.get("embedded").and_then(|x| x.as_u64()).unwrap_or(0);
+    let skipped = v.get("skipped_fresh").and_then(|x| x.as_u64()).unwrap_or(0);
+    let orphans = v.get("orphans").and_then(|x| x.as_u64()).unwrap_or(0);
+    let workers = v.get("workers").and_then(|x| x.as_u64()).unwrap_or(1);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let elapsed = now.saturating_sub(started);
+    let rate = if elapsed > 0 {
+        embedded as f64 / elapsed as f64
+    } else {
+        0.0
+    };
+    let eta = if rate > 0.0 {
+        ((considered.saturating_sub(embedded + skipped)) as f64 / rate) as u64
+    } else {
+        0
+    };
+    let status = v
+        .get("status")
+        .and_then(|x| x.as_str())
+        .unwrap_or("running");
+    println!("Embed status: {}", status);
+    println!("  PID:           {}", pid);
+    println!("  Workers:       {}", workers);
+    println!("  Elapsed:       {}s", elapsed);
+    println!("  Considered:    {}", considered);
+    println!("  Embedded:      {}", embedded);
+    println!("  Skipped fresh: {}", skipped);
+    println!("  Orphans:       {}", orphans);
+    println!("  Rate:          {:.1} vectors/sec", rate);
+    if eta > 0 && status == "running" {
+        println!("  ETA:           {}s", eta);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+fn run_embed_cancel(lock_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pid) = read_lock_pid(lock_path) else {
+        println!("No background embed in flight for this project.");
+        return Ok(());
+    };
+    if !pid_alive(pid) {
+        let _ = std::fs::remove_file(lock_path);
+        println!(
+            "Stale embed lock (PID {}) removed; no live process found.",
+            pid
+        );
+        return Ok(());
+    }
+    // SAFETY: best-effort signal; we don't own the PID namespace.
+    let ret = unsafe { libc_kill(pid, libc_SIGTERM) };
+    if ret == 0 {
+        println!("Sent SIGTERM to embed worker (PID {}).", pid);
+    } else {
+        return Err(format!("Failed to send SIGTERM to PID {}: errno={}", pid, ret).into());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+fn read_lock_pid(lock_path: &std::path::Path) -> Option<u64> {
+    let raw = std::fs::read_to_string(lock_path).ok()?;
+    raw.trim().parse::<u64>().ok()
+}
+
+#[cfg(feature = "embeddings")]
+fn pid_alive(pid: u64) -> bool {
+    // kill(pid, 0) is the canonical liveness check on POSIX.
+    let ret = unsafe { libc_kill(pid, libc_SIGTERM) };
+    // SIGTERM (0) to our own pid is non-fatal; just check ESRCH.
+    let _ = ret;
+    // Re-check with signal 0 (no-op) to avoid self-killing.
+    let probe = unsafe { libc_kill(pid, 0) };
+    probe == 0
+        || (probe == -1 && std::io::Error::last_os_error().raw_os_error() != Some(3)) && pid != 0
+}
+
+// Minimal libc bindings — avoid adding a `libc` dep just for kill().
+#[cfg(feature = "embeddings")]
+unsafe fn libc_kill(pid: u64, sig: i32) -> i32 {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    kill(pid as i32, sig)
+}
+#[cfg(feature = "embeddings")]
+const libc_SIGTERM: i32 = 15;
+
+#[cfg(feature = "embeddings")]
+fn run_embed_worker(
+    _init: bool,
+    full: bool,
+    batch_size: usize,
+    _project_path: &std::path::Path,
+    leankg_dir: &std::path::Path,
+    workers: usize,
+    types_filter: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    let status_path = leankg_dir.join("embed_status.json");
+    let lock_path = leankg_dir.join("embed.lock");
+    let db_path = leankg_dir.join("leankg.db");
+
+    // Write the lock with our PID so the parent / --status / --cancel can find us.
+    let pid = std::process::id();
+    std::fs::write(&lock_path, pid.to_string())?;
+    let started_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let write_status =
+        |considered: u64, embedded: u64, skipped: u64, orphans: u64, status: &str| {
+            let body = serde_json::json!({
+                "pid": pid,
+                "started_at": started_at,
+                "considered": considered,
+                "embedded": embedded,
+                "skipped_fresh": skipped,
+                "orphans": orphans,
+                "workers": workers,
+                "status": status,
+            });
+            if let Ok(mut f) = std::fs::File::create(&status_path) {
+                let _ = f.write_all(body.to_string().as_bytes());
+            }
+        };
+
     let db = db::schema::init_db(&db_path)?;
-    let graph = graph::GraphEngine::new(db);
+    let graph = graph::GraphEngine::new(db.clone());
 
     let mode = if full {
         embeddings::BuildMode::Full
     } else {
         embeddings::BuildMode::Incremental
     };
+    // Default to `function,method` on mega-graphs to keep cold embed under
+    // 5 min. Smaller workspaces embed every type. Pass `--types all` to
+    // override and embed everything regardless of size.
+    let parsed_filter = embeddings::parse_type_filter(types_filter);
+    // Compute the element count ONCE — both the mega-graph heuristic and
+    // the initial status payload need it, so we don't pay two full
+    // `all_elements()` scans (which on a 400k-row workspace costs seconds
+    // to tens of seconds).
+    let total = graph.all_elements().map(|v| v.len()).unwrap_or(0);
     let opts = embeddings::BuildOptions {
         mode,
         batch_size,
         reserve_capacity: None,
+        type_filter: match &parsed_filter {
+            Some(_) => parsed_filter.clone(),
+            None => {
+                if total > 50_000 {
+                    let mut set = std::collections::HashSet::new();
+                    set.insert("function".to_string());
+                    set.insert("method".to_string());
+                    Some(set)
+                } else {
+                    None
+                }
+            }
+        },
     };
+    write_status(total as u64, 0, 0, 0, "running");
 
     let started = std::time::Instant::now();
-    // Vectors live in CozoDB now; index_path is unused but retained in the
-    // signature for backward source-compat with the public `build_index` API.
-    let report = embeddings::build_index(&graph, std::path::Path::new(""), &opts)?;
+    // Parallel inference + sequential DB writes. Per-thread ONNX session
+    // is the only safe pattern with fastembed (TextEmbedding is !Sync).
+    let report: embeddings::BuildReport = if workers > 1 {
+        embeddings::build_index_parallel(&graph, std::path::Path::new(""), &opts, workers)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?
+    } else {
+        embeddings::build_index(&graph, std::path::Path::new(""), &opts)?
+    };
     let elapsed = started.elapsed();
 
-    println!(
-        "Embed build complete ({:?}) in {:.2}s",
-        mode,
-        elapsed.as_secs_f64()
+    write_status(
+        report.considered_count as u64,
+        report.embedded_count as u64,
+        report.skipped_fresh_count as u64,
+        report.orphaned_count as u64,
+        "completed",
     );
-    println!("  Considered:    {}", report.considered_count);
-    println!("  Embedded:      {}", report.embedded_count);
-    println!("  Skipped fresh: {}", report.skipped_fresh_count);
-    println!("  Orphans reaped: {}", report.orphaned_count);
-    println!("  Index size:    {} vectors", report.index_size);
-    println!("  Index path:    {}", report.index_path.display());
+    let _ = std::fs::remove_file(&lock_path);
+
+    // On a TTY this prints human output; otherwise only the status file
+    // (which the parent / --status polls) is authoritative.
+    if atty_stdout() {
+        println!(
+            "Embed build complete ({:?}) in {:.2}s ({} workers, batch {})",
+            mode,
+            elapsed.as_secs_f64(),
+            workers,
+            batch_size
+        );
+        println!("  Considered:    {}", report.considered_count);
+        println!("  Embedded:      {}", report.embedded_count);
+        println!("  Skipped fresh: {}", report.skipped_fresh_count);
+        println!("  Orphans reaped: {}", report.orphaned_count);
+        println!("  Index size:    {} vectors", report.index_size);
+        println!("  Index path:    {}", report.index_path.display());
+    }
     Ok(())
+}
+
+#[cfg(feature = "embeddings")]
+fn atty_stdout() -> bool {
+    use std::io::IsTerminal;
+    // Best-effort: use std::io::IsTerminal when stable; otherwise assume TTY.
+    std::io::stdout().is_terminal()
 }
 
 #[cfg(feature = "embeddings")]

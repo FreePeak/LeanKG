@@ -257,6 +257,12 @@ pub enum CLICommand {
     /// Default mode is incremental: only re-embed nodes touched since the
     /// last `embed` run, plus newly-added nodes. Orphans (state rows whose
     /// qualified_name no longer exists) are reaped from usearch + state.
+    ///
+    /// By default the command spawns a detached background process and
+    /// returns in <1s, leaving a PID + progress file under
+    /// `<project>/.leankg/embed_status.json`. Pass `--wait` to run in the
+    /// foreground (the legacy behavior). Use `--status` / `--cancel` to
+    /// inspect or stop a running background embed.
     #[cfg(feature = "embeddings")]
     Embed {
         /// Download the embedding + reranker models to the cache and exit.
@@ -267,13 +273,40 @@ pub enum CLICommand {
         /// scratch. Use after a model swap or index corruption.
         #[arg(long)]
         full: bool,
-        /// Override the embedding batch size (default 32). Lower this on
+        /// Override the embedding batch size (default 32). Auto-capped by
+        /// `LEANKG_EMBED_MAX_MB` (default 2048 on macOS). Lower further on
         /// memory-constrained hosts.
         #[arg(long, default_value = "32")]
         batch_size: usize,
         /// Project root (defaults to current working directory).
         #[arg(long, default_value = ".")]
         project: String,
+        /// Wait for the embed to complete in the foreground (legacy
+        /// behavior). Default: spawn a detached background process and
+        /// return immediately.
+        #[arg(long)]
+        wait: bool,
+        /// Print progress for an in-flight background embed and exit.
+        #[arg(long)]
+        status: bool,
+        /// Cancel an in-flight background embed (SIGTERM) and exit.
+        #[arg(long)]
+        cancel: bool,
+        /// Internal: set by the parent process when re-spawning itself as
+        /// a background worker. End-users should not pass this.
+        #[arg(long, hide = true)]
+        background: bool,
+        /// Number of parallel ONNX inference workers (default 2). Each
+        /// worker holds its own ONNX session (~300–400 MB). Auto-capped by
+        /// `LEANKG_EMBED_MAX_MB`. Set to 1 on low-RAM hosts.
+        #[arg(long, default_value = "2")]
+        workers: usize,
+        /// Comma-separated list of element types to embed (e.g. `function,method`).
+        /// Defaults to "all" for small graphs (<50k elements) and
+        /// `function,method` for mega-graphs to keep cold embed under 5 min.
+        /// Pass `--types all` to embed every embeddable type regardless of size.
+        #[arg(long, default_value = "")]
+        types: String,
     },
     /// One-shot embedding retrieval for CLI testing (requires
     /// --features embeddings). Useful for validating the retrieve→rerank→
