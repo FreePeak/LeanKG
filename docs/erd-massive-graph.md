@@ -267,7 +267,7 @@ Response:
     ],
     services: [
       { "name": "be-merchant", "nodes": 2000, "edges": 3500 },
-      { "name": "be-autos", "nodes": 1500, "edges": 2800 },
+      { "name": "svc-autos", "nodes": 1500, "edges": 2800 },
       ...
     ]
   }

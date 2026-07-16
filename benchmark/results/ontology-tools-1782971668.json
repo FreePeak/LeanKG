@@ -280,7 +280,7 @@
       "queries": [
         {
           "id": "qf-be-toggle",
-          "query": "platform-food/be-restaurant/internal/external/be_toggle.go",
+          "query": "platform-food/svc-restaurant/internal/external/feature_toggle.go",
           "passed": false,
           "latency_ms": 95.71475,
           "result_summary": {

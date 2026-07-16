@@ -110,5 +110,8 @@ tree-sitter-dart = "0.1"
 # path and throughput collapsed to ~40 vectors/sec.
 crossbeam-channel = "0.5"
 
+# Optional Redis HNSW vector side-store (LEANKG_EMBED_VECTOR_STORE=redis)
+redis = { version = "0.27", features = ["aio", "tokio-comp"] }
+
 [dev-dependencies]
 

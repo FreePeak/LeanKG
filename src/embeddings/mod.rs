@@ -16,18 +16,27 @@
 
 pub mod build;
 pub mod models;
+pub mod redis_store;
+pub mod runtime;
 pub mod state;
 pub mod text_blob;
 
 #[allow(unused_imports)]
 pub use build::{
-    build_index_parallel, parse_type_filter, run as build_index, spawn_background_embed,
-    BackgroundEmbedConfig, BackgroundEmbedHandle, BuildMode, BuildOptions, BuildReport,
+    build_index_parallel, embed_max_rss_mb, parse_type_filter, plan_embed_memory,
+    run as build_index, spawn_background_embed, BackgroundEmbedConfig, BackgroundEmbedHandle,
+    BuildMode, BuildOptions, BuildReport, EmbedMemoryPlan,
 };
 #[allow(unused_imports)]
 pub use models::{
-    cache_dir, init_models, Embedder, InitReport, RerankScore, Reranker, RerankerStatus,
-    DEFAULT_EMBEDDING_MODEL, DEFAULT_RERANKER_MODEL, EMBEDDING_DIM,
+    cache_dir, init_models, DirectEmbedder, EmbedModelKind, Embedder, InitReport, RerankScore,
+    Reranker, RerankerStatus, DEFAULT_EMBEDDING_MODEL, DEFAULT_RERANKER_MODEL, EMBEDDING_DIM,
+    MAX_SEQ_LEN,
+};
+#[allow(unused_imports)]
+pub use runtime::{
+    embed_fast_enabled, ensure_quantized_onnx, quantized_onnx_available, resolve_embed_runtime,
+    EmbedRuntimePlan,
 };
 #[allow(unused_imports)]
 pub use state::{

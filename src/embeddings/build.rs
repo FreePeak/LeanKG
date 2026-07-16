@@ -66,6 +66,169 @@ fn effective_upsert_chunk() -> usize {
         .unwrap_or(DEFAULT_UPSERT_CHUNK)
 }
 
+/// Soft RSS budget for the embed process (MB).
+///
+/// Default is intentionally conservative on macOS so a cold embed cannot
+/// balloon into swap and freeze the host. Override with `LEANKG_EMBED_MAX_MB`.
+/// Set to `0` to disable auto-caps / backpressure (not recommended).
+pub fn embed_max_rss_mb() -> u64 {
+    if let Ok(v) = std::env::var("LEANKG_EMBED_MAX_MB") {
+        if let Ok(n) = v.parse::<u64>() {
+            return n;
+        }
+    }
+    // Fast path needs headroom for one fat INT8 session + large batches.
+    let fast = crate::embeddings::runtime::embed_fast_enabled();
+    #[cfg(target_os = "macos")]
+    {
+        if fast {
+            4_096
+        } else {
+            2_048
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if fast {
+            4_096
+        } else {
+            3_072
+        }
+    }
+}
+
+/// Resolved worker/batch/channel caps for one embed run.
+#[derive(Debug, Clone, Copy)]
+pub struct EmbedMemoryPlan {
+    pub workers: usize,
+    pub batch_size: usize,
+    pub upsert_chunk: usize,
+    pub channel_capacity: usize,
+    pub max_rss_mb: u64,
+}
+
+/// Cap workers / batch / writer queue so peak RSS stays near `LEANKG_EMBED_MAX_MB`.
+///
+/// Rough model (BGE-small DirectEmbedder):
+/// - base process + Cozo ≈ 700–900 MB
+/// - each ONNX worker session ≈ 300–400 MB (weights + arenas)
+/// - in-flight channel vectors ≈ 2 KB each
+pub fn plan_embed_memory(requested_workers: usize, requested_batch: usize) -> EmbedMemoryPlan {
+    plan_embed_memory_with_budget(requested_workers, requested_batch, embed_max_rss_mb())
+}
+
+/// Same as [`plan_embed_memory`] but with an explicit budget (for tests / callers).
+pub fn plan_embed_memory_with_budget(
+    requested_workers: usize,
+    requested_batch: usize,
+    max_rss_mb: u64,
+) -> EmbedMemoryPlan {
+    if max_rss_mb == 0 {
+        let upsert = effective_upsert_chunk();
+        let workers = requested_workers.max(1);
+        let batch_size = requested_batch.max(1);
+        return EmbedMemoryPlan {
+            workers,
+            batch_size,
+            upsert_chunk: upsert,
+            // Still bound the queue — unbounded grow was a major OOM lever.
+            channel_capacity: (workers * batch_size * 2).clamp(64, upsert),
+            max_rss_mb: 0,
+        };
+    }
+
+    const BASE_MB: u64 = 900;
+    const PER_WORKER_MB: u64 = 350;
+    let budget_for_workers = max_rss_mb.saturating_sub(BASE_MB);
+    let max_workers = ((budget_for_workers / PER_WORKER_MB).max(1) as usize).min(8);
+    let workers = requested_workers.max(1).min(max_workers);
+
+    let max_batch = if workers <= 1 {
+        // Single high-intra session: fat batches are the throughput lever.
+        if max_rss_mb <= 2_048 {
+            64
+        } else {
+            256
+        }
+    } else if max_rss_mb <= 1_536 {
+        8
+    } else if max_rss_mb <= 2_048 {
+        16
+    } else if max_rss_mb <= 3_072 {
+        32
+    } else if max_rss_mb <= 4_096 {
+        128
+    } else {
+        256
+    };
+    let batch_size = requested_batch.max(1).min(max_batch);
+
+    let upsert_cap = if max_rss_mb <= 2_048 {
+        1_000
+    } else if max_rss_mb <= 3_072 {
+        2_500
+    } else {
+        DEFAULT_UPSERT_CHUNK
+    };
+    let upsert_chunk = effective_upsert_chunk().min(upsert_cap).max(100);
+
+    // Old default (4 × UPSERT_CHUNK ≈ 20k vectors) held a multi-GB buffer of
+    // pending embeddings. Cap to a couple of worker batches so the writer
+    // provides natural backpressure.
+    let channel_capacity = (workers * batch_size * 2).clamp(64, upsert_chunk);
+
+    EmbedMemoryPlan {
+        workers,
+        batch_size,
+        upsert_chunk,
+        channel_capacity,
+        max_rss_mb,
+    }
+}
+
+/// Sleep while RSS is above the soft embed budget so macOS does not thrash.
+fn wait_for_embed_rss_headroom(max_rss_mb: u64) {
+    if max_rss_mb == 0 {
+        return;
+    }
+    // Start backing off at 90% of the soft cap.
+    let soft = (max_rss_mb * 90) / 100;
+    for attempt in 0..50 {
+        let Ok(rss) = crate::budget::current_rss_mb() else {
+            return;
+        };
+        if rss < soft {
+            return;
+        }
+        if attempt == 0 || attempt % 10 == 0 {
+            tracing::warn!(
+                "embed RSS {} MB >= soft cap {} MB (LEANKG_EMBED_MAX_MB={}); pausing inference",
+                rss,
+                soft,
+                max_rss_mb
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200 + attempt * 40));
+    }
+}
+
+/// Opt-in hint for a locally patched Cozo (`vendor/cozo`) that honors
+/// `LEANKG_COZO_ROCKS_BULK=1` (`disable_wal` + `sync(false)`). Stock crates.io
+/// Cozo ignores the env; measured e2e gain was ≤1.15× so it is not required.
+fn enable_rocks_bulk_writes() {
+    let on = std::env::var("LEANKG_COZO_ROCKS_BULK")
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false);
+    if on {
+        tracing::info!(
+            "LEANKG_COZO_ROCKS_BULK=1 set (no-op unless using a Cozo build that honors it)"
+        );
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildMode {
     /// Skip up-to-date rows; embed only stale/missing/changed.
@@ -94,11 +257,9 @@ impl Default for BuildOptions {
     fn default() -> Self {
         Self {
             mode: BuildMode::Incremental,
-            // 64 = the empirical sweet spot for BGE-small ONNX inference
-            // on 10-core x86_64 / arm64. Smaller (16-32) leaves the
-            // workers idle between CozoDB commits; larger (128+) blows up
-            // RSS because each session pre-allocates per-batch arenas.
-            batch_size: 64,
+            // 32 = safer default under LEANKG_EMBED_MAX_MB. Raise via
+            // `--batch-size` when you have headroom; 64+ grows ORT arenas.
+            batch_size: 32,
             reserve_capacity: None,
             type_filter: None,
         }
@@ -137,6 +298,16 @@ pub fn run(
     _index_path: &std::path::Path,
     opts: &BuildOptions,
 ) -> Result<BuildReport, Box<dyn std::error::Error>> {
+    let mem = plan_embed_memory(1, opts.batch_size);
+    let mut opts = opts.clone();
+    opts.batch_size = mem.batch_size;
+    if mem.max_rss_mb > 0 {
+        tracing::info!(
+            "embed (serial) memory plan: batch={} max_rss_mb={}",
+            opts.batch_size,
+            mem.max_rss_mb
+        );
+    }
     let embedder = Embedder::new()?;
     let db = graph.db();
 
@@ -192,6 +363,7 @@ pub fn run(
     // FR-HNSW perf fix: drop the HNSW index before the bulk insert so
     // each :put doesn't pay the O(log N) HNSW update cost. The index is
     // recreated at the end of the function.
+    enable_rocks_bulk_writes();
     if state::drop_hnsw_index(db).is_err() {
         tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
     }
@@ -201,6 +373,7 @@ pub fn run(
     let mut embedded = 0usize;
     let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(to_embed.len());
     for chunk in to_embed.chunks(opts.batch_size) {
+        wait_for_embed_rss_headroom(mem.max_rss_mb);
         let texts: Vec<String> = chunk.iter().map(|w| w.blob.clone()).collect();
         let vectors = embedder.embed(&texts)?;
         let pairs: Vec<(&WorkItem, &Vec<f32>)> =
@@ -353,14 +526,54 @@ pub fn build_index_parallel(
     let considered = work.len();
     let skipped_fresh = considered - to_embed.len();
 
+    // FR-EMBED-R4: length-aware batching — sort by blob char length so each
+    // ONNX batch pads to a similar seq_len (less wasted compute on short
+    // texts sitting next to long ones). Char length is a cheap token proxy.
+    let mut to_embed = to_embed;
+    to_embed.sort_by_key(|w| w.blob.len());
+    tracing::info!(
+        "length-sorted {} embed items (min_chars={} max_chars={})",
+        to_embed.len(),
+        to_embed.first().map(|w| w.blob.len()).unwrap_or(0),
+        to_embed.last().map(|w| w.blob.len()).unwrap_or(0)
+    );
+
     // FR-HNSW perf fix: drop the HNSW index before the bulk insert so
     // each :put doesn't pay the O(log N) HNSW update cost. Recreate the
     // index after the loop completes — CozoDB's HNSW build is O(N log N)
     // and runs ~5-10x faster than N incremental updates on a 100k+ index.
+    enable_rocks_bulk_writes();
     if state::drop_hnsw_index(db).is_err() {
         tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
     }
     tracing::info!("HNSW dropped; running parallel bulk insert");
+
+    // Fast path: INT8 + explicit threads + fat batch + seq cap.
+    // Collapses N×1-thread sessions into 1×P-core session on M-series.
+    let runtime = crate::embeddings::runtime::resolve_embed_runtime(workers, opts.batch_size);
+    if runtime.kind == crate::embeddings::models::EmbedModelKind::BgeInt8 {
+        if let Err(e) = crate::embeddings::runtime::ensure_quantized_onnx() {
+            tracing::warn!(
+                "INT8 ONNX unavailable ({e}); falling back to FP32 — set LEANKG_EMBED_FAST=0 to silence"
+            );
+            std::env::set_var("LEANKG_EMBED_MODEL", "bge");
+        }
+    }
+    runtime.apply_env();
+    tracing::info!(
+        "embed runtime: fast={} kind={:?} max_seq={} workers={}→{} batch={}→{} intra={} omp={}",
+        crate::embeddings::runtime::embed_fast_enabled(),
+        runtime.kind,
+        runtime.max_seq,
+        workers,
+        runtime.workers,
+        opts.batch_size,
+        runtime.batch_size,
+        runtime.intra_threads,
+        runtime.omp_threads
+    );
+    let workers = runtime.workers;
+    let opts_batch = runtime.batch_size;
 
     // Warm the fastembed model cache once on this thread before fanning
     // out. Each worker constructs its own `TextEmbedding` (which is
@@ -370,42 +583,44 @@ pub fn build_index_parallel(
     // loser surfaces as "Failed to retrieve onnx/model.onnx". Building
     // a throwaway Embedder here populates the cache so the parallel
     // sessions find the model already on disk.
-    //
-    // Bound OMP_NUM_THREADS=1 once for the entire process so the ORT
-    // session's intra-op parallelism (which fastembed 4.9.1 sets to
-    // `available_parallelism()` per session) doesn't multiply by N workers
-    // on a 10-core host. intra_threads caps the per-session thread count;
-    // OMP_NUM_THREADS=1 caps the per-kernel thread pool. Combined, we get
-    // N ONNX sessions each doing single-threaded compute, which is the
-    // sweet spot for BGE-small (CPU-bound, cache-friendly).
     {
         let _warmer = Embedder::new().map_err(|e| e.to_string())?;
         tracing::info!("fastembed model cache warmed for parallel workers");
     }
-    if std::env::var_os("OMP_NUM_THREADS").is_none() {
-        // SAFETY: process-wide env mutation is unsafe under concurrent
-        // reads, but we set this before any worker threads are spawned
-        // and before any ORT session reads it, so the only contention is
-        // external readers (none in this process).
-        std::env::set_var("OMP_NUM_THREADS", "1");
-        tracing::info!("OMP_NUM_THREADS=1 (cap intra-op parallelism across N workers)");
-    }
+    // OMP_NUM_THREADS already set by runtime.apply_env() to match the plan
+    // (intra on single-session fast path; 1 when multi-worker).
 
     // 3. Shard the work, run inference in N worker threads, push results
     // onto a bounded crossbeam channel. A single writer thread consumes
     // the channel and ships :put embedding_vectors in UPSERT_CHUNK batches.
-    let batch_size = opts.batch_size.max(1);
-    let n_workers = workers.max(1);
+    // Cap workers/batch/channel against LEANKG_EMBED_MAX_MB so macOS does
+    // not OOM (each DirectEmbedder session ≈ 300–400 MB).
+    let mem = plan_embed_memory(workers, opts_batch);
+    if mem.workers != workers.max(1) || mem.batch_size != opts.batch_size.max(1) {
+        tracing::warn!(
+            "embed memory plan capped workers {}→{} batch {}→{} (LEANKG_EMBED_MAX_MB={})",
+            workers.max(1),
+            mem.workers,
+            opts.batch_size.max(1),
+            mem.batch_size,
+            mem.max_rss_mb
+        );
+    }
+    tracing::info!(
+        "embed memory plan: workers={} batch={} upsert_chunk={} channel={} max_rss_mb={}",
+        mem.workers,
+        mem.batch_size,
+        mem.upsert_chunk,
+        mem.channel_capacity,
+        mem.max_rss_mb
+    );
+    let batch_size = mem.batch_size;
+    let n_workers = mem.workers;
     let total = to_embed.len();
-    // Channel buffer = N workers * 8 batches so workers can stay busy
-    // even when the writer is briefly blocked.
-    // Channel buffer = 4 × UPSERT_CHUNK so workers can keep producing
-    // while the writer is mid-transaction. Smaller buffers (e.g. 8 ×
-    // n_workers) caused workers to block on send during the ~10s writer
-    // commit, which serialised inference behind the writer.
-    let upsert_chunk = effective_upsert_chunk();
-    let (tx, rx) = bounded::<(String, Vec<f32>, String)>(upsert_chunk * 4);
+    let upsert_chunk = mem.upsert_chunk;
+    let (tx, rx) = bounded::<(String, Vec<f32>, String)>(mem.channel_capacity);
     let embedded_count = Arc::new(AtomicUsize::new(0));
+    let max_rss_mb = mem.max_rss_mb;
 
     // --- Writer thread: single CozoDB writer that drains the channel and
     // emits :put embedding_vectors in UPSERT_CHUNK batches.
@@ -511,21 +726,40 @@ pub fn build_index_parallel(
                 .and_then(|v| v.parse::<usize>().ok())
                 .filter(|n| (1..=128).contains(n))
                 .unwrap_or(1);
-            let direct_result = if use_direct_embedder {
-                DirectEmbedder::with_intra_threads(direct_intra)
-                    .map(|e| EmbedderBackend::Direct(e))
-                    .ok()
+            let backend = if use_direct_embedder {
+                match DirectEmbedder::with_intra_threads(direct_intra) {
+                    Ok(e) => {
+                        tracing::info!(
+                            "worker {}: using DirectEmbedder (intra_threads={})",
+                            w_id,
+                            e.intra_threads()
+                        );
+                        EmbedderBackend::Direct(e)
+                    }
+                    Err(e) => {
+                        // Do not silently fall back — FastEmbedder has historically
+                        // hit ORT "512 by 800" on long code blobs. Surface the
+                        // DirectEmbedder error so ops can `embed --init` / fix cache.
+                        return Err(format!(
+                            "worker {w_id}: DirectEmbedder init failed ({e}); \
+                             refusing FastEmbedder fallback (ORT seq_len risk). \
+                             Run `leankg embed --init` or set LEANKG_EMBED_DIRECT=0 \
+                             only if you accept that risk."
+                        ));
+                    }
+                }
             } else {
-                None
-            };
-            let backend = match direct_result {
-                Some(b) => b,
-                None => EmbedderBackend::Fast(Embedder::new().map_err(|e| e.to_string())?),
+                tracing::warn!(
+                    "worker {}: LEANKG_EMBED_DIRECT=0 — using FastEmbedder",
+                    w_id
+                );
+                EmbedderBackend::Fast(Embedder::new().map_err(|e| e.to_string())?)
             };
             // Round-robin shards: this worker takes every Nth shard.
             let shards: Vec<&[WorkItem]> = work_items.chunks(batch_size * n_workers).collect();
             for shard in shards.iter().skip(w_id).step_by(n_workers) {
                 for chunk in shard.chunks(batch_size) {
+                    wait_for_embed_rss_headroom(max_rss_mb);
                     let texts: Vec<String> = chunk.iter().map(|w| w.blob.clone()).collect();
                     let vectors = match &backend {
                         EmbedderBackend::Direct(e) => e.embed(&texts).map_err(|e| e.to_string())?,
@@ -643,7 +877,7 @@ pub fn build_index_parallel(
 /// end), so the "no indices / no triggers" caveat in CozoDB's docs is
 /// satisfied for the duration of the embed.
 ///
-/// Throughput measured on M2 Pro 10c with /Users/linh.doan/work/be
+/// Throughput measured on M2 Pro 10c with /Users/you/work/other-repo
 /// (~371k functions-only) jumped from ~85 vec/sec (parameterized
 /// `:put`) to ~700 vec/sec with `import_relations` — about 8× — which
 /// brings cold embed from ~73 min to ~9 min on the same workspace.
@@ -651,6 +885,27 @@ fn upsert_pairs_to_db(
     db: &CozoDb,
     pairs: &[(String, Vec<f32>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Redis HNSW side-store: skip Cozo import_relations when enabled.
+    if crate::embeddings::redis_store::redis_vector_store_enabled() {
+        // One connection per flush is acceptable for cold load; for
+        // long runs the writer holds state via thread_local below.
+        thread_local! {
+            static REDIS: std::cell::RefCell<Option<crate::embeddings::redis_store::RedisVectorStore>> =
+                const { std::cell::RefCell::new(None) };
+        }
+        return REDIS.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(crate::embeddings::redis_store::RedisVectorStore::connect()?);
+                tracing::info!("embed writer: LEANKG_EMBED_VECTOR_STORE=redis");
+            }
+            slot.as_ref()
+                .unwrap()
+                .upsert_pairs(pairs)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
+        });
+    }
+
     use cozo::DataValue;
     let chunk_size = effective_upsert_chunk();
     for chunk in pairs.chunks(chunk_size) {
@@ -777,8 +1032,9 @@ pub struct BackgroundEmbedConfig {
 impl Default for BackgroundEmbedConfig {
     fn default() -> Self {
         Self {
-            batch_size: 64,
-            workers: 2,
+            batch_size: 32,
+            // One worker by default in MCP so request threads keep RAM.
+            workers: 1,
             full: false,
             types_filter: String::new(),
         }
@@ -810,6 +1066,23 @@ pub fn spawn_background_embed(
     cfg: BackgroundEmbedConfig,
 ) -> Result<Option<BackgroundEmbedHandle>, String> {
     use std::io::IsTerminal;
+
+    // Cap workers/batch against LEANKG_EMBED_MAX_MB before status/lock write.
+    let mem = plan_embed_memory(cfg.workers, cfg.batch_size);
+    let cfg = BackgroundEmbedConfig {
+        batch_size: mem.batch_size,
+        workers: mem.workers,
+        full: cfg.full,
+        types_filter: cfg.types_filter,
+    };
+    if mem.max_rss_mb > 0 {
+        tracing::info!(
+            "background embed memory plan: workers={} batch={} max_rss_mb={}",
+            cfg.workers,
+            cfg.batch_size,
+            mem.max_rss_mb
+        );
+    }
 
     let lock_path = leankg_dir.join("embed.lock");
     let status_path = leankg_dir.join("embed_status.json");
@@ -1049,8 +1322,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_options_batch_size_64() {
-        assert_eq!(BuildOptions::default().batch_size, 64);
+    fn default_options_batch_size_32() {
+        assert_eq!(BuildOptions::default().batch_size, 32);
+    }
+
+    #[test]
+    fn embed_memory_plan_caps_workers_under_2gb() {
+        let plan = plan_embed_memory_with_budget(8, 64, 2048);
+        assert!(plan.workers <= 4, "workers={}", plan.workers);
+        assert!(plan.batch_size <= 16, "batch={}", plan.batch_size);
+        assert!(plan.channel_capacity <= plan.upsert_chunk);
+    }
+
+    #[test]
+    fn embed_memory_plan_zero_disables_caps() {
+        let plan = plan_embed_memory_with_budget(4, 64, 0);
+        assert_eq!(plan.workers, 4);
+        assert_eq!(plan.batch_size, 64);
     }
 
     #[test]

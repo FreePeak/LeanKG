@@ -12,6 +12,23 @@ use sha2::{Digest, Sha256};
 /// Maximum text-blob length in characters before truncation. The embedding
 /// model's hard limit is 512 BPE tokens; ~1500 ASCII characters is a safe
 /// approximation that leaves headroom for tokenization expansion.
+///
+/// Fast path (`LEANKG_EMBED_FAST=1`) defaults to a tighter cap so batches
+/// stay short after `LEANKG_EMBED_MAX_SEQ` — needed for ≥500 vec/s on
+/// Apple Silicon. Override with `LEANKG_EMBED_MAX_BLOB_CHARS`.
+pub fn max_blob_chars() -> usize {
+    if let Ok(v) = std::env::var("LEANKG_EMBED_MAX_BLOB_CHARS") {
+        if let Ok(n) = v.parse::<usize>() {
+            return n.clamp(64, 8_000);
+        }
+    }
+    if crate::embeddings::runtime::embed_fast_enabled() {
+        500
+    } else {
+        1500
+    }
+}
+
 pub const MAX_BLOB_CHARS: usize = 1500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +70,7 @@ pub fn build_blob(element: &CodeElement) -> Option<String> {
     if trimmed.is_empty() {
         None
     } else {
-        Some(truncate_to_chars(trimmed, MAX_BLOB_CHARS).to_string())
+        Some(truncate_to_chars(trimmed, max_blob_chars()).to_string())
     }
 }
 
@@ -320,6 +337,9 @@ mod tests {
         let s = "a".repeat(2000);
         let truncated = truncate_to_chars(&s, MAX_BLOB_CHARS);
         assert_eq!(truncated.len(), MAX_BLOB_CHARS);
+        // max_blob_chars() may be tighter under LEANKG_EMBED_FAST; constant
+        // remains the legacy ceiling.
+        assert!(max_blob_chars() <= MAX_BLOB_CHARS);
     }
 
     #[test]

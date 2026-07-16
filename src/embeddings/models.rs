@@ -26,6 +26,70 @@ pub fn cache_dir() -> PathBuf {
         .join("models")
 }
 
+/// BGE / MiniLM max position embeddings. Sequences longer than this must be
+/// truncated before the ONNX graph (position Add) or ORT fails with
+/// broadcast errors like `512 by 800`.
+pub const MAX_SEQ_LEN: usize = 512;
+
+/// Runtime seq-len cap (≤ [`MAX_SEQ_LEN`]). Override with `LEANKG_EMBED_MAX_SEQ`
+/// (e.g. `256` for ~2× faster cold embed on short code blobs).
+pub fn effective_max_seq() -> usize {
+    std::env::var("LEANKG_EMBED_MAX_SEQ")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|n| n.clamp(64, MAX_SEQ_LEN))
+        .unwrap_or(MAX_SEQ_LEN)
+}
+
+/// Which ONNX weights DirectEmbedder / Embedder should load.
+/// Override with `LEANKG_EMBED_MODEL=bge|bge-q|bge-fp16|minilm` (default `bge`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbedModelKind {
+    /// Xenova/bge-small-en-v1.5 FP32 (`onnx/model.onnx`).
+    BgeFp32,
+    /// Xenova INT8 quantized (`onnx/model_quantized.onnx`) — preferred fast path.
+    /// (Qdrant `model_optimized.onnx` is broken on current ORT — fused LN inputs.)
+    BgeInt8,
+    /// Xenova FP16 (`onnx/model_fp16.onnx`).
+    BgeFp16,
+    /// Xenova/all-MiniLM-L6-v2 FP32 — faster, still 384-d.
+    MiniLm,
+}
+
+impl EmbedModelKind {
+    pub fn from_env() -> Self {
+        match std::env::var("LEANKG_EMBED_MODEL")
+            .unwrap_or_else(|_| "bge".into())
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "bge-q" | "bge_q" | "int8" | "quantized" => Self::BgeInt8,
+            "bge-fp16" | "fp16" => Self::BgeFp16,
+            "minilm" | "mini-lm" | "all-minilm-l6-v2" => Self::MiniLm,
+            _ => Self::BgeFp32,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::BgeFp32 => "bge-fp32",
+            Self::BgeInt8 => "bge-int8",
+            Self::BgeFp16 => "bge-fp16",
+            Self::MiniLm => "minilm",
+        }
+    }
+
+    fn fastembed_model(self) -> EmbeddingModel {
+        match self {
+            // Warm/cache via closest fastembed sibling; DirectEmbedder may
+            // then swap in Xenova quantized/fp16 weights from disk.
+            Self::BgeFp32 | Self::BgeInt8 | Self::BgeFp16 => EmbeddingModel::BGESmallENV15,
+            Self::MiniLm => EmbeddingModel::AllMiniLML6V2,
+        }
+    }
+}
+
 /// Default embedding model. 384-dim, ~130MB ONNX, fast on CPU.
 pub const DEFAULT_EMBEDDING_MODEL: EmbeddingModel = EmbeddingModel::BGESmallENV15;
 
@@ -46,7 +110,7 @@ impl Embedder {
     /// Load the default embedding model. Triggers lazy-download on first
     /// call per machine. Subsequent calls hit the on-disk cache.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        Self::with_model(DEFAULT_EMBEDDING_MODEL)
+        Self::with_model(EmbedModelKind::from_env().fastembed_model())
     }
 
     pub fn with_model(model: EmbeddingModel) -> Result<Self, Box<dyn std::error::Error>> {
@@ -58,7 +122,11 @@ impl Embedder {
         // hosts should pass `--batch-size 4` (or lower) to `embed`.
         let opts = InitOptions::new(model)
             .with_cache_dir(cache_dir())
-            .with_show_download_progress(true);
+            .with_show_download_progress(true)
+            // Hard-cap BPE length — Xenova tokenizer_config advertises an
+            // absurd model_max_length; without this, long code blobs can
+            // reach ORT as seq_len 800+ and crash with "512 by N" broadcast.
+            .with_max_length(MAX_SEQ_LEN);
         let inner = TextEmbedding::try_new(opts)?;
         Ok(Self { inner })
     }
@@ -190,12 +258,13 @@ pub struct DirectEmbedder {
     tokenizer: tokenizers::Tokenizer,
     session: std::sync::Arc<ort::session::Session>,
     intra_threads: usize,
+    max_seq: usize,
 }
 
 impl DirectEmbedder {
-    /// Load the default embedding model (BGE-small-en-v1.5) from
+    /// Load the embedding model selected by `LEANKG_EMBED_MODEL` from
     /// fastembed's cache dir. If the cache is empty, returns an error
-    /// (call `embed --init` first).
+    /// (call `embed --init` first, or warm via `Embedder::new()`).
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         Self::with_intra_threads(1)
     }
@@ -204,24 +273,58 @@ impl DirectEmbedder {
     /// intra_threads. Set to `available_parallelism() / workers` when you
     /// know how many workers will share the host.
     pub fn with_intra_threads(intra_threads: usize) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_kind_and_intra(EmbedModelKind::from_env(), intra_threads)
+    }
+
+    pub fn with_kind_and_intra(
+        kind: EmbedModelKind,
+        intra_threads: usize,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         use ort::session::builder::GraphOptimizationLevel;
-        let snapshot = snapshot_dir()?;
-        let tokenizer_path = snapshot.join("tokenizer.json");
-        let onnx_dir = snapshot.join("onnx");
-        let onnx_path = onnx_dir.join("model.onnx");
+        // Ensure weights are on disk (downloads if missing).
+        let _warm = Embedder::with_model(kind.fastembed_model())?;
+        let (tokenizer_path, onnx_path) = model_paths(kind)?;
         if !tokenizer_path.exists() || !onnx_path.exists() {
             return Err(format!(
-                "DirectEmbedder: model files not found at {} (run `leankg embed --init` first to download)",
-                snapshot.display()
+                "DirectEmbedder: model files not found (tokenizer={} onnx={}) — run `leankg embed --init`",
+                tokenizer_path.display(),
+                onnx_path.display()
             )
             .into());
         }
 
-        let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
+        let max_seq = effective_max_seq();
+        let mut tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| format!("tokenizer load: {e}"))?;
+        // Enforce BGE/MiniLM max length so encode_batch never exceeds
+        // position embedding size (fixes ORT "512 by N" broadcast errors).
+        let trunc = tokenizers::TruncationParams {
+            max_length: max_seq,
+            ..Default::default()
+        };
+        tokenizer
+            .with_truncation(Some(trunc))
+            .map_err(|e| format!("tokenizer truncation: {e}"))?;
+        let pad = tokenizers::PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            pad_id: tokenizer.get_padding().map(|p| p.pad_id).unwrap_or(0),
+            ..Default::default()
+        };
+        tokenizer.with_padding(Some(pad));
+
+        tracing::info!(
+            "DirectEmbedder: kind={} max_seq={} intra_threads={} onnx={}",
+            kind.label(),
+            max_seq,
+            intra_threads,
+            onnx_path.display()
+        );
 
         let session = ort::session::Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
+            // Variable seq lengths across batches — keep arenas from retaining
+            // the largest-seen shape for the whole run (major RSS lever).
+            .with_memory_pattern(false)?
             .with_intra_threads(intra_threads)?
             .commit_from_file(&onnx_path)?;
         let session = std::sync::Arc::new(session);
@@ -230,6 +333,7 @@ impl DirectEmbedder {
             tokenizer,
             session,
             intra_threads,
+            max_seq,
         })
     }
 
@@ -237,25 +341,45 @@ impl DirectEmbedder {
         self.intra_threads
     }
 
+    pub fn max_seq(&self) -> usize {
+        self.max_seq
+    }
+
     /// Embed a batch of texts. Returns one vector per input, in order.
     pub fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
+        let max_seq = self.max_seq;
         // 1. Tokenize the batch.
         let encodings = self
             .tokenizer
             .encode_batch(texts.iter().map(|s| s.as_str()).collect::<Vec<_>>(), true)
             .map_err(|e| format!("tokenize: {e}"))?;
 
+        // Defense: truncate any encoding that escaped TruncationParams
+        // (observed in the wild as ORT "512 by 800" on position Add).
+        let mut encodings = encodings;
+        for enc in &mut encodings {
+            if enc.len() > max_seq {
+                enc.truncate(max_seq, 0, tokenizers::TruncationDirection::Right);
+            }
+        }
+
         let batch_size = encodings.len();
-        // Find the max sequence length in this batch; ONNX requires a
-        // rectangular tensor. fastembed does the same with the
-        // tokenizer's pad token.
-        let encoding_length = encodings.iter().map(|e| e.len()).max().unwrap_or(1);
-        // The tokenizer's saved config may not carry padding params;
-        // fall back to 0 (BGE uses 0 for pad). Use whatever the
-        // tokenizer advertises, default 0.
+        // Cap at max_seq even if tokenizer truncation was unset.
+        let encoding_length = encodings
+            .iter()
+            .map(|e| e.len().min(max_seq))
+            .max()
+            .unwrap_or(1)
+            .min(max_seq);
+        if encodings.iter().any(|e| e.len() > max_seq) {
+            return Err(format!(
+                "DirectEmbedder: encoding still exceeds max_seq={max_seq} after truncate"
+            )
+            .into());
+        }
         let pad_id = self
             .tokenizer
             .get_padding()
@@ -267,23 +391,26 @@ impl DirectEmbedder {
         let mut mask_flat: Vec<i64> = Vec::with_capacity(batch_size * encoding_length);
         let mut type_ids_flat: Vec<i64> = Vec::with_capacity(batch_size * encoding_length);
         for enc in &encodings {
-            let len = enc.len();
-            for &id in enc.get_ids() {
+            let ids = enc.get_ids();
+            let mask = enc.get_attention_mask();
+            let types = enc.get_type_ids();
+            let take = ids.len().min(encoding_length);
+            for &id in ids.iter().take(take) {
                 ids_flat.push(id as i64);
             }
-            for _ in 0..(encoding_length - len) {
+            for _ in 0..(encoding_length - take) {
                 ids_flat.push(pad_id);
             }
-            for &m in enc.get_attention_mask() {
+            for &m in mask.iter().take(take) {
                 mask_flat.push(m as i64);
             }
-            for _ in 0..(encoding_length - len) {
+            for _ in 0..(encoding_length - take) {
                 mask_flat.push(0);
             }
-            for &t in enc.get_type_ids() {
+            for &t in types.iter().take(take) {
                 type_ids_flat.push(t as i64);
             }
-            for _ in 0..(encoding_length - len) {
+            for _ in 0..(encoding_length - take) {
                 type_ids_flat.push(0);
             }
         }
@@ -365,14 +492,68 @@ impl DirectEmbedder {
     }
 }
 
-/// Locate the snapshot dir for the default embedding model inside
-/// fastembed's HF cache layout (`<cache>/models--Xenova--bge-small-en-v1.5/snapshots/<sha>`).
-fn snapshot_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+/// Resolve tokenizer.json + ONNX weights for `kind` under the fastembed cache.
+fn model_paths(kind: EmbedModelKind) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     let cache = cache_dir();
-    let repo_dir = cache.join("models--Xenova--bge-small-en-v1.5");
+    match kind {
+        EmbedModelKind::BgeFp32 => {
+            let snap = first_snapshot(cache.join("models--Xenova--bge-small-en-v1.5"))?;
+            Ok((snap.join("tokenizer.json"), snap.join("onnx/model.onnx")))
+        }
+        EmbedModelKind::BgeInt8 => {
+            let snap = first_snapshot(cache.join("models--Xenova--bge-small-en-v1.5"))?;
+            let quantized = snap.join("onnx/model_quantized.onnx");
+            if !quantized.exists() {
+                return Err("Xenova onnx/model_quantized.onnx missing — download from \
+                     HuggingFace Xenova/bge-small-en-v1.5 onnx/ or set LEANKG_EMBED_MODEL=bge"
+                    .into());
+            }
+            Ok((snap.join("tokenizer.json"), quantized))
+        }
+        EmbedModelKind::BgeFp16 => {
+            let snap = first_snapshot(cache.join("models--Xenova--bge-small-en-v1.5"))?;
+            let fp16 = snap.join("onnx/model_fp16.onnx");
+            if !fp16.exists() {
+                return Err("Xenova onnx/model_fp16.onnx missing — download from \
+                     HuggingFace Xenova/bge-small-en-v1.5 onnx/ or set LEANKG_EMBED_MODEL=bge"
+                    .into());
+            }
+            Ok((snap.join("tokenizer.json"), fp16))
+        }
+        EmbedModelKind::MiniLm => {
+            // fastembed AllMiniLML6V2 caches under Qdrant/all-MiniLM-L6-v2-onnx.
+            let snap = first_snapshot(cache.join("models--Qdrant--all-MiniLM-L6-v2-onnx"))
+                .or_else(|_| first_snapshot(cache.join("models--Xenova--all-MiniLM-L6-v2")))?;
+            let onnx = {
+                let optimized = snap.join("model_optimized.onnx");
+                let nested = snap.join("onnx/model.onnx");
+                if optimized.exists() {
+                    optimized
+                } else if nested.exists() {
+                    nested
+                } else {
+                    snap.join("model.onnx")
+                }
+            };
+            let tok = {
+                let t = snap.join("tokenizer.json");
+                if t.exists() {
+                    t
+                } else {
+                    // Fall back to BGE tokenizer only if vocab-compatible — prefer local.
+                    first_snapshot(cache.join("models--Xenova--bge-small-en-v1.5"))?
+                        .join("tokenizer.json")
+                }
+            };
+            Ok((tok, onnx))
+        }
+    }
+}
+
+fn first_snapshot(repo_dir: PathBuf) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if !repo_dir.exists() {
         return Err(format!(
-            "fastembed model not found at {} (run `leankg embed --init` first)",
+            "fastembed model not found at {} (run `leankg embed --init` or set LEANKG_EMBED_MODEL)",
             repo_dir.display()
         )
         .into());
@@ -405,5 +586,16 @@ mod tests {
     #[test]
     fn embedding_dim_matches_bge_small() {
         assert_eq!(EMBEDDING_DIM, 384);
+    }
+
+    #[test]
+    fn embed_model_kind_from_env_defaults_bge() {
+        std::env::remove_var("LEANKG_EMBED_MODEL");
+        assert_eq!(EmbedModelKind::from_env(), EmbedModelKind::BgeFp32);
+    }
+
+    #[test]
+    fn max_seq_len_is_bge_limit() {
+        assert_eq!(MAX_SEQ_LEN, 512);
     }
 }

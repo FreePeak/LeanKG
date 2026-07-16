@@ -14,7 +14,7 @@ The bug was a **path-resolution mismatch** between
 
 ## Symptom
 
-`leankg embed --project /workspace-be`:
+`leankg embed --project /workspace-other`:
 
 ```
 Embed build complete (Incremental) in 0.51s
@@ -28,7 +28,7 @@ Embed build complete (Incremental) in 0.51s
 `leankg mcp-http` (also reaching the same DB) `INFO` log:
 
 ```
-Cozo storage = RocksDb at /data/leankg-rocksdb/projects/workspace-be-6917453a1780
+Cozo storage = RocksDb at /data/leankg-rocksdb/projects/workspace-other-6917453a1780
 ```
 
 `leankg embed` (also on the same workspace) `INFO` log:
@@ -39,7 +39,7 @@ Cozo storage = RocksDb at /data/leankg-rocksdb/projects/leankg-db-7be63682882f
 
 **Two different paths. Two different databases. The embed opens a brand-new
 empty database at `leankg-db-7be63682882f` while the indexer / MCP server
-use `workspace-be-6917453a1780`.** The fresh DB has no `code_elements`, so
+use `workspace-other-6917453a1780`.** The fresh DB has no `code_elements`, so
 the embed step finds nothing to embed and exits cleanly — masking the bug
 as "success with 0 vectors".
 
@@ -84,19 +84,19 @@ the `leankg` process never notices it is talking to a different project.
 ## Evidence
 
 ```text
-sha256(/workspace-be)             = 6917453a1780...   (existing index path)
-sha256(/workspace-be/.leankg/leankg.db) = 7be63682882f...   (where embed opened)
+sha256(/workspace-other)             = 6917453a1780...   (existing index path)
+sha256(/workspace-other/.leankg/leankg.db) = 7be63682882f...   (where embed opened)
 ```
 
 ```text
 ls /data/leankg-rocksdb/projects/
   be-food-notification-f714dea71f5e     (from earlier experiments)
-  be-marketplace-a4c16aa1f396
-  be-restaurant-209ac5463d01
+  svc-marketplace-a4c16aa1f396
+  svc-restaurant-209ac5463d01
   leankg-db-48291f1be4ca                 (orphan — created by the bug)
   leankg-db-7be63682882f                 (orphan — created by the bug)
   leankg-db-861294d69439                 (orphan — created by the bug)
-  workspace-be-6917453a1780              (the real index)
+  workspace-other-6917453a1780              (the real index)
   workspace-c52ddf65534b                 (the /workspace index)
   workspace-freepeak-1d4898664334
 ```
@@ -141,12 +141,12 @@ Tests added in `src/db/schema.rs::tests`:
 
 ## Verification
 
-After the fix, `leankg embed --project /workspace-be` opens the correct
-RocksDB project (`workspace-be-6917453a1780`) and the `Cozo storage =`
+After the fix, `leankg embed --project /workspace-other` opens the correct
+RocksDB project (`workspace-other-6917453a1780`) and the `Cozo storage =`
 log matches the indexer:
 
 ```
-Cozo storage = RocksDb at /data/leankg-rocksdb/projects/workspace-be-6917453a1780
+Cozo storage = RocksDb at /data/leankg-rocksdb/projects/workspace-other-6917453a1780
 ```
 
 `leankg embed` then reports the real element count and processes it:

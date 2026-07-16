@@ -469,11 +469,13 @@ impl MCPServer {
     /// Spawns a detached thread that holds a clone of the same
     /// `CozoDb`/`GraphEngine` MCP is using, so the embed runs against
     /// the live DB without violating RocksDB's single-writer-per-process
-    /// rule. Defaults to 2 workers / batch 64 — conservative so request
-    /// threads keep their latency budget. Operators can tune via env:
+    /// rule. Defaults to 1 worker / batch 32 — conservative for macOS
+    /// RSS. Further capped by `LEANKG_EMBED_MAX_MB` (default 2048 on
+    /// macOS). Operators can tune via env:
     ///
-    /// - `LEANKG_EMBED_BACKGROUND_WORKERS` (default 2)
-    /// - `LEANKG_EMBED_BACKGROUND_BATCH` (default 64)
+    /// - `LEANKG_EMBED_MAX_MB` (default 2048 macOS / 3072 else)
+    /// - `LEANKG_EMBED_BACKGROUND_WORKERS` (default 1)
+    /// - `LEANKG_EMBED_BACKGROUND_BATCH` (default 32)
     /// - `LEANKG_EMBED_BACKGROUND_TYPES` (default = heuristic)
     /// - `LEANKG_EMBED_BACKGROUND_FULL=1` to force a full re-embed
     #[cfg(feature = "embeddings")]
@@ -483,12 +485,12 @@ impl MCPServer {
             .ok()
             .and_then(|v| v.parse().ok())
             .filter(|n: &usize| (1..=32).contains(n))
-            .unwrap_or(2);
+            .unwrap_or(1);
         let batch_size: usize = std::env::var("LEANKG_EMBED_BACKGROUND_BATCH")
             .ok()
             .and_then(|v| v.parse().ok())
             .filter(|n: &usize| (1..=2048).contains(n))
-            .unwrap_or(64);
+            .unwrap_or(32);
         let types_filter = std::env::var("LEANKG_EMBED_BACKGROUND_TYPES").unwrap_or_default();
         let full = std::env::var("LEANKG_EMBED_BACKGROUND_FULL")
             .ok()

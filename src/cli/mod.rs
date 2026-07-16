@@ -273,9 +273,10 @@ pub enum CLICommand {
         /// scratch. Use after a model swap or index corruption.
         #[arg(long)]
         full: bool,
-        /// Override the embedding batch size (default 64). Lower this on
+        /// Override the embedding batch size (default 32). Auto-capped by
+        /// `LEANKG_EMBED_MAX_MB` (default 2048 on macOS). Lower further on
         /// memory-constrained hosts.
-        #[arg(long, default_value = "64")]
+        #[arg(long, default_value = "32")]
         batch_size: usize,
         /// Project root (defaults to current working directory).
         #[arg(long, default_value = ".")]
@@ -295,9 +296,10 @@ pub enum CLICommand {
         /// a background worker. End-users should not pass this.
         #[arg(long, hide = true)]
         background: bool,
-        /// Number of parallel ONNX inference workers (default 4). Each
-        /// worker holds its own ONNX session. Set to 1 to disable.
-        #[arg(long, default_value = "4")]
+        /// Number of parallel ONNX inference workers (default 2). Each
+        /// worker holds its own ONNX session (~300–400 MB). Auto-capped by
+        /// `LEANKG_EMBED_MAX_MB`. Set to 1 on low-RAM hosts.
+        #[arg(long, default_value = "2")]
         workers: usize,
         /// Comma-separated list of element types to embed (e.g. `function,method`).
         /// Defaults to "all" for small graphs (<50k elements) and

@@ -1,17 +1,35 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.6.2-hnsw-semantic
-**Date:** 2026-07-15
+**Version:** 3.6.3-embed-runtime
+**Date:** 2026-07-16
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.17.9
+**Codebase Version:** 0.18.0
 
 > All prior PRD/HLD files under `docs/requirement/`, `docs/design/hld-leankg.md`, and duplicate `.docs/` PRDs have been merged here. Do not recreate split PRDs — update this file only.
 
 ---
 
 ## Changelog
+
+### v3.6.3-embed-runtime - Cold embed SLA reality + MCP decoupling (2026-07-16)
+
+> **Measured reality (mega-graph cold embed):** end-to-end sustained rate is ~**170 vec/sec** → ~**36 min** for ~371k `function,method` nodes (M2 Pro 10c). Writer-only microbenches on empty RocksDB show Cozo `import_relations` at ~**100k–130k vec/sec** (&lt;1 min for 371k). **Storage commit / WAL is not the cold-SLA bottleneck**; ONNX inference + end-to-end CPU contention is.
+
+**Done (ops / architecture):**
+- MCP boot decoupled from embed: `LEANKG_EMBED_ON_BOOT=0` + in-process `LEANKG_EMBED_BACKGROUND=1` (shared `CozoDb`). MCP healthy ~60s while embed continues. See FR-EMBED-R1.
+- Parallel embed pipeline + `import_relations` + `DirectEmbedder` (FR-EMBED-R2). ~2× vs earlier `:put` path (~73 min → ~36 min ETA) — still above aspirational &lt;10/&lt;20 min cold.
+
+**Tried and rejected as cold-SLA fixes (evidence in `generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md`):**
+- Cozo RocksDB WAL-off / `sync(false)` / no-snapshot write txs (`LEANKG_COZO_ROCKS_BULK`) — **≤1.15×** writer-only; no meaningful e2e gain.
+- Redis Stack HNSW as vector side-store (`LEANKG_EMBED_VECTOR_STORE=redis`) — bulk HASH write ~164k/s (similar to Cozo); live HNSW during write ~2.7k/s (**worse**). Does **not** beat Cozo for cold SLA. Keep Cozo HNSW as canonical (FR-HNSW-B). Redis remains experimental only.
+
+**Product SLA (revised):**
+- **Must:** MCP never blocks on cold embed; semantic tools degrade until HNSW ready; day-2 incremental embed stays fast (FR-HNSW-E).
+- **Aspirational / open:** cold functions-only &lt;20 min on ~371k (needs **faster inference / smaller model / less volume**, not a new DB). Do not plan FalkorDB/Redis migration to fix cold embed.
+
+**New FRs:** Section **5.12** additions FR-EMBED-R1..R4.
 
 ### v3.6.2-hnsw-semantic - Drop LSH roadmap; expand CozoDB HNSW for semantic search (2026-07-15)
 
@@ -905,7 +923,7 @@ Palace Mapping:
 | Cross-domain tunnels | `find_tunnels` MCP + `leankg tunnels` CLI + `tunnel` relationship type |
 | Hot-path query cache | Caching layer for search/schema/architecture/find_function |
 | Clone detection (non-strategic) | `find_clones` / `leankg clones` same-file Jaccard only; custom LSH path removed (FR-HNSW-A); prefer HNSW semantic search |
-| CozoDB HNSW semantic ANN | Sole ANN via `embedding_vectors:vec_idx`; Docker OOTB embed; HNSW `semantic_search`; mega-graph `LEANKG_HNSW_*` knobs; `tests/hnsw_recall_e2e.rs` (FR-HNSW-A..F + FR-BENCH-HNSW) |
+| CozoDB HNSW semantic ANN | Sole **canonical** ANN via `embedding_vectors:vec_idx`; Docker OOTB embed; MCP decoupled from cold embed (FR-EMBED-R1); e2e cold ~170 vec/s / ~36 min on ~371k (ONNX-bound, FR-EMBED-R3); aspirational &lt;20 min = inference work (FR-EMBED-R4) |
 | Cross-repo similar | `find_cross_repo_similar` MCP; `cross_repo_similar` edges |
 | PR impact dashboard | `get_pr_impact` MCP + `leankg prs` CLI; community-conflict detection |
 | Rationale extraction | `rationale` element + `explains` edge for WHY/NOTE/HACK/FIXME/XXX markers + ADR citations |
@@ -1209,9 +1227,11 @@ Palace Mapping:
 - [x] **FR-V2-11**: CI/CD auto-graph update on release (< 3 min freshness) — GitHub Actions workflow (`eb3d331`)
 - [x] **FR-V2-12**: `get_team_map` ownership/on-call tool (`3368b5f`)
 
-### 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2)
+### 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed runtime (v3.6.3)
 
 > **Product bet:** LeanKG's strong path is **semantic search** via dense embeddings + CozoDB native `::hnsw`. Do **not** reimplement MinHash/LSH in-process, and do **not** wire Cozo `::lsh` for clones. Pattern already proven by embeddings: LeanKG builds text blobs → Cozo stores vectors + HNSW index.
+>
+> **Cold-embed reality (v3.6.3):** on mega-graphs, wall time is dominated by **ONNX embedding inference** (~170 vec/sec e2e → ~36 min for ~371k functions). Cozo/Redis writer-only paths are ~100k+ vec/sec. Do **not** treat storage migration (WAL-off, Redis, FalkorDB) as the primary cold-SLA lever.
 
 **Remove LSH complexity:**
 
@@ -1219,18 +1239,26 @@ Palace Mapping:
 
 **Reuse & expand Cozo HNSW (already on `cozo 0.7.6`):**
 
-- [x] **FR-HNSW-B**: Sole ANN path = Cozo `::hnsw` on `embedding_vectors:vec_idx` (`src/embeddings/state.rs`). Document as canonical; forbid a second ANN stack for discovery.
-- [x] **FR-HNSW-C** (= FR-C01 / US-CBM-C1): Docker / RocksDB image builds with `--features embeddings`; entrypoint documents or runs `embed --init` so semantic tools work OOTB.
+- [x] **FR-HNSW-B**: Sole **canonical** ANN path = Cozo `::hnsw` on `embedding_vectors:vec_idx` (`src/embeddings/state.rs`). Document as canonical; do not replace Cozo with Redis/FalkorDB for production discovery. (Optional experimental Redis side-store may exist behind env flags — non-canonical, not a product requirement.)
+- [x] **FR-HNSW-C** (= FR-C01 / US-CBM-C1): Docker / RocksDB image builds with `--features embeddings`. Prefer `LEANKG_EMBED_ON_BOOT=0` + `LEANKG_EMBED_BACKGROUND=1` so MCP starts immediately; do **not** block health on cold embed (see FR-EMBED-R1).
 - [x] **FR-HNSW-D**: Default agent discovery path — NL query → embed → HNSW top-k → optional rerank → graph traverse (`src/retrieval/pipeline.rs`); ensure MCP `semantic_search` / `kg_semantic_context` (or equivalent) are the recommended first tools in AGENTS/skills when embeddings are available.
-- [x] **FR-HNSW-E**: Incremental embed — indexer marks `embedding_state` stale; `leankg embed` (or auto) refreshes only dirty QNs; orphan reap stays in `embeddings/build.rs`.
+- [x] **FR-HNSW-E**: Incremental embed — indexer marks `embedding_state` stale; `leankg embed` (or auto) refreshes only dirty QNs; orphan reap stays in `embeddings/build.rs`. **Day-2 SLA:** incremental re-runs must stay seconds–minutes (this is the supported fast path).
 - [x] **FR-HNSW-F**: Mega-graph HNSW ops — expose/document `ef` / `m` / page `limit`+`offset`; keep RSS under existing `BudgetGuard` / `MemoryGuard` caps on large workspaces.
 - [x] **FR-BENCH-HNSW**: Semantic recall smoke — `tests/hnsw_recall_e2e.rs` (synthetic 384-d vectors + brute-force cosine ground truth; assert HNSW top-k contains golden `qualified_name`s; replaces cancelled clone FR-BENCH-A).
+
+**Embed runtime & cold SLA (v3.6.3):**
+
+- [x] **FR-EMBED-R1**: MCP / Docker boot must not wait on cold embed. `LEANKG_EMBED_ON_BOOT=0`; in-process background embed (`LEANKG_EMBED_BACKGROUND=1`) with shared DB handle; `leankg embed --status` / `--cancel`. Semantic tools degrade clearly until HNSW is ready.
+- [x] **FR-EMBED-R2**: Parallel embed pipeline — N ONNX workers + single writer; `import_relations` bulk path; optional `DirectEmbedder` (controlled `intra_threads`); default mega-graph types `function,method`.
+- [x] **FR-EMBED-R3**: Document measured ceilings — e2e ~170 vec/sec / ~36 min cold on ~371k; writer-only ~100k+ vec/sec. Record failed storage levers (WAL-off ≤1.15×; Redis not a cold-SLA win) in `generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md`.
+- [ ] **FR-EMBED-R4** (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. **Approach:** improve inference throughput or reduce cold volume (smaller/faster model, batching, optional quality tradeoff) — **not** Cozo→Redis/FalkorDB migration. Acceptance = measured end-to-end vec/sec ≥ ~310.
 
 **Won't Do (explicit):**
 
 - [x] **FR-LSH-A..F**: AST MinHash / bucket guards / signature K env — **Won't Do** (v3.6.2)
 - [x] **FR-BENCH-A**: CBM clone quality head-to-head — **Won't Do** (v3.6.2)
 - [x] **Cozo `::lsh` for `SIMILAR_TO`**: available in Cozo 0.7 but **not used** — clone ANN is out of scope
+- [x] **Migrate KG storage to FalkorDB/Redis to fix cold embed** — **Won't Do** (v3.6.3); writer is not the limiter; keep Cozo+RocksDB
 
 ### 5.13 LSP Adoption Track from CBM (moved from former 5.12; deep compare 2026-07-15)
 
@@ -1770,4 +1798,4 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ---
 
-*Last updated: 2026-07-15 (PRD hygiene — language/wiring status match code; FR-HNSW DONE; FR-LSP-A..D + unwired Swift/Vue/Svelte/SQL still open)*
+*Last updated: 2026-07-16 (v3.6.3-embed-runtime — cold embed ONNX-bound; MCP decouple done; WAL-off/Redis rejected as cold-SLA fixes; FR-EMBED-R1..R4)*
