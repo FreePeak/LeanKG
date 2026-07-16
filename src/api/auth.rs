@@ -32,7 +32,16 @@ pub async fn auth_middleware(
         return (StatusCode::UNAUTHORIZED, "Invalid Authorization format").into_response();
     };
 
-    let store = ApiKeyStore::new().map_err(|e| e.to_string()).unwrap();
+    let store = match ApiKeyStore::new() {
+        Ok(store) => store,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Auth error: {}", e),
+            )
+                .into_response();
+        }
+    };
     match store.validate_key(&token) {
         Ok(Some(_key_id)) => {
             request
@@ -93,7 +102,16 @@ pub async fn team_token_middleware(
         return (StatusCode::UNAUTHORIZED, "Missing X-LeanKG-Token header").into_response();
     }
 
-    let store = ApiKeyStore::new().map_err(|e| e.to_string()).unwrap();
+    let store = match ApiKeyStore::new() {
+        Ok(store) => store,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Auth error: {}", e),
+            )
+                .into_response();
+        }
+    };
     match store.validate_key(&token) {
         Ok(Some(key_id)) => {
             request.extensions_mut().insert(TeamAuthContext {
