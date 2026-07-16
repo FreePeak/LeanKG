@@ -1,0 +1,40 @@
+# Plan §"Part B Option 1" — dedicated offline embed job.
+#
+# Use this when you want to force a one-shot full rebuild while MCP is
+# stopped. CozoDB RocksDB is single-writer per process per path, so the
+# canonical "safe" sequence is:
+#
+#   docker compose -f docker-compose.rocksdb.yml stop leankg
+#   docker compose -f docker-compose.rocksdb.yml -f docker-compose.embed.yml \
+#     --profile embed run --rm leankg-embed
+#   docker compose -f docker-compose.rocksdb.yml start leankg
+#
+# Capped to 3 CPUs / 4 GiB so it doesn't fight the host's interactive
+# load while MCP is restarting. Tune cpus/mem_limit to your machine.
+#
+# In production we recommend `LEANKG_EMBED_BACKGROUND=1` on the main
+# service instead (Option 3) so MCP stays available during the rebuild.
+
+services:
+  leankg-embed:
+    profiles: ["embed"]
+    image: leankg-leankg:latest
+    entrypoint: ["leankg"]
+    command: ["embed", "--wait", "--workers", "4", "--batch-size", "64", "--types", "function,method"]
+    environment:
+      LEANKG_DB_ENGINE: rocksdb
+      LEANKG_ROCKSDB_ROOT: /data/leankg-rocksdb
+      LEANKG_MCP_PROJECT: /workspace
+      LEANKG_MMAP_SIZE: "67108864"
+      OMP_NUM_THREADS: "1"
+      RUST_LOG: leankg=info
+    volumes:
+      - leankg-rocksdb:/data/leankg-rocksdb
+      # Mount the same project the MCP server serves so the embed job
+      # can find .leankg/ + leankg.yaml. Operators override the project
+      # path via the .dockerfile env file.
+      - ${HOST_PROJECT_PATH:-./}:${CONTAINER_PROJECT_PATH:-/workspace}
+    working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
+    cpus: "3"
+    mem_limit: 4g
+    restart: "no"
