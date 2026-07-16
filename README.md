@@ -167,9 +167,16 @@ traversal. Off by default to keep the binary slim. Requires building with the
 **Canonical store:** CozoDB `embedding_vectors` + native HNSW
 (`embedding_vectors:vec_idx`, Cosine, f32, 384-dim). Do not migrate the graph
 DB to Redis/FalkorDB to speed cold embed — measured writer-only throughput is
-already ~100k+ vec/sec; cold wall time is dominated by ONNX inference
-(~170 vec/sec e2e → roughly **~36 min** for ~371k `function,method` nodes on
-an M2 Pro 10-core). See PRD v3.6.3 (`FR-EMBED-R1..R4`) and
+already ~100k+ vec/sec; cold wall time is dominated by ONNX inference.
+
+**Measured cold rates (M2 Pro, `function,method`):**
+
+| Profile | Sustained e2e | ~371k ETA |
+|---------|---------------|-----------|
+| Legacy FP32 (pre-fast) | ~170 vec/s | ~36 min |
+| **Fast path** (`LEANKG_EMBED_FAST=1`, INT8) | **~480–500 vec/s** | **~12–15 min** |
+
+See PRD v3.6.3 (`FR-EMBED-R1..R4`) and
 `generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md`.
 
 ### Build & first-time setup
@@ -184,6 +191,7 @@ cargo build --release --features embeddings
 
 Models cache to `~/Library/Caches/leankg/models/` (macOS),
 `~/.cache/leankg/models/` (Linux), or `%LOCALAPPDATA%\leankg\models` (Windows).
+Fast path uses Xenova `onnx/model_quantized.onnx` (auto-downloaded if missing).
 
 ### Build the embedding index
 
@@ -206,6 +214,32 @@ leankg embed --cancel
 Incremental runs diff against `embedding_state` and skip rows whose content
 hash hasn't changed. Prefer incremental after the first cold pass; avoid
 `--full` unless the model or schema changed.
+
+### Fast path (recommended for mega-graph cold builds)
+
+`LEANKG_EMBED_FAST` defaults **on**. It selects INT8 (Xenova quantized BGE-small),
+caps sequence length, and runs data-parallel workers (`intra_threads=1`). Raise
+`LEANKG_EMBED_MAX_MB` on large hosts so batch size is not clamped to 16:
+
+```bash
+export LEANKG_EMBED_FAST=1
+export LEANKG_EMBED_MODEL=bge-q          # Xenova INT8 (not Qdrant model_optimized)
+export LEANKG_EMBED_MAX_SEQ=128
+export LEANKG_EMBED_MAX_MB=6144          # allow batch≥64–128 (macOS default 2048 clamps hard)
+export LEANKG_EMBED_MAX_BLOB_CHARS=500   # shorter blobs → faster tokenize/infer
+
+./target/release/leankg embed --wait \
+  --project /path/to/project \
+  --types function,method \
+  --workers 8 \
+  --batch-size 128
+```
+
+Healthy logs should show `kind=bge-int8`, `max_seq=128`, and
+`...Xenova.../onnx/model_quantized.onnx` — **not** Qdrant `model_optimized.onnx`
+(that file fails on current ORT with a SkipLayerNorm missing-input error).
+
+Set `LEANKG_EMBED_FAST=0` and/or `LEANKG_EMBED_MODEL=bge` for the legacy FP32 path.
 
 ### MCP / Docker: do not block boot on cold embed
 
@@ -245,11 +279,16 @@ pauses briefly when RSS crosses 90% of that soft cap.
 | Knob | Effect |
 |------|--------|
 | `LEANKG_EMBED_MAX_MB=2048` | Soft RSS budget (set `0` to disable caps — not recommended) |
+| `LEANKG_EMBED_FAST=1` | INT8 + seq cap + data-parallel workers (default on) |
+| `LEANKG_EMBED_MODEL=bge-q` | Xenova quantized ONNX; `bge` = FP32 |
+| `LEANKG_EMBED_MAX_SEQ=128` | Token truncate for cold speed (fast path default) |
+| `LEANKG_EMBED_MAX_BLOB_CHARS` | Cap text blob length before tokenize (fast path ~500) |
 | `--workers` / `--batch-size` | Requested values; clamped by the memory plan |
 | `LEANKG_EMBED_UPSERT_CHUNK` | Writer flush size (also capped under a low budget) |
 
 | `--batch-size` | Approx peak RSS (10-core Mac) | When to use |
 |---------------|-------------------------------|------------|
+| 128 (fast path) | needs `LEANKG_EMBED_MAX_MB` ≥ ~6g | Mega-graph cold on workstation |
 | 32 (CLI default) | ~1–2 GB with 1–2 workers      | Laptop / default |
 | 16            | lower                         | Tight `LEANKG_EMBED_MAX_MB` |
 | 8             | ~730 MB                       | Memory-pressured host |
@@ -284,6 +323,10 @@ Runtime measurements and rejected storage levers (WAL-off, Redis side-store):
 | `LEANKG_AUTO_INDEX` | `1` | Enable index-if-needed on container startup. |
 | `LEANKG_EMBED_ON_BOOT` | `1` (image-dependent) | Set `0` so Docker entrypoint does **not** block MCP on cold embed. |
 | `LEANKG_EMBED_BACKGROUND` | unset | Set `1` to spawn in-process background embed inside `mcp-http` (shared DB). |
+| `LEANKG_EMBED_FAST` | `1` (on) | INT8 + seq cap + data-parallel workers. Set `0` for legacy FP32 profile. |
+| `LEANKG_EMBED_MODEL` | `bge` / fast→`bge-q` | `bge` = Xenova FP32; `bge-q`/`int8` = Xenova quantized; avoid Qdrant `model_optimized`. |
+| `LEANKG_EMBED_MAX_SEQ` | `512` / fast→`128` | Max tokens per blob for DirectEmbedder. |
+| `LEANKG_EMBED_MAX_BLOB_CHARS` | unset / fast→`500` | Cap blob text length before tokenize. |
 | `LEANKG_EMBED_MAX_MB` | `2048` (macOS) / `3072` | Soft RSS budget for embed: caps workers/batch/channel; pauses infer at 90%. `0` disables. |
 | `LEANKG_EMBED_BACKGROUND_WORKERS` | `1` | Worker count for in-process background embed (further capped by `LEANKG_EMBED_MAX_MB`). |
 | `LEANKG_EMBED_BACKGROUND_BATCH` | `32` | Batch size for in-process background embed (further capped by `LEANKG_EMBED_MAX_MB`). |
@@ -476,7 +519,8 @@ for full operational notes. Common issues:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Cold embed takes ~30–40+ min on mega-graphs | ONNX inference ~170 vec/sec e2e (not Cozo writer) | Keep MCP up with `LEANKG_EMBED_ON_BOOT=0` + background embed; use `--types function,method`; rely on incremental day-2 |
+| Cold embed still ~30–40+ min | Fast path off, or `LEANKG_EMBED_MAX_MB` clamps batch to 16 | Enable `LEANKG_EMBED_FAST=1` + `bge-q`; raise `LEANKG_EMBED_MAX_MB` (e.g. 6144); `--workers 8 --batch-size 128` |
+| ORT `SkipLayerNorm` / missing `LayerNorm.weight` | Loading Qdrant `model_optimized.onnx` | Rebuild binary; use Xenova `model_quantized.onnx` via `LEANKG_EMBED_MODEL=bge-q` |
 | MCP / Docker stuck unhealthy for hours | Entrypoint waiting on sync embed | Set `LEANKG_EMBED_ON_BOOT=0`; use `LEANKG_EMBED_BACKGROUND=1` |
 | `embed` peaks at 10+ GB RSS | ORT arenas × many workers × large batch/channel | Set `LEANKG_EMBED_MAX_MB=2048` (default on macOS); use `--workers 1 --batch-size 8` |
 | `semantic-context` returns 0 seeds, `Env-filtered: N` in `--debug` | elements' `env` doesn't match the requested env (default `local`) | pass `--env <value>`, or re-index with the right env |
