@@ -25,11 +25,13 @@ Commands:
   gemini        Install and configure LeanKG for Gemini CLI
   kilo          Install and configure LeanKG for Kilo Code
   antigravity   Install and configure LeanKG for Anti Gravity
+  docker        Docker-only setup: index + embed + MCP (no Rust)
   update        Update LeanKG to the latest version
   version       Show installed and latest available version
 
 Examples:
   curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- opencode
+  curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- docker
   curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- update
   curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- version
 EOF
@@ -1628,6 +1630,12 @@ main() {
             ;;
         version)
             show_version
+            exit 0
+            ;;
+        docker)
+            # No binary install — pull Hub image, offline embed, start MCP.
+            echo "Docker-only setup (no Rust). Fetching scripts/docker-up.sh..."
+            curl -fsSL "$GITHUB_RAW/scripts/docker-up.sh" | bash
             exit 0
             ;;
         opencode|cursor|claude|gemini|kilo|antigravity)

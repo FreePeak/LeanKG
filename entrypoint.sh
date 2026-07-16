@@ -182,6 +182,43 @@ else
     echo "No ontology directory found in $MCP_PROJECT or /workspace, skipping ontology sync"
 fi
 
+# One-shot CLI after auto-index (used by scripts/docker-up.sh).
+# Example: docker run --rm ... freepeak/leankg:latest embed --wait --project /workspace
+if [ $# -gt 0 ]; then
+    case "$1" in
+        embed|index|semantic-context|ontology|status|doctor|smoke-test|query|find)
+            echo "=== Running one-shot: leankg $* ==="
+            cd "$MCP_PROJECT" || { echo "FATAL: cannot cd to $MCP_PROJECT"; exit 1; }
+            exec leankg "$@"
+            ;;
+    esac
+fi
+
+# Optional first-boot path: offline embed every scanned project, then MCP.
+# Prefer scripts/docker-up.sh so health stays green (embed finishes first).
+if [ "${LEANKG_DOCKER_SETUP:-0}" = "1" ]; then
+    echo "=== LEANKG_DOCKER_SETUP=1: offline INT8 embed before mcp-http ==="
+    export LEANKG_EMBED_MAX_MB="${LEANKG_EMBED_MAX_MB:-0}"
+    if [ -n "$LEANKG_PROJECT_DIRS" ]; then
+        IFS=',' read -ra SETUP_DIRS <<< "$LEANKG_PROJECT_DIRS"
+    else
+        SETUP_DIRS=()
+        for dir in /workspace* /test-project*; do
+            [ -d "$dir" ] && SETUP_DIRS+=("$dir")
+        done
+    fi
+    for dir in "${SETUP_DIRS[@]}"; do
+        dir="$(echo "$dir" | xargs)"
+        [ -z "$dir" ] || [ ! -d "$dir" ] && continue
+        echo "  embed --wait: $dir"
+        ( cd "$dir" && leankg embed --wait --project "$dir" \
+            --workers "${LEANKG_EMBED_SETUP_WORKERS:-8}" \
+            --batch-size "${LEANKG_EMBED_SETUP_BATCH:-128}" \
+            --types function,method ) \
+            || echo "  WARN: embed failed for $dir; semantic tools may be unavailable."
+    done
+fi
+
 echo "=== Starting MCP HTTP on port $MCP_PORT for project $MCP_PROJECT ==="
 cd "$MCP_PROJECT" || { echo "FATAL: cannot cd to $MCP_PROJECT"; exit 1; }
 exec leankg mcp-http --port "$MCP_PORT" --project "$MCP_PROJECT" "$@"

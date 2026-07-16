@@ -130,13 +130,25 @@ Environment variables:
 
 The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects.
 
-### One-line run (published image)
+### One-line run (published image — no Rust)
+
+Index + INT8 embed + MCP (recommended):
 
 ```bash
-docker run -d --name leankg -p 9699:9699 -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb freepeak/leankg:latest
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
 ```
 
-Hub: https://hub.docker.com/r/freepeak/leankg (`linux/arm64` tags `:latest` / `:0.17.8`).
+MCP only (skip cold embed):
+
+```bash
+docker run -d --name leankg -p 9699:9699 \
+  -v "$PWD:/workspace" \
+  -v leankg-rocksdb:/data/leankg-rocksdb \
+  -v leankg-models:/root/.cache/leankg \
+  freepeak/leankg:latest
+```
+
+Hub: https://hub.docker.com/r/freepeak/leankg (`linux/arm64` tags `:latest` / `:0.18.2`).
 
 ### Single-project (build from source)
 

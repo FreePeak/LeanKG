@@ -51,11 +51,13 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 | `gemini` | Gemini CLI | Binary + MCP + Skill + GEMINI.md |
 | `kilo` | Kilo Code | Binary + MCP + Skill + AGENTS.md |
 | `antigravity` | Google Antigravity | Binary + MCP + Skill + GEMINI.md |
+| `docker` | Any MCP client | Hub image + index + embed + MCP HTTP (no Rust) |
 
 **Examples:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- claude
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- docker
 ```
 
 ### Install via Cargo or Build from Source
@@ -70,18 +72,52 @@ git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG && cargo build --r
 
 ---
 
-### Docker (Recommended for Teams)
+### Docker (Recommended for Teams — no Rust)
 
-One command — mount your codebase and start the MCP HTTP server on port 9699 (auto-indexes on first start):
+One command from your project root — pulls the Hub image, indexes, builds the
+INT8 embedding index, then starts MCP HTTP on port 9699:
 
 ```bash
-docker run -d --name leankg -p 9699:9699 -v /absolute/path/to/your/project:/workspace -v leankg-rocksdb:/data/leankg-rocksdb freepeak/leankg:latest
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
 ```
 
-Use the current directory:
+Same flow via the installer:
 
 ```bash
-docker run -d --name leankg -p 9699:9699 -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb freepeak/leankg:latest
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- docker
+```
+
+Equivalent expanded form (still Docker-only; `--entrypoint leankg` works on
+current Hub images):
+
+```bash
+docker pull freepeak/leankg:latest && \
+docker volume create leankg-rocksdb >/dev/null && docker volume create leankg-models >/dev/null && \
+docker rm -f leankg 2>/dev/null; \
+docker run --rm -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb -v leankg-models:/root/.cache/leankg \
+  -e LEANKG_DB_ENGINE=rocksdb -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
+  --entrypoint leankg freepeak/leankg:latest index /workspace && \
+docker run --rm --memory=10g --cpus=6 \
+  -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb -v leankg-models:/root/.cache/leankg \
+  -e LEANKG_DB_ENGINE=rocksdb -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
+  -e LEANKG_EMBED_MAX_MB=0 -e LEANKG_EMBED_FAST=1 -e LEANKG_EMBED_MODEL=bge-q \
+  --entrypoint leankg freepeak/leankg:latest \
+  embed --wait --project /workspace --workers 8 --batch-size 128 --types function,method && \
+docker run -d --name leankg -p 9699:9699 --restart unless-stopped \
+  -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb -v leankg-models:/root/.cache/leankg \
+  -e LEANKG_EMBED_ON_BOOT=0 -e LEANKG_EMBED_BACKGROUND=0 \
+  freepeak/leankg:latest
+```
+
+MCP-only (skip cold embed — keyword/graph tools work; `semantic_search` needs
+a prior embed):
+
+```bash
+docker run -d --name leankg -p 9699:9699 \
+  -v "$PWD:/workspace" \
+  -v leankg-rocksdb:/data/leankg-rocksdb \
+  -v leankg-models:/root/.cache/leankg \
+  freepeak/leankg:latest
 ```
 
 Verify:
@@ -98,12 +134,19 @@ docker rm -f leankg
 
 Requires [Docker](https://docs.docker.com/engine/install/) or [OrbStack](https://orbstack.dev). Point your AI tool MCP config at `http://localhost:9699/mcp`.
 
-> **Note:** Published image tags (`freepeak/leankg:latest`, `:0.18.2`) currently target `linux/arm64` (Apple Silicon / ARM hosts). On `linux/amd64`, build locally with compose below. The image builds with `--features embeddings` so CozoDB HNSW semantic search works out of the box.
+> **Note:** Published image tags (`freepeak/leankg:latest`, `:0.18.2`) currently target `linux/arm64` (Apple Silicon / ARM hosts). On `linux/amd64`, build locally with compose below. The image builds with `--features embeddings` so CozoDB HNSW semantic search works out of the box. Cold embed on mega-graphs can take 10–40+ minutes; `docker-up.sh` finishes embed before starting MCP so `/health` is green when ready.
 
 #### Build from source (compose)
 
 ```bash
 docker compose -f docker-compose.rocksdb.yml up --build
+```
+
+Offline embed for every project in `LEANKG_PROJECT_DIRS` (compose + local
+override mounts):
+
+```bash
+bash scripts/embed-all-workspaces-then-mcp.sh
 ```
 
 For multi-project mounts and local overrides, see [AGENTS.md](AGENTS.md) → RocksDB Docker Deployment.
@@ -274,10 +317,15 @@ Healthy logs should show `kind=bge-int8`, `max_seq=128`, and
 
 Set `LEANKG_EMBED_FAST=0` and/or `LEANKG_EMBED_MODEL=bge` for the legacy FP32 path.
 
-### MCP / Docker: do not block boot on cold embed
+### MCP / Docker: cold embed without blocking day-2 MCP
 
-Cold embed on a mega-graph can take tens of minutes. Keep MCP healthy
-immediately and let vectors catch up in the background:
+Cold embed on a mega-graph can take tens of minutes. **First setup:** use
+`scripts/docker-up.sh` (or `install.sh … docker`) so embed finishes, then MCP
+starts healthy with HNSW ready.
+
+**Day-2 MCP** keeps background embed off by default (`LEANKG_EMBED_BACKGROUND=0`)
+so a restart does not drop HNSW. Opt in only if you accept a temporary
+`semantic_search` outage while vectors rebuild:
 
 ```bash
 export LEANKG_EMBED_ON_BOOT=0              # entrypoint must not wait on embed
@@ -287,7 +335,7 @@ export LEANKG_EMBED_BACKGROUND_WORKERS=1
 export LEANKG_EMBED_BACKGROUND_BATCH=32
 ```
 
-While the index is building, keyword/graph MCP tools work; semantic tools
+While a background rebuild runs, keyword/graph MCP tools work; semantic tools
 degrade until HNSW is ready (`leankg embed --status` to poll).
 
 ### Query
@@ -568,7 +616,8 @@ for full operational notes. Common issues:
 |---------|-------|-----|
 | Cold embed still ~30–40+ min | Fast path off, or `LEANKG_EMBED_MAX_MB` clamps batch to 16 | Enable `LEANKG_EMBED_FAST=1` + `bge-q`; raise `LEANKG_EMBED_MAX_MB` (e.g. 6144); `--workers 8 --batch-size 128` |
 | ORT `SkipLayerNorm` / missing `LayerNorm.weight` | Loading Qdrant `model_optimized.onnx` | Rebuild binary; use Xenova `model_quantized.onnx` via `LEANKG_EMBED_MODEL=bge-q` |
-| MCP / Docker stuck unhealthy for hours | Entrypoint waiting on sync embed | Set `LEANKG_EMBED_ON_BOOT=0`; use `LEANKG_EMBED_BACKGROUND=1` |
+| MCP / Docker stuck unhealthy for hours | Entrypoint waiting on sync embed | Prefer `scripts/docker-up.sh` for first setup; keep `LEANKG_EMBED_ON_BOOT=0` and `LEANKG_EMBED_BACKGROUND=0` on day-2 MCP |
+| `semantic_search` missing `vec_idx` after MCP restart | Background embed dropped HNSW | Keep `LEANKG_EMBED_BACKGROUND=0`; re-run offline embed via `docker-up.sh` or `embed-all-workspaces-then-mcp.sh` |
 | `embed` peaks at 10+ GB RSS | ORT arenas × many workers × large batch/channel | Set `LEANKG_EMBED_MAX_MB=2048` (default on macOS); use `--workers 1 --batch-size 8` |
 | `semantic-context` returns 0 seeds, `Env-filtered: N` in `--debug` | elements' `env` doesn't match the requested env (default `local`) | pass `--env <value>`, or re-index with the right env |
 | `parser::pest` from `embed` | ran against an old build that uses `:delete` (CozoDB 0.2.2 only supports `:rm`) | rebuild from current `main` |

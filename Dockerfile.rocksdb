@@ -3,10 +3,14 @@
 #
 # Published Hub image (linux/arm64): freepeak/leankg:latest
 #
-# One-line run (replace HOST_DIR with your codebase path):
+# One-line setup (index + embed + MCP, no Rust):
+#   curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
+#
+# Or MCP-only (semantic_search needs a prior embed):
 #   docker run -d --name leankg -p 9699:9699 \
 #     -v HOST_DIR:/workspace \
 #     -v leankg-rocksdb:/data/leankg-rocksdb \
+#     -v leankg-models:/root/.cache/leankg \
 #     freepeak/leankg:latest
 
 FROM rust:1-bookworm AS builder
