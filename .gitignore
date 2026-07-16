@@ -1,7 +1,6 @@
 target/
 .worktrees/
 .leankg/
-.worktrees/
 .cargo_home/
 .DS_Store
 .leankg_backup/
@@ -21,3 +20,4 @@ node_modules/
 # volume mounts, ports, etc.). Created locally by the user; never
 # committed.
 docker-compose.override.yml
+vendor/
