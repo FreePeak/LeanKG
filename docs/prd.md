@@ -1704,14 +1704,16 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 > **Status:** PENDING — tracker `REL-052` + `FR-EMBED-RESUME-*` / `US-EMBED-*`.
 >
 > Ship day-2 resume before starting new P1 feature work. Vector Engine PR #80 may merge in parallel; it does **not** replace this gate.
+>
+> **Implementation (2026-07-18 — `feature/embed-resume-day2`):** FR-EMBED-RESUME-01..04 + US-EMBED-01..03 **DONE** (unit + e2e + local CLI smoke: second `embed --wait` logs `nothing to embed … HNSW unchanged`). Remaining PARTIAL: optional live Docker MCP smoke / mega-graph wall-time note (`US-EMBED-04`, `FR-EMBED-RESUME-05/06`, `REL-052`).
 
 **Gate checklist:**
-1. Unchanged second `embed --wait` on RocksDB volume: `embedded≈0`, `skipped_fresh` dominates (FR-EMBED-RESUME-01 / US-EMBED-01)
-2. Zero-dirty path skips HNSW drop/rebuild (FR-EMBED-RESUME-02 / US-EMBED-03)
-3. Kill mid-run → resume dirty-only (FR-EMBED-RESUME-03 / US-EMBED-02)
-4. No-op index does not stale-all (FR-EMBED-RESUME-04)
-5. Day-2 wall time ≪ cold on mega-graph; release note records numbers (FR-EMBED-RESUME-05 / REL-052)
-6. Docker embed-on (`LEANKG_EMBED_BACKGROUND` / boot / setup / `docker-up`) resumes existing data; cold only when empty (FR-EMBED-RESUME-06 / US-EMBED-04)
+1. Unchanged second `embed --wait` on RocksDB volume: `embedded≈0`, `skipped_fresh` dominates (FR-EMBED-RESUME-01 / US-EMBED-01) — **DONE** (CLI smoke + e2e)
+2. Zero-dirty path skips HNSW drop/rebuild (FR-EMBED-RESUME-02 / US-EMBED-03) — **DONE**
+3. Kill mid-run → resume dirty-only (FR-EMBED-RESUME-03 / US-EMBED-02) — **DONE** (per-batch `upsert_fresh`)
+4. No-op index does not stale-all (FR-EMBED-RESUME-04) — **DONE** (`mark_stale_if_changed`)
+5. Day-2 wall time ≪ cold on mega-graph; release note records numbers (FR-EMBED-RESUME-05 / REL-052) — **PARTIAL** (local tiny smoke green; mega-graph evidence optional)
+6. Docker embed-on resumes existing data; cold only when empty (FR-EMBED-RESUME-06 / US-EMBED-04) — **PARTIAL** (shared `build.rs` path + AGENTS; live Docker smoke optional)
 
 ## 9. Non-Functional Requirements
 
@@ -1741,10 +1743,10 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Ontology-tool default budgets | `concept_search` / `kg_semantic_context` ≥ 2k (align with sibling `kg_*`) | PENDING (FR-SEM-02) |
 | MCP HTTP semantic flake | Read-only semantic tools survive one transient socket drop via retry / hygiene | PENDING (FR-SEM-03) |
 | Live semantic MCP smoke | Checklist run (or waived) as release complement to embeddings cargo tests | PENDING (FR-SEM-04 / REL-051) |
-| Day-2 embed (unchanged graph) | Near-zero ONNX; wall time ≪ cold; minutes not hours on mega-graph | PENDING (FR-EMBED-RESUME-01 / 05) |
-| Zero-dirty embed | No HNSW drop/rebuild when nothing to write | PENDING (FR-EMBED-RESUME-02) |
-| Embed interrupt resume | Already-`fresh` rows never re-inferred after kill/restart | PENDING (FR-EMBED-RESUME-03) |
-| Docker embed-on resume | Existing RocksDB embed data → resume; empty → cold only | PENDING (FR-EMBED-RESUME-06 / US-EMBED-04) |
+| Day-2 embed (unchanged graph) | Near-zero ONNX; wall time ≪ cold; minutes not hours on mega-graph | DONE local smoke + e2e (FR-EMBED-RESUME-01 / 02); mega-graph wall-time PARTIAL (FR-05) |
+| Zero-dirty embed | No HNSW drop/rebuild when nothing to write | DONE (FR-EMBED-RESUME-02) |
+| Embed interrupt resume | Already-`fresh` rows never re-inferred after kill/restart | DONE (FR-EMBED-RESUME-03) |
+| Docker embed-on resume | Existing RocksDB embed data → resume; empty → cold only | PARTIAL — shared build path + AGENTS (FR-EMBED-RESUME-06 / US-EMBED-04); live Docker smoke optional |
 
 ---
 

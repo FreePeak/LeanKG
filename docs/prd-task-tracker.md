@@ -1,13 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-18 — **P0 = Day-2 Embed Resume** (resume if data / cold if empty — all Docker paths)  
+**Last synced:** 2026-07-18 — **P0 embed-resume implemented** (`feature/embed-resume-day2`)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
-> **P0 = Day-2 embed resume** — `US-EMBED-*` / `FR-EMBED-RESUME-*` / `REL-052` / `FR-HNSW-E` (PARTIAL).  
-> **Universal rule:** if embed data exists → **resume**; if none → **cold/fresh**. Applies to standalone `embed --wait` **and** Docker MCP embed-on (`LEANKG_EMBED_BACKGROUND` / `ON_BOOT` / `DOCKER_SETUP` / `docker-up`).  
-> **VE (v3.7) COMPLETE** on PR [#80](https://github.com/FreePeak/LeanKG/pull/80) — do not displace embed-resume.  
+> **P0 Day-2 embed resume:** core FRs **DONE** (HNSW no-op, per-batch fresh, hash-aware stale). Remaining PARTIAL: live Docker smoke / mega-graph SLA evidence (`US-EMBED-04`, `FR-EMBED-RESUME-05/06`, `REL-052`).  
+> **Universal rule:** if embed data exists → **resume**; if none → **cold/fresh**.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -16,9 +15,9 @@
 
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
-| **P0** | Day-2 Embed Resume (`US-EMBED-*`, `FR-EMBED-RESUME-*`, `REL-052`, §8.5) — resume-if-data / cold-if-empty | **CURRENT — work first** |
-| **P0 (done)** | v3.7 Vector Engine gate (`US-VE-*`, `FR-VE-*`, §8.4) | COMPLETE on PR #80 — merge when ready |
-| **P1** | Other Must Have (LSP typed edges, Graphify Must, etc.) | After P0 embed-resume gate |
+| **P0** | Day-2 Embed Resume — remaining PARTIAL smoke/SLA | Close REL-052 live smoke, then P1 |
+| **P0 (done)** | v3.7 Vector Engine gate | COMPLETE on PR #80 |
+| **P1** | Other Must Have | After P0 PARTIAL closed or waived |
 | **P2** | Should Have | Next |
 | **P3** | Could Have / aspirational `OPEN` | Backlog |
 
@@ -42,17 +41,17 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **407** |
-| NOT_DONE | 67 |
-| PENDING | 20 |
-| PARTIAL | 13 |
+| NOT_DONE | 60 |
+| PENDING | 16 |
+| PARTIAL | 16 |
 | OPEN | 1 |
-| DONE | 303 |
+| DONE | 311 |
 | WONT_DO | 3 |
-| Open work | **101** |
+| Open work | **93** |
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 12 |
+| P0 | 4 |
 | P1 | 23 |
 | P2 | 59 |
 | P3 | 7 |
@@ -67,26 +66,16 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 
 ## Active session — open work (sorted by priority)
 
-**Single ordered queue.** Work top → bottom. **P0 Day-2 embed resume is CURRENT.**
+**Single ordered queue.** Work top → bottom.
 
-> **2026-07-18 — P0 Day-2 embed resume (universal).** **If embed data exists → resume. If none → cold/fresh.** Covers standalone `embed --wait` and all Docker embed-on paths (`LEANKG_EMBED_BACKGROUND`, `LEANKG_EMBED_ON_BOOT`, `LEANKG_DOCKER_SETUP`, `docker-up.sh`). Never wipe just because embed was turned on. See PRD §3.15 / §5.16 / §8.5. Known gap: `src/embeddings/build.rs` drops HNSW even when `to_embed` is empty. `FR-HNSW-E` → **PARTIAL**.
->
-> **VE PR [#80](https://github.com/FreePeak/LeanKG/pull/80):** COMPLETE / awaiting merge — do not displace embed-resume.
+> **2026-07-18 — embed-resume core landed** on `feature/embed-resume-day2`: skip HNSW+model on zero-dirty; per-batch `upsert_fresh`; `mark_stale_if_changed`. Tests: `embeddings::` + `embeddings_state_e2e` + `embed_build_resume_e2e`. Remaining P0 PARTIAL = optional live Docker smoke / mega-graph wall-time note.
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `FR-HNSW-E` | FR | **PARTIAL** | Must Have | Incremental embed filter (foundation) — PARTIAL: day-2 resume/HNSW no-op/stale-blast trac… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) + 5.12 |
-| **P0** | `US-EMBED-01` | User Story | **PENDING** | Must Have | Second standalone Docker/CLI embed --wait on unchanged code skips fresh vectors (day-2 de… | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `US-EMBED-02` | User Story | **PENDING** | Must Have | Interrupted embed (CLI or Docker MCP) resumes; already-fresh vectors are not re-inferred | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `US-EMBED-03` | User Story | **PENDING** | Must Have | Zero-dirty embed does not drop/rebuild HNSW | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `US-EMBED-04` | User Story | **PENDING** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `FR-EMBED-RESUME-01` | FR | **NOT_DONE** | Must Have | Standalone embed --wait loads RocksDB embedding_state; unchanged second run skips fresh (… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-02` | FR | **NOT_DONE** | Must Have | Skip HNSW drop+recreate when to_embed empty and orphan set empty; fast no-op exit | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-03` | FR | **NOT_DONE** | Must Have | Mid-run durability: committed fresh rows survive kill/restart; next run dirty-only | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-04` | FR | **NOT_DONE** | Must Have | Indexer marks stale only for content_hash-changed QNs; no stale-all on no-op full index | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-05` | FR | **NOT_DONE** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-06` | FR | **NOT_DONE** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `REL-052` | Release | **NOT_DONE** | Must Have | v3.7.2 embed-resume gate: day-2 proven for standalone embed --wait AND Docker MCP embed-o… | 8.5 v3.7.2 Embed Resume Gate |
+| **P0** | `US-EMBED-04` | User Story | **PARTIAL** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
+| **P0** | `FR-EMBED-RESUME-05` | FR | **PARTIAL** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-06` | FR | **PARTIAL** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `REL-052` | Release | **PARTIAL** | Must Have | v3.7.2 embed-resume gate: day-2 proven for standalone embed --wait AND Docker MCP embed-o… | 8.5 v3.7.2 Embed Resume Gate |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
@@ -183,11 +172,11 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `FR-HNSW-E` | FR | **PARTIAL** | Must Have | Incremental embed filter (foundation) — PARTIAL: day-2 resume/HNSW no-op/stale-blast trac… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) + 5.12 |
-| **P0** | `US-EMBED-01` | User Story | **PENDING** | Must Have | Second standalone Docker/CLI embed --wait on unchanged code skips fresh vectors (day-2 de… | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `US-EMBED-02` | User Story | **PENDING** | Must Have | Interrupted embed (CLI or Docker MCP) resumes; already-fresh vectors are not re-inferred | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `US-EMBED-03` | User Story | **PENDING** | Must Have | Zero-dirty embed does not drop/rebuild HNSW | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `US-EMBED-04` | User Story | **PENDING** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
+| **P0** | `FR-HNSW-E` | FR | **DONE** | Must Have | Incremental embed filter (foundation) — PARTIAL: day-2 resume/HNSW no-op/stale-blast trac… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) + 5.12 |
+| **P0** | `US-EMBED-01` | User Story | **DONE** | Must Have | Second standalone Docker/CLI embed --wait on unchanged code skips fresh vectors (day-2 de… | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
+| **P0** | `US-EMBED-02` | User Story | **DONE** | Must Have | Interrupted embed (CLI or Docker MCP) resumes; already-fresh vectors are not re-inferred | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
+| **P0** | `US-EMBED-03` | User Story | **DONE** | Must Have | Zero-dirty embed does not drop/rebuild HNSW | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
+| **P0** | `US-EMBED-04` | User Story | **PARTIAL** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-VE-01` | User Story | **DONE** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150M… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-02` | User Story | **DONE** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-03` | User Story | **DONE** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Ru… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
@@ -195,7 +184,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P0** | `US-VE-05` | User Story | **DONE** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dua… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-07` | User Story | **DONE** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-08` | User Story | **DONE** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% to… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
-| **P0** | `FR-EMBED-RESUME-01` | FR | **NOT_DONE** | Must Have | Standalone embed --wait loads RocksDB embedding_state; unchanged second run skips fresh (… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-01` | FR | **DONE** | Must Have | Standalone embed --wait loads RocksDB embedding_state; unchanged second run skips fresh (… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
 | **P0** | `FR-VE-ABS` | FR | **DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEng… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-FS-DW` | FR | **DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Up… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-FS-REC` | FR | **DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling poi… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
@@ -206,12 +195,12 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P0** | `FR-VE-T1` | FR | **DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW a… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-T2` | FR | **DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN dis… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-T3` | FR | **DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-EMBED-RESUME-02` | FR | **NOT_DONE** | Must Have | Skip HNSW drop+recreate when to_embed empty and orphan set empty; fast no-op exit | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-03` | FR | **NOT_DONE** | Must Have | Mid-run durability: committed fresh rows survive kill/restart; next run dirty-only | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-04` | FR | **NOT_DONE** | Must Have | Indexer marks stale only for content_hash-changed QNs; no stale-all on no-op full index | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-05` | FR | **NOT_DONE** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-06` | FR | **NOT_DONE** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `REL-052` | Release | **NOT_DONE** | Must Have | v3.7.2 embed-resume gate: day-2 proven for standalone embed --wait AND Docker MCP embed-o… | 8.5 v3.7.2 Embed Resume Gate |
+| **P0** | `FR-EMBED-RESUME-02` | FR | **DONE** | Must Have | Skip HNSW drop+recreate when to_embed empty and orphan set empty; fast no-op exit | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-03` | FR | **DONE** | Must Have | Mid-run durability: committed fresh rows survive kill/restart; next run dirty-only | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-04` | FR | **DONE** | Must Have | Indexer marks stale only for content_hash-changed QNs; no stale-all on no-op full index | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-05` | FR | **PARTIAL** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-06` | FR | **PARTIAL** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `REL-052` | Release | **PARTIAL** | Must Have | v3.7.2 embed-resume gate: day-2 proven for standalone embed --wait AND Docker MCP embed-o… | 8.5 v3.7.2 Embed Resume Gate |
 | **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
@@ -595,10 +584,9 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 
 ## Sync notes
 
-- **P0 CURRENT:** Day-2 embed resume — resume-if-data / cold-if-empty for **all** embed entry paths.
-- **IDs:** `US-EMBED-01..04`, `FR-EMBED-RESUME-01..06`, `REL-052`; `FR-HNSW-E` PARTIAL.
-- **PRD:** [`docs/prd.md`](prd.md) v3.7.2-embed-resume (§3.15 / §5.16 / §8.5).
-- **VE:** PR [#80](https://github.com/FreePeak/LeanKG/pull/80) COMPLETE — not current implementation focus.
+- **P0 embed-resume:** FR-01..04 + US-01..03 **DONE**; US-04 / FR-05/06 / REL-052 **PARTIAL** (live smoke optional).
+- **Branch:** `feature/embed-resume-day2`
+- **Tests:** `cargo test --release --features embeddings --lib embeddings::`; `--test embeddings_state_e2e`; `--test embed_build_resume_e2e`
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-18 — Docker embed-on resume rule.*
+*Regenerated: 2026-07-18 — embed-resume implementation sync.*
