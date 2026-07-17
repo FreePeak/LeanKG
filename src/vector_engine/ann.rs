@@ -231,8 +231,21 @@ mod tests {
     }
 
     #[test]
+    fn synth_nsw_search_ids_match_rows() {
+        let graph = Sq8Nsw::synth_for_bench(128, DEFAULT_VECTOR_DIM, bench_params());
+        let q = synth_query(DEFAULT_VECTOR_DIM, 11);
+        let idxs = graph.search(&q, 8, DEFAULT_EF_SEARCH);
+        let ids = graph.search_ids(&q, 8, DEFAULT_EF_SEARCH);
+        assert_eq!(ids.len(), idxs.len());
+        for (idx, id) in idxs.iter().zip(ids.iter()) {
+            assert_eq!(graph.cache().id_at(*idx), Some(*id));
+        }
+    }
+
+    #[test]
     fn empty_graph_search_ok() {
         let graph = Sq8Nsw::synth_for_bench(0, 8, bench_params());
         assert!(graph.search(&[0i8; 8], 5, 10).is_empty());
+        assert!(graph.search_ids(&[0i8; 8], 5, 10).is_empty());
     }
 }

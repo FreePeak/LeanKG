@@ -133,6 +133,16 @@ mod tests {
     }
 
     #[test]
+    fn build_context_payload_is_json() {
+        let graph = Sq8Nsw::synth_for_bench(64, DEFAULT_VECTOR_DIM, bench_params());
+        let q = synth_query(DEFAULT_VECTOR_DIM, 2);
+        let payload = build_context_payload(&graph, &q, 5);
+        let v: serde_json::Value = serde_json::from_str(&payload).expect("json");
+        assert!(v.get("chunks").unwrap().as_array().unwrap().len() <= 5);
+        assert!(v.get("dependencies").is_some());
+    }
+
+    #[test]
     fn time_to_context_p95_under_100ms() {
         let report = measure_time_to_context_p95(50_000, 40);
         eprintln!(

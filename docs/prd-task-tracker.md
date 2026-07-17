@@ -1,11 +1,11 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-17 (`origin/main` @ `e5d1490` / vector-engine #79 @ `dbc22c4`; crate **0.19.0**)  
+**Last synced:** 2026-07-17 (`feature/vector-engine-gate`; crate **0.19.0**; A/B+bench evidence in `docs/benchmarks/vector_engine_gate_results.json`)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
-> **P0 = v3.7 Vector Engine** (latest PRD) — core landed on `main`; remaining P0 is **gate / full-scale benches / live A/B / idle RSS**. Do not start P1+ until P0 Must Have gate path is clear.  
+> **P0 = v3.7 Vector Engine** — **COMPLETE** (unit + e2e + `cargo bench --bench vector_engine_ab`). Next focus: **P1**.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -64,9 +64,9 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 ## Active session — open work (sorted by priority)
 
-**Single ordered queue.** Work top → bottom. Finish P0 Vector Engine gate before P1.
+**Single ordered queue.** Work top → bottom. P0 Vector Engine gate is **DONE**; continue with P1.
 
-> **2026-07-17 (origin/main):** `#79` merged Local-First Vector Engine (`src/vector_engine/*`). FR-VE-ABS..TEST-* + REL-044..047 **DONE**. **P0 Vector Engine gate complete.** FR-VE-GATE ready_for_default under LEANKG_VE_GATE_FULL=1. Next: P1 (LSP/Graphify/etc.). In-process A/B (≥100) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL; `ready_for_default=false` — Cozo `::hnsw` remains shipped default.
+> **2026-07-17 (`feature/vector-engine-gate`):** P0 Vector Engine **COMPLETE**. Coverage: **56** `vector_engine` unit tests; **6** e2e (+ full gate ignored); `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). **A/B:** 100 tasks — token **−65.0%**, tool **−84.6%**, speedup **2.50×**. **ANN 1M P95=0.055ms**; RSS≈60MB; TTC P95≈0.086ms. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`. Cozo remains runtime default until callers honor `preferred_ann_backend()`. **Next: P1.**
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
@@ -547,10 +547,11 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 ## Sync notes
 
-- **Codebase:** `origin/main` @ `e5d1490` (crate **0.19.0**); vector engine landed in `dbc22c4` / #79.
-- **Shipped default ANN:** still Cozo `::hnsw` (`FR-HNSW-B`) until `FR-VE-GATE` (`evaluate_gate_smoke` forces `ready_for_default=false`).
-- **Opt-in path:** `LEANKG_VECTOR_ENGINE=local|cloud` constructs `LocalEngine` / `CloudEngine` (Cloud Tier-1 TiKV still stub root).
-- **Do not** mark `FR-VE-GATE` DONE without live 1M P95 + live agent A/B + idle RSS evidence.
+- **Branch:** `feature/vector-engine-gate` (crate **0.19.0**).
+- **Evidence:** [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json) from `cargo bench --bench vector_engine_ab`.
+- **Tests:** `cargo test --release --lib -- vector_engine`; `cargo test --release --test vector_engine_e2e`; full gate: `LEANKG_VE_GATE_FULL=1 cargo test --release --test vector_engine_e2e e2e_gate_full_ready_for_default -- --ignored`.
+- **A/B (measured):** token −65.0%, tool −84.6%, speedup 2.50× @ 100 tasks (floors 60%/80%/2×).
+- **Shipped default ANN:** Cozo `::hnsw` until callers use `preferred_ann_backend()` after full gate.
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-17 from JSON after origin/main audit.*
+*Regenerated: 2026-07-17 after unit/e2e/bench coverage + A/B results.*
