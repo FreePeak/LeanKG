@@ -10,8 +10,9 @@
 #   docker compose -f docker-compose.rocksdb.yml start leankg
 #
 # Cold offline job: INT8 fast path. Needs ≥6g so batch 128 fits; raise
-# cpus/mem_limit on bigger hosts. Prefer BACKGROUND=1 on the main service
-# for day-2 so MCP stays up during rebuild.
+# cpus/mem_limit on bigger hosts. The long-running MCP service
+# (docker-compose.rocksdb.yml) stays at mem_limit 2g (Local survival).
+# Prefer BACKGROUND=1 on the main service for day-2 so MCP stays up during rebuild.
 
 services:
   leankg-embed:
