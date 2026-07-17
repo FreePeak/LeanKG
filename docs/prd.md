@@ -11,7 +11,7 @@
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **P0 Vector Engine COMPLETE** on `feature/vector-engine-gate` (crate 0.19.0). Evidence: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). A/B −65.0% tokens / −84.6% tools / 2.50×; 1M ANN P95=0.055ms. Next focus: **P1** (tracker).
+> **P0 Vector Engine COMPLETE** — open PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`, crate 0.19.0, tip `85c1632`). Evidence: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). A/B −65.0% tokens / −84.6% tools / 2.50×; 1M ANN P95≈0.055ms. CI hardening: i8 synth overflow fix + idle RSS **warm-delta** gate (debug `cargo test --lib`). README polished to product landing style. Next after merge: **P1** + wire `preferred_ann_backend()` cutover (tracker).
 >
 > **Semantic MCP live probe GREEN** (2026-07-17): [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Pipeline works; enhancements deferred as **US-SEM-*** / **FR-SEM-*** (Section 3.14 / 5.15) — token honesty, ontology budgets, HTTP resilience, live smoke gate.
 >
@@ -54,7 +54,7 @@
 
 > **Task inventory move (same day):** All US/FR/Release status tables and checkboxes were moved to [`prd-task-tracker.md`](prd-task-tracker.md). Sections 3/4/5/8 now reference that file instead of duplicating lists.
 
-> **Code status (synced 2026-07-17 on `feature/vector-engine-gate`):** P0 Vector Engine **DONE** — unit (56), e2e (`tests/vector_engine_e2e.rs`), bench (`cargo bench --bench vector_engine_ab`). Measured A/B: token **−65.0%**, tool **−84.6%**, speedup **2.50×** (100 tasks). 1M ANN P95=**0.055ms** (Neon). Idle RSS≈**60MB**; TTC P95≈**0.086ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true` / `preferred_ann_backend=local_engine`. Report: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). Cozo remains runtime default until callers honor the gate. Crate **0.19.0**.
+> **Code status (synced 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) `feature/vector-engine-gate` @ `85c1632`):** P0 Vector Engine **DONE** — unit (56), e2e (`tests/vector_engine_e2e.rs`), bench (`cargo bench --bench vector_engine_ab`), CI-sim `cargo test --lib` (651). Measured A/B: token **−65.0%**, tool **−84.6%**, speedup **2.50×** (100 tasks). 1M ANN P95≈**0.055ms** (Neon). Idle RSS: lean-bench absolute ≈**65MB** / warm **delta ≈58MB** (unit/e2e assert `delta_ok` — absolute process RSS is not CI-safe under debug `cargo test --lib`). TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true` / `preferred_ann_backend=local_engine`. Report: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). Cozo remains runtime default until callers honor the gate. Crate **0.19.0**. Awaiting merge to `main`.
 
 > **Mission reinforcement:** *"Stop Burning Tokens. Start Coding Lean."* Surgical retrieval = Semantic Search (vectors) + Structural Graphs (LSP/KG). Same product surface as FR-HNSW-*; **new storage/runtime engine** for constrained local hardware and cloud scale without rewriting core query logic.
 
@@ -1033,13 +1033,15 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 
 > **Goal:** Ultra-lightweight vector/graph storage + retrieval that works under Apple M2 Pro / 16GB / 256GB SSD and scales to Linux x86_64 + TiKV **without rewriting** MCP/CLI semantic APIs.
 >
-> **Coexistence:** Until FR-VE-GATE is met, FR-HNSW-B (Cozo `::hnsw`) remains the **shipped default**. LocalEngine / CloudEngine are opt-in via `LEANKG_VECTOR_ENGINE=local|cloud` and must match recall/latency gates before becoming Local default (`ready_for_default` stays false in `src/vector_engine/gate.rs`).
+> **Coexistence:** FR-VE-GATE is **met** on PR #80 when `LEANKG_VE_GATE_FULL=1` (`ready_for_default=true`). Runtime **shipped default ANN** remains Cozo `::hnsw` (FR-HNSW-B) until callers honor `preferred_ann_backend()`. LocalEngine / CloudEngine stay opt-in via `LEANKG_VECTOR_ENGINE=local|cloud`.
 >
-> **Verification (2026-07-17):**
+> **Verification (2026-07-17 — PR #80):**
 > - Unit: `cargo test --release --lib -- vector_engine` → **56 passed** (3 ignored full-scale)
-> - E2E: `cargo test --release --test vector_engine_e2e` → **6 passed**; full gate with `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`
+> - CI path: `cargo test --lib` (debug) → **651 passed** after RSS `delta_ok` + i8 overflow fixes
+> - E2E: `cargo test --release --test vector_engine_e2e` → **6 passed**; `LEANKG_VE_GATE_FULL=1` ignored gate → `ready_for_default=true`
 > - Bench: `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json)
 > - A/B measured: token −**65.0%**, tool −**84.6%**, speedup **2.50×** (100 tasks; floors 60%/80%/2×)
+> - Docs: product README polish (`85c1632`); semantic backlog v3.7.1 remains P2/P3
 
 > **Hardware envelope:** Local survival cap **2GB** (Docker/cgroup) → Cloud **50–80%** of available RAM. Prefer sequential append I/O; minimize random SSD writes.
 
@@ -1554,7 +1556,7 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | DONE (US-VE-02 — measured **0.086ms** P95) |
 | ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | DONE (FR-VE-BENCH-Q — measured **0.055ms** Neon @ 1M) |
 | Query response time (legacy general) | < 100ms | TBD |
-| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | DONE (US-VE-01 — warm 100k RSS≈**60MB**) |
+| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | DONE (US-VE-01 — lean absolute ≈**65MB**; warm delta ≈**58MB**; CI gates `delta_ok`) |
 | Memory usage (indexing) | < 500MB typical; Cloud may use 50–80% RAM for SQ8 | TBD |
 | Survival under cgroup | **2GB hard** — never OOM-killed | DONE (FR-VE-BENCH-OOM — est. heap ≈1.06GB; live alloc under 2GB) |
 | Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | DONE (FR-VE-BENCH-IO — **99.999%** modeled) |

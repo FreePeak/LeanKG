@@ -1,11 +1,11 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-17 (`feature/vector-engine-gate`; crate **0.19.0**; + **US-SEM / FR-SEM** from [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md))  
+**Last synced:** 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate` @ `85c1632`; crate **0.19.0**; + **US-SEM / FR-SEM**)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
-> **P0 = v3.7 Vector Engine** — **COMPLETE** (unit + e2e + `cargo bench --bench vector_engine_ab`). Next focus: **P1**.  
+> **P0 = v3.7 Vector Engine** — **COMPLETE** on PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (unit + e2e + bench + CI fixes). Awaiting merge; next focus: **P1**.  
 > **Semantic MCP live probe GREEN** — enhancements are **P2/P3** (`US-SEM-*` / `FR-SEM-*`); do not displace P1 Must Have.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
@@ -15,7 +15,7 @@
 
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
-| **P0** | v3.7 Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`, §8.4 gate) | **Complete on this branch — wire retrieval cutover / start P1** |
+| **P0** | v3.7 Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`, §8.4 gate) | **Complete on PR #80 — merge, then wire retrieval cutover / start P1** |
 | **P1** | Other Must Have (LSP typed edges, Graphify Must, etc.) | After P0 gate path is solid |
 | **P2** | Should Have | Next |
 | **P3** | Could Have / aspirational `OPEN` | Backlog |
@@ -67,7 +67,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 **Single ordered queue.** Work top → bottom. P0 Vector Engine gate is **DONE**; continue with P1.
 
-> **2026-07-17 (`feature/vector-engine-gate`):** P0 Vector Engine **COMPLETE**. Coverage: **56** `vector_engine` unit tests; **6** e2e (+ full gate ignored); `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). **A/B:** 100 tasks — token **−65.0%**, tool **−84.6%**, speedup **2.50×**. **ANN 1M P95=0.055ms**; RSS≈60MB; TTC P95≈0.086ms. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`. Cozo remains runtime default until callers honor `preferred_ann_backend()`. **Next: P1.**
+> **2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate` @ `85c1632`):** P0 Vector Engine **COMPLETE** (awaiting merge). Coverage: **56** unit + **6** e2e (+ full gate); `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json); CI `cargo test --lib` green after i8 overflow + RSS **delta_ok** fixes. **A/B:** token **−65.0%**, tool **−84.6%**, speedup **2.50×**. **ANN 1M P95≈0.055ms**; lean RSS abs≈**65MB** / warm delta≈**58MB**; TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`. README product landing polish. Cozo remains runtime default until callers honor `preferred_ann_backend()`. **Next after merge: P1.**
 >
 > **Same day — semantic MCP live probe GREEN** ([`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)). Pipeline OK; backlog `US-SEM-*` / `FR-SEM-*` / `REL-051` added as **P2/P3 later enhancements** (token honesty, ontology budgets, HTTP resilience, live smoke, optional diversity).
 
@@ -176,9 +176,9 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P0** | `FR-VE-BENCH-OOM` | FR | **DONE** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-Q` | FR | **DONE** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-RECALL` | FR | **DONE** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `REL-048` | Release | **DONE** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-049` | Release | **DONE** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-050` | Release | **DONE** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-048` | Release | **DONE** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-049` | Release | **DONE** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-050` | Release | **DONE** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
 | **P0** | `FR-VE-BENCH-AB` | FR | **DONE** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-GATE` | FR | **DONE** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
@@ -288,10 +288,10 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-SIMD` | FR | **DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `REL-044` | Release | **DONE** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-045` | Release | **DONE** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-046` | Release | **DONE** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-047` | Release | **DONE** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-044` | Release | **DONE** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-045` | Release | **DONE** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-046` | Release | **DONE** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-047` | Release | **DONE** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
 | **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `US-VE-06` | User Story | **DONE** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P1** | `FR-B03` | FR | **DONE** | Must Have | LSP bridge infrastructure for Go (could read 'gopls' textDocument/definition/references) — DONE infra ('534cd7… | 5.10 CBM Structural Parity Requirements (merged) |
@@ -570,12 +570,15 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 ## Sync notes
 
-- **Branch:** `feature/vector-engine-gate` (crate **0.19.0**).
+- **PR:** [#80](https://github.com/FreePeak/LeanKG/pull/80) — `feature/vector-engine-gate` @ `85c1632` (crate **0.19.0**); **awaiting merge**.
 - **Evidence:** [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json) from `cargo bench --bench vector_engine_ab`.
-- **Tests:** `cargo test --release --lib -- vector_engine`; `cargo test --release --test vector_engine_e2e`; full gate: `LEANKG_VE_GATE_FULL=1 cargo test --release --test vector_engine_e2e e2e_gate_full_ready_for_default -- --ignored`.
+- **Tests:** `cargo test --release --lib -- vector_engine`; `cargo test --release --test vector_engine_e2e`; full gate: `LEANKG_VE_GATE_FULL=1 … --ignored`; CI-sim: `cargo test --lib` (debug).
+- **CI hardening on PR:** i8 synth overflow (`587eefe`); idle RSS warm-**delta** gate for Linux debug lib tests (`6fb6c95`).
 - **A/B (measured):** token −65.0%, tool −84.6%, speedup 2.50× @ 100 tasks (floors 60%/80%/2×).
+- **US-VE-01 note:** Product absolute idle &lt;150MB on lean process; unit/e2e assert `delta_ok` because shared debug `cargo test --lib` baseline alone can exceed ~100MB on CI.
 - **Shipped default ANN:** Cozo `::hnsw` until callers use `preferred_ann_backend()` after full gate.
+- **Docs:** README product landing polish (`85c1632`).
 - **Semantic MCP live probe (GREEN):** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md) → backlog `US-SEM-01..04`, `FR-SEM-01..05`, `REL-051` (P2/P3 later; do not displace P1).
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-17 after semantic MCP verification → PRD v3.7.1 enhancement backlog.*
+*Regenerated: 2026-07-17 — synced to PR #80 tip (`85c1632`).*
