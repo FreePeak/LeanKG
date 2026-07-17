@@ -425,22 +425,31 @@ impl MCPServer {
     /// Spawn a memory-pressure watchdog. Polls RSS every
     /// `LEANKG_GC_POLL_SECS` (default 10) and runs the in-RAM
     /// release callback when the daemon has been idle past
-    /// `LEANKG_GC_IDLE_AFTER_SECS` (default 60) or when RSS exceeds
-    /// `LEANKG_GC_MAX_RSS_MB` (default 4096).
+    /// `LEANKG_GC_IDLE_AFTER_SECS` (default 60) — **once per idle
+    /// period** — or when RSS exceeds `LEANKG_GC_MAX_RSS_MB`
+    /// (default 4096, force-trim throttled to 30s). Skips when
+    /// caches are already empty; calls `trim_heap()` after a real
+    /// release.
     fn spawn_gc_watchdog(&self) {
         let shutdown_flag = self.shutdown_flag.clone();
         let graph_engine = self.graph_engine.clone();
         tokio::spawn(async move {
             let mut guard = crate::gc::MemoryGuard::new(Some(Box::new(move || {
                 let guard = graph_engine.lock();
-                if let Some(engine) = guard.as_ref() {
-                    // Drop the elements + relationships caches;
-                    // the engine will re-load on next request.
-                    engine.invalidate_cache();
+                let Some(engine) = guard.as_ref() else {
+                    return false;
+                };
+                // Skip when caches are already cold — avoids write-lock
+                // churn and info-spam while the daemon stays idle.
+                if !engine.is_cache_valid() {
+                    return false;
                 }
+                engine.invalidate_cache();
+                let _ = crate::gc::trim_heap();
+                true
             })));
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                tokio::time::sleep(crate::gc::MemoryGuard::poll_interval()).await;
                 if shutdown_flag.load(Ordering::SeqCst) {
                     break;
                 }
