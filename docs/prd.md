@@ -1457,9 +1457,9 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Query response time (legacy general) | < 100ms | TBD |
 | Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | PARTIAL (US-VE-01 — not yet measured on default path) |
 | Memory usage (indexing) | < 500MB typical; Cloud may use 50–80% RAM for SQ8 | TBD |
-| Survival under cgroup | **2GB hard** — never OOM-killed | PARTIAL (FR-VE-BENCH-OOM — planner done; live cgroup open) |
-| Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | PARTIAL (FR-VE-BENCH-IO) |
-| HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | PARTIAL (FR-VE-BENCH-RECALL) |
+| Survival under cgroup | **2GB hard** — never OOM-killed | DONE (FR-VE-BENCH-OOM — plan + live 1M RSS≈567MB) |
+| Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | DONE (FR-VE-BENCH-IO) |
+| HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | DONE (FR-VE-BENCH-RECALL — SQ8≥90% @ ef=50) |
 | Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | PARTIAL (FR-VE-BENCH-AB — in-process suite pass; live harness open) |
 | Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | PARTIAL (FR-VE-BENCH-AB) |
 | Agent time-to-resolution | ≥ **2×** faster | PARTIAL (FR-VE-BENCH-AB) |

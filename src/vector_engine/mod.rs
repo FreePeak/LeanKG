@@ -31,7 +31,9 @@ pub use ab::{
 pub use ann::{bench_params, synth_query, Sq8Nsw};
 pub use bench::{
     ann_p95_meets_1m_floor, bench_ann_p95_at, bench_ann_query_p95, bench_query_p95,
-    io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32, synth_sq8_cache,
+    estimate_local_engine_heap_bytes, io_reduction_vs_mmap, measure_io_reduction,
+    oom_1m_corpus_within_2gb, oom_plan_within_cap, recall_meets_ef50_floor,
+    recall_sq8_at_ef_search, recall_sq8_vs_fp32, synth_sq8_cache, IoReductionReport,
     QueryBenchResult, BENCH_Q_CORPUS, TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
 };
 pub use dual_write::{DualWriteEngine, WriteInput};

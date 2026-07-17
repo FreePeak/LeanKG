@@ -9,9 +9,9 @@ use std::time::Instant;
 
 use leankg::vector_engine::{
     ann_p95_meets_1m_floor, bench_ann_p95_at, bench_query_p95, evaluate_default_suite,
-    io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32, run_ab_suite, synth_sq8_cache,
-    AbFloors, BENCH_Q_CORPUS, DEFAULT_VECTOR_DIM, MIN_AB_TASKS, TARGET_IO_REDUCTION, TARGET_P95_MS,
-    TARGET_RECALL,
+    measure_io_reduction, oom_1m_corpus_within_2gb, oom_plan_within_cap, recall_meets_ef50_floor,
+    run_ab_suite, synth_sq8_cache, AbFloors, BENCH_Q_CORPUS, DEFAULT_VECTOR_DIM, MIN_AB_TASKS,
+    TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
 };
 
 fn main() {
@@ -116,31 +116,28 @@ fn main() {
     );
     let _ = q;
 
-    // --- FR-VE-BENCH-IO / RECALL / OOM smoke ---
-    let io = io_reduction_vs_mmap(1_000_000, 0);
+    // --- FR-VE-BENCH-IO / RECALL / OOM ---
+    let io = measure_io_reduction(1_000_000, 10);
     println!(
-        "[FR-VE-BENCH-IO] reduction={:.1}% (floor ≥{:.0}%)",
-        io * 100.0,
+        "[FR-VE-BENCH-IO] legacy={} hot={} reduction={:.1}% (floor ≥{:.0}%)",
+        io.legacy_disk_touches,
+        io.hot_disk_touches,
+        io.reduction * 100.0,
         TARGET_IO_REDUCTION * 100.0
     );
-    assert!(io >= TARGET_IO_REDUCTION);
+    assert!(io.meets_floor());
 
-    let mut rows = Vec::new();
-    for id in 0..256u64 {
-        let mut v = vec![0.0f32; 32];
-        v[(id as usize) % 32] = 1.0;
-        rows.push((id, v));
-    }
-    let mut qv = vec![0.0f32; 32];
-    qv[1] = 1.0;
-    let recall = recall_sq8_vs_fp32(&rows, &qv, 10);
+    let (recall, recall_ok) = recall_meets_ef50_floor();
     println!(
-        "[FR-VE-BENCH-RECALL] recall@{:.0}={:.3} (target >{:.2})",
-        10.0, recall, TARGET_RECALL
+        "[FR-VE-BENCH-RECALL] recall@efSearch=50={:.3} (target >{:.2}) ok={}",
+        recall, TARGET_RECALL, recall_ok
     );
+    assert!(recall_ok, "SQ8 recall {recall:.3} below floor");
 
     assert!(oom_plan_within_cap());
-    println!("[FR-VE-BENCH-OOM] 2GB cgroup plan within survival cap: OK");
+    let (heap, oom_ok) = oom_1m_corpus_within_2gb();
+    println!("[FR-VE-BENCH-OOM] estimated_1M_heap={heap} bytes within_2gb={oom_ok}");
+    assert!(oom_ok, "1M LocalEngine heap estimate exceeds 2GB");
 
     println!();
     println!("All vector-engine A/B + quality benches passed.");
