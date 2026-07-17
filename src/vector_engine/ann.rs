@@ -94,7 +94,10 @@ impl Sq8Nsw {
         for id in 0..n as u64 {
             let mut row = vec![0i8; dim];
             for (j, slot) in row.iter_mut().enumerate() {
-                *slot = (((id as usize).wrapping_mul(31) + j * 17) % 254) as i8 - 127;
+                // Compute in i32 first: `% 254 as i8` truncates >127 and then
+                // `- 127` overflows in debug builds (CI).
+                let v = ((id as usize).wrapping_mul(31) + j * 17) % 254;
+                *slot = (v as i32 - 127) as i8;
             }
             cache.push_sq8(id, &row).expect("dim matches");
         }
@@ -202,7 +205,8 @@ impl Sq8Nsw {
 pub fn synth_query(dim: usize, seed: u64) -> Vec<i8> {
     let mut q = vec![0i8; dim];
     for (j, slot) in q.iter_mut().enumerate() {
-        *slot = (((seed as usize).wrapping_mul(13) + j * 11) % 254) as i8 - 127;
+        let v = ((seed as usize).wrapping_mul(13) + j * 11) % 254;
+        *slot = (v as i32 - 127) as i8;
     }
     q
 }
