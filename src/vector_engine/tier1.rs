@@ -156,6 +156,10 @@ impl TopologyStore {
         self.nodes.len()
     }
 
+    pub fn node_ids(&self) -> Vec<u64> {
+        self.nodes.keys().copied().collect()
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }

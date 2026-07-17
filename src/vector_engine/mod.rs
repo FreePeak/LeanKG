@@ -8,6 +8,7 @@
 //! Cozo `::hnsw` remains the shipped default until FR-VE-GATE. Select this
 //! engine with `LEANKG_VECTOR_ENGINE=local|cloud`.
 
+pub mod dual_write;
 pub mod engine;
 pub mod hnsw;
 pub mod memory;
@@ -17,6 +18,7 @@ pub mod tier1;
 pub mod tier2;
 pub mod tier3;
 
+pub use dual_write::{DualWriteEngine, WriteInput};
 pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
     VectorStorage, DEFAULT_VECTOR_DIM, ENV_VECTOR_ENGINE,
