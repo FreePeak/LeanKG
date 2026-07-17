@@ -154,9 +154,49 @@ fn build_hnsw_create_stmt() -> String {
     )
 }
 
+/// Mark rows stale only when embed content actually changed.
+///
+/// FR-EMBED-RESUME-04: a no-op / identical-content full index must **not**
+/// force a full re-embed. Rows that are already `fresh` with a matching
+/// `content_hash` are left untouched.
+///
+/// Returns `(marked, skipped_unchanged)`.
+pub fn mark_stale_if_changed(
+    db: &CozoDb,
+    items: &[(String, String)],
+) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+    if items.is_empty() {
+        return Ok((0, 0));
+    }
+    let existing: std::collections::HashMap<String, EmbeddingStateRow> = list_all(db)?
+        .into_iter()
+        .map(|r| (r.qualified_name.clone(), r))
+        .collect();
+
+    let mut to_mark: Vec<String> = Vec::new();
+    let mut skipped = 0usize;
+    for (qn, current_hash) in items {
+        match existing.get(qn) {
+            Some(row)
+                if row.state == "fresh"
+                    && !row.content_hash.is_empty()
+                    && row.content_hash == *current_hash =>
+            {
+                skipped += 1;
+            }
+            _ => to_mark.push(qn.clone()),
+        }
+    }
+    mark_stale_for_qualified_names(db, &to_mark)?;
+    Ok((to_mark.len(), skipped))
+}
+
 /// Mark a batch of qualified_names as stale. Idempotent: rows that already
 /// exist flip to `state="stale"`; rows that don't exist are inserted with a
 /// placeholder (`content_hash=""`) so the next `embed` run picks them up.
+///
+/// Prefer [`mark_stale_if_changed`] from the indexer so unchanged fresh
+/// rows survive a no-op full index (FR-EMBED-RESUME-04).
 ///
 /// `usearch_key` is computed deterministically from each qualified_name and
 /// stored even on first insert, so the embed step can lookup the key without

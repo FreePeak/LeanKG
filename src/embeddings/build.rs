@@ -293,6 +293,47 @@ pub struct BuildReport {
     pub index_path: PathBuf,
 }
 
+/// FR-EMBED-RESUME-02: when nothing needs embedding and there are no
+/// orphans to reap, skip HNSW drop+rebuild (day-2 no-op must stay cheap).
+pub(crate) fn should_skip_hnsw_rebuild(to_embed_empty: bool, orphan_empty: bool) -> bool {
+    to_embed_empty && orphan_empty
+}
+
+/// State rows whose QN is no longer in the current embed work list.
+pub(crate) fn orphan_rows_from_work(
+    work: &[WorkItem],
+    existing_state: &std::collections::HashMap<String, EmbeddingStateRow>,
+) -> Vec<EmbeddingStateRow> {
+    let work_qns: std::collections::HashSet<&str> =
+        work.iter().map(|w| w.qualified_name.as_str()).collect();
+    existing_state
+        .iter()
+        .filter(|(qn, _)| !work_qns.contains(qn.as_str()))
+        .map(|(_, row)| row.clone())
+        .collect()
+}
+
+fn nothing_to_embed_report(
+    db: &CozoDb,
+    considered: usize,
+    skipped_fresh: usize,
+) -> Result<BuildReport, Box<dyn std::error::Error>> {
+    tracing::info!(
+        "nothing to embed: considered={} skipped_fresh={} (HNSW unchanged)",
+        considered,
+        skipped_fresh
+    );
+    let index_size = count_vectors(db)?;
+    Ok(BuildReport {
+        considered_count: considered,
+        embedded_count: 0,
+        skipped_fresh_count: skipped_fresh,
+        orphaned_count: 0,
+        index_size,
+        index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+    })
+}
+
 pub fn run(
     graph: &GraphEngine,
     _index_path: &std::path::Path,
@@ -308,7 +349,6 @@ pub fn run(
             mem.max_rss_mb
         );
     }
-    let embedder = Embedder::new()?;
     let db = graph.db();
 
     // 1. Walk code_elements and build the work list.
@@ -360,6 +400,15 @@ pub fn run(
     let considered = work.len();
     let skipped_fresh = considered - to_embed.len();
 
+    // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone
+    // (and do not load the ONNX model).
+    let orphan_rows = orphan_rows_from_work(&work, &existing_state);
+    if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
+        return nothing_to_embed_report(db, considered, skipped_fresh);
+    }
+
+    let embedder = Embedder::new()?;
+
     // FR-HNSW perf fix: drop the HNSW index before the bulk insert so
     // each :put doesn't pay the O(log N) HNSW update cost. The index is
     // recreated at the end of the function.
@@ -379,12 +428,18 @@ pub fn run(
         let pairs: Vec<(&WorkItem, &Vec<f32>)> =
             chunk.iter().copied().zip(vectors.iter()).collect();
         upsert_vectors(db, pairs.iter().copied())?;
-        for (item, _vector) in pairs {
-            fresh_rows.push(FreshRow {
+        // FR-EMBED-RESUME-03: stamp fresh per batch so kill/resume skips done work.
+        let batch_fresh: Vec<FreshRow> = pairs
+            .iter()
+            .map(|(item, _)| FreshRow {
                 qualified_name: item.qualified_name.clone(),
                 usearch_key: 0,
                 content_hash: item.current_hash.clone(),
-            });
+            })
+            .collect();
+        state::upsert_fresh(db, &batch_fresh)?;
+        for row in batch_fresh {
+            fresh_rows.push(row);
             embedded += 1;
         }
         tracing::info!(
@@ -396,11 +451,9 @@ pub fn run(
     }
 
     tracing::info!(
-        "embed loop complete, calling upsert_fresh for {} rows",
+        "embed loop complete ({} fresh rows already stamped)",
         fresh_rows.len()
     );
-    state::upsert_fresh(db, &fresh_rows)?;
-    tracing::info!("upsert_fresh complete");
 
     // Recreate the HNSW index now that the bulk insert is done. A single
     // O(N log N) build beats N incremental updates by 5-10x.
@@ -412,16 +465,7 @@ pub fn run(
         hnsw_started.elapsed().as_secs_f64()
     );
 
-    // 4. Reap orphans: state rows whose qualified_name is no longer present
-    // in the work list (either removed from code_elements, or SKIP-classified
-    // element types like clusters/processes that don't get embedded).
-    let work_qns: std::collections::HashSet<&str> =
-        work.iter().map(|w| w.qualified_name.as_str()).collect();
-    let orphan_rows: Vec<EmbeddingStateRow> = existing_state
-        .iter()
-        .filter(|(qn, _)| !work_qns.contains(qn.as_str()))
-        .map(|(_, row)| row.clone())
-        .collect();
+    // 4. Reap orphans (precomputed above).
     tracing::info!("orphan reap: {} orphans", orphan_rows.len());
     if !orphan_rows.is_empty() {
         // Remove vectors from HNSW index first, then state rows.
@@ -525,6 +569,12 @@ pub fn build_index_parallel(
 
     let considered = work.len();
     let skipped_fresh = considered - to_embed.len();
+
+    // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone.
+    let orphan_rows = orphan_rows_from_work(&work, &existing_state);
+    if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
+        return nothing_to_embed_report(db, considered, skipped_fresh).map_err(|e| e.to_string());
+    }
 
     // FR-EMBED-R4: length-aware batching — sort by blob char length so each
     // ONNX batch pads to a similar seq_len (less wasted compute on short
@@ -657,6 +707,9 @@ pub fn build_index_parallel(
                                     },
                                 );
                             upsert_pairs_to_db(&db_for_writer, &rows).map_err(|e| e.to_string())?;
+                            // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
+                            state::upsert_fresh(&db_for_writer, &fresh)
+                                .map_err(|e| e.to_string())?;
                             done += rows.len();
                             tracing::info!("writer: flushed {} rows, total {}", rows.len(), done);
                             fresh_rows.extend(fresh);
@@ -682,6 +735,7 @@ pub fn build_index_parallel(
                     );
                 if !rows.is_empty() {
                     upsert_pairs_to_db(&db_for_writer, &rows).map_err(|e| e.to_string())?;
+                    state::upsert_fresh(&db_for_writer, &fresh).map_err(|e| e.to_string())?;
                     done += rows.len();
                     tracing::info!("writer: final flush {} rows, total {}", rows.len(), done);
                 }
@@ -818,11 +872,9 @@ pub fn build_index_parallel(
     let embedded = embedded_count.load(Ordering::Relaxed);
 
     tracing::info!(
-        "pipeline embed complete, calling upsert_fresh for {} rows",
+        "pipeline embed complete ({} fresh rows already stamped by writer)",
         fresh_rows.len()
     );
-    state::upsert_fresh(db, &fresh_rows).map_err(|e| e.to_string())?;
-    tracing::info!("upsert_fresh complete");
 
     // Recreate the HNSW index now that the bulk insert is done. This is
     // a single O(N log N) operation and is much faster than letting every
@@ -835,14 +887,7 @@ pub fn build_index_parallel(
         hnsw_started.elapsed().as_secs_f64()
     );
 
-    // Reap orphans.
-    let work_qns: std::collections::HashSet<&str> =
-        work.iter().map(|w| w.qualified_name.as_str()).collect();
-    let orphan_rows: Vec<EmbeddingStateRow> = existing_state
-        .iter()
-        .filter(|(qn, _)| !work_qns.contains(qn.as_str()))
-        .map(|(_, row)| row.clone())
-        .collect();
+    // Reap orphans (precomputed before HNSW drop).
     tracing::info!("orphan reap: {} orphans", orphan_rows.len());
     if !orphan_rows.is_empty() {
         let orphan_qns: Vec<String> = orphan_rows
@@ -1306,7 +1351,7 @@ unsafe fn libc_kill_compat(pid: u64, sig: i32) -> i32 {
 }
 
 #[derive(Clone)]
-struct WorkItem {
+pub(crate) struct WorkItem {
     qualified_name: String,
     blob: String,
     current_hash: String,
@@ -1379,5 +1424,46 @@ mod tests {
     fn effective_upsert_chunk_defaults_when_env_unset() {
         std::env::remove_var("LEANKG_EMBED_UPSERT_CHUNK");
         assert_eq!(effective_upsert_chunk(), 5000);
+    }
+
+    #[test]
+    fn should_skip_hnsw_rebuild_only_when_empty_and_no_orphans() {
+        assert!(should_skip_hnsw_rebuild(true, true));
+        assert!(!should_skip_hnsw_rebuild(false, true));
+        assert!(!should_skip_hnsw_rebuild(true, false));
+        assert!(!should_skip_hnsw_rebuild(false, false));
+    }
+
+    #[test]
+    fn orphan_rows_from_work_detects_missing_qns() {
+        let work = vec![WorkItem {
+            qualified_name: "a.rs::f".into(),
+            blob: "x".into(),
+            current_hash: "h".into(),
+        }];
+        let mut existing = std::collections::HashMap::new();
+        existing.insert(
+            "a.rs::f".into(),
+            EmbeddingStateRow {
+                qualified_name: "a.rs::f".into(),
+                usearch_key: 0,
+                content_hash: "h".into(),
+                state: "fresh".into(),
+                embedded_at: "1".into(),
+            },
+        );
+        existing.insert(
+            "gone.rs::g".into(),
+            EmbeddingStateRow {
+                qualified_name: "gone.rs::g".into(),
+                usearch_key: 0,
+                content_hash: "h2".into(),
+                state: "fresh".into(),
+                embedded_at: "1".into(),
+            },
+        );
+        let orphans = orphan_rows_from_work(&work, &existing);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].qualified_name, "gone.rs::g");
     }
 }
