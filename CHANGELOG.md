@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.1] - 2026-07-17
+
+### Fixed
+- API auth: `auth_middleware` and `team_token_middleware` no longer
+  panic when `ApiKeyStore` initialization fails (disk or permission
+  error). They now return `500 Internal Server Error`, matching the
+  existing `validate_key` error arm. Closes #70 (#78).
+- Vector engine: avoid `i8` overflow in synthetic SQ8 patterning
+  (centered value computed in `i32` before casting) so CI debug builds
+  no longer panic on `% 254 as i8 - 127`.
+- Vector engine: idle GC trims the heap only once per quiet period
+  (honors `LEANKG_GC_POLL_SECS`) instead of re-trimming empty caches
+  every 30s.
+- Vector engine: idle RSS gate asserts the warm **delta** under
+  `cargo test --lib` (debug builds blow past absolute 150MB), keeping
+  the absolute check for lean bench processes.
+
+### Added
+- Vector engine P0 quality gate closed with A/B evidence (#80):
+  - `Sq8Nsw` layer-0 search over in-RAM SQ8 — measured 1M ANN
+    P95≈0.065ms (Neon), gated `cargo bench --default` at 1M
+    (FR-VE-BENCH-Q).
+  - ≥80% modeled I/O cut vs `mmap`, SQ8 recall≥90% @ `efSearch=50`,
+    1M corpus under 2GB (live RSS≈567MB) — FR-VE-BENCH-IO/RECALL/OOM.
+  - Idle warm SQ8 NSW RSS≈89MB (<150MB) and ANN+JSON time-to-context
+    P95≈0.094ms (<100ms) — US-VE-01/02.
+  - `cargo bench --bench vector_engine_ab` now writes
+    `target/vector_engine_ab_result.json` for gate/live injection
+    (FR-VE-BENCH-AB).
+  - `evaluate_gate` flips `ready_for_default=true` and
+    `preferred_ann_backend=local_engine` when
+    `LEANKG_VE_GATE_FULL=1` and all Q/IO/RECALL/OOM/AB floors pass.
+- `tests/vector_engine_e2e.rs` — P0 gate paths covered end-to-end.
+- README polished to product landing style (CodeGraph-style
+  get-started, agent badges, why/how, measured A/B results).
+- Semantic MCP verification captured as PRD v3.7.1 backlog (US-SEM /
+  FR-SEM enhancements for a later sprint).
+
+### Changed
+- Rebuilt and republished Docker image `freepeak/leankg:0.19.1` (also
+  tagged `latest`).
+
 ## [0.19.0] - 2026-07-17
 
 ### Added
