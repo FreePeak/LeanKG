@@ -4,7 +4,7 @@
 //! FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors.
 //! Until then Cozo `::hnsw` remains default.
 
-use super::ab::{load_ab_result_from_env, AbFloors};
+use super::ab::{evaluate_default_suite, load_ab_result_from_env, AbFloors};
 use super::bench::{
     bench_query_p95, io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32,
     synth_sq8_cache, TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
@@ -22,8 +22,8 @@ pub struct GateReport {
     pub ready_for_default: bool,
 }
 
-/// CI-safe smoke evaluation. Full 1M P95 + live A/B required before
-/// `ready_for_default` can become true.
+/// CI-safe smoke evaluation. Full 1M P95 + live agent harness still required
+/// before `ready_for_default` can become true (synthetic A/B alone is not enough).
 pub fn evaluate_gate_smoke() -> GateReport {
     let (cache, query) = synth_sq8_cache(512, DEFAULT_VECTOR_DIM);
     let q = bench_query_p95(&cache, &query, 20);
@@ -41,11 +41,14 @@ pub fn evaluate_gate_smoke() -> GateReport {
     let recall = recall_sq8_vs_fp32(&rows, &qv, 10);
     let bench_recall_ok = recall >= TARGET_RECALL || recall >= 0.5;
     let bench_oom_ok = oom_plan_within_cap();
+
+    // Prefer live harness JSON when present; otherwise run in-process ≥100-task suite.
     let bench_ab_ok = load_ab_result_from_env()
         .map(|r| r.meets_floors(AbFloors::default()))
-        .unwrap_or(false);
+        .unwrap_or_else(|| evaluate_default_suite().2);
+
     let tests_ok = true;
-    // Never flip default from smoke alone.
+    // Never flip default from smoke alone (needs full-scale 1M + live A/B sign-off).
     let ready_for_default = false;
     GateReport {
         tests_ok,
@@ -68,6 +71,7 @@ mod tests {
         assert!(g.tests_ok);
         assert!(g.bench_io_ok);
         assert!(g.bench_oom_ok);
+        assert!(g.bench_ab_ok, "in-process A/B suite should meet floors");
         assert!(!g.ready_for_default);
     }
 }

@@ -23,7 +23,10 @@ pub mod tier1;
 pub mod tier2;
 pub mod tier3;
 
-pub use ab::{load_ab_result_from_env, AbFloors, AbResult};
+pub use ab::{
+    evaluate_default_suite, load_ab_result_from_env, run_ab_suite, simulate_task, AbFloors,
+    AbResult, AbSuiteReport, AbTaskOutcome, MIN_AB_TASKS,
+};
 pub use bench::{
     bench_query_p95, io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32,
     synth_sq8_cache, QueryBenchResult, TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
