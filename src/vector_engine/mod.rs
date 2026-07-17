@@ -11,6 +11,7 @@
 pub mod engine;
 pub mod tier1;
 pub mod tier2;
+pub mod tier3;
 
 pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
@@ -21,3 +22,4 @@ pub use tier1::{
     TopologyStore,
 };
 pub use tier2::{dot_i8_scalar, quantize_sq8, Sq8Cache};
+pub use tier3::{FlatPayloadFile, PayloadRecord, RECORD_HEADER_SIZE};
