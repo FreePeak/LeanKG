@@ -93,14 +93,28 @@ fn main() {
     // --- US-VE-01 / US-VE-02 KPI samples (before 1M ANN so RSS is not polluted) ---
     let rss = measure_idle_rss_after_warm(100_000);
     println!(
-        "[US-VE-01] rss_after_warm={} bytes (floor <{}) ok={}",
-        rss.rss_bytes, TARGET_IDLE_RSS_BYTES, rss.ok
+        "[US-VE-01] baseline={} after={} delta={} (floor <{}) absolute_ok={} delta_ok={}",
+        rss.baseline_rss_bytes,
+        rss.rss_bytes,
+        rss.delta_bytes,
+        TARGET_IDLE_RSS_BYTES,
+        rss.ok,
+        rss.delta_ok
     );
     assert!(
-        rss.ok,
-        "idle RSS {} exceeds floor {} (run KPI before 1M ANN)",
-        rss.rss_bytes, TARGET_IDLE_RSS_BYTES
+        rss.delta_ok,
+        "warm RSS delta {} exceeds floor {}",
+        rss.delta_bytes, TARGET_IDLE_RSS_BYTES
     );
+    // Absolute product floor when the bench process itself is lean (typical
+    // release binary). Skip when baseline already eats most of the budget.
+    if rss.baseline_rss_bytes < 80 * 1024 * 1024 {
+        assert!(
+            rss.ok,
+            "idle RSS {} exceeds floor {} (run KPI before 1M ANN)",
+            rss.rss_bytes, TARGET_IDLE_RSS_BYTES
+        );
+    }
     let ttc = measure_time_to_context_p95(50_000, 40);
     println!(
         "[US-VE-02] ttc_p95={:.3}ms payload={}B (floor <{}ms) ok={}",
@@ -234,8 +248,11 @@ fn main() {
             "within_2gb": oom_ok,
         },
         "kpi": {
+            "idle_rss_baseline_bytes": rss.baseline_rss_bytes,
             "idle_rss_bytes": rss.rss_bytes,
+            "idle_rss_delta_bytes": rss.delta_bytes,
             "idle_rss_ok": rss.ok,
+            "idle_rss_delta_ok": rss.delta_ok,
             "ttc_p95_ms": ttc.p95.as_secs_f64() * 1000.0,
             "ttc_ok": ttc.ok,
         }

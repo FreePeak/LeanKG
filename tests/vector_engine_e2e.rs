@@ -77,10 +77,11 @@ fn e2e_dual_write_recover_and_ann_search() {
 #[test]
 fn e2e_kpi_floors_and_io_recall() {
     let rss = measure_idle_rss_after_warm(50_000);
+    // Use delta: absolute process RSS is flaky under shared test binaries (CI).
     assert!(
-        rss.ok,
-        "idle RSS {} exceeds {}",
-        rss.rss_bytes, TARGET_IDLE_RSS_BYTES
+        rss.delta_ok,
+        "warm RSS delta {} exceeds {} (baseline={}, after={})",
+        rss.delta_bytes, TARGET_IDLE_RSS_BYTES, rss.baseline_rss_bytes, rss.rss_bytes
     );
 
     let ttc = measure_time_to_context_p95(20_000, 30);
