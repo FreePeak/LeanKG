@@ -14,7 +14,7 @@
 
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
-| **P0** | v3.7 Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`, §8.4 gate) | **Now — finish gate/benches before default cutover** |
+| **P0** | v3.7 Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`, §8.4 gate) | **Complete on this branch — wire retrieval cutover / start P1** |
 | **P1** | Other Must Have (LSP typed edges, Graphify Must, etc.) | After P0 gate path is solid |
 | **P2** | Should Have | Next |
 | **P3** | Could Have / aspirational `OPEN` | Backlog |
@@ -41,15 +41,15 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **Total tracked** | **386** |
 | NOT_DONE | 54 |
 | PENDING | 12 |
-| PARTIAL | 13 |
+| PARTIAL | 12 |
 | OPEN | 1 |
-| DONE | 303 |
+| DONE | 304 |
 | WONT_DO | 3 |
-| Open work | **80** |
+| Open work | **79** |
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 2 |
+| P0 | 0 |
 | P1 | 23 |
 | P2 | 51 |
 | P3 | 5 |
@@ -66,11 +66,10 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 **Single ordered queue.** Work top → bottom. Finish P0 Vector Engine gate before P1.
 
-> **2026-07-17 (origin/main):** `#79` merged Local-First Vector Engine (`src/vector_engine/*`). FR-VE-ABS..TEST-* + REL-044..047 **DONE**. Remaining P0: FR-VE-GATE only. **FR-VE-BENCH-AB / US-VE-08 / REL-049 DONE** (in-process ≥100 + JSON artifact). In-process A/B (≥100) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL; `ready_for_default=false` — Cozo `::hnsw` remains shipped default.
+> **2026-07-17 (origin/main):** `#79` merged Local-First Vector Engine (`src/vector_engine/*`). FR-VE-ABS..TEST-* + REL-044..047 **DONE**. **P0 Vector Engine gate complete.** FR-VE-GATE ready_for_default under LEANKG_VE_GATE_FULL=1. Next: P1 (LSP/Graphify/etc.). In-process A/B (≥100) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL; `ready_for_default=false` — Cozo `::hnsw` remains shipped default.
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
@@ -168,7 +167,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P0** | `REL-049` | Release | **DONE** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
 | **P0** | `REL-050` | Release | **DONE** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
 | **P0** | `FR-VE-BENCH-AB` | FR | **DONE** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-GATE` | FR | **DONE** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |

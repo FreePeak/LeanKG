@@ -43,7 +43,7 @@ pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
     VectorStorage, DEFAULT_VECTOR_DIM, ENV_VECTOR_ENGINE,
 };
-pub use gate::{evaluate_gate_smoke, GateReport};
+pub use gate::{evaluate_gate, evaluate_gate_smoke, preferred_ann_backend, GateReport};
 pub use gc::{compact_shadow, fragmentation_ratio, maybe_gc, FRAGMENTATION_TRIGGER};
 pub use hnsw::{
     brute_force_topk, recall_at_k, select_neighbors_heuristic, HnswParams, DEFAULT_EF_CONSTRUCTION,

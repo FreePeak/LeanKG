@@ -11,7 +11,7 @@
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **Current implementation focus (P0):** Section **3.13 / 5.14 / 8.4** — Optimized Local-First Vector Graph Engine. **Core landed on `main` via #79** (`src/vector_engine/*`); remaining P0 is **FR-VE-GATE / full-scale benches / live A/B / idle RSS** before default cutover. Cozo `::hnsw` remains the shipped ANN default.
+> **P0 Vector Engine:** core + quality gates complete on `feature/vector-engine-gate`. Callers should honor `preferred_ann_backend()` / `LEANKG_VE_GATE_FULL` before cutting Cozo HNSW over. Next focus: **P1** (see tracker).
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -822,7 +822,7 @@ Palace Mapping:
 >
 > **Depends on:** FR-HNSW-* product path (semantic ANN UX). **Does not cancel** FR-HNSW-B until LocalEngine recall/latency gates pass and factory switch is default for Local mode.
 >
-> **Landed on main:** US-VE-03..07 + FR-VE-ABS / T1–T3 / RT-* / FS-* / TEST-* / HNSW prune (**DONE**). **FR-VE-BENCH-Q DONE** (1M ANN P95). **Still PARTIAL:** US-VE-01/02/08, FR-VE-BENCH-IO/RECALL/OOM/AB, FR-VE-GATE.
+> **P0 gate complete on `feature/vector-engine-gate`:** US-VE-* + FR-VE-* quality gates **DONE**. `evaluate_gate` sets `ready_for_default` under `LEANKG_VE_GATE_FULL=1`. Cozo remains runtime default until callers honor `preferred_ann_backend`.
 
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-VE-*` / `FR-VE-*`.
 

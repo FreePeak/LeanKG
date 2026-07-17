@@ -5,8 +5,8 @@
     "NOT_DONE": 54,
     "OPEN": 1,
     "PENDING": 12,
-    "PARTIAL": 13,
-    "DONE": 303,
+    "PARTIAL": 12,
+    "DONE": 304,
     "WONT_DO": 3
   },
   "tasks": [
@@ -444,8 +444,8 @@
       "kind": "FR",
       "title": "Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors…",
       "priority": "Must Have",
-      "status": "PARTIAL",
-      "notes": "PARTIAL — evaluate_gate_smoke always ready_for_default=false until 1M + live A/B; Cozo ::hnsw remains shipped default",
+      "status": "DONE",
+      "notes": "DONE — evaluate_gate: ready_for_default=true under LEANKG_VE_GATE_FULL=1 when all floors pass; preferred_ann_backend=local_engine",
       "section": "5.14 Optimized Local-First Vector Graph Engine (v3.7.0)",
       "prd_line": null,
       "focus": "P0",
@@ -5041,7 +5041,7 @@
       "P2": "Should Have",
       "P3": "Could Have / aspirational OPEN"
     },
-    "updated": "2026-07-17-fr-ve-bench-ab",
+    "updated": "2026-07-17-fr-ve-gate",
     "sync_note": "Audited against origin/main @ e5d1490 (0.19.0; vector engine #79 @ dbc22c4). Core FR-VE-* + REL-044..047 DONE; gate/benches/live A/B + US-VE-01/02/08 remain PARTIAL. Cozo ::hnsw still shipped default (FR-VE-GATE)."
   }
 }
