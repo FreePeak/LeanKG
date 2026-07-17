@@ -5,13 +5,13 @@
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.18.0
+**Codebase Version:** 0.19.0 (`origin/main` @ `e5d1490`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **Current implementation focus (P0):** Section **3.13 / 5.14 / 8.4** — Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`). Do not start lower-focus epics until P0 Must Have core is in progress.
+> **Current implementation focus (P0):** Section **3.13 / 5.14 / 8.4** — Optimized Local-First Vector Graph Engine. **Core landed on `main` via #79** (`src/vector_engine/*`); remaining P0 is **FR-VE-GATE / full-scale benches / live A/B / idle RSS** before default cutover. Cozo `::hnsw` remains the shipped ANN default.
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -27,10 +27,12 @@
 
 > **Task inventory move (same day):** All US/FR/Release status tables and checkboxes were moved to [`prd-task-tracker.md`](prd-task-tracker.md). Sections 3/4/5/8 now reference that file instead of duplicating lists.
 
+> **Code status (synced 2026-07-17 against `origin/main`):** Merged in `#79` / `dbc22c4` — `src/vector_engine/*` (3-tier LocalEngine/CloudEngine, SIMD, dual-write, GC, unit tests, in-process A/B ≥100, `cargo bench --bench vector_engine_ab`). Tracker: FR-VE-ABS..TEST-* + REL-044..047 **DONE**; US-VE-01/02/08 + FR-VE-BENCH-* + FR-VE-GATE + REL-048..050 **PARTIAL**. `evaluate_gate_smoke` keeps `ready_for_default=false`. Crate **0.19.0**.
+
 > **Mission reinforcement:** *"Stop Burning Tokens. Start Coding Lean."* Surgical retrieval = Semantic Search (vectors) + Structural Graphs (LSP/KG). Same product surface as FR-HNSW-*; **new storage/runtime engine** for constrained local hardware and cloud scale without rewriting core query logic.
 
 **Strategic decision (relationship to v3.6.2 / v3.6.3):**
-- **Keep** CozoDB `::hnsw` on `embedding_vectors:vec_idx` as the **current shipped canonical ANN** (FR-HNSW-B) until the Local/Cloud vector engine reaches parity and is behind a factory switch.
+- **Keep** CozoDB `::hnsw` on `embedding_vectors:vec_idx` as the **current shipped canonical ANN** (FR-HNSW-B) until the Local/Cloud vector engine reaches parity and FR-VE-GATE flips default.
 - **Adopt** a decoupled **3-tier storage architecture** (graph topology + quantized RAM vectors + flat payload) as the **next-gen LocalEngine / CloudEngine** path — solves query latency, idle RAM, and SSD write amplification under M2 Pro / 16GB / 256GB SSD constraints; scales to Linux x86_64 + TiKV without rewriting retrieval APIs.
 - **Do not** reopen FalkorDB/Redis as cold-embed SLA fixes (v3.6.3 Won't Do still stands). This track is about **query/runtime I/O + memory**, not ONNX cold-write throughput.
 
@@ -235,7 +237,8 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - Deliver code chunks + dependencies JSON to the agent in **&lt; 100ms P95**; idle MCP **&lt; 150MB RSS**
 - Prefer vector+graph scalpel over full-repo dumps (see Section 3.13 / 5.14)
 
-**Key Metrics (v0.17.9 — audited 2026-07-14; engine KPIs in Section 9 / 8.4):**
+**Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
+- **Vector engine (v3.7 P0):** `src/vector_engine/*` on `main` (#79) — opt-in via `LEANKG_VECTOR_ENGINE=local|cloud`; Cozo `::hnsw` still default until FR-VE-GATE
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
 - 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg clones`, `leankg reflect`)
 - **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests. **Extractor modules exist but not indexed yet:** Swift (`swift.rs`), Vue/Svelte (`sfc.rs`), SQL DDL (`sql.rs`). Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
@@ -813,11 +816,13 @@ Palace Mapping:
 
 ### 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.7.0
 
-> **Implementation focus: P0 (highest).** Latest PRD epic — implement before other open Must Have work. Full ordered queue: [`prd-task-tracker.md`](prd-task-tracker.md) (Focus column).
+> **Implementation focus: P0 (highest).** Core implementation **merged to `origin/main`** (`dbc22c4` / #79). Remaining open work is gate/KPI evidence — see tracker Focus=`P0`. Full ordered queue: [`prd-task-tracker.md`](prd-task-tracker.md).
 >
 > **Epic:** Replace mmap-heavy / opaque vector I/O with a **3-tier LocalEngine** (and CloudEngine twin) so semantic+LSP retrieval stays surgical under M2 Pro / 16GB / 256GB SSD, and scales to Linux x86_64 + TiKV without rewriting MCP/CLI callers.
 >
 > **Depends on:** FR-HNSW-* product path (semantic ANN UX). **Does not cancel** FR-HNSW-B until LocalEngine recall/latency gates pass and factory switch is default for Local mode.
+>
+> **Landed on main:** US-VE-03..07 + FR-VE-ABS / T1–T3 / RT-* / FS-* / TEST-* / HNSW prune (**DONE**). **Still PARTIAL:** US-VE-01/02/08 (RSS, time-to-context, live A/B), FR-VE-BENCH-*, FR-VE-GATE.
 
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-VE-*` / `FR-VE-*`.
 
@@ -955,12 +960,12 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 
 ### 5.14 Optimized Local-First Vector Graph Engine (v3.7.0)
 
-> **Implementation focus: P0 (highest).**  
+> **Implementation focus: P0 (highest).** Core module on `origin/main` (#79 / `dbc22c4`).  
 > **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `FR-VE-*` / `US-VE-*` / Kind=`Release` (§8.4).
 
 > **Goal:** Ultra-lightweight vector/graph storage + retrieval that works under Apple M2 Pro / 16GB / 256GB SSD and scales to Linux x86_64 + TiKV **without rewriting** MCP/CLI semantic APIs.
 >
-> **Coexistence:** Until FR-VE-GATE is met, FR-HNSW-B (Cozo `::hnsw`) remains the **shipped default**. LocalEngine is developed behind `LEANKG_VECTOR_ENGINE` (name TBD) and must match recall/latency gates before becoming Local default.
+> **Coexistence:** Until FR-VE-GATE is met, FR-HNSW-B (Cozo `::hnsw`) remains the **shipped default**. LocalEngine / CloudEngine are opt-in via `LEANKG_VECTOR_ENGINE=local|cloud` and must match recall/latency gates before becoming Local default (`ready_for_default` stays false in `src/vector_engine/gate.rs`).
 >
 > **Hardware envelope:** Local survival cap **2GB** (Docker/cgroup) → Cloud **50–80%** of available RAM. Prefer sequential append I/O; minimize random SSD writes.
 
@@ -1447,24 +1452,24 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 |--------|--------|--------|
 | Cold start time | < 2 seconds | TBD |
 | Indexing speed | > 10,000 lines/second (parallel via rayon) | TBD |
-| Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | PENDING (US-VE-02) |
-| ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | PENDING (FR-VE-BENCH-Q) |
+| Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | PARTIAL (US-VE-02 — engine on main; e2e MCP proof open) |
+| ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | PARTIAL (FR-VE-BENCH-Q — synth harness; 1M sign-off open) |
 | Query response time (legacy general) | < 100ms | TBD |
-| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | PENDING (US-VE-01) |
+| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | PARTIAL (US-VE-01 — not yet measured on default path) |
 | Memory usage (indexing) | < 500MB typical; Cloud may use 50–80% RAM for SQ8 | TBD |
-| Survival under cgroup | **2GB hard** — never OOM-killed | PENDING (FR-VE-BENCH-OOM) |
-| Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | PENDING (FR-VE-BENCH-IO) |
-| HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | PENDING (FR-VE-BENCH-RECALL) |
-| Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | PENDING (FR-VE-BENCH-AB) |
-| Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | PENDING (FR-VE-BENCH-AB) |
-| Agent time-to-resolution | ≥ **2×** faster | PENDING (FR-VE-BENCH-AB) |
-| Agent task success rate | ≥ baseline | PENDING (FR-VE-BENCH-AB) |
+| Survival under cgroup | **2GB hard** — never OOM-killed | PARTIAL (FR-VE-BENCH-OOM — planner done; live cgroup open) |
+| Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | PARTIAL (FR-VE-BENCH-IO) |
+| HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | PARTIAL (FR-VE-BENCH-RECALL) |
+| Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | PARTIAL (FR-VE-BENCH-AB — in-process suite pass; live harness open) |
+| Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | PARTIAL (FR-VE-BENCH-AB) |
+| Agent time-to-resolution | ≥ **2×** faster | PARTIAL (FR-VE-BENCH-AB) |
+| Agent task success rate | ≥ baseline | PARTIAL (FR-VE-BENCH-AB) |
 | detect_changes response time | < 2 seconds | TBD |
 | get_context enhanced response size | < 4000 tokens | TBD |
 | Batch insert size | 5000 rows/batch | DONE |
 | Supported parser / extractor count | Tree-sitter + specialized extractors; **indexed walk ≈ 8 code langs + Android/XML/TF/CI** (Swift/Vue/Svelte/SQL modules unwired) | PARTIAL |
-| MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14) |
-| Cross-platform | Apple Silicon (ARM64) Local + Linux x86_64 Cloud | PENDING (FR-VE-ABS) |
+| MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14; still 85 on v0.19.0) |
+| Cross-platform | Apple Silicon (ARM64) Local + Linux x86_64 Cloud | PARTIAL (FR-VE-ABS DONE; CloudEngine TiKV Tier-1 still stub root) |
 
 ---
 
@@ -1537,4 +1542,4 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ---
 
-*Last updated: 2026-07-17 (v3.7.0 — task lists moved to docs/prd-task-tracker.md; PRD keeps narrative/HLD only)*
+*Last updated: 2026-07-17 (v3.7.0 — status synced to origin/main @ dbc22c4 / #79 / crate 0.19.0; tracker is SoT for Done/Partial)*
