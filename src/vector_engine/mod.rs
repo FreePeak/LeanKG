@@ -9,8 +9,13 @@
 //! engine with `LEANKG_VECTOR_ENGINE=local|cloud`.
 
 pub mod engine;
+pub mod tier1;
 
 pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
     VectorStorage, DEFAULT_VECTOR_DIM, ENV_VECTOR_ENGINE,
+};
+pub use tier1::{
+    BlockTableFactory, HnswAdjacency, RocksCompression, RocksDbLocalOptions, TopologyNode,
+    TopologyStore,
 };
