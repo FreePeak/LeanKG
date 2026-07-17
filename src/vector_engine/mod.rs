@@ -9,6 +9,7 @@
 //! engine with `LEANKG_VECTOR_ENGINE=local|cloud`.
 
 pub mod engine;
+pub mod hnsw;
 pub mod memory;
 pub mod simd;
 pub mod threads;
@@ -19,6 +20,10 @@ pub mod tier3;
 pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
     VectorStorage, DEFAULT_VECTOR_DIM, ENV_VECTOR_ENGINE,
+};
+pub use hnsw::{
+    brute_force_topk, recall_at_k, select_neighbors_heuristic, HnswParams, DEFAULT_EF_CONSTRUCTION,
+    DEFAULT_EF_SEARCH, DEFAULT_M, M_MAX, M_MIN,
 };
 pub use memory::{
     auto_tune_block_cache, available_memory_bytes, plan_block_cache, plan_under_2gb_cgroup,
