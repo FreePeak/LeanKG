@@ -5172,6 +5172,6 @@
       "P3": "Could Have / aspirational OPEN"
     },
     "updated": "2026-07-17-coverage-ab-results",
-    "sync_note": "PR #80 feature/vector-engine-gate @ 85c1632 — P0 COMPLETE awaiting merge. Unit 56; e2e 6+1; bench + CI green; A/B −65%/−84.6%/2.50×. Next: merge then P1."
+    "sync_note": "PR #80 feature/vector-engine-gate — P0 COMPLETE awaiting merge. Unit 56; e2e 6+1; bench + CI green; A/B −65%/−84.6%/2.50×. Next: merge then P1."
   }
 }

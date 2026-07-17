@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate` @ `85c1632`; crate **0.19.0**; + **US-SEM / FR-SEM**)  
+**Last synced:** 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`; crate **0.19.0**; + **US-SEM / FR-SEM**)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
@@ -67,7 +67,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 **Single ordered queue.** Work top → bottom. P0 Vector Engine gate is **DONE**; continue with P1.
 
-> **2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate` @ `85c1632`):** P0 Vector Engine **COMPLETE** (awaiting merge). Coverage: **56** unit + **6** e2e (+ full gate); `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json); CI `cargo test --lib` green after i8 overflow + RSS **delta_ok** fixes. **A/B:** token **−65.0%**, tool **−84.6%**, speedup **2.50×**. **ANN 1M P95≈0.055ms**; lean RSS abs≈**65MB** / warm delta≈**58MB**; TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`. README product landing polish. Cozo remains runtime default until callers honor `preferred_ann_backend()`. **Next after merge: P1.**
+> **2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`):** P0 Vector Engine **COMPLETE** (awaiting merge). Coverage: **56** unit + **6** e2e (+ full gate); `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json); CI `cargo test --lib` green after i8 overflow + RSS **delta_ok** fixes. **A/B:** token **−65.0%**, tool **−84.6%**, speedup **2.50×**. **ANN 1M P95≈0.055ms**; lean RSS abs≈**65MB** / warm delta≈**58MB**; TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`. README product landing polish. Cozo remains runtime default until callers honor `preferred_ann_backend()`. **Next after merge: P1.**
 >
 > **Same day — semantic MCP live probe GREEN** ([`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)). Pipeline OK; backlog `US-SEM-*` / `FR-SEM-*` / `REL-051` added as **P2/P3 later enhancements** (token honesty, ontology budgets, HTTP resilience, live smoke, optional diversity).
 
@@ -570,7 +570,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 ## Sync notes
 
-- **PR:** [#80](https://github.com/FreePeak/LeanKG/pull/80) — `feature/vector-engine-gate` @ `85c1632` (crate **0.19.0**); **awaiting merge**.
+- **PR:** [#80](https://github.com/FreePeak/LeanKG/pull/80) — `feature/vector-engine-gate` (crate **0.19.0**); **awaiting merge**.
 - **Evidence:** [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json) from `cargo bench --bench vector_engine_ab`.
 - **Tests:** `cargo test --release --lib -- vector_engine`; `cargo test --release --test vector_engine_e2e`; full gate: `LEANKG_VE_GATE_FULL=1 … --ignored`; CI-sim: `cargo test --lib` (debug).
 - **CI hardening on PR:** i8 synth overflow (`587eefe`); idle RSS warm-**delta** gate for Linux debug lib tests (`6fb6c95`).
@@ -581,4 +581,4 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 - **Semantic MCP live probe (GREEN):** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md) → backlog `US-SEM-01..04`, `FR-SEM-01..05`, `REL-051` (P2/P3 later; do not displace P1).
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-17 — synced to PR #80 tip (`85c1632`).*
+*Regenerated: 2026-07-17 — synced to PR #80 current tip.*
