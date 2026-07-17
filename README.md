@@ -113,10 +113,11 @@ MCP-only (skip cold embed — keyword/graph tools work; `semantic_search` needs
 a prior embed):
 
 ```bash
-docker run -d --name leankg -p 9699:9699 \
+docker run -d --name leankg -p 9699:9699 --memory=2g \
   -v "$PWD:/workspace" \
   -v leankg-rocksdb:/data/leankg-rocksdb \
   -v leankg-models:/root/.cache/leankg \
+  -e LEANKG_EMBED_MAX_MB=512 \
   freepeak/leankg:latest
 ```
 
