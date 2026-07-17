@@ -1,0 +1,54 @@
+{
+  "ab": {
+    "artifact": "target/vector_engine_ab_result.json",
+    "baseline_ms": 9750,
+    "baseline_tokens": 214850,
+    "baseline_tool_calls": 650,
+    "engine_ms": 3900,
+    "engine_tokens": 75200,
+    "engine_tool_calls": 100,
+    "meets_floors": true,
+    "speedup": 2.5,
+    "success_ge_baseline": true,
+    "suite_1000_token_reduction": 0.649995270147353,
+    "suite_1000_wall_ms": 0.15125,
+    "tasks": 100,
+    "token_reduction": 0.6499883639748663,
+    "tool_call_reduction": 0.8461538461538461,
+    "wall_ms": 0
+  },
+  "ann_query": {
+    "n": 1000000,
+    "ok": true,
+    "p95_ms": 0.053542000000000006,
+    "simd": "Neon",
+    "target_p95_ms": 50
+  },
+  "crate_version": "0.19.0",
+  "generated_unix_secs": 1784306666,
+  "io": {
+    "hot_disk_touches": 10,
+    "legacy_disk_touches": 1000000,
+    "ok": true,
+    "reduction": 0.99999,
+    "target": 0.8
+  },
+  "kpi": {
+    "idle_rss_baseline_bytes": 6766592,
+    "idle_rss_bytes": 65191936,
+    "idle_rss_delta_bytes": 58425344,
+    "idle_rss_delta_ok": true,
+    "idle_rss_ok": true,
+    "ttc_ok": true,
+    "ttc_p95_ms": 0.06787499999999999
+  },
+  "oom": {
+    "estimated_1m_heap_bytes": 1060870912,
+    "within_2gb": true
+  },
+  "recall": {
+    "ok": true,
+    "recall_at_ef50": 1.0,
+    "target": 0.8999999761581421
+  }
+}

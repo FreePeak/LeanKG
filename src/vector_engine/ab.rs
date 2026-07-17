@@ -190,13 +190,59 @@ pub fn run_ab_suite(n_tasks: usize) -> AbSuiteReport {
 /// Load result from `LEANKG_VE_AB_JSON` if set (CI injection for live harness).
 pub fn load_ab_result_from_env() -> Option<AbResult> {
     let raw = std::env::var("LEANKG_VE_AB_JSON").ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    parse_ab_result_json(&raw)
+}
+
+/// Load result from `LEANKG_VE_AB_FILE` path (written by cargo bench / live harness).
+pub fn load_ab_result_from_file() -> Option<AbResult> {
+    let path = std::env::var("LEANKG_VE_AB_FILE").ok()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    parse_ab_result_json(&raw)
+}
+
+fn parse_ab_result_json(raw: &str) -> Option<AbResult> {
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
     Some(AbResult {
         token_reduction: v.get("token_reduction")?.as_f64()?,
         tool_call_reduction: v.get("tool_call_reduction")?.as_f64()?,
         speedup: v.get("speedup")?.as_f64()?,
         success_ge_baseline: v.get("success_ge_baseline")?.as_bool()?,
     })
+}
+
+/// Serialize an [`AbResult`] for CI / live harness injection.
+pub fn ab_result_to_json(result: &AbResult) -> String {
+    serde_json::json!({
+        "token_reduction": result.token_reduction,
+        "tool_call_reduction": result.tool_call_reduction,
+        "speedup": result.speedup,
+        "success_ge_baseline": result.success_ge_baseline,
+        "source": "vector_engine_ab",
+        "min_tasks": MIN_AB_TASKS,
+    })
+    .to_string()
+}
+
+/// Write A/B result JSON to `path` (used by cargo bench artifact).
+pub fn write_ab_result_file(
+    path: impl AsRef<std::path::Path>,
+    result: &AbResult,
+) -> std::io::Result<()> {
+    std::fs::write(path, ab_result_to_json(result))
+}
+
+/// Prefer live JSON (`LEANKG_VE_AB_JSON` / `LEANKG_VE_AB_FILE`), else in-process suite.
+pub fn evaluate_ab_for_gate() -> (AbResult, bool, &'static str) {
+    if let Some(r) = load_ab_result_from_env() {
+        let ok = r.meets_floors(AbFloors::default());
+        return (r, ok, "env_json");
+    }
+    if let Some(r) = load_ab_result_from_file() {
+        let ok = r.meets_floors(AbFloors::default());
+        return (r, ok, "file_json");
+    }
+    let (_report, result, ok) = evaluate_default_suite();
+    (result, ok, "in_process_suite")
 }
 
 /// Evaluate the in-process suite against PRD floors.
@@ -351,6 +397,49 @@ mod tests {
         match prev {
             Some(v) => std::env::set_var("LEANKG_VE_AB_JSON", v),
             None => std::env::remove_var("LEANKG_VE_AB_JSON"),
+        }
+    }
+
+    #[test]
+    fn evaluate_ab_for_gate_uses_suite_when_no_live_json() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev_json = std::env::var_os("LEANKG_VE_AB_JSON");
+        let prev_file = std::env::var_os("LEANKG_VE_AB_FILE");
+        std::env::remove_var("LEANKG_VE_AB_JSON");
+        std::env::remove_var("LEANKG_VE_AB_FILE");
+        let (result, ok, source) = evaluate_ab_for_gate();
+        assert_eq!(source, "in_process_suite");
+        assert!(ok, "in-process suite must meet floors: {result:?}");
+        match prev_json {
+            Some(v) => std::env::set_var("LEANKG_VE_AB_JSON", v),
+            None => std::env::remove_var("LEANKG_VE_AB_JSON"),
+        }
+        match prev_file {
+            Some(v) => std::env::set_var("LEANKG_VE_AB_FILE", v),
+            None => std::env::remove_var("LEANKG_VE_AB_FILE"),
+        }
+    }
+
+    #[test]
+    fn write_and_reload_ab_result_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ab.json");
+        let result = AbResult {
+            token_reduction: 0.61,
+            tool_call_reduction: 0.84,
+            speedup: 2.2,
+            success_ge_baseline: true,
+        };
+        write_ab_result_file(&path, &result).unwrap();
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var_os("LEANKG_VE_AB_FILE");
+        std::env::set_var("LEANKG_VE_AB_FILE", &path);
+        let loaded = load_ab_result_from_file().expect("file");
+        assert!((loaded.token_reduction - 0.61).abs() < 1e-9);
+        assert!(loaded.meets_floors(AbFloors::default()));
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_VE_AB_FILE", v),
+            None => std::env::remove_var("LEANKG_VE_AB_FILE"),
         }
     }
 }

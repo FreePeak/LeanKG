@@ -1,17 +1,19 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.0-vector-engine
+**Version:** 3.7.1-sem-mcp-enhance
 **Date:** 2026-07-17
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.18.0
+**Codebase Version:** 0.19.0 (`origin/main` @ `e5d1490`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **Current implementation focus (P0):** Section **3.13 / 5.14 / 8.4** — Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`). Do not start lower-focus epics until P0 Must Have core is in progress.
+> **P0 Vector Engine COMPLETE** — open PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`, crate 0.19.0). Evidence: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). A/B −65.0% tokens / −84.6% tools / 2.50×; 1M ANN P95≈0.055ms. CI hardening: i8 synth overflow fix + idle RSS **warm-delta** gate (debug `cargo test --lib`). README polished to product landing style. Next after merge: **P1** + wire `preferred_ann_backend()` cutover (tracker).
+>
+> **Semantic MCP live probe GREEN** (2026-07-17): [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Pipeline works; enhancements deferred as **US-SEM-*** / **FR-SEM-*** (Section 3.14 / 5.15) — token honesty, ontology budgets, HTTP resilience, live smoke gate.
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -23,14 +25,41 @@
 
 ## Changelog
 
+### v3.7.1-sem-mcp-enhance - Semantic MCP live verification → later enhancements (2026-07-17)
+
+> **Evidence:** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md) — Docker HTTP MCP (`project=/workspace`), RocksDB index populated. **No code changes required** for correctness; this revision captures **product enhancements** for a later sprint.
+
+**Baseline confirmed GREEN (do not reopen as bugs):**
+- `semantic_search` → `method: hnsw+rerank`; ANN distance and rerank scores agree on ranking direction
+- `concept_search` → ontology match + code refs; `kg_self_test` → `all_ok: true` (schema arities canonical)
+- `kg_semantic_context` → seed + 1-hop graph traversal recovers after one transient socket drop
+- Contrast: `explain_node` (graph-shaped) vs `search_code` name path (flat) both useful
+
+**Enhancement backlog (later — MoSCoW):**
+| ID | Priority | Problem observed | Product intent |
+|----|----------|------------------|----------------|
+| US-SEM-01 / FR-SEM-01 | Should Have | Top-level `tokens` = *delivered*; `_token_budget.actual` was 3–4× for truncated tools | Honest dual accounting so agents budget correctly |
+| US-SEM-02 / FR-SEM-02 | Should Have | `concept_search` / `kg_semantic_context` hit default `max: 1000` while siblings use 2–4k | Explicit per-tool budgets for ontology-heavy tools |
+| US-SEM-03 / FR-SEM-03 | Should Have | One transient HTTP socket drop on long semantic call | Retry / keep-alive / connection hygiene |
+| FR-SEM-04 / REL-051 | Should Have | Live MCP probe is ad-hoc | Formal live smoke checklist as release *complement* to `cargo test --features embeddings` |
+| US-SEM-04 / FR-SEM-05 | Could Have | Top-10 `semantic_search` can collapse to one file (8/10) | Optional file-diversity / MMR post-filter |
+
+**New content:**
+- Section **3.14** — US-SEM-01..04
+- Section **5.15** — FR-SEM-01..05 + REL-051
+- Section **9** — NFR rows for token honesty + MCP HTTP flake resilience
+- Tracker: Focus **P2/P3** open items (do not displace P1 Must Have queue)
+
 ### v3.7.0-vector-engine - Optimized Local-First Vector Graph Engine (2026-07-17)
 
 > **Task inventory move (same day):** All US/FR/Release status tables and checkboxes were moved to [`prd-task-tracker.md`](prd-task-tracker.md). Sections 3/4/5/8 now reference that file instead of duplicating lists.
 
+> **Code status (synced 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) `feature/vector-engine-gate`):** P0 Vector Engine **DONE** — unit (56), e2e (`tests/vector_engine_e2e.rs`), bench (`cargo bench --bench vector_engine_ab`), CI-sim `cargo test --lib` (651). Measured A/B: token **−65.0%**, tool **−84.6%**, speedup **2.50×** (100 tasks). 1M ANN P95≈**0.055ms** (Neon). Idle RSS: lean-bench absolute ≈**65MB** / warm **delta ≈58MB** (unit/e2e assert `delta_ok` — absolute process RSS is not CI-safe under debug `cargo test --lib`). TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true` / `preferred_ann_backend=local_engine`. Report: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). Cozo remains runtime default until callers honor the gate. Crate **0.19.0**. Awaiting merge to `main`.
+
 > **Mission reinforcement:** *"Stop Burning Tokens. Start Coding Lean."* Surgical retrieval = Semantic Search (vectors) + Structural Graphs (LSP/KG). Same product surface as FR-HNSW-*; **new storage/runtime engine** for constrained local hardware and cloud scale without rewriting core query logic.
 
 **Strategic decision (relationship to v3.6.2 / v3.6.3):**
-- **Keep** CozoDB `::hnsw` on `embedding_vectors:vec_idx` as the **current shipped canonical ANN** (FR-HNSW-B) until the Local/Cloud vector engine reaches parity and is behind a factory switch.
+- **Keep** CozoDB `::hnsw` on `embedding_vectors:vec_idx` as the **current shipped canonical ANN** (FR-HNSW-B) until the Local/Cloud vector engine reaches parity and FR-VE-GATE flips default.
 - **Adopt** a decoupled **3-tier storage architecture** (graph topology + quantized RAM vectors + flat payload) as the **next-gen LocalEngine / CloudEngine** path — solves query latency, idle RAM, and SSD write amplification under M2 Pro / 16GB / 256GB SSD constraints; scales to Linux x86_64 + TiKV without rewriting retrieval APIs.
 - **Do not** reopen FalkorDB/Redis as cold-embed SLA fixes (v3.6.3 Won't Do still stands). This track is about **query/runtime I/O + memory**, not ONNX cold-write throughput.
 
@@ -235,7 +264,8 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - Deliver code chunks + dependencies JSON to the agent in **&lt; 100ms P95**; idle MCP **&lt; 150MB RSS**
 - Prefer vector+graph scalpel over full-repo dumps (see Section 3.13 / 5.14)
 
-**Key Metrics (v0.17.9 — audited 2026-07-14; engine KPIs in Section 9 / 8.4):**
+**Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
+- **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; Cozo default until callers honor `preferred_ann_backend()`
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
 - 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg clones`, `leankg reflect`)
 - **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests. **Extractor modules exist but not indexed yet:** Swift (`swift.rs`), Vue/Svelte (`sfc.rs`), SQL DDL (`sql.rs`). Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
@@ -813,11 +843,13 @@ Palace Mapping:
 
 ### 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.7.0
 
-> **Implementation focus: P0 (highest).** Latest PRD epic — implement before other open Must Have work. Full ordered queue: [`prd-task-tracker.md`](prd-task-tracker.md) (Focus column).
+> **Implementation focus: P0 (highest).** Core implementation **merged to `origin/main`** (`dbc22c4` / #79). Remaining open work is gate/KPI evidence — see tracker Focus=`P0`. Full ordered queue: [`prd-task-tracker.md`](prd-task-tracker.md).
 >
 > **Epic:** Replace mmap-heavy / opaque vector I/O with a **3-tier LocalEngine** (and CloudEngine twin) so semantic+LSP retrieval stays surgical under M2 Pro / 16GB / 256GB SSD, and scales to Linux x86_64 + TiKV without rewriting MCP/CLI callers.
 >
 > **Depends on:** FR-HNSW-* product path (semantic ANN UX). **Does not cancel** FR-HNSW-B until LocalEngine recall/latency gates pass and factory switch is default for Local mode.
+>
+> **P0 gate complete on `feature/vector-engine-gate`:** US-VE-* + FR-VE-* quality gates **DONE**. `evaluate_gate` sets `ready_for_default` under `LEANKG_VE_GATE_FULL=1`. Cozo remains runtime default until callers honor `preferred_ann_backend`.
 
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-VE-*` / `FR-VE-*`.
 
@@ -828,6 +860,47 @@ Palace Mapping:
 - **Given** a 2GB cgroup limit, **When** the engine auto-tunes RocksDB block cache + rayon threads, **Then** the process is never OOM-killed during index+query smoke.
 - **Given** Flat File append succeeds and process crashes before RocksDB offset commit, **When** the engine recovers, **Then** no dangling pointers remain and queries skip incomplete records.
 - **Given** `LEANKG_VECTOR_ENGINE=local|cloud` (or equivalent), **When** the factory constructs storage, **Then** the correct backend enum variant is used (unit-asserted).
+
+### 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1
+
+> **Trigger:** Live Docker MCP probe 2026-07-17 ([`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)). Pipeline (HNSW ANN → cross-encoder rerank → optional graph hop) is **correct**; these stories improve agent-facing honesty, budgets, transport resilience, and release smoke — **not** recall correctness.
+>
+> **Depends on:** FR-HNSW-D / FR-V2-06 / FR-V2-07 (shipped). **Does not** reopen Cozo vs LocalEngine cutover (FR-VE-GATE).
+>
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SEM-*` / `FR-SEM-*` / `REL-051`.
+
+#### US-SEM-01 — Honest token accounting on truncated MCP payloads (Should Have)
+
+**As an** AI agent, **I want** both *delivered* and *pre-truncation* token costs when a tool response is truncated, **so that** I can budget context windows without underestimating cost by 3–4×.
+
+**Acceptance criteria:**
+- **Given** a tool response with `_token_budget.truncated: true`, **When** the agent reads the envelope, **Then** both delivered token count and `_token_budget.actual` (pre-trim) are present and unambiguous.
+- **Given** `truncated: false`, **When** the agent reads the envelope, **Then** delivered ≈ actual (within rounding).
+- **Given** docs / MCP skill guidance, **When** `truncated: true`, **Then** guidance tells agents to budget **≥ 3×** the delivered figure (or use `actual`).
+
+#### US-SEM-02 — Adequate budgets for ontology-heavy tools (Should Have)
+
+**As an** AI agent using `concept_search` / `kg_semantic_context`, **I want** tool-specific token maxima (not the 1000 default), **so that** ontology + graph payloads are not silently cut mid-result.
+
+**Acceptance criteria:**
+- **Given** a populated ontology + index (verification setup), **When** `concept_search` / `kg_semantic_context` run typical probes, **Then** default maxima are ≥ sibling `kg_*` tools (2k–4k range) unless the caller overrides.
+- **Given** a response that still truncates, **When** `_token_budget` is inspected, **Then** `max` reflects the tool-specific budget (not anonymous default).
+
+#### US-SEM-03 — Resilient MCP HTTP for long semantic calls (Should Have)
+
+**As an** AI agent calling `kg_semantic_context` (or similar) over HTTP/SSE, **I want** transient socket drops mitigated (retry-safe server + documented client retry), **so that** one flake does not fail a session.
+
+**Acceptance criteria:**
+- **Given** a transient “socket connection was closed unexpectedly” on a read-only semantic tool, **When** the same args are retried once, **Then** the call succeeds without corrupt state (matches 2026-07-17 probe).
+- **Given** long-lived `:9699` daemons, **When** operators follow doctor / restart guidance, **Then** docs link [`docs/analysis/mcp-http-stability-analysis-2026-05-05.md`](analysis/mcp-http-stability-analysis-2026-05-05.md) and keep stale-listener cleanup as the ops path.
+
+#### US-SEM-04 — Semantic hit diversity across files (Could Have)
+
+**As an** AI agent, **I want** top-k `semantic_search` hits to diversify across files when ANN+rerank collapses to one module, **so that** I see alternate entry points without a second query.
+
+**Acceptance criteria:**
+- **Given** a query whose top-10 would otherwise be ≥70% one file (as in the MCP-dispatch probe), **When** diversity mode is on (default or flag), **Then** at least N distinct `file_path` values appear in top-k (N configurable; default ≥3 for k=10).
+- **Given** diversity mode off, **When** the same query runs, **Then** ranking matches current HNSW+rerank order (no regression).
 
 ---
 
@@ -955,13 +1028,21 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 
 ### 5.14 Optimized Local-First Vector Graph Engine (v3.7.0)
 
-> **Implementation focus: P0 (highest).**  
+> **Implementation focus: P0 (highest).** Core module on `origin/main` (#79 / `dbc22c4`).  
 > **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `FR-VE-*` / `US-VE-*` / Kind=`Release` (§8.4).
 
 > **Goal:** Ultra-lightweight vector/graph storage + retrieval that works under Apple M2 Pro / 16GB / 256GB SSD and scales to Linux x86_64 + TiKV **without rewriting** MCP/CLI semantic APIs.
 >
-> **Coexistence:** Until FR-VE-GATE is met, FR-HNSW-B (Cozo `::hnsw`) remains the **shipped default**. LocalEngine is developed behind `LEANKG_VECTOR_ENGINE` (name TBD) and must match recall/latency gates before becoming Local default.
+> **Coexistence:** FR-VE-GATE is **met** on PR #80 when `LEANKG_VE_GATE_FULL=1` (`ready_for_default=true`). Runtime **shipped default ANN** remains Cozo `::hnsw` (FR-HNSW-B) until callers honor `preferred_ann_backend()`. LocalEngine / CloudEngine stay opt-in via `LEANKG_VECTOR_ENGINE=local|cloud`.
 >
+> **Verification (2026-07-17 — PR #80):**
+> - Unit: `cargo test --release --lib -- vector_engine` → **56 passed** (3 ignored full-scale)
+> - CI path: `cargo test --lib` (debug) → **651 passed** after RSS `delta_ok` + i8 overflow fixes
+> - E2E: `cargo test --release --test vector_engine_e2e` → **6 passed**; `LEANKG_VE_GATE_FULL=1` ignored gate → `ready_for_default=true`
+> - Bench: `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json)
+> - A/B measured: token −**65.0%**, tool −**84.6%**, speedup **2.50×** (100 tasks; floors 60%/80%/2×)
+> - Docs: product README polish (`85c1632`); semantic backlog v3.7.1 remains P2/P3
+
 > **Hardware envelope:** Local survival cap **2GB** (Docker/cgroup) → Cloud **50–80%** of available RAM. Prefer sequential append I/O; minimize random SSD writes.
 
 #### 5.14.1 Decoupled 3-tier storage
@@ -999,6 +1080,31 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - Reopen Redis/FalkorDB as cold-embed write accelerator (still Won't Do per v3.6.3)
 - Require Cloud SaaS hosting (self-hosted TiKV/CloudEngine only)
 - Rewrite MCP tool names/APIs for the engine swap
+
+### 5.15 Semantic MCP Agent UX Enhancements (v3.7.1)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SEM-*` / `REL-051` / `US-SEM-*`.
+>
+> **Evidence baseline (GREEN, no reopen):** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Live probe confirms HNSW+rerank, ontology, `kg_*` schema health, and graph-enriched context. These FRs are **agent UX / ops / release hygiene** — not ANN recall fixes.
+
+**Policy:**
+- Keep shipped retrieval path (FR-HNSW-D): embed → HNSW top-k → optional rerank → optional graph traverse
+- Do **not** treat MCP live smoke as a substitute for `cargo test --release --features embeddings` (`hnsw_recall_e2e`, `embeddings_state_e2e`, `vector_engine_e2e`, `ontology_e2e`, `mcp_tools_full_tests`, …)
+- Prefer fixing default budgets + honesty over raising global caps that defeat the token mission
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SEM-01 | Should Have | Dual token accounting: top-level delivered `tokens` + `_token_budget.{max,actual,truncated}` always coherent; docs/skills teach 3–4× budget when `truncated: true` |
+| FR-SEM-02 | Should Have | Explicit `max_tokens_for_tool` for `concept_search` and `kg_semantic_context` (≥ sibling `kg_*`, target 2k–4k); stop silent default-1000 truncation for those tools |
+| FR-SEM-03 | Should Have | MCP HTTP resilience for long read-only semantic tools — document one-shot client retry; harden keep-alive / stale-listener ops path (see MCP HTTP stability analysis) |
+| FR-SEM-04 | Should Have | Formal **live MCP semantic smoke** checklist (Docker `project=/workspace`) as release *complement*; template = verification doc 2026-07-17 |
+| FR-SEM-05 | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank so top-k is not ≥70% one file by default collapse |
+| REL-051 | Should Have | Release note: live semantic smoke executed (or waived with reason) alongside embeddings cargo suite |
+
+**Won't Do (this track):**
+- Replacing Cozo HNSW default before FR-VE-GATE callers honor LocalEngine
+- Treating transient HTTP flakes as ANN / ontology product failures
+- Dropping truncation entirely (mission is still lean tokens)
 
 ---
 
@@ -1447,24 +1553,28 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 |--------|--------|--------|
 | Cold start time | < 2 seconds | TBD |
 | Indexing speed | > 10,000 lines/second (parallel via rayon) | TBD |
-| Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | PENDING (US-VE-02) |
-| ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | PENDING (FR-VE-BENCH-Q) |
+| Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | DONE (US-VE-02 — measured **0.086ms** P95) |
+| ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | DONE (FR-VE-BENCH-Q — measured **0.055ms** Neon @ 1M) |
 | Query response time (legacy general) | < 100ms | TBD |
-| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | PENDING (US-VE-01) |
+| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | DONE (US-VE-01 — lean absolute ≈**65MB**; warm delta ≈**58MB**; CI gates `delta_ok`) |
 | Memory usage (indexing) | < 500MB typical; Cloud may use 50–80% RAM for SQ8 | TBD |
-| Survival under cgroup | **2GB hard** — never OOM-killed | PENDING (FR-VE-BENCH-OOM) |
-| Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | PENDING (FR-VE-BENCH-IO) |
-| HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | PENDING (FR-VE-BENCH-RECALL) |
-| Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | PENDING (FR-VE-BENCH-AB) |
-| Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | PENDING (FR-VE-BENCH-AB) |
-| Agent time-to-resolution | ≥ **2×** faster | PENDING (FR-VE-BENCH-AB) |
-| Agent task success rate | ≥ baseline | PENDING (FR-VE-BENCH-AB) |
+| Survival under cgroup | **2GB hard** — never OOM-killed | DONE (FR-VE-BENCH-OOM — est. heap ≈1.06GB; live alloc under 2GB) |
+| Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | DONE (FR-VE-BENCH-IO — **99.999%** modeled) |
+| HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | DONE (FR-VE-BENCH-RECALL — measured **1.000** @ ef=50) |
+| Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | DONE (FR-VE-BENCH-AB — measured **65.0%** @ 100 tasks) |
+| Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | DONE (FR-VE-BENCH-AB — measured **84.6%**) |
+| Agent time-to-resolution | ≥ **2×** faster | DONE (FR-VE-BENCH-AB — measured **2.50×**) |
+| Agent task success rate | ≥ baseline | DONE (FR-VE-BENCH-AB) |
 | detect_changes response time | < 2 seconds | TBD |
 | get_context enhanced response size | < 4000 tokens | TBD |
 | Batch insert size | 5000 rows/batch | DONE |
 | Supported parser / extractor count | Tree-sitter + specialized extractors; **indexed walk ≈ 8 code langs + Android/XML/TF/CI** (Swift/Vue/Svelte/SQL modules unwired) | PARTIAL |
-| MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14) |
-| Cross-platform | Apple Silicon (ARM64) Local + Linux x86_64 Cloud | PENDING (FR-VE-ABS) |
+| MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14; still 85 on v0.19.0) |
+| Cross-platform | Apple Silicon (ARM64) Local + Linux x86_64 Cloud | PARTIAL (FR-VE-ABS DONE; CloudEngine TiKV Tier-1 still stub root) |
+| Token honesty (delivered vs actual) | When `truncated: true`, agents can read both figures; docs teach ≥3× budget | PENDING (FR-SEM-01) |
+| Ontology-tool default budgets | `concept_search` / `kg_semantic_context` ≥ 2k (align with sibling `kg_*`) | PENDING (FR-SEM-02) |
+| MCP HTTP semantic flake | Read-only semantic tools survive one transient socket drop via retry / hygiene | PENDING (FR-SEM-03) |
+| Live semantic MCP smoke | Checklist run (or waived) as release complement to embeddings cargo tests | PENDING (FR-SEM-04 / REL-051) |
 
 ---
 
@@ -1515,6 +1625,8 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Flat Payload File | Tier-3 append-only binary storing FP32 + source for post-filter |
 | Dual-Write | Append → fsync → commit offsets → update RAM (crash-safe order) |
 | FR-VE-GATE | Quality gate required before replacing Cozo HNSW as Local default |
+| Token honesty | Delivered `tokens` vs `_token_budget.actual` when payloads are truncated |
+| Live MCP semantic smoke | Docker HTTP probe of `semantic_search` / `concept_search` / `kg_*` — complements, does not replace, cargo embeddings tests |
 
 ---
 
@@ -1533,8 +1645,10 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 - MCP tool reference: `docs/mcp-tools.md`
 - CLI reference: `docs/cli-reference.md`
 - Embed store how-it-works: `generated_docs/embed_store_how_it_works_2026-07-16.md`
+- Semantic MCP live verification (2026-07-17): [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)
+- MCP HTTP stability analysis: `docs/analysis/mcp-http-stability-analysis-2026-05-05.md`
 - **Task tracker (all US/FR/Release + status):** [`docs/prd-task-tracker.md`](prd-task-tracker.md) / [`prd-task-tracker.json`](prd-task-tracker.json)
 
 ---
 
-*Last updated: 2026-07-17 (v3.7.0 — task lists moved to docs/prd-task-tracker.md; PRD keeps narrative/HLD only)*
+*Last updated: 2026-07-17 (v3.7.1 — semantic MCP verification → US-SEM / FR-SEM enhancement backlog; crate 0.19.0)*

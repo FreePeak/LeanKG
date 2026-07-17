@@ -32,9 +32,9 @@ PR #72 — Format, Clippy, and all test suites green.
 - **Process budget guard** (`src/budget.rs`): every heavy tool aborts early on wall-clock, RSS, or iteration cap breach. Defaults 60 s / 4 GB RSS / 1M iters. Tunable via `LEANKG_TOOL_TIMEOUT_SECS` / `LEANKG_MAX_RSS_MB` / `LEANKG_TOOL_BUDGET_OFF=1`.
 - **Streaming API** (`graph::GraphEngine::for_each_element` / `for_each_relationship` / `for_each_element_of_type`): yields one element at a time, never materializes the full Vec. Migrated callers: `find_clones`, `export_snapshot`, `export_json_streaming`.
 - **Long-running daemon GC** (`src/gc.rs` + `MemoryGuard`):
-  - `mcp-stdio` and `mcp-http` daemons spawn a `MemoryGuard` watchdog that polls RSS every 10 s.
-  - On idle (default 60 s) the release callback runs and `trim_heap()` is called.
-  - On RSS over cap (default 4 GB) the callback runs every 30 s and prints a warning.
+  - `mcp-stdio` and `mcp-http` daemons spawn a `MemoryGuard` watchdog that polls RSS every `LEANKG_GC_POLL_SECS` (default 10 s).
+  - On idle (default 60 s) the release callback runs **once per idle period** (re-armed only after `touch()`), skips when caches are already empty, and calls `trim_heap()` after a real release.
+  - On RSS over cap (default 4 GB) the callback runs every 30 s when there is something to drop, and prints a warning.
   - MCP handlers call `MemoryGuard::touch()` per request so the idle detector only fires when the daemon is truly quiet.
 - **Streaming JSON export**: writes one element at a time via `BufWriter`, no 470 MB intermediate string.
 

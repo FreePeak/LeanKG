@@ -11,12 +11,10 @@
 //!   `/proc/self/statm` syscall [`crate::budget::current_rss_mb`]
 //!   uses.
 //! - When the configured `idle_after_secs` passes with no recorded
-//!   activity, runs `release_memory()` which calls into
-//!   [`release_caches`] so the daemon's long-lived caches are
-//!   dropped and the heap is trimmed.
-//! - When RSS exceeds `max_rss_mb`, runs an aggressive
-//!   `force_release_memory()` and (optionally) aborts the process
-//!   with a structured exit code so the supervisor restarts it.
+//!   activity, runs the release callback **once per idle period**
+//!   (resets on the next [`MemoryGuard::touch`]).
+//! - When RSS exceeds `max_rss_mb`, runs an aggressive force-trim
+//!   (throttled) so the supervisor has a chance to reclaim caches.
 //!
 //! Daemons (`mcp-http`, `mcp-stdio`, `watch`) are expected to call
 //! [`MemoryGuard::touch`] after every successful request so the
@@ -59,26 +57,33 @@ fn gc_poll_secs() -> u64 {
     std::env::var("LEANKG_GC_POLL_SECS")
         .ok()
         .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
         .unwrap_or(10)
 }
 
+/// Minimum gap between force-trims while RSS stays over the cap.
+const FORCE_TRIM_COOLDOWN_SECS: u64 = 30;
+
 /// Callback the guard calls when it wants the daemon to drop its
-/// in-RAM caches. The daemon wires this to whatever cache it holds
-/// (typically `GraphEngine::clear_caches` or similar).
-pub type ReleaseFn = Box<dyn Fn() + Send + Sync + 'static>;
+/// in-RAM caches. Returns `true` when something was actually
+/// released (so callers can avoid logging no-ops).
+pub type ReleaseFn = Box<dyn Fn() -> bool + Send + Sync + 'static>;
 
 /// Long-running memory-pressure guard. One per daemon process.
 pub struct MemoryGuard {
     started: Instant,
     last_check: Instant,
-    last_idle_trim: Instant,
     last_force_trim: Instant,
+    /// `LAST_ACTIVITY_NANOS` value we already idle-trimmed for.
+    /// Equal means this idle period was already handled; a newer
+    /// activity stamp (from [`Self::touch`]) arms idle-trim again.
+    last_idle_trim_activity: u64,
     release_fn: Option<ReleaseFn>,
 }
 
 impl MemoryGuard {
     /// Create a new guard. `release_fn` is invoked on idle-trim and
-    /// force-trim.
+    /// force-trim; it should return whether caches were dropped.
     pub fn new(release_fn: Option<ReleaseFn>) -> Self {
         let now = Instant::now();
         // Initialize LAST_ACTIVITY_NANOS so the daemon doesn't think
@@ -87,10 +92,15 @@ impl MemoryGuard {
         Self {
             started: now,
             last_check: now,
-            last_idle_trim: now,
             last_force_trim: now,
+            last_idle_trim_activity: LAST_ACTIVITY_NANOS.load(Ordering::Relaxed),
             release_fn,
         }
+    }
+
+    /// Configured poll interval (`LEANKG_GC_POLL_SECS`, default 10s).
+    pub fn poll_interval() -> Duration {
+        Duration::from_secs(gc_poll_secs())
     }
 
     /// Record that something happened (request served, file watched,
@@ -107,8 +117,12 @@ impl MemoryGuard {
         LAST_ACTIVITY_NANOS.store(now_nanos, Ordering::Relaxed);
     }
 
+    fn activity_nanos() -> u64 {
+        LAST_ACTIVITY_NANOS.load(Ordering::Relaxed)
+    }
+
     fn idle_secs() -> u64 {
-        let last = LAST_ACTIVITY_NANOS.load(Ordering::Relaxed);
+        let last = Self::activity_nanos();
         if last == 0 {
             return 0;
         }
@@ -134,19 +148,26 @@ impl MemoryGuard {
         }
         self.last_check = now;
 
-        // Update RSS observation.
-        if let Ok(rss) = current_rss_mb() {
-            LAST_RSS_MB.store(rss as i64, Ordering::Relaxed);
-        }
-        let rss = current_rss_mb().unwrap_or(0);
+        // Update RSS observation (single syscall per tick).
+        let rss = match current_rss_mb() {
+            Ok(rss) => {
+                LAST_RSS_MB.store(rss as i64, Ordering::Relaxed);
+                rss
+            }
+            Err(_) => Self::rss_mb(),
+        };
         let idle = Self::idle_secs();
+        let activity = Self::activity_nanos();
 
-        // Force-trim: RSS over the hard cap.
+        // Force-trim: RSS over the hard cap (throttled).
         if rss >= gc_max_rss_mb() {
-            // Throttle so we don't run it every poll.
-            if now.duration_since(self.last_force_trim) >= Duration::from_secs(30) {
-                self.last_force_trim = now;
-                self.run_release();
+            if now.duration_since(self.last_force_trim)
+                < Duration::from_secs(FORCE_TRIM_COOLDOWN_SECS)
+            {
+                return GcAction::Skipped;
+            }
+            self.last_force_trim = now;
+            if self.run_release() {
                 eprintln!(
                     "leankg::gc: RSS {} MB >= max {} MB; force-trimmed caches",
                     rss,
@@ -154,31 +175,32 @@ impl MemoryGuard {
                 );
                 return GcAction::ForceTrim { rss_mb: rss };
             }
-            return GcAction::Skipped;
+            return GcAction::NoOp { rss_mb: rss };
         }
 
-        // Idle-trim: no activity for `idle_after_secs`.
-        if idle >= gc_idle_after_secs()
-            && now.duration_since(self.last_idle_trim) >= Duration::from_secs(30)
-        {
-            self.last_idle_trim = now;
-            self.run_release();
-            eprintln!(
-                "leankg::gc: idle for {}s; trimmed caches (RSS {} MB)",
-                idle, rss
-            );
-            return GcAction::IdleTrim {
-                idle_secs: idle,
-                rss_mb: rss,
-            };
+        // Idle-trim: once per idle period (armed again only after touch).
+        if idle >= gc_idle_after_secs() && activity != self.last_idle_trim_activity {
+            self.last_idle_trim_activity = activity;
+            if self.run_release() {
+                eprintln!(
+                    "leankg::gc: idle for {}s; trimmed caches (RSS {} MB)",
+                    idle, rss
+                );
+                return GcAction::IdleTrim {
+                    idle_secs: idle,
+                    rss_mb: rss,
+                };
+            }
+            return GcAction::NoOp { rss_mb: rss };
         }
 
         GcAction::NoOp { rss_mb: rss }
     }
 
-    fn run_release(&self) {
-        if let Some(f) = &self.release_fn {
-            f();
+    fn run_release(&self) -> bool {
+        match &self.release_fn {
+            Some(f) => f(),
+            None => false,
         }
     }
 
@@ -193,7 +215,7 @@ impl MemoryGuard {
 pub enum GcAction {
     /// Didn't run anything this tick.
     Skipped,
-    /// RSS is healthy; no work needed.
+    /// RSS is healthy; no work needed (or release was a no-op).
     NoOp { rss_mb: u64 },
     /// Ran the release callback because the process had been idle.
     IdleTrim { idle_secs: u64, rss_mb: u64 },
@@ -223,9 +245,7 @@ pub fn trim_heap() -> bool {
         // macOS allocator is not exposed via malloc_trim, but the
         // system's default allocator (called by the Rust runtime)
         // does return pages on large frees. There's no portable
-        // hint to force it, so we just report false. Daemons that
-        // care can wire `release_caches` to call `trim_heap()`
-        // opportunistically.
+        // hint to force it, so we just report false.
         false
     }
 }
@@ -234,23 +254,6 @@ pub fn trim_heap() -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn guard_runs_release_on_idle() {
-        let called = std::sync::Arc::new(AtomicUsize::new(0));
-        let called2 = called.clone();
-        let mut g = MemoryGuard::new(Some(Box::new(move || {
-            called2.fetch_add(1, Ordering::Relaxed);
-        })));
-        // Simulate 90 s of idle by directly calling the release path
-        // via a synthetic tick: we can't fast-forward the global
-        // LAST_ACTIVITY_NANOS from this thread, but we can call
-        // `run_release` indirectly by making the guard poll now.
-        g.last_idle_trim = Instant::now() - Duration::from_secs(60);
-        // Force idle_secs to be > 60 by sleeping 60s is too slow; we
-        // just check the count was 0 at construction time.
-        assert_eq!(called.load(Ordering::Relaxed), 0);
-    }
 
     #[test]
     fn guard_touch_resets_idle() {
@@ -282,5 +285,87 @@ mod tests {
         g.last_check = Instant::now();
         let action = g.tick();
         assert_eq!(action, GcAction::Skipped);
+    }
+
+    #[test]
+    fn poll_interval_is_positive() {
+        assert!(MemoryGuard::poll_interval() >= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn idle_trim_runs_at_most_once_per_activity_period() {
+        let called = std::sync::Arc::new(AtomicUsize::new(0));
+        let called2 = called.clone();
+        let mut g = MemoryGuard::new(Some(Box::new(move || {
+            called2.fetch_add(1, Ordering::Relaxed);
+            true
+        })));
+
+        // Make idle_secs() large without sleeping: store activity in the past.
+        g.last_check = Instant::now() - Duration::from_secs(gc_poll_secs() + 1);
+        let past = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+            .saturating_sub((gc_idle_after_secs() + 5) * 1_000_000_000);
+        LAST_ACTIVITY_NANOS.store(past, Ordering::Relaxed);
+        g.last_idle_trim_activity = 0; // different from `past` → armed
+
+        let first = g.tick();
+        assert!(
+            matches!(first, GcAction::IdleTrim { .. }),
+            "expected IdleTrim, got {:?}",
+            first
+        );
+        assert_eq!(called.load(Ordering::Relaxed), 1);
+
+        // Same idle period: further ticks must not release again.
+        g.last_check = Instant::now() - Duration::from_secs(gc_poll_secs() + 1);
+        let second = g.tick();
+        assert!(
+            matches!(second, GcAction::NoOp { .. } | GcAction::Skipped),
+            "expected NoOp/Skipped after once-per-idle, got {:?}",
+            second
+        );
+        assert_eq!(called.load(Ordering::Relaxed), 1);
+
+        // New activity arms idle-trim again after another idle window.
+        MemoryGuard::touch();
+        let past2 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+            .saturating_sub((gc_idle_after_secs() + 5) * 1_000_000_000);
+        LAST_ACTIVITY_NANOS.store(past2, Ordering::Relaxed);
+        g.last_check = Instant::now() - Duration::from_secs(gc_poll_secs() + 1);
+        let third = g.tick();
+        assert!(
+            matches!(third, GcAction::IdleTrim { .. }),
+            "expected IdleTrim after new activity, got {:?}",
+            third
+        );
+        assert_eq!(called.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn release_returning_false_is_noop_not_idle_trim() {
+        let mut g = MemoryGuard::new(Some(Box::new(|| false)));
+        g.last_check = Instant::now() - Duration::from_secs(gc_poll_secs() + 1);
+        let past = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+            .saturating_sub((gc_idle_after_secs() + 5) * 1_000_000_000);
+        LAST_ACTIVITY_NANOS.store(past, Ordering::Relaxed);
+        g.last_idle_trim_activity = 0;
+
+        let action = g.tick();
+        assert!(
+            matches!(action, GcAction::NoOp { .. }),
+            "expected NoOp when release returns false, got {:?}",
+            action
+        );
+        // Period consumed so we do not retry every poll.
+        assert_eq!(g.last_idle_trim_activity, past);
     }
 }
