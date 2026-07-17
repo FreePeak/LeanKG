@@ -11,6 +11,7 @@
 pub mod engine;
 pub mod memory;
 pub mod simd;
+pub mod threads;
 pub mod tier1;
 pub mod tier2;
 pub mod tier3;
@@ -24,6 +25,7 @@ pub use memory::{
     MemoryPlan, LOCAL_SURVIVAL_CAP_BYTES,
 };
 pub use simd::{detect_simd, dot_i8, dot_i8_auto, SimdKind};
+pub use threads::{auto_tune_threads, build_rayon_pool, plan_threads, ThreadPlan};
 pub use tier1::{
     BlockTableFactory, HnswAdjacency, RocksCompression, RocksDbLocalOptions, TopologyNode,
     TopologyStore,
