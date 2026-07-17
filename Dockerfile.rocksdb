@@ -25,6 +25,7 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
 COPY vendor/ ./vendor/
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY benches ./benches
 COPY ontology/ ./ontology/
 
 # Build with the `embeddings` feature so the resulting binary ships

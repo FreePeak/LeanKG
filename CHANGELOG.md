@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.0] - 2026-07-17
+
+### Added
+- Local-first vector graph engine (v3.7 P0): new `src/vector_engine/`
+  module with tiered storage (`tier1` hot cache, `tier2` warm HNSW,
+  `tier3` cold RocksDB), SIMD-accelerated distance kernels, dual-write
+  reconciliation, background GC, and `gate`-based fallback routing
+  (FR-VE-RT-MEM / FR-VE-BENCH-OOM, PRD §5.14).
+- `vector_engine_ab` benchmark harness for A/B testing the new engine
+  against the legacy in-memory path under realistic query mixes.
+- `engine.recovery` path that rehydrates tier1/tier2 from RocksDB on
+  restart without blocking MCP startup.
+
+### Changed
+- Rebuilt and republished Docker image `freepeak/leankg:0.19.0` (also
+  tagged `latest`).
+
 ## [0.18.2] - 2026-07-16
 
 ### Fixed
