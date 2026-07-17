@@ -822,7 +822,7 @@ Palace Mapping:
 >
 > **Depends on:** FR-HNSW-* product path (semantic ANN UX). **Does not cancel** FR-HNSW-B until LocalEngine recall/latency gates pass and factory switch is default for Local mode.
 >
-> **Landed on main:** US-VE-03..07 + FR-VE-ABS / T1–T3 / RT-* / FS-* / TEST-* / HNSW prune (**DONE**). **Still PARTIAL:** US-VE-01/02/08 (RSS, time-to-context, live A/B), FR-VE-BENCH-*, FR-VE-GATE.
+> **Landed on main:** US-VE-03..07 + FR-VE-ABS / T1–T3 / RT-* / FS-* / TEST-* / HNSW prune (**DONE**). **FR-VE-BENCH-Q DONE** (1M ANN P95). **Still PARTIAL:** US-VE-01/02/08, FR-VE-BENCH-IO/RECALL/OOM/AB, FR-VE-GATE.
 
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-VE-*` / `FR-VE-*`.
 
@@ -1453,7 +1453,7 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Cold start time | < 2 seconds | TBD |
 | Indexing speed | > 10,000 lines/second (parallel via rayon) | TBD |
 | Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | PARTIAL (US-VE-02 — engine on main; e2e MCP proof open) |
-| ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | PARTIAL (FR-VE-BENCH-Q — synth harness; 1M sign-off open) |
+| ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | DONE (FR-VE-BENCH-Q — 1M ANN P95=0.065ms Neon, 2026-07-17) |
 | Query response time (legacy general) | < 100ms | TBD |
 | Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | PARTIAL (US-VE-01 — not yet measured on default path) |
 | Memory usage (indexing) | < 500MB typical; Cloud may use 50–80% RAM for SQ8 | TBD |

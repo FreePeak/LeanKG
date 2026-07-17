@@ -2,8 +2,9 @@
 
 use std::time::{Duration, Instant};
 
+use super::ann::{bench_params, synth_query, Sq8Nsw};
 use super::engine::EngineKind;
-use super::hnsw::{brute_force_topk, recall_at_k};
+use super::hnsw::{brute_force_topk, recall_at_k, DEFAULT_EF_SEARCH};
 use super::memory::{plan_under_2gb_cgroup, LOCAL_SURVIVAL_CAP_BYTES};
 use super::simd::{detect_simd, dot_i8, SimdKind};
 use super::tier2::{quantize_sq8, Sq8Cache};
@@ -16,18 +17,23 @@ pub struct QueryBenchResult {
 }
 
 pub const TARGET_P95_MS: u128 = 50;
+/// Corpus size required by FR-VE-BENCH-Q (1 query vs 1M SQ8 chunks).
+pub const BENCH_Q_CORPUS: usize = 1_000_000;
 
 /// Run `iters` queries against an in-RAM SQ8 cache; return approximate P95.
+///
+/// Flat scan — useful for small-n microbenches. Full 1M gate uses
+/// [`bench_ann_query_p95`] (graph ANN over SQ8).
 pub fn bench_query_p95(cache: &Sq8Cache, query: &[i8], iters: usize) -> QueryBenchResult {
     let simd = detect_simd();
+    let dim = cache.dim();
+    let data = cache.as_bytes();
     let mut samples = Vec::with_capacity(iters);
     for _ in 0..iters {
         let t0 = Instant::now();
         let mut best = i32::MIN;
-        for i in 0..cache.len() {
-            if let Some(row) = cache.row(i) {
-                best = best.max(dot_i8(row, query, simd));
-            }
+        for row in data.chunks_exact(dim) {
+            best = best.max(dot_i8(row, query, simd));
         }
         let _ = best;
         samples.push(t0.elapsed());
@@ -40,6 +46,41 @@ pub fn bench_query_p95(cache: &Sq8Cache, query: &[i8], iters: usize) -> QueryBen
         p95,
         simd,
     }
+}
+
+/// ANN (NSW/HNSW layer-0) query P95 over an in-RAM SQ8 graph (FR-VE-BENCH-Q).
+pub fn bench_ann_query_p95(graph: &Sq8Nsw, query: &[i8], iters: usize) -> QueryBenchResult {
+    let ef = graph.params().ef_search.max(DEFAULT_EF_SEARCH);
+    let k = 10.min(graph.len().max(1));
+    let mut samples = Vec::with_capacity(iters);
+    for _ in 0..iters {
+        let t0 = Instant::now();
+        let hits = graph.search(query, k, ef);
+        let _ = hits;
+        samples.push(t0.elapsed());
+    }
+    samples.sort();
+    let idx = ((samples.len() as f64) * 0.95).floor() as usize;
+    let p95 = samples[idx.min(samples.len().saturating_sub(1))];
+    QueryBenchResult {
+        n_vectors: graph.len(),
+        p95,
+        simd: detect_simd(),
+    }
+}
+
+/// Build synth NSW + measure ANN P95 (convenience for gate / cargo bench).
+pub fn bench_ann_p95_at(n: usize, dim: usize, iters: usize) -> QueryBenchResult {
+    let graph = Sq8Nsw::synth_for_bench(n, dim, bench_params());
+    let query = synth_query(dim, 42);
+    bench_ann_query_p95(&graph, &query, iters)
+}
+
+/// True when ANN P95 at [`BENCH_Q_CORPUS`] meets the &lt;50ms floor.
+pub fn ann_p95_meets_1m_floor(iters: usize) -> (QueryBenchResult, bool) {
+    let res = bench_ann_p95_at(BENCH_Q_CORPUS, super::engine::DEFAULT_VECTOR_DIM, iters);
+    let ok = res.p95.as_millis() < TARGET_P95_MS;
+    (res, ok)
 }
 
 /// Build a synthetic SQ8 cache of `n` vectors.
@@ -114,8 +155,43 @@ mod tests {
         let res = bench_query_p95(&cache, &query, 20);
         assert_eq!(res.n_vectors, 200);
         assert!(res.p95 < Duration::from_secs(1));
-        // Full 1M @ <50ms is enforced by cargo bench / FR-VE-GATE at scale.
         let _ = TARGET_P95_MS;
+    }
+
+    #[test]
+    fn ann_query_mid_scale_under_p95_floor() {
+        // Mid-scale smoke (CI-safe). Full 1M is `ann_p95_1m_under_floor`.
+        let res = bench_ann_p95_at(20_000, DEFAULT_VECTOR_DIM, 30);
+        assert_eq!(res.n_vectors, 20_000);
+        assert!(
+            res.p95.as_millis() < TARGET_P95_MS,
+            "ANN P95 {}ms exceeds {}ms at 20k",
+            res.p95.as_millis(),
+            TARGET_P95_MS
+        );
+    }
+
+    /// FR-VE-BENCH-Q: 1 query vs 1M SQ8 chunks, Local ANN P95 &lt; 50ms.
+    ///
+    /// Needs ~400MB+ RAM and a few seconds to build; run with:
+    /// `cargo test -r --lib vector_engine::bench::tests::ann_p95_1m_under_floor -- --ignored --nocapture`
+    #[test]
+    #[ignore = "full 1M corpus; run explicitly for FR-VE-BENCH-Q sign-off"]
+    fn ann_p95_1m_under_floor() {
+        let (res, ok) = ann_p95_meets_1m_floor(40);
+        eprintln!(
+            "[FR-VE-BENCH-Q] n={} P95={:.3}ms simd={:?} ok={}",
+            res.n_vectors,
+            res.p95.as_secs_f64() * 1000.0,
+            res.simd,
+            ok
+        );
+        assert!(
+            ok,
+            "P95 {}ms exceeds {}ms at 1M",
+            res.p95.as_millis(),
+            TARGET_P95_MS
+        );
     }
 
     #[test]

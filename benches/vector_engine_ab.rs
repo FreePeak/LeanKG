@@ -8,9 +8,10 @@
 use std::time::Instant;
 
 use leankg::vector_engine::{
-    bench_query_p95, evaluate_default_suite, io_reduction_vs_mmap, oom_plan_within_cap,
-    recall_sq8_vs_fp32, run_ab_suite, synth_sq8_cache, AbFloors, DEFAULT_VECTOR_DIM, MIN_AB_TASKS,
-    TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
+    ann_p95_meets_1m_floor, bench_ann_p95_at, bench_query_p95, evaluate_default_suite,
+    io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32, run_ab_suite, synth_sq8_cache,
+    AbFloors, BENCH_Q_CORPUS, DEFAULT_VECTOR_DIM, MIN_AB_TASKS, TARGET_IO_REDUCTION, TARGET_P95_MS,
+    TARGET_RECALL,
 };
 
 fn main() {
@@ -65,28 +66,55 @@ fn main() {
         big.token_reduction() * 100.0
     );
 
-    // --- FR-VE-BENCH-Q: SQ8 query P95 (scaled; full 1M is optional via env) ---
+    // --- FR-VE-BENCH-Q: ANN over SQ8 (default 1M; override with LEANKG_VE_BENCH_N) ---
     let n = std::env::var("LEANKG_VE_BENCH_N")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(10_000usize);
-    let (cache, query) = synth_sq8_cache(n, DEFAULT_VECTOR_DIM);
-    let q = bench_query_p95(&cache, &query, 50);
-    println!(
-        "[FR-VE-BENCH-Q] n={} P95={:.3}ms simd={:?} (1M target <{}ms)",
-        q.n_vectors,
-        q.p95.as_secs_f64() * 1000.0,
-        q.simd,
-        TARGET_P95_MS
-    );
-    if n >= 1_000_000 {
+        .unwrap_or(BENCH_Q_CORPUS);
+    let q = if n >= BENCH_Q_CORPUS {
+        let (res, ok) = ann_p95_meets_1m_floor(40);
+        println!(
+            "[FR-VE-BENCH-Q] ANN n={} P95={:.3}ms simd={:?} (target <{}ms) ok={}",
+            res.n_vectors,
+            res.p95.as_secs_f64() * 1000.0,
+            res.simd,
+            TARGET_P95_MS,
+            ok
+        );
         assert!(
-            q.p95.as_millis() < TARGET_P95_MS,
+            ok,
             "P95 {}ms exceeds {}ms at 1M",
-            q.p95.as_millis(),
+            res.p95.as_millis(),
             TARGET_P95_MS
         );
-    }
+        res
+    } else {
+        let res = bench_ann_p95_at(n, DEFAULT_VECTOR_DIM, 40);
+        println!(
+            "[FR-VE-BENCH-Q] ANN n={} P95={:.3}ms simd={:?} (1M target <{}ms)",
+            res.n_vectors,
+            res.p95.as_secs_f64() * 1000.0,
+            res.simd,
+            TARGET_P95_MS
+        );
+        assert!(
+            res.p95.as_millis() < TARGET_P95_MS,
+            "P95 {}ms exceeds {}ms at n={}",
+            res.p95.as_millis(),
+            TARGET_P95_MS,
+            n
+        );
+        res
+    };
+    // Keep a small flat-scan microbench for regression visibility.
+    let (cache, query) = synth_sq8_cache(2_000.min(n), DEFAULT_VECTOR_DIM);
+    let flat = bench_query_p95(&cache, &query, 20);
+    println!(
+        "[FR-VE-BENCH-Q] flat-scan micro n={} P95={:.3}ms (informational)",
+        flat.n_vectors,
+        flat.p95.as_secs_f64() * 1000.0
+    );
+    let _ = q;
 
     // --- FR-VE-BENCH-IO / RECALL / OOM smoke ---
     let io = io_reduction_vs_mmap(1_000_000, 0);

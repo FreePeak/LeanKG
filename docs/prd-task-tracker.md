@@ -41,15 +41,15 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **Total tracked** | **386** |
 | NOT_DONE | 54 |
 | PENDING | 12 |
-| PARTIAL | 24 |
+| PARTIAL | 23 |
 | OPEN | 1 |
-| DONE | 292 |
+| DONE | 293 |
 | WONT_DO | 3 |
-| Open work | **91** |
+| Open work | **90** |
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 12 |
+| P0 | 11 |
 | P1 | 23 |
 | P2 | 51 |
 | P3 | 5 |
@@ -66,7 +66,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 **Single ordered queue.** Work top → bottom. Finish P0 Vector Engine gate before P1.
 
-> **2026-07-17 (origin/main):** `#79` merged Local-First Vector Engine (`src/vector_engine/*`). FR-VE-ABS..TEST-* + REL-044..047 **DONE**. Remaining P0: US-VE-01/02/08 KPIs, FR-VE-BENCH-*, FR-VE-GATE, REL-048..050. In-process A/B (≥100) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL; `ready_for_default=false` — Cozo `::hnsw` remains shipped default.
+> **2026-07-17 (origin/main):** `#79` merged Local-First Vector Engine (`src/vector_engine/*`). FR-VE-ABS..TEST-* + REL-044..047 **DONE**. Remaining P0: US-VE-01/02/08 KPIs, FR-VE-BENCH-IO/RECALL/OOM/AB, FR-VE-GATE, REL-048..050. **FR-VE-BENCH-Q DONE** (1M ANN P95=0.065ms). In-process A/B (≥100) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL; `ready_for_default=false` — Cozo `::hnsw` remains shipped default.
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
@@ -75,7 +75,6 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P0** | `FR-VE-BENCH-IO` | FR | **PARTIAL** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-OOM` | FR | **PARTIAL** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-Q` | FR | **PARTIAL** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-RECALL` | FR | **PARTIAL** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `REL-048` | Release | **PARTIAL** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
 | **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
@@ -173,7 +172,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P0** | `FR-VE-BENCH-IO` | FR | **PARTIAL** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-OOM` | FR | **PARTIAL** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-Q` | FR | **PARTIAL** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-Q` | FR | **DONE** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-RECALL` | FR | **PARTIAL** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `REL-048` | Release | **PARTIAL** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
 | **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |

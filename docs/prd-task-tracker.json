@@ -5,8 +5,8 @@
     "NOT_DONE": 54,
     "OPEN": 1,
     "PENDING": 12,
-    "PARTIAL": 24,
-    "DONE": 292,
+    "PARTIAL": 23,
+    "DONE": 293,
     "WONT_DO": 3
   },
   "tasks": [
@@ -314,8 +314,8 @@
       "kind": "FR",
       "title": "'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**.",
       "priority": "Must Have",
-      "status": "PARTIAL",
-      "notes": "PARTIAL — synth bench harness exists; full 1M SQ8 P95 <50ms sign-off still open (gate keeps ready_for_default=false)",
+      "status": "DONE",
+      "notes": "DONE — Sq8Nsw ANN over 1M SQ8: P95=0.065ms (Neon) via `ann_p95_1m_under_floor` / cargo bench default n=1M (2026-07-17)",
       "section": "5.14 Optimized Local-First Vector Graph Engine (v3.7.0)",
       "prd_line": null,
       "focus": "P0",
@@ -5041,7 +5041,7 @@
       "P2": "Should Have",
       "P3": "Could Have / aspirational OPEN"
     },
-    "updated": "2026-07-17-origin-main-0.19.0-gate-branch",
+    "updated": "2026-07-17-fr-ve-bench-q-done",
     "sync_note": "Audited against origin/main @ e5d1490 (0.19.0; vector engine #79 @ dbc22c4). Core FR-VE-* + REL-044..047 DONE; gate/benches/live A/B + US-VE-01/02/08 remain PARTIAL. Cozo ::hnsw still shipped default (FR-VE-GATE)."
   }
 }

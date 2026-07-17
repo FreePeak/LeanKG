@@ -9,6 +9,7 @@
 //! engine with `LEANKG_VECTOR_ENGINE=local|cloud`.
 
 pub mod ab;
+pub mod ann;
 pub mod bench;
 pub mod dual_write;
 pub mod engine;
@@ -27,9 +28,11 @@ pub use ab::{
     evaluate_default_suite, load_ab_result_from_env, run_ab_suite, simulate_task, AbFloors,
     AbResult, AbSuiteReport, AbTaskOutcome, MIN_AB_TASKS,
 };
+pub use ann::{bench_params, synth_query, Sq8Nsw};
 pub use bench::{
-    bench_query_p95, io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32,
-    synth_sq8_cache, QueryBenchResult, TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
+    ann_p95_meets_1m_floor, bench_ann_p95_at, bench_ann_query_p95, bench_query_p95,
+    io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32, synth_sq8_cache,
+    QueryBenchResult, BENCH_Q_CORPUS, TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
 };
 pub use dual_write::{DualWriteEngine, WriteInput};
 pub use engine::{
