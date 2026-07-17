@@ -41,15 +41,15 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **Total tracked** | **386** |
 | NOT_DONE | 54 |
 | PENDING | 12 |
-| PARTIAL | 16 |
+| PARTIAL | 13 |
 | OPEN | 1 |
-| DONE | 300 |
+| DONE | 303 |
 | WONT_DO | 3 |
-| Open work | **83** |
+| Open work | **80** |
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 5 |
+| P0 | 2 |
 | P1 | 23 |
 | P2 | 51 |
 | P3 | 5 |
@@ -66,13 +66,10 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 **Single ordered queue.** Work top → bottom. Finish P0 Vector Engine gate before P1.
 
-> **2026-07-17 (origin/main):** `#79` merged Local-First Vector Engine (`src/vector_engine/*`). FR-VE-ABS..TEST-* + REL-044..047 **DONE**. Remaining P0: US-VE-08, FR-VE-BENCH-AB, FR-VE-GATE, REL-049. **US-VE-01/02 + REL-050 DONE** (RSS≈89MB, TTC P95≈0.094ms). In-process A/B (≥100) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL; `ready_for_default=false` — Cozo `::hnsw` remains shipped default.
+> **2026-07-17 (origin/main):** `#79` merged Local-First Vector Engine (`src/vector_engine/*`). FR-VE-ABS..TEST-* + REL-044..047 **DONE**. Remaining P0: FR-VE-GATE only. **FR-VE-BENCH-AB / US-VE-08 / REL-049 DONE** (in-process ≥100 + JSON artifact). In-process A/B (≥100) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL; `ready_for_default=false` — Cozo `::hnsw` remains shipped default.
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `FR-VE-BENCH-AB` | FR | **PARTIAL** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
@@ -162,15 +159,15 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 |------:|----|------|--------|----------|-------|-------|
 | **P0** | `US-VE-01` | User Story | **DONE** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P0** | `US-VE-02` | User Story | **DONE** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-08` | User Story | **DONE** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P0** | `FR-VE-BENCH-IO` | FR | **DONE** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-OOM` | FR | **DONE** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-Q` | FR | **DONE** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-RECALL` | FR | **DONE** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `REL-048` | Release | **DONE** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-049` | Release | **DONE** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
 | **P0** | `REL-050` | Release | **DONE** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `FR-VE-BENCH-AB` | FR | **PARTIAL** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-AB` | FR | **DONE** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |

@@ -4,7 +4,7 @@
 //! FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors.
 //! Until then Cozo `::hnsw` remains default.
 
-use super::ab::{evaluate_default_suite, load_ab_result_from_env, AbFloors};
+use super::ab::evaluate_ab_for_gate;
 use super::bench::{
     bench_ann_p95_at, io_reduction_vs_mmap, oom_plan_within_cap, recall_sq8_vs_fp32,
     BENCH_Q_CORPUS, TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
@@ -47,9 +47,7 @@ pub fn evaluate_gate_smoke() -> GateReport {
     let bench_oom_ok = oom_plan_within_cap();
 
     // Prefer live harness JSON when present; otherwise run in-process ≥100-task suite.
-    let bench_ab_ok = load_ab_result_from_env()
-        .map(|r| r.meets_floors(AbFloors::default()))
-        .unwrap_or_else(|| evaluate_default_suite().2);
+    let bench_ab_ok = evaluate_ab_for_gate().1;
 
     let tests_ok = true;
     // Never flip default from smoke alone (needs full-scale 1M + live A/B sign-off).

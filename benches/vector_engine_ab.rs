@@ -8,10 +8,11 @@
 use std::time::Instant;
 
 use leankg::vector_engine::{
-    ann_p95_meets_1m_floor, bench_ann_p95_at, bench_query_p95, evaluate_default_suite,
-    measure_io_reduction, oom_1m_corpus_within_2gb, oom_plan_within_cap, recall_meets_ef50_floor,
-    run_ab_suite, synth_sq8_cache, AbFloors, BENCH_Q_CORPUS, DEFAULT_VECTOR_DIM, MIN_AB_TASKS,
-    TARGET_IO_REDUCTION, TARGET_P95_MS, TARGET_RECALL,
+    ann_p95_meets_1m_floor, bench_ann_p95_at, bench_query_p95, evaluate_ab_for_gate,
+    evaluate_default_suite, measure_io_reduction, oom_1m_corpus_within_2gb, oom_plan_within_cap,
+    recall_meets_ef50_floor, run_ab_suite, synth_sq8_cache, write_ab_result_file, AbFloors,
+    BENCH_Q_CORPUS, DEFAULT_VECTOR_DIM, MIN_AB_TASKS, TARGET_IO_REDUCTION, TARGET_P95_MS,
+    TARGET_RECALL,
 };
 
 fn main() {
@@ -55,6 +56,23 @@ fn main() {
         "A/B suite must run ≥{MIN_AB_TASKS} tasks"
     );
     assert!(ok, "A/B suite failed PRD floors: {:?}", AbFloors::default());
+
+    // Persist artifact for FR-VE-GATE / live injection (`LEANKG_VE_AB_FILE`).
+    let out = std::env::var("LEANKG_VE_AB_OUT")
+        .unwrap_or_else(|_| "target/vector_engine_ab_result.json".into());
+    if let Some(parent) = std::path::Path::new(&out).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    write_ab_result_file(&out, &result).expect("write A/B JSON artifact");
+    println!("[FR-VE-BENCH-AB] wrote artifact {out}");
+    let (gate_result, gate_ok, source) = evaluate_ab_for_gate();
+    println!(
+        "[FR-VE-BENCH-AB] gate_source={source} meets_floors={gate_ok} token={:.1}% tool={:.1}% speedup={:.2}×",
+        gate_result.token_reduction * 100.0,
+        gate_result.tool_call_reduction * 100.0,
+        gate_result.speedup
+    );
+    assert!(gate_ok, "evaluate_ab_for_gate failed via {source}");
 
     // Throughput: time to run 1000 simulated tasks
     let t1 = Instant::now();

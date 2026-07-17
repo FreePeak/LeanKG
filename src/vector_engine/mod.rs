@@ -26,7 +26,8 @@ pub mod tier2;
 pub mod tier3;
 
 pub use ab::{
-    evaluate_default_suite, load_ab_result_from_env, run_ab_suite, simulate_task, AbFloors,
+    ab_result_to_json, evaluate_ab_for_gate, evaluate_default_suite, load_ab_result_from_env,
+    load_ab_result_from_file, run_ab_suite, simulate_task, write_ab_result_file, AbFloors,
     AbResult, AbSuiteReport, AbTaskOutcome, MIN_AB_TASKS,
 };
 pub use ann::{bench_params, synth_query, Sq8Nsw};

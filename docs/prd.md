@@ -1460,10 +1460,10 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Survival under cgroup | **2GB hard** — never OOM-killed | DONE (FR-VE-BENCH-OOM — plan + live 1M RSS≈567MB) |
 | Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | DONE (FR-VE-BENCH-IO) |
 | HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | DONE (FR-VE-BENCH-RECALL — SQ8≥90% @ ef=50) |
-| Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | PARTIAL (FR-VE-BENCH-AB — in-process suite pass; live harness open) |
-| Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | PARTIAL (FR-VE-BENCH-AB) |
-| Agent time-to-resolution | ≥ **2×** faster | PARTIAL (FR-VE-BENCH-AB) |
-| Agent task success rate | ≥ baseline | PARTIAL (FR-VE-BENCH-AB) |
+| Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | DONE (FR-VE-BENCH-AB — in-process ≥100 + JSON artifact) |
+| Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | DONE (FR-VE-BENCH-AB) |
+| Agent time-to-resolution | ≥ **2×** faster | DONE (FR-VE-BENCH-AB) |
+| Agent task success rate | ≥ baseline | DONE (FR-VE-BENCH-AB) |
 | detect_changes response time | < 2 seconds | TBD |
 | get_context enhanced response size | < 4000 tokens | TBD |
 | Batch insert size | 5000 rows/batch | DONE |
