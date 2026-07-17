@@ -5,12 +5,23 @@
 <h1 align="center">LeanKG</h1>
 
 <p align="center">
-  <strong>Local-first knowledge graph for AI coding tools</strong>
+  <strong>Local-first code knowledge graph for AI coding agents</strong>
 </p>
 
 <p align="center">
-  Index your codebase. Query blast radius, call graphs, and semantic context.<br>
-  Expose everything over MCP — no cloud, no external database.
+  Surgical context · fewer tool calls · blast-radius awareness · 100% local
+</p>
+
+<p align="center">
+  Pre-index your repo. Serve precise subgraphs over MCP to Cursor, Claude Code, OpenCode, and more — no cloud, no external database.
+</p>
+
+<p align="center">
+  <a href="https://leankg.onrender.com"><strong>Live Demo →</strong></a>
+  ·
+  <a href="https://github.com/FreePeak/LeanKG/blob/main/docs/cli-reference.md">Docs</a>
+  ·
+  <a href="https://hub.docker.com/r/freepeak/leankg">Docker Hub</a>
 </p>
 
 <p align="center">
@@ -23,25 +34,141 @@
 </p>
 
 <p align="center">
-  <a href="#installation">Install</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#features">Features</a> ·
-  <a href="#mcp--ai-tools">MCP</a> ·
-  <a href="https://leankg.onrender.com">Live Demo</a> ·
-  <a href="#documentation">Docs</a>
+  <img src="https://img.shields.io/badge/macOS-supported-blue.svg" alt="macOS">
+  <img src="https://img.shields.io/badge/Linux-supported-blue.svg" alt="Linux">
+  <img src="https://img.shields.io/badge/Docker-supported-blue.svg" alt="Docker">
 </p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Cursor-supported-blueviolet.svg" alt="Cursor">
+  <img src="https://img.shields.io/badge/Claude_Code-supported-blueviolet.svg" alt="Claude Code">
+  <img src="https://img.shields.io/badge/OpenCode-supported-blueviolet.svg" alt="OpenCode">
+  <img src="https://img.shields.io/badge/Gemini-supported-blueviolet.svg" alt="Gemini">
+  <img src="https://img.shields.io/badge/Codex-supported-blueviolet.svg" alt="Codex">
+  <img src="https://img.shields.io/badge/Antigravity-supported-blueviolet.svg" alt="Antigravity">
+  <img src="https://img.shields.io/badge/Kilo-supported-blueviolet.svg" alt="Kilo">
+</p>
+
+---
+
+## Contents
+
+- [Get Started](#get-started)
+- [Why LeanKG?](#why-leankg)
+- [Measured Results](#measured-results)
+- [Key Features](#key-features)
+- [Screenshots](#screenshots)
+- [How It Works](#how-it-works)
+- [MCP & Agents](#mcp--agents)
+- [Language Support](#language-support)
+- [CLI Quick Reference](#cli-quick-reference)
+- [Documentation](#documentation)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+- [Star History](#star-history)
+
+---
+
+## Get Started
+
+### 1. Install the CLI
+
+**One command** — binary, MCP wiring, and agent docs for your tool of choice:
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
+```
+
+| Target | What you get |
+|--------|----------------|
+| `cursor` | Binary + MCP + skill + AGENTS.md + session hook |
+| `claude` | Binary + MCP + plugin + skill + CLAUDE.md + hooks |
+| `opencode` | Binary + MCP + plugin + skill + AGENTS.md |
+| `gemini` / `kilo` / `antigravity` | Binary + MCP + skill + agent docs |
+| `docker` | Hub image + index + embed + MCP HTTP (**no Rust**) |
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
+```
+
+<details>
+<summary>Prefer Cargo or build from source?</summary>
+
+```bash
+cargo install leankg
+# or
+git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG && cargo build --release
+```
+
+</details>
+
+<details>
+<summary>Teams / Docker (no Rust toolchain)</summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
+curl http://localhost:9699/health
+```
+
+Point your MCP client at `http://localhost:9699/mcp`. Multi-project RocksDB mounts: [AGENTS.md](AGENTS.md).
+
+> Published Hub tags currently target `linux/arm64`. On `linux/amd64`, build with `docker compose -f docker-compose.rocksdb.yml up --build`.
+
+</details>
+
+### 2. Wire up your agent(s)
+
+Installing the binary alone does **not** connect your agent. Run setup (or use an install target above) so MCP is registered:
+
+```bash
+leankg setup
+```
+
+This configures Cursor, Claude Code, OpenCode, Gemini, and other supported clients with LeanKG’s MCP server, skills, and hooks where available.
+
+### 3. Index each project
+
+```bash
+cd your-project
+leankg init
+leankg index ./src
+leankg status
+```
+
+Optional: enable watch mode so the graph stays fresh while you and your agent edit code:
+
+```bash
+leankg mcp-stdio --watch
+```
+
+### 4. Ask better questions
+
+```bash
+leankg impact src/main.rs --depth 3
+leankg path "Handler" "Repository"
+leankg explain "APIRouter"
+leankg web    # UI at http://localhost:8080
+```
+
+Upgrade anytime:
+
+```bash
+leankg update
+```
 
 ---
 
 ## Why LeanKG?
 
-AI coding assistants default to grep and full-file dumps. That burns tokens and still misses structure: who calls this function, what breaks if it changes, which tests cover it.
+When an AI agent needs to understand code, it usually discovers structure the slow way: grep, glob, and Read — one file at a time — rebuilding call paths and dependencies by hand. That is a pile of tool calls and round-trips before the real work starts.
 
-LeanKG builds a **local knowledge graph** over your repo and serves precise subgraphs to Cursor, Claude Code, OpenCode, and other MCP clients.
+**LeanKG hands the agent the exact subgraph it needs.** It indexes symbols, edges, tests, docs, and (optionally) embeddings into a local knowledge graph, then exposes them over MCP. Instead of crawling the tree, the agent asks one question and gets back callers, dependents, blast radius, and targeted source — **surgical context, not a file-by-file search**.
 
 ```mermaid
 graph LR
-    A[AI Tool] -->|intent| B[LeanKG MCP]
+    A[AI Agent] -->|intent| B[LeanKG MCP]
     B --> C[Graph + Embeddings]
     C -->|targeted context| A
 ```
@@ -51,6 +178,58 @@ graph LR
 | Grep → open many files → large context | Query the graph → minimal, relevant subgraph |
 | No blast-radius awareness | Impact radius with confidence + severity |
 | Keyword-only search | Keyword + semantic (HNSW) + ontology |
+| Stale mental model of the repo | Index + optional `--watch` incremental updates |
+
+> **On cost:** LeanKG’s win on every codebase is **precision and speed** — fewer tool calls, faster answers. Token savings are real and **scale-dependent**: modest on small repos, material on large monorepos multiplied by team-wide agent usage.
+
+---
+
+## Measured Results
+
+Vector-engine A/B gate (100 tasks, synthetic agent workload vs grep/cat-style baseline) — see [`docs/benchmarks/vector_engine_gate_results.json`](docs/benchmarks/vector_engine_gate_results.json):
+
+| Metric | Result | Floor |
+|--------|--------|-------|
+| Token reduction | **−65.0%** | ≥ 60% |
+| Tool-call reduction | **−84.6%** | ≥ 80% |
+| Speedup | **2.50×** | ≥ 2× |
+| 1M SQ8 ANN P95 | **~0.055 ms** | &lt; 50 ms |
+
+Unified agent A/B (19 cases vs grep baseline): **~30% input token savings**, **~3× tokens/result efficiency**.
+
+Load test (~100K nodes):
+
+| Operation | Throughput |
+|-----------|------------|
+| Insert elements | ~57k / sec |
+| Insert relationships | ~67k / sec |
+| Retrieve elements | ~419k / sec |
+| Cache speedup (cold → warm) | 345–461× |
+
+```bash
+cargo build --release
+target/release/leankg benchmark-unified --project .
+cargo bench --bench vector_engine_ab
+```
+
+Full methodology: [docs/benchmark.md](docs/benchmark.md)
+
+---
+
+## Key Features
+
+- **MCP-native** — 85+ tools for search, impact, call graphs, ontology, architecture, and team knowledge
+- **Impact radius** — blast radius before you change code, with confidence and severity
+- **Dependency graph** — `imports`, `calls`, `tested_by`, `http_calls`, `service_calls`, tunnels, and more
+- **Semantic search** — CozoDB HNSW over dense embeddings (`--features embeddings`; included in Docker)
+- **Community detection** — Leiden clusters with per-cluster skill context
+- **Local-first storage** — SQLite by default; RocksDB for multi-project / team deploy
+- **Token-aware payloads** — targeted subgraphs + TOON responses (~40% smaller MCP payloads)
+- **Team knowledge** — incidents, env conflicts, service topology, Obsidian vault sync
+- **Graph export** — Mermaid, DOT, HTML, SVG, GraphML, Neo4j, portable snapshots
+- **Web UI** — force-directed graph, WebGL rendering, community clustering, linked source view
+
+Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs/mcp-tools.md](docs/mcp-tools.md)
 
 ---
 
@@ -68,132 +247,85 @@ graph LR
   <img src="docs/screenshots/obsidian.jpeg" alt="LeanKG Obsidian vault sync" width="90%">
 </p>
 
-More UI details: [docs/web-ui.md](docs/web-ui.md) · Live demo: **https://leankg.onrender.com**
+<p align="center">
+  <em>Obsidian vault sync for team knowledge and notes linked to the graph.</em>
+</p>
+
+UI guide: [docs/web-ui.md](docs/web-ui.md) · Live demo: **https://leankg.onrender.com**
 
 ---
 
-## Installation
+## How It Works
 
-### One-line setup (recommended)
+1. **Extract** — tree-sitter (and language-specific extractors) turn source into `CodeElement` nodes and typed relationships.
+2. **Store** — CozoDB over SQLite (local) or RocksDB (multi-project / Docker) holds the graph + optional HNSW vectors.
+3. **Serve** — MCP stdio (editor agents) or HTTP/SSE (Docker / remote) answers tools like `get_impact_radius`, `search_code`, `semantic_search`, `get_architecture`.
+4. **Refresh** — `--watch` and incremental index keep the graph aligned with the working tree.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
+```text
+Repo ──► Indexer ──► Knowledge Graph ──► MCP Tools ──► AI Agent
+              │              │
+              └─ embeddings ─┘ (optional)
 ```
 
-| Target | What gets installed |
+---
+
+## MCP & Agents
+
+| Agent | Auto-setup | Notes |
+|-------|------------|--------|
+| Cursor | Yes | Per-project install; session hook |
+| Claude Code | Yes | Plugin + full lifecycle hooks |
+| OpenCode | Yes | Plugin + skill |
+| Gemini CLI | Yes | MCP + skill / agent docs |
+| Codex / Antigravity / Kilo | Yes | MCP + skill / agent docs |
+| Docker MCP HTTP | Yes | Shared RocksDB; multi-repo mounts |
+
+```bash
+leankg setup                 # configure MCP + hooks
+leankg mcp-stdio --watch     # local AI tools
+leankg mcp-http --port 9699  # HTTP/SSE for Docker / remote
+```
+
+Setup details: [docs/agentic-instructions.md](docs/agentic-instructions.md)
+
+---
+
+## Language Support
+
+Structural extraction and cross-file edges into one graph (no per-language product setup):
+
+| Family | Languages / formats |
 |--------|---------------------|
-| `cursor` | Binary + MCP + skill + AGENTS.md + session hook |
-| `claude` | Binary + MCP + plugin + skill + CLAUDE.md + hooks |
-| `opencode` | Binary + MCP + plugin + skill + AGENTS.md |
-| `gemini` / `kilo` / `antigravity` | Binary + MCP + skill + agent docs |
-| `docker` | Hub image + index + embed + MCP HTTP (no Rust) |
+| Systems | Rust, Go, C / C++* |
+| JVM | Java, Kotlin |
+| Web | TypeScript, JavaScript |
+| Scripting | Python, Ruby*, PHP* |
+| Mobile | Dart, Android XML |
+| Infra | Terraform, CI YAML |
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- docker
-```
-
-### Cargo / from source
-
-```bash
-cargo install leankg
-# or
-git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG && cargo build --release
-```
-
-### Docker (teams — no Rust toolchain)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
-curl http://localhost:9699/health
-```
-
-Point your MCP client at `http://localhost:9699/mcp`. Multi-project mounts and RocksDB options: [AGENTS.md](AGENTS.md).
-
-> Published Hub tags currently target `linux/arm64`. On `linux/amd64`, build with `docker compose -f docker-compose.rocksdb.yml up --build`.
+\*Depth varies by extractor maturity — see the PRD / roadmap for parity status.
 
 ---
 
-## Quick Start
+## CLI Quick Reference
 
 ```bash
 leankg init
 leankg index ./src
 leankg status
-leankg impact src/main.rs --depth 3
-leankg web                          # UI at http://localhost:8080
-leankg mcp-stdio --watch            # local AI tools
-# or
-leankg mcp-http --port 9699         # HTTP/SSE for Docker / remote clients
-```
-
-Useful extras:
-
-```bash
-leankg path "FastAPI" "ModelField"  # shortest path between symbols
-leankg explain "APIRouter"          # definition, cluster, neighbors
-leankg detect-clusters              # functional communities (Leiden)
-leankg embed --init && leankg embed # semantic search (needs --features embeddings)
+leankg impact <file> --depth 3
+leankg path <from> <to>
+leankg explain <symbol>
+leankg detect-clusters
+leankg embed --init && leankg embed   # needs --features embeddings
+leankg web
+leankg mcp-stdio --watch
+leankg mcp-http --port 9699
+leankg update
 ```
 
 Full CLI: [docs/cli-reference.md](docs/cli-reference.md)
-
----
-
-## Features
-
-- **MCP-native** — 85+ tools for search, impact, call graphs, ontology, and team knowledge
-- **Impact radius** — blast radius before you change code, with confidence and severity
-- **Dependency graph** — `IMPORTS`, `CALLS`, `TESTED_BY`, `HTTP_CALLS`, tunnels, and more
-- **Semantic search** — CozoDB HNSW over dense embeddings (`--features embeddings`; Docker includes it). MCP probe results: [docs/semantic-search-mcp-verification-2026-07-17.md](docs/semantic-search-mcp-verification-2026-07-17.md)
-- **Community detection** — Leiden clusters with per-cluster skill context
-- **Multi-language** — Go, TypeScript, Python, Rust, Java, Kotlin, Dart, Android XML, Terraform, CI YAML
-- **Local-first** — SQLite by default; RocksDB for multi-project / team deploy
-- **Token-aware** — targeted subgraphs + TOON responses (~40% smaller MCP payloads)
-- **Team knowledge** — incidents, env conflicts, service topology, Obsidian sync
-- **Graph export** — Mermaid, DOT, HTML, SVG, GraphML, Neo4j, portable snapshots
-
-Architecture and data model: [docs/architecture.md](docs/architecture.md)
-
----
-
-## MCP & AI Tools
-
-| Tool | Auto-setup | Notes |
-|------|------------|--------|
-| Cursor | Yes | Per-project install; session hook |
-| Claude Code | Yes | Plugin + full lifecycle hooks |
-| OpenCode | Yes | Plugin + skill |
-| Gemini CLI / Antigravity / Kilo / Codex | Yes | MCP + skill / agent docs |
-| Docker MCP HTTP | Yes | Shared RocksDB; multi-repo mounts |
-
-```bash
-leankg setup    # configure MCP + Claude hooks
-```
-
-Setup details: [docs/agentic-instructions.md](docs/agentic-instructions.md) · Tool catalog: [docs/mcp-tools.md](docs/mcp-tools.md)
-
----
-
-## Performance
-
-Load test (~100K nodes):
-
-| Operation | Throughput |
-|-----------|------------|
-| Insert elements | ~57k / sec |
-| Insert relationships | ~67k / sec |
-| Retrieve elements | ~419k / sec |
-| Cache speedup (cold → warm) | 345–461× |
-
-Unified A/B (19 cases vs grep baseline): **~30% input token savings**, **~3× tokens/result efficiency**.
-
-```bash
-cargo build --release
-target/release/leankg benchmark-unified --project .
-```
-
-Reports: [docs/benchmark.md](docs/benchmark.md)
 
 ---
 
@@ -206,21 +338,11 @@ Reports: [docs/benchmark.md](docs/benchmark.md)
 | [docs/agentic-instructions.md](docs/agentic-instructions.md) | AI tool setup & auto-trigger |
 | [docs/architecture.md](docs/architecture.md) | System design & data model |
 | [docs/web-ui.md](docs/web-ui.md) | Web UI |
+| [docs/benchmark.md](docs/benchmark.md) | Benchmark methodology |
 | [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings / HNSW internals |
-| [docs/semantic-search-mcp-verification-2026-07-17.md](docs/semantic-search-mcp-verification-2026-07-17.md) | MCP smoke probe of the semantic-search + ontology pipeline |
 | [INSTRUCTION.md](INSTRUCTION.md) | Memory tuning & ops playbook |
 | [docs/roadmap.md](docs/roadmap.md) | Roadmap |
 | [AGENTS.md](AGENTS.md) | Agent / Docker deployment notes |
-
----
-
-## Update
-
-```bash
-leankg update
-# or
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- update
-```
 
 ---
 
@@ -231,14 +353,15 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 | High RAM on macOS | `export LEANKG_MMAP_SIZE=134217728` and `LEANKG_CACHE_MAX_TOKENS=100000` — see [INSTRUCTION.md](INSTRUCTION.md) |
 | `database is locked` | `leankg proc kill` (stop web/MCP before re-index) |
 | Embeddings / cold embed | [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) |
+| MCP “not initialized” in Docker | Pass **container** `project=` paths (e.g. `/workspace`), not the host Mac path — see [AGENTS.md](AGENTS.md) |
 
 ---
 
 ## Requirements
 
-- Rust 1.75+ (for building from source)
-- macOS or Linux
-- Docker optional (recommended for teams)
+- Rust **1.75+** (only when building from source)
+- **macOS** or **Linux**
+- Docker optional (recommended for teams / multi-repo)
 
 ---
 
