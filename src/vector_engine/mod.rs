@@ -43,3 +43,5 @@ pub use tier1::{
 };
 pub use tier2::{dot_i8_scalar, quantize_sq8, Sq8Cache};
 pub use tier3::{FlatPayloadFile, PayloadRecord, RECORD_HEADER_SIZE};
+
+mod factory_test;
