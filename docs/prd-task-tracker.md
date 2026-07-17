@@ -1,11 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-17 (vector-engine core on feature/vector-engine)  
+**Last synced:** 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`; crate **0.19.0**; + **US-SEM / FR-SEM**)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
-> **P0 = v3.7 Vector Engine** (latest PRD) — highest priority. Do not start P1+ until P0 Must Have core is underway/gated.  
+> **P0 = v3.7 Vector Engine** — **COMPLETE** on PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (unit + e2e + bench + CI fixes). Awaiting merge; next focus: **P1**.  
+> **Semantic MCP live probe GREEN** — enhancements are **P2/P3** (`US-SEM-*` / `FR-SEM-*`); do not displace P1 Must Have.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -14,8 +15,8 @@
 
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
-| **P0** | v3.7 Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`, §8.4 gate) | **Now — current sprint focus** |
-| **P1** | Other Must Have (LSP typed edges, Graphify Must, etc.) | After P0 core path is solid |
+| **P0** | v3.7 Optimized Local-First Vector Graph Engine (`US-VE-*`, `FR-VE-*`, §8.4 gate) | **Complete on PR #80 — merge, then wire retrieval cutover / start P1** |
+| **P1** | Other Must Have (LSP typed edges, Graphify Must, etc.) | After P0 gate path is solid |
 | **P2** | Should Have | Next |
 | **P3** | Could Have / aspirational `OPEN` | Backlog |
 
@@ -38,74 +39,51 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **386** |
-| NOT_DONE | 82 |
-| PENDING | 20 |
+| **Total tracked** | **396** |
+| NOT_DONE | 60 |
+| PENDING | 16 |
 | PARTIAL | 12 |
 | OPEN | 1 |
-| DONE | 268 |
+| DONE | 304 |
 | WONT_DO | 3 |
-| Open work | **115** |
+| Open work | **89** |
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 21 |
+| P0 | 0 |
 | P1 | 23 |
-| P2 | 51 |
-| P3 | 5 |
+| P2 | 59 |
+| P3 | 7 |
 
 | Kind | Count |
 |------|------:|
-| FR | 200 |
-| Release | 50 |
-| User Story | 136 |
+| FR | 205 |
+| Release | 51 |
+| User Story | 140 |
 
 ---
 
 ## Active session — open work (sorted by priority)
 
-**Single ordered queue.** Work top → bottom. P0 Vector Engine first.
+**Single ordered queue.** Work top → bottom. P0 Vector Engine gate is **DONE**; continue with P1.
 
-> **2026-07-17:** Vector engine core on `feature/vector-engine`. FR-VE-ABS..TEST-* DONE. A/B unit suite (≥100 tasks) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL for default cutover.
+> **2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`):** P0 Vector Engine **COMPLETE** (awaiting merge). Coverage: **56** unit + **6** e2e (+ full gate); `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json); CI `cargo test --lib` green after i8 overflow + RSS **delta_ok** fixes. **A/B:** token **−65.0%**, tool **−84.6%**, speedup **2.50×**. **ANN 1M P95≈0.055ms**; lean RSS abs≈**65MB** / warm delta≈**58MB**; TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`. README product landing polish. Cozo remains runtime default until callers honor `preferred_ann_backend()`. **Next after merge: P1.**
+>
+> **Same day — semantic MCP live probe GREEN** ([`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)). Pipeline OK; backlog `US-SEM-*` / `FR-SEM-*` / `REL-051` added as **P2/P3 later enhancements** (token honesty, ontology budgets, HTTP resilience, live smoke, optional diversity).
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-VE-01` | User Story | **PARTIAL** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-02` | User Story | **PARTIAL** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-03` | User Story | **PARTIAL** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-04` | User Story | **PARTIAL** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-05` | User Story | **PARTIAL** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-07` | User Story | **PARTIAL** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-factory tests, so con… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `FR-VE-ABS` | FR | **DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEngine') selected from e… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-DW` | FR | **DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Update RAM SQ8 cache**.… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-REC` | FR | **DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling pointers**, incomplete r… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-HNSW` | FR | **DONE** | Must Have | HNSW 'selectNeighborsHeuristic' with low **M ∈ [12, 16]**; raise 'efConstruction' to protect recall; document … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-MEM` | FR | **DONE** | Must Have | Auto-tune RocksDB block cache from cgroups / 'sysinfo' available RAM (2GB survival → cloud 50–80%). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-SIMD` | FR | **DONE** | Must Have | Runtime SIMD dispatch ('is_x86_feature_detected!' / 'is_aarch64_feature_detected!') → AVX-512 / AVX2 / NEON / … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-THREADS` | FR | **DONE** | Must Have | Dynamic 'rayon' pool — leave **2 cores free** for OS/IDE on Local; utilize full machine on Cloud. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T1` | FR | **DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW adjacency lists. Local… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T2` | FR | **DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN distance via SIMD; **no … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T3` | FR | **DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. Read **once** during … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-SIMD` | FR | **DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-IO` | FR | **PARTIAL** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-OOM` | FR | **PARTIAL** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-Q` | FR | **PARTIAL** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-RECALL` | FR | **PARTIAL** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `REL-044` | Release | **PARTIAL** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-045` | Release | **PARTIAL** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-046` | Release | **PARTIAL** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-047` | Release | **PARTIAL** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-048` | Release | **PARTIAL** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-050` | Release | **PARTIAL** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `FR-VE-BENCH-AB` | FR | **PARTIAL** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `US-VE-06` | User Story | **PARTIAL** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
+| **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify with 'resolution_met… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
+| **P1** | `US-MP-02` | User Story | **PARTIAL** | Must Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok), L1 critical facts (… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P1** | `US-MP-08` | User Story | **PARTIAL** | Must Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'contains' edges (dir→dir,… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P1** | `US-CBM-A1` | User Story | **PENDING** | Must Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-CBM-A4` | User Story | **PENDING** | Must Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-LSP-A` | FR | **NOT_DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeScript / Python / Rust … | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
 | **P1** | `FR-LSP-B` | FR | **NOT_DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / 'typescript-language-s… | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
@@ -118,17 +96,15 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P1** | `REL-041` | Release | **NOT_DONE** | Must Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-042` | Release | **NOT_DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-043` | Release | **NOT_DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `US-CBM-A1` | User Story | **PENDING** | Must Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-CBM-A4` | User Story | **PENDING** | Must Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
-| **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify with 'resolution_met… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
-| **P1** | `US-MP-02` | User Story | **PARTIAL** | Must Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok), L1 critical facts (… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P1** | `US-MP-08` | User Story | **PARTIAL** | Must Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'contains' edges (dir→dir,… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-GF-06` | User Story | **PARTIAL** | Should Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions, confidence summary | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
+| **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-C3` | User Story | **PENDING** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E1` | User Story | **PENDING** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E2` | User Story | **PENDING** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E3` | User Story | **PENDING** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E4` | User Story | **PENDING** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decisions, preferences, m… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
@@ -171,20 +147,21 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
-| **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-C3` | User Story | **PENDING** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E1` | User Story | **PENDING** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E2` | User Story | **PENDING** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E3` | User Story | **PENDING** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E4` | User Story | **PENDING** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decisions, preferences, m… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-GF-06` | User Story | **PARTIAL** | Should Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions, confidence summary | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
-| **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach ≥3× when truncated | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, target 2k–4k) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-listener hygiene) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-04` | FR | **NOT_DONE** | Should Have | Formal live MCP semantic smoke checklist (Docker project=/workspace) as release complement to cargo embeddings tests | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `REL-051` | Release | **NOT_DONE** | Should Have | Live semantic MCP smoke executed (or waived with reason) alongside embeddings cargo suite | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Apex, …) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GF-12` | User Story | **PARTIAL** | Could Have | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app code) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
+| **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. **Approach:** improve … | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
+| **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 
 ---
 
@@ -192,42 +169,29 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-VE-01` | User Story | **PARTIAL** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-02` | User Story | **PARTIAL** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-03` | User Story | **PARTIAL** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-04` | User Story | **PARTIAL** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-05` | User Story | **PARTIAL** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-07` | User Story | **PARTIAL** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-factory tests, so con… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `FR-VE-ABS` | FR | **DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEngine') selected from e… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-DW` | FR | **DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Update RAM SQ8 cache**.… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-REC` | FR | **DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling pointers**, incomplete r… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-HNSW` | FR | **DONE** | Must Have | HNSW 'selectNeighborsHeuristic' with low **M ∈ [12, 16]**; raise 'efConstruction' to protect recall; document … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-MEM` | FR | **DONE** | Must Have | Auto-tune RocksDB block cache from cgroups / 'sysinfo' available RAM (2GB survival → cloud 50–80%). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-SIMD` | FR | **DONE** | Must Have | Runtime SIMD dispatch ('is_x86_feature_detected!' / 'is_aarch64_feature_detected!') → AVX-512 / AVX2 / NEON / … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-THREADS` | FR | **DONE** | Must Have | Dynamic 'rayon' pool — leave **2 cores free** for OS/IDE on Local; utilize full machine on Cloud. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T1` | FR | **DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW adjacency lists. Local… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T2` | FR | **DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN distance via SIMD; **no … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T3` | FR | **DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. Read **once** during … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-SIMD` | FR | **DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-IO` | FR | **PARTIAL** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-OOM` | FR | **PARTIAL** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-Q` | FR | **PARTIAL** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-RECALL` | FR | **PARTIAL** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `REL-044` | Release | **PARTIAL** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-045` | Release | **PARTIAL** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-046` | Release | **PARTIAL** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-047` | Release | **PARTIAL** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-048` | Release | **PARTIAL** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-050` | Release | **PARTIAL** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `FR-VE-BENCH-AB` | FR | **PARTIAL** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `US-VE-06` | User Story | **PARTIAL** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-01` | User Story | **DONE** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-02` | User Story | **DONE** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-08` | User Story | **DONE** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `FR-VE-BENCH-IO` | FR | **DONE** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-OOM` | FR | **DONE** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-Q` | FR | **DONE** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-RECALL` | FR | **DONE** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `REL-048` | Release | **DONE** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-049` | Release | **DONE** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-050` | Release | **DONE** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `FR-VE-BENCH-AB` | FR | **DONE** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-GATE` | FR | **DONE** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
+| **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify with 'resolution_met… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
+| **P1** | `US-MP-02` | User Story | **PARTIAL** | Must Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok), L1 critical facts (… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P1** | `US-MP-08` | User Story | **PARTIAL** | Must Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'contains' edges (dir→dir,… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P1** | `US-CBM-A1` | User Story | **PENDING** | Must Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-CBM-A4` | User Story | **PENDING** | Must Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-LSP-A` | FR | **NOT_DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeScript / Python / Rust … | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
 | **P1** | `FR-LSP-B` | FR | **NOT_DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / 'typescript-language-s… | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
@@ -240,17 +204,15 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P1** | `REL-041` | Release | **NOT_DONE** | Must Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-042` | Release | **NOT_DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-043` | Release | **NOT_DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `US-CBM-A1` | User Story | **PENDING** | Must Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-CBM-A4` | User Story | **PENDING** | Must Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
-| **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify with 'resolution_met… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
-| **P1** | `US-MP-02` | User Story | **PARTIAL** | Must Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok), L1 critical facts (… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P1** | `US-MP-08` | User Story | **PARTIAL** | Must Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'contains' edges (dir→dir,… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-GF-06` | User Story | **PARTIAL** | Should Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions, confidence summary | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
+| **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-C3` | User Story | **PENDING** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E1` | User Story | **PENDING** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E2` | User Story | **PENDING** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E3` | User Story | **PENDING** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E4` | User Story | **PENDING** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decisions, preferences, m… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
@@ -293,20 +255,45 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
-| **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-C3` | User Story | **PENDING** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E1` | User Story | **PENDING** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E2` | User Story | **PENDING** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E3` | User Story | **PENDING** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E4` | User Story | **PENDING** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decisions, preferences, m… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-GF-06` | User Story | **PARTIAL** | Should Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions, confidence summary | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
-| **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach ≥3× when truncated | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, target 2k–4k) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-listener hygiene) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-04` | FR | **NOT_DONE** | Should Have | Formal live MCP semantic smoke checklist (Docker project=/workspace) as release complement to cargo embeddings tests | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `REL-051` | Release | **NOT_DONE** | Should Have | Live semantic MCP smoke executed (or waived with reason) alongside embeddings cargo suite | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Apex, …) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GF-12` | User Story | **PARTIAL** | Could Have | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app code) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
+| **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. **Approach:** improve … | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
+| **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P0** | `US-VE-03` | User Story | **DONE** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-04` | User Story | **DONE** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-05` | User Story | **DONE** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-07` | User Story | **DONE** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-factory tests, so con… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `FR-VE-ABS` | FR | **DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEngine') selected from e… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-DW` | FR | **DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Update RAM SQ8 cache**.… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-REC` | FR | **DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling pointers**, incomplete r… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-HNSW` | FR | **DONE** | Must Have | HNSW 'selectNeighborsHeuristic' with low **M ∈ [12, 16]**; raise 'efConstruction' to protect recall; document … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-MEM` | FR | **DONE** | Must Have | Auto-tune RocksDB block cache from cgroups / 'sysinfo' available RAM (2GB survival → cloud 50–80%). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-SIMD` | FR | **DONE** | Must Have | Runtime SIMD dispatch ('is_x86_feature_detected!' / 'is_aarch64_feature_detected!') → AVX-512 / AVX2 / NEON / … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-THREADS` | FR | **DONE** | Must Have | Dynamic 'rayon' pool — leave **2 cores free** for OS/IDE on Local; utilize full machine on Cloud. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T1` | FR | **DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW adjacency lists. Local… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T2` | FR | **DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN distance via SIMD; **no … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T3` | FR | **DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. Read **once** during … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-SIMD` | FR | **DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `REL-044` | Release | **DONE** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-045` | Release | **DONE** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-046` | Release | **DONE** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `REL-047` | Release | **DONE** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (COMPLETE on PR #80) |
+| **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `US-VE-06` | User Story | **DONE** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P1** | `FR-B03` | FR | **DONE** | Must Have | LSP bridge infrastructure for Go (could read 'gopls' textDocument/definition/references) — DONE infra ('534cd7… | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-B04` | FR | **DONE** | Must Have | LSP bridge infrastructure for TS/TSX — DONE infra; actual 'typed' edge production PENDING | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `REL-001` | Release | **DONE** | Must Have | Code indexing works for 10 languages | 8.1 MVP (v1.x) - COMPLETED |
@@ -568,6 +555,9 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P2** | `US-V2-06` | User Story | **DONE** | Should Have | Semantic search natural language → graph nodes | 3.12 Team Knowledge Infrastructure (US-V2) — merged from 'pr… |
 | **P2** | `US-V2-08` | User Story | **DONE** | Should Have | Scheduled DB vacuum on long-lived MCP servers | 3.12 Team Knowledge Infrastructure (US-V2) — merged from 'pr… |
 | **P2** | `US-V2-09` | User Story | **DONE** | Should Have | Ontology 'kg_self_test' + HTTP startup self-test WARN | 3.12 Team Knowledge Infrastructure (US-V2) — merged from 'pr… |
+| **P2** | `FR-BENCH-A` | FR | **WONT_DO** | Should Have | CBM clone quality head-to-head — **Won't Do** (v3.6.2) | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
+| **P2** | `FR-HNSW-A` | FR | **WONT_DO** | Should Have | Remove custom MinHash/LSH — delete 'src/minhash.rs', drop 'mod minhash' from 'lib.rs' / 'main.rs', remove 'fin… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
+| **P2** | `FR-LSH-A..F` | FR | **WONT_DO** | Should Have | AST MinHash / bucket guards / signature K env — **Won't Do** (v3.6.2) | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
 | **P3** | `US-CBM-B7` | User Story | **DONE** | Could Have | Clone / near-duplicate detection ('find_clones', 'similar_to') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `US-GF-11` | User Story | **DONE** | Could Have | Portable graph snapshot export + optional git merge driver for team-committed graph artifacts | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GN-07` | User Story | **DONE** | Could Have | Cluster-level SKILL.md generation | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
@@ -575,16 +565,20 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P3** | `US-INF-08` | User Story | **DONE** | Could Have | Wiki generation from code structure | 3.6 Infrastructure Stories (US-INF-01 to US-INF-10) |
 | **P3** | `US-LANG-03` | User Story | **DONE** | Could Have | XML parser (tree-sitter-xml) with child-elements + attributes | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
 | **P3** | `US-MP-06` | User Story | **DONE** | Could Have | Cross-Domain Tunnels — auto-link clusters across projects/modules that share the same domain concept (e.g., "a… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `FR-BENCH-A` | FR | **WONT_DO** | Should Have | CBM clone quality head-to-head — **Won't Do** (v3.6.2) | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
-| **P2** | `FR-HNSW-A` | FR | **WONT_DO** | Should Have | Remove custom MinHash/LSH — delete 'src/minhash.rs', drop 'mod minhash' from 'lib.rs' / 'main.rs', remove 'fin… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
-| **P2** | `FR-LSH-A..F` | FR | **WONT_DO** | Should Have | AST MinHash / bucket guards / signature K env — **Won't Do** (v3.6.2) | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
 
 ---
 
-## How to update
+## Sync notes
 
-1. Set `focus` (`P0`–`P3`) and `priority` (Must/Should/Could) when adding IDs.
-2. Keep **latest PRD epic** as `P0` until its gate passes, then promote the next epic to P0.
-3. Mirror narrative/AC in `docs/prd.md` — never put status tables back in the PRD.
+- **PR:** [#80](https://github.com/FreePeak/LeanKG/pull/80) — `feature/vector-engine-gate` (crate **0.19.0**); **awaiting merge**.
+- **Evidence:** [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json) from `cargo bench --bench vector_engine_ab`.
+- **Tests:** `cargo test --release --lib -- vector_engine`; `cargo test --release --test vector_engine_e2e`; full gate: `LEANKG_VE_GATE_FULL=1 … --ignored`; CI-sim: `cargo test --lib` (debug).
+- **CI hardening on PR:** i8 synth overflow (`587eefe`); idle RSS warm-**delta** gate for Linux debug lib tests (`6fb6c95`).
+- **A/B (measured):** token −65.0%, tool −84.6%, speedup 2.50× @ 100 tasks (floors 60%/80%/2×).
+- **US-VE-01 note:** Product absolute idle &lt;150MB on lean process; unit/e2e assert `delta_ok` because shared debug `cargo test --lib` baseline alone can exceed ~100MB on CI.
+- **Shipped default ANN:** Cozo `::hnsw` until callers use `preferred_ann_backend()` after full gate.
+- **Docs:** README product landing polish (`85c1632`).
+- **Semantic MCP live probe (GREEN):** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md) → backlog `US-SEM-01..04`, `FR-SEM-01..05`, `REL-051` (P2/P3 later; do not displace P1).
+- Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Sorted by Focus (P0=v3.7 VE highest) → MoSCoW → build order → id.*
+*Regenerated: 2026-07-17 — synced to PR #80 current tip.*
