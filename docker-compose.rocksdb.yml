@@ -28,7 +28,9 @@ services:
       LEANKG_EMBED_MODEL: "bge-q"
       LEANKG_EMBED_MAX_SEQ: "128"
       LEANKG_EMBED_MAX_BLOB_CHARS: "500"
-      LEANKG_EMBED_MAX_MB: "3072"
+      # Soft pause budget must fit under mem_limit 2g (Local survival).
+      # Offline full rebuild uses docker-compose.embed.yml (higher mem_limit).
+      LEANKG_EMBED_MAX_MB: "512"
       LEANKG_EMBED_BACKGROUND_WORKERS: "1"
       LEANKG_EMBED_BACKGROUND_BATCH: "32"
       # `LEANKG_MCP_PROJECT` and `LEANKG_PROJECT_DIRS` are intentionally
@@ -57,10 +59,11 @@ services:
       # Persist ONNX / tokenizer cache across restarts (Embedder + DirectEmbedder).
       - leankg_models:/root/.cache/leankg
     working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
-    # Resource limits — previously unset, which let the container consume the
-    # full host memory and get OOM-killed (exit 137). Tune to your host.
-    mem_limit: 6g
-    mem_reservation: 4g
+    # Resource limits — LocalEngine survival envelope is 2GB hard (PRD §5.14 /
+    # FR-VE-RT-MEM / FR-VE-BENCH-OOM). Offline cold embed stays on
+    # docker-compose.embed.yml with a higher mem_limit.
+    mem_limit: 2g
+    mem_reservation: 1g
     cpus: "4"
     pids_limit: 4096
     restart: unless-stopped

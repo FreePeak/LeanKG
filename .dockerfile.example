@@ -38,14 +38,16 @@ LEANKG_MCP_PROJECT=/workspace
 LEANKG_PROJECT_DIRS=/workspace
 
 # Embed (optional overrides — compose/Dockerfile already set safe defaults).
-# Background MCP path stays light; raise MAX_MB + workers only if mem_limit ≥ 6g.
+# Local MCP mem_limit is 2g (PRD Local survival). Offline embed job keeps a
+# higher limit in docker-compose.embed.yml / LEANKG_EMBED_MEMORY.
+# Raise MAX_MB + workers only on the offline embed profile, not MCP.
 # LEANKG_EMBED_ON_BOOT=0
 # LEANKG_EMBED_BACKGROUND=1
 # LEANKG_EMBED_FAST=1
 # LEANKG_EMBED_MODEL=bge-q
 # LEANKG_EMBED_MAX_SEQ=128
 # LEANKG_EMBED_MAX_BLOB_CHARS=500
-# LEANKG_EMBED_MAX_MB=3072
+# LEANKG_EMBED_MAX_MB=512
 # LEANKG_EMBED_BACKGROUND_WORKERS=1
 # LEANKG_EMBED_BACKGROUND_BATCH=32
 
