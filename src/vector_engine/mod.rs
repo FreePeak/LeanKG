@@ -12,6 +12,7 @@ pub mod dual_write;
 pub mod engine;
 pub mod hnsw;
 pub mod memory;
+pub mod recovery;
 pub mod simd;
 pub mod threads;
 pub mod tier1;
@@ -31,6 +32,7 @@ pub use memory::{
     auto_tune_block_cache, available_memory_bytes, plan_block_cache, plan_under_2gb_cgroup,
     MemoryPlan, LOCAL_SURVIVAL_CAP_BYTES,
 };
+pub use recovery::{assert_no_dangling_pointers, recover_and_list};
 pub use simd::{detect_simd, dot_i8, dot_i8_auto, SimdKind};
 pub use threads::{auto_tune_threads, build_rayon_pool, plan_threads, ThreadPlan};
 pub use tier1::{
