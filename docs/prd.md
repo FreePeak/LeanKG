@@ -11,11 +11,11 @@
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **CURRENT P0 (highest):** **Day-2 embed resume** — whenever LeanKG turns embedding on in Docker (standalone `embed --wait`, `LEANKG_EMBED_BACKGROUND=1`, `LEANKG_EMBED_ON_BOOT=1`, `LEANKG_DOCKER_SETUP=1`, `docker-up.sh`), it **must resume from existing RocksDB vectors/`embedding_state`**. **Cold/fresh run only when no embed data exists** for that project. Second+ runs = delta only; never wipe by default. Sections **3.15** / **5.16** / **8.5**. Tracker Focus=`P0` = `US-EMBED-*` / `FR-EMBED-RESUME-*` / `REL-052`. Reopens gap vs claimed-complete `FR-HNSW-E`.
+> **CURRENT P0 (highest):** **Day-2 embed resume** — core FRs DONE on `feature/embed-resume-day2` / PR [#81](https://github.com/FreePeak/LeanKG/pull/81). Remaining PARTIAL: mega-graph MCP auto-index OOM ops (`FR-MG-AUTO-01`, `LEANKG_SKIP_FRESHNESS_CHECK`) + optional live Docker smoke.
 >
-> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`, crate 0.19.0). Evidence: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). Merge when ready; **do not** start new VE work ahead of embed-resume.
+> **Semantic MCP live probe 2026-07-18 GREEN** ([`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md)): 3,271 vectors; no embed-resume regressions. Follow-ups: **FR-SEM-06** path filter (embed/assets + benchmark noise) — **in progress this sprint**; FR-SEM-01..03 remain P2.
 >
-> **Semantic MCP live probe GREEN** (2026-07-17): [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Enhancements remain **P2/P3** (`US-SEM-*` / `FR-SEM-*`) — do not displace P0 embed-resume or P1 Must Have.
+> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80). Do **not** start new VE work ahead of closing embed-resume PARTIAL + FR-SEM-06.
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -26,6 +26,23 @@
 ---
 
 ## Changelog
+
+### v3.7.3-sem-filter-ops - Live MCP verification + ops fixes (2026-07-18)
+
+> **Evidence:**
+> - [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md) — Docker MCP `project=/workspace`, **3,271** vectors, semantic/kg tools GREEN; **no regressions** from embed-resume. PARTIAL: Probe G (minified `src/embed/assets/*.js`) + Probe H (`src/benchmark/*` verdict noise).
+> - [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md) — cold embed + live vector counts (`/workspace` 3,271; large side mount **146,977**; `/workspace-freepeak` 14,110); semantic_search OK on all three after MCP `mem_limit: 6g` / `mem_reservation: 3g` / `cpus: "6"` + `LEANKG_AUTO_INDEX=0`.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-SEM-05 / FR-SEM-06 | Must Have | **P1** | Drop `embed/assets/` always; gate `src/benchmark/` unless query says "benchmark" |
+| FR-SEM-04 / REL-051 | Should Have | P2 → **DONE** | Live semantic smoke executed 2026-07-18 (complement to cargo suite) |
+| FR-MG-AUTO-01 | Must Have | **P1** | `LEANKG_SKIP_FRESHNESS_CHECK=1` skips MCP auto-index (mega-graph OOM escape); document RocksDB mtime mismatch |
+| FR-OPS-EMBED-CPU | Must Have | **P1** | Embed + MCP compose: `cpus: "6"`, `mem_reservation: 3g`; MCP `mem_limit: 6g` for mega-graphs (~147k vectors) |
+| US-EMBED-04 / FR-EMBED-RESUME-05/06 / REL-052 | Must Have | P0 | Close further with 3-workspace + MCP vector-count evidence |
+
+**New content:** Section **3.14** US-SEM-05; Section **5.15** FR-SEM-06; Section **5.17** FR-MG-AUTO-01 + FR-OPS-EMBED-CPU.
 
 ### v3.7.2-embed-resume - Day-2 embed resume is P0 (2026-07-18)
 
@@ -979,6 +996,16 @@ Palace Mapping:
 - **Given** a query whose top-10 would otherwise be ≥70% one file (as in the MCP-dispatch probe), **When** diversity mode is on (default or flag), **Then** at least N distinct `file_path` values appear in top-k (N configurable; default ≥3 for k=10).
 - **Given** diversity mode off, **When** the same query runs, **Then** ranking matches current HNSW+rerank order (no regression).
 
+#### US-SEM-05 — Exclude UI-bundle / benchmark noise from semantic seeds (Must Have)
+
+**As an** AI agent, **I want** `semantic_search` to ignore minified embedded UI assets and (by default) benchmark helpers, **so that** HNSW / scoring queries return readable Rust retrieval symbols instead of single-letter JS or `verdict` helpers.
+
+**Acceptance criteria:**
+- **Given** Probe G query (`HNSW approximate nearest neighbor vector index`), **When** `semantic_search` runs, **Then** top-k does **not** include `src/embed/assets/*.js` (or any `embed/assets/` path).
+- **Given** Probe H query (`vector similarity scoring`) without the word "benchmark", **When** `semantic_search` runs, **Then** `src/benchmark/**` candidates are filtered before rerank.
+- **Given** a query containing `"benchmark"`, **When** `semantic_search` runs, **Then** `src/benchmark/**` may appear (gated keep).
+- **Evidence baseline:** [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md) Probes G/H.
+
 ### 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 — **P0 CURRENT**
 
 > **Trigger:** Turning embedding on (standalone Docker `embed --wait`, or Docker MCP with `LEANKG_EMBED_BACKGROUND` / boot / setup) against a persisted RocksDB volume looks like a full cold rebuild — unacceptable CPU/RAM/time on mega-graphs.
@@ -1219,9 +1246,10 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-SEM-01 | Should Have | Dual token accounting: top-level delivered `tokens` + `_token_budget.{max,actual,truncated}` always coherent; docs/skills teach 3–4× budget when `truncated: true` |
 | FR-SEM-02 | Should Have | Explicit `max_tokens_for_tool` for `concept_search` and `kg_semantic_context` (≥ sibling `kg_*`, target 2k–4k); stop silent default-1000 truncation for those tools |
 | FR-SEM-03 | Should Have | MCP HTTP resilience for long read-only semantic tools — document one-shot client retry; harden keep-alive / stale-listener ops path (see MCP HTTP stability analysis) |
-| FR-SEM-04 | Should Have | Formal **live MCP semantic smoke** checklist (Docker `project=/workspace`) as release *complement*; template = verification doc 2026-07-17 |
+| FR-SEM-04 | Should Have | Formal **live MCP semantic smoke** checklist (Docker `project=/workspace`) as release *complement*; template = verification docs 2026-07-17 / **2026-07-18** |
 | FR-SEM-05 | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank so top-k is not ≥70% one file by default collapse |
-| REL-051 | Should Have | Release note: live semantic smoke executed (or waived with reason) alongside embeddings cargo suite |
+| FR-SEM-06 | Must Have | Path filter in `FilterPolicy`: always drop `embed/assets/`; query-gate `src/benchmark/` unless query contains "benchmark" (Probes G/H) |
+| REL-051 | Should Have | Release note: live semantic smoke executed (or waived with reason) alongside embeddings cargo suite — **DONE** 2026-07-18 |
 
 **Won't Do (this track):**
 - Replacing Cozo HNSW default before FR-VE-GATE callers honor LocalEngine
@@ -1257,6 +1285,19 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - Reopening Redis/FalkorDB as cold-write accelerators
 - Blocking MCP boot on embed (FR-EMBED-R1 still stands)
 - Treating “embed turned on in Docker” as a signal to wipe or full-rebuild
+
+### 5.17 Mega-graph MCP auto-index + embed ops (v3.7.3)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-MG-AUTO-*` / `FR-OPS-EMBED-*`.
+>
+> **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md) — large multi-repo mounts trigger MCP incremental reindex on every start (RocksDB writes do not bump `.leankg/leankg.db` mtime), OOMs under 2g `mem_limit`, and flake semantic HTTP. `docker-compose.embed.yml` `cpus: "6"` failed on 5-vCPU hosts.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-MG-AUTO-01 | Must Have | Honor `LEANKG_SKIP_FRESHNESS_CHECK=1` in MCP `auto_index_if_needed` (no wipe). Document ops: `LEANKG_AUTO_INDEX=0`, `auto_index_on_start: false`, MCP `mem_limit: 6g` / `mem_reservation: 3g` / `cpus: "6"` for mega-graphs (~147k vectors). Follow-up: RocksDB manifest mtime vs `leankg.db` |
+| FR-OPS-EMBED-CPU | Must Have | `docker-compose.embed.yml`: `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 10g`. MCP `docker-compose.rocksdb.yml`: multi-project default `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 6g` (override down for single-project Local 2g KPI) |
+
+**Won't Do:** `LEANKG_FORCE_REINDEX=1` as the fix for stale mega-graphs (wipes data).
 
 ---
 

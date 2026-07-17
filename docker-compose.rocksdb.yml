@@ -59,12 +59,14 @@ services:
       # Persist ONNX / tokenizer cache across restarts (Embedder + DirectEmbedder).
       - leankg_models:/root/.cache/leankg
     working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
-    # Resource limits — LocalEngine survival envelope is 2GB hard (PRD §5.14 /
-    # FR-VE-RT-MEM / FR-VE-BENCH-OOM). Offline cold embed stays on
-    # docker-compose.embed.yml with a higher mem_limit.
-    mem_limit: 2g
-    mem_reservation: 1g
-    cpus: "4"
+    # Resource limits — multi-project / mega-graph MCP envelope (embed report
+    # 2026-07-17/18): ~147k vectors OOMed under 2g during semantic_search.
+    # Defaults: mem_limit 6g, mem_reservation 3g, cpus 6. Single-project
+    # LocalEngine survival KPI remains 2g (PRD §5.14) — lower via override
+    # when not serving large side mounts.
+    mem_limit: 6g
+    mem_reservation: 3g
+    cpus: "6"
     pids_limit: 4096
     restart: unless-stopped
 

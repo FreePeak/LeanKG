@@ -1343,6 +1343,17 @@ impl MCPServer {
             return Ok(());
         }
 
+        // FR-MG-AUTO-01: operators can skip freshness reindex without wiping
+        // data (mega-graph Docker OOM escape hatch). Documented in AGENTS /
+        // embed ops reports — previously referenced but unimplemented.
+        if std::env::var("LEANKG_SKIP_FRESHNESS_CHECK")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            tracing::info!("LEANKG_SKIP_FRESHNESS_CHECK set, skipping MCP auto-index on start");
+            return Ok(());
+        }
+
         let db_path = self.get_db_path();
         let db_file = db_path.join("leankg.db");
 

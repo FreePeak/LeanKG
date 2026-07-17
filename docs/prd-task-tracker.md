@@ -1,12 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-18 — **P0 embed-resume implemented** (`feature/embed-resume-day2`)  
+**Last synced:** 2026-07-18 — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) embed-resume + SEM path filter + mega-graph ops (6g/3g/cpus6)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
-> **P0 Day-2 embed resume:** core FRs **DONE** (HNSW no-op, per-batch fresh, hash-aware stale). Remaining PARTIAL: live Docker smoke / mega-graph SLA evidence (`US-EMBED-04`, `FR-EMBED-RESUME-05/06`, `REL-052`).  
-> **Universal rule:** if embed data exists → **resume**; if none → **cold/fresh**.  
+> **P0 embed-resume:** core + Docker evidence **DONE**.  
+> **P1 this pass:** FR-SEM-06 / FR-MG-AUTO-01 / FR-OPS-EMBED-CPU **DONE**. Next: remaining P1 Must Have (LSP, etc.).  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -15,13 +15,10 @@
 
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
-| **P0** | Day-2 Embed Resume — remaining PARTIAL smoke/SLA | Close REL-052 live smoke, then P1 |
-| **P0 (done)** | v3.7 Vector Engine gate | COMPLETE on PR #80 |
-| **P1** | Other Must Have | After P0 PARTIAL closed or waived |
+| **P0** | Day-2 Embed Resume | **DONE** on PR #81 |
+| **P1** | Other Must Have (SEM path filter + mega-graph ops landed; LSP/etc. remain) | Next open Must Have |
 | **P2** | Should Have | Next |
 | **P3** | Could Have / aspirational `OPEN` | Backlog |
-
-Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_suborder`, then status, then id.
 
 ## Status legend
 
@@ -40,42 +37,36 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **407** |
-| NOT_DONE | 60 |
+| **Total tracked** | **411** |
+| NOT_DONE | 58 |
 | PENDING | 16 |
-| PARTIAL | 16 |
+| PARTIAL | 12 |
 | OPEN | 1 |
-| DONE | 311 |
+| DONE | 321 |
 | WONT_DO | 3 |
-| Open work | **93** |
+| Open work | **87** |
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 4 |
+| P0 | 0 |
 | P1 | 23 |
-| P2 | 59 |
+| P2 | 57 |
 | P3 | 7 |
 
 | Kind | Count |
 |------|------:|
-| FR | 211 |
+| FR | 214 |
 | Release | 52 |
-| User Story | 144 |
+| User Story | 145 |
 
 ---
 
 ## Active session — open work (sorted by priority)
 
-**Single ordered queue.** Work top → bottom.
-
-> **2026-07-18 — embed-resume core landed** on `feature/embed-resume-day2`: skip HNSW+model on zero-dirty; per-batch `upsert_fresh`; `mark_stale_if_changed`. Tests: `embeddings::` + `embeddings_state_e2e` + `embed_build_resume_e2e`. Remaining P0 PARTIAL = optional live Docker smoke / mega-graph wall-time note.
+> **2026-07-18 — closed on PR #81:** embed-resume day-2; SEM path filter (Probes G/H); `LEANKG_SKIP_FRESHNESS_CHECK`; compose **cpus 6 / mem_reservation 3g / MCP mem_limit 6g**; 3-workspace vector counts (3,271 / 146,977 / 14,110) + semantic_search OK.
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-EMBED-04` | User Story | **PARTIAL** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `FR-EMBED-RESUME-05` | FR | **PARTIAL** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-06` | FR | **PARTIAL** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `REL-052` | Release | **PARTIAL** | Must Have | v3.7.2 embed-resume gate: day-2 proven for standalone embed --wait AND Docker MCP embed-o… | 8.5 v3.7.2 Embed Resume Gate |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
@@ -156,8 +147,6 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teac… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, ta… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-li… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-04` | FR | **NOT_DONE** | Should Have | Formal live MCP semantic smoke checklist (Docker project=/workspace) as release complemen… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `REL-051` | Release | **NOT_DONE** | Should Have | Live semantic MCP smoke executed (or waived with reason) alongside embeddings cargo suite | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, A… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GF-12` | User Story | **PARTIAL** | Could Have | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app co… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
@@ -176,7 +165,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P0** | `US-EMBED-01` | User Story | **DONE** | Must Have | Second standalone Docker/CLI embed --wait on unchanged code skips fresh vectors (day-2 de… | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-EMBED-02` | User Story | **DONE** | Must Have | Interrupted embed (CLI or Docker MCP) resumes; already-fresh vectors are not re-inferred | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-EMBED-03` | User Story | **DONE** | Must Have | Zero-dirty embed does not drop/rebuild HNSW | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
-| **P0** | `US-EMBED-04` | User Story | **PARTIAL** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
+| **P0** | `US-EMBED-04` | User Story | **DONE** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-VE-01` | User Story | **DONE** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150M… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-02` | User Story | **DONE** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-03` | User Story | **DONE** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Ru… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
@@ -198,13 +187,13 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P0** | `FR-EMBED-RESUME-02` | FR | **DONE** | Must Have | Skip HNSW drop+recreate when to_embed empty and orphan set empty; fast no-op exit | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
 | **P0** | `FR-EMBED-RESUME-03` | FR | **DONE** | Must Have | Mid-run durability: committed fresh rows survive kill/restart; next run dirty-only | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
 | **P0** | `FR-EMBED-RESUME-04` | FR | **DONE** | Must Have | Indexer marks stale only for content_hash-changed QNs; no stale-all on no-op full index | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-05` | FR | **PARTIAL** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `FR-EMBED-RESUME-06` | FR | **PARTIAL** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
-| **P0** | `REL-052` | Release | **PARTIAL** | Must Have | v3.7.2 embed-resume gate: day-2 proven for standalone embed --wait AND Docker MCP embed-o… | 8.5 v3.7.2 Embed Resume Gate |
+| **P0** | `FR-EMBED-RESUME-05` | FR | **DONE** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-06` | FR | **DONE** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
 | **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-SIMD` | FR | **DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `REL-052` | Release | **DONE** | Must Have | v3.7.2 embed-resume gate: day-2 proven for standalone embed --wait AND Docker MCP embed-o… | 8.5 v3.7.2 Embed Resume Gate |
 | **P0** | `FR-VE-BENCH-IO` | FR | **DONE** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-OOM` | FR | **DONE** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-BENCH-Q` | FR | **DONE** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
@@ -334,6 +323,10 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P1** | `US-V2-05` | User Story | **DONE** | Must Have | Team/knowledge contribution via MCP ('add_knowledge', annotations) | 3.12 Team Knowledge Infrastructure (US-V2) — merged fr… |
 | **P1** | `US-V2-07` | User Story | **DONE** | Must Have | Token budget enforcement on MCP responses | 3.12 Team Knowledge Infrastructure (US-V2) — merged fr… |
 | **P1** | `US-V2-10` | User Story | **DONE** | Must Have | Multi-repo / shared RocksDB HTTP backend for teams | 3.12 Team Knowledge Infrastructure (US-V2) — merged fr… |
+| **P1** | `US-SEM-05` | User Story | **DONE** | Must Have | Exclude UI-bundle / benchmark noise from semantic seeds (embed/assets + src/benchmark gat… | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) |
+| **P1** | `FR-SEM-06` | FR | **DONE** | Must Have | Path filter: always drop embed/assets/; query-gate src/benchmark/ unless query contains b… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P1** | `FR-MG-AUTO-01` | FR | **DONE** | Must Have | LEANKG_SKIP_FRESHNESS_CHECK=1 skips MCP auto-index; document mega-graph 6g/3g/cpus6 + AUT… | 5.17 Mega-graph MCP auto-index + embed ops (v3.7.3) |
+| **P1** | `FR-OPS-EMBED-CPU` | FR | **DONE** | Must Have | Compose envelope: cpus 6, mem_reservation 3g; MCP mem_limit 6g; embed mem_limit 10g | 5.17 Mega-graph MCP auto-index + embed ops (v3.7.3) |
 | **P2** | `US-GF-06` | User Story | **PARTIAL** | Should Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG… |
 | **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
@@ -391,8 +384,6 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teac… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, ta… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-li… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-04` | FR | **NOT_DONE** | Should Have | Formal live MCP semantic smoke checklist (Docker project=/workspace) as release complemen… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `REL-051` | Release | **NOT_DONE** | Should Have | Live semantic MCP smoke executed (or waived with reason) alongside embeddings cargo suite | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-01 to FR-07` | FR | **DONE** | Should Have | Code Indexing and Dependency Graph | 5.1 Core Features (DONE) |
 | **P2** | `FR-08 to FR-12` | FR | **DONE** | Should Have | Auto Documentation Generation | 5.1 Core Features (DONE) |
 | **P2** | `FR-13 to FR-16` | FR | **DONE** | Should Have | Business Logic to Code Mapping | 5.1 Core Features (DONE) |
@@ -504,6 +495,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P2** | `FR-RTK-08` | FR | **DONE** | Should Have | Compressed responses for impact_radius, call_graph, search_code, dependencies, dependents… | 5.4 RTK Compression (DONE) |
 | **P2** | `FR-RTK-09` | FR | **DONE** | Should Have | 'compress_response' parameter on get_impact_radius and other graph tools | 5.4 RTK Compression (DONE) |
 | **P2** | `FR-RTK-10` | FR | **DONE** | Should Have | '--compress' CLI flag on 'leankg run' command | 5.4 RTK Compression (DONE) |
+| **P2** | `FR-SEM-04` | FR | **DONE** | Should Have | Formal live MCP semantic smoke checklist (Docker project=/workspace) as release complemen… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-UPD-01` | FR | **DONE** | Should Have | 'leankg update' from GitHub releases | 5.11 Team Infrastructure / v2 Requirements (merged fro… |
 | **P2** | `FR-V2-01` | FR | **DONE** | Should Have | 'env' field on elements/relationships; default 'local' | 5.11 Team Infrastructure / v2 Requirements (merged fro… |
 | **P2** | `FR-V2-02` | FR | **DONE** | Should Have | Incident data model + CLI/MCP contribute & query | 5.11 Team Infrastructure / v2 Requirements (merged fro… |
@@ -517,6 +509,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 | **P2** | `FR-V2-10` | FR | **DONE** | Should Have | Multi-project RocksDB HTTP deploy + registry | 5.11 Team Infrastructure / v2 Requirements (merged fro… |
 | **P2** | `FR-V2-11` | FR | **DONE** | Should Have | CI/CD auto-graph update on release (< 3 min freshness) — GitHub Actions workflow ('eb3d33… | 5.11 Team Infrastructure / v2 Requirements (merged fro… |
 | **P2** | `FR-V2-12` | FR | **DONE** | Should Have | 'get_team_map' ownership/on-call tool ('3368b5f') | 5.11 Team Infrastructure / v2 Requirements (merged fro… |
+| **P2** | `REL-051` | Release | **DONE** | Should Have | Live semantic MCP smoke executed (or waived with reason) alongside embeddings cargo suite | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `US-07` | User Story | **DONE** | Should Have | Lightweight Web UI for graph visualization | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-09` | User Story | **DONE** | Should Have | Pipeline information extraction from CI/CD configs | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-10` | User Story | **DONE** | Should Have | Documentation-structure mapping | 3.1 Core MVP Stories (US-01 to US-18) |
@@ -584,9 +577,8 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then `ve_su
 
 ## Sync notes
 
-- **P0 embed-resume:** FR-01..04 + US-01..03 **DONE**; US-04 / FR-05/06 / REL-052 **PARTIAL** (live smoke optional).
-- **Branch:** `feature/embed-resume-day2`
-- **Tests:** `cargo test --release --features embeddings --lib embeddings::`; `--test embeddings_state_e2e`; `--test embed_build_resume_e2e`
+- **PR [#81](https://github.com/FreePeak/LeanKG/pull/81):** embed-resume + SEM-06 + MG-AUTO-01 + OPS cpus6/3g/6g.
+- **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md), [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md).
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-18 — embed-resume implementation sync.*
+*Regenerated: 2026-07-18 — ops envelope + SEM filter.*

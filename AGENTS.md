@@ -178,6 +178,8 @@ This applies to **every** path that starts embed:
 
 Turning embed on later (or restarting the container with the same volume) must **not** wipe or full-rebuild. Intentional full rebuild only via `--full`, `LEANKG_EMBED_BACKGROUND_FULL=1`, or `LEANKG_FORCE_REINDEX=1`. Product ACs: [`docs/prd.md`](docs/prd.md) §3.15 / §5.16 / §8.5.
 
+**Mega-graph MCP auto-index OOM escape:** set `LEANKG_SKIP_FRESHNESS_CHECK=1` and/or `LEANKG_AUTO_INDEX=0` (or `mcp.auto_index_on_start: false` in that project's `leankg.yaml`) so Docker MCP does not reindex hundreds of thousands of elements on every start. For serving ~150k+ embedding vectors, use MCP **`mem_limit: 6g`**, **`mem_reservation: 3g`**, **`cpus: "6"`** (compose defaults in `docker-compose.rocksdb.yml`; offline embed in `docker-compose.embed.yml`). Prefer offline `embed` / `index` when you choose. See [`docs/reports/embed-3-workspaces-2026-07-17.md`](docs/reports/embed-3-workspaces-2026-07-17.md) and FR-MG-AUTO-01 / FR-OPS-EMBED-CPU.
+
 ### One-line run (published image — no Rust)
 
 Index + INT8 embed + MCP (recommended):

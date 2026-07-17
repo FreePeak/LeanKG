@@ -270,7 +270,7 @@ impl SemanticRetrievalPipeline {
                 continue;
             }
             if let Some(p) = &policy {
-                if p.should_drop(&el.element_type, &query_lower) {
+                if p.should_drop_candidate(&el.element_type, &el.file_path, &query_lower) {
                     node_type_filtered += 1;
                     continue;
                 }
