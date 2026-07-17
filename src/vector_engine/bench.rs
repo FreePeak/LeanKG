@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
+use super::engine::EngineKind;
 use super::hnsw::{brute_force_topk, recall_at_k};
+use super::memory::{plan_under_2gb_cgroup, LOCAL_SURVIVAL_CAP_BYTES};
 use super::simd::{detect_simd, dot_i8, SimdKind};
 use super::tier2::{quantize_sq8, Sq8Cache};
 
@@ -93,6 +95,13 @@ pub fn recall_sq8_vs_fp32(fp32_rows: &[(u64, Vec<f32>)], query: &[f32], k: usize
 
 pub const TARGET_RECALL: f32 = 0.90;
 
+/// 2GB cgroup memory plan must stay within survival cap (FR-VE-BENCH-OOM).
+pub fn oom_plan_within_cap() -> bool {
+    let plan = plan_under_2gb_cgroup(EngineKind::Local);
+    plan.block_cache_bytes <= LOCAL_SURVIVAL_CAP_BYTES
+        && plan.survival_cap_bytes <= LOCAL_SURVIVAL_CAP_BYTES
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +137,10 @@ mod tests {
         let r = recall_sq8_vs_fp32(&rows, &q, DEFAULT_EF_SEARCH.min(10));
         assert!(r >= 0.0);
         let _ = TARGET_RECALL;
+    }
+
+    #[test]
+    fn oom_2gb_cgroup_plan_safe() {
+        assert!(oom_plan_within_cap());
     }
 }
