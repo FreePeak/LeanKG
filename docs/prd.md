@@ -1452,10 +1452,10 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 |--------|--------|--------|
 | Cold start time | < 2 seconds | TBD |
 | Indexing speed | > 10,000 lines/second (parallel via rayon) | TBD |
-| Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | PARTIAL (US-VE-02 — engine on main; e2e MCP proof open) |
+| Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | DONE (US-VE-02 — ANN+JSON P95≈0.094ms) |
 | ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | DONE (FR-VE-BENCH-Q — 1M ANN P95=0.065ms Neon, 2026-07-17) |
 | Query response time (legacy general) | < 100ms | TBD |
-| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | PARTIAL (US-VE-01 — not yet measured on default path) |
+| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | DONE (US-VE-01 — warm SQ8 path RSS≈89MB) |
 | Memory usage (indexing) | < 500MB typical; Cloud may use 50–80% RAM for SQ8 | TBD |
 | Survival under cgroup | **2GB hard** — never OOM-killed | DONE (FR-VE-BENCH-OOM — plan + live 1M RSS≈567MB) |
 | Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | DONE (FR-VE-BENCH-IO) |

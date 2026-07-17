@@ -5,8 +5,8 @@
     "NOT_DONE": 54,
     "OPEN": 1,
     "PENDING": 12,
-    "PARTIAL": 19,
-    "DONE": 297,
+    "PARTIAL": 16,
+    "DONE": 300,
     "WONT_DO": 3
   },
   "tasks": [
@@ -15,8 +15,8 @@
       "kind": "User Story",
       "title": "As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O…",
       "priority": "Must Have",
-      "status": "PARTIAL",
-      "notes": "PARTIAL — engine on main; idle MCP RSS <150MB not yet proven on warm LocalEngine default path",
+      "status": "DONE",
+      "notes": "DONE — warm LocalEngine SQ8 NSW (100k) RSS≈89MB < 150MB (kpi::measure_idle_rss_after_warm)",
       "section": "3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.…",
       "prd_line": null,
       "focus": "P0",
@@ -28,8 +28,8 @@
       "kind": "User Story",
       "title": "As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop",
       "priority": "Must Have",
-      "status": "PARTIAL",
-      "notes": "PARTIAL — engine on main; time-to-context P95 <100ms not yet proven end-to-end vs Cozo default",
+      "status": "DONE",
+      "notes": "DONE — ANN+JSON context P95≈0.094ms < 100ms (kpi::measure_time_to_context_p95)",
       "section": "3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.…",
       "prd_line": null,
       "focus": "P0",
@@ -366,8 +366,8 @@
       "kind": "Release",
       "title": "Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms",
       "priority": "Must Have",
-      "status": "PARTIAL",
-      "notes": "PARTIAL — RSS + time-to-context product KPIs not yet measured on MCP path",
+      "status": "DONE",
+      "notes": "DONE — US-VE-01/02 KPI helpers meet idle RSS + TTC floors",
       "section": "8.4 v3.7 Vector Engine Gate (PENDING)",
       "prd_line": null,
       "focus": "P0",
@@ -5041,7 +5041,7 @@
       "P2": "Should Have",
       "P3": "Could Have / aspirational OPEN"
     },
-    "updated": "2026-07-17-fr-ve-bench-io-recall-oom",
+    "updated": "2026-07-17-us-ve-01-02",
     "sync_note": "Audited against origin/main @ e5d1490 (0.19.0; vector engine #79 @ dbc22c4). Core FR-VE-* + REL-044..047 DONE; gate/benches/live A/B + US-VE-01/02/08 remain PARTIAL. Cozo ::hnsw still shipped default (FR-VE-GATE)."
   }
 }

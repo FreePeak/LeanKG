@@ -16,6 +16,7 @@ pub mod engine;
 pub mod gate;
 pub mod gc;
 pub mod hnsw;
+pub mod kpi;
 pub mod memory;
 pub mod recovery;
 pub mod simd;
@@ -46,6 +47,11 @@ pub use gc::{compact_shadow, fragmentation_ratio, maybe_gc, FRAGMENTATION_TRIGGE
 pub use hnsw::{
     brute_force_topk, recall_at_k, select_neighbors_heuristic, HnswParams, DEFAULT_EF_CONSTRUCTION,
     DEFAULT_EF_SEARCH, DEFAULT_M, M_MAX, M_MIN,
+};
+pub use kpi::{
+    build_context_payload, current_process_rss_bytes, measure_idle_rss_after_warm,
+    measure_time_to_context_p95, IdleRssReport, TimeToContextReport, TARGET_IDLE_RSS_BYTES,
+    TARGET_TTC_P95_MS,
 };
 pub use memory::{
     auto_tune_block_cache, available_memory_bytes, plan_block_cache, plan_under_2gb_cgroup,
