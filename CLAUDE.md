@@ -81,14 +81,41 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ## LeanKG Tools Usage
 
+### MANDATORY: Docker MCP project paths (not host paths)
+
+When Cursor's LeanKG MCP talks to the Docker HTTP server on `:9699`, RocksDB keys projects by **in-container** mount paths. Host Mac paths fail with "not initialized" even when the index exists.
+
+| Repo / mount | Pass `project=` (container path) | Do NOT pass |
+|--------------|-----------------------------------|-------------|
+| This LeanKG repo | `/workspace` | `/Users/.../leankg` or `.../leankg/.leankg` |
+| Side-by-side monorepo | `/workspace-other` (or whatever bind is in local `docker-compose.override.yml`) | the host path of that repo |
+| freepeak polyrepo (if mounted) | `/workspace-freepeak` | `/Users/.../freepeak` |
+
+**Every tool call** must include the container `project` argument, e.g.:
+
+```
+mcp_status(project="/workspace")
+search_code(query="Handler", project="/workspace")
+find_function(name="main", project="/workspace")
+get_context(file="src/lib.rs", project="/workspace")
+```
+
+**Probe before assuming empty:**
+
+1. `curl http://localhost:9699/health` — Docker MCP up?
+2. `mcp_status(project="/workspace")` — this repo indexed?
+3. Only if status fails for every known container mount, fall back to stdio/`mcp_init` on a local `.leankg` (non-Docker).
+
+Local-only mount lists live in gitignored `.dockerfile` / `docker-compose.override.yml` (`LEANKG_PROJECT_DIRS`). Never paste personal host bind paths into commits or agent replies.
+
 ### MANDATORY: Use LeanKG First, Fallback to Raw Tools
 
 **This is a MANDATORY workflow - not optional guidance.**
 
 #### Step 1: Always Try LeanKG First
-1. Call `mcp_status` to check if LeanKG is ready
-2. If not ready, call `mcp_init` with path: "/Users/linh.doan/work/harvey/freepeak/leankg/.leankg"
-3. Use appropriate LeanKG tool: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+1. Call `mcp_status(project="/workspace")` to check if LeanKG is ready for this repo
+2. If Docker MCP is down / not ready, try other mounts from `LEANKG_PROJECT_DIRS`, then local `mcp_init` only as last resort
+3. Use appropriate LeanKG tool with `project="/workspace"`: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
 
 #### Step 2: Fallback Only If LeanKG Fails
 - LeanKG returns empty results OR
@@ -98,19 +125,21 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 #### Step 3: Never Skip LeanKG for Code Search
 - NEVER say "I'll just use grep" without trying LeanKG first
 - NEVER claim "LeanKG doesn't have this" without actually checking
+- NEVER pass a Mac host path as `project` when Docker MCP on `:9699` is healthy
 
 | Task | LeanKG First | Fallback |
 |------|--------------|----------|
-| Where is X? | `search_code("X")` | `Grep("X")` |
-| Find function | `find_function("name")` | `Grep("fn name")` |
-| What breaks? | `get_impact_radius(file)` | Manual trace |
-| What tests? | `get_tested_by(file)` | `Grep("test.*file")` |
-| Read content | `get_context(file)` | `Read(file)` |
+| Where is X? | `search_code("X", project="/workspace")` | `Grep("X")` |
+| Find function | `find_function("name", project="/workspace")` | `Grep("fn name")` |
+| What breaks? | `get_impact_radius(file, project="/workspace")` | Manual trace |
+| What tests? | `get_tested_by(file, project="/workspace")` | `Grep("test.*file")` |
+| Read content | `get_context(file, project="/workspace")` | `Read(file)` |
 
 ### Why This Matters
 - LeanKG is 10-100x faster than raw grep on large codebases
 - LeanKG understands code relationships (imports, calls, tests)
 - Raw tools should be emergency fallback only
+- Wrong `project` path looks like "LeanKG is broken" when the Docker index is fine
 
 ---
 
@@ -142,4 +171,4 @@ launchctl start com.leankg.mcp-http
 
 ---
 
-*Last updated: 2026-05-05*
+*Last updated: 2026-07-17*

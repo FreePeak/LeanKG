@@ -29,7 +29,7 @@ cargo run -- mcp-http --port 9699
 
 ### Pattern: Update Docs -> Implement -> Test -> Commit -> Push -> Bump Version -> Tag
 
-1. **Update docs first** - Consolidated PRD+HLD (`docs/prd.md`) → README as needed
+1. **Update docs first** - Consolidated PRD+HLD (`docs/prd.md`) for narrative/ACs/HLD. For **all task lists + Done/Pending status**, use [`docs/prd-task-tracker.md`](docs/prd-task-tracker.md) only — do not scan or reintroduce status tables in the PRD.
 2. **Implement** - Follow patterns in `docs/workflow-opencode-agent.md`
 3. **Build & test** - `cargo build && cargo test`
 4. **Commit** - `git commit -m "feat: description"` (one feature per commit)
@@ -91,6 +91,35 @@ Three new MCP tools are available once a project is indexed:
 
 See [`docs/mcp-tools.md`](docs/mcp-tools.md) → Structure Tools and [`docs/roadmap.md`](docs/roadmap.md) → Phase 1. Requirements: [`docs/prd.md`](docs/prd.md) Sections 3.11 / 5.10.
 
+## MANDATORY: LeanKG MCP project paths (Docker vs host)
+
+Cursor agents talking to LeanKG MCP over HTTP (`localhost:9699`, Docker RocksDB) **must** pass **container mount paths** as `project=`. Host filesystem paths do not match RocksDB project keys and return "not initialized" even when the graph is indexed.
+
+| Target codebase | Correct `project=` | Wrong (will fail against Docker MCP) |
+|-----------------|--------------------|--------------------------------------|
+| This LeanKG repo (`$PWD` → `/workspace`) | `/workspace` | `/Users/.../leankg`, `./.leankg`, absolute Mac path |
+| Extra monorepo bind (`…:/workspace-other`) | `/workspace-other` | that repo's host path |
+| Optional freepeak bind (`…:/workspace-freepeak`) | `/workspace-freepeak` | that tree's host path |
+
+**Required pattern for every MCP call in this repo:**
+
+```
+mcp_status(project="/workspace")
+search_code(query="…", project="/workspace")
+find_function(name="…", project="/workspace")
+get_context(file="…", project="/workspace")
+```
+
+**Agent checklist (new chat / no prior context):**
+
+1. Prefer Docker MCP when `curl http://localhost:9699/health` is ok
+2. Call `mcp_status(project="/workspace")` first for LeanKG source work
+3. For other indexed trees, use the container side of binds listed in local `LEANKG_PROJECT_DIRS` (gitignored `.dockerfile`)
+4. Never invent or paste personal host bind paths into commits, docs, or chat
+5. Host-path `mcp_init` / local SQLite is only for non-Docker stdio workflows
+
+Chat sessions do **not** share memory. This section is the durable source of truth so agents do not re-discover mounts every session.
+
 ## MCP Server Transport Modes
 
 LeanKG supports two MCP transport modes:
@@ -103,7 +132,7 @@ For local AI tools (Cursor, Claude Code, opencode, etc.):
 cargo run -- mcp-stdio --watch
 ```
 
-The stdio transport uses the per-project SQLite-backed CozoDB file at `<project>/.leankg/leankg.db`. This is the default mode for local development.
+The stdio transport uses the per-project SQLite-backed CozoDB file at `<project>/.leankg/leankg.db`. Use host project paths only with this transport (not with Docker HTTP MCP).
 
 ### HTTP/SSE Transport (Remote Clients)
 
@@ -125,6 +154,8 @@ HTTP endpoints:
 Environment variables:
 - `MCP_HTTP_PORT` -- Override port (default: 9699)
 - `MCP_HTTP_AUTH` -- Bearer token for authentication
+
+When the HTTP server runs **inside Docker**, `--project` / MCP `project` must be the **container** path (`/workspace`, `/workspace-other`, …), matching bind mounts and `LEANKG_PROJECT_DIRS`.
 
 ## RocksDB Docker Deployment
 
@@ -300,4 +331,4 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ---
 
-*Last updated: 2026-05-22*
+*Last updated: 2026-07-17*
