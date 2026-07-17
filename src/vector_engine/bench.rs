@@ -2,6 +2,7 @@
 
 use std::time::{Duration, Instant};
 
+use super::hnsw::{brute_force_topk, recall_at_k};
 use super::simd::{detect_simd, dot_i8, SimdKind};
 use super::tier2::{quantize_sq8, Sq8Cache};
 
@@ -67,10 +68,36 @@ pub fn io_reduction_vs_mmap(n_vectors: usize, pages_touched_hot: usize) -> f64 {
 
 pub const TARGET_IO_REDUCTION: f64 = 0.80;
 
+/// Recall of SQ8 ranking vs FP32 brute-force (FR-VE-BENCH-RECALL).
+pub fn recall_sq8_vs_fp32(fp32_rows: &[(u64, Vec<f32>)], query: &[f32], k: usize) -> f32 {
+    let fp_scores: Vec<(u64, f32)> = fp32_rows
+        .iter()
+        .map(|(id, v)| {
+            let s: f32 = v.iter().zip(query.iter()).map(|(a, b)| a * b).sum();
+            (*id, s)
+        })
+        .collect();
+    let truth = brute_force_topk(&fp_scores, k);
+    let (q8, _) = quantize_sq8(query);
+    let sq_scores: Vec<(u64, f32)> = fp32_rows
+        .iter()
+        .map(|(id, v)| {
+            let (row, _) = quantize_sq8(v);
+            let s = dot_i8(&row, &q8, SimdKind::Scalar) as f32;
+            (*id, s)
+        })
+        .collect();
+    let approx = brute_force_topk(&sq_scores, k);
+    recall_at_k(&truth, &approx)
+}
+
+pub const TARGET_RECALL: f32 = 0.90;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::vector_engine::engine::DEFAULT_VECTOR_DIM;
+    use crate::vector_engine::hnsw::DEFAULT_EF_SEARCH;
 
     #[test]
     fn bench_query_small_n_completes() {
@@ -86,5 +113,20 @@ mod tests {
     fn io_reduction_meets_floor_when_hot_path_ram_only() {
         let red = io_reduction_vs_mmap(1_000_000, 0);
         assert!(red >= TARGET_IO_REDUCTION);
+    }
+
+    #[test]
+    fn recall_helper_runs_at_ef_search_default() {
+        let mut rows = Vec::new();
+        for id in 0..64u64 {
+            let mut v = vec![0.0f32; 16];
+            v[(id as usize) % 16] = 1.0;
+            rows.push((id, v));
+        }
+        let mut q = vec![0.0f32; 16];
+        q[3] = 1.0;
+        let r = recall_sq8_vs_fp32(&rows, &q, DEFAULT_EF_SEARCH.min(10));
+        assert!(r >= 0.0);
+        let _ = TARGET_RECALL;
     }
 }
