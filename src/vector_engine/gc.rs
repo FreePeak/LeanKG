@@ -97,3 +97,57 @@ pub fn maybe_gc(
     }
     compact_shadow(eng, lock)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vector_engine::dual_write::WriteInput;
+    use crate::vector_engine::engine::DEFAULT_VECTOR_DIM;
+    use std::thread;
+    use tempfile::TempDir;
+
+    fn sample(qn: &str, seed: f32) -> WriteInput {
+        WriteInput {
+            qualified_name: qn.into(),
+            vector: vec![seed; DEFAULT_VECTOR_DIM],
+            payload: qn.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn gc_compaction_with_concurrent_reads() {
+        let dir = TempDir::new().unwrap();
+        let mut eng = DualWriteEngine::open_local(dir.path()).unwrap();
+        for i in 0..40 {
+            eng.write(sample(&format!("n::{i}"), i as f32 * 0.01))
+                .unwrap();
+        }
+        let lock = Arc::new(RwLock::new(()));
+        assert_eq!(maybe_gc(&mut eng, &lock).unwrap(), 0);
+
+        let rewritten = compact_shadow(&mut eng, &lock).unwrap();
+        assert_eq!(rewritten, 40);
+
+        // Concurrent readers hold the shared read lock briefly while
+        // another compact acquires the write lock between iterations.
+        let lock2 = Arc::new(RwLock::new(()));
+        let root = dir.path().to_path_buf();
+        let reader = {
+            let lock2 = Arc::clone(&lock2);
+            thread::spawn(move || {
+                for _ in 0..30 {
+                    let _g = lock2.read().unwrap();
+                    let eng = DualWriteEngine::open_local(&root).unwrap();
+                    assert_eq!(eng.vector_count(), 40);
+                    drop(_g);
+                    thread::yield_now();
+                }
+            })
+        };
+        for _ in 0..3 {
+            let _ = compact_shadow(&mut eng, &lock2).unwrap();
+        }
+        reader.join().unwrap();
+        assert_eq!(eng.vector_count(), 40);
+    }
+}
