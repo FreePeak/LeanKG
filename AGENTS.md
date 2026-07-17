@@ -161,6 +161,23 @@ When the HTTP server runs **inside Docker**, `--project` / MCP `project` must be
 
 The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects.
 
+### Embed resume rule (P0 — day-2)
+
+**If embedding data already exists** on the named RocksDB volume → **resume** (skip `fresh` vectors; delta only).  
+**If no embedding data exists** for that project → **cold/fresh** fill is allowed.
+
+This applies to **every** path that starts embed:
+
+| Path | Env / command |
+|------|----------------|
+| Standalone | `docker run … embed --wait --project /workspace-other` |
+| In-process MCP | `LEANKG_EMBED_BACKGROUND=1` |
+| Legacy boot | `LEANKG_EMBED_ON_BOOT=1` |
+| Offline setup | `LEANKG_DOCKER_SETUP=1` |
+| One-line up | `scripts/docker-up.sh` |
+
+Turning embed on later (or restarting the container with the same volume) must **not** wipe or full-rebuild. Intentional full rebuild only via `--full`, `LEANKG_EMBED_BACKGROUND_FULL=1`, or `LEANKG_FORCE_REINDEX=1`. Product ACs: [`docs/prd.md`](docs/prd.md) §3.15 / §5.16 / §8.5.
+
 ### One-line run (published image — no Rust)
 
 Index + INT8 embed + MCP (recommended):

@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.1-sem-mcp-enhance
-**Date:** 2026-07-17
+**Version:** 3.7.2-embed-resume
+**Date:** 2026-07-18
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
@@ -11,9 +11,11 @@
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **P0 Vector Engine COMPLETE** — open PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`, crate 0.19.0). Evidence: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). A/B −65.0% tokens / −84.6% tools / 2.50×; 1M ANN P95≈0.055ms. CI hardening: i8 synth overflow fix + idle RSS **warm-delta** gate (debug `cargo test --lib`). README polished to product landing style. Next after merge: **P1** + wire `preferred_ann_backend()` cutover (tracker).
+> **CURRENT P0 (highest):** **Day-2 embed resume** — whenever LeanKG turns embedding on in Docker (standalone `embed --wait`, `LEANKG_EMBED_BACKGROUND=1`, `LEANKG_EMBED_ON_BOOT=1`, `LEANKG_DOCKER_SETUP=1`, `docker-up.sh`), it **must resume from existing RocksDB vectors/`embedding_state`**. **Cold/fresh run only when no embed data exists** for that project. Second+ runs = delta only; never wipe by default. Sections **3.15** / **5.16** / **8.5**. Tracker Focus=`P0` = `US-EMBED-*` / `FR-EMBED-RESUME-*` / `REL-052`. Reopens gap vs claimed-complete `FR-HNSW-E`.
 >
-> **Semantic MCP live probe GREEN** (2026-07-17): [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Pipeline works; enhancements deferred as **US-SEM-*** / **FR-SEM-*** (Section 3.14 / 5.15) — token honesty, ontology budgets, HTTP resilience, live smoke gate.
+> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) (`feature/vector-engine-gate`, crate 0.19.0). Evidence: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). Merge when ready; **do not** start new VE work ahead of embed-resume.
+>
+> **Semantic MCP live probe GREEN** (2026-07-17): [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Enhancements remain **P2/P3** (`US-SEM-*` / `FR-SEM-*`) — do not displace P0 embed-resume or P1 Must Have.
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -24,6 +26,81 @@
 ---
 
 ## Changelog
+
+### v3.7.2-embed-resume - Day-2 embed resume is P0 (2026-07-18)
+
+> **Problem:** Operators re-running embed against a **persisted RocksDB volume** (standalone `embed --wait`, or turning embed on inside Docker MCP via `LEANKG_EMBED_BACKGROUND` / `LEANKG_EMBED_ON_BOOT` / setup scripts) still burn full cold-embed resources (ONNX + HNSW rebuild) as if starting fresh — even when most/all vectors are already stored. Mega-graphs cannot afford a second full pass.
+
+> **Product intent (universal rule):**  
+> - **No embed data for project** → cold / fresh fill (first run).  
+> - **Embed data exists** → **always resume** (skip `fresh`, embed only missing/stale/`content_hash`-changed).  
+> Applies to **every** Docker/CLI path that starts embed — not only standalone `--wait`. Zero-dirty runs must exit quickly without dropping HNSW. Interrupted runs must resume without discarding already-`fresh` rows. Container restart with the same named RocksDB volume must **never** imply a wipe.
+
+> **Relationship to FR-HNSW-E:** Incremental filter + `embedding_state` already exist in code and were marked DONE, but **day-2 resource behavior is incomplete** (notably unconditional HNSW drop/rebuild; no mid-run checkpoint; full index can stale everything). Tracker sets `FR-HNSW-E` → **PARTIAL** and adds **Must Have** resume FRs as **Focus P0**.
+
+**Decision table (Must Have):**
+
+| Existing embed data in RocksDB / `.leankg`? | Docker / CLI starts embed? | Required behavior |
+|--------------------------------------------|----------------------------|-------------------|
+| **No** (empty / first project) | Yes | **Cold/fresh** fill |
+| **Yes** | Yes (any path below) | **Resume** — skip `fresh`; delta only |
+| **Yes** | Container restart, embed off | Leave data alone; MCP serves existing HNSW |
+| Explicit `--full` / `LEANKG_EMBED_BACKGROUND_FULL=1` / `LEANKG_FORCE_REINDEX=1` | Yes | Intentional full rebuild (ops escape hatch only) |
+
+**Covered entry paths (all must obey the table):**
+1. Standalone: `docker run … embed --wait --project <container-path>`
+2. In-process MCP: `LEANKG_EMBED_BACKGROUND=1` after `mcp-http` bind
+3. Legacy foreground boot: `LEANKG_EMBED_ON_BOOT=1` / `embed_if_needed` in `entrypoint.sh`
+4. Setup: `LEANKG_DOCKER_SETUP=1` offline embed before MCP
+5. `scripts/docker-up.sh` index + embed flow
+
+**Success metrics (day-2 KPIs):**
+
+| KPI | Target | Measurement |
+|-----|--------|-------------|
+| Second embed on unchanged graph (any path) | Near-zero ONNX batches; wall time **minutes not hours** on mega-graph | Log `skipped_fresh` ≈ work list; `embedded` ≈ 0 |
+| Zero-dirty run | **No** HNSW drop + rebuild | Log / unit: skip path when `to_embed` empty and no orphans |
+| Interrupted then restarted | Resume; already-`fresh` rows not re-inferred | Kill mid-run → re-run; `embedded` ≤ remaining dirty |
+| RocksDB volume remount / MCP re-enable embed | Vectors + state survive; resume not wipe | Same named volume; second start sees prior state |
+| Empty project first embed | Cold fill allowed | No existing `embedding_state` / vectors |
+
+**New content:**
+- Section **3.15** — US-EMBED-01..04
+- Section **5.16** — FR-EMBED-RESUME-01..06 + REL-052; note on FR-HNSW-E PARTIAL
+- Section **8.5** — v3.7.2 embed-resume release gate
+- Section **9** — NFR rows for day-2 embed
+- Tracker: Focus **P0** open queue = embed-resume (VE gate remains DONE)
+
+**Standalone operator pattern (placeholders only — never commit personal host mounts):**
+
+```bash
+docker run --rm \
+  --cpus 4 --memory 10g \
+  -v leankg_leankg-rocksdb:/data/leankg-rocksdb \
+  -v leankg_leankg_models:/root/.cache/leankg \
+  -v "$PWD":/workspace \
+  -v /Users/you/work/other-repo:/workspace-other \
+  -e LEANKG_DB_ENGINE=rocksdb \
+  -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
+  -e LEANKG_EMBED_FAST=1 \
+  -e LEANKG_EMBED_MODEL=bge-q \
+  -e LEANKG_EMBED_MAX_SEQ=128 \
+  -e LEANKG_EMBED_MAX_BLOB_CHARS=500 \
+  -e LEANKG_EMBED_MAX_MB=0 \
+  -e OMP_NUM_THREADS=1 \
+  -e RUST_LOG=leankg=info \
+  leankg-leankg:latest \
+  embed --wait --project /workspace-other --workers 8 --batch-size 128 --types function,method
+```
+
+Second identical run (unchanged code) **must** skip fresh rows and must **not** pay cold-embed cost.
+
+**Docker MCP pattern (embed turned on later — still resume):**
+
+```bash
+# Same named RocksDB volume as a prior embed. Turning embed on must NOT wipe.
+# e.g. LEANKG_EMBED_BACKGROUND=1 in compose / .dockerfile — incremental only.
+```
 
 ### v3.7.1-sem-mcp-enhance - Semantic MCP live verification → later enhancements (2026-07-17)
 
@@ -843,7 +920,7 @@ Palace Mapping:
 
 ### 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.7.0
 
-> **Implementation focus: P0 (highest).** Core implementation **merged to `origin/main`** (`dbc22c4` / #79). Remaining open work is gate/KPI evidence — see tracker Focus=`P0`. Full ordered queue: [`prd-task-tracker.md`](prd-task-tracker.md).
+> **Former P0 — COMPLETE on PR #80.** Current highest focus is **§3.15 Day-2 Embed Resume**. Core implementation **merged to `origin/main`** (`dbc22c4` / #79). Full ordered queue: [`prd-task-tracker.md`](prd-task-tracker.md).
 >
 > **Epic:** Replace mmap-heavy / opaque vector I/O with a **3-tier LocalEngine** (and CloudEngine twin) so semantic+LSP retrieval stays surgical under M2 Pro / 16GB / 256GB SSD, and scales to Linux x86_64 + TiKV without rewriting MCP/CLI callers.
 >
@@ -901,6 +978,51 @@ Palace Mapping:
 **Acceptance criteria:**
 - **Given** a query whose top-10 would otherwise be ≥70% one file (as in the MCP-dispatch probe), **When** diversity mode is on (default or flag), **Then** at least N distinct `file_path` values appear in top-k (N configurable; default ≥3 for k=10).
 - **Given** diversity mode off, **When** the same query runs, **Then** ranking matches current HNSW+rerank order (no regression).
+
+### 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 — **P0 CURRENT**
+
+> **Trigger:** Turning embedding on (standalone Docker `embed --wait`, or Docker MCP with `LEANKG_EMBED_BACKGROUND` / boot / setup) against a persisted RocksDB volume looks like a full cold rebuild — unacceptable CPU/RAM/time on mega-graphs.
+>
+> **Universal rule:** **Resume if embed data exists; cold/fresh only if none exists.** Same rule for every entry path.
+>
+> **Depends on:** `embedding_state` + incremental filter (FR-HNSW-E foundation). **Closes the gap** so day-2 behavior matches the product promise in v3.6.3 (“day-2 incremental embed stays fast”).
+>
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-EMBED-*` / `FR-EMBED-RESUME-*` / `REL-052`.
+
+#### US-EMBED-01 — Second standalone embed updates deltas only (Must Have)
+
+**As an** operator embedding a large mounted project via Docker `embed --wait`, **I want** a second run on unchanged code to skip already-`fresh` vectors, **so that** I do not burn another full cold-embed (hours / multi-GB) of CPU and RAM.
+
+**Acceptance criteria:**
+- **Given** a RocksDB project with `embedding_state=fresh` for (nearly) all targeted types after a successful first embed, **When** the same `embed --wait --types function,method` command runs again with no code changes, **Then** ONNX work embeds ≈0 new vectors (`skipped_fresh` ≈ work list) and wall time is **minutes not hours** on mega-graphs.
+- **Given** a small set of new/changed functions, **When** day-2 embed runs, **Then** only those dirty QNs are re-inferred; other fresh rows stay untouched.
+- **Given** docs / operator scripts, **When** examples show standalone Docker embed, **Then** they use container path placeholders (`/workspace-other`) and document that the named RocksDB volume must be reused.
+
+#### US-EMBED-02 — Interrupted embed resumes without discarding fresh work (Must Have)
+
+**As an** operator whose embed job is killed (OOM, Ctrl-C, container stop), **I want** the next embed (CLI or Docker MCP) to resume from persisted `embedding_state`, **so that** already-written fresh vectors are not recomputed.
+
+**Acceptance criteria:**
+- **Given** an embed interrupted after N batches committed `fresh`, **When** embed is started again (same project / same RocksDB), **Then** those N QNs are skipped and only remaining dirty/missing QNs are processed.
+- **Given** a stale `embed.lock` with no live PID, **When** a new embed starts, **Then** the lock is cleared or stolen safely (existing lock semantics) without wiping vectors.
+
+#### US-EMBED-03 — Zero-dirty run does not tear down HNSW (Must Have)
+
+**As an** operator, **I want** a no-op day-2 embed to leave the HNSW index intact, **so that** semantic search stays available and the process does not pay O(N log N) rebuild cost for zero writes.
+
+**Acceptance criteria:**
+- **Given** `to_embed` is empty and orphan reap is empty, **When** any embed path runs, **Then** the process does **not** drop or recreate `embedding_vectors:vec_idx`.
+- **Given** `to_embed` is non-empty, **When** bulk write path runs, **Then** existing drop-before-bulk / recreate-after (or equivalent correct incremental update) remains allowed.
+
+#### US-EMBED-04 — Docker MCP / boot embed resumes existing data (Must Have)
+
+**As an** operator who turns embedding on inside Docker LeanKG (e.g. `LEANKG_EMBED_BACKGROUND=1`, `LEANKG_EMBED_ON_BOOT=1`, `LEANKG_DOCKER_SETUP=1`, or `docker-up.sh`), **I want** the service to detect existing vectors/`embedding_state` on the RocksDB volume and **resume**, **so that** enabling embed after a prior cold fill (or after MCP-only restarts) never wipes or re-embeds the whole graph.
+
+**Acceptance criteria:**
+- **Given** a named RocksDB volume already containing embeddings for `/workspace` or `/workspace-other`, **When** the container starts with any embed-on path enabled, **Then** LeanKG runs **incremental resume** (skip `fresh`); it does **not** treat the start as a cold wipe.
+- **Given** a project with **no** embedding data (empty state / no vectors), **When** embed is turned on, **Then** a **cold/fresh** fill is allowed and expected.
+- **Given** embed remains off (`LEANKG_EMBED_BACKGROUND=0`, `LEANKG_EMBED_ON_BOOT=0`), **When** MCP restarts, **Then** existing embed data is left intact and semantic tools use whatever HNSW is already present.
+- **Given** docs (`entrypoint.sh`, compose, AGENTS), **When** operators enable Docker embed, **Then** docs state the resume-vs-cold rule explicitly.
 
 ---
 
@@ -1015,7 +1137,7 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 
 **Policy (details + status in tracker):**
 - Remove custom MinHash/LSH; keep Cozo `::hnsw` as shipped default until FR-VE-GATE
-- MCP must not block on cold embed; day-2 incremental embed is the fast path
+- MCP must not block on cold embed; **day-2 incremental / resume is P0** (FR-EMBED-RESUME-* closes gaps vs FR-HNSW-E PARTIAL)
 - **Won't Do:** Cozo `::lsh` for clones; migrate KG to FalkorDB/Redis to fix cold embed
 
 ### 5.13 LSP Adoption Track from CBM (moved from former 5.12; deep compare 2026-07-15)
@@ -1028,8 +1150,8 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 
 ### 5.14 Optimized Local-First Vector Graph Engine (v3.7.0)
 
-> **Implementation focus: P0 (highest).** Core module on `origin/main` (#79 / `dbc22c4`).  
-> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `FR-VE-*` / `US-VE-*` / Kind=`Release` (§8.4).
+> **Former P0 — COMPLETE on PR #80.** Current highest focus is **§5.16 Day-2 Embed Resume**.  
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-VE-*` / `US-VE-*` / Kind=`Release` (§8.4).
 
 > **Goal:** Ultra-lightweight vector/graph storage + retrieval that works under Apple M2 Pro / 16GB / 256GB SSD and scales to Linux x86_64 + TiKV **without rewriting** MCP/CLI semantic APIs.
 >
@@ -1105,6 +1227,36 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - Replacing Cozo HNSW default before FR-VE-GATE callers honor LocalEngine
 - Treating transient HTTP flakes as ANN / ontology product failures
 - Dropping truncation entirely (mission is still lean tokens)
+
+### 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) — **P0 CURRENT**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-EMBED-RESUME-*` / `US-EMBED-*` / `REL-052` / `FR-HNSW-E`.
+>
+> **Gap:** FR-HNSW-E delivered the incremental *filter*, but day-2 runs can still (a) drop+rebuild HNSW even when `to_embed` is empty, (b) lack mid-run checkpoint clarity, (c) look like a full cold restart after Docker remounts or when embed is turned on later. Product priority: **fix resource behavior before any new P1 feature work.**
+
+**Policy (universal):**
+- **If embed data exists → resume. If none → cold/fresh.** Default for every Docker/CLI embed entry path.
+- Default `embed` mode remains **incremental**; `--full` / `LEANKG_EMBED_BACKGROUND_FULL=1` / `LEANKG_FORCE_REINDEX=1` are the only intentional full rebuilds / wipes
+- Persist vectors + `embedding_state` in RocksDB (named volume) / SQLite `.leankg` — container recreate or “turn embed on” must not imply wipe
+- Day-2 success = skip fresh + avoid needless HNSW rebuild + resume after interrupt
+- Reclassify **FR-HNSW-E** as **PARTIAL** until FR-EMBED-RESUME-* close the gap
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-EMBED-RESUME-01 | Must Have | Standalone Docker / CLI `embed --wait` loads existing `embedding_state` + vectors from RocksDB; second unchanged run skips `fresh` QNs (prove with logs: `skipped_fresh`, `embedded≈0`) |
+| FR-EMBED-RESUME-02 | Must Have | When `to_embed` is empty and orphan set is empty, **skip** HNSW drop + recreate; exit quickly with clear “nothing to embed” status |
+| FR-EMBED-RESUME-03 | Must Have | Mid-run durability: committed `fresh` rows survive kill/restart; next run resumes dirty-only (document lock + status files) |
+| FR-EMBED-RESUME-04 | Must Have | Indexer must not force a full re-embed on no-op / identical content: mark stale only for QNs whose embeddable `content_hash` changed (audit full-index `mark_stale_for_qualified_names` blast radius) |
+| FR-EMBED-RESUME-05 | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass finishes with near-zero ONNX batches and wall time **≪** cold pass (document threshold in release note; target minutes not hours) |
+| FR-EMBED-RESUME-06 | Must Have | **All Docker embed-on paths** (`LEANKG_EMBED_BACKGROUND`, `LEANKG_EMBED_ON_BOOT` / `embed_if_needed`, `LEANKG_DOCKER_SETUP`, `docker-up.sh`) share the same resume-vs-cold rule: existing data → incremental; no data → cold. Never wipe on enable. Document in `entrypoint.sh` / compose / AGENTS |
+| REL-052 | Must Have | Release gate: day-2 resume proven on named RocksDB volume for standalone `embed --wait` **and** at least one Docker MCP embed-on path (unit + e2e + optional live smoke) |
+| FR-HNSW-E | Must Have (PARTIAL) | Keep incremental filter; remaining work tracked under FR-EMBED-RESUME-* |
+
+**Won't Do (this track):**
+- Deleting RocksDB / forcing `--full` as the “fix” for day-2 slowness
+- Reopening Redis/FalkorDB as cold-write accelerators
+- Blocking MCP boot on embed (FR-EMBED-R1 still stands)
+- Treating “embed turned on in Docker” as a signal to wipe or full-rebuild
 
 ---
 
@@ -1545,7 +1697,21 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ## 8. Release Criteria
 
-> **Release checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Kind=`Release` or section 8.* / FR-VE-GATE.
+> **Release checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Kind=`Release` or section 8.* / FR-VE-GATE / REL-052.
+
+### 8.5 v3.7.2 Embed Resume Gate (CURRENT P0)
+
+> **Status:** PENDING — tracker `REL-052` + `FR-EMBED-RESUME-*` / `US-EMBED-*`.
+>
+> Ship day-2 resume before starting new P1 feature work. Vector Engine PR #80 may merge in parallel; it does **not** replace this gate.
+
+**Gate checklist:**
+1. Unchanged second `embed --wait` on RocksDB volume: `embedded≈0`, `skipped_fresh` dominates (FR-EMBED-RESUME-01 / US-EMBED-01)
+2. Zero-dirty path skips HNSW drop/rebuild (FR-EMBED-RESUME-02 / US-EMBED-03)
+3. Kill mid-run → resume dirty-only (FR-EMBED-RESUME-03 / US-EMBED-02)
+4. No-op index does not stale-all (FR-EMBED-RESUME-04)
+5. Day-2 wall time ≪ cold on mega-graph; release note records numbers (FR-EMBED-RESUME-05 / REL-052)
+6. Docker embed-on (`LEANKG_EMBED_BACKGROUND` / boot / setup / `docker-up`) resumes existing data; cold only when empty (FR-EMBED-RESUME-06 / US-EMBED-04)
 
 ## 9. Non-Functional Requirements
 
@@ -1575,6 +1741,10 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Ontology-tool default budgets | `concept_search` / `kg_semantic_context` ≥ 2k (align with sibling `kg_*`) | PENDING (FR-SEM-02) |
 | MCP HTTP semantic flake | Read-only semantic tools survive one transient socket drop via retry / hygiene | PENDING (FR-SEM-03) |
 | Live semantic MCP smoke | Checklist run (or waived) as release complement to embeddings cargo tests | PENDING (FR-SEM-04 / REL-051) |
+| Day-2 embed (unchanged graph) | Near-zero ONNX; wall time ≪ cold; minutes not hours on mega-graph | PENDING (FR-EMBED-RESUME-01 / 05) |
+| Zero-dirty embed | No HNSW drop/rebuild when nothing to write | PENDING (FR-EMBED-RESUME-02) |
+| Embed interrupt resume | Already-`fresh` rows never re-inferred after kill/restart | PENDING (FR-EMBED-RESUME-03) |
+| Docker embed-on resume | Existing RocksDB embed data → resume; empty → cold only | PENDING (FR-EMBED-RESUME-06 / US-EMBED-04) |
 
 ---
 
