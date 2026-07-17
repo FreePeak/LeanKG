@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-17 (priority sort)  
+**Last synced:** 2026-07-17 (vector-engine core on feature/vector-engine)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
@@ -49,7 +49,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 36 |
+| P0 | 21 |
 | P1 | 23 |
 | P2 | 51 |
 | P3 | 5 |
@@ -66,44 +66,46 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 **Single ordered queue.** Work top → bottom. P0 Vector Engine first.
 
+> **2026-07-17:** Vector engine core on `feature/vector-engine`. FR-VE-ABS..TEST-* DONE. A/B unit suite (≥100 tasks) + `cargo bench --bench vector_engine_ab` pass floors; live Kilo harness + 1M P95 still PARTIAL for default cutover.
+
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-VE-01` | User Story | **PENDING** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-02` | User Story | **PENDING** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-03` | User Story | **PENDING** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-04` | User Story | **PENDING** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-05` | User Story | **PENDING** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-07` | User Story | **PENDING** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-factory tests, so con… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-08` | User Story | **PENDING** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `FR-VE-ABS` | FR | **NOT_DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEngine') selected from e… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-DW` | FR | **NOT_DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Update RAM SQ8 cache**.… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-REC` | FR | **NOT_DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling pointers**, incomplete r… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-HNSW` | FR | **NOT_DONE** | Must Have | HNSW 'selectNeighborsHeuristic' with low **M ∈ [12, 16]**; raise 'efConstruction' to protect recall; document … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-MEM` | FR | **NOT_DONE** | Must Have | Auto-tune RocksDB block cache from cgroups / 'sysinfo' available RAM (2GB survival → cloud 50–80%). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-SIMD` | FR | **NOT_DONE** | Must Have | Runtime SIMD dispatch ('is_x86_feature_detected!' / 'is_aarch64_feature_detected!') → AVX-512 / AVX2 / NEON / … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-THREADS` | FR | **NOT_DONE** | Must Have | Dynamic 'rayon' pool — leave **2 cores free** for OS/IDE on Local; utilize full machine on Cloud. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T1` | FR | **NOT_DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW adjacency lists. Local… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T2` | FR | **NOT_DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN distance via SIMD; **no … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T3` | FR | **NOT_DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. Read **once** during … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-DW` | FR | **NOT_DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-FACTORY` | FR | **NOT_DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-GC` | FR | **NOT_DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-SIMD` | FR | **NOT_DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-IO` | FR | **NOT_DONE** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-OOM` | FR | **NOT_DONE** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-Q` | FR | **NOT_DONE** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-RECALL` | FR | **NOT_DONE** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `REL-044` | Release | **NOT_DONE** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-045` | Release | **NOT_DONE** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-046` | Release | **NOT_DONE** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-047` | Release | **NOT_DONE** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-048` | Release | **NOT_DONE** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-049` | Release | **NOT_DONE** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-050` | Release | **NOT_DONE** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `FR-VE-BENCH-AB` | FR | **NOT_DONE** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-GATE` | FR | **NOT_DONE** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-GC` | FR | **NOT_DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `US-VE-06` | User Story | **PENDING** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-01` | User Story | **PARTIAL** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-02` | User Story | **PARTIAL** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-03` | User Story | **PARTIAL** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-04` | User Story | **PARTIAL** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-05` | User Story | **PARTIAL** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-07` | User Story | **PARTIAL** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-factory tests, so con… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `FR-VE-ABS` | FR | **DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEngine') selected from e… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-DW` | FR | **DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Update RAM SQ8 cache**.… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-REC` | FR | **DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling pointers**, incomplete r… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-HNSW` | FR | **DONE** | Must Have | HNSW 'selectNeighborsHeuristic' with low **M ∈ [12, 16]**; raise 'efConstruction' to protect recall; document … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-MEM` | FR | **DONE** | Must Have | Auto-tune RocksDB block cache from cgroups / 'sysinfo' available RAM (2GB survival → cloud 50–80%). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-SIMD` | FR | **DONE** | Must Have | Runtime SIMD dispatch ('is_x86_feature_detected!' / 'is_aarch64_feature_detected!') → AVX-512 / AVX2 / NEON / … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-THREADS` | FR | **DONE** | Must Have | Dynamic 'rayon' pool — leave **2 cores free** for OS/IDE on Local; utilize full machine on Cloud. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T1` | FR | **DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW adjacency lists. Local… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T2` | FR | **DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN distance via SIMD; **no … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T3` | FR | **DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. Read **once** during … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-SIMD` | FR | **DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-IO` | FR | **PARTIAL** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-OOM` | FR | **PARTIAL** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-Q` | FR | **PARTIAL** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-RECALL` | FR | **PARTIAL** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `REL-044` | Release | **PARTIAL** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-045` | Release | **PARTIAL** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-046` | Release | **PARTIAL** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-047` | Release | **PARTIAL** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-048` | Release | **PARTIAL** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-050` | Release | **PARTIAL** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `FR-VE-BENCH-AB` | FR | **PARTIAL** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `US-VE-06` | User Story | **PARTIAL** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-LSP-A` | FR | **NOT_DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeScript / Python / Rust … | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
 | **P1** | `FR-LSP-B` | FR | **NOT_DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / 'typescript-language-s… | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
@@ -190,42 +192,42 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-VE-01` | User Story | **PENDING** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-02` | User Story | **PENDING** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-03` | User Story | **PENDING** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-04` | User Story | **PENDING** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-05` | User Story | **PENDING** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-07` | User Story | **PENDING** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-factory tests, so con… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `US-VE-08` | User Story | **PENDING** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
-| **P0** | `FR-VE-ABS` | FR | **NOT_DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEngine') selected from e… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-DW` | FR | **NOT_DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Update RAM SQ8 cache**.… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-REC` | FR | **NOT_DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling pointers**, incomplete r… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-HNSW` | FR | **NOT_DONE** | Must Have | HNSW 'selectNeighborsHeuristic' with low **M ∈ [12, 16]**; raise 'efConstruction' to protect recall; document … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-MEM` | FR | **NOT_DONE** | Must Have | Auto-tune RocksDB block cache from cgroups / 'sysinfo' available RAM (2GB survival → cloud 50–80%). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-SIMD` | FR | **NOT_DONE** | Must Have | Runtime SIMD dispatch ('is_x86_feature_detected!' / 'is_aarch64_feature_detected!') → AVX-512 / AVX2 / NEON / … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-RT-THREADS` | FR | **NOT_DONE** | Must Have | Dynamic 'rayon' pool — leave **2 cores free** for OS/IDE on Local; utilize full machine on Cloud. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T1` | FR | **NOT_DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW adjacency lists. Local… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T2` | FR | **NOT_DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN distance via SIMD; **no … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-T3` | FR | **NOT_DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. Read **once** during … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-DW` | FR | **NOT_DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-FACTORY` | FR | **NOT_DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-GC` | FR | **NOT_DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-TEST-SIMD` | FR | **NOT_DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-IO` | FR | **NOT_DONE** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-OOM` | FR | **NOT_DONE** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-Q` | FR | **NOT_DONE** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-BENCH-RECALL` | FR | **NOT_DONE** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `REL-044` | Release | **NOT_DONE** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-045` | Release | **NOT_DONE** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-046` | Release | **NOT_DONE** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-047` | Release | **NOT_DONE** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-048` | Release | **NOT_DONE** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-049` | Release | **NOT_DONE** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `REL-050` | Release | **NOT_DONE** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
-| **P0** | `FR-VE-BENCH-AB` | FR | **NOT_DONE** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-GATE` | FR | **NOT_DONE** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `FR-VE-FS-GC` | FR | **NOT_DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
-| **P0** | `US-VE-06` | User Story | **PENDING** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-01` | User Story | **PARTIAL** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150MB**, so the IDE and O… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-02` | User Story | **PARTIAL** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops stay 1-hop | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-03` | User Story | **PARTIAL** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-04` | User Story | **PARTIAL** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-05` | User Story | **PARTIAL** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-07` | User Story | **PARTIAL** | Must Have | As a QA engineer, I want dual-write crash, SIMD differential, GC concurrency, and engine-factory tests, so con… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `US-VE-08` | User Story | **PARTIAL** | Must Have | As a product owner, I want Kilo/OpenCode A/B (≥100 tasks) showing ≥60% token cut, ≥80% tool-call cut, ≥2× fast… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
+| **P0** | `FR-VE-ABS` | FR | **DONE** | Must Have | Storage abstraction via Rust traits + **static enum dispatch** ('LocalEngine' / 'CloudEngine') selected from e… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-DW` | FR | **DONE** | Must Have | Safe dual-write order: **Append Flat File → 'fsync' → Commit offsets to RocksDB/TiKV → Update RAM SQ8 cache**.… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-REC` | FR | **DONE** | Must Have | Crash after Flat File write but before RocksDB commit → clean recovery, **no dangling pointers**, incomplete r… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-HNSW` | FR | **DONE** | Must Have | HNSW 'selectNeighborsHeuristic' with low **M ∈ [12, 16]**; raise 'efConstruction' to protect recall; document … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-MEM` | FR | **DONE** | Must Have | Auto-tune RocksDB block cache from cgroups / 'sysinfo' available RAM (2GB survival → cloud 50–80%). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-SIMD` | FR | **DONE** | Must Have | Runtime SIMD dispatch ('is_x86_feature_detected!' / 'is_aarch64_feature_detected!') → AVX-512 / AVX2 / NEON / … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-RT-THREADS` | FR | **DONE** | Must Have | Dynamic 'rayon' pool — leave **2 cores free** for OS/IDE on Local; utilize full machine on Cloud. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T1` | FR | **DONE** | Must Have | **Tier 1 — Graph topology** in RocksDB (Local) / TiKV (Cloud): metadata, AST refs, HNSW adjacency lists. Local… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T2` | FR | **DONE** | Must Have | **Tier 2 — Quantized vectors** as an in-memory SQ8/INT8 array (100% RAM). All hot ANN distance via SIMD; **no … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-T3` | FR | **DONE** | Must Have | **Tier 3 — Raw payload** flat binary file: original FP32 vectors + source/chunk payload. Read **once** during … | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never blocked. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-TEST-SIMD` | FR | **DONE** | Must Have | Differential test: NEON / AVX2 / scalar on same mock set; abs error **&lt; 1e-6**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-IO` | FR | **PARTIAL** | Must Have | Prove ≥ **80%** reduction in page faults / disk reads vs legacy mmap architecture. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-OOM` | FR | **PARTIAL** | Must Have | Simulated **2GB cgroup** — heap/RSS monitored; **must not** OOM-kill. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-Q` | FR | **PARTIAL** | Must Have | 'cargo bench' — 1 query vs **1,000,000** SQ8 chunks, Local mode P95 **&lt; 50ms**. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-BENCH-RECALL` | FR | **PARTIAL** | Must Have | Recall **&gt; 90%** at 'efSearch=50' vs FP32 brute-force. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `REL-044` | Release | **PARTIAL** | Must Have | 3-tier LocalEngine implemented (FR-VE-T1..T3 + FR-VE-ABS) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-045` | Release | **PARTIAL** | Must Have | Dynamic SIMD + memory + thread auto-tune (FR-VE-RT-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-046` | Release | **PARTIAL** | Must Have | Dual-write + crash recovery + GC (FR-VE-FS-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-047` | Release | **PARTIAL** | Must Have | Unit/integration: DW crash, SIMD differential, GC concurrency, factory (FR-VE-TEST-*) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-048` | Release | **PARTIAL** | Must Have | Benches: &lt;50ms P95 @ 1M SQ8; ≥80% I/O reduction vs mmap; recall &gt;90% @ ef=50; 2GB cgroup no OOM | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-049` | Release | **PARTIAL** | Must Have | Agent A/B: ≥60% tokens, ≥80% tool calls, ≥2× faster, success ≥ baseline (FR-VE-BENCH-AB) | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `REL-050` | Release | **PARTIAL** | Must Have | Idle MCP RSS &lt; 150MB; time-to-context P95 &lt; 100ms | 8.4 v3.7 Vector Engine Gate (PENDING) |
+| **P0** | `FR-VE-BENCH-AB` | FR | **PARTIAL** | Must Have | Agent A/B ('run_kilo_ab_final.sh' or existing harness), ≥100 tasks: | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-GATE` | FR | **PARTIAL** | Must Have | Default Local switch only when FR-VE-TEST-* + FR-VE-BENCH-Q/IO/RECALL/OOM pass and FR-VE-BENCH-AB meets floors… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **&gt; 30%**; concurren… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
+| **P0** | `US-VE-06` | User Story | **PARTIAL** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragmentation &gt; 30%), s… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-LSP-A` | FR | **NOT_DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeScript / Python / Rust … | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
 | **P1** | `FR-LSP-B` | FR | **NOT_DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / 'typescript-language-s… | 5.13 LSP Adoption Track from CBM (moved from former 5.12; de… |
