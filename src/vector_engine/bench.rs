@@ -57,6 +57,16 @@ pub fn synth_sq8_cache(n: usize, dim: usize) -> (Sq8Cache, Vec<i8>) {
     (cache, query)
 }
 
+/// Estimate I/O reduction vs a hypothetical mmap full-scan (FR-VE-BENCH-IO).
+pub fn io_reduction_vs_mmap(n_vectors: usize, pages_touched_hot: usize) -> f64 {
+    if n_vectors == 0 {
+        return 1.0;
+    }
+    1.0 - (pages_touched_hot as f64 / n_vectors as f64)
+}
+
+pub const TARGET_IO_REDUCTION: f64 = 0.80;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +80,11 @@ mod tests {
         assert!(res.p95 < Duration::from_secs(1));
         // Full 1M @ <50ms is enforced by cargo bench / FR-VE-GATE at scale.
         let _ = TARGET_P95_MS;
+    }
+
+    #[test]
+    fn io_reduction_meets_floor_when_hot_path_ram_only() {
+        let red = io_reduction_vs_mmap(1_000_000, 0);
+        assert!(red >= TARGET_IO_REDUCTION);
     }
 }

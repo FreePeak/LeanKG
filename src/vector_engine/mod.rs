@@ -21,7 +21,10 @@ pub mod tier1;
 pub mod tier2;
 pub mod tier3;
 
-pub use bench::{bench_query_p95, synth_sq8_cache, QueryBenchResult, TARGET_P95_MS};
+pub use bench::{
+    bench_query_p95, io_reduction_vs_mmap, synth_sq8_cache, QueryBenchResult, TARGET_IO_REDUCTION,
+    TARGET_P95_MS,
+};
 pub use dual_write::{DualWriteEngine, WriteInput};
 pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
