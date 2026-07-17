@@ -103,9 +103,9 @@ docker run --rm --memory=10g --cpus=6 \
   -e LEANKG_EMBED_MAX_MB=0 -e LEANKG_EMBED_FAST=1 -e LEANKG_EMBED_MODEL=bge-q \
   --entrypoint leankg freepeak/leankg:latest \
   embed --wait --project /workspace --workers 8 --batch-size 128 --types function,method && \
-docker run -d --name leankg -p 9699:9699 --restart unless-stopped \
+docker run -d --name leankg -p 9699:9699 --memory=2g --restart unless-stopped \
   -v "$PWD:/workspace" -v leankg-rocksdb:/data/leankg-rocksdb -v leankg-models:/root/.cache/leankg \
-  -e LEANKG_EMBED_ON_BOOT=0 -e LEANKG_EMBED_BACKGROUND=0 \
+  -e LEANKG_EMBED_ON_BOOT=0 -e LEANKG_EMBED_BACKGROUND=0 -e LEANKG_EMBED_MAX_MB=512 \
   freepeak/leankg:latest
 ```
 
@@ -375,9 +375,10 @@ pauses briefly when RSS crosses 90% of that soft cap.
 | 8             | ~730 MB                       | Memory-pressured host |
 | 4             | ~400 MB                       | 1-vCPU container |
 
-For Docker cold embeds, prefer `mem_limit` ≥ 6g **or** set
-`LEANKG_EMBED_MAX_MB` below the container limit so backpressure engages
-before the OOM killer.
+For Docker **MCP** (`docker-compose.rocksdb.yml` / `docker-up.sh`), Local
+survival is **`mem_limit: 2g`**. For Docker **cold embeds**, prefer
+`mem_limit` ≥ 6g **or** set `LEANKG_EMBED_MAX_MB` below the container limit
+so backpressure engages before the OOM killer.
 
 ### Internals & design rationale
 
