@@ -145,7 +145,7 @@ Full CLI: [docs/cli-reference.md](docs/cli-reference.md)
 - **MCP-native** — 85+ tools for search, impact, call graphs, ontology, and team knowledge
 - **Impact radius** — blast radius before you change code, with confidence and severity
 - **Dependency graph** — `IMPORTS`, `CALLS`, `TESTED_BY`, `HTTP_CALLS`, tunnels, and more
-- **Semantic search** — CozoDB HNSW over dense embeddings (`--features embeddings`; Docker includes it)
+- **Semantic search** — CozoDB HNSW over dense embeddings (`--features embeddings`; Docker includes it). MCP probe results: [docs/semantic-search-mcp-verification-2026-07-17.md](docs/semantic-search-mcp-verification-2026-07-17.md)
 - **Community detection** — Leiden clusters with per-cluster skill context
 - **Multi-language** — Go, TypeScript, Python, Rust, Java, Kotlin, Dart, Android XML, Terraform, CI YAML
 - **Local-first** — SQLite by default; RocksDB for multi-project / team deploy
@@ -207,6 +207,7 @@ Reports: [docs/benchmark.md](docs/benchmark.md)
 | [docs/architecture.md](docs/architecture.md) | System design & data model |
 | [docs/web-ui.md](docs/web-ui.md) | Web UI |
 | [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings / HNSW internals |
+| [docs/semantic-search-mcp-verification-2026-07-17.md](docs/semantic-search-mcp-verification-2026-07-17.md) | MCP smoke probe of the semantic-search + ontology pipeline |
 | [INSTRUCTION.md](INSTRUCTION.md) | Memory tuning & ops playbook |
 | [docs/roadmap.md](docs/roadmap.md) | Roadmap |
 | [AGENTS.md](AGENTS.md) | Agent / Docker deployment notes |

@@ -1,11 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-17 (`feature/vector-engine-gate`; crate **0.19.0**; A/B+bench evidence in `docs/benchmarks/vector_engine_gate_results.json`)  
+**Last synced:** 2026-07-17 (`feature/vector-engine-gate`; crate **0.19.0**; + **US-SEM / FR-SEM** from [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md))  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
 > **P0 = v3.7 Vector Engine** — **COMPLETE** (unit + e2e + `cargo bench --bench vector_engine_ab`). Next focus: **P1**.  
+> **Semantic MCP live probe GREEN** — enhancements are **P2/P3** (`US-SEM-*` / `FR-SEM-*`); do not displace P1 Must Have.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -38,27 +39,27 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **386** |
-| NOT_DONE | 54 |
-| PENDING | 12 |
+| **Total tracked** | **396** |
+| NOT_DONE | 60 |
+| PENDING | 16 |
 | PARTIAL | 12 |
 | OPEN | 1 |
 | DONE | 304 |
 | WONT_DO | 3 |
-| Open work | **79** |
+| Open work | **89** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
 | P1 | 23 |
-| P2 | 51 |
-| P3 | 5 |
+| P2 | 59 |
+| P3 | 7 |
 
 | Kind | Count |
 |------|------:|
-| FR | 200 |
-| Release | 50 |
-| User Story | 136 |
+| FR | 205 |
+| Release | 51 |
+| User Story | 140 |
 
 ---
 
@@ -67,6 +68,8 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 **Single ordered queue.** Work top → bottom. P0 Vector Engine gate is **DONE**; continue with P1.
 
 > **2026-07-17 (`feature/vector-engine-gate`):** P0 Vector Engine **COMPLETE**. Coverage: **56** `vector_engine` unit tests; **6** e2e (+ full gate ignored); `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). **A/B:** 100 tasks — token **−65.0%**, tool **−84.6%**, speedup **2.50×**. **ANN 1M P95=0.055ms**; RSS≈60MB; TTC P95≈0.086ms. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true`. Cozo remains runtime default until callers honor `preferred_ann_backend()`. **Next: P1.**
+>
+> **Same day — semantic MCP live probe GREEN** ([`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)). Pipeline OK; backlog `US-SEM-*` / `FR-SEM-*` / `REL-051` added as **P2/P3 later enhancements** (token honesty, ontology budgets, HTTP resilience, live smoke, optional diversity).
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
@@ -144,11 +147,21 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
+| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach ≥3× when truncated | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, target 2k–4k) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-listener hygiene) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-04` | FR | **NOT_DONE** | Should Have | Formal live MCP semantic smoke checklist (Docker project=/workspace) as release complement to cargo embeddings tests | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `REL-051` | Release | **NOT_DONE** | Should Have | Live semantic MCP smoke executed (or waived with reason) alongside embeddings cargo suite | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Apex, …) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GF-12` | User Story | **PARTIAL** | Could Have | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app code) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. **Approach:** improve … | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
+| **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 
 ---
 
@@ -242,11 +255,21 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 | **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
+| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach ≥3× when truncated | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, target 2k–4k) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-listener hygiene) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-04` | FR | **NOT_DONE** | Should Have | Formal live MCP semantic smoke checklist (Docker project=/workspace) as release complement to cargo embeddings tests | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `REL-051` | Release | **NOT_DONE** | Should Have | Live semantic MCP smoke executed (or waived with reason) alongside embeddings cargo suite | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Apex, …) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GF-12` | User Story | **PARTIAL** | Could Have | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app code) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. **Approach:** improve … | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
+| **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P0** | `US-VE-03` | User Story | **DONE** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Rust trait + static enu… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P0** | `US-VE-04` | User Story | **DONE** | Must Have | As a query runtime, I want SQ8/INT8 vectors fully in RAM with dynamic SIMD (NEON / AVX2 / AVX-512 / scalar fal… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
 | **P0** | `US-VE-05` | User Story | **DONE** | Must Have | As a storage owner on a 256GB SSD, I want mmap disabled + Zstd RocksDB + append/fsync dual-write, so write amp… | 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.… |
@@ -552,6 +575,7 @@ Within the same Focus: **Must Have → Should Have → Could Have**, then VE bui
 - **Tests:** `cargo test --release --lib -- vector_engine`; `cargo test --release --test vector_engine_e2e`; full gate: `LEANKG_VE_GATE_FULL=1 cargo test --release --test vector_engine_e2e e2e_gate_full_ready_for_default -- --ignored`.
 - **A/B (measured):** token −65.0%, tool −84.6%, speedup 2.50× @ 100 tasks (floors 60%/80%/2×).
 - **Shipped default ANN:** Cozo `::hnsw` until callers use `preferred_ann_backend()` after full gate.
+- **Semantic MCP live probe (GREEN):** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md) → backlog `US-SEM-01..04`, `FR-SEM-01..05`, `REL-051` (P2/P3 later; do not displace P1).
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-17 after unit/e2e/bench coverage + A/B results.*
+*Regenerated: 2026-07-17 after semantic MCP verification → PRD v3.7.1 enhancement backlog.*
