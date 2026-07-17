@@ -11,6 +11,7 @@
 #   LEANKG_IMAGE          image tag (default: freepeak/leankg:latest)
 #   LEANKG_CONTAINER_NAME container name (default: leankg)
 #   MCP_HTTP_PORT         host port (default: 9699)
+#   LEANKG_MCP_MEMORY     MCP container memory limit (default: 2g — Local survival)
 #   LEANKG_EMBED_MEMORY   embed job memory limit (default: 10g)
 #   LEANKG_EMBED_CPUS     embed job CPUs (default: 6)
 #   LEANKG_SKIP_EMBED=1   start MCP only (skip cold embed)
@@ -20,6 +21,7 @@ IMAGE="${LEANKG_IMAGE:-freepeak/leankg:latest}"
 HOST_DIR="${LEANKG_HOST_DIR:-$PWD}"
 NAME="${LEANKG_CONTAINER_NAME:-leankg}"
 PORT="${MCP_HTTP_PORT:-9699}"
+MCP_MEM="${LEANKG_MCP_MEMORY:-2g}"
 MEM="${LEANKG_EMBED_MEMORY:-10g}"
 CPUS="${LEANKG_EMBED_CPUS:-6}"
 
@@ -38,6 +40,7 @@ echo "  image:     $IMAGE"
 echo "  host dir:  $HOST_DIR → /workspace"
 echo "  container: $NAME  port: $PORT"
 echo "  embed:     memory=$MEM cpus=$CPUS"
+echo "  mcp:       memory=$MCP_MEM (Local 2GB survival)"
 
 echo "=== Pull image ==="
 docker pull "$IMAGE"
@@ -104,10 +107,11 @@ fi
 echo "=== Start MCP HTTP ==="
 docker run -d --name "$NAME" \
   -p "${PORT}:9699" \
+  --memory="$MCP_MEM" \
   --restart unless-stopped \
   "${VOLUMES[@]}" \
   "${ENV_COMMON[@]}" \
-  -e LEANKG_EMBED_MAX_MB=3072 \
+  -e LEANKG_EMBED_MAX_MB=512 \
   "$IMAGE"
 
 echo "=== Wait for /health ==="
