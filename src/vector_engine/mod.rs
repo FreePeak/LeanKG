@@ -9,6 +9,7 @@
 //! engine with `LEANKG_VECTOR_ENGINE=local|cloud`.
 
 pub mod engine;
+pub mod memory;
 pub mod simd;
 pub mod tier1;
 pub mod tier2;
@@ -17,6 +18,10 @@ pub mod tier3;
 pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
     VectorStorage, DEFAULT_VECTOR_DIM, ENV_VECTOR_ENGINE,
+};
+pub use memory::{
+    auto_tune_block_cache, available_memory_bytes, plan_block_cache, plan_under_2gb_cgroup,
+    MemoryPlan, LOCAL_SURVIVAL_CAP_BYTES,
 };
 pub use simd::{detect_simd, dot_i8, dot_i8_auto, SimdKind};
 pub use tier1::{
