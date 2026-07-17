@@ -9,6 +9,7 @@
 //! engine with `LEANKG_VECTOR_ENGINE=local|cloud`.
 
 pub mod engine;
+pub mod simd;
 pub mod tier1;
 pub mod tier2;
 pub mod tier3;
@@ -17,6 +18,7 @@ pub use engine::{
     CloudEngine, EngineKind, LocalEngine, VectorEngine, VectorEngineError, VectorEngineFactory,
     VectorStorage, DEFAULT_VECTOR_DIM, ENV_VECTOR_ENGINE,
 };
+pub use simd::{detect_simd, dot_i8, dot_i8_auto, SimdKind};
 pub use tier1::{
     BlockTableFactory, HnswAdjacency, RocksCompression, RocksDbLocalOptions, TopologyNode,
     TopologyStore,
