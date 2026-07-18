@@ -38,18 +38,18 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **423** |
-| NOT_DONE | 64 |
-| PENDING | 21 |
+| NOT_DONE | 63 |
+| PENDING | 20 |
 | PARTIAL | 12 |
 | OPEN | 1 |
-| DONE | 322 |
+| DONE | 324 |
 | WONT_DO | 3 |
-| Open work | **98** |
+| Open work | **96** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
-| P1 | 27 |
+| P1 | 25 |
 | P2 | 62 |
 | P3 | 9 |
 
@@ -69,10 +69,8 @@
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P1** | `US-SURF-01` | User Story | **PENDING** | Must Have | Agents know which search/semantic tool to call first (prefer-order in schemas) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
 | **P1** | `US-SURF-02` | User Story | **PENDING** | Must Have | Remove zero-value / superseded MCP tools (mcp_hello, mcp_impact, get_doc_for_file) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
 | **P1** | `FR-SURF-01` | FR | **NOT_DONE** | Must Have | Fix semantic_search schema: dual-path HNSW+rerank OR ontology-first (not ANN-only) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P1** | `FR-SURF-02` | FR | **NOT_DONE** | Must Have | Prefer-order one-liners on concept_search / search_code / semantic_search / kg_semantic_c… | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P1** | `FR-SURF-03` | FR | **NOT_DONE** | Must Have | Delete mcp_hello, mcp_impact, get_doc_for_file; update redundant_tools_matrix.rs | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |

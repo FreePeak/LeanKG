@@ -498,7 +498,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_code".to_string(),
-                description: "Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination.".to_string(),
+                description: "Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination. Prefer-order (search): try after concept_search and semantic_search when you need name/type filters.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -515,7 +515,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "concept_search".to_string(),
-                description: "Concept-gated semantic search: extracts keywords from raw input, scans the concept ontology for matching concepts, loads each concept's code references, and queries the LeanKG DB for the actual code. Use this for natural-language / domain-concept queries (e.g. 'feature flag', 'gorm store', 'grpc service'). Falls back to name-based code search if no concept matches.".to_string(),
+                description: "Concept-gated semantic search: extracts keywords from raw input, scans the concept ontology for matching concepts, loads each concept's code references, and queries the LeanKG DB for the actual code. Use this for natural-language / domain-concept queries (e.g. 'feature flag', 'gorm store', 'grpc service'). Falls back to name-based code search if no concept matches. Prefer-order (search): try first for domain concepts; then semantic_search; then search_code.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -987,7 +987,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "semantic_search".to_string(),
-                description: "Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses CozoDB HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables).".to_string(),
+                description: "Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses CozoDB HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables). Prefer-order (search): after concept_search; before search_code. Prefer-order (semantic): try first; then kg_semantic_context; then kg_context.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1015,7 +1015,7 @@ impl ToolRegistry {
             // Ontology Semantic Search Tools
             ToolDefinition {
                 name: "kg_context".to_string(),
-                description: "Get ontology-aware context for a semantic query. Returns matched concept nodes, expanded code context, workflows, docs, tests, and confidence scores. Use for agentic semantic questions like 'where is checkout refund failure handled?'".to_string(),
+                description: "Get ontology-aware context for a semantic query. Returns matched concept nodes, expanded code context, workflows, docs, tests, and confidence scores. Use for agentic semantic questions like 'where is checkout refund failure handled?' Prefer-order (semantic): try after semantic_search / kg_semantic_context when ontology expand without vectors is enough.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1078,7 +1078,7 @@ impl ToolRegistry {
             #[cfg(feature = "embeddings")]
             ToolDefinition {
                 name: "kg_semantic_context".to_string(),
-                description: "Vector retrieval + cross-encoder rerank + adaptive KG traversal. Use for natural-language queries where keyword search misses: 'where do we validate access rights', 'how does the refund flow work'. Returns ranked seed nodes plus 1-2 hop graph context (related code, tests, docs, workflows). Requires the `embeddings` cargo feature and an embedding index built via `cargo run --release -- embed`.".to_string(),
+                description: "Vector retrieval + cross-encoder rerank + adaptive KG traversal. Use for natural-language queries where keyword search misses: 'where do we validate access rights', 'how does the refund flow work'. Returns ranked seed nodes plus 1-2 hop graph context (related code, tests, docs, workflows). Requires the `embeddings` cargo feature and an embedding index built via `cargo run --release -- embed`. Prefer-order (semantic): after semantic_search; before kg_context. Requires embeddings.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1234,5 +1234,34 @@ mod tests {
             "description must mention ontology-first/safe_discover fallback: {}",
             tool.description
         );
+    }
+
+    fn assert_prefer_order_hint(tool_name: &str, description: &str) {
+        assert!(
+            description.to_lowercase().contains("prefer-order"),
+            "{tool_name} description must include prefer-order hint: {description}"
+        );
+    }
+
+    #[test]
+    fn test_search_and_semantic_tools_include_prefer_order_hints() {
+        let tools = ToolRegistry::list_tools();
+        let always_present = [
+            "concept_search",
+            "search_code",
+            "semantic_search",
+            "kg_context",
+        ];
+        for name in always_present {
+            let tool = tools
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("{name} tool must exist"));
+            assert_prefer_order_hint(name, &tool.description);
+        }
+
+        if let Some(tool) = tools.iter().find(|t| t.name == "kg_semantic_context") {
+            assert_prefer_order_hint("kg_semantic_context", &tool.description);
+        }
     }
 }

@@ -2,11 +2,11 @@
   "generated": "2026-07-18",
   "source": "docs/prd.md",
   "counts": {
-    "NOT_DONE": 64,
+    "NOT_DONE": 63,
     "OPEN": 1,
-    "PENDING": 21,
+    "PENDING": 20,
     "PARTIAL": 12,
-    "DONE": 322,
+    "DONE": 324,
     "WONT_DO": 3
   },
   "tasks": [
@@ -5358,8 +5358,8 @@
       "kind": "User Story",
       "title": "Agents know which search/semantic tool to call first (prefer-order in schemas)",
       "priority": "Must Have",
-      "status": "PENDING",
-      "notes": "v3.7.4 \u2014 document search + semantic triples; fix semantic_search dual-path docstring",
+      "status": "DONE",
+      "notes": "v3.7.4 \u2014 document search + semantic triples; fix semantic_search dual-path docstring | DONE after FR-SURF-01+02",
       "section": "3.16 MCP Tool Surface Rationalization (US-SURF) \u2014 v3.7.4",
       "prd_line": null,
       "focus": "P1",
@@ -5436,8 +5436,8 @@
       "kind": "FR",
       "title": "Prefer-order one-liners on concept_search / search_code / semantic_search / kg_semantic_context / kg_context",
       "priority": "Must Have",
-      "status": "NOT_DONE",
-      "notes": "v3.7.4 \u2014 sync AGENTS + using-leankg skill",
+      "status": "DONE",
+      "notes": "v3.7.4 \u2014 sync AGENTS + using-leankg skill | DONE 2026-07-18 prefer-order one-liners",
       "section": "5.18 MCP Tool Surface Rationalization (v3.7.4)",
       "prd_line": null,
       "focus": "P1",
@@ -5522,7 +5522,7 @@
       "P2": "Should Have",
       "P3": "Could Have / aspirational OPEN"
     },
-    "updated": "2026-07-18-surf01",
-    "sync_note": "FR-SURF-01 DONE: semantic_search dual-path HNSW+rerank / ontology-first safe_discover docstring."
+    "updated": "2026-07-18-surf02",
+    "sync_note": "FR-SURF-01+02 / US-SURF-01 DONE: dual-path + prefer-order schemas."
   }
 }
