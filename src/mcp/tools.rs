@@ -987,7 +987,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "semantic_search".to_string(),
-                description: "Natural language semantic discovery with pagination. Ontology-first: scans concept ontology then falls back to bounded name search. Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables).".to_string(),
+                description: "Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses CozoDB HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1213,5 +1213,26 @@ mod tests {
         assert!(properties.contains_key("query"));
         assert!(properties.contains_key("env"));
         assert!(properties.contains_key("limit"));
+    }
+
+    #[test]
+    fn test_semantic_search_description_documents_dual_path() {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "semantic_search")
+            .expect("semantic_search tool must exist");
+
+        let desc = tool.description.to_lowercase();
+        assert!(
+            desc.contains("hnsw") || desc.contains("embedding") || desc.contains("rerank"),
+            "description must mention HNSW/embeddings/rerank path: {}",
+            tool.description
+        );
+        assert!(
+            desc.contains("ontology-first") || desc.contains("safe_discover"),
+            "description must mention ontology-first/safe_discover fallback: {}",
+            tool.description
+        );
     }
 }

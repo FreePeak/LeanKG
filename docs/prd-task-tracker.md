@@ -1,12 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-18 — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) embed-resume + SEM filter + mega-graph ops + Docker PID1 embed.lock fix  
+**Last synced:** 2026-07-18 — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) embed-resume + SEM filter + mega-graph ops; **v3.7.4 MCP tool surface** (`US-SURF-*` / `FR-SURF-*`) added  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
 > **P0 embed-resume:** core + Docker evidence **DONE**.  
-> **P1 this pass:** FR-SEM-06 / FR-MG-AUTO-01 / FR-OPS-EMBED-CPU **DONE**. Next: remaining P1 Must Have (LSP, etc.).  
+> **P1 this pass:** FR-SEM-06 / FR-MG-AUTO-01 / FR-OPS-EMBED-CPU **DONE**. Next: **MCP surface** (`FR-SURF-02..03` / `US-SURF-01/02`; FR-SURF-01 DONE) then remaining P1 Must Have (LSP, etc.).  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -37,36 +37,43 @@
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **411** |
-| NOT_DONE | 58 |
-| PENDING | 16 |
+| **Total tracked** | **423** |
+| NOT_DONE | 64 |
+| PENDING | 21 |
 | PARTIAL | 12 |
 | OPEN | 1 |
-| DONE | 321 |
+| DONE | 322 |
 | WONT_DO | 3 |
-| Open work | **87** |
+| Open work | **98** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
-| P1 | 23 |
-| P2 | 57 |
-| P3 | 7 |
+| P1 | 27 |
+| P2 | 62 |
+| P3 | 9 |
 
 | Kind | Count |
 |------|------:|
-| FR | 214 |
-| Release | 52 |
-| User Story | 145 |
+| FR | 220 |
+| Release | 53 |
+| User Story | 150 |
 
 ---
 
 ## Active session — open work (sorted by priority)
 
 > **2026-07-18 — closed on PR #81:** embed-resume day-2; SEM path filter (Probes G/H); `LEANKG_SKIP_FRESHNESS_CHECK`; compose **cpus 6 / mem_reservation 3g / MCP mem_limit 6g**; 3-workspace vector counts (3,271 / 146,977 / 14,110) + semantic_search OK.
+>
+> **2026-07-18 — added (v3.7.4):** MCP tool surface rationalization — document prefer-order + delete 3 superseded tools first; soft-deprecate `wake_up` / `search_by_environment`; do **not** deprecate `mcp_status` / bootstrap ops tools. Registry baseline ≈85.
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
+| **P1** | `US-SURF-01` | User Story | **PENDING** | Must Have | Agents know which search/semantic tool to call first (prefer-order in schemas) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P1** | `US-SURF-02` | User Story | **PENDING** | Must Have | Remove zero-value / superseded MCP tools (mcp_hello, mcp_impact, get_doc_for_file) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P1** | `FR-SURF-01` | FR | **NOT_DONE** | Must Have | Fix semantic_search schema: dual-path HNSW+rerank OR ontology-first (not ANN-only) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P1** | `FR-SURF-02` | FR | **NOT_DONE** | Must Have | Prefer-order one-liners on concept_search / search_code / semantic_search / kg_semantic_c… | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P1** | `FR-SURF-03` | FR | **NOT_DONE** | Must Have | Delete mcp_hello, mcp_impact, get_doc_for_file; update redundant_tools_matrix.rs | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
@@ -102,6 +109,11 @@
 | **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
+| **P2** | `US-SURF-03` | User Story | **PENDING** | Should Have | Soft-deprecate wake_up in favor of get_overview_context (not load_layer L0 alone) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `US-SURF-04` | User Story | **PENDING** | Should Have | Soft-deprecate search_by_environment (use env= on primary search/kg tools) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `FR-SURF-04` | FR | **NOT_DONE** | Should Have | Soft-deprecate wake_up → get_overview_context (not load_layer L0 alone) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `FR-SURF-05` | FR | **NOT_DONE** | Should Have | Soft-deprecate search_by_environment; point to env= on primary search/kg tools | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `REL-053` | Release | **NOT_DONE** | Should Have | Release note: MCP tool surface shrink after FR-SURF-03 (list_tools before/after) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
@@ -152,7 +164,9 @@
 | **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
+| **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. *… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + e… |
 
 ---
@@ -210,6 +224,11 @@
 | **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `US-VE-06` | User Story | **DONE** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragm… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
+| **P1** | `US-SURF-01` | User Story | **PENDING** | Must Have | Agents know which search/semantic tool to call first (prefer-order in schemas) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P1** | `US-SURF-02` | User Story | **PENDING** | Must Have | Remove zero-value / superseded MCP tools (mcp_hello, mcp_impact, get_doc_for_file) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P1** | `FR-SURF-01` | FR | **NOT_DONE** | Must Have | Fix semantic_search schema: dual-path HNSW+rerank OR ontology-first (not ANN-only) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P1** | `FR-SURF-02` | FR | **NOT_DONE** | Must Have | Prefer-order one-liners on concept_search / search_code / semantic_search / kg_semantic_c… | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P1** | `FR-SURF-03` | FR | **NOT_DONE** | Must Have | Delete mcp_hello, mcp_impact, get_doc_for_file; update redundant_tools_matrix.rs | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
@@ -339,6 +358,11 @@
 | **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
+| **P2** | `US-SURF-03` | User Story | **PENDING** | Should Have | Soft-deprecate wake_up in favor of get_overview_context (not load_layer L0 alone) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `US-SURF-04` | User Story | **PENDING** | Should Have | Soft-deprecate search_by_environment (use env= on primary search/kg tools) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `FR-SURF-04` | FR | **NOT_DONE** | Should Have | Soft-deprecate wake_up → get_overview_context (not load_layer L0 alone) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `FR-SURF-05` | FR | **NOT_DONE** | Should Have | Soft-deprecate search_by_environment; point to env= on primary search/kg tools | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `REL-053` | Release | **NOT_DONE** | Should Have | Release note: MCP tool surface shrink after FR-SURF-03 (list_tools before/after) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
@@ -563,6 +587,8 @@
 | **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
+| **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. *… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + e… |
 | **P3** | `US-CBM-B7` | User Story | **DONE** | Could Have | Clone / near-duplicate detection ('find_clones', 'similar_to') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
@@ -578,7 +604,8 @@
 ## Sync notes
 
 - **PR [#81](https://github.com/FreePeak/LeanKG/pull/81):** embed-resume + SEM-06 + MG-AUTO-01 + OPS cpus6/3g/6g.
+- **v3.7.4 MCP surface:** added `US-SURF-01..05`, `FR-SURF-01..06`, `REL-053` (PRD §3.16 / §5.18). Prefer docstring prefer-order + 3 hard deletes; soft-deprecate `wake_up` / `search_by_environment`; keep `mcp_status` + bootstrap ops tools.
 - **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md), [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md).
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-18 — ops envelope + SEM filter.*
+*Regenerated: 2026-07-18 — MCP tool surface rationalization (v3.7.4).*
