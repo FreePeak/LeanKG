@@ -83,7 +83,7 @@ mod tests {
     fn build_pool_succeeds() {
         let plan = plan_threads(4, EngineKind::Local);
         let pool = build_rayon_pool(plan).unwrap();
-        let sum: i32 = pool.install(|| (0..10).map(|x| x).sum());
+        let sum: i32 = pool.install(|| (0..10).sum());
         assert_eq!(sum, 45);
     }
 }
