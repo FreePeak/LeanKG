@@ -10,7 +10,6 @@ LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowle
 | `mcp_index` | Index codebase (path, incremental, lang, exclude options) |
 | `mcp_install` | Create .mcp.json for MCP client configuration |
 | `mcp_status` | Show index statistics and status |
-| `mcp_impact` | Calculate blast radius for a file |
 
 ## Query Tools
 
@@ -43,7 +42,6 @@ LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowle
 | Tool | Description |
 |------|-------------|
 | `generate_doc` | Generate documentation for file |
-| `get_doc_for_file` | Get documentation files referencing a code element |
 | `get_files_for_doc` | Get code elements referenced in a documentation file |
 | `get_doc_structure` | Get documentation directory structure |
 | `get_doc_tree` | Get documentation tree structure |

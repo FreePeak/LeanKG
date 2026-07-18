@@ -27,9 +27,7 @@ async fn test_all_mcp_tools() {
     println!("Using cluster_id: {}", cluster_id);
 
     let tools = vec![
-        ("mcp_hello", json!({})),
         ("mcp_status", json!({})),
-        ("mcp_hello", json!({"format": "json"})),
         ("search_code", json!({"query": "main", "limit": 5})),
         ("find_function", json!({"name": "new"})),
         ("query_file", json!({"pattern": "main"})),
@@ -51,7 +49,6 @@ async fn test_all_mcp_tools() {
         ("get_callers", json!({"function": "src/main.rs::main"})),
         ("find_large_functions", json!({"min_lines": 100})),
         ("get_tested_by", json!({"file": "src/main.rs"})),
-        ("get_doc_for_file", json!({"file": "src/main.rs"})),
         ("get_files_for_doc", json!({"doc": "README.md"})),
         ("get_doc_structure", json!({})),
         ("get_traceability", json!({"element": "src/main.rs::main"})),
@@ -63,7 +60,6 @@ async fn test_all_mcp_tools() {
         ("get_cluster_context", json!({"cluster_id": cluster_id})),
         ("orchestrate", json!({"intent": "find main function"})),
         ("generate_doc", json!({"file": "src/main.rs"})),
-        ("mcp_impact", json!({"file": "src/main.rs", "depth": 2})),
         ("detect_changes", json!({})),
         ("ctx_read", json!({"file": "src/main.rs", "mode": "full"})),
         (

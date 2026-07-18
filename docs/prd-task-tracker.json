@@ -2,12 +2,12 @@
   "generated": "2026-07-18",
   "source": "docs/prd.md",
   "counts": {
-    "NOT_DONE": 63,
-    "OPEN": 1,
-    "PENDING": 20,
+    "DONE": 326,
     "PARTIAL": 12,
-    "DONE": 324,
-    "WONT_DO": 3
+    "PENDING": 19,
+    "NOT_DONE": 62,
+    "WONT_DO": 3,
+    "OPEN": 1
   },
   "tasks": [
     {
@@ -5371,8 +5371,8 @@
       "kind": "User Story",
       "title": "Remove zero-value / superseded MCP tools (mcp_hello, mcp_impact, get_doc_for_file)",
       "priority": "Must Have",
-      "status": "PENDING",
-      "notes": "v3.7.4 \u2014 hard delete; keep get_impact_radius / find_related_docs",
+      "status": "DONE",
+      "notes": "v3.7.4 \u2014 hard delete; keep get_impact_radius / find_related_docs | DONE 2026-07-18 FR-SURF-03",
       "section": "3.16 MCP Tool Surface Rationalization (US-SURF) \u2014 v3.7.4",
       "prd_line": null,
       "focus": "P1",
@@ -5449,8 +5449,8 @@
       "kind": "FR",
       "title": "Delete mcp_hello, mcp_impact, get_doc_for_file; update redundant_tools_matrix.rs",
       "priority": "Must Have",
-      "status": "NOT_DONE",
-      "notes": "v3.7.4 \u2014 near-term registry ~85 \u2192 ~82",
+      "status": "DONE",
+      "notes": "v3.7.4 \u2014 registry ~85 \u2192 ~82 | DONE 2026-07-18 hard delete + redundant_tools_matrix",
       "section": "5.18 MCP Tool Surface Rationalization (v3.7.4)",
       "prd_line": null,
       "focus": "P1",
@@ -5522,7 +5522,7 @@
       "P2": "Should Have",
       "P3": "Could Have / aspirational OPEN"
     },
-    "updated": "2026-07-18-surf02",
-    "sync_note": "FR-SURF-01+02 / US-SURF-01 DONE: dual-path + prefer-order schemas."
+    "updated": "2026-07-18-surf03",
+    "sync_note": "FR-SURF-03 / US-SURF-02 DONE: hard-removed mcp_hello, mcp_impact, get_doc_for_file."
   }
 }

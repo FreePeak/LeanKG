@@ -73,18 +73,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "mcp_impact".to_string(),
-                description: "Calculate impact radius (blast radius) for a file".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to analyze"},
-                        "depth": {"type": "integer", "description": "Depth of analysis (default: 3)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
                 name: "query_file".to_string(),
                 description: "Find file by name or pattern".to_string(),
                 input_schema: json!({
@@ -581,18 +569,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "get_doc_for_file".to_string(),
-                description: "Get documentation files that reference a code element".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to get documentation for"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
                 name: "get_files_for_doc".to_string(),
                 description: "Get code elements referenced in a documentation file".to_string(),
                 input_schema: json!({
@@ -680,17 +656,6 @@ impl ToolRegistry {
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "mcp_hello".to_string(),
-                description: "Returns 'Hello, World!'".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
                 }),
             },
             ToolDefinition {
@@ -1158,6 +1123,13 @@ mod tests {
         assert!(names.contains(&"query_file"));
         assert!(names.contains(&"get_dependencies"));
         assert!(names.contains(&"get_impact_radius"));
+        assert!(names.contains(&"find_related_docs"));
+        for removed in ["mcp_hello", "mcp_impact", "get_doc_for_file"] {
+            assert!(
+                !names.contains(&removed),
+                "removed tool `{removed}` must not be registered"
+            );
+        }
     }
 
     #[test]

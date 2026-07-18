@@ -132,19 +132,6 @@ mod mcp_core_tools {
             result.err()
         );
     }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_mcp_impact() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool("mcp_impact", &json!({"file": "./src/main.rs", "depth": 2}))
-            .await;
-        assert!(
-            result.is_ok(),
-            "mcp_impact should succeed: {:?}",
-            result.err()
-        );
-    }
 }
 
 // ============================================================================
@@ -484,25 +471,6 @@ mod documentation_tools {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_get_doc_for_file() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool("get_doc_for_file", &json!({"file": "./src/main.rs"}))
-            .await;
-        assert!(
-            result.is_ok(),
-            "get_doc_for_file should succeed: {:?}",
-            result.err()
-        );
-        let value = result.unwrap();
-        // May be empty if no docs linked, but should not error
-        assert!(
-            value.get("docs").is_some() || !value.to_string().is_empty(),
-            "get_doc_for_file should return docs field"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_files_for_doc() {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler
@@ -708,19 +676,18 @@ mod utility_tools {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_mcp_hello() {
+    async fn test_kg_self_test() {
         let (handler, _tmp) = create_real_handler().await;
-        let result = handler.execute_tool("mcp_hello", &json!({})).await;
+        let result = handler.execute_tool("kg_self_test", &json!({})).await;
         assert!(
             result.is_ok(),
-            "mcp_hello should succeed: {:?}",
+            "kg_self_test should succeed: {:?}",
             result.err()
         );
         let value = result.unwrap();
-        // mcp_hello typically returns a greeting or status
         assert!(
             !value.to_string().is_empty(),
-            "mcp_hello should return data"
+            "kg_self_test should return diagnostics"
         );
     }
 

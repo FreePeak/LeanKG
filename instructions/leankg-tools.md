@@ -42,7 +42,7 @@ User asks about codebase → mcp_status (check initialized)
   │   └─ file param is OPTIONAL — only needed for impact/dependency queries
   │      e.g. orchestrate(intent="show me impact of changing src/lib.rs", file="src/lib.rs")
   │
-  ├─ "What docs reference X?" ─────────────────► get_doc_for_file(file="X")
+  ├─ "What docs reference X?" ─────────────────► find_related_docs(file="X")
   ├─ "What code is in this doc?" ─────────────► get_files_for_doc(doc="docs/X.md")
   │
   └─ Pre-commit risk check ───────────────────► detect_changes(scope="staged"|"all")

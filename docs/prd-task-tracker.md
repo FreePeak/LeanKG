@@ -6,7 +6,7 @@
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
 > **P0 embed-resume:** core + Docker evidence **DONE**.  
-> **P1 this pass:** FR-SEM-06 / FR-MG-AUTO-01 / FR-OPS-EMBED-CPU **DONE**. Next: **MCP surface** (`FR-SURF-02..03` / `US-SURF-01/02`; FR-SURF-01 DONE) then remaining P1 Must Have (LSP, etc.).  
+> **P1 this pass:** FR-SEM-06 / FR-MG-AUTO-01 / FR-OPS-EMBED-CPU **DONE**. MCP surface hard-delete (`FR-SURF-03` / `US-SURF-02`) **DONE**; next remaining P1 Must Have (LSP, etc.).  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -38,18 +38,18 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **423** |
-| NOT_DONE | 63 |
-| PENDING | 20 |
+| NOT_DONE | 62 |
+| PENDING | 19 |
 | PARTIAL | 12 |
 | OPEN | 1 |
-| DONE | 324 |
+| DONE | 326 |
 | WONT_DO | 3 |
-| Open work | **96** |
+| Open work | **94** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
-| P1 | 25 |
+| P1 | 23 |
 | P2 | 62 |
 | P3 | 9 |
 
@@ -69,9 +69,6 @@
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P1** | `US-SURF-02` | User Story | **PENDING** | Must Have | Remove zero-value / superseded MCP tools (mcp_hello, mcp_impact, get_doc_for_file) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P1** | `FR-SURF-01` | FR | **NOT_DONE** | Must Have | Fix semantic_search schema: dual-path HNSW+rerank OR ontology-first (not ANN-only) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P1** | `FR-SURF-03` | FR | **NOT_DONE** | Must Have | Delete mcp_hello, mcp_impact, get_doc_for_file; update redundant_tools_matrix.rs | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
@@ -222,11 +219,6 @@
 | **P0** | `FR-VE-FS-GC` | FR | **DONE** | Should Have | Zero-downtime GC via shadow paging + micro-lock delta sync; trigger when fragmentation **… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `US-VE-06` | User Story | **DONE** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragm… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
-| **P1** | `US-SURF-01` | User Story | **PENDING** | Must Have | Agents know which search/semantic tool to call first (prefer-order in schemas) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P1** | `US-SURF-02` | User Story | **PENDING** | Must Have | Remove zero-value / superseded MCP tools (mcp_hello, mcp_impact, get_doc_for_file) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P1** | `FR-SURF-01` | FR | **NOT_DONE** | Must Have | Fix semantic_search schema: dual-path HNSW+rerank OR ontology-first (not ANN-only) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P1** | `FR-SURF-02` | FR | **NOT_DONE** | Must Have | Prefer-order one-liners on concept_search / search_code / semantic_search / kg_semantic_c… | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P1** | `FR-SURF-03` | FR | **NOT_DONE** | Must Have | Delete mcp_hello, mcp_impact, get_doc_for_file; update redundant_tools_matrix.rs | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
@@ -603,6 +595,7 @@
 
 - **PR [#81](https://github.com/FreePeak/LeanKG/pull/81):** embed-resume + SEM-06 + MG-AUTO-01 + OPS cpus6/3g/6g.
 - **v3.7.4 MCP surface:** added `US-SURF-01..05`, `FR-SURF-01..06`, `REL-053` (PRD §3.16 / §5.18). Prefer docstring prefer-order + 3 hard deletes; soft-deprecate `wake_up` / `search_by_environment`; keep `mcp_status` + bootstrap ops tools.
+- **FR-SURF-03 / US-SURF-02:** hard-removed `mcp_hello`, `mcp_impact`, `get_doc_for_file`; registry ~82 tools; `tests/redundant_tools_matrix.rs` asserts absence.
 - **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md), [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md).
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
