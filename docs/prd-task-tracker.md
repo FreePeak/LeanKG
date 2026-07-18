@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-18 — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) embed-resume + SEM path filter + mega-graph ops (6g/3g/cpus6)  
+**Last synced:** 2026-07-18 — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) embed-resume + SEM filter + mega-graph ops + Docker PID1 embed.lock fix  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 

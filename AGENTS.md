@@ -180,6 +180,8 @@ Turning embed on later (or restarting the container with the same volume) must *
 
 **Mega-graph MCP auto-index OOM escape:** set `LEANKG_SKIP_FRESHNESS_CHECK=1` and/or `LEANKG_AUTO_INDEX=0` (or `mcp.auto_index_on_start: false` in that project's `leankg.yaml`) so Docker MCP does not reindex hundreds of thousands of elements on every start. For serving ~150k+ embedding vectors, use MCP **`mem_limit: 6g`**, **`mem_reservation: 3g`**, **`cpus: "6"`** (compose defaults in `docker-compose.rocksdb.yml`; offline embed in `docker-compose.embed.yml`). Prefer offline `embed` / `index` when you choose. See [`docs/reports/embed-3-workspaces-2026-07-17.md`](docs/reports/embed-3-workspaces-2026-07-17.md) and FR-MG-AUTO-01 / FR-OPS-EMBED-CPU.
 
+**Docker PID 1 + `embed.lock`:** MCP runs as PID 1 in the container. A leftover `<project>/.leankg/embed.lock` containing `1` from a killed prior run used to look “alive” forever and skip `LEANKG_EMBED_BACKGROUND` spawn. Current code treats same-PID locks as stale unless an in-process embed is already active in this process (and clears non-`running` status leftovers). Manual escape: `rm -f "$LEANKG_MCP_PROJECT/.leankg/embed.lock"` then recreate the container.
+
 ### One-line run (published image — no Rust)
 
 Index + INT8 embed + MCP (recommended):

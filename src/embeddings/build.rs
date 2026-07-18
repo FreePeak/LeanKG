@@ -30,6 +30,13 @@ use crate::embeddings::{
 use crate::graph::query::GraphEngine;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// True while this process owns an in-process background embed thread.
+/// File locks alone are insufficient in Docker: the MCP binary is PID 1, so a
+/// leftover `embed.lock` with `1` from a prior container still passes
+/// `kill(1, 0)` even though no embed thread exists in this reincarnation.
+static IN_PROCESS_BG_EMBED_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "embeddings")]
 use crate::embeddings::build_index;
@@ -1131,24 +1138,50 @@ pub fn spawn_background_embed(
 
     // Refuse to start a second one if a previous run is alive.
     if let Ok(raw) = std::fs::read_to_string(&lock_path) {
-        if let Ok(pid) = raw.trim().parse::<u64>() {
-            let probe = unsafe { libc_kill_compat(pid, 0) };
-            if probe == 0 {
+        if let Ok(lock_pid) = raw.trim().parse::<u64>() {
+            let probe = unsafe { libc_kill_compat(lock_pid, 0) };
+            let status = read_embed_status_field(&status_path);
+            let current_pid = u64::from(std::process::id());
+            if embed_lock_blocks_spawn(
+                lock_pid,
+                probe == 0,
+                current_pid,
+                IN_PROCESS_BG_EMBED_ACTIVE.load(Ordering::SeqCst),
+                status.as_deref(),
+            ) {
                 tracing::info!(
                     "background embed already running (PID {}); skipping new spawn",
-                    pid
+                    lock_pid
                 );
                 return Ok(None);
             }
+            tracing::warn!(
+                "clearing stale embed.lock (pid={}, alive={}, status={:?}, in_process={})",
+                lock_pid,
+                probe == 0,
+                status,
+                IN_PROCESS_BG_EMBED_ACTIVE.load(Ordering::SeqCst)
+            );
         }
         let _ = std::fs::remove_file(&lock_path);
+    }
+
+    if IN_PROCESS_BG_EMBED_ACTIVE
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        tracing::info!("background embed already active in this process; skipping new spawn");
+        return Ok(None);
     }
 
     // Write the lock first; the worker thread will refresh the status
     // file periodically. If the worker panics before writing, the lock
     // gives us a PID to investigate.
     let pid = std::process::id();
-    let _ = std::fs::write(&lock_path, pid.to_string());
+    if let Err(e) = std::fs::write(&lock_path, pid.to_string()) {
+        IN_PROCESS_BG_EMBED_ACTIVE.store(false, Ordering::SeqCst);
+        return Err(format!("failed to write embed.lock: {}", e));
+    }
 
     let started_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1335,10 +1368,50 @@ pub fn spawn_background_embed(
             // Clear the lock so a future spawn can run.
             let lock_path = leankg_dir_for_worker.join("embed.lock");
             let _ = std::fs::remove_file(&lock_path);
+            IN_PROCESS_BG_EMBED_ACTIVE.store(false, Ordering::SeqCst);
         })
-        .map_err(|e| format!("failed to spawn background embed thread: {}", e))?;
+        .map_err(|e| {
+            IN_PROCESS_BG_EMBED_ACTIVE.store(false, Ordering::SeqCst);
+            let _ = std::fs::remove_file(&lock_path);
+            format!("failed to spawn background embed thread: {}", e)
+        })?;
 
     Ok(Some(BackgroundEmbedHandle { pid }))
+}
+
+/// Whether an existing `embed.lock` should block spawning a new background embed.
+///
+/// Docker/OrbStack runs the server as PID 1. A leftover lock containing `1`
+/// from a previous container still looks alive via `kill(1, 0)`. Same-PID
+/// locks only block when this process already owns an in-process embed.
+/// Non-`running` status (completed/failed) is always treated as stale.
+pub(crate) fn embed_lock_blocks_spawn(
+    lock_pid: u64,
+    lock_pid_alive: bool,
+    current_pid: u64,
+    in_process_active: bool,
+    status: Option<&str>,
+) -> bool {
+    if !lock_pid_alive {
+        return false;
+    }
+    if let Some(s) = status {
+        if s != "running" {
+            return false;
+        }
+    }
+    if lock_pid == current_pid {
+        return in_process_active;
+    }
+    true
+}
+
+fn read_embed_status_field(status_path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(status_path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("status")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string())
 }
 
 // Minimal libc binding — same shape as main.rs::libc_kill to avoid
@@ -1465,5 +1538,49 @@ mod tests {
         let orphans = orphan_rows_from_work(&work, &existing);
         assert_eq!(orphans.len(), 1);
         assert_eq!(orphans[0].qualified_name, "gone.rs::g");
+    }
+
+    #[test]
+    fn embed_lock_docker_pid1_stale_when_not_in_process() {
+        // Prior container left embed.lock=1; new container is also PID 1.
+        assert!(!embed_lock_blocks_spawn(1, true, 1, false, Some("running")));
+        assert!(!embed_lock_blocks_spawn(
+            1,
+            true,
+            1,
+            false,
+            Some("completed")
+        ));
+        assert!(!embed_lock_blocks_spawn(1, true, 1, false, None));
+    }
+
+    #[test]
+    fn embed_lock_blocks_when_in_process_active_same_pid() {
+        assert!(embed_lock_blocks_spawn(1, true, 1, true, Some("running")));
+    }
+
+    #[test]
+    fn embed_lock_blocks_other_live_pid() {
+        assert!(embed_lock_blocks_spawn(
+            4242,
+            true,
+            1,
+            false,
+            Some("running")
+        ));
+        assert!(!embed_lock_blocks_spawn(
+            4242,
+            false,
+            1,
+            false,
+            Some("running")
+        ));
+        assert!(!embed_lock_blocks_spawn(
+            4242,
+            true,
+            1,
+            false,
+            Some("completed")
+        ));
     }
 }
