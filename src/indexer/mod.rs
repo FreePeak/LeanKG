@@ -798,19 +798,27 @@ pub fn index_files_parallel(
             );
         }
 
-        // Mark every touched element as embedding-stale so the next
-        // `embed` run picks them up incrementally. Only fires when the
-        // `embeddings` feature is compiled in; otherwise no-op.
+        // Mark only content-changed (or missing) embeddable elements stale
+        // so a no-op full index does not force a full re-embed (FR-EMBED-RESUME-04).
         #[cfg(feature = "embeddings")]
         {
-            let touched: Vec<String> = all_elements
+            let items: Vec<(String, String)> = all_elements
                 .iter()
-                .map(|e| e.qualified_name.clone())
+                .filter_map(|e| {
+                    let blob = crate::embeddings::text_blob::build_blob(e)?;
+                    let hash = crate::embeddings::text_blob::content_hash_for(&blob);
+                    Some((e.qualified_name.clone(), hash))
+                })
                 .collect();
-            if let Err(e) =
-                crate::embeddings::state::mark_stale_for_qualified_names(graph.db(), &touched)
-            {
-                tracing::warn!("embedding_state stale-mark failed: {}", e);
+            match crate::embeddings::state::mark_stale_if_changed(graph.db(), &items) {
+                Ok((marked, skipped)) => {
+                    tracing::info!(
+                        "embedding_state stale-mark: marked={} skipped_unchanged={}",
+                        marked,
+                        skipped
+                    );
+                }
+                Err(e) => tracing::warn!("embedding_state stale-mark failed: {}", e),
             }
         }
     }

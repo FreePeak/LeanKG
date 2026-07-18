@@ -161,6 +161,27 @@ When the HTTP server runs **inside Docker**, `--project` / MCP `project` must be
 
 The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects.
 
+### Embed resume rule (P0 — day-2)
+
+**If embedding data already exists** on the named RocksDB volume → **resume** (skip `fresh` vectors; delta only).  
+**If no embedding data exists** for that project → **cold/fresh** fill is allowed.
+
+This applies to **every** path that starts embed:
+
+| Path | Env / command |
+|------|----------------|
+| Standalone | `docker run … embed --wait --project /workspace-other` |
+| In-process MCP | `LEANKG_EMBED_BACKGROUND=1` |
+| Legacy boot | `LEANKG_EMBED_ON_BOOT=1` |
+| Offline setup | `LEANKG_DOCKER_SETUP=1` |
+| One-line up | `scripts/docker-up.sh` |
+
+Turning embed on later (or restarting the container with the same volume) must **not** wipe or full-rebuild. Intentional full rebuild only via `--full`, `LEANKG_EMBED_BACKGROUND_FULL=1`, or `LEANKG_FORCE_REINDEX=1`. Product ACs: [`docs/prd.md`](docs/prd.md) §3.15 / §5.16 / §8.5.
+
+**Mega-graph MCP auto-index OOM escape:** set `LEANKG_SKIP_FRESHNESS_CHECK=1` and/or `LEANKG_AUTO_INDEX=0` (or `mcp.auto_index_on_start: false` in that project's `leankg.yaml`) so Docker MCP does not reindex hundreds of thousands of elements on every start. For serving ~150k+ embedding vectors, use MCP **`mem_limit: 6g`**, **`mem_reservation: 3g`**, **`cpus: "6"`** (compose defaults in `docker-compose.rocksdb.yml`; offline embed in `docker-compose.embed.yml`). Prefer offline `embed` / `index` when you choose. See [`docs/reports/embed-3-workspaces-2026-07-17.md`](docs/reports/embed-3-workspaces-2026-07-17.md) and FR-MG-AUTO-01 / FR-OPS-EMBED-CPU.
+
+**Docker PID 1 + `embed.lock`:** MCP runs as PID 1 in the container. A leftover `<project>/.leankg/embed.lock` containing `1` from a killed prior run used to look “alive” forever and skip `LEANKG_EMBED_BACKGROUND` spawn. Current code treats same-PID locks as stale unless an in-process embed is already active in this process (and clears non-`running` status leftovers). Manual escape: `rm -f "$LEANKG_MCP_PROJECT/.leankg/embed.lock"` then recreate the container.
+
 ### One-line run (published image — no Rust)
 
 Index + INT8 embed + MCP (recommended):

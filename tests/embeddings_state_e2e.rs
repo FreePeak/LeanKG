@@ -15,7 +15,7 @@
 use leankg::db::schema::init_db;
 use leankg::embeddings::state::{
     count_by_state, delete_state_rows, ensure_embedding_state_table, list_all, list_orphans,
-    list_stale, mark_stale_for_qualified_names, upsert_fresh, FreshRow,
+    list_stale, mark_stale_for_qualified_names, mark_stale_if_changed, upsert_fresh, FreshRow,
 };
 
 fn fresh_db() -> leankg::db::schema::CozoDb {
@@ -143,4 +143,67 @@ fn count_by_state_partitions_correctly() {
     let counts = count_by_state(&db).expect("count_by_state again");
     assert_eq!(counts.fresh, 2);
     assert_eq!(counts.stale, 3);
+}
+
+#[test]
+fn mark_stale_if_changed_skips_unchanged_fresh_rows() {
+    let db = fresh_db();
+    let qns: Vec<String> = vec!["src/a.rs::f".into(), "src/b.rs::g".into()];
+    mark_stale_for_qualified_names(&db, &qns).expect("mark");
+    upsert_fresh(
+        &db,
+        &[
+            FreshRow {
+                qualified_name: "src/a.rs::f".into(),
+                usearch_key: 0,
+                content_hash: "hash-a".into(),
+            },
+            FreshRow {
+                qualified_name: "src/b.rs::g".into(),
+                usearch_key: 0,
+                content_hash: "hash-b".into(),
+            },
+        ],
+    )
+    .expect("fresh");
+
+    // Same hashes → both skipped.
+    let (marked, skipped) = mark_stale_if_changed(
+        &db,
+        &[
+            ("src/a.rs::f".into(), "hash-a".into()),
+            ("src/b.rs::g".into(), "hash-b".into()),
+        ],
+    )
+    .expect("if_changed");
+    assert_eq!(marked, 0);
+    assert_eq!(skipped, 2);
+    let stale = list_stale(&db).expect("list_stale");
+    assert!(stale.is_empty(), "unchanged fresh rows must stay fresh");
+
+    // Changed hash on a only → mark a, skip b.
+    let (marked, skipped) = mark_stale_if_changed(
+        &db,
+        &[
+            ("src/a.rs::f".into(), "hash-a-NEW".into()),
+            ("src/b.rs::g".into(), "hash-b".into()),
+        ],
+    )
+    .expect("if_changed changed");
+    assert_eq!(marked, 1);
+    assert_eq!(skipped, 1);
+    let stale = list_stale(&db).expect("list_stale");
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0].qualified_name, "src/a.rs::f");
+}
+
+#[test]
+fn mark_stale_if_changed_marks_missing_rows() {
+    let db = fresh_db();
+    let (marked, skipped) =
+        mark_stale_if_changed(&db, &[("new.rs::f".into(), "h1".into())]).expect("mark");
+    assert_eq!(marked, 1);
+    assert_eq!(skipped, 0);
+    let stale = list_stale(&db).expect("stale");
+    assert_eq!(stale.len(), 1);
 }
