@@ -187,6 +187,8 @@ Turning embed on later (or restarting the container with the same volume) must *
 
 **Docker PID 1 + `embed.lock`:** MCP runs as PID 1 in the container. A leftover `<project>/.leankg/embed.lock` containing `1` from a killed prior run used to look “alive” forever and skip `LEANKG_EMBED_BACKGROUND` spawn. Current code treats same-PID locks as stale unless an in-process embed is already active in this process (and clears non-`running` status leftovers). Manual escape: `rm -f "$LEANKG_MCP_PROJECT/.leankg/embed.lock"` then recreate the container.
 
+**Boot must not block search:** `entrypoint.sh` ontology sync is timed (default 45s) or skippable via `LEANKG_ONTOLOGY_SYNC_ON_BOOT=skip`. A hung sync used to prevent `mcp-http` from binding, so `search_code` / `find_function` looked completely broken. In-process `LEANKG_EMBED_BACKGROUND=1` is **skipped on mega-graphs** unless `LEANKG_EMBED_BACKGROUND_MEGA=1` (prefer offline `embed --wait`).
+
 ### One-line run (published image — no Rust)
 
 Index + INT8 embed + MCP (recommended):
