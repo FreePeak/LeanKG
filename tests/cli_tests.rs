@@ -11,7 +11,10 @@ struct TestArgs {
 fn test_cli_init_default_path() {
     let args = TestArgs::try_parse_from(["leankg", "init"]).unwrap();
     match args.command {
-        CLICommand::Init { path } => assert_eq!(path, ".leankg"),
+        CLICommand::Init { path, with_lsp, .. } => {
+            assert_eq!(path, ".leankg");
+            assert!(!with_lsp);
+        }
         _ => panic!("expected Init command"),
     }
 }
@@ -20,7 +23,22 @@ fn test_cli_init_default_path() {
 fn test_cli_init_custom_path() {
     let args = TestArgs::try_parse_from(["leankg", "init", "--path", "/custom/path"]).unwrap();
     match args.command {
-        CLICommand::Init { path } => assert_eq!(path, "/custom/path"),
+        CLICommand::Init { path, with_lsp, .. } => {
+            assert_eq!(path, "/custom/path");
+            assert!(!with_lsp);
+        }
+        _ => panic!("expected Init command"),
+    }
+}
+
+#[test]
+fn test_cli_init_with_lsp() {
+    let args = TestArgs::try_parse_from(["leankg", "init", "--with-lsp"]).unwrap();
+    match args.command {
+        CLICommand::Init { path, with_lsp, .. } => {
+            assert_eq!(path, ".leankg");
+            assert!(with_lsp);
+        }
         _ => panic!("expected Init command"),
     }
 }
