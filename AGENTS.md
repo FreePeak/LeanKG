@@ -117,11 +117,11 @@ get_context(file="…", project="/workspace")
 
 **Agent checklist (new chat / no prior context):**
 
-1. `curl -sf --max-time 2 http://localhost:9699/health` — if this fails, **skip LeanKG** and use Grep/Glob/Read (default mode)
-2. If health OK: `mcp_status(project="/workspace")` for LeanKG source work
+1. Prefer Docker MCP when `curl http://localhost:9699/health` is ok
+2. Call `mcp_status(project="/workspace")` first for LeanKG source work
 3. For other indexed trees, use the container side of binds listed in local `LEANKG_PROJECT_DIRS` (gitignored `.dockerfile`)
 4. Never invent or paste personal host bind paths into commits, docs, or chat
-5. Do **not** fall back to `mcp_init` / local CLI when HTTP is down — default Cursor tools only
+5. Host-path `mcp_init` / local SQLite is only for non-Docker stdio workflows
 
 Chat sessions do **not** share memory. This section is the durable source of truth so agents do not re-discover mounts every session.
 
