@@ -1,12 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-18 — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) embed-resume + SEM filter + mega-graph ops; **v3.7.4 MCP tool surface** (`US-SURF-*` / `FR-SURF-*`) added  
+**Last synced:** 2026-07-19 — hybrid LSP Go/TS track (`FR-LSP-A..D` / `US-CBM-B1` / `REL-039`) + SURF soft-deprecate (`FR-SURF-04/05` / `REL-053`)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
 > **P0 embed-resume:** core + Docker evidence **DONE**.  
-> **P1 this pass:** FR-SEM-06 / FR-MG-AUTO-01 / FR-OPS-EMBED-CPU **DONE**. MCP surface hard-delete (`FR-SURF-03` / `US-SURF-02`) **DONE**; next remaining P1 Must Have (LSP, etc.).  
+> **P1 this pass:** Hybrid LSP for Go/TS (`FR-LSP-A..D`, `US-CBM-B1`, `REL-039`) — in progress on `feature/hybrid-lsp-go-ts`.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
