@@ -72,7 +72,7 @@ Every `calls` relationship now carries a `resolution_method` value in its metada
 | `name` | Resolved by exact name match within a known context (same class, same file, or receiver type). |
 | `name_file_hint` | Resolved by name within a hint-derived file context. Lower confidence than `name`. |
 | `unresolved` | Could not be resolved; stored as `__unresolved__<name>`. |
-| `typed` | (Phase 3) Resolved using type/import information. Not yet produced. |
+| `typed` | Resolved via in-process hybrid type registry (Go/TS MVP when `typed_resolve=go,ts`) or external LSP bridge. |
 
 Use `get_architecture` to inspect how many calls fall into each bucket once Phase 3 lands.
 
