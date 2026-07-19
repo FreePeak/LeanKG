@@ -11,6 +11,8 @@ LeanKG is a lightweight knowledge graph for codebase understanding. It indexes c
 ```bash
 # Index a codebase
 cargo run -- init
+# Optional: prefab LSP + typed_resolve=go,ts (FR-LSP-B)
+cargo run -- init --with-lsp
 cargo run -- index ./src
 
 # Calculate impact radius
@@ -23,6 +25,9 @@ cargo run -- mcp-stdio --watch
 cargo run -- mcp-http --port 9699
 ```
 
+### Hybrid typed resolve (Go / TypeScript MVP)
+
+When `indexer.typed_resolve` is `go,ts` (or `all`), indexing builds a cross-file type registry and upgrades CALLS edges to `resolution_method=typed` without spawning language servers. External LSP (`resolve_with_lsp` / `leankg lsp-resolve`) remains available when servers are installed; `leankg init --with-lsp` writes the prefab `lsp:` block from the server catalog.
 ## Development Workflow
 
 **When implementing features, follow:** `docs/workflow-opencode-agent.md`
