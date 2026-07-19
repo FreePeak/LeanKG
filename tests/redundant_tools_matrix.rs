@@ -147,12 +147,46 @@ fn replacement_tools_remain_registered() {
         "find_related_docs",
         "kg_self_test",
         "mcp_status",
+        "get_overview_context",
     ] {
         assert!(
             reg.contains(tool),
             "replacement `{tool}` missing from registry"
         );
     }
+}
+
+#[test]
+fn soft_deprecated_tools_mark_replacement_in_description() {
+    // FR-SURF-04 / FR-SURF-05 — soft-deprecate without removing from tools/list.
+    let tools = ToolRegistry::list_tools();
+    let wake = tools
+        .iter()
+        .find(|t| t.name == "wake_up")
+        .expect("wake_up still registered during deprecation window");
+    assert!(
+        wake.description.contains("DEPRECATED")
+            && wake.description.contains("get_overview_context"),
+        "wake_up must soft-deprecate toward get_overview_context: {}",
+        wake.description
+    );
+    assert!(
+        !wake.description.contains("load_layer(L0) alone")
+            || wake.description.contains("Do not replace with load_layer"),
+        "wake_up deprecation must warn against load_layer(L0)-only migration"
+    );
+
+    let env_search = tools
+        .iter()
+        .find(|t| t.name == "search_by_environment")
+        .expect("search_by_environment still registered");
+    assert!(
+        env_search.description.contains("DEPRECATED")
+            && (env_search.description.contains("env=")
+                || env_search.description.contains("env =")),
+        "search_by_environment must point to env= on primary tools: {}",
+        env_search.description
+    );
 }
 
 #[test]

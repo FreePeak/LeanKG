@@ -872,7 +872,7 @@ impl ToolRegistry {
             // Version/Branch Tagging Tools
             ToolDefinition {
                 name: "search_by_environment".to_string(),
-                description: "Search code elements and knowledge entries filtered by environment (production, staging, dev, upcoming). Useful for seeing what's in production vs what's in development.".to_string(),
+                description: "DEPRECATED (FR-SURF-05): prefer env= on search_code / semantic_search / concept_search / kg_* tools. Still searches code elements and knowledge filtered by environment (production, staging, dev, upcoming, local).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -967,7 +967,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "wake_up".to_string(),
-                description: "Load minimal project context (~170 tokens) for session start. Returns project identity (L0: name, languages, top directories) and critical facts (L1: module map, critical dependencies, recent hotspots). Cached in .leankg/wake_up.txt and regenerated on re-index.".to_string(),
+                description: "DEPRECATED (FR-SURF-04): prefer get_overview_context (L0+L1 style overview). Do not replace with load_layer(L0) alone — wake_up is L0+L1 (~170 tok). Still loads cached project identity + critical facts from .leankg/wake_up.txt.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
