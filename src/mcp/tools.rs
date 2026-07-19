@@ -430,6 +430,20 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "query_graph".to_string(),
+                description: "US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from orchestrate and kg_semantic_context.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "Natural-language connection question, e.g. 'what connects auth to the database?'"},
+                        "token_budget": {"type": "integer", "default": 2000, "minimum": 200, "maximum": 20000, "description": "Max approximate tokens for the subgraph response"},
+                        "max_depth": {"type": "integer", "default": 2, "minimum": 1, "maximum": 5, "description": "BFS expansion depth from seeds"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["question"]
+                }),
+            },
+            ToolDefinition {
                 name: "shortest_path".to_string(),
                 description: "US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix.".to_string(),
                 input_schema: json!({
@@ -1124,12 +1138,31 @@ mod tests {
         assert!(names.contains(&"get_dependencies"));
         assert!(names.contains(&"get_impact_radius"));
         assert!(names.contains(&"find_related_docs"));
+        assert!(names.contains(&"query_graph"));
+        assert!(names.contains(&"shortest_path"));
         for removed in ["mcp_hello", "mcp_impact", "get_doc_for_file"] {
             assert!(
                 !names.contains(&removed),
                 "removed tool `{removed}` must not be registered"
             );
         }
+    }
+
+    #[test]
+    fn test_query_graph_tool_schema() {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "query_graph")
+            .expect("query_graph must be registered");
+        assert!(tool.description.contains("US-GF-03"));
+        let schema = tool.input_schema.as_object().unwrap();
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("question"));
+        assert!(props.contains_key("token_budget"));
+        assert!(props.contains_key("max_depth"));
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v.as_str() == Some("question")));
     }
 
     #[test]

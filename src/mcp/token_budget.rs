@@ -28,6 +28,7 @@ impl TokenBudget {
             "get_code_tree" => 4000,
             "get_call_graph" => 4000,
             "search_code" => 4000,
+            "query_graph" => 2000,
             "query_file" => 4000,
             "get_dependencies" => 2000,
             "get_dependents" => 2000,

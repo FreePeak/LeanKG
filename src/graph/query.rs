@@ -4327,7 +4327,7 @@ impl GraphEngine {
     /// Resolve a free-form input (qualified_name, exact name, or fuzzy
     /// suffix match) to a single qualified_name. Returns the first match
     /// by priority: exact qualified_name > exact element name > suffix.
-    fn resolve_to_qualified(&self, input: &str) -> Option<String> {
+    pub(crate) fn resolve_to_qualified(&self, input: &str) -> Option<String> {
         let elements = self.all_elements().ok()?;
         // 1. Exact qualified_name
         if elements.iter().any(|e| e.qualified_name == input) {

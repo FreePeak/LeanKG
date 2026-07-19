@@ -43,8 +43,9 @@ pub enum CLICommand {
     Query {
         /// Query string
         query: String,
-        /// Query type: name, type, rel, pattern, or content
-        /// (content does case-insensitive substring match across name, qualified_name, and file_path)
+        /// Query type: name, type, rel, pattern, content, or subgraph
+        /// (content does case-insensitive substring match across name, qualified_name, and file_path;
+        /// subgraph runs US-GF-03 NL scoped subgraph query — same as `graph-query`)
         #[arg(long, default_value = "name")]
         kind: String,
         /// Find elements in a specific file path (substring match)
@@ -53,6 +54,23 @@ pub enum CLICommand {
         /// Find functions by name (substring match)
         #[arg(long)]
         function: Option<String>,
+        /// US-GF-03: token budget when `--kind subgraph` (default 2000)
+        #[arg(long)]
+        token_budget: Option<usize>,
+        /// US-GF-03: BFS depth when `--kind subgraph` (default 2)
+        #[arg(long)]
+        max_depth: Option<usize>,
+    },
+    /// US-GF-03: Natural-language scoped subgraph query (seed → expand → budget trim)
+    GraphQuery {
+        /// Natural-language connection question
+        question: String,
+        /// Approximate token budget for the response (default 2000)
+        #[arg(long, default_value = "2000")]
+        token_budget: usize,
+        /// BFS expansion depth from seeds (default 2)
+        #[arg(long, default_value = "2")]
+        max_depth: usize,
     },
     /// Generate documentation
     Generate {

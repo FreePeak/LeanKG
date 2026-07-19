@@ -274,6 +274,7 @@ impl ToolHandler {
             "find_clones" => self.find_clones(arguments),
             "export_graph_snapshot" => self.export_graph_snapshot(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
+            "query_graph" => self.query_graph(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
@@ -1429,6 +1430,20 @@ impl ToolHandler {
             "found": result.is_some(),
             "result": result,
         }))
+    }
+
+    /// US-GF-03 / FR-GF-05: NL scoped subgraph query.
+    fn query_graph(&self, args: &Value) -> Result<Value, String> {
+        let question = args["question"]
+            .as_str()
+            .ok_or("Missing 'question' parameter")?;
+        let token_budget = args["token_budget"].as_u64().map(|v| v as usize);
+        let max_depth = args["max_depth"].as_u64().map(|v| v as usize);
+        let result = self
+            .graph_engine
+            .query_graph(question, token_budget, max_depth)
+            .map_err(|e| e.to_string())?;
+        serde_json::to_value(result).map_err(|e| e.to_string())
     }
 
     fn explain_node(&self, args: &Value) -> Result<Value, String> {
