@@ -317,6 +317,7 @@ const UNTESTED_BEFORE_THIS_PR: &[&str] = &[
     "search_knowledge",
     "semantic_search",
     "shortest_path",
+    "query_graph",
     "temporal_query",
     "timeline",
     "update_knowledge",

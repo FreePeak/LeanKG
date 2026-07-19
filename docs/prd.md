@@ -783,6 +783,9 @@ Palace Mapping:
 - Pipeline: seed retrieval (keyword + optional embeddings) → bounded BFS/DFS expand → budget trim → TOON response
 - Distinct from `orchestrate` (routing) and `kg_semantic_context` (embed pipeline): oriented to *connection* questions
 - Surface confidence_label on every returned edge
+- CLI: `leankg graph-query "<question>"` and `leankg query --kind subgraph "<question>"` (FR-GF-06; existing `--kind name|type|…` unchanged)
+
+**Status (2026-07-19):** **DONE** — MCP + CLI + unit tests (`src/graph/nl_query.rs`). Release gate: `REL-042`.
 </details>
 
 <details>

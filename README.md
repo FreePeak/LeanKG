@@ -149,6 +149,7 @@ leankg mcp-stdio --watch
 leankg impact src/main.rs --depth 3
 leankg path "Handler" "Repository"
 leankg explain "APIRouter"
+leankg graph-query "what connects auth to the database?"
 leankg web    # UI at http://localhost:8080
 ```
 
@@ -317,6 +318,7 @@ leankg status
 leankg impact <file> --depth 3
 leankg path <from> <to>
 leankg explain <symbol>
+leankg graph-query "<question>"
 leankg detect-clusters
 leankg embed --init && leankg embed   # needs --features embeddings
 leankg web

@@ -384,6 +384,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             kind,
             file,
             function,
+            token_budget,
+            max_depth,
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -393,9 +395,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 run_file_query(&file_path, &db_path)?;
             } else if let Some(func_name) = function {
                 run_function_query(&func_name, &db_path)?;
+            } else if kind == "subgraph" {
+                run_graph_query(&query, token_budget, max_depth, &db_path)?;
             } else {
                 run_query(&query, &kind, &db_path)?;
             }
+        }
+        cli::CLICommand::GraphQuery {
+            question,
+            token_budget,
+            max_depth,
+        } => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            run_graph_query(&question, Some(token_budget), Some(max_depth), &db_path)?;
         }
         cli::CLICommand::Install => {
             install_mcp_config()?;
@@ -1191,6 +1204,52 @@ fn run_shortest_path(
             "No path found between '{}' and '{}' within {} hops",
             source, target, max_hops
         ),
+    }
+    Ok(())
+}
+
+/// US-GF-03 / FR-GF-05..06: print a budgeted NL subgraph.
+fn run_graph_query(
+    question: &str,
+    token_budget: Option<usize>,
+    max_depth: Option<usize>,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::schema::init_db(db_path)?;
+    let graph_engine = graph::GraphEngine::new(db);
+    let result = graph_engine.query_graph(question, token_budget, max_depth)?;
+    println!("question: {}", result.question);
+    println!(
+        "seeds ({}): {}",
+        result.seeds.len(),
+        result.seeds.join(", ")
+    );
+    println!(
+        "nodes={} edges={} hops={} tokens~{}/{} truncated={}",
+        result.nodes.len(),
+        result.edges.len(),
+        result.hops,
+        result.tokens_estimate,
+        result.token_budget,
+        result.truncated
+    );
+    if let Some(path) = &result.path {
+        println!(
+            "path: {} -> {} ({} hops)",
+            path.source, path.target, path.hops
+        );
+    }
+    for edge in &result.edges {
+        println!(
+            "  {} --[{} conf={:.2} {}]--> {}",
+            edge.from, edge.rel_type, edge.confidence, edge.confidence_label, edge.to
+        );
+    }
+    for node in result.nodes.iter().filter(|n| n.is_seed) {
+        println!(
+            "  seed: {} [{}] {}",
+            node.qualified_name, node.element_type, node.file_path
+        );
     }
     Ok(())
 }

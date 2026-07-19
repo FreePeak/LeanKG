@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-19 — hybrid LSP Go/TS track (`FR-LSP-A..D` / `US-CBM-B1` / `REL-039`) + SURF soft-deprecate (`FR-SURF-04/05` / `REL-053`)  
+**Last synced:** 2026-07-19 — US-GF-03 / REL-042 `query_graph` NL scoped subgraph (`FR-GF-05`/`FR-GF-06`); prior: hybrid LSP Go/TS + SURF soft-deprecate  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
@@ -79,7 +79,7 @@
 | **P1** | `US-CBM-A1` | User Story | **PENDING** | Must Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-A4` | User Story | **PENDING** | Must Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
-| **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P1** | `US-GF-03` | User Story | **DONE** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-LSP-A` | FR | **DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeSc… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
 | **P1** | `FR-LSP-B` | FR | **DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / '… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
@@ -90,7 +90,7 @@
 | **P1** | `REL-039` | Release | **DONE** | Must Have | Default LSP server bootstrap (FR-LSP-B / FR-B09 fanout — gopls + tsserver + pyright + dar… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-040` | Release | **NOT_DONE** | Must Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-041` | Release | **NOT_DONE** | Must Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `REL-042` | Release | **NOT_DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P1** | `REL-042` | Release | **DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-043` | Release | **NOT_DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P2** | `US-GF-06` | User Story | **PARTIAL** | Should Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG… |
@@ -132,8 +132,8 @@
 | **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-GF-05` | FR | **NOT_DONE** | Should Have | MCP tool 'query_graph(question, token_budget?)' — seed → expand → budget trim → TOON | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-06` | FR | **NOT_DONE** | Should Have | CLI 'leankg query "<question>"' wrapping FR-GF-05 (note: existing 'leankg query' is name/… | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-05` | FR | **DONE** | Should Have | MCP tool 'query_graph(question, token_budget?)' — seed → expand → budget trim → TOON | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-06` | FR | **DONE** | Should Have | CLI 'leankg query "<question>"' wrapping FR-GF-05 (note: existing 'leankg query' is name/… | 5.9 Graphify-Inspired Features |
 | **P2** | `FR-GF-07` | FR | **NOT_DONE** | Should Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written… | 5.9 Graphify-Inspired Features |
 | **P2** | `FR-GF-08` | FR | **NOT_DONE** | Should Have | Map 'resolution_method' → 'confidence_label' at edge write time; backfill on reindex | 5.9 Graphify-Inspired Features |
 | **P2** | `FR-GF-09` | FR | **NOT_DONE** | Should Have | Propagate 'confidence_label' in impact, call_graph, path, query_graph, Web UI | 5.9 Graphify-Inspired Features |
@@ -228,7 +228,7 @@
 | **P1** | `US-CBM-A1` | User Story | **PENDING** | Must Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-A4` | User Story | **PENDING** | Must Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
-| **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P1** | `US-GF-03` | User Story | **DONE** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-LSP-A` | FR | **DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeSc… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
 | **P1** | `FR-LSP-B` | FR | **DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / '… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
@@ -239,7 +239,7 @@
 | **P1** | `REL-039` | Release | **DONE** | Must Have | Default LSP server bootstrap (FR-LSP-B / FR-B09 fanout — gopls + tsserver + pyright + dar… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-040` | Release | **NOT_DONE** | Must Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-041` | Release | **NOT_DONE** | Must Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `REL-042` | Release | **NOT_DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P1** | `REL-042` | Release | **DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-043` | Release | **NOT_DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `FR-B03` | FR | **DONE** | Must Have | LSP bridge infrastructure for Go (could read 'gopls' textDocument/definition/references) … | 5.10 CBM Structural Parity Requirements (merged) |
 | **P1** | `FR-B04` | FR | **DONE** | Must Have | LSP bridge infrastructure for TS/TSX — DONE infra; actual 'typed' edge production PENDING | 5.10 CBM Structural Parity Requirements (merged) |
@@ -376,8 +376,8 @@
 | **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-GF-05` | FR | **NOT_DONE** | Should Have | MCP tool 'query_graph(question, token_budget?)' — seed → expand → budget trim → TOON | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-06` | FR | **NOT_DONE** | Should Have | CLI 'leankg query "<question>"' wrapping FR-GF-05 (note: existing 'leankg query' is name/… | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-05` | FR | **DONE** | Should Have | MCP tool 'query_graph(question, token_budget?)' — seed → expand → budget trim → TOON | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-06` | FR | **DONE** | Should Have | CLI 'leankg query "<question>"' wrapping FR-GF-05 (note: existing 'leankg query' is name/… | 5.9 Graphify-Inspired Features |
 | **P2** | `FR-GF-07` | FR | **NOT_DONE** | Should Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written… | 5.9 Graphify-Inspired Features |
 | **P2** | `FR-GF-08` | FR | **NOT_DONE** | Should Have | Map 'resolution_method' → 'confidence_label' at edge write time; backfill on reindex | 5.9 Graphify-Inspired Features |
 | **P2** | `FR-GF-09` | FR | **NOT_DONE** | Should Have | Propagate 'confidence_label' in impact, call_graph, path, query_graph, Web UI | 5.9 Graphify-Inspired Features |

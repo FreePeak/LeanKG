@@ -141,6 +141,7 @@ fn every_tested_tool_is_registered() {
         "search_knowledge",
         "semantic_search",
         "shortest_path",
+        "query_graph",
         "temporal_query",
         "timeline",
         "update_knowledge",
@@ -394,6 +395,36 @@ mod graph_features {
                 || resp.as_array().is_some(),
             "shortest_path should return hops: {resp}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_graph_returns_budgeted_subgraph() {
+        let (handler, _tmp) = make_handler().await;
+        let resp = call(
+            &handler,
+            "query_graph",
+            json!({
+                "question": "what connects handle_request to charge?",
+                "token_budget": 2000,
+                "max_depth": 3
+            }),
+        )
+        .await
+        .expect("query_graph");
+        assert!(
+            resp.get("question").is_some()
+                || resp.get("seeds").is_some()
+                || resp.get("edges").is_some(),
+            "query_graph should return a subgraph envelope: {resp}"
+        );
+        if let Some(edges) = resp.get("edges").and_then(|e| e.as_array()) {
+            for edge in edges {
+                assert!(
+                    edge.get("confidence_label").is_some(),
+                    "every edge needs confidence_label: {edge}"
+                );
+            }
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
