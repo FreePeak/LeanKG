@@ -1,6 +1,6 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.2-embed-resume
+**Version:** 3.7.4-mcp-surface
 **Date:** 2026-07-18
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
@@ -13,9 +13,11 @@
 >
 > **CURRENT P0 (highest):** **Day-2 embed resume** — core FRs DONE on `feature/embed-resume-day2` / PR [#81](https://github.com/FreePeak/LeanKG/pull/81). Remaining PARTIAL: mega-graph MCP auto-index OOM ops (`FR-MG-AUTO-01`, `LEANKG_SKIP_FRESHNESS_CHECK`) + optional live Docker smoke.
 >
-> **Semantic MCP live probe 2026-07-18 GREEN** ([`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md)): 3,271 vectors; no embed-resume regressions. Follow-ups: **FR-SEM-06** path filter (embed/assets + benchmark noise) — **in progress this sprint**; FR-SEM-01..03 remain P2.
+> **Semantic MCP live probe 2026-07-18 GREEN** ([`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md)): 3,271 vectors; no embed-resume regressions. **FR-SEM-06** path filter **DONE**. FR-SEM-01..03 remain P2.
 >
-> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80). Do **not** start new VE work ahead of closing embed-resume PARTIAL + FR-SEM-06.
+> **New track (v3.7.4):** **MCP tool surface rationalization** — §3.16 / §5.18 (`US-SURF-*` / `FR-SURF-*`). Prefer docstring prefer-order + 3 hard deletes over large merges/rebrands. Baseline registry ≈**85** tools (not 64).
+>
+> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80). Do **not** start new VE work ahead of closing embed-resume PARTIAL.
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -26,6 +28,36 @@
 ---
 
 ## Changelog
+
+### v3.7.4-mcp-surface - MCP tool surface rationalization (2026-07-18)
+
+> **Trigger:** Overlap review of loosely-overlapping MCP tools (search triple, semantic triple, identity triple, legacy `mcp_*`). Live schemas + handlers contradict some popular characterizations (notably `semantic_search` is dual-path, not ANN-only; `search_code` is ontology-first on mega-graphs; `wake_up` is L0+L1 cached text, not L0 alone).
+>
+> **Product intent:** Shrink agent confusion **without** losing capability. Highest ROI is honest schemas + prefer-order. Then delete true subsets. Soft-deprecate only where a clear replacement exists. Do **not** hide ops bootstrap tools.
+
+**Decision table:**
+
+| Proposal | Verdict | Product action |
+|----------|---------|----------------|
+| Document search triple + semantic triple | Agree | Must Have — schema one-liners + prefer-order |
+| Delete `mcp_hello`, `mcp_impact`, `get_doc_for_file` | Agree | Must Have — hard remove after matrix update |
+| Soft-deprecate `wake_up` | Partial | Should Have — point to `get_overview_context` (**not** `load_layer(L0)` alone) |
+| Soft-deprecate `search_by_environment` | Agree | Should Have — most tools already take `env=` |
+| Merge `get_doc_tree` + `get_doc_structure` | Partial | Could Have — after mega-graph safety; both currently `all_elements()` |
+| Deprecate all `mcp_*` bootstrap (`mcp_status`/`init`/`index`/`install`) | Disagree | Won't Do this release — `mcp_status` is load-bearing |
+| Quote surface 64 → ~57 | Fact error | Recount from `ToolRegistry::list_tools()` (≈85 today); near-term shrink ≈85 → ~82 after 3 deletes |
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-SURF-01 / FR-SURF-01 / FR-SURF-02 | Must Have | **P1** | Fix `semantic_search` dual-path docstring; prefer-order on search + semantic tools |
+| US-SURF-02 / FR-SURF-03 | Must Have | **P1** | Delete `mcp_hello`, `mcp_impact`, `get_doc_for_file`; update `tests/redundant_tools_matrix.rs` |
+| US-SURF-03 / FR-SURF-04 | Should Have | P2 | Soft-deprecate `wake_up` → `get_overview_context` |
+| US-SURF-04 / FR-SURF-05 | Should Have | P2 | Soft-deprecate `search_by_environment` |
+| US-SURF-05 / FR-SURF-06 | Could Have | P3 | Optional merge / mega-safe `get_doc_tree` + `get_doc_structure` |
+| REL-053 | Should Have | P2 | Release note after hard deletes land |
+
+**New content:** Section **3.16** US-SURF-01..05; Section **5.18** FR-SURF-01..06 + REL-053.
 
 ### v3.7.3-sem-filter-ops - Live MCP verification + ops fixes (2026-07-18)
 
@@ -1053,6 +1085,79 @@ Palace Mapping:
 
 ---
 
+### 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4
+
+> **Trigger:** Agent-facing overlap among discovery / semantic / identity tools plus legacy `mcp_*` names. Review evidence: live MCP schemas + `src/mcp/handler.rs` / `tools.rs`; redundancy matrix in `tests/redundant_tools_matrix.rs`.
+>
+> **Baseline:** `ToolRegistry::list_tools()` ≈ **85** tools (7 `mcp_*`). Soft-deprecations do not shrink `tools/list` until removed.
+>
+> **Policy:** Document first → hard-delete true subsets → soft-deprecate with explicit replacements. Prefer wrong-tool prevention over cosmetic renames.
+>
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SURF-*` / `FR-SURF-*` / `REL-053`.
+
+#### Prefer-order (canonical)
+
+**Search triple (discovery):**
+1. `concept_search` — domain terms / aliases / matched concepts payload
+2. `semantic_search` — natural language; HNSW+rerank when embeddings exist, else ontology-first `safe_discover`
+3. `search_code` — exact/name + `element_type` filter; ontology-first on mega-graphs
+
+**Semantic triple (context):**
+1. `semantic_search` — discovery page (ANN if available, else ontology+name)
+2. `kg_semantic_context` — ranked seeds + 1–2 hop neighborhood (**embeddings required**)
+3. `kg_context` — ontology match + expand (**no vectors**)
+
+**Identity triple (session start):**
+1. `get_overview_context` — structured L0 + L1 + wake summary
+2. `load_layer` — progressive L0 / L1 / L2 / L3 chooser
+3. `get_architecture` — deep single-call overview
+4. `wake_up` — **deprecated path** (cached L0+L1 text in `.leankg/wake_up.txt`)
+
+#### US-SURF-01 — Agents know which search/semantic tool to call first (Must Have)
+
+**As an** AI agent, **I want** each overlapping search/semantic tool's schema to state when to use it and what to try next, **so that** I do not burn retries on the wrong surface.
+
+**Acceptance criteria:**
+- **Given** `tools/list`, **When** an agent reads `semantic_search`, **Then** the description states the dual path (HNSW+rerank if embeddings exist; else ontology-first) — not “ANN-only”.
+- **Given** `search_code` / `concept_search` / `semantic_search` / `kg_semantic_context` / `kg_context`, **When** schemas are listed, **Then** each has a one-line prefer-order hint consistent with §3.16.
+- **Given** docs / AGENTS / LeanKG skill, **When** search guidance is updated, **Then** it matches the same prefer-order (no conflicting “always grep / always semantic” advice).
+
+#### US-SURF-02 — Remove zero-value / superseded MCP tools (Must Have)
+
+**As an** AI agent, **I want** dead or strict-subset tools removed from the registry, **so that** `tools/list` is smaller and I cannot call obsolete names by mistake.
+
+**Acceptance criteria:**
+- **Given** a build after this story, **When** `ToolRegistry::list_tools()` runs, **Then** `mcp_hello`, `mcp_impact`, and `get_doc_for_file` are **absent**.
+- **Given** callers needing impact analysis, **When** they use `get_impact_radius`, **Then** they retain severity / confidence / `project=` / `compress_response` (strict superset of former `mcp_impact`).
+- **Given** callers needing docs for a file, **When** they use `find_related_docs`, **Then** they get `documented_by` **and** `references` (superset of former `get_doc_for_file`).
+- **Given** `tests/redundant_tools_matrix.rs`, **When** the suite runs, **Then** it reflects the removals (no stale SUPERSEDED rows for deleted tools).
+
+#### US-SURF-03 — Soft-deprecate wake_up in favor of get_overview_context (Should Have)
+
+**As an** AI agent starting a session, **I want** one structured overview tool, **so that** I do not choose among three identity loaders incorrectly.
+
+**Acceptance criteria:**
+- **Given** `wake_up` still registered during the deprecation window, **When** its description is read, **Then** it is marked deprecated and points to `get_overview_context` (and optionally `load_layer` for progressive budgets).
+- **Given** a caller that previously used `wake_up` for L0+L1, **When** migrated, **Then** they do **not** replace it with `load_layer(layer="L0")` alone (L0 is identity-only ~50 tok; wake_up is L0+L1 ~170 tok).
+- **Given** one release after soft-deprecation lands, **When** product decides, **Then** hard removal is allowed if call telemetry / docs are clear.
+
+#### US-SURF-04 — Soft-deprecate search_by_environment (Should Have)
+
+**As an** AI agent, **I want** environment scoping via the `env=` parameter on primary search/kg tools, **so that** I do not maintain a parallel env-only search tool.
+
+**Acceptance criteria:**
+- **Given** `search_by_environment` during deprecation, **When** its schema is read, **Then** it points callers to `env=` on `search_code` / `semantic_search` / `concept_search` / `kg_*`.
+- **Given** primary search tools, **When** `env` is set, **Then** behavior remains unchanged (no regression).
+
+#### US-SURF-05 — Optional unify doc structure tools (Could Have)
+
+**As an** AI agent exploring documentation, **I want** one doc-structure tool with a format flag, **so that** I do not pick between `get_doc_tree` and `get_doc_structure`.
+
+**Acceptance criteria:**
+- **Given** mega-graphs, **When** either tool (or the merged tool) runs, **Then** it must not call unbounded `all_elements()` (refuse or paginate — safety before merge).
+- **Given** a merge, **When** `format` is `"tree"` | `"list"`, **Then** payloads match today's tree vs flat list shapes.
+- **Out of scope for Must Have:** cosmetic merge alone without mega-graph safety.
+
 ## 4. Implementation Status Summary
 
 > **Implementation status:** see [`prd-task-tracker.md`](prd-task-tracker.md) — Summary counts + Active session (open work) + Master table.
@@ -1298,6 +1403,36 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-OPS-EMBED-CPU | Must Have | `docker-compose.embed.yml`: `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 10g`. MCP `docker-compose.rocksdb.yml`: multi-project default `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 6g` (override down for single-project Local 2g KPI) |
 
 **Won't Do:** `LEANKG_FORCE_REINDEX=1` as the fix for stale mega-graphs (wipes data).
+
+### 5.18 MCP Tool Surface Rationalization (v3.7.4)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SURF-*` / `US-SURF-*` / `REL-053`.
+>
+> **Evidence:** Live MCP schemas + `src/mcp/handler.rs` / `tools.rs` review 2026-07-18. Registry baseline ≈85 tools. Fact corrections: `semantic_search` is dual-path (HNSW when embeddings exist); `search_code` is ontology-first on mega-graphs; `wake_up` = L0+L1 cached text (not L0 alone).
+
+**Policy:**
+- Prefer-order docstrings before deletes; deletes before merges
+- Hard-delete only strict subsets / zero-value tools
+- Soft-deprecate with an explicit replacement tool name in the schema
+- Keep ops bootstrap tools (`mcp_status`, `mcp_init`, `mcp_index`, `mcp_index_docs`, `mcp_install`) — do not hide behind “deprecate all mcp_*”
+- Update `tests/redundant_tools_matrix.rs` when the roster changes
+- Recount surface size from `ToolRegistry::list_tools()` before quoting externally
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SURF-01 | Must Have | Fix `semantic_search` tool description: document dual path (HNSW+cross-encoder when embeddings index exists; else ontology-first `safe_discover`). Never claim ANN-only |
+| FR-SURF-02 | Must Have | Add prefer-order one-liners to schemas for `concept_search`, `search_code`, `semantic_search`, `kg_semantic_context`, `kg_context` (match §3.16). Sync AGENTS / using-leankg skill |
+| FR-SURF-03 | Must Have | Remove `mcp_hello`, `mcp_impact`, `get_doc_for_file` from `ToolRegistry` + handlers; update `tests/redundant_tools_matrix.rs` and any docs that reference them |
+| FR-SURF-04 | Should Have | Soft-deprecate `wake_up`: description marks deprecated and points to `get_overview_context` (not `load_layer(L0)` alone) |
+| FR-SURF-05 | Should Have | Soft-deprecate `search_by_environment`: description points to `env=` on primary search / `kg_*` tools |
+| FR-SURF-06 | Could Have | Mega-safe `get_doc_structure` / `get_doc_tree` (no unbounded `all_elements()`); optional merge behind `format: "tree" \| "list"` after safety |
+| REL-053 | Should Have | Release note: tool surface shrink after FR-SURF-03 (registry count before/after from `list_tools`) |
+
+**Won't Do (this track):**
+- Deprecating or renaming `mcp_status` / `mcp_init` / `mcp_index` / `mcp_index_docs` / `mcp_install` for cosmetic `get_*` consistency
+- Replacing `wake_up` with `load_layer(layer="L0")` alone
+- Merging the intentional search triple or semantic triple into one tool
+- Quoting a “64 → 57” shrink without recounting the live registry
 
 ---
 

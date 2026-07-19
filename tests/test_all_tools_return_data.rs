@@ -41,7 +41,6 @@ async fn test_all_mcp_tools_return_data() {
         ("get_review_context", json!({"files": [&valid_file]})),
         ("find_large_functions", json!({})),
         ("generate_doc", json!({"file": &valid_file})),
-        ("get_doc_for_file", json!({"file": &valid_file})),
         (
             "get_files_for_doc",
             json!({"doc": "./docs/requirement/prd-leankg.md"}),
@@ -53,12 +52,11 @@ async fn test_all_mcp_tools_return_data() {
         ("find_related_docs", json!({"file": &valid_file})),
         ("get_clusters", json!({})),
         ("get_cluster_context", json!({"cluster_id": "1"})),
-        ("mcp_hello", json!({})),
+        ("kg_self_test", json!({})),
         ("ctx_read", json!({"file": &valid_file})),
         ("detect_changes", json!({"path": "./src"})),
         ("orchestrate", json!({"intent": "find main function"})),
         ("get_service_graph", json!({})),
-        ("mcp_impact", json!({"file": "./src/main.rs", "depth": 2})),
         ("mcp_index_docs", json!({"path": "./docs"})),
         ("mcp_install", json!({})),
         (

@@ -71,7 +71,7 @@ User asks about codebase → mcp_status (check initialized)
   │   └─ file param is OPTIONAL — only needed for impact/dependency queries
   │      e.g. orchestrate(intent="show me impact of changing src/lib.rs", file="src/lib.rs")
   │
-  ├─ "What docs reference X?" ─────────────────► get_doc_for_file(file="X")
+  ├─ "What docs reference X?" ─────────────────► find_related_docs(file="X")
   ├─ "What code is in this doc?" ─────────────► get_files_for_doc(doc="docs/X.md")
   │
   └─ Pre-commit risk check ───────────────────► detect_changes(scope="staged"|"all")
@@ -245,7 +245,6 @@ impl ToolHandler {
             "mcp_index_docs" => self.mcp_index_docs(arguments),
             "mcp_install" => self.mcp_install(arguments),
             "mcp_status" => self.mcp_status(arguments),
-            "mcp_impact" => self.mcp_impact(arguments),
             "detect_changes" => self.detect_changes(arguments),
             "query_file" => self.query_file(arguments),
             "get_dependencies" => self.get_dependencies(arguments),
@@ -286,7 +285,6 @@ impl ToolHandler {
             "generate_doc" => self.generate_doc(arguments),
             "find_large_functions" => self.find_large_functions(arguments),
             "get_tested_by" => self.get_tested_by(arguments),
-            "get_doc_for_file" => self.get_doc_for_file(arguments),
             "get_files_for_doc" => self.get_files_for_doc(arguments),
             "get_doc_structure" => self.get_doc_structure(arguments),
             "get_traceability" => self.get_traceability(arguments),
@@ -294,7 +292,6 @@ impl ToolHandler {
             "get_doc_tree" => self.get_doc_tree(arguments),
             "get_code_tree" => self.get_code_tree(arguments),
             "find_related_docs" => self.find_related_docs(arguments),
-            "mcp_hello" => self.mcp_hello(arguments),
             "get_clusters" => self.get_clusters(arguments),
             "get_cluster_context" => self.get_cluster_context(arguments),
             "run_raw_query" => self.run_raw_query(arguments),
@@ -787,12 +784,6 @@ impl ToolHandler {
         }))
     }
 
-    fn mcp_hello(&self, _args: &Value) -> Result<Value, String> {
-        Ok(json!({
-            "message": "Hello, World!"
-        }))
-    }
-
     /// US-CBM-C2 / FR-C02: hot-path result cache for high-frequency
     /// MCP tools. Wraps an LRU TimedCache keyed by `(tool, args)`.
     /// Default 60s TTL, 256 entries. Cache is invalidated on every
@@ -809,29 +800,6 @@ impl ToolHandler {
 
     pub fn invalidate_hot_cache(&self) {
         self.hot_cache.write().clear();
-    }
-
-    fn mcp_impact(&self, args: &Value) -> Result<Value, String> {
-        let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
-        let depth = args["depth"].as_u64().unwrap_or(3) as u32;
-
-        let analyzer = crate::graph::ImpactAnalyzer::new(&self.graph_engine);
-
-        let result = analyzer
-            .calculate_impact_radius(file, depth)
-            .map_err(|e| e.to_string())?;
-
-        Ok(json!({
-            "start_file": result.start_file,
-            "max_depth": result.max_depth,
-            "affected_count": result.affected_elements.len(),
-            "elements": result.affected_elements.iter().map(|e| json!({
-                "qualified_name": e.qualified_name,
-                "name": e.name,
-                "type": e.element_type,
-                "file": e.file_path
-            })).collect::<Vec<_>>()
-        }))
     }
 
     fn detect_changes(&self, args: &Value) -> Result<Value, String> {
@@ -2272,28 +2240,6 @@ impl ToolHandler {
             .collect();
 
         Ok(json!({ "tests": tests }))
-    }
-
-    fn get_doc_for_file(&self, args: &Value) -> Result<Value, String> {
-        let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
-
-        let relationships = self
-            .graph_engine
-            .get_relationships(file)
-            .map_err(|e| e.to_string())?;
-
-        let docs: Vec<_> = relationships
-            .iter()
-            .filter(|r| r.rel_type == "documented_by")
-            .map(|r| {
-                json!({
-                    "doc": r.target_qualified,
-                    "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or("")
-                })
-            })
-            .collect();
-
-        Ok(json!({ "documents": docs }))
     }
 
     fn get_files_for_doc(&self, args: &Value) -> Result<Value, String> {

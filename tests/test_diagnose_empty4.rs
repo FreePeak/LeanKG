@@ -134,13 +134,14 @@ async fn test_verify_correct_params() {
     // Also test documented_by relationship
     println!("\n=== Testing documented_by relationships ===");
     let dbf1 = handler
-        .execute_tool("get_doc_for_file", &json!({"file": "./src/api/auth.rs"}))
+        .execute_tool("find_related_docs", &json!({"file": "./src/api/auth.rs"}))
         .await
         .unwrap();
     let docs_count = dbf1
         .get("documents")
+        .or_else(|| dbf1.get("docs"))
         .and_then(|d| d.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
-    println!("get_doc_for_file './src/api/auth.rs': {} docs", docs_count);
+    println!("find_related_docs './src/api/auth.rs': {} docs", docs_count);
 }

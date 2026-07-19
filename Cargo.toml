@@ -114,6 +114,7 @@ crossbeam-channel = "0.5"
 redis = { version = "0.27", features = ["aio", "tokio-comp"] }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "vector_engine_ab"
@@ -125,5 +126,9 @@ harness = false
 
 [[bench]]
 name = "orchestrator_real_bench"
+harness = false
+
+[[bench]]
+name = "redundant_tool_overhead"
 harness = false
 
