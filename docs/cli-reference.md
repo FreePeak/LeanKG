@@ -27,7 +27,12 @@ Complete reference for all LeanKG CLI commands.
 | `leankg install` | Auto-install MCP config for AI tools |
 | `leankg watch` | Start file watcher for auto-indexing |
 | `leankg quality --min-lines N` | Find oversized functions by line count |
-| `leankg query <text> --kind name` | Query the knowledge graph |
+| `leankg query <text> --kind name` | Query the knowledge graph by name/type/rel/pattern/content |
+| `leankg query "<question>" --kind subgraph` | US-GF-03 / FR-GF-06: NL scoped subgraph (same as `graph-query`) |
+| `leankg graph-query "<question>"` | US-GF-03: seed → expand → budget trim subgraph with provenance labels |
+| `leankg path <a> <b>` | US-GF-01: shortest path between two symbols |
+| `leankg explain <symbol>` | US-GF-02: node dossier (degree, cluster, neighbors) |
+| `leankg gods` | US-GF-05: top-degree god nodes |
 | `leankg annotate <element> -d <desc>` | Add business logic annotation |
 | `leankg link <element> <id>` | Link element to feature |
 | `leankg search-annotations <query>` | Search business logic annotations |
