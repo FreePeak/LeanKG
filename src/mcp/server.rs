@@ -519,6 +519,23 @@ impl MCPServer {
                 return;
             }
         };
+        // Mega-graphs: in-process background embed calls all_elements() and
+        // contends with MCP on RocksDB/memory, which makes search tools hang
+        // or the container go unhealthy. Require an explicit opt-in.
+        let force_mega = std::env::var("LEANKG_EMBED_BACKGROUND_MEGA")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !force_mega && crate::ontology::safe_discover::is_mega_graph(&graph) {
+            let n = graph.count_elements().unwrap_or(0);
+            tracing::warn!(
+                "LEANKG_EMBED_BACKGROUND=1 skipped on mega-graph ({} elements). \
+                 Use offline `leankg embed --wait` or set LEANKG_EMBED_BACKGROUND_MEGA=1 \
+                 (not recommended under MCP mem_limit). Search tools stay available.",
+                n
+            );
+            return;
+        }
         let leankg_dir = self.get_db_path();
         let cfg = crate::embeddings::BackgroundEmbedConfig {
             batch_size,
