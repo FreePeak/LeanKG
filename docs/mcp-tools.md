@@ -64,6 +64,18 @@ LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowle
 | `find_dead_code` | Find functions with zero callers and no `tested_by` edge, excluding common entry-point names (`main`, `Main`, `start`, `serve`, `Start`) and trivial bodies. Returns `dead_functions[]`, `count`, and the `min_lines` threshold that was applied. Argument: `min_lines` (default 10). |
 | `query_graph` | US-GF-03 / FR-GF-05: natural-language scoped subgraph. Pipeline: keyword seed retrieval → bounded BFS expand (or shortest path when the question asks what connects A to B) → trim to `token_budget` → TOON response. Every edge includes `confidence_label` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`). Distinct from `orchestrate` (routing) and `kg_semantic_context` (embed pipeline). Args: `question` (required), `token_budget` (optional, default 2000), `max_depth` (optional, default 2). |
 
+### Live MCP smoke (optional)
+
+Against a running HTTP MCP (`localhost:9699`):
+
+```bash
+python3 scripts/mcp-smoke-tools.py
+# mega-graph heavy tools (needs higher mem_limit):
+LEANKG_SMOKE_INCLUDE_HEAVY=1 python3 scripts/mcp-smoke-tools.py
+```
+
+The script discovers tools from `tools/list`, skips mutators vs mega-graph-heavy with distinct labels, and always exercises `query_graph`.
+
 ## Call-edge Resolution Method
 
 Every `calls` relationship now carries a `resolution_method` value in its metadata:

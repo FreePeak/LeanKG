@@ -1138,12 +1138,31 @@ mod tests {
         assert!(names.contains(&"get_dependencies"));
         assert!(names.contains(&"get_impact_radius"));
         assert!(names.contains(&"find_related_docs"));
+        assert!(names.contains(&"query_graph"));
+        assert!(names.contains(&"shortest_path"));
         for removed in ["mcp_hello", "mcp_impact", "get_doc_for_file"] {
             assert!(
                 !names.contains(&removed),
                 "removed tool `{removed}` must not be registered"
             );
         }
+    }
+
+    #[test]
+    fn test_query_graph_tool_schema() {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "query_graph")
+            .expect("query_graph must be registered");
+        assert!(tool.description.contains("US-GF-03"));
+        let schema = tool.input_schema.as_object().unwrap();
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("question"));
+        assert!(props.contains_key("token_budget"));
+        assert!(props.contains_key("max_depth"));
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v.as_str() == Some("question")));
     }
 
     #[test]

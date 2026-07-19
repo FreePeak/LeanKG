@@ -27,7 +27,7 @@
 //! load_layer, promote_environment, query_incidents, report_query_outcome,
 //! resolve_with_lsp, search_annotations, search_by_environment,
 //! search_knowledge, semantic_search, shortest_path, temporal_query,
-//! timeline, update_knowledge, wake_up
+//! timeline, update_knowledge, wake_up, query_graph
 
 use leankg::db::schema::{init_db, run_script, CozoDb};
 use leankg::graph::GraphEngine;
@@ -78,6 +78,25 @@ async fn make_handler() -> (ToolHandler, TempDir) {
     seed_db(&db);
     let graph = GraphEngine::new(db);
     (ToolHandler::new(graph, db_path), tmp)
+}
+
+/// Write a persona under `<tmp>/.leankg/agents/<name>.json` so agent_focus / diary pass.
+fn write_persona(tmp: &TempDir, name: &str) {
+    let dir = tmp.path().join(".leankg").join("agents");
+    std::fs::create_dir_all(&dir).expect("create agents dir");
+    let persona = json!({
+        "name": name,
+        "description": "smoke persona",
+        "focus_areas": ["auth"],
+        "path_filters": ["src/auth"],
+        "cluster_id": "c1",
+        "element_types": ["function"]
+    });
+    std::fs::write(
+        dir.join(format!("{name}.json")),
+        serde_json::to_string_pretty(&persona).unwrap(),
+    )
+    .expect("write persona");
 }
 
 async fn call(handler: &ToolHandler, tool: &str, args: Value) -> Result<Value, String> {
@@ -287,49 +306,45 @@ mod agent {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn focus_set_then_diary_write_then_read() {
-        let (handler, _tmp) = make_handler().await;
+        let (handler, tmp) = make_handler().await;
+        write_persona(&tmp, "reviewer-bot");
+        let project = tmp.path().to_string_lossy().to_string();
 
-        // agent_focus + diary expect a persona .json on disk; we expect an
-        // error in the test env. We accept that OR a successful payload.
-        let focus = call(&handler, "agent_focus", json!({"name": "reviewer-bot"})).await;
-        match focus {
-            Ok(v) => assert!(!v.to_string().is_empty()),
-            Err(e) => assert!(
-                e.contains("not found") || e.contains("persona") || e.contains("missing"),
-                "expected graceful persona-not-found error: {e}"
-            ),
-        }
+        let focus = call(
+            &handler,
+            "agent_focus",
+            json!({"name": "reviewer-bot", "project": &project}),
+        )
+        .await
+        .expect("agent_focus with persona fixture");
+        assert_eq!(focus["agent"], "reviewer-bot");
+        assert!(
+            focus["element_count"].as_u64().unwrap_or(0) > 0,
+            "persona filters should keep auth functions: {focus}"
+        );
 
         let write = call(
             &handler,
             "agent_diary_write",
             json!({
                 "name": "reviewer-bot",
-                "note": "Investigated the auth charge path."
+                "note": "Investigated the auth charge path.",
+                "project": &project,
+                "tags": ["smoke"]
             }),
         )
-        .await;
-        match write {
-            Ok(v) => assert!(!v.to_string().is_empty()),
-            Err(e) => assert!(
-                e.contains("not found") || e.contains("persona"),
-                "expected graceful persona error: {e}"
-            ),
-        }
+        .await
+        .expect("agent_diary_write");
+        assert!(!write.to_string().is_empty());
 
         let read = call(
             &handler,
             "agent_diary_read",
-            json!({"name": "reviewer-bot"}),
+            json!({"name": "reviewer-bot", "project": &project}),
         )
-        .await;
-        match read {
-            Ok(v) => assert!(!v.to_string().is_empty()),
-            Err(e) => assert!(
-                e.contains("not found") || e.contains("persona"),
-                "expected graceful persona error: {e}"
-            ),
-        }
+        .await
+        .expect("agent_diary_read");
+        assert!(!read.to_string().is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -411,20 +426,58 @@ mod graph_features {
         )
         .await
         .expect("query_graph");
-        assert!(
-            resp.get("question").is_some()
-                || resp.get("seeds").is_some()
-                || resp.get("edges").is_some(),
-            "query_graph should return a subgraph envelope: {resp}"
-        );
-        if let Some(edges) = resp.get("edges").and_then(|e| e.as_array()) {
-            for edge in edges {
-                assert!(
-                    edge.get("confidence_label").is_some(),
-                    "every edge needs confidence_label: {edge}"
-                );
-            }
+        assert_eq!(resp["question"], "what connects handle_request to charge?");
+        let seeds = resp["seeds"].as_array().expect("seeds array");
+        assert!(!seeds.is_empty(), "expected seeds: {resp}");
+        let edges = resp["edges"].as_array().expect("edges array");
+        assert!(!edges.is_empty(), "expected connecting edges: {resp}");
+        for edge in edges {
+            let label = edge["confidence_label"].as_str().unwrap_or("");
+            assert!(
+                matches!(label, "EXTRACTED" | "INFERRED" | "AMBIGUOUS"),
+                "bad confidence_label: {edge}"
+            );
         }
+        assert!(
+            resp["tokens_estimate"].as_u64().unwrap_or(u64::MAX)
+                <= resp["token_budget"].as_u64().unwrap_or(0)
+                || resp["truncated"].as_bool().unwrap_or(false),
+            "budget accounting missing: {resp}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_graph_rejects_empty_question() {
+        let (handler, _tmp) = make_handler().await;
+        let err = call(&handler, "query_graph", json!({"question": "   "}))
+            .await
+            .expect_err("empty question must fail");
+        assert!(
+            err.to_lowercase().contains("empty") || err.to_lowercase().contains("question"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_graph_respects_small_token_budget() {
+        let (handler, _tmp) = make_handler().await;
+        let resp = call(
+            &handler,
+            "query_graph",
+            json!({
+                "question": "what connects auth to billing?",
+                "token_budget": 250,
+                "max_depth": 3
+            }),
+        )
+        .await
+        .expect("query_graph small budget");
+        let estimate = resp["tokens_estimate"].as_u64().unwrap_or(u64::MAX);
+        let budget = resp["token_budget"].as_u64().unwrap_or(0);
+        assert!(
+            estimate <= budget,
+            "tokens {estimate} exceeded budget {budget}: {resp}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
