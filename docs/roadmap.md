@@ -51,7 +51,7 @@ PRD: [`prd.md`](prd.md) Section 3.10 · Analysis: [`analysis/graphify-comparison
 |---------|--------|--------|-------------|
 | Shortest path | US-GF-01 / FR-GF-01..02 | Planned | MCP `shortest_path` + CLI `leankg path` |
 | Explain node | US-GF-02 / FR-GF-03..04 | Planned | Single-call node dossier |
-| NL subgraph query | US-GF-03 / FR-GF-05..06 | Planned | `query_graph` |
+| NL subgraph query | US-GF-03 / FR-GF-05..06 | Done | MCP `query_graph` + CLI `graph-query` / `query --kind subgraph` |
 | Edge provenance labels | US-GF-04 / FR-GF-07..09 | Planned | EXTRACTED / INFERRED / AMBIGUOUS |
 | God-node ranking | US-GF-05 / FR-GF-10..12 | Planned | Index-time hub importance |
 | GRAPH_REPORT.md | US-GF-06 / FR-GF-13..14 | Planned | Architecture brief |
