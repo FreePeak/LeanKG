@@ -71,7 +71,7 @@
 |------:|----|------|--------|----------|-------|-------|
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
-| **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
+| **P1** | `US-CBM-B1` | User Story | **DONE** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P1** | `US-MP-02` | User Story | **PARTIAL** | Must Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok)… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
@@ -81,13 +81,13 @@
 | **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P1** | `FR-LSP-A` | FR | **NOT_DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeSc… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
-| **P1** | `FR-LSP-B` | FR | **NOT_DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / '… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
-| **P1** | `FR-LSP-C` | FR | **NOT_DONE** | Must Have | Wire 'resolve_with_lsp' results into the indexer — when 'typed_resolve=go,ts' (or 'all') … | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
-| **P1** | `FR-LSP-D` | FR | **NOT_DONE** | Must Have | Cross-file type registry shared across files in the same project (mirror 'internal/cbm/ls… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-A` | FR | **DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeSc… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-B` | FR | **DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / '… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-C` | FR | **DONE** | Must Have | Wire 'resolve_with_lsp' results into the indexer — when 'typed_resolve=go,ts' (or 'all') … | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-D` | FR | **DONE** | Must Have | Cross-file type registry shared across files in the same project (mirror 'internal/cbm/ls… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
 | **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
 | **P1** | `REL-032` | Release | **NOT_DONE** | Must Have | Swift / Vue / Svelte / SQL DDL — extractors present ('swift.rs' / 'sfc.rs' / 'sql.rs') bu… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `REL-039` | Release | **NOT_DONE** | Must Have | Default LSP server bootstrap (FR-LSP-B / FR-B09 fanout — gopls + tsserver + pyright + dar… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P1** | `REL-039` | Release | **DONE** | Must Have | Default LSP server bootstrap (FR-LSP-B / FR-B09 fanout — gopls + tsserver + pyright + dar… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-040` | Release | **NOT_DONE** | Must Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-041` | Release | **NOT_DONE** | Must Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-042` | Release | **NOT_DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
@@ -104,11 +104,11 @@
 | **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
-| **P2** | `US-SURF-03` | User Story | **PENDING** | Should Have | Soft-deprecate wake_up in favor of get_overview_context (not load_layer L0 alone) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P2** | `US-SURF-04` | User Story | **PENDING** | Should Have | Soft-deprecate search_by_environment (use env= on primary search/kg tools) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P2** | `FR-SURF-04` | FR | **NOT_DONE** | Should Have | Soft-deprecate wake_up → get_overview_context (not load_layer L0 alone) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P2** | `FR-SURF-05` | FR | **NOT_DONE** | Should Have | Soft-deprecate search_by_environment; point to env= on primary search/kg tools | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P2** | `REL-053` | Release | **NOT_DONE** | Should Have | Release note: MCP tool surface shrink after FR-SURF-03 (list_tools before/after) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `US-SURF-03` | User Story | **DONE** | Should Have | Soft-deprecate wake_up in favor of get_overview_context (not load_layer L0 alone) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `US-SURF-04` | User Story | **DONE** | Should Have | Soft-deprecate search_by_environment (use env= on primary search/kg tools) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `FR-SURF-04` | FR | **DONE** | Should Have | Soft-deprecate wake_up → get_overview_context (not load_layer L0 alone) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `FR-SURF-05` | FR | **DONE** | Should Have | Soft-deprecate search_by_environment; point to env= on primary search/kg tools | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `REL-053` | Release | **DONE** | Should Have | Release note: MCP tool surface shrink after FR-SURF-03 (list_tools before/after) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
@@ -220,7 +220,7 @@
 | **P0** | `US-VE-06` | User Story | **DONE** | Should Have | As an operator, I want zero-downtime GC (shadow paging + micro-lock delta sync when fragm… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
-| **P1** | `US-CBM-B1` | User Story | **PARTIAL** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
+| **P1** | `US-CBM-B1` | User Story | **DONE** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P1** | `US-MP-02` | User Story | **PARTIAL** | Must Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok)… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
@@ -230,13 +230,13 @@
 | **P1** | `US-CBM-D3` | User Story | **PENDING** | Must Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-GF-03` | User Story | **PENDING** | Must Have | Natural-language scoped subgraph query ('query_graph "what connects auth to DB?"') | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `FR-B05` | FR | **NOT_DONE** | Must Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P1** | `FR-LSP-A` | FR | **NOT_DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeSc… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
-| **P1** | `FR-LSP-B` | FR | **NOT_DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / '… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
-| **P1** | `FR-LSP-C` | FR | **NOT_DONE** | Must Have | Wire 'resolve_with_lsp' results into the indexer — when 'typed_resolve=go,ts' (or 'all') … | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
-| **P1** | `FR-LSP-D` | FR | **NOT_DONE** | Must Have | Cross-file type registry shared across files in the same project (mirror 'internal/cbm/ls… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-A` | FR | **DONE** | Must Have | LeanKG-native Hybrid LSP tier — an **in-process, no-spawn type resolver** for Go / TypeSc… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-B` | FR | **DONE** | Must Have | Prefab 'lsp:' block — 'leankg init --with-lsp' writes a default block listing 'gopls' / '… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-C` | FR | **DONE** | Must Have | Wire 'resolve_with_lsp' results into the indexer — when 'typed_resolve=go,ts' (or 'all') … | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
+| **P1** | `FR-LSP-D` | FR | **DONE** | Must Have | Cross-file type registry shared across files in the same project (mirror 'internal/cbm/ls… | 5.13 LSP Adoption Track from CBM (moved from former 5.… |
 | **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
 | **P1** | `REL-032` | Release | **NOT_DONE** | Must Have | Swift / Vue / Svelte / SQL DDL — extractors present ('swift.rs' / 'sfc.rs' / 'sql.rs') bu… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `REL-039` | Release | **NOT_DONE** | Must Have | Default LSP server bootstrap (FR-LSP-B / FR-B09 fanout — gopls + tsserver + pyright + dar… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P1** | `REL-039` | Release | **DONE** | Must Have | Default LSP server bootstrap (FR-LSP-B / FR-B09 fanout — gopls + tsserver + pyright + dar… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-040` | Release | **NOT_DONE** | Must Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-041` | Release | **NOT_DONE** | Must Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `REL-042` | Release | **NOT_DONE** | Must Have | US-GF-03 NL scoped subgraph ('query_graph') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
@@ -348,11 +348,11 @@
 | **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
-| **P2** | `US-SURF-03` | User Story | **PENDING** | Should Have | Soft-deprecate wake_up in favor of get_overview_context (not load_layer L0 alone) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P2** | `US-SURF-04` | User Story | **PENDING** | Should Have | Soft-deprecate search_by_environment (use env= on primary search/kg tools) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P2** | `FR-SURF-04` | FR | **NOT_DONE** | Should Have | Soft-deprecate wake_up → get_overview_context (not load_layer L0 alone) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P2** | `FR-SURF-05` | FR | **NOT_DONE** | Should Have | Soft-deprecate search_by_environment; point to env= on primary search/kg tools | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P2** | `REL-053` | Release | **NOT_DONE** | Should Have | Release note: MCP tool surface shrink after FR-SURF-03 (list_tools before/after) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `US-SURF-03` | User Story | **DONE** | Should Have | Soft-deprecate wake_up in favor of get_overview_context (not load_layer L0 alone) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `US-SURF-04` | User Story | **DONE** | Should Have | Soft-deprecate search_by_environment (use env= on primary search/kg tools) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
+| **P2** | `FR-SURF-04` | FR | **DONE** | Should Have | Soft-deprecate wake_up → get_overview_context (not load_layer L0 alone) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `FR-SURF-05` | FR | **DONE** | Should Have | Soft-deprecate search_by_environment; point to env= on primary search/kg tools | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
+| **P2** | `REL-053` | Release | **DONE** | Should Have | Release note: MCP tool surface shrink after FR-SURF-03 (list_tools before/after) | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
