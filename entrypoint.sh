@@ -167,6 +167,16 @@ export LEANKG_MMAP_SIZE="${LEANKG_MMAP_SIZE:-67108864}"
 # the MCP project if present, otherwise falling back to /workspace/ontology
 # (the LeanKG source tree ships concepts.yaml + workflows.yaml there).
 # The sync target is always $MCP_PROJECT so the served DB has the ontology.
+#
+# CRITICAL (search availability): never block mcp-http forever on sync.
+# On mega-graphs, opening RocksDB + sync has been observed to hang for
+# minutes with /health failing (empty reply / connection reset) so
+# search_code / find_function appear completely broken.
+#
+# LEANKG_ONTOLOGY_SYNC_ON_BOOT:
+#   skip | 0     — do not sync (MCP starts immediately)
+#   force | 1    — blocking sync (legacy; can delay health for a long time)
+#   timeout|auto — default: sync with timeout, then start MCP either way
 ONTOLOGY_SOURCE_DIR=""
 for candidate in "$MCP_PROJECT" "/workspace"; do
     if [ -d "$candidate/ontology" ] && [ -f "$candidate/ontology/concepts.yaml" ]; then
@@ -174,10 +184,48 @@ for candidate in "$MCP_PROJECT" "/workspace"; do
         break
     fi
 done
+ONTOLOGY_SYNC_MODE="${LEANKG_ONTOLOGY_SYNC_ON_BOOT:-timeout}"
+ONTOLOGY_SYNC_TIMEOUT="${LEANKG_ONTOLOGY_SYNC_TIMEOUT_SECS:-45}"
+ONTOLOGY_MARKER="$MCP_PROJECT/.leankg/ontology_synced"
 if [ -n "$ONTOLOGY_SOURCE_DIR" ]; then
-    echo "=== Syncing ontology from $ONTOLOGY_SOURCE_DIR into $MCP_PROJECT ==="
-    ( cd "$MCP_PROJECT" && leankg ontology sync --path "$ONTOLOGY_SOURCE_DIR" )
-    echo "=== Ontology sync done ==="
+    case "$ONTOLOGY_SYNC_MODE" in
+        skip|0|false|FALSE)
+            echo "=== Skipping ontology sync (LEANKG_ONTOLOGY_SYNC_ON_BOOT=$ONTOLOGY_SYNC_MODE) ==="
+            ;;
+        force|1|true|TRUE|foreground)
+            echo "=== Syncing ontology from $ONTOLOGY_SOURCE_DIR into $MCP_PROJECT (blocking) ==="
+            ( cd "$MCP_PROJECT" && leankg ontology sync --path "$ONTOLOGY_SOURCE_DIR" ) \
+                && mkdir -p "$(dirname "$ONTOLOGY_MARKER")" && touch "$ONTOLOGY_MARKER" \
+                || echo "WARN: ontology sync failed; continuing to mcp-http"
+            echo "=== Ontology sync done ==="
+            ;;
+        *)
+            # Default: skip if marker is newer than concepts.yaml (already synced).
+            CONCEPTS_FILE="$ONTOLOGY_SOURCE_DIR/concepts.yaml"
+            if [ -f "$ONTOLOGY_MARKER" ] && [ "$ONTOLOGY_MARKER" -nt "$CONCEPTS_FILE" ]; then
+                echo "=== Ontology already synced (marker newer than concepts.yaml); skipping ==="
+            else
+                echo "=== Syncing ontology from $ONTOLOGY_SOURCE_DIR (timeout ${ONTOLOGY_SYNC_TIMEOUT}s) ==="
+                set +e
+                if command -v timeout >/dev/null 2>&1; then
+                    ( cd "$MCP_PROJECT" && timeout "$ONTOLOGY_SYNC_TIMEOUT" leankg ontology sync --path "$ONTOLOGY_SOURCE_DIR" )
+                    sync_rc=$?
+                else
+                    ( cd "$MCP_PROJECT" && leankg ontology sync --path "$ONTOLOGY_SOURCE_DIR" )
+                    sync_rc=$?
+                fi
+                set -e
+                if [ "$sync_rc" -eq 0 ]; then
+                    mkdir -p "$(dirname "$ONTOLOGY_MARKER")" && touch "$ONTOLOGY_MARKER"
+                    echo "=== Ontology sync done ==="
+                elif [ "$sync_rc" -eq 124 ]; then
+                    echo "WARN: ontology sync timed out after ${ONTOLOGY_SYNC_TIMEOUT}s; starting mcp-http anyway (search stays available)"
+                else
+                    echo "WARN: ontology sync failed (rc=$sync_rc); starting mcp-http anyway"
+                fi
+            fi
+            ;;
+    esac
 else
     echo "No ontology directory found in $MCP_PROJECT or /workspace, skipping ontology sync"
 fi

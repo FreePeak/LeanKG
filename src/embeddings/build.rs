@@ -1206,10 +1206,9 @@ pub fn spawn_background_embed(
             }
         };
 
-    // Snapshot the initial element count ONCE (don't double-scan inside
-    // build_index_parallel). On the mega-graph heuristic, this is also
-    // where the function,method filter is applied.
-    let total = graph.all_elements().map(|v| v.len()).unwrap_or(0);
+    // Snapshot the initial element count ONCE without materializing every
+    // row (all_elements on mega-graphs OOM/locks MCP and breaks search).
+    let total = graph.count_elements().unwrap_or(0);
     write_status(total as u64, 0, 0, 0, "running");
 
     let graph_clone = graph.clone();
