@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Why LeanKG - Competitive One-Pager</title>
+  <meta name="description" content="Sales one-pager positioning LeanKG against other local knowledge graph tools for AI-assisted development." />
+  <meta name="generator" content="hand-authored" />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-alt: #f8fafc;
+      --bg-soft: #f1f5f9;
+      --text: #0f172a;
+      --text-muted: #475569;
+      --text-soft: #64748b;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --accent: #0ea5e9;
+      --accent-strong: #0369a1;
+      --accent-soft: #e0f2fe;
+      --good: #047857;
+      --good-soft: #ecfdf5;
+      --warn: #b45309;
+      --warn-soft: #fef3c7;
+      --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 56px 32px 80px;
+    }
+
+    /* ---------- Header ---------- */
+
+    header.hero {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 32px;
+      margin-bottom: 40px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      font-size: 40px;
+      line-height: 1.1;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      font-size: 17px;
+      color: var(--text-muted);
+      margin: 0;
+      max-width: 60ch;
+    }
+
+    /* ---------- Sections ---------- */
+
+    section {
+      margin-bottom: 48px;
+    }
+
+    h2 {
+      font-size: 22px;
+      margin: 0 0 16px;
+      letter-spacing: -0.01em;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin: 0 0 6px;
+      color: var(--text);
+    }
+
+    p { margin: 0 0 12px; }
+
+    a { color: var(--accent-strong); text-decoration: none; border-bottom: 1px dotted var(--accent); }
+    a:hover { border-bottom-style: solid; }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: var(--bg-soft);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 16px 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 12px 0 0;
+    }
+
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+
+    /* ---------- Pitch grid ---------- */
+
+    .pitch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .pitch-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .pitch-card .tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent-strong);
+      margin-bottom: 8px;
+    }
+
+    .pitch-card p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin: 0;
+    }
+
+    /* ---------- When to use split ---------- */
+
+    .when-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    .when-block {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 22px 24px;
+      background: var(--bg-alt);
+    }
+
+    .when-block.use { border-left: 4px solid var(--good); background: var(--good-soft); }
+    .when-block.avoid { border-left: 4px solid var(--warn); background: var(--warn-soft); }
+
+    .when-block h2 { font-size: 18px; margin-bottom: 12px; }
+
+    .when-block ul { margin: 0; padding-left: 20px; }
+    .when-block li { margin-bottom: 8px; }
+    .when-block li strong { color: var(--text); }
+
+    /* ---------- Comparison table ---------- */
+
+    .matrix-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+      box-shadow: var(--shadow);
+    }
+
+    table.matrix {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      min-width: 640px;
+    }
+
+    table.matrix th,
+    table.matrix td {
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    table.matrix thead th {
+      background: var(--bg-soft);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-soft);
+      font-weight: 600;
+    }
+
+    table.matrix tbody tr:last-child td { border-bottom: 0; }
+
+    table.matrix th.row-label,
+    table.matrix td.row-label {
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      background: var(--bg-alt);
+    }
+
+    table.matrix td.us {
+      background: var(--good-soft);
+      font-weight: 600;
+      color: var(--good);
+    }
+
+    table.matrix td.us::before {
+      content: "yes";
+    }
+
+    table.matrix td.no {
+      color: var(--text-soft);
+    }
+
+    /* ---------- Stack + Get started ---------- */
+
+    .stack-block {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .stack-block .meta {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .stack-block .meta strong { color: var(--text); }
+
+    /* ---------- Footer ---------- */
+
+    footer.page-footer {
+      margin-top: 64px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-soft);
+    }
+
+    footer.page-footer a { color: var(--text-muted); border-bottom: 1px dotted var(--border-strong); }
+
+    /* ---------- Print ---------- */
+
+    @media print {
+      :root {
+        --bg: #fff;
+        --bg-alt: #fff;
+        --bg-soft: #fff;
+        --shadow: none;
+      }
+
+      body { font-size: 11pt; }
+      .page { max-width: none; padding: 0; }
+      header.hero { margin-bottom: 24px; padding-bottom: 16px; }
+      section { margin-bottom: 24px; page-break-inside: avoid; }
+      .pitch-card, .when-block, .matrix-wrap { box-shadow: none; }
+      table.matrix thead th { background: #f4f4f4; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      table.matrix td.us, .when-block.use, .when-block.avoid, .eyebrow { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      a { border-bottom: 0; color: var(--text); }
+    }
+
+    /* ---------- Mobile ---------- */
+
+    @media (max-width: 720px) {
+      .page { padding: 32px 20px 60px; }
+      h1 { font-size: 32px; }
+      .when-split, .stack-block { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+
+    <!-- ============== Hero ============== -->
+    <header class="hero">
+      <span class="eyebrow">Sales one-pager</span>
+      <h1>Why LeanKG</h1>
+      <p class="subtitle">
+        A side-by-side positioning of LeanKG against other local knowledge graph tools
+        for AI-assisted development. For prospect conversations and cold outreach.
+      </p>
+    </header>
+
+    <!-- ============== Pitch ============== -->
+    <section class="pitch">
+      <h2>The pitch</h2>
+      <div class="pitch-grid">
+
+        <article class="pitch-card">
+          <span class="tag">Token economics</span>
+          <h3>Stop burning tokens</h3>
+          <p>
+            TOON (Token-Oriented Object Notation) trims response payloads by roughly 40%.
+            A/B benchmarks show 30% fewer input tokens and 3x the tokens-per-result
+            of raw search.
+          </p>
+        </article>
+
+        <article class="pitch-card">
+          <span class="tag">Tool breadth</span>
+          <h3>85 MCP tools</h3>
+          <p>
+            The broadest atomic surface in the category. Competitors ship 1 to 17.
+            Your agent queries with surgical precision instead of blunt grep and
+            chains narrow calls without round-tripping whole files.
+          </p>
+        </article>
+
+        <article class="pitch-card">
+          <span class="tag">Domain depth</span>
+          <h3>Built for mobile and the cloud</h3>
+          <p>
+            The only tool here that extracts Android XML resources, Hilt, Room, and
+            Navigation graphs out of the box, and that stitches microservice
+            topologies together with outage postmortems.
+          </p>
+        </article>
+
+        <article class="pitch-card">
+          <span class="tag">Procedural</span>
+          <h3>Not just structural</h3>
+          <p>
+            The ontology layer (<code>concepts.yaml</code>, <code>workflows.yaml</code>)
+            and Agent Personas (architect, ops) turn the graph into a carrier of
+            instructions, not just code metadata.
+          </p>
+        </article>
+
+        <article class="pitch-card">
+          <span class="tag">Trust</span>
+          <h3>Verifiable numbers</h3>
+          <p>
+            Every figure on this page comes from a reproducible A/B benchmark,
+            not marketing copy.
+          </p>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- ============== When to use / not use ============== -->
+    <section class="when">
+      <h2>When to reach for what</h2>
+      <div class="when-split">
+
+        <div class="when-block use">
+          <h2>When LeanKG wins</h2>
+          <ul>
+            <li><strong>You pay per token.</strong> Let the graph do the heavy lifting on every retrieval.</li>
+            <li><strong>You ship Android.</strong> Only LeanKG understands XML resources, Hilt DI, Room schemas, and Navigation graphs.</li>
+            <li><strong>You run microservices.</strong> The graph links services to postmortems and on-call ownership.</li>
+            <li><strong>Your agent needs fine-grained tools</strong> - impact radius, call graph, dead code, clones, semantic context - not a single "Explore" verb.</li>
+            <li><strong>You want procedural knowledge</strong> alongside structural code (ontologies, workflows, personas).</li>
+          </ul>
+        </div>
+
+        <div class="when-block avoid">
+          <h2>When to look elsewhere</h2>
+          <ul>
+            <li><strong>Raw indexing speed on huge C/C++ codebases.</strong> <code>codebase-memory-mcp</code> ingests the Linux kernel in about 3 minutes.</li>
+            <li><strong>Zero-server browser experience.</strong> <code>GitNexus</code> runs in WebAssembly with LadybugDB - drop a repo into a browser, get a graph.</li>
+            <li><strong>Video, PDF, and images in the same graph.</strong> Reach for <code>graphify</code>.</li>
+            <li><strong>Swift-to-Objective-C or React Native bridging</strong> across 17 web frameworks. <code>codegraph</code> owns that niche.</li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============== Matrix ============== -->
+    <section class="matrix-section">
+      <h2>At a glance</h2>
+      <div class="matrix-wrap">
+        <table class="matrix" aria-label="LeanKG vs alternative local knowledge graph tools">
+          <thead>
+            <tr>
+              <th scope="col">Dimension</th>
+              <th scope="col">LeanKG</th>
+              <th scope="col">codebase-memory-mcp</th>
+              <th scope="col">GitNexus</th>
+              <th scope="col">graphify</th>
+              <th scope="col">codegraph</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="row-label">Language</td>
+              <td>Rust</td>
+              <td>C / C++</td>
+              <td>TypeScript</td>
+              <td>Python</td>
+              <td>TypeScript</td>
+            </tr>
+            <tr>
+              <td class="row-label">MCP tools</td>
+              <td><strong>85</strong></td>
+              <td>15</td>
+              <td>17</td>
+              <td>standard set</td>
+              <td>1 ("Explore")</td>
+            </tr>
+            <tr>
+              <td class="row-label">Token format</td>
+              <td>TOON (~40% saved)</td>
+              <td>standard</td>
+              <td>standard</td>
+              <td>budget-per-token</td>
+              <td>standard</td>
+            </tr>
+            <tr>
+              <td class="row-label">Android-aware</td>
+              <td class="us" aria-label="yes"></td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+              <td class="no">partial</td>
+            </tr>
+            <tr>
+              <td class="row-label">Microservice topology</td>
+              <td class="us" aria-label="yes"></td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+            </tr>
+            <tr>
+              <td class="row-label">Procedural ontology</td>
+              <td class="us" aria-label="yes"></td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+              <td class="no">no</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============== Stack + Get started ============== -->
+    <section class="stack-section">
+      <h2>Stack and start</h2>
+      <div class="stack-block">
+        <div class="meta">
+          <p>
+            <strong>Rust</strong> + <strong>CozoDB</strong> + <strong>tree-sitter</strong>.
+            Local-first. No SaaS lock-in. Runs as an MCP HTTP server on <code>:9699</code>
+            or over stdio.
+          </p>
+          <p>
+            See <a href="./competitive-analysis.md">the markdown source</a> or
+            <a href="./README.md">docs/README.md</a> for the full picture.
+          </p>
+        </div>
+        <div>
+          <h3>Get started</h3>
+          <pre><code>cargo install leankg --release
+leankg init
+leankg index ./src
+leankg serve</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Footer ============== -->
+    <footer class="page-footer">
+      <span>Last updated 2026-07-18</span>
+      <span>Source: <a href="./competitive-analysis.md">docs/competitive-analysis.md</a></span>
+    </footer>
+
+  </main>
+</body>
+</html>
