@@ -1280,6 +1280,21 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 >
 > **Intent:** close the zero-setup gap (LeanKG currently requires user-configured LSP servers) via prefab `lsp:` block, optional in-process native resolver, indexer wiring for `resolution_method=typed`, and cross-file type registry.
 
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-LSP-A | Must Have | LeanKG-native Hybrid LSP tier — **in-process, no-spawn** type resolver for **Go + TypeScript MVP** (Python/Rust later). Runs during index; never forks gopls/tsserver. |
+| FR-LSP-B | Must Have | Prefab `lsp:` block — `leankg init --with-lsp` writes default servers from the catalog (`gopls`, `typescript-language-server`, `pyright`, …) and sets `indexer.typed_resolve: go,ts`. Empty yaml still falls back to catalog at resolve time (REL-039). |
+| FR-LSP-C | Must Have | Wire hybrid/LSP results into the indexer — when `typed_resolve=go,ts` (or `all`), CALLS edges get `resolution_method=typed` + high confidence before DB insert. |
+| FR-LSP-D | Must Have | Cross-file type registry shared across files in the same project (functions/methods/types keyed by name, module/dir, and type+method). |
+| REL-039 | Must Have | Default LSP server bootstrap fanout (FR-LSP-B) — catalog-backed prefab for gopls + tsserver + pyright (+ other catalogued languages). |
+
+**Acceptance (MVP):**
+- Given a small Go package with cross-file calls and `typed_resolve=go,ts`, indexing produces ≥1 CALLS edge with `resolution_method=typed`.
+- Given a TS module pair with an exported function call, same.
+- `leankg init --with-lsp` writes a non-empty `lsp.servers` map.
+- Hybrid path never spawns a child process (unit-tested).
+- External `resolve_with_lsp` still works when binaries are installed (existing bridge).
+
 ### 5.14 Optimized Local-First Vector Graph Engine (v3.7.0)
 
 > **Former P0 — COMPLETE on PR #80.** Current highest focus is **§5.16 Day-2 Embed Resume**.  

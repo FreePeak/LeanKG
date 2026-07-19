@@ -65,6 +65,26 @@ impl Default for LspConfig {
 }
 
 impl LspConfig {
+    /// FR-LSP-B / REL-039: prefab catalog block (include missing binaries
+    /// so yaml documents the intended servers even before install).
+    pub fn prefab_defaults() -> Self {
+        let (cfg, _missing) = crate::lsp::registry::auto_config(true);
+        cfg
+    }
+
+    /// Merge catalog defaults for any language not already configured.
+    /// Used when `lsp.servers` is empty so zero-setup resolve still works.
+    pub fn with_prefab_fallback(mut self) -> Self {
+        if self.servers.is_empty() {
+            return Self::prefab_defaults();
+        }
+        let (prefab, _) = crate::lsp::registry::auto_config(true);
+        for (lang, server) in prefab.servers {
+            self.servers.entry(lang).or_insert(server);
+        }
+        self
+    }
+
     /// Default extension list for a given language when the user
     /// didn't supply one in the config file.
     pub fn default_extensions(language: &str) -> Vec<&'static str> {
@@ -79,6 +99,7 @@ impl LspConfig {
             "csharp" => vec!["cs"],
             "cpp" | "c" => vec!["cpp", "cxx", "cc", "hpp", "h"],
             "php" => vec!["php"],
+            "dart" => vec!["dart"],
             _ => vec![],
         }
     }
@@ -106,5 +127,22 @@ mod tests {
         let back: LspConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.timeout_ms, 5000);
         assert!(back.servers.is_empty());
+    }
+
+    #[test]
+    fn prefab_defaults_includes_go_and_typescript() {
+        let cfg = LspConfig::prefab_defaults();
+        assert!(cfg.servers.contains_key("go"), "expected gopls entry");
+        assert!(
+            cfg.servers.contains_key("typescript"),
+            "expected typescript-language-server entry"
+        );
+        assert!(cfg.servers.contains_key("python"), "expected pyright/pylsp");
+    }
+
+    #[test]
+    fn with_prefab_fallback_fills_empty() {
+        let cfg = LspConfig::default().with_prefab_fallback();
+        assert!(!cfg.servers.is_empty());
     }
 }

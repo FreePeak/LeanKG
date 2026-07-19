@@ -49,18 +49,20 @@ impl LspBridge {
 
     /// Load the lsp config block from a `leankg.yaml` style file.
     /// If the file is missing or has no `lsp:` block, returns a
-    /// default-empty bridge.
+    /// bridge preloaded with catalog prefab servers (FR-LSP-B / REL-039).
     pub fn from_leankg_yaml_or_default(path: &Path) -> Self {
         let raw = match std::fs::read_to_string(path) {
             Ok(s) => s,
-            Err(_) => return Self::default(),
+            Err(_) => return Self::new(LspConfig::prefab_defaults()),
         };
         let val: serde_yaml::Value = match serde_yaml::from_str(&raw) {
             Ok(v) => v,
-            Err(_) => return Self::default(),
+            Err(_) => return Self::new(LspConfig::prefab_defaults()),
         };
         let lsp_block = val.get("lsp").cloned().unwrap_or(serde_yaml::Value::Null);
-        let cfg: LspConfig = serde_yaml::from_value(lsp_block).unwrap_or_default();
+        let cfg = serde_yaml::from_value::<LspConfig>(lsp_block)
+            .unwrap_or_default()
+            .with_prefab_fallback();
         Self::new(cfg)
     }
 
@@ -115,7 +117,7 @@ impl LspBridge {
 
 impl Default for LspBridge {
     fn default() -> Self {
-        Self::new(LspConfig::default())
+        Self::new(LspConfig::prefab_defaults())
     }
 }
 

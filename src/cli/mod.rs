@@ -10,6 +10,9 @@ pub enum CLICommand {
     Init {
         #[arg(long, default_value = ".leankg")]
         path: String,
+        /// FR-LSP-B / REL-039: write prefab `lsp:` servers + typed_resolve=go,ts
+        #[arg(long, default_value_t = false)]
+        with_lsp: bool,
     },
     /// Index the codebase
     Index {

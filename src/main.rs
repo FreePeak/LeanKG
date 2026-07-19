@@ -57,8 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Update => {
             update_leankg().await?;
         }
-        cli::CLICommand::Init { path } => {
-            init_project(&path)?;
+        cli::CLICommand::Init { path, with_lsp } => {
+            init_project(&path, with_lsp)?;
         }
         cli::CLICommand::Index {
             path,
@@ -789,7 +789,7 @@ fn find_project_root() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
     Ok(current_dir)
 }
 
-fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Error>> {
     let project_name = std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())
@@ -822,6 +822,12 @@ fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         config.project.languages = detected_langs;
     }
 
+    // FR-LSP-B / REL-039: prefab lsp block + typed_resolve for Go/TS MVP
+    if with_lsp {
+        config.lsp = Some(crate::lsp::config::LspConfig::prefab_defaults());
+        config.indexer.typed_resolve = "go,ts".to_string();
+    }
+
     let config_yaml = serde_yaml::to_string(&config)?;
 
     std::fs::create_dir_all(path)?;
@@ -847,6 +853,13 @@ fn init_project(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "  Detected languages: {}",
             config.project.languages.join(", ")
+        );
+    }
+    if with_lsp {
+        let n = config.lsp.as_ref().map(|l| l.servers.len()).unwrap_or(0);
+        println!(
+            "  Prefab lsp: {} servers; indexer.typed_resolve={}",
+            n, config.indexer.typed_resolve
         );
     }
     Ok(())
@@ -1033,7 +1046,12 @@ async fn index_codebase(
 
     println!("Found {} files to index", files.len());
 
-    let total_elements = indexer::index_files_parallel(&graph_engine, &files, verbose)?;
+    let total_elements = indexer::index_files_parallel_with_typed_resolve(
+        &graph_engine,
+        &files,
+        verbose,
+        &config.indexer.typed_resolve,
+    )?;
     println!(
         "Indexed {} files ({} elements)",
         files.len(),

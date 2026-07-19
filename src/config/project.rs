@@ -10,6 +10,9 @@ pub struct ProjectConfig {
     pub documentation: DocConfig,
     pub microservice: Option<MicroserviceExtractorConfig>,
     pub auth: AuthSettings,
+    /// FR-LSP-B: optional prefab / user LSP server block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lsp: Option<crate::lsp::config::LspConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +202,7 @@ impl Default for ProjectConfig {
             },
             microservice: None,
             auth: AuthSettings::default(),
+            lsp: None,
         }
     }
 }

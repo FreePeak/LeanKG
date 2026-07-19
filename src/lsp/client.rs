@@ -380,7 +380,14 @@ pub fn try_spawn(
     config: &LspConfig,
     workspace_root: &Path,
 ) -> Result<Option<LspClient>, String> {
-    let Some(server_cfg) = config.servers.get(language) else {
+    // Prefer explicit yaml config; fall back to catalog (FR-LSP-B).
+    let owned_fallback;
+    let server_cfg = if let Some(cfg) = config.servers.get(language) {
+        cfg
+    } else if let Some(cfg) = crate::lsp::registry::default_server_config(language) {
+        owned_fallback = cfg;
+        &owned_fallback
+    } else {
         return Ok(None);
     };
     let timeout = Duration::from_millis(config.timeout_ms);
@@ -436,7 +443,8 @@ mod tests {
     #[test]
     fn try_spawn_returns_none_when_no_server() {
         let config = LspConfig::default();
-        let r = try_spawn("go", &config, std::path::Path::new("/tmp"));
+        // Unknown language — no catalog entry and no yaml config.
+        let r = try_spawn("klingon", &config, std::path::Path::new("/tmp"));
         assert!(matches!(r, Ok(None)));
     }
 }

@@ -681,6 +681,16 @@ pub fn index_files_parallel(
     files: &[String],
     verbose: bool,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    index_files_parallel_with_typed_resolve(graph, files, verbose, "off")
+}
+
+/// Index files and optionally apply hybrid typed resolve (FR-LSP-A/C).
+pub fn index_files_parallel_with_typed_resolve(
+    graph: &GraphEngine,
+    files: &[String],
+    verbose: bool,
+    typed_resolve: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
     if files.is_empty() {
         return Ok(0);
     }
@@ -759,6 +769,21 @@ pub fn index_files_parallel(
     all_relationships.extend(fw_rels);
 
     resolve_call_edges_inline(&mut all_elements, &mut all_relationships);
+
+    // FR-LSP-A/C/D: in-process hybrid typed resolve (Go/TS MVP)
+    if typed_resolve_setting_active(typed_resolve) {
+        let registry = crate::lsp::TypeRegistry::from_elements(&all_elements);
+        let upgraded =
+            crate::lsp::apply_typed_resolve(&mut all_relationships, &registry, typed_resolve);
+        if verbose || upgraded > 0 {
+            eprintln!(
+                "Hybrid typed resolve: upgraded {} CALLS edges (registry {} symbols, setting={})",
+                upgraded,
+                registry.len(),
+                typed_resolve
+            );
+        }
+    }
 
     // Extract microservice relationships (gRPC service-to-service calls)
     if verbose {
@@ -1312,6 +1337,16 @@ where
         }
     }
 
+    if !all_elements.is_empty() || !all_relationships.is_empty() {
+        resolve_call_edges_inline(&mut all_elements, &mut all_relationships);
+        let typed_setting = std::env::var("LEANKG_TYPED_RESOLVE").unwrap_or_else(|_| "off".into());
+        if typed_resolve_setting_active(&typed_setting) {
+            let registry = crate::lsp::TypeRegistry::from_elements(&all_elements);
+            let _ =
+                crate::lsp::apply_typed_resolve(&mut all_relationships, &registry, &typed_setting);
+        }
+    }
+
     if !all_elements.is_empty() {
         if let Err(e) = graph.insert_elements(&all_elements) {
             tracing::warn!("Failed to batch insert elements: {}", e);
@@ -1686,23 +1721,39 @@ pub fn resolve_call_edges_inline(elements: &mut [CodeElement], relationships: &m
                 .get("callee_file_hint")
                 .and_then(|v| v.as_str());
 
-            let target_qn = if let Some(hint) = file_hint {
-                by_name_and_file
-                    .get(&(bare_name, hint))
-                    .or_else(|| by_name.get(bare_name))
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| bare_name.to_string())
+            let (target_qn, method) = if let Some(hint) = file_hint {
+                if let Some(qn) = by_name_and_file.get(&(bare_name, hint)) {
+                    ((*qn).to_string(), "name_file_hint")
+                } else if let Some(qn) = by_name.get(bare_name) {
+                    ((*qn).to_string(), "name")
+                } else {
+                    (bare_name.to_string(), "unresolved")
+                }
+            } else if let Some(qn) = by_name.get(bare_name) {
+                ((*qn).to_string(), "name")
             } else {
-                by_name
-                    .get(bare_name)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| bare_name.to_string())
+                (bare_name.to_string(), "unresolved")
             };
 
             rel.target_qualified = target_qn;
-            rel.confidence = 1.0;
-            rel.metadata = serde_json::json!({});
-            resolved += 1;
+            if method != "unresolved" {
+                rel.confidence = 1.0;
+                resolved += 1;
+            }
+            // Preserve existing metadata keys; set resolution_method.
+            let mut meta = if rel.metadata.is_object() {
+                rel.metadata.clone()
+            } else {
+                serde_json::json!({})
+            };
+            if let Some(obj) = meta.as_object_mut() {
+                obj.insert("resolution_method".to_string(), serde_json::json!(method));
+                obj.insert(
+                    "is_resolved".to_string(),
+                    serde_json::json!(method != "unresolved"),
+                );
+            }
+            rel.metadata = meta;
         } else if rel.rel_type == "calls" {
             unresolved.push(rel.target_qualified.clone());
         }
@@ -1714,6 +1765,11 @@ pub fn resolve_call_edges_inline(elements: &mut [CodeElement], relationships: &m
             resolved
         );
     }
+}
+
+fn typed_resolve_setting_active(setting: &str) -> bool {
+    let s = setting.trim().to_lowercase();
+    !matches!(s.as_str(), "off" | "" | "false" | "no")
 }
 
 pub fn detect_gradle_submodules(settings_content: &[u8]) -> Vec<String> {

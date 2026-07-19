@@ -8,7 +8,13 @@ Complete reference for all LeanKG CLI commands.
 |---------|-------------|
 | `leankg version` | Show LeanKG version |
 | `leankg init` | Initialize LeanKG in the current directory |
+| `leankg init --with-lsp` | Initialize and write a prefab `lsp:` block (gopls / typescript-language-server / pyright / …) plus `indexer.typed_resolve: go,ts` |
+| `leankg lsp-resolve <file> <line> <col>` | Resolve definition/references via LSP bridge (or hybrid fallback) |
+| `leankg lsp-list` | List catalogued LSP servers |
+| `leankg lsp-install <lang>` | Install the preferred LSP server for a language |
 | `leankg index [path]` | Index source files at the given path |
+| `leankg index` with `typed_resolve: go,ts` | Produce `resolution_method=typed` CALLS edges via in-process hybrid resolver (Go/TS MVP) |
+
 | `leankg index --incremental` | Only index changed files (git-based) |
 | `leankg index --lang go,ts,py,rs,java,kotlin` | Filter by language |
 | `leankg index --exclude vendor,node_modules` | Exclude patterns |
@@ -40,6 +46,8 @@ Complete reference for all LeanKG CLI commands.
 ```bash
 # 1. Initialize LeanKG in your project
 leankg init
+# Optional: prefab LSP servers + typed_resolve=go,ts (FR-LSP-B / REL-039)
+leankg init --with-lsp
 
 # 2. Index your codebase
 leankg index ./src
