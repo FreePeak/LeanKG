@@ -143,12 +143,17 @@ export async function runQuery(query: string): Promise<unknown> {
   return unwrapEnvelope(json, 'Query failed');
 }
 
-export async function switchProject(path: string): Promise<void> {
-  const json = await fetchJson<ApiEnvelope<unknown>>('/api/project/switch', {
+export async function switchProject(path: string, reindex = false): Promise<{
+  project_path?: string;
+  element_count?: number;
+}> {
+  const json = await fetchJson<
+    ApiEnvelope<{ project_path?: string; element_count?: number; needs_indexing?: boolean }>
+  >('/api/project/switch', {
     method: 'POST',
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, reindex }),
   });
-  unwrapEnvelope(json, 'Project switch failed');
+  return unwrapEnvelope(json, 'Project switch failed');
 }
 
 export function parseProjectParam(value: string | null | undefined): string | undefined {

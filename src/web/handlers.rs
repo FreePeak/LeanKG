@@ -2063,7 +2063,7 @@ pub async fn api_graph_expand_service(
             }
         };
 
-    let nodes: Vec<GraphNode> = result
+    let mut nodes: Vec<GraphNode> = result
         .elements
         .iter()
         .map(|e| {
@@ -2083,9 +2083,32 @@ pub async fn api_graph_expand_service(
         })
         .collect();
 
+    // Drop ghost rows whose relative path is missing under the active project root
+    // (stale cross-mount pollution). Keeps UI tree aligned with disk for ?project=.
+    let before = nodes.len();
+    nodes.retain(|n| {
+        let fp = n.properties.file_path.trim();
+        if fp.is_empty() || fp == "." || fp == "./" {
+            return true;
+        }
+        let rel = fp.strip_prefix("./").unwrap_or(fp);
+        let candidate = std::path::Path::new(&project_path).join(rel);
+        candidate.exists()
+    });
+    let dropped = before.saturating_sub(nodes.len());
+    if dropped > 0 {
+        tracing::info!(
+            "expand-service dropped {} ghost paths not on disk under {}",
+            dropped,
+            project_path
+        );
+    }
+
+    let keep: std::collections::HashSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
     let graph_relationships: Vec<GraphRelationship> = result
         .relationships
         .iter()
+        .filter(|r| keep.contains(&r.source_qualified) && keep.contains(&r.target_qualified))
         .map(|r| GraphRelationship {
             id: format!(
                 "{}_{}_{}",
@@ -2106,12 +2129,17 @@ pub async fn api_graph_expand_service(
             nodes,
             relationships: graph_relationships,
             filtered: Some(GraphFilterInfo {
-                tests_filtered: 0,
+                tests_filtered: dropped,
                 message: format!(
-                    "Expanded service '{}' with {} elements and {} relationships",
+                    "Expanded service '{}' with {} elements and {} relationships{}",
                     folder_path.split('/').next_back().unwrap_or(&folder_path),
                     nodes_count,
-                    relationships_count
+                    relationships_count,
+                    if dropped > 0 {
+                        format!(" (dropped {} missing-on-disk)", dropped)
+                    } else {
+                        String::new()
+                    }
                 ),
             }),
             has_more: result.has_more,
@@ -3198,6 +3226,11 @@ pub async fn api_graph_layout(
 pub struct PathSwitchRequest {
     pub path: Option<String>,
     pub github_url: Option<String>,
+    /// When true, re-walk and index files after switch. Default false — Docker
+    /// multi-root UIs must open the existing RocksDB graph for `?project=`, not
+    /// reindex the wrong tree into the active handle.
+    #[serde(default)]
+    pub reindex: bool,
 }
 
 #[derive(Serialize)]
@@ -3207,24 +3240,80 @@ pub struct PathSwitchResponse {
     pub needs_indexing: bool,
     pub is_github: bool,
     pub project_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_count: Option<usize>,
 }
 
-#[allow(dead_code)]
-pub async fn api_switch_path(
-    State(state): State<AppState>,
-    Json(req): Json<PathSwitchRequest>,
-) -> impl IntoResponse {
-    let project_path: String;
+fn start_background_reindex(state: AppState, absolute_path: String) {
+    let indexing_state = state.indexing_state.clone();
+    let rt = tokio::runtime::Handle::current();
 
+    std::thread::spawn(move || {
+        let _enter = rt.enter();
+
+        let files = match crate::indexer::find_files_sync(&absolute_path) {
+            Ok(f) => f,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!("Failed to find files: {}", err_msg);
+                rt.block_on(state.set_indexing_error(err_msg));
+                return;
+            }
+        };
+
+        rt.block_on(state.set_indexing_started(files.len()));
+
+        let graph = match rt.block_on(state.get_graph_engine()) {
+            Ok(g) => g,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!("Failed to get graph engine: {}", err_msg);
+                rt.block_on(state.set_indexing_error(err_msg));
+                return;
+            }
+        };
+
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        if let Err(e) = parser_manager.init_parsers() {
+            let err_msg = e.to_string();
+            tracing::error!("Failed to init parsers: {}", err_msg);
+            rt.block_on(state.set_indexing_error(err_msg));
+            return;
+        }
+
+        let total = files.len();
+
+        for (idx, file_path) in files.iter().enumerate() {
+            {
+                let mut state_guard = rt.block_on(indexing_state.write());
+                state_guard.indexed_files = idx + 1;
+                state_guard.current_file = file_path.clone();
+                if total > 0 {
+                    state_guard.progress_percent =
+                        ((idx + 1) * 100).checked_div(total).unwrap_or(0);
+                }
+            }
+
+            if let Err(e) = crate::indexer::index_file_sync(&graph, &mut parser_manager, file_path)
+            {
+                tracing::warn!("Failed to index {}: {}", file_path, e);
+            }
+        }
+
+        if let Err(e) = graph.resolve_call_edges() {
+            tracing::warn!("Failed to resolve call edges: {}", e);
+        }
+
+        rt.block_on(state.set_indexing_complete());
+        tracing::info!("Indexing complete for {}", absolute_path);
+    });
+}
+
+fn resolve_switch_project_path(req: &PathSwitchRequest) -> Result<(String, bool), String> {
     if let Some(ref github_url) = req.github_url {
         let url = github_url.trim();
-
         if !url.contains("github.com") {
-            return ApiResponse::<PathSwitchResponse> {
-                success: false,
-                data: None,
-                error: Some("Only GitHub URLs are supported".to_string()),
-            };
+            return Err("Only GitHub URLs are supported".to_string());
         }
 
         let repo_name = url
@@ -3235,52 +3324,46 @@ pub async fn api_switch_path(
 
         let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         let clone_base = home_dir.join(".leankg").join("clones");
-
-        if let Err(e) = std::fs::create_dir_all(&clone_base) {
-            return ApiResponse::<PathSwitchResponse> {
-                success: false,
-                data: None,
-                error: Some(format!("Failed to create clones directory: {}", e)),
-            };
-        }
+        std::fs::create_dir_all(&clone_base)
+            .map_err(|e| format!("Failed to create clones directory: {}", e))?;
 
         let clone_path = clone_base.join(&repo_name);
-
         if !clone_path.exists() {
             let output = Command::new("git")
                 .args(["clone", url, clone_path.to_str().unwrap_or(&repo_name)])
-                .output();
+                .output()
+                .map_err(|e| format!("Failed to execute git: {}", e))?;
 
-            match output {
-                Ok(output) if !output.status.success() => {
-                    let err = String::from_utf8_lossy(&output.stderr);
-                    return ApiResponse::<PathSwitchResponse> {
-                        success: false,
-                        data: None,
-                        error: Some(format!("Git clone failed: {}", err)),
-                    };
-                }
-                Err(e) => {
-                    return ApiResponse::<PathSwitchResponse> {
-                        success: false,
-                        data: None,
-                        error: Some(format!("Failed to execute git: {}", e)),
-                    };
-                }
-                _ => {}
+            if !output.status.success() {
+                let err = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("Git clone failed: {}", err));
             }
         }
 
-        project_path = clone_path.to_string_lossy().to_string();
-    } else if let Some(ref path) = req.path {
-        project_path = path.trim().to_string();
-    } else {
-        return ApiResponse::<PathSwitchResponse> {
-            success: false,
-            data: None,
-            error: Some("Either path or github_url must be provided".to_string()),
-        };
+        return Ok((clone_path.to_string_lossy().to_string(), true));
     }
+
+    if let Some(ref path) = req.path {
+        return Ok((path.trim().to_string(), false));
+    }
+
+    Err("Either path or github_url must be provided".to_string())
+}
+
+pub async fn api_switch_path(
+    State(state): State<AppState>,
+    Json(req): Json<PathSwitchRequest>,
+) -> impl IntoResponse {
+    let (project_path, is_github) = match resolve_switch_project_path(&req) {
+        Ok(v) => v,
+        Err(msg) => {
+            return ApiResponse::<PathSwitchResponse> {
+                success: false,
+                data: None,
+                error: Some(msg),
+            };
+        }
+    };
 
     let path_obj = std::path::Path::new(&project_path);
 
@@ -3312,94 +3395,45 @@ pub async fn api_switch_path(
     }
 
     let has_database = db_path.exists();
+    let want_reindex = req.reindex;
 
-    let new_state = state.clone();
-    let absolute_path_clone = absolute_path.clone();
-    let project_path_for_response = absolute_path.clone();
-    let path_obj_clone = path_obj.to_path_buf();
-
-    let indexing_state = new_state.indexing_state.clone();
-    let rt = tokio::runtime::Handle::current();
-
-    std::thread::spawn(move || {
-        let _enter = rt.enter();
-
-        let init_err = {
-            let result = rt.block_on(new_state.switch_project(path_obj_clone.clone()));
-            result.err().map(|e| e.to_string())
+    if let Err(e) = state.switch_project(path_obj.to_path_buf()).await {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some(format!(
+                "Failed to open project '{}': {}. Another process may hold the RocksDB lock.",
+                absolute_path, e
+            )),
         };
-        if let Some(err_msg) = init_err {
-            tracing::error!("Failed to switch project: {}", err_msg);
-            rt.block_on(new_state.set_indexing_error(err_msg));
-            return;
-        }
+    }
 
-        let files = crate::indexer::find_files_sync(&absolute_path_clone);
-        let files = match files {
-            Ok(f) => f,
-            Err(e) => {
-                let err_msg = e.to_string();
-                tracing::error!("Failed to find files: {}", err_msg);
-                rt.block_on(new_state.set_indexing_error(err_msg));
-                return;
-            }
-        };
+    let element_count = match state.get_graph_engine().await {
+        Ok(g) => g.count_elements().ok(),
+        Err(_) => None,
+    };
+    let already_populated = element_count.unwrap_or(0) > 0;
 
-        rt.block_on(new_state.set_indexing_started(files.len()));
-
-        let graph = match rt.block_on(new_state.get_graph_engine()) {
-            Ok(g) => g,
-            Err(e) => {
-                let err_msg = e.to_string();
-                tracing::error!("Failed to get graph engine: {}", err_msg);
-                rt.block_on(new_state.set_indexing_error(err_msg));
-                return;
-            }
-        };
-
-        let mut parser_manager = crate::indexer::ParserManager::new();
-        if let Err(e) = parser_manager.init_parsers() {
-            let err_msg = e.to_string();
-            tracing::error!("Failed to init parsers: {}", err_msg);
-            rt.block_on(new_state.set_indexing_error(err_msg));
-            return;
-        }
-
-        let total = files.len();
-
-        for (idx, file_path) in files.iter().enumerate() {
-            {
-                let mut state_guard = rt.block_on(indexing_state.write());
-                state_guard.indexed_files = idx + 1;
-                state_guard.current_file = file_path.clone();
-                if total > 0 {
-                    state_guard.progress_percent =
-                        ((idx + 1) * 100).checked_div(total).unwrap_or(0);
-                }
-            }
-
-            if let Err(e) = crate::indexer::index_file_sync(&graph, &mut parser_manager, file_path)
-            {
-                tracing::warn!("Failed to index {}: {}", file_path, e);
-            }
-        }
-
-        if let Err(e) = graph.resolve_call_edges() {
-            tracing::warn!("Failed to resolve call edges: {}", e);
-        }
-
-        rt.block_on(new_state.set_indexing_complete());
-        tracing::info!("Indexing complete for {}", absolute_path_clone);
-    });
+    if want_reindex || !already_populated {
+        start_background_reindex(state.clone(), absolute_path.clone());
+    } else {
+        state.set_indexing_complete().await;
+        tracing::info!(
+            "Switched to {} (element_count={:?}); skipped auto-reindex",
+            absolute_path,
+            element_count
+        );
+    }
 
     ApiResponse::<PathSwitchResponse> {
         success: true,
         data: Some(PathSwitchResponse {
             is_directory: true,
             has_database,
-            needs_indexing: true,
-            is_github: req.github_url.is_some(),
-            project_path: project_path_for_response,
+            needs_indexing: want_reindex || !already_populated,
+            is_github,
+            project_path: absolute_path,
+            element_count,
         }),
         error: None,
     }

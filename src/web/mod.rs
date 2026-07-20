@@ -122,33 +122,86 @@ impl AppState {
         project_path: std::path::PathBuf,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let db_path = project_path.join(".leankg");
+        std::fs::create_dir_all(&db_path)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-        {
-            let mut path_guard = self.db_path.write().await;
-            *path_guard = db_path.clone();
-        }
-        {
-            let mut proj_guard = self.current_project_path.write().await;
-            *proj_guard = project_path.clone();
-        }
+        let prev_project = self.current_project_path.read().await.clone();
+        let prev_db_path = self.db_path.read().await.clone();
 
-        let db = init_db(&db_path).map_err(|e| {
-            let msg = e.to_string();
-            Box::new(std::io::Error::other(msg)) as Box<dyn std::error::Error + Send + Sync>
-        })?;
-        let graph = GraphEngine::new(db.clone());
-        {
-            let mut db_lock = self.db.write().await;
-            *db_lock = Some(db);
-        }
+        // Drop the open RocksDB handle first so we can open another project key.
+        // Updating current_project_path before a successful open caused the UI to
+        // show ?project=/workspace while expand still served a sibling mount's graph.
         {
             let mut ge_lock = self.graph_engine.write().await;
-            *ge_lock = Some(graph);
+            *ge_lock = None;
         }
+        {
+            let mut db_lock = self.db.write().await;
+            *db_lock = None;
+        }
+        tokio::task::yield_now().await;
 
-        self.reset_indexing_state().await;
+        let db_path_for_init = db_path.clone();
+        let init_result = tokio::task::spawn_blocking(move || {
+            init_db(&db_path_for_init).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| {
+            Box::new(std::io::Error::other(format!("init_db task failed: {}", e)))
+                as Box<dyn std::error::Error + Send + Sync>
+        })?;
 
-        Ok(())
+        match init_result {
+            Ok(db) => {
+                let graph = GraphEngine::new(db.clone());
+                {
+                    let mut db_lock = self.db.write().await;
+                    *db_lock = Some(db);
+                }
+                {
+                    let mut ge_lock = self.graph_engine.write().await;
+                    *ge_lock = Some(graph);
+                }
+                {
+                    let mut path_guard = self.db_path.write().await;
+                    *path_guard = db_path;
+                }
+                {
+                    let mut proj_guard = self.current_project_path.write().await;
+                    *proj_guard = project_path;
+                }
+                self.reset_indexing_state().await;
+                if let Ok(g) = self.get_graph_engine().await {
+                    if g.count_elements().unwrap_or(0) > 0 {
+                        self.set_indexing_complete().await;
+                    }
+                }
+                Ok(())
+            }
+            Err(msg) => {
+                // Best-effort reopen of the previous project so the API stays usable.
+                if !prev_db_path.as_os_str().is_empty() {
+                    let prev_db_path_for_init = prev_db_path.clone();
+                    if let Ok(Ok(db)) = tokio::task::spawn_blocking(move || {
+                        init_db(&prev_db_path_for_init).map_err(|e| e.to_string())
+                    })
+                    .await
+                    {
+                        let graph = GraphEngine::new(db.clone());
+                        let mut db_lock = self.db.write().await;
+                        *db_lock = Some(db);
+                        let mut ge_lock = self.graph_engine.write().await;
+                        *ge_lock = Some(graph);
+                        let mut path_guard = self.db_path.write().await;
+                        *path_guard = prev_db_path;
+                        let mut proj_guard = self.current_project_path.write().await;
+                        *proj_guard = prev_project;
+                    }
+                }
+                Err(Box::new(std::io::Error::other(msg))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            }
+        }
     }
 
     pub async fn init_db(&self) -> Result<(), Box<dyn std::error::Error>> {

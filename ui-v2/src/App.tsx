@@ -279,10 +279,17 @@ export default function App() {
       const proj = params.get('project');
       if (proj) {
         try {
-          await switchProject(proj);
-          setProject(proj);
-        } catch {
-          /* ignore switch errors; status will show */
+          const switched = await switchProject(proj, false);
+          setProject(switched.project_path || proj);
+          // Confirm serve actually opened this RocksDB (not a stale sibling mount).
+          const status = await fetchIndexStatus();
+          if (status.project_path && status.project_path !== proj) {
+            setError(
+              `Project switch mismatch: requested ${proj} but serve has ${status.project_path}`,
+            );
+          }
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : String(err));
         }
       }
       await loadGraph(false);

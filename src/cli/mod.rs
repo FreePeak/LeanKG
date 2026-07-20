@@ -82,12 +82,19 @@ pub enum CLICommand {
         /// Port to listen on (default: from PORT env var or 8080)
         #[arg(long)]
         port: Option<u16>,
+        /// Project root to open (default: cwd / find_project_root). Use container
+        /// mounts like `/workspace` in Docker — do not inherit MCP's multi-repo cwd.
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Start the embedded web UI server
     Web {
         /// Port to listen on (default: from PORT env var or 8080)
         #[arg(long)]
         port: Option<u16>,
+        /// Project root to open (default: cwd / find_project_root)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Start MCP server with stdio transport (for opencode integration)
     McpStdio {
