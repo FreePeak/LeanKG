@@ -1,6 +1,6 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.6-mega-concept-query
+**Version:** 3.7.7-ui-v2
 **Date:** 2026-07-20
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
