@@ -55,10 +55,13 @@ Fresh captures (Force / Tree / Circles / Query / Search / Mega-skip / Code panel
 |-------|------|---------|
 | ![Force](../docs/reports/screenshots/01-force-src.png) | ![Tree](../docs/reports/screenshots/02-tree-src.png) | ![Circles](../docs/reports/screenshots/03-circles-src.png) |
 
+| Query | Search | Mega-skip | Code panel |
+|-------|--------|-----------|------------|
+| ![Query](../docs/reports/screenshots/04-query-panel.png) | ![Search](../docs/reports/screenshots/05-search.png) | ![Mega skip](../docs/reports/screenshots/06-mega-skip.png) | ![Code](../docs/reports/screenshots/07-code-panel.png) |
+
 Viewport / smoothness RCA:
 
 → [`docs/reports/ui-v2-empty-panel-smoothness-rca-2026-07-20.md`](../docs/reports/ui-v2-empty-panel-smoothness-rca-2026-07-20.md)
-
 ## Features (Phase 1)
 
 - Force / Tree / Circles layouts (Sigma + graphology)
