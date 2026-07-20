@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -4085,86 +4086,55 @@ pub struct FileResponse {
 pub async fn api_get_file(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
-) -> impl IntoResponse {
-    let proj_path = state.current_project_path.read().await.clone();
-
-    // Normalize: strip leading "./" and map absolute paths under the project root
-    // to project-relative (same strip idea as expand-service).
-    let mut clean_path = query
-        .path
-        .strip_prefix("./")
-        .unwrap_or(&query.path)
-        .to_string();
-    if let Ok(canonical_proj) = proj_path.canonicalize() {
-        let proj_str = canonical_proj.to_string_lossy();
-        if let Some(remainder) = clean_path.strip_prefix(proj_str.as_ref()) {
-            let stripped = remainder.trim_start_matches('/');
-            clean_path = if stripped.is_empty() {
-                ".".to_string()
-            } else {
-                stripped.to_string()
-            };
-        } else if clean_path.starts_with('/') {
-            // Also try non-canonical project string (container mount path as stored).
-            let proj_raw = proj_path.to_string_lossy();
-            if let Some(remainder) = clean_path.strip_prefix(proj_raw.as_ref()) {
-                let stripped = remainder.trim_start_matches('/');
-                clean_path = if stripped.is_empty() {
-                    ".".to_string()
-                } else {
-                    stripped.to_string()
-                };
-            }
-        }
-    }
-
-    let target_path = if clean_path == "." || clean_path.is_empty() {
-        proj_path.clone()
-    } else {
-        proj_path.join(&clean_path)
+) -> Response {
+    use crate::web::file_resolve::{
+        clean_project_relative_path, not_found_message, project_dirs_from_env,
+        resolve_readable_file, FileResolveError,
     };
 
-    // Security: canonicalize and verify the resolved path is within the project root
-    let canonical_proj = proj_path
-        .canonicalize()
-        .unwrap_or_else(|_| proj_path.clone());
-    let canonical_target = target_path.canonicalize();
+    let proj_path = state.current_project_path.read().await.clone();
+    let clean_path = clean_project_relative_path(&query.path, &proj_path);
+    let extras = project_dirs_from_env();
 
-    match canonical_target {
-        Ok(ref resolved) if resolved.starts_with(&canonical_proj) => {
-            if resolved.is_dir() {
-                return ApiResponse::<FileResponse> {
+    let resolved = match resolve_readable_file(&clean_path, &proj_path, &extras) {
+        Ok(path) => path,
+        Err(err) => {
+            let status = match &err {
+                FileResolveError::Directory { .. } => StatusCode::BAD_REQUEST,
+                FileResolveError::OutsideProject => StatusCode::FORBIDDEN,
+                FileResolveError::NotFound { .. } => StatusCode::NOT_FOUND,
+            };
+            return (
+                status,
+                Json(ApiResponse::<FileResponse> {
                     success: false,
                     data: None,
-                    error: Some(format!(
-                        "Path '{}' is a directory; use /api/graph/expand-service?path=…&all=true to load its subgraph",
-                        clean_path
-                    )),
-                };
-            }
-            match tokio::fs::read_to_string(resolved).await {
-                Ok(content) => ApiResponse::<FileResponse> {
-                    success: true,
-                    data: Some(FileResponse { content }),
-                    error: None,
-                },
-                Err(e) => ApiResponse::<FileResponse> {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Failed to read file '{}': {}", clean_path, e)),
-                },
-            }
+                    error: Some(not_found_message(&err)),
+                }),
+            )
+                .into_response();
         }
-        Ok(_) => ApiResponse::<FileResponse> {
-            success: false,
-            data: None,
-            error: Some("Access denied: path is outside project directory".to_string()),
-        },
-        Err(e) => ApiResponse::<FileResponse> {
-            success: false,
-            data: None,
-            error: Some(format!("File not found '{}': {}", clean_path, e)),
-        },
+    };
+
+    match tokio::fs::read_to_string(&resolved).await {
+        Ok(content) => (
+            StatusCode::OK,
+            Json(ApiResponse::<FileResponse> {
+                success: true,
+                data: Some(FileResponse { content }),
+                error: None,
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<FileResponse> {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to read file '{}': {}", clean_path, e)),
+            }),
+        )
+            .into_response(),
     }
 }
 

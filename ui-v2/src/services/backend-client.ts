@@ -33,7 +33,14 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status} ${path}`);
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (body?.error != null) detail = String(body.error);
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new Error(detail || `HTTP ${res.status} ${path}`);
     }
     return res.json() as Promise<T>;
   } finally {

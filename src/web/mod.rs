@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod file_resolve;
 pub mod handlers;
 
 use axum::{
