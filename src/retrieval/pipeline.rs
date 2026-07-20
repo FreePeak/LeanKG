@@ -13,7 +13,7 @@ use crate::db::schema::{run_script, CozoDb};
 use crate::embeddings::models::{Embedder, RerankerStatus};
 use crate::retrieval::rerank::RerankStage;
 use cozo::DataValue;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub struct SemanticRetrievalPipeline {
     embedder: Embedder,
@@ -223,8 +223,14 @@ impl SemanticRetrievalPipeline {
         opts: &RetrieveOptions,
     ) -> Result<RetrievalResult, Box<dyn std::error::Error>> {
         // Resolve effective k: explicit override or adaptive on index size.
-        let index_size = self.index_size()?;
-        let effective_k = opts.ann_top_k.unwrap_or_else(|| adaptive_k(index_size));
+        // FR-SEM-07: when caller already set ann_top_k (MCP path), skip
+        // index_size() — it currently scans all embedding_state rows.
+        let (index_size, effective_k) = if let Some(k) = opts.ann_top_k {
+            (0usize, k)
+        } else {
+            let size = self.index_size()?;
+            (size, adaptive_k(size))
+        };
 
         // Stage 2: embed query, run CozoDB HNSW search.
         let qvec = self.embedder.embed(&[query.to_string()])?;
@@ -369,17 +375,9 @@ impl SemanticRetrievalPipeline {
         &self,
         qns: &[String],
     ) -> Result<HashMap<String, CodeElement>, Box<dyn std::error::Error>> {
-        if qns.is_empty() {
-            return Ok(HashMap::new());
-        }
+        // FR-SEM-07: keyed QN lookup only — never all_elements() (mega OOM).
         let engine = crate::graph::query::GraphEngine::new(self.db.clone());
-        let all = engine.all_elements()?;
-        let qn_set: HashSet<&str> = qns.iter().map(|s| s.as_str()).collect();
-        Ok(all
-            .into_iter()
-            .filter(|e| qn_set.contains(e.qualified_name.as_str()))
-            .map(|e| (e.qualified_name.clone(), e))
-            .collect())
+        engine.get_elements_by_qualified_names(qns)
     }
 }
 

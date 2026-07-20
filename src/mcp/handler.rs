@@ -3954,12 +3954,8 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
 
 #[cfg(feature = "embeddings")]
 fn embeddings_index_available(db: &crate::db::schema::CozoDb) -> bool {
-    // Cheap check: any non-empty row in `embedding_vectors` means an
-    // embedding index exists for this DB. Avoids spinning up the embedder
-    // when no `leankg embed` has been run yet.
-    crate::embeddings::state::list_all(db)
-        .map(|rows| !rows.is_empty())
-        .unwrap_or(false)
+    // FR-SEM-07: :limit 1 probe — never list_all (~147k rows) just to gate HNSW.
+    crate::embeddings::state::has_any(db).unwrap_or(false)
 }
 
 #[cfg(feature = "embeddings")]

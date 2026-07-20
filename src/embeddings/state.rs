@@ -267,6 +267,14 @@ pub fn list_all(db: &CozoDb) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::erro
     Ok(result.rows.iter().filter_map(row_to_state_row).collect())
 }
 
+/// Cheap non-empty probe for MCP HNSW gating (FR-SEM-07).
+/// Avoids loading every `embedding_state` row via [`list_all`].
+pub fn has_any(db: &CozoDb) -> Result<bool, Box<dyn std::error::Error>> {
+    let query = r#"?[qualified_name] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at] :limit 1"#;
+    let result = crate::db::schema::run_script(db, query, Default::default())?;
+    Ok(!result.rows.is_empty())
+}
+
 /// Maximum number of rows to inline into a single CozoDB `<~ [...]` literal.
 /// CozoDB's pest grammar parser recurses on large literals and can blow the
 /// stack or hit internal limits on thousand-row repos; chunking keeps each
@@ -464,5 +472,25 @@ mod tests {
             cozo::DataValue::Num(cozo::Num::Int(5)),
         ];
         assert!(row_to_state_row(&row).is_none());
+    }
+
+    #[test]
+    fn has_any_false_on_empty_then_true_after_upsert() {
+        // FR-SEM-07: MCP HNSW gate must use :limit 1, not list_all.
+        use crate::db::schema::init_db;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = init_db(&tmp.path().join("has_any.db")).unwrap();
+        ensure_embedding_state_table(&db).unwrap();
+        assert!(!has_any(&db).unwrap());
+        upsert_fresh(
+            &db,
+            &[FreshRow {
+                qualified_name: "src/x.rs::f".to_string(),
+                usearch_key: 1,
+                content_hash: "h".to_string(),
+            }],
+        )
+        .unwrap();
+        assert!(has_any(&db).unwrap());
     }
 }
