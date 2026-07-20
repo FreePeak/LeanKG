@@ -1,38 +1,45 @@
 # Web UI
 
-The LeanKG Web UI is a Vite + React + TailwindCSS frontend with a Rust axum backend. The built UI is bundled in the binary.
+LeanKG ships **UI v2** (GitNexus-inspired explorer in `ui-v2/`). Production assets are built into `src/embed/` and served by `leankg serve` / `leankg web` (onrender, Docker `:8080`).
+
+Legacy source under `ui/` is kept for reference only — it is **not** embedded anymore.
 
 ## Start Web UI
 
 ```bash
-# Start the web server (default port: 8080)
-leankg web
-
-# Or specify a custom port
+# REST API + embedded UI v2 (default port: 8080)
+leankg serve
+# or
 leankg web --port 9000
 ```
 
-Open **http://localhost:8080** in your browser.
+Open **http://localhost:8080/?path=src/cli** (bounded expand is recommended).
+
+Dev hot-reload: `cd ui-v2 && npm run dev` → http://localhost:5173 (proxies `/api` → `:8080`).
+
+## Refresh embedded assets
+
+```bash
+cd ui-v2 && npm run build
+rm -rf ../src/embed/*
+cp -r dist/* ../src/embed/
+cargo build --release
+```
+
+Docker / onrender builds run this automatically (see `Dockerfile` / `Dockerfile.rocksdb`).
 
 ## Features
 
-### Graph Viewer & Code Inspector
+Screenshots: [docs/reports/ui-v2-screenshots-2026-07-20.md](reports/ui-v2-screenshots-2026-07-20.md) · App notes: [ui-v2/README.md](../ui-v2/README.md)
 
-![LeanKG Graph Visualization](screenshots/graph.jpeg)
-![LeanKG Obsidian](screenshots/obsidian.jpeg)
+- **Force / Tree / Circles** layouts (Sigma + graphology)
+- **Filters + file tree** (US-MG-04 defaults)
+- **Code panel** via `/api/file`
+- **Search + Query FAB** via `/api/search` and `/api/query`
+- **Mega-graph skip** gate with “Load graph anyway”
 
-### Core Features
+## Architecture
 
-- **Force-Directed Graph:** Sigma.js with ForceAtlas2 renders a balanced, centered dependency map.
-- **WebGL Rendering:** Fast WebGL-based node and edge filtering without React re-renders.
-- **Community Clustering:** Louvain algorithms group related modules, functions, and classes.
-- **Code Inspector:** Click any node to view code in a resizable pane.
-
-## Auto-Indexing
-
-LeanKG watches your codebase and automatically keeps the knowledge graph up-to-date. When you modify, create, or delete files, LeanKG incrementally updates the index.
-
-```bash
-# Watch mode - auto-index on file changes
-leankg watch --path ./src
-```
+- **Frontend:** Vite + React + Tailwind (`ui-v2/`)
+- **Backend:** Axum REST (`/api/*`)
+- **Bundle:** `rust_embed` over `src/embed/`
