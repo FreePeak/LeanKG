@@ -125,6 +125,8 @@ services:
 
 The override is **required** for any side repo to be mounted -- `docker-compose.rocksdb.yml` only mounts the primary `HOST_PROJECT_PATH`.
 
+Compose also publishes **8080** for `leankg serve` (UI v2 REST) alongside **9699** (MCP). Set `LEANKG_SERVE_HTTP=0` in `.dockerfile` for MCP-only.
+
 If `LEANKG_PROJECT_DIRS` is unset, the entrypoint falls back to scanning `/workspace*`, `/test-project*` globs automatically.
 
 ## MCP Project Routing
