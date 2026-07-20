@@ -1,11 +1,11 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.7-ui-v2
-**Date:** 2026-07-20
+**Version:** 3.7.8-ui-v2-service-expand
+**Date:** 2026-07-21
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.1 (`origin/main` @ `ce03fd8`)
+**Codebase Version:** 0.19.1 (`origin/main`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
@@ -30,6 +30,19 @@
 ---
 
 ## Changelog
+
+### v3.7.8-ui-v2-service-expand - Service/Folder replace-graph + CodePanel file gate (2026-07-21)
+
+> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400 (`Is a directory` / not found). Multi-service topology had no drill-in to **replace** the canvas with that service’s subgraph (legacy `ui/` double-click → `expand-service`).
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-UI2-03 (tighten) | Must Have | **P1** | `/api/file` only for content-bearing nodes; not Service/Folder/Directory |
+| US-UI2-10 / FR-UI2-12 | Must Have | **P1** | Double-click Service/Folder/Directory → `expand-service?all=true` **replaces** exploring graph; breadcrumbs back to topology |
+| REL-057 | Must Have | **P1** | Vitest/e2e proof: no `/api/file` 400 on Service select; replace-graph on double-click |
+
+**New content:** §3.17 US-UI2-10; §5.19 FR-UI2-12 + REL-057. RCA: `docs/reports/root_cause_api_file_service_folder_400.md`.
 
 ### v3.7.7-ui-v2 - GitNexus-shell 2D UI rebuild (2026-07-20)
 
@@ -1543,9 +1556,9 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - Merging the intentional search triple or semantic triple into one tool
 - Quoting a “64 → 57” shrink without recounting the live registry
 
-### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.7
+### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.8
 
-> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056`.  
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056` / `REL-057`.  
 > **Design:** [`docs/erd/ui-v2-erd.md`](erd/ui-v2-erd.md).  
 > **Separate from:** Track E 3D `graph-ui/` (`REL-041` / `US-CBM-E1`).
 
@@ -1553,15 +1566,16 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 |----|----------|-------|
 | US-UI2-01 | Must Have | As a developer, I open `ui-v2` against `leankg serve` and explore the graph in Force, Tree, or Circles layout |
 | US-UI2-02 | Must Have | As a developer, I filter node/edge types (defaults Service/Folder/File/Function) and browse a file tree of loaded nodes |
-| US-UI2-03 | Must Have | As a developer, I select a node and see syntax-highlighted source via `/api/file` |
+| US-UI2-03 | Must Have | As a developer, I select a **content-bearing** node (File/Function/Method/Class/…) and see syntax-highlighted source via `/api/file`; Service/Folder/Directory selection does **not** call `/api/file` |
 | US-UI2-04 | Must Have | As a developer, I search via `/api/search` and run raw queries via QueryFAB `/api/query` |
 | US-UI2-05 | Must Have | As a developer on a mega-graph, the UI skips full canvas load and offers “Load graph anyway” |
+| US-UI2-10 | Must Have | As a developer on a multi-service topology, I double-click a Service/Folder/Directory and the canvas **replaces** with that path’s expand-service subgraph (`all=true`); breadcrumbs return me to overview |
 
 **Phase 1 out of scope:** browser LLM agent, analyze/upload, Processes Mermaid, replacing `src/embed/`.
 
-### 5.19 UI v2 Graph Explorer (v3.7.7)
+### 5.19 UI v2 Graph Explorer (v3.7.8)
 
-> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056`.  
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057`.  
 > **Evidence:** [`docs/reports/ui-v2-gitnexus-parity-*.md`](reports/) (required before claiming GitNexus parity).
 
 | ID | Priority | Requirement |
@@ -1573,7 +1587,9 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-UI2-05 | Must Have | Preserve US-MG-03/04 filter defaults (`DEFAULT_NODE_TYPE_ORDER`, `DEFAULT_VISIBLE_LABELS`) |
 | FR-UI2-06 | Must Have | Mega-graph skip via `decideSkipGraph` (~50k nodes) + Load anyway |
 | FR-UI2-07 | Must Have | Vitest units (adapter, load-decision, constants, client, url-restore) + Playwright Phase-1 e2e matrix |
+| FR-UI2-12 | Must Have | Double-click Service/Folder/Directory → `expandService(path, all=true)` **replaces** `kg` (not merge); CodePanel `/api/file` only for content-bearing types; breadcrumb back to topology; `/api/file` returns clear directory error |
 | REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
+| REL-057 | Must Have | Proof: Service select does not 400 `/api/file`; double-click replaces graph with expand-service subgraph |
 
 **Won't Do (Phase 1):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
 
