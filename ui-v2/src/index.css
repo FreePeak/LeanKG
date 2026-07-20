@@ -1,0 +1,365 @@
+@import 'tailwindcss';
+
+/* ═══════════════════════════════════════════════════════════════
+   TAILWIND V4 THEME CONFIGURATION
+═══════════════════════════════════════════════════════════════ */
+@theme {
+  /* Backgrounds */
+  --color-void: #06060a;
+  --color-deep: #0a0a10;
+  --color-surface: #101018;
+  --color-elevated: #16161f;
+  --color-hover: #1c1c28;
+
+  /* Borders */
+  --color-border-subtle: #1e1e2a;
+  --color-border-default: #2a2a3a;
+
+  /* Text */
+  --color-text-primary: #e4e4ed;
+  --color-text-secondary: #8888a0;
+  --color-text-muted: #5a5a70;
+
+  /* Accent */
+  --color-accent: #7c3aed;
+  --color-accent-dim: #5b21b6;
+
+  /* Node colors */
+  --color-node-file: #3b82f6;
+  --color-node-folder: #6366f1;
+  --color-node-class: #f59e0b;
+  --color-node-function: #10b981;
+  --color-node-interface: #ec4899;
+  --color-node-import: #6b7280;
+  --color-node-method: #14b8a6;
+
+  /* Fonts */
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Animations */
+  --animate-breathe: breathe 3s ease-in-out infinite;
+  --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
+  --animate-slide-in: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-slide-up: slide-up 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-fade-in: fade-in 0.3s ease-out;
+
+  /* Box shadows */
+  --shadow-glow: 0 0 20px rgba(124, 58, 237, 0.4);
+  --shadow-glow-soft: 0 0 40px rgba(124, 58, 237, 0.15);
+}
+
+/* Keyframes */
+@keyframes breathe {
+  0%,
+  100% {
+    border-color: #2a2a3a;
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.3);
+  }
+
+  50% {
+    border-color: #7c3aed;
+    box-shadow: 0 0 40px 10px rgba(124, 58, 237, 0.3);
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 40px rgba(124, 58, 237, 0.4);
+  }
+
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 0 80px rgba(124, 58, 237, 0.6);
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
+═══════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BASE STYLES
+═══════════════════════════════════════════════════════════════ */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-void);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CUSTOM SCROLLBAR
+═══════════════════════════════════════════════════════════════ */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a3a #0a0a10;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: var(--color-deep);
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CHAT MESSAGE PROSE STYLES
+═══════════════════════════════════════════════════════════════ */
+.chat-prose {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--color-text-primary);
+}
+
+/* Spacing between all block elements */
+.chat-prose p,
+.chat-prose ul,
+.chat-prose ol,
+.chat-prose pre,
+.chat-prose blockquote,
+.chat-prose table {
+  margin-top: 0;
+  margin-bottom: 1em;
+}
+
+.chat-prose p:last-child,
+.chat-prose ul:last-child,
+.chat-prose ol:last-child,
+.chat-prose pre:last-child,
+.chat-prose blockquote:last-child {
+  margin-bottom: 0;
+}
+
+.chat-prose strong {
+  font-weight: 600;
+  color: #fff;
+}
+
+.chat-prose em {
+  font-style: italic;
+  color: var(--color-text-secondary);
+}
+
+/* Headers */
+.chat-prose h1,
+.chat-prose h2,
+.chat-prose h3,
+.chat-prose h4 {
+  font-weight: 600;
+  color: #fff;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.chat-prose h1 {
+  font-size: 1.25em;
+}
+
+.chat-prose h2 {
+  font-size: 1.125em;
+}
+
+.chat-prose h3 {
+  font-size: 1em;
+}
+
+.chat-prose h4 {
+  font-size: 0.875em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+.chat-prose > h1:first-child,
+.chat-prose > h2:first-child,
+.chat-prose > h3:first-child,
+.chat-prose > h4:first-child {
+  margin-top: 0;
+}
+
+/* Lists */
+.chat-prose ul,
+.chat-prose ol {
+  margin: 0.75em 0;
+  padding-left: 1.5em;
+}
+
+.chat-prose li {
+  margin: 0.375em 0;
+  padding-left: 0.25em;
+}
+
+.chat-prose li::marker {
+  color: var(--color-accent);
+}
+
+.chat-prose ul ul,
+.chat-prose ol ol,
+.chat-prose ul ol,
+.chat-prose ol ul {
+  margin: 0.25em 0;
+}
+
+/* Inline code - VS Code style */
+.chat-prose code:not([class*='language-']) {
+  padding: 0.2em 0.5em;
+  background: rgba(110, 118, 129, 0.2);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  color: #e6b450 !important;
+  border: 1px solid rgba(110, 118, 129, 0.3);
+  font-weight: 500;
+}
+
+/* Ensure inline code keeps its color inside links and other elements */
+.chat-prose a code:not([class*='language-']),
+.chat-prose strong code:not([class*='language-']),
+.chat-prose em code:not([class*='language-']) {
+  color: #e6b450 !important;
+}
+
+/* Code blocks */
+.chat-prose pre {
+  margin: 1em 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Blockquotes */
+.chat-prose blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-surface);
+  border-radius: 0 6px 6px 0;
+  color: var(--color-text-secondary);
+}
+
+.chat-prose blockquote p {
+  margin: 0;
+}
+
+/* Horizontal rules */
+.chat-prose hr {
+  margin: 1.5em 0;
+  border: none;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Links - but NOT grounding/citation buttons (those have their own Tailwind styles) */
+.chat-prose a:not(.code-ref-btn) {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-prose a:not(.code-ref-btn):hover {
+  color: #a78bfa;
+}
+
+/* Tables */
+.chat-prose table {
+  width: 100%;
+  margin: 1em 0;
+  border-collapse: collapse;
+  font-size: 0.875em;
+}
+
+.chat-prose th,
+.chat-prose td {
+  padding: 0.5em 0.75em;
+  border: 1px solid var(--color-border-subtle);
+  text-align: left;
+}
+
+.chat-prose th {
+  background: var(--color-surface);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.chat-prose tr:nth-child(even) td {
+  background: var(--color-surface);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIGMA.JS CONTAINER
+═══════════════════════════════════════════════════════════════ */
+.sigma-container {
+  width: 100%;
+  height: 100%;
+}
+
+.sigma-container canvas {
+  outline: none;
+}

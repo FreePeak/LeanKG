@@ -51,6 +51,11 @@ LEANKG_PROJECT_DIRS=/workspace
 # LEANKG_EMBED_BACKGROUND_WORKERS=1
 # LEANKG_EMBED_BACKGROUND_BATCH=32
 
+# Dual-process boot (Option A): MCP :9699 + `leankg serve` REST :8080 for UI v2.
+# Compose defaults both on. Set to 0 for MCP-only containers.
+# LEANKG_SERVE_HTTP=1
+# LEANKG_SERVE_PORT=8080
+
 # Multiple projects: list additional container paths after a comma. Each path
 # listed here MUST also be bind-mounted into the container. The simplest way
 # is via a local docker-compose override file (recommended); an example

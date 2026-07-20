@@ -48,8 +48,13 @@ services:
       LEANKG_WATCHER_DEBOUNCE_MS: "2000"
       LEANKG_WATCHER_BURST_LIMIT: "256"
       RUST_LOG: "leankg=info"
+      # Option A: REST API for UI v2 alongside MCP (entrypoint starts `leankg serve`).
+      # Set LEANKG_SERVE_HTTP=0 in .dockerfile to disable and keep MCP-only.
+      LEANKG_SERVE_HTTP: "1"
+      LEANKG_SERVE_PORT: "8080"
     ports:
       - "9699:9699"
+      - "8080:8080"
     volumes:
       # Primary project mount (the LeanKG source tree itself, used by the
       # auto-init fallback path). The host side is taken from HOST_PROJECT_PATH
