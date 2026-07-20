@@ -1,10 +1,10 @@
 # MCP Tool Redundancy + Removal-Impact Audit (2026-07-20)
 
 **Branch / PR:** `feature/mcp-embed-control`  
-**Registry:** 84 live tools with `embeddings` feature (`tools/list`); 82 without (`embed_control` + `kg_semantic_context` are `#[cfg(feature = "embeddings")]`)  
+**Registry:** 83 live tools with `embeddings` feature (`tools/list`); 81 without (`embed_control` + `kg_semantic_context` are `#[cfg(feature = "embeddings")]`)  
 **Matrix:** [`tests/redundant_tools_matrix.rs`](../../tests/redundant_tools_matrix.rs) — every **registered** tool classified exactly once (embeddings-gated rows `cfg`'d)  
-**Scope:** Analysis + matrix/docs only — **no hard deletes** in this pass
-**Tests:** `cargo test --release --test redundant_tools_matrix` and `--features embeddings` — 7/7 ok
+**Scope:** Original audit was analysis-only; **`find_clones` hard-deleted 2026-07-20** (non-strategic + mega-graph refuse). Soft-deprecated `wake_up` / `search_by_environment` still registered.  
+**Tests:** `cargo test --release --test redundant_tools_matrix` and `--features embeddings`
 ## Summary
 
 | Category | Count | Action |
@@ -12,8 +12,8 @@
 | SoftDeprecated | 2 | Keep registered; hard-delete later after grace |
 | Complementary | 24 | Keep both sides of overlap |
 | DomainSpecific | 18 | Keep (different domain / prefer-order) |
-| KeepUnique | 40 | Keep |
-| AlreadyRemoved (asserted absent) | 3 | `mcp_hello`, `mcp_impact`, `get_doc_for_file` |
+| KeepUnique | 39 | Keep (`find_clones` removed from this bucket) |
+| AlreadyRemoved (asserted absent) | 4 | `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones` |
 
 Prior chat triage listed overlaps but did not classify all 84 or quantify AI rules/skills blast radius. This report closes that gap.
 

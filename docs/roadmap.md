@@ -15,7 +15,7 @@
 | `typed_resolve` feature flag | FR-B08 | Not done | With typed resolve (Phase 3) |
 | Typed resolve Go/TS | FR-B03..B05 | Not done | Hybrid-LSP-style MVP |
 | Architecture token budget | FR-B22 | **Done** | Per-section `max_items` truncation + `truncated_sections` metadata |
-| Clones / cross-repo | FR-B30..B33 | Not done | Rel-type stubs only in `models.rs` |
+| Clones / cross-repo | FR-B30..B33 | **Removed / stubs** | `find_clones` MCP + `leankg clones` hard-removed 2026-07-20; `SimilarTo` / cross-repo stubs may remain |
 | Event edges | FR-B15 | Not done | EMITS / LISTENS_ON |
 | 3D graph UI (Track E) | FR-E* | Not done | New `graph-ui/`; keep 2D `ui/` |
 
