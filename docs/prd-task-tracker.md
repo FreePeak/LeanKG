@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-20 — UI v2 Phase 1 **DONE** (`US-UI2-*` / `FR-UI2-*` / `REL-056`); evidence [`docs/reports/ui-v2-gitnexus-parity-2026-07-20.md`](reports/ui-v2-gitnexus-parity-2026-07-20.md); **P0 CLOSED** mega-safe concept/query/clusters (`US-MG-TOOL-01` / `REL-055`); evidence [`docs/reports/rel-055-mega-concept-query-clusters-2026-07-20.md`](reports/rel-055-mega-concept-query-clusters-2026-07-20.md)  
+**Last synced:** 2026-07-21 — UI v2 Service/Folder replace-graph **DONE** (`US-UI2-10` / `FR-UI2-12` / `REL-057`); CodePanel `/api/file` gated (`US-UI2-03` tightened)
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
@@ -37,12 +37,12 @@
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **444** |
+| **Total tracked** | **447** |
 | NOT_DONE | 54 |
 | PENDING | 17 |
 | PARTIAL | 11 |
 | OPEN | 1 |
-| DONE | 358 |
+| DONE | 361 |
 | WONT_DO | 3 |
 | Open work | **83** |
 
@@ -80,7 +80,7 @@
 | **P1** | `FR-CL-MEGA-01` | FR | **DONE** | Must Have | Mega get_clusters serves precomputed cluster_id from DB | 5.15 |
 | **P1** | `US-UI2-01` | User Story | **DONE** | Must Have | Explore graph in Force/Tree/Circles via ui-v2 + leankg serve | 3.17 UI v2 |
 | **P1** | `US-UI2-02` | User Story | **DONE** | Must Have | File tree + type/edge filters (US-MG-04 defaults) | 3.17 UI v2 |
-| **P1** | `US-UI2-03` | User Story | **DONE** | Must Have | Node select opens /api/file code panel | 3.17 UI v2 |
+| **P1** | `US-UI2-03` | User Story | **DONE** | Must Have | Content-bearing select opens /api/file; Service/Folder skip | 3.17 UI v2 |
 | **P1** | `US-UI2-04` | User Story | **DONE** | Must Have | Server search + QueryFAB /api/query | 3.17 UI v2 |
 | **P1** | `US-UI2-05` | User Story | **DONE** | Must Have | Mega-graph skip + Load graph anyway | 3.17 UI v2 |
 | **P1** | `FR-UI2-01` | FR | **DONE** | Must Have | New ui-v2/ app; leave ui/ and src/embed untouched in Phase 1 | 5.19 UI v2 |

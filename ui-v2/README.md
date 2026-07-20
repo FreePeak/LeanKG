@@ -70,11 +70,23 @@ Fresh captures (Force / Tree / Circles / Query / Search / Mega-skip / Code panel
 Viewport / smoothness RCA:
 
 → [`docs/reports/ui-v2-empty-panel-smoothness-rca-2026-07-20.md`](../docs/reports/ui-v2-empty-panel-smoothness-rca-2026-07-20.md)
+
+## Navigation (US-UI2-10 / FR-UI2-12)
+
+| Action | Result |
+|--------|--------|
+| Single-click File / Function / … | Code panel loads `/api/file` |
+| Single-click Service / Folder / Directory | Code panel shows metadata only (no `/api/file`) |
+| Double-click Service / Folder / Directory | `expand-service?all=true` **replaces** the canvas; breadcrumbs → Overview |
+
+RCA: [`docs/reports/root_cause_api_file_service_folder_400.md`](../docs/reports/root_cause_api_file_service_folder_400.md).
+
 ## Features (Phase 1)
 
 - Force / Tree / Circles layouts (Sigma + graphology)
 - Left explore: node/edge filters, focus depth, file list
-- Code panel on file/node select (`GET /api/file`)
+- Code panel on content-bearing select (`GET /api/file`); Service/Folder metadata only
+- Double-click Service/Folder replaces graph via expand-service
 - Header search (`GET /api/search`) + Query FAB (`POST /api/query`)
 - Mega-graph skip gate + “Load graph anyway”
 - URL: `?path=`, `?skipGraph=`, `?project=`, `?expand=1`

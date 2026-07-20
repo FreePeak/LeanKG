@@ -4,6 +4,7 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { X } from 'lucide-react';
 import { readFile } from '../services/backend-client';
 import type { GraphNode } from '../core/graph/types';
+import { isContainerNode, isContentBearingNode, nodeElementType } from '../lib/node-kinds';
 
 interface CodePanelProps {
   node: GraphNode | null;
@@ -29,10 +30,14 @@ export function CodePanel({ node, onClose }: CodePanelProps) {
     () => (node ? String(node.properties.filePath || '') : ''),
     [node],
   );
+  const container = node ? isContainerNode(node) : false;
+  const contentBearing = node ? isContentBearingNode(node) : false;
 
   useEffect(() => {
-    if (!node || !filePath) {
+    if (!node || !filePath || !contentBearing) {
       setContent('');
+      setError(null);
+      setLoading(false);
       return;
     }
     let cancelled = false;
@@ -51,9 +56,11 @@ export function CodePanel({ node, onClose }: CodePanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [node, filePath]);
+  }, [node, filePath, contentBearing]);
 
   if (!node) return null;
+
+  const typeLabel = nodeElementType(node) || node.label || 'node';
 
   return (
     <div
@@ -77,9 +84,26 @@ export function CodePanel({ node, onClose }: CodePanelProps) {
         </button>
       </div>
       <div className="flex-1 overflow-auto text-xs">
-        {loading && <p className="p-3 text-text-muted">Loading…</p>}
-        {error && <p className="p-3 text-red-400">{error}</p>}
-        {!loading && !error && content && (
+        {container && (
+          <div className="p-3 space-y-2 text-text-secondary" data-testid="code-panel-container-hint">
+            <p>
+              <span className="text-text-muted uppercase tracking-wider text-[10px]">{typeLabel}</span>
+            </p>
+            <p>
+              This is a folder/service root, not a source file. Double-click the node to replace the
+              graph with its subgraph.
+            </p>
+            {filePath ? (
+              <p className="text-text-muted font-mono break-all text-[10px]">{filePath}</p>
+            ) : null}
+          </div>
+        )}
+        {!container && !contentBearing && (
+          <p className="p-3 text-text-muted">No source preview for this node type.</p>
+        )}
+        {contentBearing && loading && <p className="p-3 text-text-muted">Loading…</p>}
+        {contentBearing && error && <p className="p-3 text-red-400">{error}</p>}
+        {contentBearing && !loading && !error && content && (
           <SyntaxHighlighter
             language={langFromPath(filePath)}
             style={vscDarkPlus}

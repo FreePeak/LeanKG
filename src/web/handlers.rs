@@ -4088,9 +4088,41 @@ pub async fn api_get_file(
 ) -> impl IntoResponse {
     let proj_path = state.current_project_path.read().await.clone();
 
-    // Normalize: strip leading "./" prefix that the indexer stores
-    let clean_path = query.path.strip_prefix("./").unwrap_or(&query.path);
-    let target_path = proj_path.join(clean_path);
+    // Normalize: strip leading "./" and map absolute paths under the project root
+    // to project-relative (same strip idea as expand-service).
+    let mut clean_path = query
+        .path
+        .strip_prefix("./")
+        .unwrap_or(&query.path)
+        .to_string();
+    if let Ok(canonical_proj) = proj_path.canonicalize() {
+        let proj_str = canonical_proj.to_string_lossy();
+        if let Some(remainder) = clean_path.strip_prefix(proj_str.as_ref()) {
+            let stripped = remainder.trim_start_matches('/');
+            clean_path = if stripped.is_empty() {
+                ".".to_string()
+            } else {
+                stripped.to_string()
+            };
+        } else if clean_path.starts_with('/') {
+            // Also try non-canonical project string (container mount path as stored).
+            let proj_raw = proj_path.to_string_lossy();
+            if let Some(remainder) = clean_path.strip_prefix(proj_raw.as_ref()) {
+                let stripped = remainder.trim_start_matches('/');
+                clean_path = if stripped.is_empty() {
+                    ".".to_string()
+                } else {
+                    stripped.to_string()
+                };
+            }
+        }
+    }
+
+    let target_path = if clean_path == "." || clean_path.is_empty() {
+        proj_path.clone()
+    } else {
+        proj_path.join(&clean_path)
+    };
 
     // Security: canonicalize and verify the resolved path is within the project root
     let canonical_proj = proj_path
@@ -4100,6 +4132,16 @@ pub async fn api_get_file(
 
     match canonical_target {
         Ok(ref resolved) if resolved.starts_with(&canonical_proj) => {
+            if resolved.is_dir() {
+                return ApiResponse::<FileResponse> {
+                    success: false,
+                    data: None,
+                    error: Some(format!(
+                        "Path '{}' is a directory; use /api/graph/expand-service?path=…&all=true to load its subgraph",
+                        clean_path
+                    )),
+                };
+            }
             match tokio::fs::read_to_string(resolved).await {
                 Ok(content) => ApiResponse::<FileResponse> {
                     success: true,
