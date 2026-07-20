@@ -268,14 +268,14 @@ configure_opencode() {
 configure_cursor() {
     local config_dir="$HOME/.cursor"
     local config_file="$config_dir/mcp.json"
-    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
     local mcp_port="${MCP_HTTP_PORT:-9699}"
 
     mkdir -p "$config_dir"
 
-    # SSE/HTTP mode: single server, project routed via ?project= query parameter.
-    # Each project's .cursor/mcp.json includes its project path in the URL.
-    # The server reads the query param and routes to the correct .leankg database.
+    # HTTP MCP: project is routed via ?project=. For Docker RocksDB the value
+    # must be the *container* mount (e.g. /workspace), not a Mac host path.
+    # Override with LEANKG_MCP_PROJECT when using a secondary mount.
+    local mcp_project="${LEANKG_MCP_PROJECT:-/workspace}"
 
     # Remove leankg from global config (per-project config is used instead)
     if [ -f "$config_file" ]; then
@@ -290,12 +290,9 @@ configure_cursor() {
         fi
     fi
 
-    # Create per-project .cursor/mcp.json in current directory
     local project_mcp_dir=".cursor"
     local project_mcp_file="$project_mcp_dir/mcp.json"
-    local project_root
-    project_root="$(pwd)"
-    local mcp_url="http://localhost:${mcp_port}/mcp?project=${project_root}"
+    local mcp_url="http://localhost:${mcp_port}/mcp?project=${mcp_project}"
 
     if [ -d ".cursor" ] || [ -f ".cursor/mcp.json" ]; then
         mkdir -p "$project_mcp_dir"
@@ -304,6 +301,7 @@ configure_cursor() {
             current_url=$(jq -r '.mcpServers.leankg.url // empty' "$project_mcp_file" 2>/dev/null)
             if [ "$current_url" = "$mcp_url" ]; then
                 echo "LeanKG already configured in project .cursor/mcp.json"
+                echo "  project=$mcp_project (Docker container path; override LEANKG_MCP_PROJECT)"
                 return
             fi
             local tmp_file
@@ -324,7 +322,8 @@ EOF
         fi
         echo "Configured LeanKG for Cursor in project .cursor/mcp.json"
         echo "  URL: $mcp_url"
-        echo "  Project database: ${project_root}/.leankg"
+        echo "  project=$mcp_project (container mount for Docker MCP)"
+        echo "  Override: LEANKG_MCP_PROJECT=/workspace-other"
     else
         echo "No .cursor directory in project. Run this from a Cursor project root."
         echo "Or add to .cursor/mcp.json manually:"
@@ -499,30 +498,23 @@ const input = JSON.parse(raw);
 
 const ROUTING_BLOCK = `
 <tool_selection_hierarchy>
-  1. ORCHESTRATE: mcp__leankg__orchestrate(intent)
-     - Natural language: "show me impact of changing function X"
+  Gate: curl -sf http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
 
-  2. CODE DISCOVERY: mcp__leankg__search_code(query, element_type)
-     - Primary search. ONE call replaces many Grep/Bash commands.
-
-  3. IMPACT ANALYSIS: mcp__leankg__get_impact_radius(file, depth)
-     - Calculate blast radius BEFORE making changes.
-
-  4. CONTEXT: mcp__leankg__get_context(file)
-     - Get minimal token-optimized context for a file.
-
-  5. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
-
-  6. CALLERS: mcp__leankg__get_callers(function) | mcp__leankg__find_function(name)
-
-  7. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
-
-  8. TESTING: mcp__leankg__get_tested_by(file) | mcp__leankg__detect_changes(scope)
+  Prefer-order (HTTP healthy):
+  1. mcp_status(project=…) — container path e.g. /workspace for Docker
+  2. DISCOVER: concept_search → semantic_search → search_code / find_function
+  3. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
+  4. CALLERS: get_callers / get_call_graph
+  5. DOCS: get_traceability / find_related_docs / get_files_for_doc
+  6. TESTING: get_tested_by / detect_changes
+  7. ORCHESTRATE: orchestrate(intent) when unsure which tool
 </tool_selection_hierarchy>
 
 <forbidden_actions>
-  - DO NOT use Grep for code search (use mcp__leankg__search_code instead)
-  - DO NOT use Bash find/grep for file search (use mcp__leankg__query_file instead)
+  - Do NOT call LeanKG when :9699 health failed
+  - Do NOT pass host Mac paths as project= against Docker MCP (use /workspace)
+  - Do NOT use Grep for code search when LeanKG is healthy and returns hits
+  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact)
 </forbidden_actions>
 `;
 
@@ -668,6 +660,8 @@ import { homedir } from "node:os";
 
 const LEANKG_TOOLS = [
   "mcp__leankg__orchestrate",
+  "mcp__leankg__concept_search",
+  "mcp__leankg__semantic_search",
   "mcp__leankg__search_code",
   "mcp__leankg__find_function",
   "mcp__leankg__query_file",
@@ -678,7 +672,6 @@ const LEANKG_TOOLS = [
   "mcp__leankg__get_callers",
   "mcp__leankg__get_call_graph",
   "mcp__leankg__get_clusters",
-  "mcp__leankg__get_doc_for_file",
   "mcp__leankg__get_traceability",
   "mcp__leankg__get_tested_by",
   "mcp__leankg__detect_changes",
@@ -871,19 +864,21 @@ function buildSessionContext(input) {
   const projectType = detectProjectType(cwd);
 
   const context = `<tool_selection_hierarchy>
-  1. ORCHESTRATE: mcp__leankg__orchestrate(intent)
-  2. CODE DISCOVERY: mcp__leankg__search_code(query, element_type)
-  3. IMPACT ANALYSIS: mcp__leankg__get_impact_radius(file, depth)
-  4. CONTEXT: mcp__leankg__get_context(file)
-  5. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
-  6. CALLERS: mcp__leankg__get_callers(function) | mcp__leankg__find_function(name)
-  7. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
-  8. TESTING: mcp__leankg__get_tested_by(file) | mcp__leankg__detect_changes(scope)
+  Gate: curl -sf http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
+  1. mcp_status(project=…) — Docker: /workspace (not host Mac path)
+  2. DISCOVER: concept_search → semantic_search → search_code / find_function
+  3. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
+  4. CALLERS: get_callers / get_call_graph
+  5. DOCS: get_traceability / find_related_docs / get_files_for_doc
+  6. TESTING: get_tested_by / detect_changes
+  7. ORCHESTRATE: orchestrate(intent) when unsure
 </tool_selection_hierarchy>
 
 <forbidden_actions>
-  - DO NOT use Grep for code search (use mcp__leankg__search_code instead)
-  - DO NOT use Bash find/grep for file search (use mcp__leankg__query_file instead)
+  - Do NOT call LeanKG when :9699 health failed
+  - Do NOT pass host Mac paths as project= against Docker MCP
+  - Do NOT use Grep when LeanKG is healthy and returns hits
+  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact)
 </forbidden_actions>
 
 <project_context>
@@ -891,8 +886,8 @@ Project type detected: ${projectType}
 </project_context>
 
 <leankg_reminder>
-- Run: mcp__leankg__mcp_status to verify LeanKG is ready
-- Run: mcp__leankg__mcp_index to index code if needed
+- Health-gate :9699 before LeanKG tools
+- Prefer concept_search / semantic_search before search_code for NL queries
 </leankg_reminder>`;
 
   return context;
@@ -1043,7 +1038,7 @@ LeanKG uses a single HTTP server that supports multiple projects. Each tool acce
 
 **IMPORTANT:** Always pass `project="/path/to/project/root"` when calling LeanKG tools. This ensures the server queries the correct project database.
 
-Example: `search_code(query="main", project="/Users/you/work/my-project")`
+Example: `search_code(query="main", project="/workspace")`  # Docker container mount
 
 **Auto-Activated Tools (all accept `project` parameter):**
 - `mcp_status` - Check if LeanKG is initialized
@@ -1059,7 +1054,6 @@ Example: `search_code(query="main", project="/Users/you/work/my-project")`
 - `query_file` - Find files by name/pattern
 - `get_call_graph` - Get function call chains
 - `find_large_functions` - Find oversized functions
-- `get_doc_for_file` - Get documentation for a file
 - `get_traceability` - Get full traceability chain
 - `get_code_tree` - Get codebase structure
 - `get_clusters` - Get functional clusters
@@ -1147,7 +1141,7 @@ LeanKG uses a single HTTP server that supports multiple projects. Each tool acce
 
 **IMPORTANT:** Always pass `project="/path/to/project/root"` when calling LeanKG tools. This ensures the server queries the correct project database.
 
-Example: `search_code(query="main", project="/Users/you/work/my-project")`
+Example: `search_code(query="main", project="/workspace")`  # Docker container mount
 
 **Auto-Activated Tools (all accept `project` parameter):**
 - `mcp_status` - Check if LeanKG is initialized
@@ -1163,7 +1157,6 @@ Example: `search_code(query="main", project="/Users/you/work/my-project")`
 - `query_file` - Find files by name/pattern
 - `get_call_graph` - Get function call chains
 - `find_large_functions` - Find oversized functions
-- `get_doc_for_file` - Get documentation for a file
 - `get_traceability` - Get full traceability chain
 - `get_code_tree` - Get codebase structure
 - `get_clusters` - Get functional clusters
@@ -1420,99 +1413,71 @@ install_leankg_skill() {
     local skills_dir="$1"
     local agent_name="$2"
     local leankg_skill_dir="$skills_dir/using-leankg"
-    
+    local skill_url="${INSTRUCTIONS_DIR}/using-leankg/SKILL.md"
+
     mkdir -p "$leankg_skill_dir"
-    
-    local skill_content=$(cat <<'EOF'
+
+    # Prefer on-disk copy when install.sh is run from a git checkout.
+    local repo_skill=""
+    if [ -n "${LEANKG_REPO_ROOT:-}" ] && [ -f "${LEANKG_REPO_ROOT}/instructions/using-leankg/SKILL.md" ]; then
+        repo_skill="${LEANKG_REPO_ROOT}/instructions/using-leankg/SKILL.md"
+    elif [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+        local _root
+        _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+        if [ -n "$_root" ] && [ -f "$_root/instructions/using-leankg/SKILL.md" ]; then
+            repo_skill="$_root/instructions/using-leankg/SKILL.md"
+        fi
+    elif [ -f "$(pwd)/instructions/using-leankg/SKILL.md" ]; then
+        repo_skill="$(pwd)/instructions/using-leankg/SKILL.md"
+    fi
+
+    local dest="$leankg_skill_dir/SKILL.md"
+    local resolved_skills
+    resolved_skills="$(cd "$skills_dir" 2>/dev/null && pwd -P || echo "$skills_dir")"
+
+    if [ -L "$skills_dir" ] || [[ "$resolved_skills" == *'/.ai-tools/skills'* ]]; then
+        echo "Note: $skills_dir resolves to shared skills ($resolved_skills)"
+        echo "      Updating using-leankg from LeanKG canonical skill (HTTP-gated + prefer-order)"
+    fi
+
+    # Refresh when missing or still on the old mandatory / RTK template.
+    local needs_update=1
+    if [ -f "$dest" ] && grep -q 'prefer-order' "$dest" 2>/dev/null \
+        && grep -q 'HTTP-gated\|:9699/health' "$dest" 2>/dev/null \
+        && ! grep -q 'STRICT ENFORCEMENT' "$dest" 2>/dev/null; then
+        needs_update=0
+    fi
+
+    if [ "$needs_update" = "0" ]; then
+        echo "LeanKG skill already up to date at $leankg_skill_dir"
+        return
+    fi
+
+    if [ -n "$repo_skill" ]; then
+        cp "$repo_skill" "$dest"
+    else
+        if ! curl -fsSL "$skill_url" -o "$dest"; then
+            echo "WARN: could not download $skill_url — writing embedded fallback" >&2
+            cat > "$dest" <<'EOF'
 ---
 name: using-leankg
-description: Use for ANY code search, navigation, or finding code logic - "where is X", "find logic Y", "how does Z work", impact analysis, dependencies. LeanKG is MANDATORY first.
+description: >-
+  Code search via LeanKG MCP when HTTP :9699 is healthy; otherwise skip LeanKG
+  and use default Grep/Glob/Read.
 ---
 
-<EXTREMELY_IMPORTANT>
-STRICT ENFORCEMENT: You MUST use LeanKG tools FIRST before ANY other method.
+# LeanKG Code Search (HTTP-gated)
 
-1. ALWAYS invoke `mcp_status` first to check LeanKG readiness
-2. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
-3. Use LeanKG tools for ALL searches
-4. ONLY fall back to RTK or grep if LeanKG returns EMPTY results
+Gate: `curl -sf --max-time 2 http://localhost:9699/health`
+- Fail → Grep/Glob/Read only (no MCP, no mcp_init)
+- OK → mcp_status(project=…) then prefer-order:
+  concept_search → semantic_search → search_code / find_function → get_context
 
-**NO EXCEPTIONS. NO RATIONALIZATION. Use LeanKG first.**
-</EXTREMELY_IMPORTANT>
-
-## MANDATORY Search Flow: LeanKG -> RTK -> Grep
-
-```
-When user asks "where is X", "find logic Y", "how does Z work", etc:
-           |
-           v
-1. mcp_status (ALWAYS check first)
-           |
-           v
-2. search_code("X") or find_function("X") or query_file("X")
-           |
-           +-- Results returned --> Use get_context(file) to read content
-           |
-           v (EMPTY)
-3. rtk grep "X" --path .
-           |
-           v (EMPTY)
-4. grep -rn "X" --include="*.rs"
-```
-
-## LeanKG MCP Tools (Use in this order)
-
-| Step | Tool | When to Use |
-|------|------|-------------|
-| 1 | `mcp_status` | ALWAYS check first |
-| 2 | `search_code("X")` | Find code by name/type |
-| 3 | `find_function("X")` | Locate function definitions |
-| 4 | `query_file("*X*")` | Find files by name |
-| 5 | `get_impact_radius(file)` | Blast radius for changes |
-| 6 | `get_context(file)` | READ file content (token-optimized) |
-| 7 | `get_dependencies(file)` | Get imports |
-| 8 | `get_tested_by(file)` | Find tests |
-
-## Critical: After search_code returns file paths
-
-**IMPORTANT:** When `search_code` returns results with file paths:
-1. Use `get_context(file_path)` to READ the actual file content
-2. Do NOT just report the file paths - show the code
-
-## RTK Fallback (Only if LeanKG EMPTY)
-
-```bash
-rtk grep "search term" --path .
-rtk file "pattern" --path .
-```
-
-## Grep Fallback (LAST RESORT, only if RTK EMPTY too)
-
-```bash
-grep -rn "X" --include="*.rs"
-```
-
-## Common Triggers for LeanKG
-
-| User says... | LeanKG tool |
-|--------------|-------------|
-| "where is X" | `search_code("X")` or `find_function("X")` |
-| "find the logic" | `search_code("logic_name")` |
-| "how does X work" | `get_context(file)` after search_code |
-| "what calls X" | `get_call_graph("X")` |
-| "what breaks if I change X" | `get_impact_radius("X")` |
-| "find all files named X" | `query_file("X")` |
+Docker MCP: pass container project= (`/workspace`), not a host Mac path.
 EOF
-)
-
-    if [ -f "$leankg_skill_dir/SKILL.md" ]; then
-        if grep -q "STRICT ENFORCEMENT" "$leankg_skill_dir/SKILL.md" 2>/dev/null; then
-            echo "LeanKG skill already installed at $leankg_skill_dir"
-            return
         fi
     fi
-    
-    echo "$skill_content" > "$leankg_skill_dir/SKILL.md"
+
     echo "Installed LeanKG skill to $leankg_skill_dir for $agent_name"
 }
 
@@ -1520,78 +1485,62 @@ install_agents_instructions() {
     local agents_file="$1"
     local agents_dir="$(dirname "$agents_file")"
     mkdir -p "$agents_dir"
-    
+
     local agents_content
     agents_content=$(cat <<'EOF'
 
-## LeanKG Tools Usage
+## LeanKG Tools Usage (HTTP-gated)
 
-### MANDATORY RULE - ALWAYS USE LEANKG FIRST
+### Gate first
 
-**Before doing ANY codebase search, navigation, or analysis, you MUST use LeanKG tools.**
-
-### This Is Not Optional
-
-When a user asks about the codebase, you MUST:
-1. Check if LeanKG is available via `mcp_status`
-2. If LeanKG is not initialized, run `mcp_init` first
-3. Use the appropriate LeanKG tool for the task
-4. **ONLY after LeanKG is exhausted** may you fall back to other methods
-
-### Why This Matters
-
-| Instead of | Use LeanKG |
-|------------|------------|
-| grep/ripgrep for "where is X?" | `search_code` or `find_function` |
-| glob + content search for tests | `get_tested_by` |
-| Manual dependency tracing | `get_impact_radius` or `get_dependencies` |
-| Reading entire files | `get_context` (token-optimized) |
-
-### LeanKG Tools Quick Reference
-
-| Tool | Use Case |
-|------|----------|
-| `mcp_status` | Check if LeanKG is ready |
-| `search_code` | Find code by name/type |
-| `find_function` | Locate function definition |
-| `query_file` | Find file by name/pattern |
-| `get_impact_radius` | Blast radius before changes |
-| `get_call_graph` | Understand function flow |
-| `get_dependencies` | Get direct imports |
-| `get_dependents` | Get files depending on target |
-| `get_tested_by` | Find related tests |
-| `get_context` | Minimal AI context (token-optimized) |
-| `get_review_context` | Focused subgraph for reviews |
-
-### Example Decision Flow
-
-**User: "Where is the auth function?"**
-```
-1. mcp_status -> confirmed ready
-2. search_code("auth") OR find_function("auth")
-3. Return result from LeanKG
+```bash
+curl -sf --max-time 2 http://localhost:9699/health
 ```
 
-**User: "What would break if I change main.rs?"**
+| Health | Mode |
+|--------|------|
+| OK | Prefer LeanKG MCP |
+| Fail / timeout / refused | Grep / Glob / Read — do **not** call LeanKG, `mcp_init`, or leankg CLI |
+
+### When HTTP is healthy
+
+1. `mcp_status(project=…)` — Docker: container mount (`/workspace`), not a host Mac path
+2. Prefer-order discover: `concept_search` → `semantic_search` → `search_code` / `find_function`
+3. Exact follow-up: `get_context` / `get_impact_radius` / `get_dependencies` / `get_dependents` / `get_tested_by`
+4. If LeanKG returns empty → fall back to Grep/Glob/Read
+
+| Instead of | Use LeanKG (HTTP up only) |
+|------------|---------------------------|
+| grep for "where is X?" (NL/domain) | `concept_search` then `semantic_search` |
+| grep for exact symbol name | `search_code` / `find_function` |
+| Manual dependency tracing | `get_impact_radius` / `get_dependencies` |
+| Reading entire files | `get_context` |
+
+### Example
+
+**User: "Where is authentication handled?"**
 ```
-1. mcp_status -> confirmed ready
-2. get_impact_radius("src/main.rs", depth=3)
-3. Return affected elements
+1. curl :9699/health → OK
+2. mcp_status(project="/workspace")
+3. concept_search("authentication") or semantic_search("authentication")
+4. get_context(file=…) on a hit
 ```
 
-### Important Notes
-
-- LeanKG maintains a **knowledge graph** of your codebase
-- `get_impact_radius` calculates blast radius - always check before changes
-- `get_context` returns token-optimized output (~99% token savings)
-- Tools are pre-indexed and **much faster** than runtime grep/search
-- If LeanKG returns empty/incomplete results, THEN you may use fallback methods
 EOF
 )
 
     if [ -f "$agents_file" ]; then
-        if grep -qi "LEANKG" "$agents_file" 2>/dev/null; then
-            echo "LeanKG instructions already exist in $agents_file"
+        if grep -q 'prefer-order\|HTTP-gated\|:9699/health' "$agents_file" 2>/dev/null \
+            && ! grep -q 'MANDATORY RULE - ALWAYS USE LEANKG FIRST\|mcp_init first' "$agents_file" 2>/dev/null; then
+            echo "LeanKG instructions already up to date in $agents_file"
+        elif grep -qi "LEANKG" "$agents_file" 2>/dev/null; then
+            # Replace stale LeanKG section markers by appending refreshed block once.
+            if ! grep -q 'concept_search → semantic_search' "$agents_file" 2>/dev/null; then
+                echo "$agents_content" >> "$agents_file"
+                echo "Appended updated LeanKG instructions to $agents_file"
+            else
+                echo "LeanKG instructions already present in $agents_file"
+            fi
         else
             echo "$agents_content" >> "$agents_file"
             echo "Added LeanKG instructions to $agents_file"
@@ -1600,7 +1549,6 @@ EOF
         cat > "$agents_file" <<'EOF'
 # LeanKG Agent Instructions
 
-## MANDATORY: Use LeanKG First
 EOF
         echo "$agents_content" >> "$agents_file"
         echo "Created $agents_file with LeanKG instructions"
@@ -1613,6 +1561,12 @@ main() {
     if [ -z "$target" ]; then
         usage
         exit 1
+    fi
+
+    # When run from a git checkout (not curl|bash), expose repo root for skill copy.
+    if [ -z "${LEANKG_REPO_ROOT:-}" ] && [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+        LEANKG_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+        export LEANKG_REPO_ROOT
     fi
 
     local platform
