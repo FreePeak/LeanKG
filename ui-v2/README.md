@@ -1,6 +1,7 @@
 # LeanKG UI v2 — README
 
-GitNexus-inspired graph explorer for LeanKG.  
+LeanKG’s graph explorer **uses the [GitNexus](https://github.com/abhigyanpatwari/GitNexus) UI shell** (`gitnexus-web`: 3-pane layout, Force / Tree / Circles, Sigma, mega-graph skip).  
+The data plane is rewritten for LeanKG `leankg serve` REST (`/api/graph/*`, `/api/file`, `/api/search`) — not GitNexus APIs.  
 Phase 1: exploring shell only — no browser LLM agent.
 
 **Production path:** `npm run build` → copy `dist/*` into `src/embed/` → `leankg serve` / onrender / Docker `:8080` serve the embedded UI. Dev still uses Vite on `:5173`.
@@ -100,6 +101,6 @@ E2E=1 npm run test:e2e  # Playwright (needs serve :8080)
 
 ## Provenance
 
-Shell / Tree / Circles / Sigma patterns adapted from GitNexus `gitnexus-web`.  
-`backend-client`, schema normalize, and LeanKG wiring written for this repo.  
-Legacy [`ui/`](../ui/) + `src/embed/` unchanged until cutover.
+**UI shell:** adapted from [GitNexus](https://github.com/abhigyanpatwari/GitNexus) `gitnexus-web` (Header, FileTree + filters, Force / Tree / Circles, Code panel, StatusBar, mega-graph skip).  
+**LeanKG wiring:** `backend-client`, schema normalize, and `/api/*` against this repo.  
+Legacy [`ui/`](../ui/) kept for reference; production embed is UI v2 (`src/embed/`).
