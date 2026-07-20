@@ -175,6 +175,7 @@
 | **P0** | `US-EMBED-02` | User Story | **DONE** | Must Have | Interrupted embed (CLI or Docker MCP) resumes; already-fresh vectors are not re-inferred | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-EMBED-03` | User Story | **DONE** | Must Have | Zero-dirty embed does not drop/rebuild HNSW | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-EMBED-04` | User Story | **DONE** | Must Have | Docker MCP/boot/setup embed resumes existing RocksDB data; cold/fresh only when no embed … | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
+| **P0** | `US-EMBED-05` | User Story | **DONE** | Must Have | MCP idle-gated partial embed_control on/off/status; Incremental resume; cooperative cancel | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-VE-01` | User Story | **DONE** | Must Have | As a local developer on Apple Silicon (≤16GB RAM), I want idle LeanKG MCP RSS **&lt; 150M… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-02` | User Story | **DONE** | Must Have | As an AI agent, I want code chunks + dependency JSON in **&lt; 100ms P95**, so tool loops… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
 | **P0** | `US-VE-03` | User Story | **DONE** | Must Have | As a platform engineer, I want 'LocalEngine' vs 'CloudEngine' selected via env/config (Ru… | 3.13 Optimized Local-First Vector Graph Engine (US-VE)… |
@@ -198,6 +199,9 @@
 | **P0** | `FR-EMBED-RESUME-04` | FR | **DONE** | Must Have | Indexer marks stale only for content_hash-changed QNs; no stale-all on no-op full index | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
 | **P0** | `FR-EMBED-RESUME-05` | FR | **DONE** | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass near-zero ONNX; wall time << cold | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
 | **P0** | `FR-EMBED-RESUME-06` | FR | **DONE** | Must Have | All Docker embed-on paths share resume-if-data / cold-if-empty; never wipe on enable (BAC… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-RESUME-07` | FR | **DONE** | Must Have | MCP/FG resume preflight; zero-dirty no ONNX/HNSW; small dirty incremental HNSW puts; honest skipped_fresh status | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-TOGGLE-01` | FR | **DONE** | Must Have | MCP embed_control on/off/status; idle-gated arm; cooperative cancel | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
+| **P0** | `FR-EMBED-PARTIAL-01` | FR | **DONE** | Must Have | Partial duty-cycle embed; yield on MCP activity; RSS fraction of container budget | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) |
 | **P0** | `FR-VE-TEST-DW` | FR | **DONE** | Must Have | Dual-write crash simulation unit/integration test (assert recovery). | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-FACTORY` | FR | **DONE** | Must Have | Env injection selects LocalEngine vs CloudEngine correctly. | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
 | **P0** | `FR-VE-TEST-GC` | FR | **DONE** | Must Have | 10k update/delete fragment → background GC + concurrent reads → integrity OK, reads never… | 5.14 Optimized Local-First Vector Graph Engine (v3.7.0) |
@@ -595,8 +599,8 @@
 
 - **PR [#81](https://github.com/FreePeak/LeanKG/pull/81):** embed-resume + SEM-06 + MG-AUTO-01 + OPS cpus6/3g/6g.
 - **v3.7.4 MCP surface:** added `US-SURF-01..05`, `FR-SURF-01..06`, `REL-053` (PRD §3.16 / §5.18). Prefer docstring prefer-order + 3 hard deletes; soft-deprecate `wake_up` / `search_by_environment`; keep `mcp_status` + bootstrap ops tools.
-- **FR-SURF-03 / US-SURF-02:** hard-removed `mcp_hello`, `mcp_impact`, `get_doc_for_file`; registry ~82 tools; `tests/redundant_tools_matrix.rs` asserts absence.
-- **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md), [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md).
+- **FR-SURF-03 / US-SURF-02:** hard-removed `mcp_hello`, `mcp_impact`, `get_doc_for_file`; registry ~82–84 tools; `tests/redundant_tools_matrix.rs` asserts absence + full 84-tool classification (2026-07-20).
+- **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md), [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md), [`docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool-redundancy-impact-2026-07-20.md) (skills/rules blast radius; SoftDeprecated = wake_up + search_by_environment; no hard deletes).
 - Machine mirror: [`prd-task-tracker.json`](prd-task-tracker.json).
 
-*Regenerated: 2026-07-18 — MCP tool surface rationalization (v3.7.4).*
+*Regenerated: 2026-07-20 — MCP redundancy impact audit on feature/mcp-embed-control.*
