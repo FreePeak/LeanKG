@@ -265,8 +265,9 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 
 **Cancel / Won’t Do (LSH track):**
 - FR-LSH-A..F and FR-BENCH-A (CBM MinHash parity) — **Won’t Do**. Do not expand MinHash/LSH; do not adopt Cozo `::lsh` for clones either (clone ANN is out of product focus).
-- Custom in-process LSH (`src/minhash.rs` + `find_clones --cross-file`) **removed** on `integration/prd-pending` (FR-HNSW-A). Same-file Jaccard `find_clones` remains as a light non-strategic tool.
-- US-CBM-B7 / FR-B30 / FR-B31 remain historically DONE for the light same-file Jaccard tool, but are **non-strategic** — no further LSH investment; optional later deprecation of `find_clones` / `leankg clones` if unused.
+- Custom in-process LSH (`src/minhash.rs` + `find_clones --cross-file`) **removed** on `integration/prd-pending` (FR-HNSW-A).
+- Same-file Jaccard `find_clones` MCP + `leankg clones` CLI **hard-removed** (2026-07-20) — non-strategic and unusable on mega-graphs (`max_functions` guard). Prefer `semantic_search` / `concept_search` for discovery.
+- US-CBM-B7 / FR-B30 / FR-B31 remain historically DONE for the light same-file Jaccard tool; product surface no longer exposes it.
 
 **Adopt / Expand (HNSW track) — reuse CozoDB 0.7.x native index (already in tree):**
 - LeanKG already depends on `cozo = "0.7.6"` and already uses `::hnsw create embedding_vectors:vec_idx` (`src/embeddings/state.rs`, `src/retrieval/pipeline.rs`). Pattern to double down on: **LeanKG extracts features → Cozo indexes**.
@@ -299,7 +300,7 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
   - US-MP-06 cross-domain tunnels — `find_tunnels` MCP + `leankg tunnels` CLI (`5b6547e`)
 - CBM structural — DONE:
   - US-CBM-B6 event-channel edges `emits` / `listens_on` (`25a3b37`)
-  - US-CBM-B7 clone / near-duplicate detection — `find_clones` MCP + `leankg clones` CLI (`55e6e72`)
+  - US-CBM-B7 clone / near-duplicate detection — historically shipped as `find_clones` MCP + `leankg clones` CLI (`55e6e72`); **hard-removed 2026-07-20** (prefer semantic HNSW discovery)
   - US-CBM-B8 cross-repo similar edges — `find_cross_repo_similar` (`ab16c9b`)
   - US-CBM-C2 hot-path cache for high-frequency MCP tools (`836f0a3`)
 - GitNexus — DONE:
@@ -325,7 +326,7 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 
 | Knob | CBM | LeanKG (pre-removal) | Note |
 |------|-----|----------------------|------|
-| Role | Core clone product | Non-strategic `find_clones` helper | **Won't adopt** further LSH |
+| Role | Core clone product | Historical LeanKG helper (removed) | **Won't adopt** further LSH |
 | Shingle unit | AST leaf trigrams `I/S/N/T` | Whitespace 5-grams | Irrelevant under HNSW strategy |
 | Index home | In-process C | Custom Rust `LshIndex` (also unused Cozo `::lsh`) | Prefer deleting custom LSH; do not wire Cozo `::lsh` |
 
@@ -423,7 +424,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 **Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
 - **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; Cozo default until callers honor `preferred_ann_backend()`
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
-- 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg clones`, `leankg reflect`)
+- 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg reflect`; `leankg clones` hard-removed 2026-07-20)
 - **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests. **Extractor modules exist but not indexed yet:** Swift (`swift.rs`), Vue/Svelte (`sfc.rs`), SQL DDL (`sql.rs`). Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
 - 8 compression/read modes + TOON responses
 - Smart orchestrator with persistent cache + hot-path cache for high-frequency MCP tools (`836f0a3`)
@@ -943,7 +944,7 @@ Palace Mapping:
 - `wake_up` — `src/mcp/handler.rs` (also closes MemPalace US-MP-07)
 - `LSP` module — `src/lsp/{bridge,client,config,mod}.rs`; `resolve_with_lsp` MCP; `leankg lsp-resolve` CLI; `IndexerConfig::typed_resolve` (`8971dc5`)
 - Event edges `emits` / `listens_on` — `src/db/models.rs` + `25a3b37`
-- Clones — `find_clones` MCP + `leankg clones` + `SimilarTo` (`55e6e72`); LSH path non-strategic / scheduled removal (v3.6.2)
+- Clones — historically `find_clones` MCP + `leankg clones` + `SimilarTo` (`55e6e72`); **MCP/CLI hard-removed 2026-07-20** (`SimilarTo` rel-type stub may remain in `models.rs`)
 - Cross-repo similar — `find_cross_repo_similar` MCP + `CrossRepoSimilar` (`ab16c9b`)
 - Hot-path cache — `src/cache/hot_path.rs` + `836f0a3`
 - Temporal graph fields — `src/db/models.rs` `valid_from` / `valid_to` (`bc9cc53`)

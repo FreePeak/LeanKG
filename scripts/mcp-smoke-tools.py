@@ -47,7 +47,6 @@ MUTATING = {
 
 # Full-graph / heavy tools — safe on small projects; skip on mega-graphs unless opted in.
 MEGA_GRAPH_HEAVY = {
-    "find_clones",
     "find_dead_code",
     "find_large_functions",
     "find_tunnels",
@@ -133,7 +132,6 @@ DEFAULT_ARGS: dict[str, dict[str, Any]] = {
     "get_architecture": {},
     "get_graph_schema": {},
     "find_dead_code": {"min_lines": 100},
-    "find_clones": {"limit": 5, "threshold": 0.8},
     "find_tunnels": {"limit": 5},
     "check_consistency": {},
     "get_clusters": {"limit": 5},
