@@ -6,8 +6,8 @@
 # One-line setup (index + embed + MCP, no Rust):
 #   curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
 #
-# Or MCP-only (semantic_search needs a prior embed):
-#   docker run -d --name leankg -p 9699:9699 \
+# Or MCP + UI REST (entrypoint starts serve :8080 when LEANKG_SERVE_HTTP=1):
+#   docker run -d --name leankg -p 9699:9699 -p 8080:8080 \
 #     -v HOST_DIR:/workspace \
 #     -v leankg-rocksdb:/data/leankg-rocksdb \
 #     -v leankg-models:/root/.cache/leankg \
@@ -72,13 +72,15 @@ ENV LEANKG_DB_ENGINE=rocksdb \
     LEANKG_EMBED_BACKGROUND_WORKERS=1 \
     LEANKG_EMBED_BACKGROUND_BATCH=32 \
     MCP_HTTP_PORT=9699 \
+    LEANKG_SERVE_HTTP=1 \
+    LEANKG_SERVE_PORT=8080 \
     LEANKG_MMAP_SIZE=67108864 \
     LEANKG_WATCHER_DEBOUNCE_MS=2000 \
     LEANKG_WATCHER_BURST_LIMIT=256 \
     RUST_LOG=leankg=info
 
 VOLUME ["/data/leankg-rocksdb"]
-EXPOSE 9699
+EXPOSE 9699 8080
 WORKDIR /workspace
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${MCP_HTTP_PORT}/health" || exit 1

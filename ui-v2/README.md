@@ -27,6 +27,24 @@ Vite proxies `/api` → `127.0.0.1:8080`. Status should show **connected**.
 
 **Not Docker MCP `:9699`** — UI talks REST (`/api/graph/*`, `/api/file`, `/api/search`), not MCP JSON-RPC.
 
+## Docker (Option A — MCP + REST in one container)
+
+RocksDB compose publishes **both** ports and starts `leankg serve` in the background before MCP:
+
+| Port | Process | Clients |
+|------|---------|---------|
+| `9699` | `mcp-http` | Cursor / agents (MCP) |
+| `8080` | `leankg serve` | UI v2 Vite proxy (`/api`) |
+
+```bash
+docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up -d --build
+# Host UI
+cd ui-v2 && npm run dev
+# open http://127.0.0.1:5173/?path=src/cli
+```
+
+Same RocksDB env (`LEANKG_DB_ENGINE`, `LEANKG_ROCKSDB_ROOT`) and `LEANKG_MCP_PROJECT` cwd — UI sees the Docker index. Disable REST with `LEANKG_SERVE_HTTP=0` in `.dockerfile` if you only need MCP.
+
 ## Screenshots
 
 Fresh captures (Force / Tree / Circles / Query / Search / Mega-skip / Code panel):
