@@ -2,6 +2,89 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.2] - 2026-07-20
+
+### Fixed
+- MCP: mega-graph search availability on boot — ontology sync is
+  timed (45s default) or skippable via
+  `LEANKG_ONTOLOGY_SYNC_ON_BOOT=skip`, so `mcp-http` no longer hangs
+  and `search_code` / `find_function` look completely broken (#85,
+  REL-052).
+- MCP: in-process `LEANKG_EMBED_BACKGROUND=1` is **skipped** on
+  mega-graphs (override with `LEANKG_EMBED_BACKGROUND_MEGA=1`).
+  Prefer offline `embed --wait` for >150k workspaces (#85, REL-052).
+- MCP: Docker PID-1 stale `embed.lock` from a killed prior run no
+  longer looks "alive" forever. Same-PID locks are treated as stale
+  unless an in-process embed is already active (#81).
+- HNSW `semantic_search`: keyed seed hydration without `all_elements`
+  on mega-graphs, avoiding OOM on 150k+ workspaces (#87, FR-SEM-07,
+  REL-054).
+- HNSW `kg_semantic_context`: cheap `has_any` gate keeps the path off
+  the `list_all` (~147k `embedding_state` rows) on mega-graphs (#87,
+  FR-SEM-07, REL-054).
+- `concept_search`, `query_graph`, `get_clusters`: mega-safe paths
+  key `code_refs`, use frontier-local BFS, and serve a precomputed
+  `cluster_id` instead of running live Louvain on huge graphs (#88,
+  REL-055).
+- `query_graph`: avoid unindexed name/edge full scans on mega-graphs
+  (US-MG-TOOL-01 / FR-ONT-MEGA-01 / FR-GF-MEGA-01 / FR-CL-MEGA-01).
+- `semantic_search` mega path: tighten response shape and avoid the
+  `env=production` false-positive on locally-indexed code.
+- Clippy: drop `map_identity` in threads pool test (#82).
+
+### Added
+- MCP `embed_control(action="on|off|status")` for day-2 partial
+  resume when boot embed is off; idle-gated, RSS-fraction bounded,
+  cooperative cancel, Docker PID-1 safe (#86, FR-EMBED-TOGGLE-01).
+- MCP `query_graph` and CLI `graph-query` / `query --kind subgraph`:
+  natural-language scoped subgraph with seed retrieval → BFS / shortest
+  path → token-budget trim and `confidence_label` (EXTRACTED /
+  INFERRED / AMBIGUOUS) on every edge (#84, US-GF-03, FR-GF-05/06,
+  REL-042).
+- Hybrid typed CALLS resolution for Go/TS without an LSP server
+  (`indexer.typed_resolve=go,ts` or `all`) — in-process
+  `TypeRegistry` + resolver upgrade `resolution_method=typed` during
+  indexing (#83, FR-LSP-A..D, REL-039).
+- `leankg init --with-lsp` writes a prefab `lsp:` block from the
+  server catalog; empty `leankg.yaml` falls back to the prefab (#83).
+- MCP prefer-order schema hints on `concept_search` / `semantic_search`
+  / `search_code` / `kg_semantic_context` / `kg_context` to drive
+  agent tool selection (#82, FR-SURF-02, US-SURF-01).
+- Soft-deprecate `wake_up` and `search_by_environment`; prefer
+  `get_overview_context` and `env=` on search / `kg_*` (#83,
+  FR-SURF-04/05, REL-053).
+- Day-2 embed resume: HNSW drop/rebuild and model load are skipped
+  when nothing is dirty; per-batch freshness stamp survives kill;
+  `content_hash` change is the only signal that marks vectors stale
+  (no full-index forced re-embed) (#81, FR-HNSW-E).
+- Mega-graph compose defaults: `cpus: "6"`, `mem_reservation: 3g`,
+  MCP `mem_limit: 6g`; FilterPolicy drops embed/assets and gate
+  benchmark paths; `LEANKG_SKIP_FRESHNESS_CHECK=1` honored (#81).
+- UI v2 (Phase 1) in `ui-v2/`: GitNexus-style explorer with
+  Force/Tree/Circles layouts, mega-graph skip, LeanKG REST client,
+  Vitest unit tests, Playwright e2e, screenshot report (#89).
+- UI v2 baked into `src/embed/` via `rust-embed`; `leankg serve`,
+  Docker, and onrender ship the new shell on `:8080` (#90).
+- Docker `entrypoint.sh` now starts `leankg serve` on `:8080` and
+  execs MCP as PID 1; compose publishes `8080:8080` + `9699:9699`
+  (Option A for UI v2 + MCP) (#89).
+- `scripts/mcp-smoke-tools.py` honest-skip smoke harness for the
+  full MCP tool surface (#84).
+- Redundant-tools matrix classifies every MCP tool and documents
+  skills/rules removal impact (#86).
+
+### Removed
+- `mcp_hello`, `mcp_impact`, `get_doc_for_file` — superseded by
+  `get_impact_radius`, `find_related_docs`, and `mcp_status` /
+  `kg_self_test` (#82, FR-SURF-03, US-SURF-02).
+- `find_clones` tool and the `leankg clones` CLI command — same-file
+  Jaccard clone detection was unused by agents and refused on
+  mega-graphs; prefer `semantic_search` / `concept_search`.
+
+### Changed
+- AGENTS.md mega-graph guidance and prefer-order instructions synced
+  with FR-SURF-02 search/semantic triples (#82, #85, #86).
+
 ## [0.19.1] - 2026-07-17
 
 ### Fixed
