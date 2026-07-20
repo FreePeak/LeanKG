@@ -189,6 +189,8 @@ Turning embed on later (or restarting the container with the same volume) must *
 
 **Boot must not block search:** `entrypoint.sh` ontology sync is timed (default 45s) or skippable via `LEANKG_ONTOLOGY_SYNC_ON_BOOT=skip`. A hung sync used to prevent `mcp-http` from binding, so `search_code` / `find_function` looked completely broken. In-process `LEANKG_EMBED_BACKGROUND=1` is **skipped on mega-graphs** unless `LEANKG_EMBED_BACKGROUND_MEGA=1` (prefer offline `embed --wait`).
 
+**Manual MCP embed (preferred when boot embed is off):** with `LEANKG_EMBED_ON_BOOT=0` and `LEANKG_EMBED_BACKGROUND=0`, call MCP `embed_control(action="on")` to arm an idle-gated **Incremental** partial embed (RSS fraction of container budget; yields on tool activity). Use `action="off"` to cooperatively cancel (safe under Docker PID 1). `action="status"` reports `skipped_fresh` / `vectors_existing`. Env knobs: `LEANKG_EMBED_IDLE_AFTER_SECS`, `LEANKG_EMBED_RSS_FRACTION` (default 0.40), `LEANKG_EMBED_PARTIAL_BATCHES`, `LEANKG_EMBED_PARTIAL_PAUSE_MS`.
+
 ### One-line run (published image — no Rust)
 
 Index + INT8 embed + MCP (recommended):
@@ -244,6 +246,7 @@ Workspaces above `LEANKG_MAX_CACHE_ELEMENTS` (default **50_000** elements) are t
 - Full-scan tools (`get_clusters`, `get_code_tree` without query, nav dumps, annotation full scans) **refuse** with a redirect hint instead of loading 600k+ rows.
 - Incremental auto-index **skips** full-graph dependent expansion on mega-graphs (override with `LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1` to force skip always).
 - Search prefer-order: `concept_search` → `semantic_search` → `search_code`. Semantic context: `semantic_search` → `kg_semantic_context` (embeddings) → `kg_context`.
+- Overview prefer: `get_overview_context` (soft-deprecated: `wake_up`; do not replace with `load_layer(L0)` alone). Prefer `env=` on search/`kg_*` instead of `search_by_environment`. Full redundancy audit: [`docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`](docs/reports/mcp-tool-redundancy-impact-2026-07-20.md).
 
 Env knobs:
 

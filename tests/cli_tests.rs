@@ -217,6 +217,7 @@ fn test_cli_query_basic() {
             kind,
             file: _,
             function: _,
+            ..
         } => {
             assert_eq!(query, "find_foo");
             assert_eq!(kind, "name");
@@ -234,6 +235,7 @@ fn test_cli_query_with_kind() {
             kind,
             file: _,
             function: _,
+            ..
         } => {
             assert_eq!(query, "find_foo");
             assert_eq!(kind, "type");

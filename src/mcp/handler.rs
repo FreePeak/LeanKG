@@ -328,6 +328,11 @@ impl ToolHandler {
             "find_dead_code" => self.find_dead_code(arguments),
             #[cfg(feature = "embeddings")]
             "kg_semantic_context" => self.kg_semantic_context(arguments),
+            #[cfg(feature = "embeddings")]
+            "embed_control" => Err(
+                "embed_control is handled by MCPServer (idle scheduler); unreachable via ToolHandler"
+                    .into(),
+            ),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 

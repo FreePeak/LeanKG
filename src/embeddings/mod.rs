@@ -15,6 +15,7 @@
 #![cfg(feature = "embeddings")]
 
 pub mod build;
+pub mod control;
 pub mod models;
 pub mod redis_store;
 pub mod runtime;
@@ -24,8 +25,15 @@ pub mod text_blob;
 #[allow(unused_imports)]
 pub use build::{
     build_index_parallel, embed_max_rss_mb, parse_type_filter, plan_embed_memory,
-    run as build_index, spawn_background_embed, BackgroundEmbedConfig, BackgroundEmbedHandle,
-    BuildMode, BuildOptions, BuildReport, EmbedMemoryPlan,
+    plan_embed_memory_with_budget, run as build_index, spawn_background_embed,
+    BackgroundEmbedConfig, BackgroundEmbedHandle, BuildMode, BuildOptions, BuildReport,
+    EmbedMemoryPlan,
+};
+#[allow(unused_imports)]
+pub use control::{
+    arm_embed, disarm_embed, embed_job_status, embed_resume_preflight, is_armed,
+    request_cancel_in_process_embed, resolve_partial_embed_budget_mb,
+    should_use_incremental_hnsw_puts, EmbedResumePreflight, PartialEmbedPolicy,
 };
 #[allow(unused_imports)]
 pub use models::{

@@ -488,6 +488,210 @@ impl MCPServer {
     /// - `LEANKG_EMBED_BACKGROUND_TYPES` (default = heuristic)
     /// - `LEANKG_EMBED_BACKGROUND_FULL=1` to force a full re-embed
     #[cfg(feature = "embeddings")]
+    fn spawn_embed_idle_scheduler(&self) {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let server = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                if !crate::embeddings::is_armed() {
+                    continue;
+                }
+                if crate::embeddings::control::is_in_process_embed_active() {
+                    continue;
+                }
+                if crate::embeddings::control::phase() == crate::embeddings::control::PHASE_RUNNING
+                    || crate::embeddings::control::phase()
+                        == crate::embeddings::control::PHASE_PAUSED
+                {
+                    continue;
+                }
+                if !crate::embeddings::control::mcp_is_idle_for_embed() {
+                    crate::embeddings::control::set_phase(
+                        crate::embeddings::control::PHASE_WAITING,
+                    );
+                    continue;
+                }
+                // RSS soft check
+                let rss = crate::gc::MemoryGuard::rss_mb();
+                let budget = crate::embeddings::resolve_partial_embed_budget_mb(0.0);
+                if budget > 0 && rss > 0 && rss >= (budget * 95) / 100 {
+                    tracing::info!(
+                        "embed scheduler: RSS {} MB near budget {} MB; waiting",
+                        rss,
+                        budget
+                    );
+                    continue;
+                }
+                let Some(cfg) = crate::embeddings::control::take_armed_config() else {
+                    continue;
+                };
+                tracing::info!("embed scheduler: idle+RSS ok; spawning partial resume embed");
+                crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_RUNNING);
+                server.spawn_background_embed_with_config(cfg);
+            }
+        });
+    }
+
+    #[cfg(not(feature = "embeddings"))]
+    fn spawn_embed_idle_scheduler(&self) {}
+
+    #[cfg(feature = "embeddings")]
+    fn spawn_background_embed_with_config(&self, cfg: crate::embeddings::BackgroundEmbedConfig) {
+        let graph = match self.get_graph_engine() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!("embed_control spawn skipped; graph not ready ({})", e);
+                crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_FAILED);
+                crate::embeddings::disarm_embed();
+                return;
+            }
+        };
+        // Mega + full requires force (cfg.full already gated by tool).
+        let force_mega = std::env::var("LEANKG_EMBED_BACKGROUND_MEGA")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if cfg.full && !force_mega && crate::ontology::safe_discover::is_mega_graph(&graph) {
+            tracing::warn!("embed_control: full rebuild refused on mega-graph without MEGA=1");
+            crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_FAILED);
+            crate::embeddings::disarm_embed();
+            return;
+        }
+        let leankg_dir = self.get_db_path();
+        match crate::embeddings::spawn_background_embed(graph, leankg_dir, cfg) {
+            Ok(Some(h)) => tracing::info!("embed_control spawned in-process embed pid={}", h.pid),
+            Ok(None) => tracing::info!("embed_control: embed already running"),
+            Err(e) => {
+                tracing::error!("embed_control spawn failed: {}", e);
+                crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_FAILED);
+                crate::embeddings::disarm_embed();
+            }
+        }
+    }
+
+    #[cfg(feature = "embeddings")]
+    fn handle_embed_control(
+        &self,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("status");
+        let leankg_dir = self.get_db_path();
+        match action {
+            "status" => {
+                let mut status = crate::embeddings::embed_job_status(&leankg_dir);
+                if let Ok(graph) = self.get_graph_engine() {
+                    if let Ok(pre) = crate::embeddings::embed_resume_preflight(graph.db()) {
+                        status["resume_preflight"] = serde_json::json!({
+                            "vectors_existing": pre.vectors_existing,
+                            "fresh": pre.fresh,
+                            "stale": pre.stale,
+                            "has_embed_data": pre.has_embed_data,
+                        });
+                    }
+                }
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "tool": "embed_control",
+                    "data": status,
+                }))
+            }
+            "off" => {
+                crate::embeddings::request_cancel_in_process_embed();
+                crate::embeddings::disarm_embed();
+                crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_CANCELLED);
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "tool": "embed_control",
+                    "data": {
+                        "action": "off",
+                        "phase": "cancelled",
+                        "message": "cooperative cancel requested; armed cleared",
+                    }
+                }))
+            }
+            "on" => {
+                let mode = arguments
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("partial");
+                let mut full = arguments
+                    .get("full")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let force_full = arguments
+                    .get("force_full")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if let Ok(graph) = self.get_graph_engine() {
+                    if full && crate::ontology::safe_discover::is_mega_graph(&graph) && !force_full
+                    {
+                        full = false;
+                        tracing::warn!(
+                            "embed_control on: cleared full on mega-graph (pass force_full=true to override)"
+                        );
+                    }
+                }
+                let workers = arguments
+                    .get("workers")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1)
+                    .clamp(1, 8) as usize;
+                let batch_size = arguments
+                    .get("batch_size")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(32)
+                    .clamp(1, 512) as usize;
+                let rss_fraction = arguments
+                    .get("rss_fraction")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.40);
+                let types_filter = arguments
+                    .get("types")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let cfg = crate::embeddings::BackgroundEmbedConfig {
+                    batch_size,
+                    workers,
+                    full,
+                    types_filter,
+                    partial: mode != "continuous",
+                    rss_fraction,
+                };
+                crate::embeddings::control::clear_cancel();
+                crate::embeddings::arm_embed(cfg);
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "tool": "embed_control",
+                    "data": {
+                        "action": "on",
+                        "phase": "waiting_idle",
+                        "mode": mode,
+                        "full": full,
+                        "message": "armed; will start when MCP idle and RSS headroom available",
+                    }
+                }))
+            }
+            other => Err(format!("unknown embed_control action '{}'", other)),
+        }
+    }
+
+    #[cfg(not(feature = "embeddings"))]
+    fn handle_embed_control(
+        &self,
+        _arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        Err("embed_control requires the `embeddings` cargo feature".into())
+    }
+
+    #[cfg(feature = "embeddings")]
     fn spawn_background_embed_in_process(&self) {
         // Read tuning env once (default-friendly fallbacks).
         let workers: usize = std::env::var("LEANKG_EMBED_BACKGROUND_WORKERS")
@@ -542,6 +746,8 @@ impl MCPServer {
             workers,
             full,
             types_filter,
+            partial: false,
+            rss_fraction: 0.0,
         };
         match crate::embeddings::spawn_background_embed(graph, leankg_dir.clone(), cfg) {
             Ok(Some(handle)) => {
@@ -609,6 +815,7 @@ impl MCPServer {
         // See HLD §2.5 / PRD FR-10.
         self.spawn_vacuum_scheduler();
         self.spawn_gc_watchdog();
+        self.spawn_embed_idle_scheduler();
 
         // Setup graceful shutdown for stdio mode
         let shutdown_flag = self.shutdown_flag.clone();
@@ -1040,6 +1247,7 @@ impl MCPServer {
         {
             self.spawn_background_embed_in_process();
         }
+        self.spawn_embed_idle_scheduler();
 
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),
@@ -1780,6 +1988,10 @@ impl MCPServer {
             return Err(err);
         }
 
+        if tool_name == "embed_control" {
+            return self.handle_embed_control(&arguments);
+        }
+
         if tool_name == "mcp_init" {
             if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
                 let new_db_path = std::path::PathBuf::from(path);
@@ -1927,6 +2139,7 @@ impl MCPServer {
                 | "link_element"
                 | "add_documentation"
                 | "promote_environment"
+                | "embed_control"
         )
     }
 }

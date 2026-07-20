@@ -1073,6 +1073,26 @@ impl ToolRegistry {
                     "required": ["query"]
                 }),
             },
+            #[cfg(feature = "embeddings")]
+            ToolDefinition {
+                name: "embed_control".to_string(),
+                description: "US-EMBED-05 / FR-EMBED-TOGGLE-01: Arm or disarm in-process day-2 embedding when LEANKG_EMBED_ON_BOOT/BACKGROUND are off. Actions: on (idle-gated Incremental resume, default mode=partial with RSS fraction), off (cooperative cancel, Docker PID-1 safe), status (armed/phase/skipped_fresh/vectors_existing). Never wipes existing RocksDB vectors. Mega graphs refuse full unless force_full=true.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["on", "off", "status"], "description": "on=arm idle-gated partial resume; off=cancel+disarm; status=progress"},
+                        "mode": {"type": "string", "enum": ["partial", "continuous"], "default": "partial"},
+                        "full": {"type": "boolean", "default": false, "description": "Force full rebuild (ignored on mega unless force_full)"},
+                        "force_full": {"type": "boolean", "default": false},
+                        "workers": {"type": "integer", "default": 1},
+                        "batch_size": {"type": "integer", "default": 32},
+                        "rss_fraction": {"type": "number", "default": 0.4},
+                        "types": {"type": "string", "description": "Optional type filter, e.g. function,method"},
+                        "project": {"type": "string"}
+                    },
+                    "required": ["action"]
+                }),
+            },
             ToolDefinition {
                 name: "get_architecture".to_string(),
                 description: "Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries. Supports max_items to cap each section for token budget control.".to_string(),
@@ -1268,5 +1288,29 @@ mod tests {
         if let Some(tool) = tools.iter().find(|t| t.name == "kg_semantic_context") {
             assert_prefer_order_hint("kg_semantic_context", &tool.description);
         }
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn test_embed_control_tool_exists() {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "embed_control")
+            .expect("embed_control tool must exist when embeddings feature is on");
+        assert!(
+            tool.description.contains("US-EMBED-05") || tool.description.contains("idle"),
+            "description should cite US-EMBED-05 / idle gate: {}",
+            tool.description
+        );
+        let props = tool.input_schema.get("properties").expect("properties");
+        assert!(props.get("action").is_some());
+        assert!(props.get("mode").is_some());
+        let required = tool
+            .input_schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("required");
+        assert!(required.iter().any(|v| v.as_str() == Some("action")));
     }
 }

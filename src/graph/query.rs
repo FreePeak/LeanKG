@@ -445,7 +445,7 @@ impl GraphEngine {
         offset: usize,
     ) -> Result<(Vec<CodeElement>, usize), Box<dyn std::error::Error>> {
         let tail = self.code_elements_tail();
-        let limit = limit.min(1000); // Cap to prevent excessive memory
+        let limit = limit.min(5_000); // Cap to prevent excessive memory
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit {} :offset {}"#,
             limit, offset
