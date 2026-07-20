@@ -17,6 +17,7 @@ const DEFAULT_TOKEN_BUDGET: usize = 2000;
 const DEFAULT_MAX_DEPTH: usize = 2;
 const MAX_SEEDS: usize = 8;
 const MAX_SEED_HITS_PER_TERM: usize = 3;
+const MAX_FRONTIER_VISITS: usize = 500;
 
 const STOP_WORDS: &[&str] = &[
     "a",
@@ -321,7 +322,7 @@ impl GraphEngine {
                 }
             }
             for el in self
-                .search_by_name(&variant)?
+                .search_by_name_typed(&variant, None, MAX_SEED_HITS_PER_TERM * 3)?
                 .into_iter()
                 .take(MAX_SEED_HITS_PER_TERM)
             {
@@ -352,19 +353,6 @@ impl GraphEngine {
         (HashMap<String, QueryGraphNode>, Vec<QueryGraphEdge>, usize),
         Box<dyn std::error::Error>,
     > {
-        let all_rels = self.all_relationships()?;
-        let mut adjacency: HashMap<String, Vec<(String, Relationship)>> = HashMap::new();
-        for rel in &all_rels {
-            adjacency
-                .entry(rel.source_qualified.clone())
-                .or_default()
-                .push((rel.target_qualified.clone(), rel.clone()));
-            adjacency
-                .entry(rel.target_qualified.clone())
-                .or_default()
-                .push((rel.source_qualified.clone(), rel.clone()));
-        }
-
         let mut nodes: HashMap<String, QueryGraphNode> = HashMap::new();
         let mut edges: Vec<QueryGraphEdge> = Vec::new();
         let mut edge_keys: HashSet<(String, String, String)> = HashSet::new();
@@ -379,19 +367,30 @@ impl GraphEngine {
 
         let mut max_hop = 0usize;
         while let Some((current, dist)) = queue.pop_front() {
+            if visited.len() > MAX_FRONTIER_VISITS {
+                break;
+            }
             max_hop = max_hop.max(dist);
             if dist >= max_depth {
                 continue;
             }
-            let Some(neighbors) = adjacency.get(&current) else {
-                continue;
-            };
-            // Prefer EXTRACTED edges when expanding.
-            let mut ordered = neighbors.clone();
-            ordered.sort_by(|a, b| {
+            let rels = self
+                .get_relationships_involving_elements_fast(std::slice::from_ref(&current), None)?;
+            let mut neighbors: Vec<(String, Relationship)> = Vec::new();
+            for rel in rels {
+                let next = if rel.source_qualified == current {
+                    rel.target_qualified.clone()
+                } else if rel.target_qualified == current {
+                    rel.source_qualified.clone()
+                } else {
+                    continue;
+                };
+                neighbors.push((next, rel));
+            }
+            neighbors.sort_by(|a, b| {
                 label_rank(a.1.confidence_label()).cmp(&label_rank(b.1.confidence_label()))
             });
-            for (next, rel) in ordered {
+            for (next, rel) in neighbors {
                 let key = (
                     rel.source_qualified.clone(),
                     rel.target_qualified.clone(),
@@ -795,5 +794,23 @@ mod tests {
         let (engine, _tmp) = make_engine();
         let err = engine.query_graph("   ", None, None).unwrap_err();
         assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn query_graph_seeds_via_typed_name_search() {
+        let (engine, _tmp) = make_engine();
+        insert_fn(&engine, "src/auth.rs", "authenticate");
+        insert_fn(&engine, "src/other.rs", "auth_helper");
+
+        let result = engine
+            .query_graph("authenticate", Some(4000), Some(1))
+            .unwrap();
+        assert!(
+            result
+                .seeds
+                .contains(&"src/auth.rs::authenticate".to_string()),
+            "expected typed seed for authenticate, got {:?}",
+            result.seeds
+        );
     }
 }

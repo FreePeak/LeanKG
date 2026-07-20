@@ -2558,16 +2558,44 @@ impl ToolHandler {
                 target: "leankg::mem",
                 elements = element_count,
                 max = max_cluster_elements,
-                "get_clusters refused: graph too large (set LEANKG_MAX_CLUSTER_ELEMENTS to override)"
+                "get_clusters: live Louvain refused; serving precomputed cluster_id if present (FR-CL-MEGA-01)"
             );
-            return Ok(json!({
-                "clusters": [],
-                "stats": { "total_clusters": 0, "total_members": 0, "avg_cluster_size": 0.0 },
-                "error": format!(
-                    "Clustering refused: graph has {} elements (max {}). Set LEANKG_MAX_CLUSTER_ELEMENTS to override or shard the project.",
-                    element_count, max_cluster_elements
-                )
-            }));
+            match crate::graph::clustering::load_precomputed_clusters(&self.graph_engine, limit) {
+                Ok((clusters, stats)) if !clusters.is_empty() => {
+                    return Ok(json!({
+                        "clusters": clusters,
+                        "stats": {
+                            "total_clusters": stats.total_clusters,
+                            "total_members": stats.total_members,
+                            "avg_cluster_size": stats.avg_cluster_size
+                        },
+                        "source": "precomputed",
+                        "note": "Live Louvain skipped on mega-graph; returned cluster_id/cluster_label from DB."
+                    }));
+                }
+                Ok(_) => {
+                    return Ok(json!({
+                        "clusters": [],
+                        "stats": { "total_clusters": 0, "total_members": 0, "avg_cluster_size": 0.0 },
+                        "source": "precomputed",
+                        "error": format!(
+                            "Live Louvain refused: graph has {} elements (max {}). No precomputed cluster_id rows found. Run offline cluster assign (CommunityDetector::assign_clusters_to_elements) then retry.",
+                            element_count, max_cluster_elements
+                        )
+                    }));
+                }
+                Err(e) => {
+                    return Ok(json!({
+                        "clusters": [],
+                        "stats": { "total_clusters": 0, "total_members": 0, "avg_cluster_size": 0.0 },
+                        "source": "precomputed",
+                        "error": format!(
+                            "Live Louvain refused ({} elements > {}). Precomputed load failed: {}",
+                            element_count, max_cluster_elements, e
+                        )
+                    }));
+                }
+            }
         }
 
         let detector = CommunityDetector::new(self.graph_engine.db());

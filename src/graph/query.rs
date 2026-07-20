@@ -1304,6 +1304,89 @@ impl GraphEngine {
         Ok(relationships)
     }
 
+    /// Relationships where `source_qualified` or `target_qualified` is in `element_ids`.
+    /// FR-GF-MEGA-01: frontier-local BFS without `all_relationships()`.
+    pub fn get_relationships_involving_elements_fast(
+        &self,
+        element_ids: &[String],
+        rel_types: Option<&[&str]>,
+    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        if element_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        const OR_CHUNK: usize = 50;
+        let rel_types_filter: std::collections::HashSet<&str> = rel_types
+            .map(|types| types.iter().copied().collect())
+            .unwrap_or_default();
+
+        let mut out: Vec<Relationship> = Vec::new();
+        let mut seen: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
+
+        for chunk in element_ids.chunks(OR_CHUNK) {
+            let or_clauses: Vec<String> = chunk
+                .iter()
+                .flat_map(|id| {
+                    let esc = escape_datalog(id);
+                    [
+                        format!(r#"source_qualified = "{}""#, esc),
+                        format!(r#"target_qualified = "{}""#, esc),
+                    ]
+                })
+                .collect();
+            let element_filter = or_clauses.join(" or ");
+
+            let (query, params) = if rel_types_filter.is_empty() {
+                let q = format!(
+                    r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                        *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
+                        ({})
+                        :limit 5000"#,
+                    element_filter
+                );
+                (q, std::collections::BTreeMap::new())
+            } else {
+                let types_str = rel_types_filter
+                    .iter()
+                    .map(|t| format!(r#""{}""#, t))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let q = format!(
+                    r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                        *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
+                        ({}),
+                        rel_type in [{}]
+                        :limit 5000"#,
+                    element_filter, types_str
+                );
+                (q, std::collections::BTreeMap::new())
+            };
+
+            let result = crate::db::schema::run_script(&self.db, &query, params)?;
+            for row in result.rows.iter() {
+                let src = row[0].get_str().unwrap_or("").to_string();
+                let tgt = row[1].get_str().unwrap_or("").to_string();
+                let rel_type = row[2].get_str().unwrap_or("").to_string();
+                if !seen.insert((src.clone(), tgt.clone(), rel_type.clone())) {
+                    continue;
+                }
+                let metadata_str = row[4].get_str().unwrap_or("{}");
+                out.push(Relationship {
+                    id: None,
+                    source_qualified: src,
+                    target_qualified: tgt,
+                    rel_type,
+                    confidence: row[3].get_float().unwrap_or(1.0),
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    ..Default::default()
+                });
+            }
+        }
+
+        Ok(out)
+    }
+
     pub fn all_relationships(&self) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
         // Check cache first
         if let Some(cached) = self.relationships_cache.read().as_ref() {
@@ -2580,6 +2663,40 @@ impl GraphEngine {
            :limit 20"#,
             type_clause = type_clause,
             name = safe_name,
+        );
+        self.run_element_query(&query)
+    }
+
+    /// FR-ONT-MEGA-01: keyed file-path prefix lookup (no `all_elements()`).
+    pub fn find_elements_by_file_path_prefix(
+        &self,
+        path_prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let prefix = normalize_path(path_prefix);
+        let limit = limit.clamp(1, 500);
+        let safe_prefix = escape_datalog(&regex::escape(&prefix));
+        let basename = prefix.rsplit('/').next().unwrap_or(&prefix);
+        let safe_basename = escape_datalog(&regex::escape(basename));
+
+        let path_match = if prefix.is_empty() {
+            r#"!regex_matches(file_path, "^ontology://")"#.to_string()
+        } else {
+            format!(
+                r#"(file_path = "{exact}" or regex_matches(file_path, "^{prefix}/.*") or regex_matches(file_path, ".*/{basename}$")),
+                  !regex_matches(file_path, "^ontology://")"#,
+                exact = escape_datalog(&prefix),
+                prefix = safe_prefix,
+                basename = safe_basename,
+            )
+        };
+
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]
+               := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+              {path_match}
+           :limit {limit}"#,
         );
         self.run_element_query(&query)
     }
@@ -4313,22 +4430,7 @@ impl GraphEngine {
             }));
         }
 
-        // BFS over (qualified_name) using all relationships as edges.
-        let all_rels = self.all_relationships()?;
-        let mut adjacency: std::collections::HashMap<String, Vec<(String, Relationship)>> =
-            std::collections::HashMap::new();
-        for rel in &all_rels {
-            adjacency
-                .entry(rel.source_qualified.clone())
-                .or_default()
-                .push((rel.target_qualified.clone(), rel.clone()));
-            // Treat graph as undirected for path-finding so callers can
-            // express either "X calls Y" or "Y is called by X" intent.
-            adjacency
-                .entry(rel.target_qualified.clone())
-                .or_default()
-                .push((rel.source_qualified.clone(), rel.clone()));
-        }
+        const MAX_BFS_VISITS: usize = 5000;
 
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut queue: std::collections::VecDeque<(String, Vec<PathHop>)> =
@@ -4337,37 +4439,49 @@ impl GraphEngine {
         visited.insert(source_qn.clone());
 
         while let Some((current, path)) = queue.pop_front() {
+            if visited.len() > MAX_BFS_VISITS {
+                break;
+            }
             if path.len() >= max_hops {
                 continue;
             }
-            if let Some(neighbors) = adjacency.get(&current) {
-                for (next, rel) in neighbors {
-                    if !visited.insert(next.clone()) {
-                        continue;
-                    }
-                    let mut new_path = path.clone();
-                    new_path.push(PathHop {
-                        from: current.clone(),
-                        to: next.clone(),
-                        rel_type: rel.rel_type.clone(),
-                        confidence: rel.confidence,
-                        confidence_label: rel.confidence_label().to_string(),
-                        source_file: rel
-                            .metadata
-                            .get("source_file")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    });
-                    if next == &target_qn {
-                        return Ok(Some(ShortestPathResult {
-                            source: source_qn,
-                            target: target_qn,
-                            hops: new_path.len(),
-                            path: new_path,
-                        }));
-                    }
-                    queue.push_back((next.clone(), new_path));
+            let rels = self
+                .get_relationships_involving_elements_fast(std::slice::from_ref(&current), None)?;
+            for rel in rels {
+                let next = if rel.source_qualified == current {
+                    rel.target_qualified.clone()
+                } else if rel.target_qualified == current {
+                    rel.source_qualified.clone()
+                } else {
+                    continue;
+                };
+                if !visited.insert(next.clone()) {
+                    continue;
+                }
+                let mut new_path = path.clone();
+                new_path.push(PathHop {
+                    from: current.clone(),
+                    to: next.clone(),
+                    rel_type: rel.rel_type.clone(),
+                    confidence: rel.confidence,
+                    confidence_label: rel.confidence_label().to_string(),
+                    source_file: rel
+                        .metadata
+                        .get("source_file")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                });
+                if next == target_qn {
+                    return Ok(Some(ShortestPathResult {
+                        source: source_qn,
+                        target: target_qn,
+                        hops: new_path.len(),
+                        path: new_path,
+                    }));
+                }
+                if visited.len() <= MAX_BFS_VISITS {
+                    queue.push_back((next, new_path));
                 }
             }
         }
@@ -4377,29 +4491,60 @@ impl GraphEngine {
 
     /// Resolve a free-form input (qualified_name, exact name, or fuzzy
     /// suffix match) to a single qualified_name. Returns the first match
-    /// by priority: exact qualified_name > exact element name > suffix.
+    /// by priority: exact qualified_name > exact element name > typed name
+    /// search > qualified_name suffix (path-like inputs).
     pub(crate) fn resolve_to_qualified(&self, input: &str) -> Option<String> {
-        let elements = self.all_elements().ok()?;
-        // 1. Exact qualified_name
-        if elements.iter().any(|e| e.qualified_name == input) {
-            return Some(input.to_string());
+        if input.is_empty() {
+            return None;
         }
-        // 2. Exact element name
-        let mut by_name: Vec<&CodeElement> = elements.iter().filter(|e| e.name == input).collect();
-        if !by_name.is_empty() {
-            // Prefer functions / classes over files / directories when names collide.
-            by_name.sort_by(|a, b| {
-                rank_element_type(&a.element_type).cmp(&rank_element_type(&b.element_type))
-            });
-            return Some(by_name[0].qualified_name.clone());
+        if let Ok(Some(el)) = self.find_element(input) {
+            return Some(el.qualified_name);
         }
-        // 3. Suffix match
-        let suffix_matches: Vec<&CodeElement> = elements
-            .iter()
-            .filter(|e| e.qualified_name.ends_with(input) || e.qualified_name.contains(input))
-            .collect();
-        if !suffix_matches.is_empty() {
-            return Some(suffix_matches[0].qualified_name.clone());
+        if let Ok(mut by_name) = self.find_elements_by_name_exact(input, None) {
+            if !by_name.is_empty() {
+                by_name.sort_by(|a, b| {
+                    rank_element_type(&a.element_type).cmp(&rank_element_type(&b.element_type))
+                });
+                return Some(by_name[0].qualified_name.clone());
+            }
+        }
+        if let Ok(candidates) = self.search_by_name_typed(input, None, 20) {
+            if let Some(exact) = candidates.iter().find(|e| e.name == input) {
+                return Some(exact.qualified_name.clone());
+            }
+            if let Some(first) = candidates.first() {
+                return Some(first.qualified_name.clone());
+            }
+        }
+        if input.contains('/') || input.contains("::") {
+            return self.resolve_qualified_name_suffix(input);
+        }
+        None
+    }
+
+    fn resolve_qualified_name_suffix(&self, input: &str) -> Option<String> {
+        let tail = self.code_elements_tail();
+        let safe_input = escape_datalog(&regex::escape(input));
+        let safe_lower = escape_datalog(&regex::escape(&input.to_lowercase()));
+        for pattern in [
+            format!(r#"regex_matches(qualified_name, ".*{safe_input}$")"#),
+            format!(r#"regex_matches(qualified_name, ".*{safe_input}.*")"#),
+            format!(r#"regex_matches(lowercase(qualified_name), ".*{safe_lower}.*")"#),
+        ] {
+            let query = format!(
+                r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]
+                   := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+                  {pattern}
+               :limit 20"#,
+            );
+            if let Ok(elems) = self.run_element_query(&query) {
+                if let Some(exact) = elems.iter().find(|e| e.qualified_name.ends_with(input)) {
+                    return Some(exact.qualified_name.clone());
+                }
+                if let Some(first) = elems.first() {
+                    return Some(first.qualified_name.clone());
+                }
+            }
         }
         None
     }
@@ -6353,6 +6498,109 @@ mod tests {
         assert_eq!(v["from"], "a");
         assert_eq!(v["to"], "b");
         assert_eq!(v["confidence_label"], "EXTRACTED");
+    }
+
+    #[test]
+    fn resolve_to_qualified_empty_db_returns_none() {
+        let (engine, _tmp) = make_test_engine();
+        assert!(engine.resolve_to_qualified("missing").is_none());
+        assert!(engine.resolve_to_qualified("src/a.rs::foo").is_none());
+    }
+
+    #[test]
+    fn resolve_to_qualified_prefers_exact_qualified_name() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "alpha", "function", "src/a.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "alpha", "file", "src/b.rs", "rust", 1, 1);
+        assert_eq!(
+            engine.resolve_to_qualified("src/a.rs::alpha"),
+            Some("src/a.rs::alpha".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_to_qualified_prefers_function_over_file_name() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "handler", "function", "src/a.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "handler", "file", "src/handler.rs", "rust", 1, 1);
+        assert_eq!(
+            engine.resolve_to_qualified("handler"),
+            Some("src/a.rs::handler".to_string())
+        );
+    }
+
+    #[test]
+    fn find_elements_by_file_path_prefix_matches_exact_and_children() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "root_fn", "function", "src/auth.rs", "rust", 1, 5);
+        insert_test_element_full(
+            &engine,
+            "nested_fn",
+            "function",
+            "src/auth/login.rs",
+            "rust",
+            1,
+            5,
+        );
+        insert_test_element_full(
+            &engine,
+            "other",
+            "function",
+            "ontology://concept/auth",
+            "rust",
+            1,
+            5,
+        );
+
+        let exact = engine
+            .find_elements_by_file_path_prefix("src/auth.rs", 20)
+            .unwrap();
+        assert!(exact
+            .iter()
+            .any(|e| e.qualified_name == "src/auth.rs::root_fn"));
+
+        let dir_prefix = engine
+            .find_elements_by_file_path_prefix("src/auth", 20)
+            .unwrap();
+        assert!(dir_prefix
+            .iter()
+            .any(|e| e.qualified_name == "src/auth/login.rs::nested_fn"));
+        assert!(!exact
+            .iter()
+            .chain(dir_prefix.iter())
+            .any(|e| e.file_path.starts_with("ontology://")));
+    }
+
+    #[test]
+    fn get_relationships_involving_elements_fast_fetches_both_directions() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "a", "function", "src/a.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "b", "function", "src/b.rs", "rust", 1, 5);
+        insert_test_rel(&engine, "src/a.rs::a", "src/b.rs::b", "calls", 0.9);
+
+        let out = engine
+            .get_relationships_involving_elements_fast(&["src/b.rs::b".to_string()], None)
+            .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source_qualified, "src/a.rs::a");
+        assert_eq!(out[0].target_qualified, "src/b.rs::b");
+    }
+
+    #[test]
+    fn shortest_path_uses_frontier_local_fetch() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "a", "function", "src/a.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "b", "function", "src/b.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "c", "function", "src/c.rs", "rust", 1, 5);
+        insert_test_rel(&engine, "src/a.rs::a", "src/b.rs::b", "calls", 0.9);
+        insert_test_rel(&engine, "src/b.rs::b", "src/c.rs::c", "calls", 0.9);
+
+        let path = engine
+            .shortest_path("src/a.rs::a", "src/c.rs::c", 3)
+            .unwrap()
+            .expect("path should exist");
+        assert_eq!(path.hops, 2);
+        assert_eq!(path.path.len(), 2);
     }
 
     // US-GF-02: NodeExplanation serialization shape

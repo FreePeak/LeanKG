@@ -4,6 +4,7 @@
 
 use crate::db::models::{CodeElement, Relationship};
 use crate::db::schema::CozoDb;
+use crate::graph::GraphEngine;
 use crate::ontology::procedural::{
     FailureModeMetadata, FailureModeNode, WorkflowMetadata, WorkflowNode, WorkflowStepMetadata,
     WorkflowStepNode,
@@ -478,19 +479,18 @@ impl OntologyQueryEngine {
 
     /// Resolve a list of `code_refs` (file paths, directory paths, or
     /// `file::symbol` references) against the indexed code elements in the db.
+    ///
+    /// FR-ONT-MEGA-01: keyed / path-prefixed GraphEngine queries only — never
+    /// `load_indexed_code_elements()` (full ~641k-row dump).
     fn resolve_code_refs(
         &self,
         code_refs: &[String],
         limit: usize,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        if code_refs.is_empty() {
+        if code_refs.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        let elements = self.load_indexed_code_elements()?;
-        if elements.is_empty() {
-            return Ok(Vec::new());
-        }
-
+        let engine = GraphEngine::new(self.db.clone());
         let mut matched: Vec<CodeElement> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -498,8 +498,23 @@ impl OntologyQueryEngine {
             if matched.len() >= limit {
                 break;
             }
+            let remaining = limit - matched.len();
             let r = normalize_path(raw_ref);
             if r.is_empty() {
+                continue;
+            }
+
+            // Exact qualified_name hit (file::symbol already stored as QN).
+            if let Ok(Some(el)) = engine.find_element(raw_ref.trim()) {
+                if seen.insert(el.qualified_name.clone()) {
+                    matched.push(el);
+                }
+                continue;
+            }
+            if let Ok(Some(el)) = engine.find_element(&r) {
+                if seen.insert(el.qualified_name.clone()) {
+                    matched.push(el);
+                }
                 continue;
             }
 
@@ -507,7 +522,17 @@ impl OntologyQueryEngine {
             if let Some((file_part, sym_part)) = r.split_once("::") {
                 let file_norm = normalize_path(file_part);
                 let sym_lower = sym_part.to_lowercase();
-                for e in &elements {
+                let qn_guess = format!("{}::{}", file_norm, sym_part);
+                if let Ok(Some(el)) = engine.find_element(&qn_guess) {
+                    if seen.insert(el.qualified_name.clone()) {
+                        matched.push(el);
+                    }
+                    continue;
+                }
+                let per_ref_cap = remaining.min(80);
+                let candidates =
+                    engine.find_elements_by_file_path_prefix(&file_norm, per_ref_cap)?;
+                for e in candidates {
                     let efile = normalize_path(&e.file_path);
                     let matches_file = efile == file_norm
                         || efile.ends_with(&file_norm)
@@ -518,48 +543,73 @@ impl OntologyQueryEngine {
                             .ends_with(&format!("::{}", sym_lower))
                         || e.name.to_lowercase().contains(&sym_lower);
                     if matches_file && matches_sym && seen.insert(e.qualified_name.clone()) {
-                        matched.push(e.clone());
+                        matched.push(e);
+                        if matched.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+                if matched.len() < limit {
+                    for e in engine.search_by_name_typed(sym_part, None, 20)? {
+                        let efile = normalize_path(&e.file_path);
+                        if (efile == file_norm
+                            || efile.ends_with(&file_norm)
+                            || file_norm.ends_with(&efile))
+                            && seen.insert(e.qualified_name.clone())
+                        {
+                            matched.push(e);
+                            if matched.len() >= limit {
+                                break;
+                            }
+                        }
                     }
                 }
                 continue;
             }
 
-            // file or directory form
+            // file or directory form — bounded path prefix query
             let r_norm = normalize_path(&r);
-            let looks_like_dir = raw_ref.trim().ends_with('/')
-                || (!raw_ref.contains('.') && !raw_ref.contains("::"));
-            for e in &elements {
-                if matched.len() >= limit {
-                    break;
-                }
-                let efile = normalize_path(&e.file_path);
-                let mut hit = false;
-                if efile == r_norm
-                    || (looks_like_dir
-                        && efile.starts_with(&format!("{}/", r_norm.trim_end_matches('/'))))
-                    || efile.ends_with(&format!("/{}", r_norm))
-                    || efile.ends_with(&r_norm)
-                {
-                    hit = true;
-                } else if !looks_like_dir {
-                    if let Some(base) = r_norm.rsplit('/').next() {
-                        if efile.ends_with(&format!("/{}", base)) || efile == base {
-                            hit = true;
-                        }
+            let per_ref_cap = remaining.min(200);
+            for e in engine.find_elements_by_file_path_prefix(&r_norm, per_ref_cap)? {
+                if seen.insert(e.qualified_name.clone()) {
+                    matched.push(e);
+                    if matched.len() >= limit {
+                        break;
                     }
-                }
-                if hit && seen.insert(e.qualified_name.clone()) {
-                    matched.push(e.clone());
                 }
             }
         }
 
+        tracing::debug!(
+            target: "leankg::ontology",
+            refs = code_refs.len(),
+            matched = matched.len(),
+            "TRACE concept_search: resolve_code_refs method=keyed"
+        );
         Ok(matched)
     }
 
-    /// Load all non-ontology code elements from the db (the actual indexed code,
-    /// excluding `ontology://` concept/workflow nodes).
+    /// Name-based code search over indexed (non-ontology) elements, used as the
+    /// fallback when no concept ontology node matches.
+    ///
+    /// FR-ONT-MEGA-01: uses `search_by_name_typed` (`:limit`) — never full-table load.
+    fn search_code_elements_by_name(
+        &self,
+        name: &str,
+        limit: usize,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let engine = GraphEngine::new(self.db.clone());
+        engine.search_by_name_typed(name, None, limit.max(1))
+    }
+
+    /// Deprecated full-table loader — kept for rare offline/admin callers only.
+    /// Hot paths must use keyed GraphEngine queries (FR-ONT-MEGA-01).
+    #[allow(dead_code)]
     fn load_indexed_code_elements(&self) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        tracing::warn!(
+            target: "leankg::mem",
+            "load_indexed_code_elements() is deprecated on mega-graphs — use keyed GraphEngine lookups"
+        );
         let tail = if crate::db::schema::run_script(
             &self.db,
             "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
@@ -574,32 +624,14 @@ impl OntologyQueryEngine {
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env]
             := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
-            !regex_matches(file_path, "^ontology://")"#
+            !regex_matches(file_path, "^ontology://")
+            :limit 1"#
         );
         let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
         Ok(result
             .rows
             .iter()
             .map(|row| row_to_code_element(row))
-            .collect())
-    }
-
-    /// Name-based code search over indexed (non-ontology) elements, used as the
-    /// fallback when no concept ontology node matches.
-    fn search_code_elements_by_name(
-        &self,
-        name: &str,
-        limit: usize,
-    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let lower = name.to_lowercase();
-        let elements = self.load_indexed_code_elements()?;
-        Ok(elements
-            .into_iter()
-            .filter(|e| {
-                e.name.to_lowercase().contains(&lower)
-                    || e.qualified_name.to_lowercase().contains(&lower)
-            })
-            .take(limit)
             .collect())
     }
 
