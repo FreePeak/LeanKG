@@ -2,6 +2,19 @@
 
 LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowledge graph.
 
+Live registry size is **~84** tools (`tools/list`). Prefer-order and redundancy status:
+
+| Prefer-order | Tools |
+|--------------|-------|
+| Search | `concept_search` → `semantic_search` → `search_code` |
+| Semantic context | `semantic_search` → `kg_semantic_context` → `kg_context` |
+| Overview | `get_overview_context` (not `wake_up`; not `load_layer(L0)` alone) |
+| File context | `get_context` (skill default); `ctx_read` for compression modes |
+
+**Soft-deprecated (still registered):** `wake_up`, `search_by_environment` — see [redundancy impact report](reports/mcp-tool-redundancy-impact-2026-07-20.md).  
+**Hard-removed:** `mcp_hello`, `mcp_impact`, `get_doc_for_file`.  
+**Machine-checked matrix:** `tests/redundant_tools_matrix.rs` (every tool classified).
+
 ## Core Tools
 
 | Tool | Description |
@@ -100,6 +113,7 @@ These tools ship only when LeanKG is built with `--features embeddings`. They ad
 | Tool | Description |
 |------|-------------|
 | `kg_semantic_context` | Vector retrieve → rerank → traverse. Best for natural-language questions where keyword search misses (e.g., 'where do we validate access rights'). Returns ranked seed nodes plus 1-2 hop graph context. |
+| `embed_control` | US-EMBED-05: arm/disarm in-process day-2 embed when boot FG is off. Actions: `on` (idle-gated Incremental resume, default `mode=partial`), `off` (cooperative cancel), `status` (`mode`, `vectors_existing`, `skipped_fresh`, `armed`/`waiting_idle`/`running`/`paused_yield`). Does not wipe existing RocksDB vectors. |
 
 Setup (one-time):
 

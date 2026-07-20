@@ -1086,6 +1086,16 @@ Palace Mapping:
 - **Given** embed remains off (`LEANKG_EMBED_BACKGROUND=0`, `LEANKG_EMBED_ON_BOOT=0`), **When** MCP restarts, **Then** existing embed data is left intact and semantic tools use whatever HNSW is already present.
 - **Given** docs (`entrypoint.sh`, compose, AGENTS), **When** operators enable Docker embed, **Then** docs state the resume-vs-cold rule explicitly.
 
+#### US-EMBED-05 — MCP idle-gated partial embed toggle (Must Have)
+
+**As an** operator with `LEANKG_EMBED_ON_BOOT=0` / `LEANKG_EMBED_BACKGROUND=0`, **I want** MCP `embed_control` to arm/disarm in-process embedding only when the server is idle and under an RSS fraction of the container budget, **so that** day-2 resume does not starve search or rebuild cold when vectors already exist.
+
+**Acceptance criteria:**
+- **Given** MCP is healthy and boot embed is off, **When** `embed_control(action=on)`, **Then** the job waits for idle (`LEANKG_EMBED_IDLE_AFTER_SECS`) + RSS headroom, then runs **Incremental** resume by default (`full=false`).
+- **Given** existing vectors and an unchanged graph, **When** the job runs, **Then** status reports `mode=incremental`, high `skipped_fresh`, `embedded≈0`, and the process does **not** load ONNX or drop HNSW.
+- **Given** a running/armed job, **When** `embed_control(action=off)`, **Then** the in-process worker cooperatively cancels (no `SIGTERM` to Docker PID 1).
+- **Given** `mode=partial` (default), **When** embed runs under MCP, **Then** it duty-cycles batches, yields on MCP activity (`paused_yield`), and caps soft RSS to `LEANKG_EMBED_RSS_FRACTION` of the container budget.
+
 ---
 
 ### 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4
@@ -1400,6 +1410,9 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-EMBED-RESUME-04 | Must Have | Indexer must not force a full re-embed on no-op / identical content: mark stale only for QNs whose embeddable `content_hash` changed (audit full-index `mark_stale_for_qualified_names` blast radius) |
 | FR-EMBED-RESUME-05 | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass finishes with near-zero ONNX batches and wall time **≪** cold pass (document threshold in release note; target minutes not hours) |
 | FR-EMBED-RESUME-06 | Must Have | **All Docker embed-on paths** (`LEANKG_EMBED_BACKGROUND`, `LEANKG_EMBED_ON_BOOT` / `embed_if_needed`, `LEANKG_DOCKER_SETUP`, `docker-up.sh`) share the same resume-vs-cold rule: existing data → incremental; no data → cold. Never wipe on enable. Document in `entrypoint.sh` / compose / AGENTS |
+| FR-EMBED-RESUME-07 | Must Have | MCP/FG in-process path: cheap resume preflight (vector/state counts, no mega `all_elements` just to skip); zero-dirty → no ONNX/HNSW; small dirty → prefer incremental HNSW puts; status exposes `skipped_fresh` / `vectors_existing` |
+| FR-EMBED-TOGGLE-01 | Must Have | MCP `embed_control` actions `on` / `off` / `status`; idle-gated arm; cooperative cancel; Admin for mutating actions |
+| FR-EMBED-PARTIAL-01 | Must Have | Default MCP embed `mode=partial`: duty-cycle batches, yield on MCP activity, soft RSS ≤ `LEANKG_EMBED_RSS_FRACTION` (default 0.40) of container budget clamped by `LEANKG_EMBED_MAX_MB` |
 | REL-052 | Must Have | Release gate: day-2 resume proven on named RocksDB volume for standalone `embed --wait` **and** at least one Docker MCP embed-on path (unit + e2e + optional live smoke) |
 | FR-HNSW-E | Must Have (PARTIAL) | Keep incremental filter; remaining work tracked under FR-EMBED-RESUME-* |
 
