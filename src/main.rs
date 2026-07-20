@@ -5149,6 +5149,15 @@ fn run_embed_cancel(lock_path: &std::path::Path) -> Result<(), Box<dyn std::erro
         );
         return Ok(());
     }
+    let self_pid = u64::from(std::process::id());
+    if pid == self_pid {
+        embeddings::request_cancel_in_process_embed();
+        println!(
+            "Requested cooperative cancel for in-process embed (PID {}).",
+            pid
+        );
+        return Ok(());
+    }
     // SAFETY: best-effort signal; we don't own the PID namespace.
     let ret = unsafe { libc_kill(pid, libc_SIGTERM) };
     if ret == 0 {
@@ -5262,6 +5271,7 @@ fn run_embed_worker(
                 }
             }
         },
+        ..Default::default()
     };
     write_status(total as u64, 0, 0, 0, "running");
 

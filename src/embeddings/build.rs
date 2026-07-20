@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// File locks alone are insufficient in Docker: the MCP binary is PID 1, so a
 /// leftover `embed.lock` with `1` from a prior container still passes
 /// `kill(1, 0)` even though no embed thread exists in this reincarnation.
-static IN_PROCESS_BG_EMBED_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub(crate) static IN_PROCESS_BG_EMBED_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "embeddings")]
 use crate::embeddings::build_index;
@@ -258,6 +258,10 @@ pub struct BuildOptions {
     /// defaults to `function,method` on mega-graphs to keep cold embed
     /// under 5 min; pass `all` (empty string from CLI) to disable.
     pub type_filter: Option<std::collections::HashSet<String>>,
+    /// Duty-cycle / yield under MCP (FR-EMBED-PARTIAL-01).
+    pub partial: bool,
+    /// Soft RSS cap override (MB); `None` uses `plan_embed_memory` / env.
+    pub max_rss_mb_override: Option<u64>,
 }
 
 impl Default for BuildOptions {
@@ -269,6 +273,8 @@ impl Default for BuildOptions {
             batch_size: 32,
             reserve_capacity: None,
             type_filter: None,
+            partial: false,
+            max_rss_mb_override: None,
         }
     }
 }
@@ -306,6 +312,136 @@ pub(crate) fn should_skip_hnsw_rebuild(to_embed_empty: bool, orphan_empty: bool)
     to_embed_empty && orphan_empty
 }
 
+fn element_passes_type_filter(el: &crate::db::models::CodeElement, opts: &BuildOptions) -> bool {
+    match &opts.type_filter {
+        Some(filter) => filter.contains(&el.element_type.to_ascii_lowercase()),
+        None => true,
+    }
+}
+
+fn work_item_from_element(el: &crate::db::models::CodeElement) -> Option<WorkItem> {
+    let blob = text_blob::build_blob(el)?;
+    let hash = text_blob::content_hash_for(&blob);
+    Some(WorkItem {
+        qualified_name: el.qualified_name.clone(),
+        blob,
+        current_hash: hash,
+    })
+}
+
+/// Incremental dirty set from `embedding_state` (indexer marks stale/new).
+/// Avoids mega `all_elements` / full pagination just to skip fresh rows.
+fn collect_incremental_dirty_work(
+    graph: &GraphEngine,
+    opts: &BuildOptions,
+) -> Result<(Vec<WorkItem>, Vec<EmbeddingStateRow>, usize), Box<dyn std::error::Error>> {
+    let stale_rows = state::list_stale(graph.db())?;
+    let orphan_rows = state::list_orphans(graph.db()).unwrap_or_default();
+    let fresh = state::count_by_state(graph.db())
+        .map(|c| c.fresh)
+        .unwrap_or(0);
+    let mut work = Vec::with_capacity(stale_rows.len());
+    for row in &stale_rows {
+        if crate::embeddings::control::is_cancel_requested() {
+            return Err("embed cancelled".into());
+        }
+        let Some(el) = graph.find_element(&row.qualified_name)? else {
+            continue;
+        };
+        if !element_passes_type_filter(&el, opts) {
+            continue;
+        }
+        if let Some(item) = work_item_from_element(&el) {
+            work.push(item);
+        }
+    }
+    tracing::info!(
+        "incremental dirty collect: stale_rows={} work={} orphans={} fresh={}",
+        stale_rows.len(),
+        work.len(),
+        orphan_rows.len(),
+        fresh
+    );
+    Ok((work, orphan_rows, fresh))
+}
+
+/// Full (or non-incremental) collect — paginated on mega-graphs.
+fn collect_work_items(
+    graph: &GraphEngine,
+    opts: &BuildOptions,
+) -> Result<Vec<WorkItem>, Box<dyn std::error::Error>> {
+    let total = graph.count_elements().unwrap_or(0);
+    let mega = total > 50_000;
+    let mut work = Vec::new();
+    if mega {
+        let mut offset = 0usize;
+        let page_size = 5_000usize;
+        loop {
+            if crate::embeddings::control::is_cancel_requested() {
+                return Err("embed cancelled".into());
+            }
+            let (page, _) = graph.get_elements_paginated(page_size, offset)?;
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len();
+            for el in page {
+                if !element_passes_type_filter(&el, opts) {
+                    continue;
+                }
+                if let Some(item) = work_item_from_element(&el) {
+                    work.push(item);
+                }
+            }
+            if offset % 50_000 < page_size {
+                tracing::info!(
+                    "full embed collect progress: offset={}/{} work={}",
+                    offset,
+                    total,
+                    work.len()
+                );
+            }
+            if offset >= total {
+                break;
+            }
+        }
+    } else {
+        let elements = graph.all_elements()?;
+        for el in elements {
+            if !element_passes_type_filter(&el, opts) {
+                continue;
+            }
+            if let Some(item) = work_item_from_element(&el) {
+                work.push(item);
+            }
+        }
+    }
+    Ok(work)
+}
+
+/// Between partial slices: cancel / MCP yield / pause.
+fn partial_slice_gate(batches_done: usize, partial: bool) -> Result<(), String> {
+    if crate::embeddings::control::is_cancel_requested() {
+        return Err("embed cancelled".into());
+    }
+    if !partial {
+        return Ok(());
+    }
+    let policy = crate::embeddings::control::PartialEmbedPolicy::default();
+    if batches_done > 0 && batches_done % policy.batches_per_slice == 0 {
+        if policy.yield_on_activity && crate::gc::MemoryGuard::idle_secs_public() < 2 {
+            if !crate::embeddings::control::yield_while_mcp_busy() {
+                return Err("embed cancelled during yield".into());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(policy.pause_ms));
+        if crate::embeddings::control::is_cancel_requested() {
+            return Err("embed cancelled".into());
+        }
+    }
+    Ok(())
+}
+
 /// State rows whose QN is no longer in the current embed work list.
 pub(crate) fn orphan_rows_from_work(
     work: &[WorkItem],
@@ -331,6 +467,12 @@ fn nothing_to_embed_report(
         skipped_fresh
     );
     let index_size = count_vectors(db)?;
+    crate::embeddings::control::set_live_progress(
+        considered as u64,
+        skipped_fresh as u64,
+        0,
+        index_size as u64,
+    );
     Ok(BuildReport {
         considered_count: considered,
         embedded_count: 0,
@@ -358,78 +500,120 @@ pub fn run(
     }
     let db = graph.db();
 
-    // 1. Walk code_elements and build the work list.
-    let elements = graph.all_elements()?;
-    let work: Vec<WorkItem> = elements
-        .iter()
-        .filter(|el| {
-            // Apply the optional element-type filter. On mega-graphs the
-            // CLI defaults to `function,method` to keep cold embed under
-            // 5 min; pass `--types all` to embed every type.
-            if let Some(filter) = &opts.type_filter {
-                filter.contains(&el.element_type.to_ascii_lowercase())
-            } else {
-                true
-            }
-        })
-        .filter_map(|el| {
-            let blob = text_blob::build_blob(el)?;
-            let hash = text_blob::content_hash_for(&blob);
-            Some(WorkItem {
-                qualified_name: el.qualified_name.clone(),
-                blob,
-                current_hash: hash,
-            })
-        })
-        .collect();
+    // Cheap resume preflight before walking the graph.
+    let preflight = crate::embeddings::control::embed_resume_preflight(db).ok();
+    if let Some(ref pre) = preflight {
+        crate::embeddings::control::set_live_progress(0, pre.fresh, 0, pre.vectors_existing);
+        tracing::info!(
+            "embed resume preflight: vectors_existing={} fresh={} stale={} has_data={}",
+            pre.vectors_existing,
+            pre.fresh,
+            pre.stale,
+            pre.has_embed_data
+        );
+    }
 
-    // 2. Build the "needs embed" set.
-    let existing_state: std::collections::HashMap<String, EmbeddingStateRow> = state::list_all(db)?
-        .into_iter()
-        .map(|r| (r.qualified_name.clone(), r))
-        .collect();
+    // 1. Build dirty work list.
+    // Incremental: list_stale/list_orphans only (FR-EMBED-RESUME-07) — never
+    // re-scan all fresh rows. Full: paginated / all_elements walk.
+    let (work, orphan_rows, skipped_fresh_hint) = match opts.mode {
+        BuildMode::Incremental => {
+            let (w, orphans, fresh) = collect_incremental_dirty_work(graph, &opts)?;
+            (w, orphans, fresh)
+        }
+        BuildMode::Full => {
+            let w = collect_work_items(graph, &opts)?;
+            let existing_state: std::collections::HashMap<String, EmbeddingStateRow> =
+                state::list_all(db)?
+                    .into_iter()
+                    .map(|r| (r.qualified_name.clone(), r))
+                    .collect();
+            let orphans = orphan_rows_from_work(&w, &existing_state);
+            (w, orphans, 0)
+        }
+    };
 
-    let to_embed: Vec<&WorkItem> = work
-        .iter()
-        .filter(|w| match opts.mode {
-            BuildMode::Full => true,
-            BuildMode::Incremental => match existing_state.get(&w.qualified_name) {
-                None => true,
-                Some(row) => {
-                    row.state != "fresh"
-                        || row.content_hash.is_empty()
-                        || row.content_hash != w.current_hash
-                }
-            },
-        })
-        .collect();
+    let to_embed: Vec<&WorkItem> = match opts.mode {
+        BuildMode::Full => work.iter().collect(),
+        BuildMode::Incremental => work.iter().collect(), // already dirty-only
+    };
 
-    let considered = work.len();
-    let skipped_fresh = considered - to_embed.len();
+    let considered = match opts.mode {
+        BuildMode::Incremental => skipped_fresh_hint + to_embed.len(),
+        BuildMode::Full => work.len(),
+    };
+    let skipped_fresh = match opts.mode {
+        BuildMode::Incremental => skipped_fresh_hint,
+        BuildMode::Full => 0,
+    };
+    let vectors_existing = count_vectors(db).unwrap_or(0);
+    crate::embeddings::control::set_live_progress(
+        considered as u64,
+        skipped_fresh as u64,
+        to_embed.len() as u64,
+        vectors_existing as u64,
+    );
 
     // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone
     // (and do not load the ONNX model).
-    let orphan_rows = orphan_rows_from_work(&work, &existing_state);
     if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
-        return nothing_to_embed_report(db, considered, skipped_fresh);
+        return nothing_to_embed_report(db, considered.max(skipped_fresh), skipped_fresh);
+    }
+
+    // Orphan-only: reap without loading ONNX / touching HNSW bulk rebuild.
+    if to_embed.is_empty() && !orphan_rows.is_empty() {
+        tracing::info!(
+            "orphan-only resume: reaping {} orphans (no ONNX)",
+            orphan_rows.len()
+        );
+        let orphan_qns: Vec<String> = orphan_rows
+            .iter()
+            .map(|r| r.qualified_name.clone())
+            .collect();
+        remove_vectors(db, &orphan_qns)?;
+        state::delete_state_rows(db, &orphan_rows)?;
+        let index_size = count_vectors(db)?;
+        return Ok(BuildReport {
+            considered_count: considered.max(skipped_fresh),
+            embedded_count: 0,
+            skipped_fresh_count: skipped_fresh,
+            orphaned_count: orphan_rows.len(),
+            index_size,
+            index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+        });
     }
 
     let embedder = Embedder::new()?;
 
-    // FR-HNSW perf fix: drop the HNSW index before the bulk insert so
-    // each :put doesn't pay the O(log N) HNSW update cost. The index is
-    // recreated at the end of the function.
+    let max_rss = opts.max_rss_mb_override.unwrap_or(mem.max_rss_mb);
+    let use_incr_hnsw = crate::embeddings::control::should_use_incremental_hnsw_puts(
+        to_embed.len(),
+        vectors_existing,
+    );
+
     enable_rocks_bulk_writes();
-    if state::drop_hnsw_index(db).is_err() {
+    if use_incr_hnsw {
+        tracing::info!(
+            "small dirty set ({}); incremental HNSW puts (no full drop/rebuild)",
+            to_embed.len()
+        );
+    } else if state::drop_hnsw_index(db).is_err() {
         tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
+        tracing::info!("HNSW dropped; running sequential bulk insert");
+    } else {
+        tracing::info!("HNSW dropped; running sequential bulk insert");
     }
-    tracing::info!("HNSW dropped; running sequential bulk insert");
 
     // 3. Batch embed and :put into embedding_vectors.
     let mut embedded = 0usize;
     let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(to_embed.len());
+    let mut batches_done = 0usize;
     for chunk in to_embed.chunks(opts.batch_size) {
-        wait_for_embed_rss_headroom(mem.max_rss_mb);
+        if crate::embeddings::control::is_cancel_requested() {
+            return Err("embed cancelled".into());
+        }
+        partial_slice_gate(batches_done, opts.partial)?;
+        wait_for_embed_rss_headroom(max_rss);
         let texts: Vec<String> = chunk.iter().map(|w| w.blob.clone()).collect();
         let vectors = embedder.embed(&texts)?;
         let pairs: Vec<(&WorkItem, &Vec<f32>)> =
@@ -449,6 +633,7 @@ pub fn run(
             fresh_rows.push(row);
             embedded += 1;
         }
+        batches_done += 1;
         tracing::info!(
             "embed batch done: running total {}/{} (chunk_size={})",
             embedded,
@@ -462,15 +647,18 @@ pub fn run(
         fresh_rows.len()
     );
 
-    // Recreate the HNSW index now that the bulk insert is done. A single
-    // O(N log N) build beats N incremental updates by 5-10x.
-    tracing::info!("rebuilding HNSW index on embedding_vectors:vec_idx");
-    let hnsw_started = std::time::Instant::now();
-    state::create_hnsw_index(db)?;
-    tracing::info!(
-        "HNSW rebuild complete in {:.2}s",
-        hnsw_started.elapsed().as_secs_f64()
-    );
+    if !use_incr_hnsw {
+        // Recreate the HNSW index now that the bulk insert is done.
+        tracing::info!("rebuilding HNSW index on embedding_vectors:vec_idx");
+        let hnsw_started = std::time::Instant::now();
+        state::create_hnsw_index(db)?;
+        tracing::info!(
+            "HNSW rebuild complete in {:.2}s",
+            hnsw_started.elapsed().as_secs_f64()
+        );
+    } else {
+        tracing::info!("skipped full HNSW rebuild (incremental puts)");
+    }
 
     // 4. Reap orphans (precomputed above).
     tracing::info!("orphan reap: {} orphans", orphan_rows.len());
@@ -529,58 +717,68 @@ pub fn build_index_parallel(
 
     let db = graph.db();
 
-    // 1. Walk code_elements and build the work list (sequential, can't be
-    // sped up — this is a single CozoDB scan).
-    let elements = graph.all_elements().map_err(|e| e.to_string())?;
-    let work: Vec<WorkItem> = elements
-        .iter()
-        .filter(|el| {
-            if let Some(filter) = &opts.type_filter {
-                filter.contains(&el.element_type.to_ascii_lowercase())
-            } else {
-                true
-            }
-        })
-        .filter_map(|el| {
-            let blob = text_blob::build_blob(el)?;
-            let hash = text_blob::content_hash_for(&blob);
-            Some(WorkItem {
-                qualified_name: el.qualified_name.clone(),
-                blob,
-                current_hash: hash,
-            })
-        })
-        .collect();
+    // 1. Dirty work list — Incremental uses state table only (no mega walk).
+    let (work, orphan_rows, skipped_fresh_hint) = match opts.mode {
+        BuildMode::Incremental => {
+            collect_incremental_dirty_work(graph, opts).map_err(|e| e.to_string())?
+        }
+        BuildMode::Full => {
+            let w = collect_work_items(graph, opts).map_err(|e| e.to_string())?;
+            let existing_state: std::collections::HashMap<String, EmbeddingStateRow> =
+                state::list_all(db)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|r| (r.qualified_name.clone(), r))
+                    .collect();
+            let orphans = orphan_rows_from_work(&w, &existing_state);
+            (w, orphans, 0)
+        }
+    };
 
-    // 2. Build the "needs embed" set.
-    let existing_state: std::collections::HashMap<String, EmbeddingStateRow> = state::list_all(db)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| (r.qualified_name.clone(), r))
-        .collect();
-    let to_embed: Vec<WorkItem> = work
-        .iter()
-        .filter(|w| match opts.mode {
-            BuildMode::Full => true,
-            BuildMode::Incremental => match existing_state.get(&w.qualified_name) {
-                None => true,
-                Some(row) => {
-                    row.state != "fresh"
-                        || row.content_hash.is_empty()
-                        || row.content_hash != w.current_hash
-                }
-            },
-        })
-        .map(|w| w.clone())
-        .collect();
+    let to_embed: Vec<WorkItem> = work.clone();
 
-    let considered = work.len();
-    let skipped_fresh = considered - to_embed.len();
+    let considered = match opts.mode {
+        BuildMode::Incremental => skipped_fresh_hint + to_embed.len(),
+        BuildMode::Full => work.len(),
+    };
+    let skipped_fresh = match opts.mode {
+        BuildMode::Incremental => skipped_fresh_hint,
+        BuildMode::Full => 0,
+    };
+    let vectors_existing = count_vectors(db).unwrap_or(0);
+    crate::embeddings::control::set_live_progress(
+        considered as u64,
+        skipped_fresh as u64,
+        to_embed.len() as u64,
+        vectors_existing as u64,
+    );
 
     // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone.
-    let orphan_rows = orphan_rows_from_work(&work, &existing_state);
     if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
-        return nothing_to_embed_report(db, considered, skipped_fresh).map_err(|e| e.to_string());
+        return nothing_to_embed_report(db, considered.max(skipped_fresh), skipped_fresh)
+            .map_err(|e| e.to_string());
+    }
+
+    if to_embed.is_empty() && !orphan_rows.is_empty() {
+        tracing::info!(
+            "orphan-only resume (parallel path): reaping {} orphans (no ONNX)",
+            orphan_rows.len()
+        );
+        let orphan_qns: Vec<String> = orphan_rows
+            .iter()
+            .map(|r| r.qualified_name.clone())
+            .collect();
+        remove_vectors(db, &orphan_qns).map_err(|e| e.to_string())?;
+        state::delete_state_rows(db, &orphan_rows).map_err(|e| e.to_string())?;
+        let index_size = count_vectors(db).unwrap_or(0);
+        return Ok(BuildReport {
+            considered_count: considered.max(skipped_fresh),
+            embedded_count: 0,
+            skipped_fresh_count: skipped_fresh,
+            orphaned_count: orphan_rows.len(),
+            index_size,
+            index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+        });
     }
 
     // FR-EMBED-R4: length-aware batching — sort by blob char length so each
@@ -595,15 +793,23 @@ pub fn build_index_parallel(
         to_embed.last().map(|w| w.blob.len()).unwrap_or(0)
     );
 
-    // FR-HNSW perf fix: drop the HNSW index before the bulk insert so
-    // each :put doesn't pay the O(log N) HNSW update cost. Recreate the
-    // index after the loop completes — CozoDB's HNSW build is O(N log N)
-    // and runs ~5-10x faster than N incremental updates on a 100k+ index.
+    // Prefer incremental HNSW puts for small dirty sets (FR-EMBED-RESUME-07).
+    let use_incr_hnsw = crate::embeddings::control::should_use_incremental_hnsw_puts(
+        to_embed.len(),
+        vectors_existing,
+    );
     enable_rocks_bulk_writes();
-    if state::drop_hnsw_index(db).is_err() {
-        tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
+    if use_incr_hnsw {
+        tracing::info!(
+            "small dirty set ({}); parallel incremental HNSW puts (no full drop/rebuild)",
+            to_embed.len()
+        );
+    } else {
+        if state::drop_hnsw_index(db).is_err() {
+            tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
+        }
+        tracing::info!("HNSW dropped; running parallel bulk insert");
     }
-    tracing::info!("HNSW dropped; running parallel bulk insert");
 
     // Warm the fastembed / Xenova snapshot BEFORE INT8 ensure. Previously
     // `ensure_quantized_onnx` ran first, failed with "cache missing", fell
@@ -883,16 +1089,18 @@ pub fn build_index_parallel(
         fresh_rows.len()
     );
 
-    // Recreate the HNSW index now that the bulk insert is done. This is
-    // a single O(N log N) operation and is much faster than letting every
-    // :put pay the incremental update cost.
-    tracing::info!("rebuilding HNSW index on embedding_vectors:vec_idx");
-    let hnsw_started = std::time::Instant::now();
-    state::create_hnsw_index(db).map_err(|e| e.to_string())?;
-    tracing::info!(
-        "HNSW rebuild complete in {:.2}s",
-        hnsw_started.elapsed().as_secs_f64()
-    );
+    if !use_incr_hnsw {
+        // Recreate the HNSW index now that the bulk insert is done.
+        tracing::info!("rebuilding HNSW index on embedding_vectors:vec_idx");
+        let hnsw_started = std::time::Instant::now();
+        state::create_hnsw_index(db).map_err(|e| e.to_string())?;
+        tracing::info!(
+            "HNSW rebuild complete in {:.2}s",
+            hnsw_started.elapsed().as_secs_f64()
+        );
+    } else {
+        tracing::info!("skipped full HNSW rebuild (incremental puts)");
+    }
 
     // Reap orphans (precomputed before HNSW drop).
     tracing::info!("orphan reap: {} orphans", orphan_rows.len());
@@ -1076,6 +1284,10 @@ pub struct BackgroundEmbedConfig {
     pub full: bool,
     /// Override the types filter; empty = "use the mega-graph heuristic".
     pub types_filter: String,
+    /// Duty-cycle / yield under MCP (default true for MCP toggle).
+    pub partial: bool,
+    /// Soft RSS fraction of container budget (0.0 = use env default).
+    pub rss_fraction: f64,
 }
 
 impl Default for BackgroundEmbedConfig {
@@ -1086,6 +1298,8 @@ impl Default for BackgroundEmbedConfig {
             workers: 1,
             full: false,
             types_filter: String::new(),
+            partial: true,
+            rss_fraction: 0.0,
         }
     }
 }
@@ -1116,13 +1330,26 @@ pub fn spawn_background_embed(
 ) -> Result<Option<BackgroundEmbedHandle>, String> {
     use std::io::IsTerminal;
 
-    // Cap workers/batch against LEANKG_EMBED_MAX_MB before status/lock write.
-    let mem = plan_embed_memory(cfg.workers, cfg.batch_size);
+    // Cap workers/batch against fractional / LEANKG_EMBED_MAX_MB budget.
+    let budget = if cfg.rss_fraction > 0.0 {
+        crate::embeddings::control::resolve_partial_embed_budget_mb(cfg.rss_fraction)
+    } else if cfg.partial {
+        crate::embeddings::control::resolve_partial_embed_budget_mb(0.0)
+    } else {
+        embed_max_rss_mb()
+    };
+    let mem = if budget > 0 {
+        plan_embed_memory_with_budget(cfg.workers, cfg.batch_size, budget)
+    } else {
+        plan_embed_memory(cfg.workers, cfg.batch_size)
+    };
     let cfg = BackgroundEmbedConfig {
         batch_size: mem.batch_size,
         workers: mem.workers,
         full: cfg.full,
         types_filter: cfg.types_filter,
+        partial: cfg.partial,
+        rss_fraction: cfg.rss_fraction,
     };
     if mem.max_rss_mb > 0 {
         tracing::info!(
@@ -1245,6 +1472,8 @@ pub fn spawn_background_embed(
                         }
                     }
                 },
+                partial: cfg.partial,
+                max_rss_mb_override: Some(mem.max_rss_mb).filter(|n| *n > 0),
             };
 
             // Periodic status snapshot poller. Reads the live row count from the
@@ -1267,6 +1496,16 @@ pub fn spawn_background_embed(
                 .spawn(move || {
                     while !poller_done_clone.load(Ordering::Relaxed) {
                         std::thread::sleep(std::time::Duration::from_secs(5));
+                        if poller_done_clone.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let phase = crate::embeddings::control::phase();
+                        if phase == crate::embeddings::control::PHASE_COMPLETED
+                            || phase == crate::embeddings::control::PHASE_FAILED
+                            || phase == crate::embeddings::control::PHASE_CANCELLED
+                        {
+                            break;
+                        }
                         let embedded = poller_graph
                             .db()
                             .run_script(
@@ -1276,16 +1515,21 @@ pub fn spawn_background_embed(
                             )
                             .map(|r| r.rows.len() as u64)
                             .unwrap_or(0);
+                        let (considered, skipped_fresh, to_embed, vectors_existing) =
+                            crate::embeddings::control::live_progress();
                         let body = serde_json::json!({
                             "pid": poller_pid,
                             "started_at": poller_started,
-                            "considered": poller_total,
+                            "considered": if considered > 0 { considered } else { poller_total },
                             "embedded": embedded,
-                            "skipped_fresh": 0u64,
+                            "skipped_fresh": skipped_fresh,
+                            "to_embed": to_embed,
+                            "vectors_existing": vectors_existing,
                             "orphans": 0u64,
                             "workers": poller_workers,
-                            "status": "running",
-                            "mode": "in_process_background",
+                            "status": crate::embeddings::control::phase_name(phase),
+                            "mode": if cfg.partial { "partial_incremental" } else { "in_process_background" },
+                            "build_mode": if cfg.full { "full" } else { "incremental" },
                         });
                         if let Ok(mut f) = std::fs::File::create(&poller_status) {
                             let _ = f.write_all(body.to_string().as_bytes());
@@ -1295,7 +1539,9 @@ pub fn spawn_background_embed(
                 .ok();
 
             let started = std::time::Instant::now();
-            let result = if cfg.workers > 1 {
+            crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_RUNNING);
+            // Partial mode stays on the serial path so duty-cycle / yield gates apply.
+            let result = if cfg.workers > 1 && !cfg.partial {
                 build_index_parallel(
                     &graph_clone,
                     std::path::Path::new(""),
@@ -1320,11 +1566,23 @@ pub fn spawn_background_embed(
                         "embedded": report.embedded_count,
                         "skipped_fresh": report.skipped_fresh_count,
                         "orphans": report.orphaned_count,
+                        "vectors_existing": crate::embeddings::control::live_progress().3,
                         "workers": cfg.workers,
                         "elapsed_s": elapsed.as_secs_f64(),
                         "status": "completed",
-                        "mode": "in_process_background",
+                        "mode": if cfg.partial { "partial_incremental" } else { "in_process_background" },
+                        "build_mode": if cfg.full { "full" } else { "incremental" },
                     });
+                    crate::embeddings::control::set_live_progress(
+                        report.considered_count as u64,
+                        report.skipped_fresh_count as u64,
+                        0,
+                        crate::embeddings::control::live_progress().3,
+                    );
+                    crate::embeddings::control::set_phase(
+                        crate::embeddings::control::PHASE_COMPLETED,
+                    );
+                    crate::embeddings::control::disarm_embed();
                     if let Ok(mut f) = std::fs::File::create(&final_status) {
                         let _ = f.write_all(body.to_string().as_bytes());
                     }
@@ -1349,17 +1607,25 @@ pub fn spawn_background_embed(
                     }
                 }
                 Err(e) => {
+                    let cancelled = e.contains("cancel");
                     let err_status = leankg_dir_for_worker.join("embed_status.json");
                     let body = serde_json::json!({
                         "pid": pid,
                         "started_at": started_at,
-                        "status": "failed",
+                        "status": if cancelled { "cancelled" } else { "failed" },
                         "error": e,
-                        "mode": "in_process_background",
+                        "mode": if cfg.partial { "partial_incremental" } else { "in_process_background" },
+                        "build_mode": if cfg.full { "full" } else { "incremental" },
                     });
                     if let Ok(mut f) = std::fs::File::create(&err_status) {
                         let _ = f.write_all(body.to_string().as_bytes());
                     }
+                    crate::embeddings::control::set_phase(if cancelled {
+                        crate::embeddings::control::PHASE_CANCELLED
+                    } else {
+                        crate::embeddings::control::PHASE_FAILED
+                    });
+                    crate::embeddings::control::disarm_embed();
                     tracing::error!("background embed failed: {}", e);
                 }
             }

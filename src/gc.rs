@@ -122,6 +122,11 @@ impl MemoryGuard {
     }
 
     fn idle_secs() -> u64 {
+        Self::idle_secs_public()
+    }
+
+    /// Public idle seconds since last [`Self::touch`] (for embed yield/idle gates).
+    pub fn idle_secs_public() -> u64 {
         let last = Self::activity_nanos();
         if last == 0 {
             return 0;
