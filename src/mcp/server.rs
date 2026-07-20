@@ -691,6 +691,117 @@ impl MCPServer {
         Err("embed_control requires the `embeddings` cargo feature".into())
     }
 
+    /// FR-ONT-PROC-01: watch ontology YAML and re-sync without dropping HTTP.
+    fn spawn_ontology_yaml_watcher_if_present(&self) {
+        let project_root = match self.find_project_root() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::debug!("ontology watcher skipped: {}", e);
+                return;
+            }
+        };
+        let graph = match self.get_graph_engine() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!("ontology watcher: graph not ready ({})", e);
+                return;
+            }
+        };
+        let me = self.clone();
+        if crate::ontology::spawn_ontology_yaml_watcher(project_root, graph, move |_stats| {
+            let mut guard = me.graph_engine.lock();
+            *guard = None;
+            let mut cache = me.graph_engine_cache.write();
+            cache.clear();
+        })
+        .is_some()
+        {
+            tracing::info!("Ontology YAML auto-sync watcher started");
+        }
+    }
+
+    /// FR-ONT-PROC-03: idempotent ontology refresh after index (or explicit MCP sync).
+    fn refresh_ontology_after_index(&self) {
+        let project_root = match self.find_project_root() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let graph = match self.get_graph_engine() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!("ontology post-index sync skipped: {}", e);
+                return;
+            }
+        };
+        match crate::ontology::sync_for_project(&project_root, &graph) {
+            Ok(stats) => {
+                tracing::info!(
+                    "Ontology refreshed (workflows={}, steps={})",
+                    stats.workflows,
+                    stats.workflow_steps
+                );
+                let mut guard = self.graph_engine.lock();
+                *guard = None;
+                let mut cache = self.graph_engine_cache.write();
+                cache.clear();
+            }
+            Err(e) => {
+                tracing::debug!("Ontology post-index sync skipped: {}", e);
+            }
+        }
+    }
+
+    fn handle_ontology_control(
+        &self,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("status");
+        let project_root = self.find_project_root()?;
+        match action {
+            "status" => {
+                let mut status = crate::ontology::ontology_sync_status(&project_root);
+                if let Ok(graph) = self.get_graph_engine() {
+                    let q = crate::ontology::OntologyQueryEngine::new(graph.db().clone());
+                    if let Ok(ont) = q.get_ontology_status() {
+                        status["procedural_counts"] = serde_json::json!(ont.procedural_counts);
+                        status["concept_counts"] = serde_json::json!(ont.concept_counts);
+                    }
+                }
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "tool": "ontology_control",
+                    "data": status,
+                }))
+            }
+            "sync" => {
+                let graph = self.get_graph_engine()?;
+                let stats = crate::ontology::sync_for_project(&project_root, &graph)
+                    .map_err(|e| format!("ontology sync failed: {}", e))?;
+                {
+                    let mut guard = self.graph_engine.lock();
+                    *guard = None;
+                }
+                {
+                    let mut cache = self.graph_engine_cache.write();
+                    cache.clear();
+                }
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "tool": "ontology_control",
+                    "data": {
+                        "action": "sync",
+                        "stats": stats,
+                        "message": "ontology YAML synced into served DB",
+                    }
+                }))
+            }
+            other => Err(format!("unknown ontology_control action '{}'", other)),
+        }
+    }
+
     #[cfg(feature = "embeddings")]
     fn spawn_background_embed_in_process(&self) {
         // Read tuning env once (default-friendly fallbacks).
@@ -810,6 +921,8 @@ impl MCPServer {
                     .display()
             );
         }
+
+        self.spawn_ontology_yaml_watcher_if_present();
 
         // Background maintenance: periodically reclaim free pages via VACUUM.
         // See HLD §2.5 / PRD FR-10.
@@ -1226,6 +1339,8 @@ impl MCPServer {
                     .display()
             );
         }
+
+        self.spawn_ontology_yaml_watcher_if_present();
 
         // Background maintenance: periodically reclaim free pages via VACUUM.
         // See HLD §2.5 / PRD FR-10.
@@ -1702,6 +1817,8 @@ impl MCPServer {
 
         tracing::info!("Auto-index complete");
 
+        self.refresh_ontology_after_index();
+
         {
             let mut guard = self.graph_engine.lock();
             *guard = None;
@@ -1992,6 +2109,10 @@ impl MCPServer {
             return self.handle_embed_control(&arguments);
         }
 
+        if tool_name == "ontology_control" {
+            return self.handle_ontology_control(&arguments);
+        }
+
         if tool_name == "mcp_init" {
             if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
                 let new_db_path = std::path::PathBuf::from(path);
@@ -2085,6 +2206,9 @@ impl MCPServer {
         let result = handler.execute_tool(tool_name, &args_value).await;
 
         if tool_name == "mcp_index" {
+            if result.is_ok() {
+                self.refresh_ontology_after_index();
+            }
             let mut guard = self.graph_engine.lock();
             *guard = None;
         }
@@ -2102,6 +2226,7 @@ impl MCPServer {
                 | "link_element"
                 | "add_documentation"
                 | "promote_environment"
+                | "ontology_control"
         ) {
             let mut guard = self.graph_engine.lock();
             *guard = None;
@@ -2140,6 +2265,7 @@ impl MCPServer {
                 | "add_documentation"
                 | "promote_environment"
                 | "embed_control"
+                | "ontology_control"
         )
     }
 }

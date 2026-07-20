@@ -317,6 +317,19 @@ leankg mcp-http --port 9699  # HTTP/SSE for Docker / remote
 
 **Agent search prefer-order** (when `:9699` healthy): `concept_search` → `semantic_search` → `search_code`, then exact tools (`get_context`, impact, deps). Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
 
+### Procedural ontology (auto-update)
+
+While `mcp-http` / `mcp-stdio` / `leankg serve` runs, LeanKG watches `ontology/concepts.yaml` and `ontology/workflows.yaml`, debounces (≥1s), and re-syncs into the served DB so `kg_trace_workflow` stays fresh without a restart. Ontology also refreshes after index, and Docker boot re-syncs when `.leankg/ontology_synced` is older than **either** YAML file.
+
+| Knob | Default | Purpose |
+|------|---------|---------|
+| `LEANKG_ONTOLOGY_DIR` | `<project>/ontology` | Override ontology YAML directory |
+| `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS` | `1500` (min 1000) | Debounce for in-process YAML watch |
+| `LEANKG_ONTOLOGY_SYNC_ON_BOOT` | `timeout` | Docker: `skip` / `force` / `timeout` |
+| MCP `ontology_control` | — | `action=sync\|status` (Admin) |
+
+Details: [docs/mcp-tools.md](docs/mcp-tools.md) · Smoke: [docs/reports/ontology-proc-auto-smoke-2026-07-21.md](docs/reports/ontology-proc-auto-smoke-2026-07-21.md)
+
 Setup details: [docs/agentic-instructions.md](docs/agentic-instructions.md) · Skill: [instructions/using-leankg/SKILL.md](instructions/using-leankg/SKILL.md) · Tool catalog: [docs/mcp-tools.md](docs/mcp-tools.md)
 
 ---

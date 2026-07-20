@@ -106,6 +106,25 @@ Use `get_architecture` to inspect how many calls fall into each bucket once Phas
 
 When the MCP server starts without an existing LeanKG project, it automatically initializes and indexes the current directory. This provides a "plug and play" experience for AI tools.
 
+## Procedural ontology (auto-update)
+
+Procedural workflows live in `ontology/workflows.yaml` (plus `concepts.yaml`). Flow search: `kg_trace_workflow` / `kg_ontology_status`.
+
+| Tool | Description |
+|------|-------------|
+| `kg_trace_workflow` | Ordered procedural steps for a workflow (or match by step name) |
+| `kg_ontology_status` | Concept/procedural counts, missing aliases, workflows without failure modes |
+| `ontology_control` | Admin: `action=sync` loads YAML into the served DB and touches `.leankg/ontology_synced`; `action=status` reports YAML/marker mtimes and counts |
+
+**When ontology refreshes (no restart):**
+
+1. YAML watch during `mcp-http` / `mcp-stdio` / `leankg serve` (debounce `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS`, default 1500ms, min 1000)
+2. Docker/boot when `.leankg/ontology_synced` is older than `concepts.yaml` **or** `workflows.yaml` (`LEANKG_ONTOLOGY_SYNC_ON_BOOT`)
+3. After successful index (CLI / MCP / auto-index / UI)
+4. Explicit `ontology_control(action=sync)`
+
+Env: `LEANKG_ONTOLOGY_DIR` overrides the ontology directory. Smoke: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md).
+
 ## Semantic Retrieval (optional, `embeddings` feature)
 
 These tools ship only when LeanKG is built with `--features embeddings`. They add vector retrieval + cross-encoder rerank + adaptive graph traversal on top of the existing keyword/graph search.
