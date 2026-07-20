@@ -76,9 +76,13 @@ export async function fetchServiceTopology(): Promise<KnowledgeGraph> {
   return normalizeGraphPayload(data);
 }
 
-export async function expandService(path: string, all = true): Promise<KnowledgeGraph> {
+export async function expandService(
+  path: string,
+  all = true,
+  projectPath?: string,
+): Promise<KnowledgeGraph> {
   const q = new URLSearchParams();
-  const normalized = normalizeExpandPath(path);
+  const normalized = normalizeExpandPath(path, projectPath);
   if (normalized) q.set('path', normalized);
   if (all) q.set('all', 'true');
   const json = await fetchJson<ApiEnvelope<{ nodes: unknown[]; relationships: unknown[] }>>(
