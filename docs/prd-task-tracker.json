@@ -2,10 +2,10 @@
   "generated": "2026-07-20",
   "source": "docs/prd.md",
   "counts": {
-    "DONE": 337,
+    "DONE": 340,
     "PARTIAL": 11,
-    "PENDING": 18,
-    "NOT_DONE": 56,
+    "PENDING": 17,
+    "NOT_DONE": 54,
     "WONT_DO": 3,
     "OPEN": 1
   },
@@ -15,8 +15,8 @@
       "kind": "User Story",
       "title": "Mega-graph HNSW semantic_search / kg_semantic_context must not OOM MCP",
       "priority": "Must Have",
-      "status": "PENDING",
-      "notes": "OPEN P0 2026-07-20 \u2014 evidence docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md; small /workspace HNSW GREEN",
+      "status": "DONE",
+      "notes": "DONE 2026-07-20 \u2014 keyed hydration + has_any; evidence docs/reports/rel-054-mega-sem-oom-fix-2026-07-20.md",
       "section": "3.14 Semantic MCP Agent UX Enhancements (US-SEM) \u2014 v3.7.1",
       "prd_line": null,
       "focus": "P0",
@@ -28,8 +28,8 @@
       "kind": "FR",
       "title": "Mega-safe HNSW path: no unbounded all_elements(); ANN + paginated/keyed hydration; MCP stays healthy under mem_limit",
       "priority": "Must Have",
-      "status": "NOT_DONE",
-      "notes": "P0 \u2014 remove all_elements from HNSW semantic seed hydration; peak RSS must not OOM MCP on ~641k-element graphs",
+      "status": "DONE",
+      "notes": "DONE 2026-07-20 \u2014 get_elements_by_qualified_names; skip index_size when ann_top_k set; has_any gates",
       "section": "5.15 Semantic MCP Agent UX Enhancements (v3.7.1)",
       "prd_line": null,
       "focus": "P0",
@@ -41,8 +41,8 @@
       "kind": "Release",
       "title": "Live mega smoke: semantic_search + kg_semantic_context on /workspace-other without OOM/restart",
       "priority": "Must Have",
-      "status": "NOT_DONE",
-      "notes": "P0 release gate; complements REL-051 small-graph smoke; record peak RSS + latency in docs/reports/",
+      "status": "DONE",
+      "notes": "DONE 2026-07-20 \u2014 docs/reports/rel-054-mega-sem-oom-fix-2026-07-20.md; residual model RSS under ~3.9GiB cgroup noted",
       "section": "5.15 Semantic MCP Agent UX Enhancements (v3.7.1)",
       "prd_line": null,
       "focus": "P0",
@@ -5556,12 +5556,12 @@
     "update_rule": "Edit this file (and JSON) when closing work. Link new IDs from PRD narrative sections.",
     "sort": "focus(P0..P3) \u2192 MoSCoW \u2192 VE suborder \u2192 status \u2192 id",
     "focus_legend": {
-      "P0": "Mega-graph HNSW semantic_search OOM (US-SEM-06 / FR-SEM-07 / REL-054) \u2014 CURRENT highest; embed-resume + VE DONE",
+      "P0": "Mega-graph HNSW semantic_search OOM (US-SEM-06 / FR-SEM-07 / REL-054) \u2014 DONE 2026-07-20; next open focus P1",
       "P1": "Other Must Have",
       "P2": "Should Have",
       "P3": "Could Have / aspirational OPEN"
     },
-    "updated": "2026-07-20-mega-sem-oom",
-    "sync_note": "v3.7.5: added US-SEM-06, FR-SEM-07, REL-054 as open P0 from mega Docker MCP OOM evidence."
+    "updated": "2026-07-20-rel-054-closed",
+    "sync_note": "v3.7.5: US-SEM-06 / FR-SEM-07 / REL-054 DONE after keyed hydration + mega Docker smoke."
   }
 }
