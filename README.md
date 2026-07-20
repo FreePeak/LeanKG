@@ -302,7 +302,7 @@ Repo ──► Indexer ──► Knowledge Graph ──► MCP Tools ──► A
 
 | Agent | Auto-setup | Notes |
 |-------|------------|--------|
-| Cursor | Yes | Per-project install; session hook |
+| Cursor | Yes | Per-project install; session hook; skill `using-leankg` |
 | Claude Code | Yes | Plugin + full lifecycle hooks |
 | OpenCode | Yes | Plugin + skill |
 | Gemini CLI | Yes | MCP + skill / agent docs |
@@ -315,7 +315,9 @@ leankg mcp-stdio --watch     # local AI tools
 leankg mcp-http --port 9699  # HTTP/SSE for Docker / remote
 ```
 
-Setup details: [docs/agentic-instructions.md](docs/agentic-instructions.md)
+**Agent search prefer-order** (when `:9699` healthy): `concept_search` → `semantic_search` → `search_code`, then exact tools (`get_context`, impact, deps). Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
+
+Setup details: [docs/agentic-instructions.md](docs/agentic-instructions.md) · Skill: [instructions/using-leankg/SKILL.md](instructions/using-leankg/SKILL.md) · Tool catalog: [docs/mcp-tools.md](docs/mcp-tools.md)
 
 ---
 
