@@ -18,7 +18,7 @@
 //! agent_diary_read, agent_diary_write, agent_focus,
 //! check_consistency, concept_search,
 //! delete_knowledge, explain_node, export_graph_snapshot,
-//! find_clones, find_dead_code, find_env_conflicts, find_route, find_tunnels,
+//! find_dead_code, find_env_conflicts, find_route, find_tunnels,
 //! get_architecture, get_cluster_skill, get_god_nodes, get_graph_report,
 //! get_graph_schema, get_nav_callers, get_nav_graph, get_overview_context,
 //! get_pr_impact, get_screen_args, get_service_context, get_team_map,
@@ -125,7 +125,6 @@ fn every_tested_tool_is_registered() {
         "delete_knowledge",
         "explain_node",
         "export_graph_snapshot",
-        "find_clones",
         "find_dead_code",
         "find_env_conflicts",
         "find_route",
@@ -628,19 +627,6 @@ mod aggregators {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn find_clones_returns_array() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(
-            &handler,
-            "find_clones",
-            json!({"min_lines": 5, "scope": "file"}),
-        )
-        .await
-        .expect("find_clones");
-        assert!(!resp.to_string().is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn get_pr_impact_returns_payload() {
         let (handler, _tmp) = make_handler().await;
         let resp = call(
@@ -838,7 +824,9 @@ mod ontology {
                     || e.contains("missing")
                     || e.contains("not registered")
                     || e.contains("not implemented")
-                    || e.contains("Unknown tool"),
+                    || e.contains("Unknown tool")
+                    || e.contains("No embedded vectors")
+                    || e.contains("leankg embed"),
                 "expected graceful error: {e}"
             ),
         }

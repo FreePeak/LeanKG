@@ -122,12 +122,6 @@ fn prs_parses() {
 }
 
 #[test]
-fn clones_parses() {
-    let cmd = parse(&["clones"]).expect("parse");
-    assert!(matches!(cmd, CLICommand::Clones { .. }));
-}
-
-#[test]
 fn doctor_parses() {
     let cmd = parse(&["doctor"]).expect("parse");
     assert!(matches!(cmd, CLICommand::Doctor { .. }));

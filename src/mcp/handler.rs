@@ -271,7 +271,6 @@ impl ToolHandler {
             "get_team_map" => self.get_team_map(arguments),
             "get_overview_context" => self.get_overview_context(arguments),
             "get_pr_impact" => self.get_pr_impact(arguments),
-            "find_clones" => self.find_clones(arguments),
             "export_graph_snapshot" => self.export_graph_snapshot(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "query_graph" => self.query_graph(arguments),
@@ -1750,20 +1749,6 @@ impl ToolHandler {
             .map_err(|e| e.to_string())?;
         let value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
         Ok(value)
-    }
-
-    fn find_clones(&self, args: &Value) -> Result<Value, String> {
-        let threshold = args["threshold"].as_f64().unwrap_or(0.6);
-        let limit = args["limit"].as_u64().unwrap_or(50) as usize;
-        let pairs = self
-            .graph_engine
-            .find_clones(threshold, limit)
-            .map_err(|e| e.to_string())?;
-        Ok(json!({
-            "count": pairs.len(),
-            "threshold": threshold,
-            "pairs": pairs,
-        }))
     }
 
     fn export_graph_snapshot(&self, args: &Value) -> Result<Value, String> {

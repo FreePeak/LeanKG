@@ -231,21 +231,6 @@ pub enum CLICommand {
         #[arg(long)]
         files: Option<String>,
     },
-    /// US-CBM-B7: Find near-duplicate functions / methods
-    Clones {
-        /// Similarity threshold (0.0 - 1.0)
-        #[arg(long, default_value = "0.6")]
-        threshold: f64,
-        /// Limit
-        #[arg(long, default_value = "50")]
-        limit: usize,
-        /// Maximum functions/methods/constructors to scan. Default 50000;
-        /// raise this only on graphs you control (e.g. single-service
-        /// subgraphs). The previous O(n²) all-pairs scan would otherwise
-        /// run for hours on big monorepos.
-        #[arg(long, default_value = "50000")]
-        max_functions: usize,
-    },
     /// Auto-install MCP config
     Install,
     /// Diagnose stale leankg processes, mmap'd DB files, and current

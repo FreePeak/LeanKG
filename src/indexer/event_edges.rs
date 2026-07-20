@@ -84,7 +84,7 @@ pub fn detect_event_edges(source: &str) -> Vec<EventEdge> {
 
 /// Convert detected edges into graph Relationships. The event itself
 /// becomes a synthetic `event:<name>` qualified_name so it shows up
-/// in `search_code` and `find_clones` outputs.
+/// in `search_code` outputs.
 pub fn to_relationships(edges: &[EventEdge]) -> Vec<Relationship> {
     edges
         .iter()

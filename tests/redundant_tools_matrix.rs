@@ -41,8 +41,8 @@ struct OverlapEntry {
     note: &'static str,
 }
 
-/// Tools hard-removed in FR-SURF-03.
-const REMOVED_TOOLS: &[&str] = &["mcp_hello", "mcp_impact", "get_doc_for_file"];
+/// Tools hard-removed (FR-SURF-03 + find_clones hard-delete 2026-07-20).
+const REMOVED_TOOLS: &[&str] = &["mcp_hello", "mcp_impact", "get_doc_for_file", "find_clones"];
 
 /// Full inventory — must match `ToolRegistry::list_tools()` exactly (one row each).
 const TOOL_CLASSIFICATION: &[ClassEntry] = &[
@@ -315,11 +315,6 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         name: "find_large_functions",
         kind: Kind::KeepUnique,
         note: "Oversized functions by line count.",
-    },
-    ClassEntry {
-        name: "find_clones",
-        kind: Kind::KeepUnique,
-        note: "Near-duplicate functions.",
     },
     ClassEntry {
         name: "find_tunnels",

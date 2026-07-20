@@ -1,7 +1,7 @@
 //! Process-budget helper for heavy CLI/MCP operations.
 //!
 //! Wraps every long-running algorithm with hard caps on wall-clock time,
-//! resident memory, and iteration count. Heavy tools (`clones`, `impact`,
+//! resident memory, and iteration count. Heavy tools (`impact`,
 //! `export`, `check-consistency`, `gods`, `path`, `tunnels`, `report`,
 //! `prs`) call `BudgetGuard::check()` inside their hot loops and abort
 //! early when the budget is exhausted, instead of running for hours
@@ -18,7 +18,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! let mut guard = BudgetGuard::for_tool("clones");
+//! let mut guard = BudgetGuard::for_tool("impact");
 //! for i in 0..n {
 //!     guard.tick();                          // increments iteration counter
 //!     guard.check()?;                        // abort on timeout / RSS breach

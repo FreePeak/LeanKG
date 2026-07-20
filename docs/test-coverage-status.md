@@ -129,18 +129,18 @@ The closed set:
 add_annotation            add_documentation       add_knowledge
 agent_diary_read          agent_diary_write       agent_focus
 check_consistency         concept_search          delete_knowledge
-explain_node              export_graph_snapshot   find_clones
-find_dead_code            find_env_conflicts      find_route
-find_tunnels              get_architecture        get_cluster_skill
-get_god_nodes             get_graph_report        get_graph_schema
-get_nav_callers           get_nav_graph           get_overview_context
-get_pr_impact             get_screen_args         get_service_context
-get_team_map              get_traceability        get_upcoming_changes
-kg_concept_map            kg_context              kg_ontology_status
-kg_self_test              kg_semantic_context     kg_trace_workflow
-link_element              load_layer              mcp_init
-promote_environment       query_incidents         report_query_outcome
-resolve_with_lsp          search_annotations      search_by_environment
+explain_node              export_graph_snapshot   find_dead_code
+find_env_conflicts        find_route              find_tunnels
+get_architecture          get_cluster_skill       get_god_nodes
+get_graph_report          get_graph_schema        get_nav_callers
+get_nav_graph             get_overview_context    get_pr_impact
+get_screen_args           get_service_context     get_team_map
+get_traceability          get_upcoming_changes    kg_concept_map
+kg_context                kg_ontology_status      kg_self_test
+kg_semantic_context       kg_trace_workflow       link_element
+load_layer                mcp_init                promote_environment
+query_incidents           report_query_outcome    resolve_with_lsp
+search_annotations        search_by_environment
 search_by_requirement     search_knowledge        semantic_search
 shortest_path             temporal_query          timeline
 update_knowledge          wake_up

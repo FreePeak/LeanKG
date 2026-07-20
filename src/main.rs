@@ -365,15 +365,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_default();
             run_prs(&project_path, &env, &files_vec, &db_path)?;
         }
-        cli::CLICommand::Clones {
-            threshold,
-            limit,
-            max_functions,
-        } => {
-            let project_path = find_project_root()?;
-            let db_path = project_path.join(".leankg");
-            run_clones(threshold, limit, max_functions, &db_path)?;
-        }
         cli::CLICommand::Generate { template: _ } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
@@ -1640,30 +1631,6 @@ fn run_install_command(method: &crate::lsp::registry::InstallMethod) -> Result<(
             status
         ))
     }
-}
-
-fn run_clones(
-    threshold: f64,
-    limit: usize,
-    max_functions: usize,
-    db_path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
-    let graph_engine = graph::GraphEngine::new(db);
-    let opts = graph::CloneScanOptions { max_functions };
-    let started = std::time::Instant::now();
-    let pairs = graph_engine.find_clones_with_opts(threshold, limit, &opts)?;
-    println!(
-        "Found {} clone pairs (threshold={}, max_functions={}) in {:?}:",
-        pairs.len(),
-        threshold,
-        opts.max_functions,
-        started.elapsed()
-    );
-    for p in pairs.iter().take(50) {
-        println!("  {:.2}  {}  <==>  {}", p.similarity, p.source, p.target);
-    }
-    Ok(())
 }
 
 fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {

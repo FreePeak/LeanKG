@@ -216,18 +216,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "find_clones".to_string(),
-                description: "US-CBM-B7: Find near-duplicate functions / methods using Jaccard token-set similarity. Returns pairs whose similarity >= threshold (default 0.6).".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "threshold": {"type": "number", "default": 0.6, "minimum": 0.0, "maximum": 1.0},
-                        "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
-                        "project": {"type": "string"}
-                    }
-                }),
-            },
-            ToolDefinition {
                 name: "get_pr_impact".to_string(),
                 description: "US-GF-08: PR impact dashboard. Given changed files, returns cluster overlap and severity (LOW / MEDIUM / HIGH). Use to triage merge-order risk before pushing.".to_string(),
                 input_schema: json!({
