@@ -308,42 +308,36 @@ When `LEANKG_DB_ENGINE` is not set, LeanKG uses the default per-project SQLite s
 
 ## UI Development
 
-### UI v2 (GitNexus-shell explorer — Phase 1)
+### UI v2 (GitNexus-shell explorer — embedded default)
 
-New app in `<leankg-codebase>/ui-v2/` (does **not** replace `ui/` or `src/embed/` yet):
+App source: `<leankg-codebase>/ui-v2/`. Production assets are copied into `src/embed/` and served by `leankg serve` / `leankg web` (onrender `:8080`, Docker Option A `:8080`).
 
 ```bash
-# Terminal A — backend
-cargo run --release -- serve   # :8080
+# Terminal A — backend (also serves embedded UI at http://localhost:8080/)
+cargo run --release -- serve
 
-# Terminal B — UI v2
+# Terminal B — hot reload during UI work
 cd <leankg-codebase>/ui-v2 && npm install && npm run dev   # :5173, proxies /api → :8080
+
+# After UI changes — refresh embedded assets for Docker / onrender / binary serve
+cd <leankg-codebase>/ui-v2 && npm run build
+rm -rf <leankg-codebase>/src/embed/*
+cp -r <leankg-codebase>/ui-v2/dist/* <leankg-codebase>/src/embed/
+cargo build --release
 
 # Tests
 cd <leankg-codebase>/ui-v2 && npm test && npm run test:e2e
 ```
 
-ERD: [`docs/erd/ui-v2-erd.md`](docs/erd/ui-v2-erd.md). Parity report required before claiming GitNexus parity.
+ERD: [`docs/erd/ui-v2-erd.md`](docs/erd/ui-v2-erd.md). Parity: [`docs/reports/ui-v2-gitnexus-parity-2026-07-20.md`](docs/reports/ui-v2-gitnexus-parity-2026-07-20.md).
 
-### Legacy UI (`ui/` — still embedded)
+### Legacy UI (`ui/` — source kept, not embedded)
 
-The UI is a Vite + React app in `<leankg-codebase>/ui/`:
+The previous Vite app remains under `ui/` for reference. It is **not** what `serve` / onrender ship anymore. Do not copy `ui/dist` into `src/embed/`.
 
+**For full backend + embedded UI:**
 ```bash
-cd <leankg-codebase>/ui && npm run dev    # Dev server at http://localhost:5173/ (hot reload)
-cd <leankg-codebase>/ui && npm run build  # Production build
-```
-
-**Workflow after testing (legacy embed — cutover from ui-v2 is later):**
-```bash
-cp -r <leankg-codebase>/ui/dist/* <leankg-codebase>/src/embed/
-cargo build  # Rebuild Rust with new UI assets
-```
-
-**For full backend testing:**
-```bash
-cargo run -- serve      # Backend API at http://localhost:8080/
-# Then open http://localhost:8080 in browser
+cargo run --release -- serve   # http://localhost:8080/  (UI v2 + /api)
 ```
 
 ## Important Files
