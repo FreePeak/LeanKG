@@ -13,6 +13,14 @@
 #     -v leankg-models:/root/.cache/leankg \
 #     freepeak/leankg:latest
 
+# UI v2 → baked into the binary via rust_embed (`src/embed/`).
+FROM node:20-bookworm AS ui
+WORKDIR /ui
+COPY ui-v2/package.json ui-v2/package-lock.json ./
+RUN npm ci
+COPY ui-v2/ ./
+RUN npm run build
+
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 
@@ -27,6 +35,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY benches ./benches
 COPY ontology/ ./ontology/
+# Prefer freshly built ui-v2 over whatever was last committed under src/embed/.
+COPY --from=ui /ui/dist/ ./src/embed/
 
 # Build with the `embeddings` feature so the resulting binary ships
 # `leankg embed`, `leankg semantic-context`, `leankg smoke-test`, and the

@@ -1,46 +1,54 @@
 # LeanKG UI v2 — README
 
-GitNexus-inspired graph explorer for LeanKG (`leankg serve` REST on `:8080`).  
+GitNexus-inspired graph explorer for LeanKG.  
 Phase 1: exploring shell only — no browser LLM agent.
+
+**Production path:** `npm run build` → copy `dist/*` into `src/embed/` → `leankg serve` / onrender / Docker `:8080` serve the embedded UI. Dev still uses Vite on `:5173`.
 
 ## Quick start
 
 ```bash
-# Terminal A — from an indexed LeanKG checkout (uses cwd’s .leankg)
+# Terminal A — REST + embedded UI (after assets are in src/embed/)
 cargo run --release -- serve --port 8080
-# or: ./target/release/leankg serve --port 8080
+# open http://127.0.0.1:8080/?path=src/cli
 
-# Terminal B
+# Terminal B — hot reload during UI work
 cd ui-v2 && npm install && npm run dev
 ```
 
-Open:
+Open (Vite or embedded):
 
 | URL | What you get |
 |-----|----------------|
-| http://127.0.0.1:5173/?path=src/cli | Bounded expand (~500 nodes) — **recommended** |
+| http://127.0.0.1:8080/?path=src/cli | Embedded UI v2 (onrender / Docker serve) |
+| http://127.0.0.1:5173/?path=src/cli | Vite dev — bounded expand (~500 nodes) |
 | http://127.0.0.1:5173/?path=src | Larger subtree |
 | http://127.0.0.1:5173/?skipGraph=1 | Mega-graph skip / topology overview |
-| http://127.0.0.1:5173/ | Auto-expand project root (needs current `serve` binary) |
 
 Vite proxies `/api` → `127.0.0.1:8080`. Status should show **connected**.
 
 **Not Docker MCP `:9699`** — UI talks REST (`/api/graph/*`, `/api/file`, `/api/search`), not MCP JSON-RPC.
 
+### Refresh embedded assets
+
+```bash
+cd ui-v2 && npm run build
+rm -rf ../src/embed/*
+cp -r dist/* ../src/embed/
+```
+
 ## Docker (Option A — MCP + REST in one container)
 
-RocksDB compose publishes **both** ports and starts `leankg serve` in the background before MCP:
+RocksDB compose builds **ui-v2 into the binary**, publishes **both** ports, and starts `leankg serve` before MCP:
 
 | Port | Process | Clients |
 |------|---------|---------|
 | `9699` | `mcp-http` | Cursor / agents (MCP) |
-| `8080` | `leankg serve` | UI v2 Vite proxy (`/api`) |
+| `8080` | `leankg serve` | **Embedded UI v2** + `/api` |
 
 ```bash
 docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up -d --build
-# Host UI
-cd ui-v2 && npm run dev
-# open http://127.0.0.1:5173/?path=src/cli
+# open http://127.0.0.1:8080/?path=src/cli
 ```
 
 Same RocksDB env (`LEANKG_DB_ENGINE`, `LEANKG_ROCKSDB_ROOT`) and `LEANKG_MCP_PROJECT` cwd — UI sees the Docker index. Disable REST with `LEANKG_SERVE_HTTP=0` in `.dockerfile` if you only need MCP.
