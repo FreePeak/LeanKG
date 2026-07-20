@@ -3403,11 +3403,28 @@ pub struct IndexStatusResponse {
     pub current_file: String,
     pub total_files: usize,
     pub indexed_files: usize,
+    /// Soft counts for UI mega-graph gating (ui-v2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relationship_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
 }
 
 #[allow(dead_code)]
 pub async fn api_index_status(State(state): State<AppState>) -> impl IntoResponse {
     let indexing_state = state.indexing_state.read().await;
+    let project_path = state.current_project_path.read().await.clone();
+
+    let (element_count, relationship_count) = match state.get_graph_engine().await {
+        Ok(g) => {
+            let ec = g.count_elements().ok();
+            let rc = g.count_relationships().ok();
+            (ec, rc)
+        }
+        Err(_) => (None, None),
+    };
 
     ApiResponse {
         success: true,
@@ -3417,6 +3434,9 @@ pub async fn api_index_status(State(state): State<AppState>) -> impl IntoRespons
             current_file: indexing_state.current_file.clone(),
             total_files: indexing_state.total_files,
             indexed_files: indexing_state.indexed_files,
+            element_count,
+            relationship_count,
+            project_path: Some(project_path.display().to_string()),
         }),
         error: indexing_state.error.clone(),
     }

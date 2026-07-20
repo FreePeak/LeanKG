@@ -303,6 +303,25 @@ When `LEANKG_DB_ENGINE` is not set, LeanKG uses the default per-project SQLite s
 
 ## UI Development
 
+### UI v2 (GitNexus-shell explorer — Phase 1)
+
+New app in `<leankg-codebase>/ui-v2/` (does **not** replace `ui/` or `src/embed/` yet):
+
+```bash
+# Terminal A — backend
+cargo run --release -- serve   # :8080
+
+# Terminal B — UI v2
+cd <leankg-codebase>/ui-v2 && npm install && npm run dev   # :5173, proxies /api → :8080
+
+# Tests
+cd <leankg-codebase>/ui-v2 && npm test && npm run test:e2e
+```
+
+ERD: [`docs/erd/ui-v2-erd.md`](docs/erd/ui-v2-erd.md). Parity report required before claiming GitNexus parity.
+
+### Legacy UI (`ui/` — still embedded)
+
 The UI is a Vite + React app in `<leankg-codebase>/ui/`:
 
 ```bash
@@ -310,7 +329,7 @@ cd <leankg-codebase>/ui && npm run dev    # Dev server at http://localhost:5173/
 cd <leankg-codebase>/ui && npm run build  # Production build
 ```
 
-**Workflow after testing:**
+**Workflow after testing (legacy embed — cutover from ui-v2 is later):**
 ```bash
 cp -r <leankg-codebase>/ui/dist/* <leankg-codebase>/src/embed/
 cargo build  # Rebuild Rust with new UI assets
