@@ -4,6 +4,15 @@ import type {
   KnowledgeGraph,
 } from '../core/graph/types';
 
+/** Map API type strings (`function`, `property`, `File`) to PascalCase labels. */
+export function toPascalType(raw: unknown): string {
+  const t = String(raw ?? '').trim();
+  if (!t) return 'CodeElement';
+  if (t.startsWith('Cluster[')) return t;
+  if (/^[A-Z][A-Za-z0-9]*$/.test(t)) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+}
+
 /** Normalize LeanKG API payloads (camelCase or snake_case) into KnowledgeGraph. */
 export function normalizeGraphPayload(raw: {
   nodes?: unknown[];
@@ -12,14 +21,17 @@ export function normalizeGraphPayload(raw: {
   const nodes: GraphNode[] = (raw.nodes ?? []).map((n) => {
     const node = n as Record<string, unknown>;
     const props = (node.properties ?? {}) as Record<string, unknown>;
-    const label = String(node.label ?? props.elementType ?? 'CodeElement');
+    const elementType = toPascalType(
+      props.elementType ?? props.element_type ?? node.label ?? 'CodeElement',
+    );
     return {
       id: String(node.id),
-      label,
+      label: elementType,
       properties: {
+        ...props,
         name: String(props.name ?? node.id ?? ''),
         filePath: String(props.filePath ?? props.file_path ?? ''),
-        elementType: String(props.elementType ?? props.element_type ?? label),
+        elementType,
         startLine:
           typeof props.startLine === 'number'
             ? props.startLine
@@ -32,7 +44,6 @@ export function normalizeGraphPayload(raw: {
             : typeof props.end_line === 'number'
               ? props.end_line
               : undefined,
-        ...props,
       },
     };
   });

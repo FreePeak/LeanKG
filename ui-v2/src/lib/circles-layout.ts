@@ -38,6 +38,7 @@ const TYPE_TO_RING: Record<string, number> = {
   // Ring 0 – innermost: structural containers
   Project: 0,
   Service: 0,
+  Directory: 0,
   Package: 0,
   Module: 0,
   Folder: 0,

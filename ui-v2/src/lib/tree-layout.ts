@@ -20,6 +20,7 @@ const TYPE_TO_LAYER: Record<string, number> = {
   Package: 0,
   Module: 0,
   Folder: 0,
+  Directory: 0,
   Namespace: 0,
 
   // Layer 1: Files
@@ -61,15 +62,15 @@ const TYPE_TO_LAYER: Record<string, number> = {
 /** Fallback layer for unmapped types. */
 const DEFAULT_LAYER = 1;
 
-/** Virtual canvas size for layout calculation. */
+/** Virtual canvas — match wide viewports but keep layers tall enough to fill height. */
 const CANVAS_WIDTH = 1200;
-const CANVAS_HEIGHT = 800;
+const CANVAS_HEIGHT = 2200;
 const LAYER_COUNT = 4;
-const LAYER_HEIGHT = CANVAS_HEIGHT / LAYER_COUNT; // 200
+const LAYER_HEIGHT = CANVAS_HEIGHT / LAYER_COUNT; // 550
 const PADDING_X = 60;
-const PADDING_Y = 15;
-const MIN_NODE_GAP = 45;
-const MAX_LAYER_ROW_SPREAD = 132;
+const PADDING_Y = 50;
+const MIN_NODE_GAP = 40;
+const MAX_LAYER_ROW_SPREAD = 240;
 // HAS_METHOD and HAS_PROPERTY are Kotlin/Java-style hierarchy edges
 // (Class→Method, Class→Property). Treat them like DEFINES for layout purposes
 // so Methods/Properties cluster beneath their parent Class horizontally.

@@ -1,6 +1,7 @@
 import type { ApiEnvelope } from '../lib/normalize';
 import { unwrapEnvelope, normalizeGraphPayload } from '../lib/normalize';
 import type { KnowledgeGraph } from '../core/graph/types';
+import { normalizeExpandPath } from '../lib/camera-fit';
 
 let _baseUrl = '';
 
@@ -77,7 +78,8 @@ export async function fetchServiceTopology(): Promise<KnowledgeGraph> {
 
 export async function expandService(path: string, all = true): Promise<KnowledgeGraph> {
   const q = new URLSearchParams();
-  if (path) q.set('path', path);
+  const normalized = normalizeExpandPath(path);
+  if (normalized) q.set('path', normalized);
   if (all) q.set('all', 'true');
   const json = await fetchJson<ApiEnvelope<{ nodes: unknown[]; relationships: unknown[] }>>(
     `/api/graph/expand-service?${q.toString()}`,

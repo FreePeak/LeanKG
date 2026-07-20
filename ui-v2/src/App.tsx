@@ -122,13 +122,32 @@ export default function App() {
             data = topo;
           } else if ((wantExpand || topoHasSingle) && topo.nodes.length >= 1) {
             const root = topo.nodes[0];
-            const path = String(root.properties.filePath || '');
+            const path = String(root.properties.filePath || '.');
             data = await expandService(path, true);
+            // Absolute project root used to expand to 0 nodes — fall back to topology.
+            if (data.nodeCount === 0) {
+              data = await expandService('.', true);
+            }
+            if (data.nodeCount === 0) {
+              data = topo;
+            }
           } else {
-            data = await expandService('', true);
+            data = await expandService('.', true);
           }
         } catch {
-          data = await expandService('', true);
+          try {
+            data = await expandService('.', true);
+          } catch {
+            data = { nodes: [], relationships: [], nodeCount: 0, relationshipCount: 0 };
+          }
+        }
+
+        if (data.nodeCount === 0) {
+          try {
+            data = await fetchServiceTopology();
+          } catch {
+            /* keep empty */
+          }
         }
 
         setKg(data);
@@ -281,7 +300,7 @@ export default function App() {
             onSelectNode={setSelectedId}
             selectedId={selectedId}
           />
-          <div className="relative flex-1 min-w-0">
+          <div className="relative flex-1 min-w-0 min-h-0 h-full flex flex-col">
             <GraphCanvas
               graph={sigmaGraph}
               visibleLabels={filters.effectiveLabels}
@@ -290,6 +309,7 @@ export default function App() {
               highlightIds={highlightIds}
               onNodeSelect={setSelectedId}
               selectedNodeId={selectedId}
+              layoutMode={layoutMode}
             />
             <CodePanel node={selectedNode} onClose={() => setSelectedId(null)} />
             {viewMode === 'overview' && (

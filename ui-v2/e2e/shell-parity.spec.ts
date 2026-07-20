@@ -81,9 +81,29 @@ test.describe('UI v2 shell parity', () => {
     await expect(page.getByTestId('load-graph-anyway')).toBeVisible();
   });
 
-  test('status bar present when connected', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForTimeout(1500);
-    await expect(page.getByTestId('status-bar')).toBeVisible();
+  test('graph canvas fills viewport height (not a thin strip)', async ({ page }) => {
+    await page.goto('/?path=src/cli');
+    await page.waitForFunction(() => {
+      const t = document.querySelector('[data-testid="status-bar"]')?.textContent || '';
+      const m = t.match(/nodes:\s*(\d+)/);
+      return m && Number(m[1]) > 5;
+    }, null, { timeout: 90_000 });
+    await page.getByTestId('layout-tree').click();
+    await page.waitForTimeout(1200);
+    const metrics = await page.evaluate(() => {
+      const canvas = document.querySelector('[data-testid="graph-canvas"]') as HTMLElement | null;
+      const sigma = canvas?.querySelector('.sigma-container') as HTMLElement | null;
+      if (!canvas || !sigma) return null;
+      return {
+        canvasH: canvas.clientHeight,
+        sigmaH: sigma.clientHeight,
+        canvasW: canvas.clientWidth,
+      };
+    });
+    expect(metrics).not.toBeNull();
+    expect(metrics!.canvasH).toBeGreaterThan(400);
+    expect(metrics!.sigmaH).toBeGreaterThan(400);
+    // Sigma container should track the canvas box (not collapse to ~1/3 height).
+    expect(metrics!.sigmaH / metrics!.canvasH).toBeGreaterThan(0.9);
   });
 });

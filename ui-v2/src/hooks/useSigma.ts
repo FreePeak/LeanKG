@@ -5,8 +5,9 @@ import FA2Layout from 'graphology-layout-forceatlas2/worker';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
 import noverlap from 'graphology-layout-noverlap';
 import EdgeCurveProgram from '@sigma/edge-curve';
-import type { SigmaNodeAttributes, SigmaEdgeAttributes } from '../lib/graph-adapter';
+import type { SigmaNodeAttributes, SigmaEdgeAttributes, LayoutMode } from '../lib/graph-adapter';
 import type { EdgeType } from '../lib/constants';
+import { fitSigmaToGraph } from '../lib/camera-fit';
 
 // Helper: Parse hex color to RGB
 // Using a simpler parsing approach to avoid regex pattern false positives in security scanners
@@ -60,6 +61,8 @@ interface UseSigmaOptions {
   onStageClick?: () => void;
   visibleEdgeTypes?: EdgeType[];
   searchTerm?: string;
+  /** When tree/circles, skip ForceAtlas2 and only fit camera to precomputed positions. */
+  layoutMode?: LayoutMode;
 }
 
 interface UseSigmaReturn {
@@ -126,9 +129,30 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const visibleEdgeTypesRef = useRef<EdgeType[] | null>(null);
   const searchTermRef = useRef<string>('');
   const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fitRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const midFitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutModeRef = useRef<LayoutMode>(options.layoutMode || 'force');
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const [selectedNode, setSelectedNodeState] = useState<string | null>(null);
+
+  useEffect(() => {
+    layoutModeRef.current = options.layoutMode || 'force';
+  }, [options.layoutMode]);
+
+  const scheduleFit = useCallback((graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, animate = true) => {
+    const tryFit = (attempt: number) => {
+      const sigma = sigmaRef.current;
+      if (!sigma) return;
+      const ok = fitSigmaToGraph(sigma, graph, { animate, duration: animate ? 450 : 0 });
+      if (!ok && attempt < 12) {
+        fitRetryRef.current = setTimeout(() => tryFit(attempt + 1), 50 + attempt * 25);
+      }
+    };
+    if (fitRetryRef.current) clearTimeout(fitRetryRef.current);
+    // Next frame so CSS flex height is applied before measuring the container.
+    requestAnimationFrame(() => tryFit(0));
+  }, []);
 
   useEffect(() => {
     visibleEdgeTypesRef.current = options.visibleEdgeTypes || null;
@@ -155,15 +179,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       labelSize: 12,
       labelWeight: '500',
       labelColor: { color: '#e4e4ed' },
-      labelRenderedSizeThreshold: 12,
-      labelDensity: 0.07,
-      labelGridCellSize: 120,
+      labelRenderedSizeThreshold: 10,
+      labelDensity: 0.1,
+      labelGridCellSize: 100,
       defaultNodeColor: '#6b7280',
       defaultEdgeColor: '#2a2a3a',
       defaultEdgeType: 'curved',
       edgeProgramClasses: {
         curved: EdgeCurveProgram,
       },
+      minCameraRatio: 0.002,
+      maxCameraRatio: 50,
+      zIndex: true,
       defaultDrawNodeHover: (context: CanvasRenderingContext2D, data: any, settings: any) => {
         const baseLabel = typeof data.label === 'string' ? data.label : String(data.label || '');
         if (!baseLabel) return;
@@ -330,6 +357,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       (window as any).sig = sigma;
     }
 
+    const ro = new ResizeObserver(() => {
+      const g = graphRef.current;
+      if (!g || g.order === 0) {
+        sigma.resize();
+        return;
+      }
+      sigma.resize();
+      fitSigmaToGraph(sigma, g, { animate: false });
+    });
+    ro.observe(containerRef.current);
+
     sigma.on('clickNode', ({ node }) => {
       clickTimeoutRef.current = setTimeout(() => {
         const shouldSelect = options.onNodeClick?.(node);
@@ -363,7 +401,10 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     });
 
     return () => {
+      ro.disconnect();
       if (layoutTimeoutRef.current) clearTimeout(layoutTimeoutRef.current);
+      if (midFitRef.current) clearTimeout(midFitRef.current);
+      if (fitRetryRef.current) clearTimeout(fitRetryRef.current);
       if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
       layoutRef.current?.kill();
       sigma.kill();
@@ -372,7 +413,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const runLayout = useCallback((graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, skipAnimation: boolean = false) => {
+  const runLayout = useCallback((graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => {
     const nodeCount = graph.order;
     if (nodeCount === 0) return;
 
@@ -381,32 +422,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       layoutRef.current = null;
     }
     if (layoutTimeoutRef.current) clearTimeout(layoutTimeoutRef.current);
+    if (midFitRef.current) clearTimeout(midFitRef.current);
 
-    if (skipAnimation) {
-      // Skip layout animation for initial load
-      // For massive graphs, also skip noverlap as it can cause Set overflow errors
-      if (nodeCount < 10000) {
-        noverlap.assign(graph, NOVERLAP_SETTINGS);
-      }
-      const sigma = sigmaRef.current;
-      if (sigma) {
-        // Calculate graph bounds and fit camera synchronously
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        graph.forEachNode((_n: string, attrs: SigmaNodeAttributes) => {
-          if (attrs.x < minX) minX = attrs.x;
-          if (attrs.x > maxX) maxX = attrs.x;
-          if (attrs.y < minY) minY = attrs.y;
-          if (attrs.y > maxY) maxY = attrs.y;
-        });
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-        const graphW = maxX - minX || 1;
-        const graphH = maxY - minY || 1;
-        const container = sigma.getContainer();
-        const ratio = Math.max(graphW / (container?.clientWidth || 800), graphH / (container?.clientHeight || 600)) * 1.2;
-        sigma.getCamera().setState({ x: cx, y: cy, angle: 0, ratio });
-      }
-      sigmaRef.current?.refresh();
+    const mode = layoutModeRef.current;
+    // Tree / Circles already have positions — only fit camera (do not scramble with FA2).
+    if (mode === 'tree' || mode === 'circles') {
+      setIsLayoutRunning(false);
+      scheduleFit(graph, true);
       return;
     }
 
@@ -419,36 +441,44 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
     layout.start();
     setIsLayoutRunning(true);
 
+    // Fit immediately (even while FA2 is expanding) so nodes are never off-camera.
+    scheduleFit(graph, false);
+
     const duration = getLayoutDuration(nodeCount);
+    const mid = Math.min(2500, Math.floor(duration / 3));
+    midFitRef.current = setTimeout(() => {
+      scheduleFit(graph, false);
+    }, mid);
+
     layoutTimeoutRef.current = setTimeout(() => {
       if (layoutRef.current) {
         layoutRef.current.stop();
         layoutRef.current = null;
-        // Skip noverlap for massive graphs to avoid Set overflow
         if (nodeCount < 10000) {
           noverlap.assign(graph, NOVERLAP_SETTINGS);
         }
         sigmaRef.current?.refresh();
-        sigmaRef.current?.getCamera().animatedReset({ duration: 800 });
+        scheduleFit(graph, true);
         setIsLayoutRunning(false);
       }
     }, duration);
-  }, []);
+  }, [scheduleFit]);
 
-  const setGraph = useCallback((newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, skipAnimation: boolean = false) => {
+  const setGraph = useCallback((newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, _skipAnimation: boolean = false) => {
     const sigma = sigmaRef.current;
     if (!sigma) return;
 
     if (layoutRef.current) { layoutRef.current.kill(); layoutRef.current = null; }
     if (layoutTimeoutRef.current) { clearTimeout(layoutTimeoutRef.current); layoutTimeoutRef.current = null; }
+    if (midFitRef.current) { clearTimeout(midFitRef.current); midFitRef.current = null; }
+    if (fitRetryRef.current) { clearTimeout(fitRetryRef.current); fitRetryRef.current = null; }
 
     graphRef.current = newGraph;
     sigma.setGraph(newGraph);
     setSelectedNode(null);
 
-    runLayout(newGraph, skipAnimation);
-    // Always ensure camera is properly fitted to graph bounds, even on initial load
-    sigma.getCamera().animatedReset({ duration: skipAnimation ? 0 : 500 });
+    // Do NOT animatedReset here — that races FA2 and zero-height containers.
+    runLayout(newGraph);
   }, [runLayout, setSelectedNode]);
 
   const focusNode = useCallback((nodeId: string) => {
@@ -470,9 +500,10 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const zoomIn = useCallback(() => sigmaRef.current?.getCamera().animatedZoom({ duration: 200 }), []);
   const zoomOut = useCallback(() => sigmaRef.current?.getCamera().animatedUnzoom({ duration: 200 }), []);
   const resetZoom = useCallback(() => {
-    sigmaRef.current?.getCamera().animatedReset({ duration: 300 });
+    const graph = graphRef.current;
+    if (graph) scheduleFit(graph, true);
     setSelectedNode(null);
-  }, [setSelectedNode]);
+  }, [scheduleFit, setSelectedNode]);
 
   const startLayout = useCallback(() => {
     const graph = graphRef.current;
@@ -491,10 +522,11 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
           noverlap.assign(graph, NOVERLAP_SETTINGS);
         }
         sigmaRef.current?.refresh();
+        scheduleFit(graph, true);
       }
       setIsLayoutRunning(false);
     }
-  }, []);
+  }, [scheduleFit]);
 
   return {
     containerRef, sigmaRef, setGraph, zoomIn, zoomOut, resetZoom, focusNode,

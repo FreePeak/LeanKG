@@ -129,8 +129,11 @@ const addNodeToGraph = (
     type = 'Cluster';
     effectiveType = rawType; // Store full cluster type for filtering
   } else {
-    type = rawType.charAt(0).toUpperCase() + rawType.slice(1) || 'unknown';
-    effectiveType = type;
+    // Normalize lowercase API types (function → Function, property → Property)
+    const pascal =
+      /^[A-Z]/.test(rawType) ? rawType : rawType.charAt(0).toUpperCase() + rawType.slice(1).toLowerCase();
+    type = pascal;
+    effectiveType = pascal;
   }
 
   const baseSize = NODE_SIZES[effectiveType] || NODE_SIZES[type] || 8;
@@ -457,7 +460,9 @@ export function buildLayoutGraph(
     if (graph.hasNode(node.id)) continue;
     const pos = positions.get(node.id);
     const rawType = String(node.properties?.elementType || node.label || 'unknown');
-    const type = rawType.charAt(0).toUpperCase() + rawType.slice(1);
+    const type = /^[A-Z]/.test(rawType)
+      ? rawType
+      : rawType.charAt(0).toUpperCase() + rawType.slice(1).toLowerCase();
     const baseSize = NODE_SIZES[type] || (pos?.size ?? 6);
     graph.addNode(node.id, {
       x: pos?.x ?? Math.random() * 100,

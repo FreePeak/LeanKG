@@ -69,14 +69,27 @@ export const DEFAULT_NODE_TYPE_ORDER = [
   'Decorator',
 ];
 
-/** US-MG-04 defaults */
-export const DEFAULT_VISIBLE_LABELS = ['Service', 'Folder', 'File', 'Function'];
+/** Exploring defaults — LeanKG indexes many symbols as property/method/function (lowercase).
+ * Include Property/Method or the canvas looks empty (only a handful of File nodes). */
+export const DEFAULT_VISIBLE_LABELS = [
+  'Service',
+  'Folder',
+  'Directory',
+  'File',
+  'Module',
+  'Class',
+  'Struct',
+  'Function',
+  'Method',
+  'Property',
+];
 
 export const DEFAULT_VISIBLE_EDGES = [
   'CONTAINS',
   'DEFINES',
   'IMPORTS',
   'CALLS',
+  'SERVICE_CALLS',
   'EXTENDS',
   'IMPLEMENTS',
 ];

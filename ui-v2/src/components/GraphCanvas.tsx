@@ -19,6 +19,7 @@ interface GraphCanvasProps {
   highlightIds: Set<string>;
   onNodeSelect: (nodeId: string | null) => void;
   selectedNodeId: string | null;
+  layoutMode: 'force' | 'tree' | 'circles';
 }
 
 export function GraphCanvas({
@@ -29,6 +30,7 @@ export function GraphCanvas({
   highlightIds,
   onNodeSelect,
   selectedNodeId,
+  layoutMode,
 }: GraphCanvasProps) {
   const {
     containerRef,
@@ -47,18 +49,20 @@ export function GraphCanvas({
     onStageClick: () => onNodeSelect(null),
     visibleEdgeTypes: visibleEdges,
     searchTerm,
+    layoutMode,
   });
 
-  const appliedRef = useRef<Graph | null>(null);
+  const appliedRef = useRef<{ graph: Graph | null; mode: string }>({ graph: null, mode: '' });
 
   useEffect(() => {
     if (!graph) return;
-    if (appliedRef.current === graph) return;
-    appliedRef.current = graph;
+    // Re-apply when layout mode changes even if the same KnowledgeGraph object is reused.
+    if (appliedRef.current.graph === graph && appliedRef.current.mode === layoutMode) return;
+    appliedRef.current = { graph, mode: layoutMode };
     const clone = graph.copy();
     filterGraphByLabels(clone, visibleLabels);
     setGraph(clone);
-  }, [graph, setGraph, visibleLabels]);
+  }, [graph, setGraph, visibleLabels, layoutMode]);
 
   useEffect(() => {
     const sigma = sigmaRef.current;
@@ -100,8 +104,12 @@ export function GraphCanvas({
   }, [highlightIds, sigmaRef]);
 
   return (
-    <div className="relative flex-1 min-w-0 bg-void" data-testid="graph-canvas">
-      <div ref={containerRef} className="sigma-container absolute inset-0 w-full h-full min-h-[200px]" />
+    <div className="relative flex-1 min-w-0 min-h-0 h-full w-full bg-void" data-testid="graph-canvas">
+      <div
+        ref={containerRef}
+        className="sigma-container absolute inset-0 w-full h-full"
+        style={{ minHeight: '100%' }}
+      />
       {!graph && (
         <div className="absolute inset-0 flex items-center justify-center text-text-muted text-sm">
           No graph loaded

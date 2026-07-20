@@ -9,6 +9,11 @@ import { normalizeGraphPayload } from '../../src/lib/normalize';
 import { buildLayoutGraph } from '../../src/lib/graph-adapter';
 import { DEFAULT_VISIBLE_LABELS, DEFAULT_NODE_TYPE_ORDER } from '../../src/lib/constants';
 import { parseProjectParam } from '../../src/services/backend-client';
+import {
+  cameraRatioForBounds,
+  computeGraphBounds,
+  normalizeExpandPath,
+} from '../../src/lib/camera-fit';
 
 describe('decideSkipGraph', () => {
   it('respects explicit true/false', () => {
@@ -124,8 +129,13 @@ describe('buildLayoutGraph', () => {
 });
 
 describe('US-MG-04 defaults', () => {
-  it('defaults visible labels', () => {
-    expect(DEFAULT_VISIBLE_LABELS).toEqual(['Service', 'Folder', 'File', 'Function']);
+  it('defaults visible labels include structure + LeanKG symbol types', () => {
+    expect(DEFAULT_VISIBLE_LABELS).toContain('Service');
+    expect(DEFAULT_VISIBLE_LABELS).toContain('Folder');
+    expect(DEFAULT_VISIBLE_LABELS).toContain('File');
+    expect(DEFAULT_VISIBLE_LABELS).toContain('Function');
+    expect(DEFAULT_VISIBLE_LABELS).toContain('Property');
+    expect(DEFAULT_VISIBLE_LABELS).toContain('Method');
     expect(DEFAULT_NODE_TYPE_ORDER[0]).toBe('Service');
   });
 });
@@ -135,5 +145,41 @@ describe('parseProjectParam', () => {
     expect(parseProjectParam('  /workspace  ')).toBe('/workspace');
     expect(parseProjectParam('')).toBeUndefined();
     expect(parseProjectParam(null)).toBeUndefined();
+  });
+});
+
+describe('camera-fit', () => {
+  it('normalizes expand paths for project root', () => {
+    expect(normalizeExpandPath('')).toBe('.');
+    expect(normalizeExpandPath('./')).toBe('.');
+    expect(normalizeExpandPath('/proj', '/proj')).toBe('.');
+    expect(normalizeExpandPath('/proj/', '/proj')).toBe('.');
+    expect(normalizeExpandPath('/proj/src/cli', '/proj')).toBe('./src/cli');
+    expect(normalizeExpandPath('src/cli')).toBe('src/cli');
+  });
+
+  it('computes bounds and camera ratio that prefer filling tall containers', () => {
+    const g = buildLayoutGraph(
+      normalizeGraphPayload({
+        nodes: [
+          { id: 'a', label: 'Folder', properties: { name: 'a', elementType: 'Folder' } },
+          { id: 'b', label: 'File', properties: { name: 'b', elementType: 'File' } },
+          { id: 'c', label: 'Function', properties: { name: 'c', elementType: 'Function' } },
+        ],
+        relationships: [
+          { sourceId: 'a', targetId: 'b', type: 'CONTAINS' },
+          { sourceId: 'b', targetId: 'c', type: 'DEFINES' },
+        ],
+      }),
+      'tree',
+    );
+    const bounds = computeGraphBounds(g, { paddingFactor: 1 });
+    expect(bounds).not.toBeNull();
+    // Tree layers should span meaningful vertical space (taller canvas).
+    expect(bounds!.height).toBeGreaterThan(200);
+    const ratioWide = cameraRatioForBounds(bounds!, 1400, 400);
+    const ratioTall = cameraRatioForBounds(bounds!, 800, 900);
+    expect(ratioWide).toBeGreaterThan(0);
+    expect(ratioTall).toBeGreaterThan(0);
   });
 });
