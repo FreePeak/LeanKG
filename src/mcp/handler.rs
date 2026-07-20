@@ -3644,9 +3644,9 @@ impl ToolHandler {
         let _project = args["project"].as_str().unwrap_or(".");
 
         // Vectors live in CozoDB now; freshness check is a state-table count.
-        let has_vectors = crate::embeddings::state::list_all(self.graph_engine.db())
-            .map(|rows| !rows.is_empty())
-            .unwrap_or(false);
+        // FR-SEM-07: cheap :limit 1 — never list_all (~147k rows) before retrieve.
+        let has_vectors =
+            crate::embeddings::state::has_any(self.graph_engine.db()).unwrap_or(false);
         if !has_vectors {
             return Err("No embedded vectors found. Run `leankg embed --init` \
                  to download models, then `leankg embed` to build the index."
@@ -3954,12 +3954,8 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
 
 #[cfg(feature = "embeddings")]
 fn embeddings_index_available(db: &crate::db::schema::CozoDb) -> bool {
-    // Cheap check: any non-empty row in `embedding_vectors` means an
-    // embedding index exists for this DB. Avoids spinning up the embedder
-    // when no `leankg embed` has been run yet.
-    crate::embeddings::state::list_all(db)
-        .map(|rows| !rows.is_empty())
-        .unwrap_or(false)
+    // FR-SEM-07: :limit 1 probe — never list_all (~147k rows) just to gate HNSW.
+    crate::embeddings::state::has_any(db).unwrap_or(false)
 }
 
 #[cfg(feature = "embeddings")]

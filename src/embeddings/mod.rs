@@ -49,7 +49,7 @@ pub use runtime::{
 #[allow(unused_imports)]
 pub use state::{
     count_by_state, create_hnsw_index, delete_state_rows, drop_hnsw_index,
-    ensure_embedding_state_table, list_all, list_orphans, list_stale,
+    ensure_embedding_state_table, has_any, list_all, list_orphans, list_stale,
     mark_stale_for_qualified_names, upsert_fresh, EmbeddingStateRow, FreshRow, StateCounts,
 };
 #[allow(unused_imports)]

@@ -192,6 +192,57 @@ impl GraphEngine {
         }))
     }
 
+    /// Keyed lookup for a small set of qualified names (HNSW ANN hits).
+    ///
+    /// FR-SEM-07: never call [`Self::all_elements`] to hydrate ~top-k seeds —
+    /// that OOMs mega-graphs (~600k+ elements). Includes `env` (unlike
+    /// [`Self::find_element`]) so env filters in retrieval stay correct.
+    pub fn get_elements_by_qualified_names(
+        &self,
+        qns: &[String],
+    ) -> Result<std::collections::HashMap<String, CodeElement>, Box<dyn std::error::Error>> {
+        let mut out = std::collections::HashMap::with_capacity(qns.len());
+        if qns.is_empty() {
+            return Ok(out);
+        }
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = $qn"#
+        );
+        for qn in qns {
+            if qn.is_empty() || out.contains_key(qn) {
+                continue;
+            }
+            let mut params = std::collections::BTreeMap::new();
+            params.insert("qn".to_string(), serde_json::Value::String(qn.clone()));
+            let result = crate::db::schema::run_script(&self.db, &query, params)?;
+            let Some(row) = result.rows.first() else {
+                continue;
+            };
+            let parent_qualified = row[7].get_str().map(String::from);
+            let cluster_id = row[8].get_str().map(String::from);
+            let cluster_label = row[9].get_str().map(String::from);
+            let metadata_str = row[10].get_str().unwrap_or("{}");
+            let env = row[11].get_str().unwrap_or("local").to_string();
+            let elem = CodeElement {
+                qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                element_type: row[1].get_str().unwrap_or("").to_string(),
+                name: row[2].get_str().unwrap_or("").to_string(),
+                file_path: row[3].get_str().unwrap_or("").to_string(),
+                line_start: row[4].get_int().unwrap_or(0) as u32,
+                line_end: row[5].get_int().unwrap_or(0) as u32,
+                language: row[6].get_str().unwrap_or("").to_string(),
+                parent_qualified,
+                cluster_id,
+                cluster_label,
+                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                env,
+            };
+            out.insert(elem.qualified_name.clone(), elem);
+        }
+        Ok(out)
+    }
+
     #[allow(dead_code)]
     pub fn find_element_by_name(
         &self,
@@ -5608,6 +5659,55 @@ mod tests {
             ..Default::default()
         };
         engine.insert_element(&elem).unwrap();
+    }
+
+    #[test]
+    fn get_elements_by_qualified_names_returns_only_requested_with_env() {
+        // FR-SEM-07: keyed hydration must not require all_elements().
+        let (engine, _tmp) = make_test_engine();
+        let wanted = CodeElement {
+            qualified_name: "src/a.rs::keep_me".to_string(),
+            element_type: "function".to_string(),
+            name: "keep_me".to_string(),
+            file_path: "src/a.rs".to_string(),
+            line_start: 1,
+            line_end: 5,
+            language: "rust".to_string(),
+            ..Default::default()
+        };
+        let other = CodeElement {
+            qualified_name: "src/b.rs::skip_me".to_string(),
+            element_type: "function".to_string(),
+            name: "skip_me".to_string(),
+            file_path: "src/b.rs".to_string(),
+            line_start: 1,
+            line_end: 5,
+            language: "rust".to_string(),
+            ..Default::default()
+        };
+        engine.insert_element(&wanted).unwrap();
+        engine.insert_element(&other).unwrap();
+
+        let map = engine
+            .get_elements_by_qualified_names(&[
+                "src/a.rs::keep_me".to_string(),
+                "src/missing.rs::nope".to_string(),
+            ])
+            .unwrap();
+        assert_eq!(map.len(), 1);
+        let got = map.get("src/a.rs::keep_me").expect("keep_me present");
+        assert_eq!(got.name, "keep_me");
+        // insert_element uses schema default env='local'; keyed path must still
+        // populate the env column (not leave it empty via find_element Default).
+        assert_eq!(got.env, "local");
+        assert!(!map.contains_key("src/b.rs::skip_me"));
+    }
+
+    #[test]
+    fn get_elements_by_qualified_names_empty_input() {
+        let (engine, _tmp) = make_test_engine();
+        let map = engine.get_elements_by_qualified_names(&[]).unwrap();
+        assert!(map.is_empty());
     }
 
     #[test]
