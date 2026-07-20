@@ -33,7 +33,7 @@
 
 ### v3.7.8-ui-v2-service-expand - Service/Folder replace-graph + CodePanel file gate (2026-07-21)
 
-> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400 (`Is a directory` / not found). Multi-service topology had no drill-in to **replace** the canvas with that service’s subgraph (legacy `ui/` double-click → `expand-service`). Follow-up: Sigma handlers closed over first-render `kg=null`, so double-click no-op’d until callback refs; onrender/`Dockerfile` rebakes UI v2 with layer-cached npm + `/api/index/status` health check.
+> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400 (`Is a directory` / not found). Multi-service topology had no drill-in to **replace** the canvas with that service’s subgraph (legacy `ui/` double-click → `expand-service`). Follow-up: Sigma handlers closed over first-render `kg=null`, so double-click no-op’d until callback refs; onrender/`Dockerfile` rebakes UI v2 with layer-cached npm + `/api/index/status` health check. Follow-up: `/api/file` for graph paths present only on a sibling `LEANKG_PROJECT_DIRS` mount (e.g. `claude-mem/…` under `/workspace-freepeak` while active root is `/workspace`) returned opaque HTTP 400 — multi-root resolve + real 404 + UI error body.
 
 **Product actions this revision:**
 | ID | Priority | Focus | Intent |
