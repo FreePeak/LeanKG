@@ -1,17 +1,17 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.5-mega-sem-oom
+**Version:** 3.7.6-mega-concept-query
 **Date:** 2026-07-20
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.1 (`origin/main` @ `a89a2cc`)
+**Codebase Version:** 0.19.1 (`origin/main` @ `ce03fd8`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **CURRENT P0 (highest):** **Mega-graph HNSW `semantic_search` OOM** — `US-SEM-06` / `FR-SEM-07` / `REL-054`. Evidence: [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md). HNSW path still triggers `all_elements()` on ~641k-element mounts → MCP OOM/restart. Small `/workspace` HNSW remains GREEN.
+> **CURRENT P0 (highest):** **Mega-safe `concept_search` / `query_graph` / `get_clusters` serve** — `US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `FR-CL-MEGA-01` / `REL-055`. Evidence: [`docs/reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md`](reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md). HNSW FR-SEM-07 **DONE**; remaining unbounded loads are ontology code_refs + NL subgraph + live Louvain.
 >
 > **Prior P0 Day-2 embed resume COMPLETE** — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) + `embed_control` idle resume on PR [#86](https://github.com/FreePeak/LeanKG/pull/86). Do **not** start new embed-resume work ahead of closing mega-sem OOM.
 >
@@ -30,6 +30,20 @@
 ---
 
 ## Changelog
+
+### v3.7.6-mega-concept-query - Mega-safe concept_search / query_graph / clusters (2026-07-20)
+
+> **Trigger:** Post-#87 Docker full-tool suite on `ce03fd8` ([`docs/reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md`](reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md)). Mega HNSW **PASS**. Mega `concept_search` disconnect/timeout; `query_graph` timeout (`all_elements`/`all_relationships`); `get_clusters` intentional refuse. RCA: [`docs/reports/root_cause_mega_concept_query_clusters_2026-07-20.md`](reports/root_cause_mega_concept_query_clusters_2026-07-20.md).
+>
+> **Product intent:** Prefer-order and NL tools must work on mega mounts via **keyed / frontier-local** queries (FR-SEM-07 pattern). Do not refuse `concept_search`/`query_graph` forever; do not raise RAM as the fix. Mega `get_clusters` serves precomputed `cluster_id` (no live Louvain).
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-MG-TOOL-01 / FR-ONT-MEGA-01 | Must Have | **P0** | Keyed `concept_search` code_ref + typed name fallback |
+| FR-GF-MEGA-01 | Must Have | **P0** | Keyed `resolve_to_qualified` + frontier-local `query_graph` BFS |
+| FR-CL-MEGA-01 | Must Have | **P1** | Mega `get_clusters` reads precomputed clusters from DB |
+| REL-055 | Must Have | **P0** | Live mega smoke: concept_search + query_graph + get_clusters |
 
 ### v3.7.5-mega-sem-oom - Mega-graph HNSW semantic_search OOM is P0 (2026-07-20)
 
@@ -1070,6 +1084,16 @@ Palace Mapping:
 
 **Temporary agent workaround (not the fix):** on mega-graphs prefer `concept_search` → `search_code` / `find_function` until FR-SEM-07 lands.
 
+#### US-MG-TOOL-01 — Mega-safe prefer-order + NL tools (**P0** / Must Have)
+
+**As an** AI agent on a mega-graph mount, **I want** `concept_search` and `query_graph` to complete without dumping the full element/relationship tables, **so that** prefer-order discovery and NL subgraph stay usable under the documented MCP memory budget.
+
+**Acceptance criteria:**
+- **Given** mega `/workspace-other`, **When** `concept_search(query="authentication")` runs, **Then** it returns within seconds without MCP restart; no full-table `load_indexed_code_elements` / equivalent.
+- **Given** mega, **When** `query_graph(question="what connects auth to payment")` runs, **Then** it completes without `all_elements()` / `all_relationships()` WARN on that path; response respects `token_budget`.
+- **Given** mega, **When** `get_clusters` runs and live Louvain is refused, **Then** if `cluster_id` is populated it returns precomputed clusters; else a structured empty + offline-assign hint (not a hang).
+- **Evidence of failure (baseline):** [`docs/reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md`](reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md).
+
 ### 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 — **DONE (prior P0)**
 
 > **Trigger:** Turning embedding on (standalone Docker `embed --wait`, or Docker MCP with `LEANKG_EMBED_BACKGROUND` / boot / setup) against a persisted RocksDB volume looks like a full cold rebuild — unacceptable CPU/RAM/time on mega-graphs.
@@ -1416,6 +1440,10 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-SEM-07 | Must Have (**P0**) | **Mega-safe HNSW semantic path:** `semantic_search` / `kg_semantic_context` (and any helper they call for seed hydration) must **not** invoke unbounded `all_elements()` or load the full element set into RAM on graphs above `LEANKG_MAX_CACHE_ELEMENTS`. Hydrate ANN hit QNs via keyed/paginated DB reads only. Peak RSS must fit documented MCP `mem_limit` (compose default 6g; effective cgroup may be lower) without OOM/restart. Small-graph HNSW path must not regress. |
 | REL-051 | Should Have | Release note: live semantic smoke executed (or waived with reason) alongside embeddings cargo suite — **DONE** 2026-07-18 |
 | REL-054 | Must Have (**P0**) | Live mega smoke gate: on `/workspace-other` (or equivalent), `semantic_search` + `kg_semantic_context` succeed without OOM/HTTP drop; record peak RSS + latency in a `docs/reports/` note. Complements REL-051 (small-graph) |
+| FR-ONT-MEGA-01 | Must Have (**P0**) | **Mega-safe `concept_search`:** resolve `code_refs` via keyed/path-prefixed Cozo queries with `:limit`; name fallback via `search_by_name_typed`. Ban `load_indexed_code_elements` on the hot path. |
+| FR-GF-MEGA-01 | Must Have (**P0**) | **Mega-safe `query_graph` / `shortest_path`:** keyed `resolve_to_qualified` (no `all_elements`); BFS via frontier-local relationship fetch (no `all_relationships`). |
+| FR-CL-MEGA-01 | Must Have (**P1**) | **Mega `get_clusters` serve:** when live Louvain is refused, return clusters from precomputed `cluster_id`/`cluster_label`; else structured empty + offline-assign hint. |
+| REL-055 | Must Have (**P0**) | Live mega smoke: `concept_search` + `query_graph` + `get_clusters` on `/workspace-other` without OOM/timeout; no `all_elements`/`all_relationships` WARN on those paths. |
 
 **Won't Do (this track):**
 - Replacing Cozo HNSW default before FR-VE-GATE callers honor LocalEngine

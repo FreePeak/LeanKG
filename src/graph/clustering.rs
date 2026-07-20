@@ -293,6 +293,97 @@ impl CommunityDetector {
     }
 }
 
+/// FR-CL-MEGA-01: serve clusters already written to `cluster_id` / `cluster_label`
+/// without running live Louvain (unsafe on mega-graphs).
+pub fn load_precomputed_clusters(
+    engine: &GraphEngine,
+    limit: usize,
+) -> Result<(Vec<Cluster>, ClusterStats), Box<dyn std::error::Error>> {
+    let limit = limit.clamp(1, 500);
+    let db = engine.db();
+    // Probe arity once via a cheap limit-0 script (same pattern as GraphEngine).
+    let tail = if crate::db::schema::run_script(
+        db,
+        "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
+        Default::default(),
+    )
+    .is_ok()
+    {
+        ", env, ontology_layer"
+    } else {
+        ", env"
+    };
+
+    let ids_query = format!(
+        r#"?[cluster_id, cluster_label] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+            cluster_id != null,
+            cluster_id != ""
+            :limit {limit}"#
+    );
+    let id_rows = crate::db::schema::run_script(db, &ids_query, Default::default())?;
+
+    let mut by_id: HashMap<String, Cluster> = HashMap::new();
+    for row in &id_rows.rows {
+        let id = row[0].get_str().unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let label = row[1]
+            .get_str()
+            .map(String::from)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| id.clone());
+        by_id.entry(id.clone()).or_insert_with(|| Cluster {
+            id: id.clone(),
+            label,
+            members: Vec::new(),
+            representative_files: Vec::new(),
+        });
+    }
+
+    if by_id.is_empty() {
+        return Ok((
+            Vec::new(),
+            ClusterStats {
+                total_clusters: 0,
+                total_members: 0,
+                avg_cluster_size: 0.0,
+            },
+        ));
+    }
+
+    for (cid, cluster) in by_id.iter_mut() {
+        let safe_cid = cid.replace('\\', "\\\\").replace('"', "\\\"");
+        let mem_q = format!(
+            r#"?[qualified_name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+                cluster_id = "{safe_cid}"
+                :limit 40"#
+        );
+        if let Ok(mem_rows) = crate::db::schema::run_script(db, &mem_q, Default::default()) {
+            for row in &mem_rows.rows {
+                let qn = row[0].get_str().unwrap_or("").to_string();
+                let fp = row[1].get_str().unwrap_or("").to_string();
+                if !qn.is_empty() {
+                    cluster.members.push(qn);
+                }
+                if !fp.is_empty()
+                    && cluster.representative_files.len() < 5
+                    && !cluster.representative_files.contains(&fp)
+                {
+                    cluster.representative_files.push(fp);
+                }
+            }
+        }
+    }
+
+    let mut clusters: Vec<Cluster> = by_id.into_values().collect();
+    clusters.sort_by_key(|b| std::cmp::Reverse(b.members.len()));
+    let map: HashMap<String, Cluster> =
+        clusters.iter().map(|c| (c.id.clone(), c.clone())).collect();
+    let stats = get_cluster_stats(&map);
+    Ok((clusters.into_iter().take(limit).collect(), stats))
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Cluster {
     pub id: String,
