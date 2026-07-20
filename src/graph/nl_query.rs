@@ -17,7 +17,7 @@ const DEFAULT_TOKEN_BUDGET: usize = 2000;
 const DEFAULT_MAX_DEPTH: usize = 2;
 const MAX_SEEDS: usize = 8;
 const MAX_SEED_HITS_PER_TERM: usize = 3;
-const MAX_FRONTIER_VISITS: usize = 500;
+const MAX_FRONTIER_VISITS: usize = 40;
 
 const STOP_WORDS: &[&str] = &[
     "a",
@@ -96,21 +96,30 @@ const STOP_WORDS: &[&str] = &[
     "very",
     "just",
     "also",
-    "connects",
+    // Connection-question verbs — rare as symbol names; exact-name Cozo
+    // scans on mega graphs time out when these are treated as seeds.
     "connect",
+    "connects",
     "connected",
+    "connecting",
+    "connection",
     "link",
     "links",
     "linked",
     "related",
     "relation",
     "relations",
+    "relationship",
+    "path",
+    "paths",
     "show",
     "me",
     "find",
     "give",
     "tell",
     "please",
+    "graph",
+    "subgraph",
     "and",
     "or",
     "vs",
@@ -134,6 +143,23 @@ fn expand_term(term: &str) -> Vec<String> {
         _ => {}
     }
     out.sort();
+    out.dedup();
+    out
+}
+
+/// Mega-safe expansion: prefer longer, more selective tokens first.
+/// Short substrings like `auth` force expensive regex scans over mega graphs.
+fn expand_term_mega(term: &str) -> Vec<String> {
+    let lower = term.to_lowercase();
+    let mut out = match lower.as_str() {
+        "auth" => vec!["authentication".into(), "authorize".into(), "auth".into()],
+        "db" | "database" => vec!["database".into(), "repository".into()],
+        "api" => vec!["handler".into(), "controller".into()],
+        "pay" | "payment" => vec!["payment".into(), "payments".into()],
+        _ if lower.len() < 5 => vec![lower],
+        _ => vec![lower],
+    };
+    out.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
     out.dedup();
     out
 }
@@ -200,6 +226,7 @@ impl GraphEngine {
 
         let connect_pair = extract_connect_pair(question);
         let keywords = extract_keywords(question);
+        let mega = self.is_mega_graph();
 
         let mut seed_qns: Vec<String> = Vec::new();
         let mut seed_set: HashSet<String> = HashSet::new();
@@ -214,16 +241,28 @@ impl GraphEngine {
                 }
             }
         }
-        for kw in &keywords {
-            if seed_qns.len() >= MAX_SEEDS {
-                break;
-            }
-            for qn in self.resolve_seed_terms(kw)? {
+        // Mega: only seed from the connect pair (or fall through to keywords
+        // when no pair). Extra keyword exact-name scans on rare verbs/nouns
+        // full-scan hundreds of thousands of rows and time out MCP.
+        if !mega || connect_pair.is_none() {
+            for kw in &keywords {
                 if seed_qns.len() >= MAX_SEEDS {
                     break;
                 }
-                if seed_set.insert(qn.clone()) {
-                    seed_qns.push(qn);
+                if connect_pair
+                    .as_ref()
+                    .map(|(a, b)| kw == a || kw == b)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                for qn in self.resolve_seed_terms(kw)? {
+                    if seed_qns.len() >= MAX_SEEDS {
+                        break;
+                    }
+                    if seed_set.insert(qn.clone()) {
+                        seed_qns.push(qn);
+                    }
                 }
             }
         }
@@ -231,43 +270,48 @@ impl GraphEngine {
         tracing::debug!("TRACE query_graph: seeds={:?}", seed_qns);
 
         // Connection questions with two resolvable ends → shortest path first.
+        // Mega: skip live shortest_path BFS (expensive under weak rel indexes);
+        // expand_from_seeds below still returns a bounded neighborhood.
         let mut path_summary: Option<ShortestPathResult> = None;
         let mut nodes: HashMap<String, QueryGraphNode> = HashMap::new();
         let mut edges: Vec<QueryGraphEdge> = Vec::new();
         let mut hops_used = 0usize;
 
-        if let Some((a, b)) = &connect_pair {
-            if let (Some(src), Some(tgt)) = (
-                seed_qns
-                    .iter()
-                    .find(|qn| qn_matches_term(qn, a))
-                    .cloned()
-                    .or_else(|| self.resolve_to_qualified(a)),
-                seed_qns
-                    .iter()
-                    .find(|qn| qn_matches_term(qn, b))
-                    .cloned()
-                    .or_else(|| self.resolve_to_qualified(b)),
-            ) {
-                if let Some(path) = self.shortest_path(&src, &tgt, depth.max(6))? {
-                    hops_used = path.hops;
-                    for hop in &path.path {
-                        push_edge_from_hop(&mut edges, hop);
-                        ensure_node_stub(&mut nodes, &hop.from, seed_set.contains(&hop.from));
-                        ensure_node_stub(&mut nodes, &hop.to, seed_set.contains(&hop.to));
+        if !mega {
+            if let Some((a, b)) = &connect_pair {
+                if let (Some(src), Some(tgt)) = (
+                    seed_qns
+                        .iter()
+                        .find(|qn| qn_matches_term(qn, a))
+                        .cloned()
+                        .or_else(|| self.resolve_to_qualified(a)),
+                    seed_qns
+                        .iter()
+                        .find(|qn| qn_matches_term(qn, b))
+                        .cloned()
+                        .or_else(|| self.resolve_to_qualified(b)),
+                ) {
+                    if let Some(path) = self.shortest_path(&src, &tgt, depth)? {
+                        hops_used = path.hops;
+                        for hop in &path.path {
+                            push_edge_from_hop(&mut edges, hop);
+                            ensure_node_stub(&mut nodes, &hop.from, seed_set.contains(&hop.from));
+                            ensure_node_stub(&mut nodes, &hop.to, seed_set.contains(&hop.to));
+                        }
+                        if path.hops == 0 {
+                            ensure_node_stub(&mut nodes, &path.source, true);
+                        }
+                        path_summary = Some(path);
                     }
-                    if path.hops == 0 {
-                        ensure_node_stub(&mut nodes, &path.source, true);
-                    }
-                    path_summary = Some(path);
                 }
             }
         }
 
         // Always expand around seeds (fills empty path case + adds context).
         if !seed_qns.is_empty() {
+            let expand_depth = if mega { depth.min(1) } else { depth };
             let (exp_nodes, exp_edges, exp_hops) =
-                self.expand_from_seeds(&seed_qns, &seed_set, depth)?;
+                self.expand_from_seeds(&seed_qns, &seed_set, expand_depth)?;
             hops_used = hops_used.max(exp_hops);
             for (qn, node) in exp_nodes {
                 nodes.entry(qn).or_insert(node);
@@ -313,7 +357,19 @@ impl GraphEngine {
     fn resolve_seed_terms(&self, term: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut found: Vec<CodeElement> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
-        for variant in expand_term(term) {
+        // Mega: exact QN / name only — regex `search_by_name_typed` full-scans.
+        // Also skip synonym expansion (login/session/…) — each rare exact-name
+        // miss scans the whole code_elements table.
+        let mega = self.is_mega_graph();
+        let variants: Vec<String> = if mega {
+            expand_term_mega(term)
+        } else {
+            expand_term(term)
+        };
+        for variant in variants {
+            if found.len() >= MAX_SEED_HITS_PER_TERM {
+                break;
+            }
             if let Some(qn) = self.resolve_to_qualified(&variant) {
                 if seen.insert(qn.clone()) {
                     if let Some(el) = self.find_element(&qn)? {
@@ -321,13 +377,40 @@ impl GraphEngine {
                     }
                 }
             }
-            for el in self
-                .search_by_name_typed(&variant, None, MAX_SEED_HITS_PER_TERM * 3)?
-                .into_iter()
-                .take(MAX_SEED_HITS_PER_TERM)
-            {
-                if seen.insert(el.qualified_name.clone()) {
-                    found.push(el);
+            if found.len() >= MAX_SEED_HITS_PER_TERM {
+                break;
+            }
+            if !mega {
+                if let Ok(exact) = self.find_elements_by_name_exact(&variant, None) {
+                    for el in exact.into_iter().take(MAX_SEED_HITS_PER_TERM) {
+                        if seen.insert(el.qualified_name.clone()) {
+                            found.push(el);
+                        }
+                    }
+                }
+                for el in self
+                    .search_by_name_typed(&variant, None, MAX_SEED_HITS_PER_TERM * 3)?
+                    .into_iter()
+                    .take(MAX_SEED_HITS_PER_TERM)
+                {
+                    if seen.insert(el.qualified_name.clone()) {
+                        found.push(el);
+                    }
+                }
+            } else if found.len() < MAX_SEED_HITS_PER_TERM {
+                // Mega: limited typed search only (no unindexed exact-name miss).
+                // Skip ultra-short tokens — they force expensive regex scans.
+                if variant.len() < 5 {
+                    continue;
+                }
+                for el in self
+                    .search_by_name_typed(&variant, Some("function"), MAX_SEED_HITS_PER_TERM)?
+                    .into_iter()
+                    .take(MAX_SEED_HITS_PER_TERM)
+                {
+                    if seen.insert(el.qualified_name.clone()) {
+                        found.push(el);
+                    }
                 }
             }
         }

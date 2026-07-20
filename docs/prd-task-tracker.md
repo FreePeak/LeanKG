@@ -1,11 +1,11 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-20 — **P0 OPEN** mega-safe concept_search/query_graph (`US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `REL-055`); HNSW FR-SEM-07 DONE; evidence [`docs/reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md`](reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md)  
+**Last synced:** 2026-07-20 — **P0 CLOSED** mega-safe concept_search/query_graph/get_clusters (`US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `FR-CL-MEGA-01` / `REL-055`); evidence [`docs/reports/rel-055-mega-concept-query-clusters-2026-07-20.md`](reports/rel-055-mega-concept-query-clusters-2026-07-20.md)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
-> **P0 mega concept/query:** **CURRENT** — keyed code_refs + frontier BFS (`FR-ONT-MEGA-01` / `FR-GF-MEGA-01`). HNSW FR-SEM-07 DONE.  
+> **P0 mega concept/query:** **DONE** — keyed code_refs + frontier BFS + precomputed clusters.  
 > **Prior P0 embed-resume:** core + Docker evidence **DONE** (PR #81 / #86).  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
@@ -15,8 +15,8 @@
 
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
-| **P0** | Mega-safe `concept_search` / `query_graph` (`US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `REL-055`) | **CURRENT** |
-| **P1** | `FR-CL-MEGA-01` precomputed clusters + other Must Have | After P0 concept/query |
+| **P0** | Mega-safe `concept_search` / `query_graph` (`US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `REL-055`) | **DONE** |
+| **P1** | Other Must Have (clusters serve landed with REL-055) | **CURRENT** |
 | **P2** | Should Have | Next |
 | **P3** | Could Have / aspirational `OPEN` | Backlog |
 
@@ -73,11 +73,11 @@
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-MG-TOOL-01` | User Story | **PENDING** | Must Have | Mega-safe concept_search / query_graph / get_clusters serve | 3.14 / US-MG-TOOL-01 |
-| **P0** | `FR-ONT-MEGA-01` | FR | **NOT_DONE** | Must Have | Mega-safe concept_search keyed code_ref + typed name fallback | 5.15 |
-| **P0** | `FR-GF-MEGA-01` | FR | **NOT_DONE** | Must Have | Mega-safe query_graph keyed resolve + frontier-local BFS | 5.15 |
-| **P0** | `REL-055` | Release | **NOT_DONE** | Must Have | Live mega smoke concept_search + query_graph + get_clusters | 5.15 |
-| **P1** | `FR-CL-MEGA-01` | FR | **NOT_DONE** | Must Have | Mega get_clusters serves precomputed cluster_id from DB | 5.15 |
+| **P0** | `US-MG-TOOL-01` | User Story | **DONE** | Must Have | Mega-safe concept_search / query_graph / get_clusters serve | 3.14 / US-MG-TOOL-01 |
+| **P0** | `FR-ONT-MEGA-01` | FR | **DONE** | Must Have | Mega-safe concept_search keyed code_ref + typed name fallback | 5.15 |
+| **P0** | `FR-GF-MEGA-01` | FR | **DONE** | Must Have | Mega-safe query_graph keyed resolve + frontier-local BFS | 5.15 |
+| **P0** | `REL-055` | Release | **DONE** | Must Have | Live mega smoke concept_search + query_graph + get_clusters | 5.15 |
+| **P1** | `FR-CL-MEGA-01` | FR | **DONE** | Must Have | Mega get_clusters serves precomputed cluster_id from DB | 5.15 |
 | **P0** | `US-SEM-06` | User Story | **DONE** | Must Have | Mega-graph HNSW semantic_search / kg_semantic_context must not OOM MCP | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P0** | `FR-SEM-07` | FR | **DONE** | Must Have | Mega-safe HNSW path: no unbounded all_elements(); ANN + paginated/keyed hydration; MCP stays healthy under mem_limit | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P0** | `REL-054` | Release | **DONE** | Must Have | Live mega smoke: semantic_search + kg_semantic_context on /workspace-other without OOM/restart | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
@@ -182,11 +182,11 @@
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `US-MG-TOOL-01` | User Story | **PENDING** | Must Have | Mega-safe concept_search / query_graph / get_clusters serve | 3.14 / US-MG-TOOL-01 |
-| **P0** | `FR-ONT-MEGA-01` | FR | **NOT_DONE** | Must Have | Mega-safe concept_search keyed code_ref + typed name fallback | 5.15 |
-| **P0** | `FR-GF-MEGA-01` | FR | **NOT_DONE** | Must Have | Mega-safe query_graph keyed resolve + frontier-local BFS | 5.15 |
-| **P0** | `REL-055` | Release | **NOT_DONE** | Must Have | Live mega smoke concept_search + query_graph + get_clusters | 5.15 |
-| **P1** | `FR-CL-MEGA-01` | FR | **NOT_DONE** | Must Have | Mega get_clusters serves precomputed cluster_id from DB | 5.15 |
+| **P0** | `US-MG-TOOL-01` | User Story | **DONE** | Must Have | Mega-safe concept_search / query_graph / get_clusters serve | 3.14 / US-MG-TOOL-01 |
+| **P0** | `FR-ONT-MEGA-01` | FR | **DONE** | Must Have | Mega-safe concept_search keyed code_ref + typed name fallback | 5.15 |
+| **P0** | `FR-GF-MEGA-01` | FR | **DONE** | Must Have | Mega-safe query_graph keyed resolve + frontier-local BFS | 5.15 |
+| **P0** | `REL-055` | Release | **DONE** | Must Have | Live mega smoke concept_search + query_graph + get_clusters | 5.15 |
+| **P1** | `FR-CL-MEGA-01` | FR | **DONE** | Must Have | Mega get_clusters serves precomputed cluster_id from DB | 5.15 |
 | **P0** | `US-SEM-06` | User Story | **DONE** | Must Have | Mega-graph HNSW semantic_search / kg_semantic_context must not OOM MCP | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P0** | `FR-SEM-07` | FR | **DONE** | Must Have | Mega-safe HNSW path: no unbounded all_elements(); ANN + paginated/keyed hydration; MCP stays healthy under mem_limit | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P0** | `REL-054` | Release | **DONE** | Must Have | Live mega smoke: semantic_search + kg_semantic_context on /workspace-other without OOM/restart | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
@@ -617,7 +617,7 @@
 
 ## Sync notes
 
-- **2026-07-20 v3.7.6 P0 OPEN:** `US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `FR-CL-MEGA-01` / `REL-055` — mega concept/query/clusters. RCA: [`docs/reports/root_cause_mega_concept_query_clusters_2026-07-20.md`](reports/root_cause_mega_concept_query_clusters_2026-07-20.md).
+- **2026-07-20 v3.7.6 P0 CLOSED:** `US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `FR-CL-MEGA-01` / `REL-055` — mega concept/query/clusters. Evidence: [`docs/reports/rel-055-mega-concept-query-clusters-2026-07-20.md`](reports/rel-055-mega-concept-query-clusters-2026-07-20.md). RCA: [`docs/reports/root_cause_mega_concept_query_clusters_2026-07-20.md`](reports/root_cause_mega_concept_query_clusters_2026-07-20.md).
 - **2026-07-20 v3.7.5 P0 CLOSED:** `US-SEM-06` / `FR-SEM-07` / `REL-054` — keyed HNSW hydration + `has_any`; mega smoke PASS. Evidence: [`docs/reports/rel-054-mega-sem-oom-fix-2026-07-20.md`](reports/rel-054-mega-sem-oom-fix-2026-07-20.md). Prior fail: [`main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md).
 - **PR [#81](https://github.com/FreePeak/LeanKG/pull/81):** embed-resume + SEM-06 + MG-AUTO-01 + OPS cpus6/3g/6g.
 - **v3.7.4 MCP surface:** added `US-SURF-01..05`, `FR-SURF-01..06`, `REL-053` (PRD §3.16 / §5.18). Prefer docstring prefer-order + 3 hard deletes; soft-deprecate `wake_up` / `search_by_environment`; keep `mcp_status` + bootstrap ops tools.

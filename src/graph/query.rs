@@ -32,7 +32,7 @@ fn normalize_path(path: &str) -> String {
 /// Mega-graphs above this threshold skip the permanent cache to avoid
 /// unbounded RSS growth (see root_cause_docker_memory_2026-07-13.md RC1).
 /// Override via LEANKG_MAX_CACHE_ELEMENTS env var.
-fn max_cache_elements() -> usize {
+pub(crate) fn max_cache_elements() -> usize {
     std::env::var("LEANKG_MAX_CACHE_ELEMENTS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -61,6 +61,8 @@ pub struct GraphEngine {
     // Secondary index: element_id -> indices of relationships involving that element
     relationships_by_element:
         std::sync::Arc<parking_lot::RwLock<Option<std::collections::HashMap<String, Vec<usize>>>>>,
+    /// Cached result of [`Self::is_mega_graph`] (shared across clones).
+    mega_graph: std::sync::Arc<parking_lot::RwLock<Option<bool>>>,
 }
 
 impl GraphEngine {
@@ -73,6 +75,7 @@ impl GraphEngine {
                 None::<Vec<Relationship>>,
             )),
             relationships_by_element: std::sync::Arc::new(parking_lot::RwLock::new(None)),
+            mega_graph: std::sync::Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -86,6 +89,7 @@ impl GraphEngine {
                 None::<Vec<Relationship>>,
             )),
             relationships_by_element: std::sync::Arc::new(parking_lot::RwLock::new(None)),
+            mega_graph: std::sync::Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -100,6 +104,7 @@ impl GraphEngine {
                 None::<Vec<Relationship>>,
             )),
             relationships_by_element: std::sync::Arc::new(parking_lot::RwLock::new(None)),
+            mega_graph: std::sync::Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -1306,6 +1311,13 @@ impl GraphEngine {
 
     /// Relationships where `source_qualified` or `target_qualified` is in `element_ids`.
     /// FR-GF-MEGA-01: frontier-local BFS without `all_relationships()`.
+    ///
+    /// Uses per-QN equality params (indexed) — never a giant `OR` over the full
+    /// relationship table (that full-scans mega graphs and times out).
+    ///
+    /// On mega graphs, only fetches **outgoing** edges (`source_qualified = QN`).
+    /// Incoming (`target_qualified`) lookups often devolve to full-table scans
+    /// when the secondary index is cold/missing, which times out MCP BFS.
     pub fn get_relationships_involving_elements_fast(
         &self,
         element_ids: &[String],
@@ -1315,59 +1327,24 @@ impl GraphEngine {
             return Ok(vec![]);
         }
 
-        const OR_CHUNK: usize = 50;
+        let mega = self.is_mega_graph();
+        let mut out: Vec<Relationship> = Vec::new();
+        let mut seen: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
         let rel_types_filter: std::collections::HashSet<&str> = rel_types
             .map(|types| types.iter().copied().collect())
             .unwrap_or_default();
 
-        let mut out: Vec<Relationship> = Vec::new();
-        let mut seen: std::collections::HashSet<(String, String, String)> =
-            std::collections::HashSet::new();
-
-        for chunk in element_ids.chunks(OR_CHUNK) {
-            let or_clauses: Vec<String> = chunk
-                .iter()
-                .flat_map(|id| {
-                    let esc = escape_datalog(id);
-                    [
-                        format!(r#"source_qualified = "{}""#, esc),
-                        format!(r#"target_qualified = "{}""#, esc),
-                    ]
-                })
-                .collect();
-            let element_filter = or_clauses.join(" or ");
-
-            let (query, params) = if rel_types_filter.is_empty() {
-                let q = format!(
-                    r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
-                        *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
-                        ({})
-                        :limit 5000"#,
-                    element_filter
-                );
-                (q, std::collections::BTreeMap::new())
-            } else {
-                let types_str = rel_types_filter
-                    .iter()
-                    .map(|t| format!(r#""{}""#, t))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let q = format!(
-                    r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
-                        *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
-                        ({}),
-                        rel_type in [{}]
-                        :limit 5000"#,
-                    element_filter, types_str
-                );
-                (q, std::collections::BTreeMap::new())
-            };
-
-            let result = crate::db::schema::run_script(&self.db, &query, params)?;
-            for row in result.rows.iter() {
+        let push_rows = |out: &mut Vec<Relationship>,
+                         seen: &mut std::collections::HashSet<(String, String, String)>,
+                         rows: &cozo::NamedRows| {
+            for row in rows.rows.iter() {
+                let rel_type = row[2].get_str().unwrap_or("").to_string();
+                if !rel_types_filter.is_empty() && !rel_types_filter.contains(rel_type.as_str()) {
+                    continue;
+                }
                 let src = row[0].get_str().unwrap_or("").to_string();
                 let tgt = row[1].get_str().unwrap_or("").to_string();
-                let rel_type = row[2].get_str().unwrap_or("").to_string();
                 if !seen.insert((src.clone(), tgt.clone(), rel_type.clone())) {
                     continue;
                 }
@@ -1382,6 +1359,31 @@ impl GraphEngine {
                     ..Default::default()
                 });
             }
+        };
+
+        // One equality lookup per QN (source uses PK prefix).
+        for id in element_ids {
+            let out_q = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
+                source_qualified = $sq
+                :limit 500"#;
+            let mut out_params = std::collections::BTreeMap::new();
+            out_params.insert("sq".to_string(), serde_json::Value::String(id.clone()));
+            let out_rows = crate::db::schema::run_script(&self.db, out_q, out_params)?;
+            push_rows(&mut out, &mut seen, &out_rows);
+
+            if mega {
+                continue;
+            }
+
+            let in_q = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
+                target_qualified = $tq
+                :limit 500"#;
+            let mut in_params = std::collections::BTreeMap::new();
+            in_params.insert("tq".to_string(), serde_json::Value::String(id.clone()));
+            let in_rows = crate::db::schema::run_script(&self.db, in_q, in_params)?;
+            push_rows(&mut out, &mut seen, &in_rows);
         }
 
         Ok(out)
@@ -3149,6 +3151,21 @@ impl GraphEngine {
         Ok(!result.rows.is_empty())
     }
 
+    /// Cheap mega probe: true when at least one element exists past the cache threshold
+    /// (avoids a full `count()` over hundreds of thousands of rows). Result is cached.
+    pub(crate) fn is_mega_graph(&self) -> bool {
+        if let Some(cached) = *self.mega_graph.read() {
+            return cached;
+        }
+        let threshold = max_cache_elements();
+        let mega = match self.get_elements_paginated(1, threshold) {
+            Ok((rows, _)) => !rows.is_empty(),
+            Err(_) => false,
+        };
+        *self.mega_graph.write() = Some(mega);
+        mega
+    }
+
     pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[count(n)] := *relationships[n, a, b, c, d, _]"#;
         let result =
@@ -4430,7 +4447,9 @@ impl GraphEngine {
             }));
         }
 
-        const MAX_BFS_VISITS: usize = 5000;
+        // Cap visits hard: each visit is 2 indexed Cozo lookups; mega graphs
+        // must stay within MCP request latency even when no path exists.
+        const MAX_BFS_VISITS: usize = 120;
 
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut queue: std::collections::VecDeque<(String, Vec<PathHop>)> =
@@ -4499,6 +4518,37 @@ impl GraphEngine {
         }
         if let Ok(Some(el)) = self.find_element(input) {
             return Some(el.qualified_name);
+        }
+        let mega = self.is_mega_graph();
+        // Mega: prefer limited typed/regex search (stops at :limit) over
+        // unindexed `name = "…"` misses that scan the entire element table.
+        // Ultra-short tokens (e.g. "auth") are expanded to longer aliases first.
+        if mega {
+            let variants: Vec<String> = if input.len() < 5 {
+                match input.to_lowercase().as_str() {
+                    "auth" => vec!["authentication".into(), "authorize".into()],
+                    "db" => vec!["database".into(), "repository".into()],
+                    "api" => vec!["handler".into(), "controller".into()],
+                    "pay" => vec!["payment".into()],
+                    _ => Vec::new(),
+                }
+            } else {
+                vec![input.to_string()]
+            };
+            for variant in variants {
+                if let Ok(candidates) = self.search_by_name_typed(&variant, None, 8) {
+                    if let Some(exact) = candidates
+                        .iter()
+                        .find(|e| e.name.eq_ignore_ascii_case(&variant))
+                    {
+                        return Some(exact.qualified_name.clone());
+                    }
+                    if let Some(first) = candidates.first() {
+                        return Some(first.qualified_name.clone());
+                    }
+                }
+            }
+            return None;
         }
         if let Ok(mut by_name) = self.find_elements_by_name_exact(input, None) {
             if !by_name.is_empty() {

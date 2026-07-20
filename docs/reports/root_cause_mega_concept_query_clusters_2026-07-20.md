@@ -67,3 +67,11 @@ Same class as FR-SEM-07:
 ## Suggested Additional Logging
 
 Debug timestamps around keyed fetches; warn if any single frontier fetch returns the `:limit` cap (possible truncation).
+
+---
+
+## Fix verification (REL-055)
+
+Live Docker smoke 2026-07-20: mega `concept_search` ~0.9s, `query_graph` ~12.6s, `get_clusters` ~1.2s under ~3.9 GiB cgroup; zero `all_elements`/`all_relationships` WARNs. Evidence: [`rel-055-mega-concept-query-clusters-2026-07-20.md`](rel-055-mega-concept-query-clusters-2026-07-20.md).
+
+Latency follow-ups applied after first hang: stop-word connection verbs; mega longer seed aliases; outbound-only frontier edges on mega; skip live shortest_path on mega; frontier/depth caps.
