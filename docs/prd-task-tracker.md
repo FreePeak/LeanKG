@@ -1,12 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-19 — US-GF-03 / REL-042 `query_graph` NL scoped subgraph (`FR-GF-05`/`FR-GF-06`); prior: hybrid LSP Go/TS + SURF soft-deprecate  
+**Last synced:** 2026-07-20 — **P0** mega-graph HNSW `semantic_search` OOM (`US-SEM-06` / `FR-SEM-07` / `REL-054`); evidence [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md)  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
 > **Agent rule:** Implement in **Focus** order: **P0 → P1 → P2 → P3**.  
-> **P0 embed-resume:** core + Docker evidence **DONE**.  
-> **P1 this pass:** Hybrid LSP for Go/TS (`FR-LSP-A..D`, `US-CBM-B1`, `REL-039`) — in progress on `feature/hybrid-lsp-go-ts`.  
+> **P0 now:** Mega-safe HNSW semantic path (no `all_elements()` / no MCP OOM on ~641k-element mounts).  
+> **Prior P0 embed-resume:** core + Docker evidence **DONE** (PR #81 / #86).  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -15,8 +15,8 @@
 
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
-| **P0** | Day-2 Embed Resume | **DONE** on PR #81 |
-| **P1** | Other Must Have (SEM path filter + mega-graph ops landed; LSP/etc. remain) | Next open Must Have |
+| **P0** | Mega-graph HNSW `semantic_search` OOM (`US-SEM-06` / `FR-SEM-07` / `REL-054`) | **CURRENT** — do first |
+| **P1** | Other Must Have (SEM path filter + mega-graph ops landed; LSP/etc. remain) | After P0 |
 | **P2** | Should Have | Next |
 | **P3** | Could Have / aspirational `OPEN` | Backlog |
 
@@ -37,38 +37,43 @@
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **423** |
-| NOT_DONE | 62 |
-| PENDING | 19 |
-| PARTIAL | 12 |
+| **Total tracked** | **426** |
+| NOT_DONE | 56 |
+| PENDING | 18 |
+| PARTIAL | 11 |
 | OPEN | 1 |
-| DONE | 326 |
+| DONE | 337 |
 | WONT_DO | 3 |
-| Open work | **94** |
+| Open work | **86** |
 
 | Open by Focus | Count |
 |---------------|------:|
-| P0 | 0 |
-| P1 | 23 |
-| P2 | 62 |
+| P0 | 3 |
+| P1 | 17 |
+| P2 | 57 |
 | P3 | 9 |
 
 | Kind | Count |
 |------|------:|
-| FR | 220 |
-| Release | 53 |
-| User Story | 150 |
+| FR | 221 |
+| Release | 54 |
+| User Story | 151 |
 
 ---
 
 ## Active session — open work (sorted by priority)
 
-> **2026-07-18 — closed on PR #81:** embed-resume day-2; SEM path filter (Probes G/H); `LEANKG_SKIP_FRESHNESS_CHECK`; compose **cpus 6 / mem_reservation 3g / MCP mem_limit 6g**; 3-workspace vector counts (3,271 / 146,977 / 14,110) + semantic_search OK.
+> **2026-07-20 — P0 opened (v3.7.5):** Mega HNSW `semantic_search` OOM on `/workspace-other` (~641k elements). Small `/workspace` HNSW GREEN. Root symptom: unbounded `all_elements()` during HNSW seed hydration. Report: [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md).
+>
+> **2026-07-18 — closed on PR #81:** embed-resume day-2; SEM path filter (Probes G/H); `LEANKG_SKIP_FRESHNESS_CHECK`; compose **cpus 6 / mem_reservation 3g / MCP mem_limit 6g**; 3-workspace vector counts (3,271 / 146,977 / 14,110) + semantic_search OK on **small** graphs.
 >
 > **2026-07-18 — added (v3.7.4):** MCP tool surface rationalization — document prefer-order + delete 3 superseded tools first; soft-deprecate `wake_up` / `search_by_environment`; do **not** deprecate `mcp_status` / bootstrap ops tools. Registry baseline ≈85.
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
+| **P0** | `US-SEM-06` | User Story | **PENDING** | Must Have | Mega-graph HNSW semantic_search / kg_semantic_context must not OOM MCP | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
+| **P0** | `FR-SEM-07` | FR | **NOT_DONE** | Must Have | Mega-safe HNSW path: no unbounded all_elements(); ANN + paginated/keyed hydration; MCP stays healthy under mem_limit | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P0** | `REL-054` | Release | **NOT_DONE** | Must Have | Live mega smoke: semantic_search + kg_semantic_context on /workspace-other without OOM/restart | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P1** | `US-08` | User Story | **PARTIAL** | Must Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P1** | `US-CBM-A2` | User Story | **PARTIAL** | Must Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
 | **P1** | `US-CBM-B1` | User Story | **DONE** | Must Have | Typed call resolution Go + TypeScript MVP ('resolution_method=typed') | 3.11 CBM Structural Parity Stories (US-CBM) — merged f… |
@@ -170,6 +175,9 @@
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
+| **P0** | `US-SEM-06` | User Story | **PENDING** | Must Have | Mega-graph HNSW semantic_search / kg_semantic_context must not OOM MCP | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
+| **P0** | `FR-SEM-07` | FR | **NOT_DONE** | Must Have | Mega-safe HNSW path: no unbounded all_elements(); ANN + paginated/keyed hydration; MCP stays healthy under mem_limit | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P0** | `REL-054` | Release | **NOT_DONE** | Must Have | Live mega smoke: semantic_search + kg_semantic_context on /workspace-other without OOM/restart | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P0** | `FR-HNSW-E` | FR | **DONE** | Must Have | Incremental embed filter (foundation) — PARTIAL: day-2 resume/HNSW no-op/stale-blast trac… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) + 5.12 |
 | **P0** | `US-EMBED-01` | User Story | **DONE** | Must Have | Second standalone Docker/CLI embed --wait on unchanged code skips fresh vectors (day-2 de… | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
 | **P0** | `US-EMBED-02` | User Story | **DONE** | Must Have | Interrupted embed (CLI or Docker MCP) resumes; already-fresh vectors are not re-inferred | 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 |
@@ -597,6 +605,7 @@
 
 ## Sync notes
 
+- **2026-07-20 v3.7.5 P0:** `US-SEM-06` / `FR-SEM-07` / `REL-054` — mega-graph HNSW `semantic_search` OOM (`all_elements()`). Evidence: [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md). Prior embed-resume P0 remains DONE.
 - **PR [#81](https://github.com/FreePeak/LeanKG/pull/81):** embed-resume + SEM-06 + MG-AUTO-01 + OPS cpus6/3g/6g.
 - **v3.7.4 MCP surface:** added `US-SURF-01..05`, `FR-SURF-01..06`, `REL-053` (PRD §3.16 / §5.18). Prefer docstring prefer-order + 3 hard deletes; soft-deprecate `wake_up` / `search_by_environment`; keep `mcp_status` + bootstrap ops tools.
 - **FR-SURF-03 / US-SURF-02:** hard-removed `mcp_hello`, `mcp_impact`, `get_doc_for_file`; registry ~82–84 tools; `tests/redundant_tools_matrix.rs` asserts absence + full 84-tool classification (2026-07-20).
