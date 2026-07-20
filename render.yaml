@@ -1,3 +1,5 @@
+# LeanKG on Render (https://leankg.onrender.com)
+# Builds ./Dockerfile → UI v2 embedded via rust_embed; serves `leankg web` on :8080.
 services:
   - type: web
     name: leankg
@@ -6,6 +8,7 @@ services:
     region: iad
     plan: free
     port: 8080
+    healthCheckPath: /api/index/status
     envVars:
       - key: PORT
         value: 8080

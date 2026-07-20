@@ -107,7 +107,7 @@ export default function App() {
       setViewMode('loading');
       setError(null);
       try {
-        const data = await expandService(path, true);
+        const data = await expandService(path, true, project || undefined);
         applyGraph(data);
         const base = fromCrumbs ?? breadcrumbs;
         const next = [...base.filter((c) => c.path !== path), { label, path }];
@@ -123,19 +123,22 @@ export default function App() {
         setViewMode('exploring');
       }
     },
-    [applyGraph, breadcrumbs, filters],
+    [applyGraph, breadcrumbs, filters, project],
   );
 
   const onNodeDoubleClick = useCallback(
     (nodeId: string) => {
       const node = kg?.nodes.find((n) => n.id === nodeId);
       if (!node || !isContainerNode(node)) return;
-      const path = String(node.properties.filePath || '');
-      if (!path) return;
+      let path = String(node.properties.filePath || '').trim();
+      // Topology root often has absolute project path; expand API wants '.' / relative.
+      if (!path || path === project || path === `${project}/`) {
+        path = '.';
+      }
       const label = String(node.properties.name || node.label || nodeId);
       void drillIntoPath(path, label);
     },
-    [kg, drillIntoPath],
+    [kg, drillIntoPath, project],
   );
 
   const onBreadcrumb = useCallback(
@@ -187,17 +190,25 @@ export default function App() {
 
         if (skip && !force) {
           setSkipInfo({ nodes: nodeCount ?? 0, edges: edgeCount ?? 0 });
+          const params = new URLSearchParams(window.location.search);
+          const expandPath = params.get('path');
           try {
             const topo = await fetchServiceTopology();
             setTopologyKg(topo);
             applyGraph(topo);
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
+            setViewMode('overview');
+            setStatusText('Overview (graph skipped — mega-graph gate)');
+            // Deep-link ?path= still drills in (replace-graph) without loading full mega graph.
+            if (expandPath) {
+              void drillIntoPath(expandPath, expandPath, [{ label: 'Overview', path: '' }]);
+            }
           } catch {
             setKg({ nodes: [], relationships: [], nodeCount: 0, relationshipCount: 0 });
             setSigmaGraph(null);
+            setViewMode('overview');
+            setStatusText('Overview (graph skipped — mega-graph gate)');
           }
-          setViewMode('overview');
-          setStatusText('Overview (graph skipped — mega-graph gate)');
           return;
         }
 
@@ -210,7 +221,7 @@ export default function App() {
           setTopologyKg(topo);
           const topoHasSingle = topo.nodes.length === 1;
           if (expandPath) {
-            data = await expandService(expandPath, true);
+            data = await expandService(expandPath, true, project || undefined);
             setBreadcrumbs([
               { label: 'Overview', path: '' },
               { label: expandPath, path: expandPath },
@@ -219,19 +230,19 @@ export default function App() {
             const root = topo.nodes[0];
             const path = root ? String(root.properties.filePath || '.') : '.';
             try {
-              data = await expandService(path, true);
+              data = await expandService(path, true, project || undefined);
             } catch {
-              data = await expandService('.', true);
+              data = await expandService('.', true, project || undefined);
             }
             if (data.nodeCount === 0) {
-              data = await expandService('.', true);
+              data = await expandService('.', true, project || undefined);
             }
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
           } else if (topo.nodes.length > 1) {
             data = topo;
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
           } else {
-            data = await expandService('.', true);
+            data = await expandService('.', true, project || undefined);
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
           }
           if (data.nodeCount === 0 && topo.nodes.length > 0) {
@@ -251,7 +262,7 @@ export default function App() {
         setViewMode('onboarding');
       }
     },
-    [project, setProject, applyGraph],
+    [project, setProject, applyGraph, drillIntoPath],
   );
 
   useEffect(() => {

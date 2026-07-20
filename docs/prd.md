@@ -33,7 +33,7 @@
 
 ### v3.7.8-ui-v2-service-expand - Service/Folder replace-graph + CodePanel file gate (2026-07-21)
 
-> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400 (`Is a directory` / not found). Multi-service topology had no drill-in to **replace** the canvas with that service’s subgraph (legacy `ui/` double-click → `expand-service`).
+> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400 (`Is a directory` / not found). Multi-service topology had no drill-in to **replace** the canvas with that service’s subgraph (legacy `ui/` double-click → `expand-service`). Follow-up: Sigma handlers closed over first-render `kg=null`, so double-click no-op’d until callback refs; onrender/`Dockerfile` rebakes UI v2 with layer-cached npm + `/api/index/status` health check.
 
 **Product actions this revision:**
 | ID | Priority | Focus | Intent |
@@ -42,7 +42,7 @@
 | US-UI2-10 / FR-UI2-12 | Must Have | **P1** | Double-click Service/Folder/Directory → `expand-service?all=true` **replaces** exploring graph; breadcrumbs back to topology |
 | REL-057 | Must Have | **P1** | Vitest/e2e proof: no `/api/file` 400 on Service select; replace-graph on double-click |
 
-**New content:** §3.17 US-UI2-10; §5.19 FR-UI2-12 + REL-057. RCA: `docs/reports/root_cause_api_file_service_folder_400.md`.
+**New content:** §3.17 US-UI2-10; §5.19 FR-UI2-12 + REL-057. RCA: `docs/reports/root_cause_api_file_service_folder_400.md`. Deploy: `Dockerfile` + `render.yaml` (UI v2 embed for leankg.onrender.com).
 
 ### v3.7.7-ui-v2 - GitNexus-shell 2D UI rebuild (2026-07-20)
 
