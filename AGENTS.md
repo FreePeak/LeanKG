@@ -191,6 +191,8 @@ Turning embed on later (or restarting the container with the same volume) must *
 
 **Manual MCP embed (preferred when boot embed is off):** with `LEANKG_EMBED_ON_BOOT=0` and `LEANKG_EMBED_BACKGROUND=0`, call MCP `embed_control(action="on")` to arm an idle-gated **Incremental** partial embed (RSS fraction of container budget; yields on tool activity). Use `action="off"` to cooperatively cancel (safe under Docker PID 1). `action="status"` reports `skipped_fresh` / `vectors_existing`. Env knobs: `LEANKG_EMBED_IDLE_AFTER_SECS`, `LEANKG_EMBED_RSS_FRACTION` (default 0.40), `LEANKG_EMBED_PARTIAL_BATCHES`, `LEANKG_EMBED_PARTIAL_PAUSE_MS`.
 
+**UI v2 + MCP (Option A):** `entrypoint.sh` starts `leankg serve --port ${LEANKG_SERVE_PORT:-8080}` in the background, then `exec` MCP as PID 1. Compose publishes `8080:8080` and `9699:9699`. Host Vite (`ui-v2`) proxies `/api` → `:8080`; agents keep MCP on `:9699`. Same RocksDB env and project cwd. Set `LEANKG_SERVE_HTTP=0` for MCP-only.
+
 ### One-line run (published image — no Rust)
 
 Index + INT8 embed + MCP (recommended):
@@ -202,7 +204,8 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker
 MCP only (skip cold embed):
 
 ```bash
-docker run -d --name leankg -p 9699:9699 \
+docker run -d --name leankg -p 9699:9699 -p 8080:8080 \
+  -e LEANKG_SERVE_HTTP=1 \
   -v "$PWD:/workspace" \
   -v leankg-rocksdb:/data/leankg-rocksdb \
   -v leankg-models:/root/.cache/leankg \
@@ -227,6 +230,8 @@ docker volume rm leankg_leankg-rocksdb
 Environment variables for RocksDB (defaults are built into compose):
 - `LEANKG_DB_ENGINE=rocksdb` -- Switch from SQLite to RocksDB
 - `LEANKG_ROCKSDB_ROOT` -- Centralized storage root (default: `$HOME/.leankg-rocksdb`)
+- `LEANKG_SERVE_HTTP=1` -- Start `leankg serve` REST alongside MCP (UI v2); `0` = MCP-only
+- `LEANKG_SERVE_PORT=8080` -- REST listen port inside the container
 
 The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-other`).
 
@@ -303,6 +308,25 @@ When `LEANKG_DB_ENGINE` is not set, LeanKG uses the default per-project SQLite s
 
 ## UI Development
 
+### UI v2 (GitNexus-shell explorer — Phase 1)
+
+New app in `<leankg-codebase>/ui-v2/` (does **not** replace `ui/` or `src/embed/` yet):
+
+```bash
+# Terminal A — backend
+cargo run --release -- serve   # :8080
+
+# Terminal B — UI v2
+cd <leankg-codebase>/ui-v2 && npm install && npm run dev   # :5173, proxies /api → :8080
+
+# Tests
+cd <leankg-codebase>/ui-v2 && npm test && npm run test:e2e
+```
+
+ERD: [`docs/erd/ui-v2-erd.md`](docs/erd/ui-v2-erd.md). Parity report required before claiming GitNexus parity.
+
+### Legacy UI (`ui/` — still embedded)
+
 The UI is a Vite + React app in `<leankg-codebase>/ui/`:
 
 ```bash
@@ -310,7 +334,7 @@ cd <leankg-codebase>/ui && npm run dev    # Dev server at http://localhost:5173/
 cd <leankg-codebase>/ui && npm run build  # Production build
 ```
 
-**Workflow after testing:**
+**Workflow after testing (legacy embed — cutover from ui-v2 is later):**
 ```bash
 cp -r <leankg-codebase>/ui/dist/* <leankg-codebase>/src/embed/
 cargo build  # Rebuild Rust with new UI assets

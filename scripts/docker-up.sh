@@ -10,7 +10,8 @@
 #   LEANKG_HOST_DIR       host project to mount (default: $PWD)
 #   LEANKG_IMAGE          image tag (default: freepeak/leankg:latest)
 #   LEANKG_CONTAINER_NAME container name (default: leankg)
-#   MCP_HTTP_PORT         host port (default: 9699)
+#   MCP_HTTP_PORT         host MCP port (default: 9699)
+#   LEANKG_SERVE_PORT     host REST port for UI v2 (default: 8080; set LEANKG_SERVE_HTTP=0 to skip)
 #   LEANKG_MCP_MEMORY     MCP container memory limit (default: 2g — Local survival)
 #   LEANKG_EMBED_MEMORY   embed job memory limit (default: 10g)
 #   LEANKG_EMBED_CPUS     embed job CPUs (default: 6)
@@ -21,6 +22,8 @@ IMAGE="${LEANKG_IMAGE:-freepeak/leankg:latest}"
 HOST_DIR="${LEANKG_HOST_DIR:-$PWD}"
 NAME="${LEANKG_CONTAINER_NAME:-leankg}"
 PORT="${MCP_HTTP_PORT:-9699}"
+SERVE_PORT="${LEANKG_SERVE_PORT:-8080}"
+SERVE_HTTP="${LEANKG_SERVE_HTTP:-1}"
 MCP_MEM="${LEANKG_MCP_MEMORY:-2g}"
 MEM="${LEANKG_EMBED_MEMORY:-10g}"
 CPUS="${LEANKG_EMBED_CPUS:-6}"
@@ -38,7 +41,7 @@ fi
 echo "=== LeanKG Docker setup ==="
 echo "  image:     $IMAGE"
 echo "  host dir:  $HOST_DIR → /workspace"
-echo "  container: $NAME  port: $PORT"
+echo "  container: $NAME  mcp:$PORT  serve:$SERVE_PORT (LEANKG_SERVE_HTTP=$SERVE_HTTP)"
 echo "  embed:     memory=$MEM cpus=$CPUS"
 echo "  mcp:       memory=$MCP_MEM (Local 2GB survival)"
 
@@ -104,14 +107,20 @@ else
   echo "=== Skipping embed (LEANKG_SKIP_EMBED=1) ==="
 fi
 
-echo "=== Start MCP HTTP ==="
+echo "=== Start MCP HTTP (+ optional REST serve for UI v2) ==="
+RUN_PORTS=(-p "${PORT}:9699")
+if [[ "$SERVE_HTTP" == "1" || "$SERVE_HTTP" == "true" ]]; then
+  RUN_PORTS+=(-p "${SERVE_PORT}:8080")
+fi
 docker run -d --name "$NAME" \
-  -p "${PORT}:9699" \
+  "${RUN_PORTS[@]}" \
   --memory="$MCP_MEM" \
   --restart unless-stopped \
   "${VOLUMES[@]}" \
   "${ENV_COMMON[@]}" \
   -e LEANKG_EMBED_MAX_MB=512 \
+  -e LEANKG_SERVE_HTTP="$SERVE_HTTP" \
+  -e LEANKG_SERVE_PORT=8080 \
   "$IMAGE"
 
 echo "=== Wait for /health ==="
@@ -134,4 +143,7 @@ echo ""
 echo "LeanKG MCP ready — no Rust required."
 echo "  Health:  curl http://127.0.0.1:${PORT}/health"
 echo "  MCP URL: http://127.0.0.1:${PORT}/mcp"
+if [[ "$SERVE_HTTP" == "1" || "$SERVE_HTTP" == "true" ]]; then
+  echo "  REST UI: http://127.0.0.1:${SERVE_PORT}/  (ui-v2 proxies /api here)"
+fi
 echo "  Stop:    docker rm -f ${NAME}"

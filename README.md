@@ -228,32 +228,59 @@ Full methodology: [docs/benchmark.md](docs/benchmark.md)
 - **Token-aware payloads** — targeted subgraphs + TOON responses (~40% smaller MCP payloads)
 - **Team knowledge** — incidents, env conflicts, service topology, Obsidian vault sync
 - **Graph export** — Mermaid, DOT, HTML, SVG, GraphML, Neo4j, portable snapshots
-- **Web UI** — force-directed graph, WebGL rendering, community clustering, linked source view
+- **Web UI (v2)** — GitNexus-inspired explorer: Force / Tree / Circles, filters, search, code panel (`ui-v2/` + `leankg serve`)
 
-Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs/mcp-tools.md](docs/mcp-tools.md)
+Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs/mcp-tools.md](docs/mcp-tools.md) · UI v2: [ui-v2/README.md](ui-v2/README.md)
 
 ---
 
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/graph.jpeg" alt="LeanKG force-directed graph visualization" width="90%">
+  <img src="docs/reports/screenshots/01-force-src.png" alt="LeanKG UI v2 Force layout" width="90%">
 </p>
 
 <p align="center">
-  <em>Force-directed graph, WebGL rendering, community clustering, and linked source view.</em>
+  <em>UI v2 — Force layout (Sigma), filters, and status bar against <code>leankg serve</code>.</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/obsidian.jpeg" alt="LeanKG Obsidian vault sync" width="90%">
+  <img src="docs/reports/screenshots/02-tree-src.png" alt="LeanKG UI v2 Tree layout" width="45%">
+  &nbsp;
+  <img src="docs/reports/screenshots/03-circles-src.png" alt="LeanKG UI v2 Circles layout" width="45%">
 </p>
 
 <p align="center">
-  <em>Obsidian vault sync for team knowledge and notes linked to the graph.</em>
+  <em>Tree and Circles layouts on the same subgraph.</em>
 </p>
 
-UI guide: [docs/web-ui.md](docs/web-ui.md) · Live demo: **https://leankg.onrender.com**
+<p align="center">
+  <img src="docs/reports/screenshots/07-code-panel.png" alt="LeanKG UI v2 code panel" width="90%">
+</p>
 
+<p align="center">
+  <em>Node select opens syntax-highlighted source via <code>/api/file</code>.</em>
+</p>
+
+<p align="center">
+  <img src="docs/reports/screenshots/05-search.png" alt="LeanKG UI v2 header search" width="45%">
+  &nbsp;
+  <img src="docs/reports/screenshots/04-query-panel.png" alt="LeanKG UI v2 Query FAB" width="45%">
+</p>
+
+<p align="center">
+  <em>Header search (<code>/api/search</code>) and Query FAB (<code>/api/query</code>).</em>
+</p>
+
+<p align="center">
+  <img src="docs/reports/screenshots/06-mega-skip.png" alt="LeanKG UI v2 mega-graph skip gate" width="90%">
+</p>
+
+<p align="center">
+  <em>Mega-graph skip gate with “Load graph anyway”.</em>
+</p>
+
+Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-screenshots-2026-07-20.md) · App notes: [ui-v2/README.md](ui-v2/README.md) · Live demo: **https://leankg.onrender.com**
 ---
 
 ## How It Works

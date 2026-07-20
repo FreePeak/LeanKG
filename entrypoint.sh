@@ -267,6 +267,30 @@ if [ "${LEANKG_DOCKER_SETUP:-0}" = "1" ]; then
     done
 fi
 
-echo "=== Starting MCP HTTP on port $MCP_PORT for project $MCP_PROJECT ==="
 cd "$MCP_PROJECT" || { echo "FATAL: cannot cd to $MCP_PROJECT"; exit 1; }
+
+# Option A: same container serves MCP (:9699) + REST UI API (:8080).
+# UI v2 (Vite) proxies /api → host :8080; agents keep using MCP :9699.
+# Disable with LEANKG_SERVE_HTTP=0 when you only need MCP (saves a process).
+SERVE_PORT="${LEANKG_SERVE_PORT:-8080}"
+case "${LEANKG_SERVE_HTTP:-1}" in
+    0|false|FALSE|no|NO|off|OFF)
+        echo "=== Skipping leankg serve (LEANKG_SERVE_HTTP=${LEANKG_SERVE_HTTP}) ==="
+        ;;
+    *)
+        echo "=== Starting web REST API (leankg serve) on port $SERVE_PORT ==="
+        # Same cwd + LEANKG_DB_ENGINE/LEANKG_ROCKSDB_ROOT as MCP so UI sees Docker RocksDB.
+        # Background child; container stop kills the cgroup (MCP remains PID 1 via exec).
+        leankg serve --port "$SERVE_PORT" &
+        SERVE_PID=$!
+        sleep 0.5
+        if kill -0 "$SERVE_PID" 2>/dev/null; then
+            echo "  serve PID $SERVE_PID — UI REST http://0.0.0.0:$SERVE_PORT (host map 8080:8080)"
+        else
+            echo "  WARN: leankg serve failed to start; UI REST :$SERVE_PORT unavailable (MCP still starting)"
+        fi
+        ;;
+esac
+
+echo "=== Starting MCP HTTP on port $MCP_PORT for project $MCP_PROJECT ==="
 exec leankg mcp-http --port "$MCP_PORT" --project "$MCP_PROJECT" "$@"

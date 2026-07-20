@@ -2007,20 +2007,28 @@ pub async fn api_graph_expand_service(
         path.to_string_lossy().to_string()
     };
 
-    let relative_folder = if let Some(remainder) = folder_path.strip_prefix(&project_path) {
-        if let Some(stripped) = remainder.strip_prefix('/') {
-            format!("./{}", stripped)
+    // Map absolute project root → "." (not "./") so folder queries match indexed paths.
+    // strip_prefix("") previously produced "./" which returned 0 elements.
+    let mut relative_folder = if let Some(remainder) = folder_path.strip_prefix(&project_path) {
+        let stripped = remainder.trim_start_matches('/');
+        if stripped.is_empty() {
+            ".".to_string()
         } else {
-            format!("./{}", remainder)
+            format!("./{}", stripped)
         }
+    } else if folder_path == "." || folder_path == "./" || folder_path.is_empty() {
+        ".".to_string()
     } else {
         folder_path.clone()
     };
+    if relative_folder == "./" {
+        relative_folder = ".".to_string();
+    }
 
     // FR-MG-03: For single-repo projects, treat the root path as the "service".
     // Auto-enable all_content when the user expands the project root in single-repo
     // mode so the entire graph loads in a single API call.
-    if !all_content && (relative_folder.is_empty() || relative_folder == ".") {
+    if relative_folder.is_empty() || relative_folder == "." {
         let project_root = std::path::Path::new(&project_path);
         let is_single_repo = detect_single_repo(project_root);
         if is_single_repo {
@@ -3403,11 +3411,28 @@ pub struct IndexStatusResponse {
     pub current_file: String,
     pub total_files: usize,
     pub indexed_files: usize,
+    /// Soft counts for UI mega-graph gating (ui-v2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relationship_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
 }
 
 #[allow(dead_code)]
 pub async fn api_index_status(State(state): State<AppState>) -> impl IntoResponse {
     let indexing_state = state.indexing_state.read().await;
+    let project_path = state.current_project_path.read().await.clone();
+
+    let (element_count, relationship_count) = match state.get_graph_engine().await {
+        Ok(g) => {
+            let ec = g.count_elements().ok();
+            let rc = g.count_relationships().ok();
+            (ec, rc)
+        }
+        Err(_) => (None, None),
+    };
 
     ApiResponse {
         success: true,
@@ -3417,6 +3442,9 @@ pub async fn api_index_status(State(state): State<AppState>) -> impl IntoRespons
             current_file: indexing_state.current_file.clone(),
             total_files: indexing_state.total_files,
             indexed_files: indexing_state.indexed_files,
+            element_count,
+            relationship_count,
+            project_path: Some(project_path.display().to_string()),
         }),
         error: indexing_state.error.clone(),
     }

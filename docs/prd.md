@@ -1,6 +1,6 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.6-mega-concept-query
+**Version:** 3.7.7-ui-v2
 **Date:** 2026-07-20
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
@@ -30,6 +30,18 @@
 ---
 
 ## Changelog
+
+### v3.7.7-ui-v2 - GitNexus-shell 2D UI rebuild (2026-07-20)
+
+> **Trigger:** Rebuild LeanKG web explorer UX to match GitNexus `gitnexus-web` exploring shell (3-pane layout, Force/Tree/Circles, mega-graph skip) while keeping LeanKG `leankg serve` REST and CodeElement schema. Existing `ui/` + Track E 3D `graph-ui/` remain separate.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-UI2-01..05 / FR-UI2-* | Must Have | **P1** | New `ui-v2/` graph explorer shell; Vitest+Playwright parity proof |
+| REL-056 | Must Have | **P1** | Parity report: shell behaviors vs GitNexus (no agent/analyze in Phase 1) |
+
+**New content:** Section **3.17** UI v2 stories; Section **5.19** UI v2 FRs. ERD: [`docs/erd/ui-v2-erd.md`](erd/ui-v2-erd.md).
 
 ### v3.7.6-mega-concept-query - Mega-safe concept_search / query_graph / clusters (2026-07-20)
 
@@ -1530,6 +1542,40 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - Replacing `wake_up` with `load_layer(layer="L0")` alone
 - Merging the intentional search triple or semantic triple into one tool
 - Quoting a “64 → 57” shrink without recounting the live registry
+
+### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.7
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056`.  
+> **Design:** [`docs/erd/ui-v2-erd.md`](erd/ui-v2-erd.md).  
+> **Separate from:** Track E 3D `graph-ui/` (`REL-041` / `US-CBM-E1`).
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-UI2-01 | Must Have | As a developer, I open `ui-v2` against `leankg serve` and explore the graph in Force, Tree, or Circles layout |
+| US-UI2-02 | Must Have | As a developer, I filter node/edge types (defaults Service/Folder/File/Function) and browse a file tree of loaded nodes |
+| US-UI2-03 | Must Have | As a developer, I select a node and see syntax-highlighted source via `/api/file` |
+| US-UI2-04 | Must Have | As a developer, I search via `/api/search` and run raw queries via QueryFAB `/api/query` |
+| US-UI2-05 | Must Have | As a developer on a mega-graph, the UI skips full canvas load and offers “Load graph anyway” |
+
+**Phase 1 out of scope:** browser LLM agent, analyze/upload, Processes Mermaid, replacing `src/embed/`.
+
+### 5.19 UI v2 Graph Explorer (v3.7.7)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056`.  
+> **Evidence:** [`docs/reports/ui-v2-gitnexus-parity-*.md`](reports/) (required before claiming GitNexus parity).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-UI2-01 | Must Have | New `ui-v2/` Vite+React+Tailwind+Sigma app; do not modify `ui/` or `src/embed/` in Phase 1 |
+| FR-UI2-02 | Must Have | 3-pane exploring shell: FileTree+Filters / GraphCanvas / Code panel + Header + StatusBar |
+| FR-UI2-03 | Must Have | Layout modes Force / Tree / Circles (GitNexus-shell behavior) |
+| FR-UI2-04 | Must Have | Data plane uses LeanKG REST envelope `{success,data,error}`: topology, expand-service, children, search, file, query, index/status, project/switch, clusters |
+| FR-UI2-05 | Must Have | Preserve US-MG-03/04 filter defaults (`DEFAULT_NODE_TYPE_ORDER`, `DEFAULT_VISIBLE_LABELS`) |
+| FR-UI2-06 | Must Have | Mega-graph skip via `decideSkipGraph` (~50k nodes) + Load anyway |
+| FR-UI2-07 | Must Have | Vitest units (adapter, load-decision, constants, client, url-restore) + Playwright Phase-1 e2e matrix |
+| REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
+
+**Won't Do (Phase 1):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
 
 ---
 
