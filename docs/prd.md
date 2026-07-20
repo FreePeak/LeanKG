@@ -1,23 +1,25 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.4-mcp-surface
-**Date:** 2026-07-18
+**Version:** 3.7.5-mega-sem-oom
+**Date:** 2026-07-20
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.0 (`origin/main` @ `e5d1490`)
+**Codebase Version:** 0.19.1 (`origin/main` @ `a89a2cc`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **CURRENT P0 (highest):** **Day-2 embed resume** — core FRs DONE on `feature/embed-resume-day2` / PR [#81](https://github.com/FreePeak/LeanKG/pull/81). Remaining PARTIAL: mega-graph MCP auto-index OOM ops (`FR-MG-AUTO-01`, `LEANKG_SKIP_FRESHNESS_CHECK`) + optional live Docker smoke.
+> **CURRENT P0 (highest):** **Mega-graph HNSW `semantic_search` OOM** — `US-SEM-06` / `FR-SEM-07` / `REL-054`. Evidence: [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md). HNSW path still triggers `all_elements()` on ~641k-element mounts → MCP OOM/restart. Small `/workspace` HNSW remains GREEN.
 >
-> **Semantic MCP live probe 2026-07-18 GREEN** ([`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md)): 3,271 vectors; no embed-resume regressions. **FR-SEM-06** path filter **DONE**. FR-SEM-01..03 remain P2.
+> **Prior P0 Day-2 embed resume COMPLETE** — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) + `embed_control` idle resume on PR [#86](https://github.com/FreePeak/LeanKG/pull/86). Do **not** start new embed-resume work ahead of closing mega-sem OOM.
 >
-> **New track (v3.7.4):** **MCP tool surface rationalization** — §3.16 / §5.18 (`US-SURF-*` / `FR-SURF-*`). Prefer docstring prefer-order + 3 hard deletes over large merges/rebrands. Baseline registry ≈**85** tools (not 64).
+> **Semantic MCP live probe 2026-07-18 GREEN on small graph** ([`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md)): 3,271 vectors. **FR-SEM-06** path filter **DONE**. FR-SEM-01..03 remain P2. Mega HNSW is a **new P0** (not covered by that small-graph probe).
 >
-> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80). Do **not** start new VE work ahead of closing embed-resume PARTIAL.
+> **Track (v3.7.4):** **MCP tool surface rationalization** — §3.16 / §5.18 (`US-SURF-*` / `FR-SURF-*`). Prefer docstring prefer-order + 3 hard deletes over large merges/rebrands. Baseline registry ≈**84–85** tools.
+>
+> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80).
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -28,6 +30,20 @@
 ---
 
 ## Changelog
+
+### v3.7.5-mega-sem-oom - Mega-graph HNSW semantic_search OOM is P0 (2026-07-20)
+
+> **Trigger:** Post-merge Docker MCP validation on `main` @ `a89a2cc` ([`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md)). Find/lookup, ontology, flow, and `embed_control` idle resume **PASS** on `/workspace-other` (~641k elements, ~147k vectors). **`semantic_search` on mega FAIL:** RSS climbs ~3.3 GiB → `OOMKilled` / HTTP disconnect; logs show deprecated `all_elements()` + skip elements_cache. Same tool on `/workspace` **PASS** (`method: hnsw+rerank`).
+>
+> **Product intent:** Mega-graph agents must be able to run HNSW `semantic_search` / `kg_semantic_context` under documented MCP memory budgets **without** killing the HTTP server. Prefer-order (`concept_search` → `search_code`) is a temporary agent workaround, not the product fix.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-SEM-06 / FR-SEM-07 | Must Have | **P0** | Mega-safe HNSW path: no unbounded `all_elements()`; ANN + paginated element hydration only; MCP stays healthy |
+| REL-054 | Must Have | **P0** | Live mega smoke: `semantic_search` + `kg_semantic_context` on `/workspace-other` without OOM/restart |
+
+**New content:** Section **3.14** US-SEM-06; Section **5.15** FR-SEM-07 + REL-054; Section **5.17** cross-link. Tracker Focus **P0** open queue = mega-sem OOM (embed-resume / VE remain DONE).
 
 ### v3.7.4-mcp-surface - MCP tool surface rationalization (2026-07-18)
 
@@ -996,7 +1012,7 @@ Palace Mapping:
 >
 > **Depends on:** FR-HNSW-D / FR-V2-06 / FR-V2-07 (shipped). **Does not** reopen Cozo vs LocalEngine cutover (FR-VE-GATE).
 >
-> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SEM-*` / `FR-SEM-*` / `REL-051`.
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SEM-*` / `FR-SEM-*` / `REL-051` / `REL-054`. **P0 open:** `US-SEM-06` / `FR-SEM-07` / `REL-054`.
 
 #### US-SEM-01 — Honest token accounting on truncated MCP payloads (Should Have)
 
@@ -1041,7 +1057,20 @@ Palace Mapping:
 - **Given** a query containing `"benchmark"`, **When** `semantic_search` runs, **Then** `src/benchmark/**` may appear (gated keep).
 - **Evidence baseline:** [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md) Probes G/H.
 
-### 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 — **P0 CURRENT**
+#### US-SEM-06 — Mega-graph HNSW semantic search must not OOM MCP (**P0** / Must Have)
+
+**As an** AI agent on a mega-graph Docker MCP mount (~600k+ elements, ~150k vectors), **I want** `semantic_search` and `kg_semantic_context` to complete under the documented MCP memory budget, **so that** natural-language retrieval does not kill `:9699` and strand the rest of the tool surface.
+
+**Acceptance criteria:**
+- **Given** an indexed mega project (`project=/workspace-other` or equivalent container mount) with an existing embedding index, **When** `semantic_search(query=…, limit≤5)` runs, **Then** the call returns `method: hnsw+rerank` (or documented degrade) **without** container `OOMKilled`, process crash, or HTTP disconnect; `/health` stays ok during and after the call.
+- **Given** the same setup, **When** `kg_semantic_context` runs a short NL query, **Then** the same stability ACs hold (no mega `all_elements()` dump).
+- **Given** logs during the call, **When** inspected, **Then** there is **no** unbounded `all_elements()` / full-graph element cache load for seed hydration (ANN candidates + paginated / keyed element fetch only).
+- **Given** the same binary on a small project (`/workspace`), **When** `semantic_search` runs, **Then** existing HNSW+rerank behavior remains GREEN (no regression).
+- **Evidence of failure (baseline):** [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md) — mega FAIL / small PASS; mem peak ~3.3 GiB before kill.
+
+**Temporary agent workaround (not the fix):** on mega-graphs prefer `concept_search` → `search_code` / `find_function` until FR-SEM-07 lands.
+
+### 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 — **DONE (prior P0)**
 
 > **Trigger:** Turning embedding on (standalone Docker `embed --wait`, or Docker MCP with `LEANKG_EMBED_BACKGROUND` / boot / setup) against a persisted RocksDB volume looks like a full cold rebuild — unacceptable CPU/RAM/time on mega-graphs.
 >
@@ -1365,9 +1394,11 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 
 ### 5.15 Semantic MCP Agent UX Enhancements (v3.7.1)
 
-> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SEM-*` / `REL-051` / `US-SEM-*`.
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SEM-*` / `REL-051` / `REL-054` / `US-SEM-*`. **Current P0:** `FR-SEM-07` / `REL-054`.
 >
-> **Evidence baseline (GREEN, no reopen):** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Live probe confirms HNSW+rerank, ontology, `kg_*` schema health, and graph-enriched context. These FRs are **agent UX / ops / release hygiene** — not ANN recall fixes.
+> **Evidence baseline (GREEN, no reopen) — small graph:** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Live probe confirms HNSW+rerank, ontology, `kg_*` schema health, and graph-enriched context.
+>
+> **Mega-graph gap (P0, 2026-07-20):** [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md) — HNSW path OOMs when seed hydration still touches `all_elements()`. FR-SEM-01..05 remain agent UX / ops / release hygiene — **FR-SEM-07 is the mega safety fix**.
 
 **Policy:**
 - Keep shipped retrieval path (FR-HNSW-D): embed → HNSW top-k → optional rerank → optional graph traverse
@@ -1382,14 +1413,17 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-SEM-04 | Should Have | Formal **live MCP semantic smoke** checklist (Docker `project=/workspace`) as release *complement*; template = verification docs 2026-07-17 / **2026-07-18** |
 | FR-SEM-05 | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank so top-k is not ≥70% one file by default collapse |
 | FR-SEM-06 | Must Have | Path filter in `FilterPolicy`: always drop `embed/assets/`; query-gate `src/benchmark/` unless query contains "benchmark" (Probes G/H) |
+| FR-SEM-07 | Must Have (**P0**) | **Mega-safe HNSW semantic path:** `semantic_search` / `kg_semantic_context` (and any helper they call for seed hydration) must **not** invoke unbounded `all_elements()` or load the full element set into RAM on graphs above `LEANKG_MAX_CACHE_ELEMENTS`. Hydrate ANN hit QNs via keyed/paginated DB reads only. Peak RSS must fit documented MCP `mem_limit` (compose default 6g; effective cgroup may be lower) without OOM/restart. Small-graph HNSW path must not regress. |
 | REL-051 | Should Have | Release note: live semantic smoke executed (or waived with reason) alongside embeddings cargo suite — **DONE** 2026-07-18 |
+| REL-054 | Must Have (**P0**) | Live mega smoke gate: on `/workspace-other` (or equivalent), `semantic_search` + `kg_semantic_context` succeed without OOM/HTTP drop; record peak RSS + latency in a `docs/reports/` note. Complements REL-051 (small-graph) |
 
 **Won't Do (this track):**
 - Replacing Cozo HNSW default before FR-VE-GATE callers honor LocalEngine
 - Treating transient HTTP flakes as ANN / ontology product failures
 - Dropping truncation entirely (mission is still lean tokens)
+- Raising OrbStack/host VM RAM alone as the “fix” for `all_elements()` on mega HNSW (ops headroom helps; code must still stop full-graph dumps)
 
-### 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) — **P0 CURRENT**
+### 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) — **DONE (prior P0)**
 
 > **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-EMBED-RESUME-*` / `US-EMBED-*` / `REL-052` / `FR-HNSW-E`.
 >
@@ -1424,14 +1458,17 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 
 ### 5.17 Mega-graph MCP auto-index + embed ops (v3.7.3)
 
-> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-MG-AUTO-*` / `FR-OPS-EMBED-*`.
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-MG-AUTO-*` / `FR-OPS-EMBED-*` / **P0** `FR-SEM-07` / `REL-054`.
 >
 > **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md) — large multi-repo mounts trigger MCP incremental reindex on every start (RocksDB writes do not bump `.leankg/leankg.db` mtime), OOMs under 2g `mem_limit`, and flake semantic HTTP. `docker-compose.embed.yml` `cpus: "6"` failed on 5-vCPU hosts.
+>
+> **2026-07-20 follow-up:** Auto-index skip + compose CPU/mem knobs are **not sufficient** for mega HNSW query — see **FR-SEM-07** / **US-SEM-06** (P0). Evidence: [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md).
 
 | ID | Priority | Requirement |
 |----|----------|-------------|
 | FR-MG-AUTO-01 | Must Have | Honor `LEANKG_SKIP_FRESHNESS_CHECK=1` in MCP `auto_index_if_needed` (no wipe). Document ops: `LEANKG_AUTO_INDEX=0`, `auto_index_on_start: false`, MCP `mem_limit: 6g` / `mem_reservation: 3g` / `cpus: "6"` for mega-graphs (~147k vectors). Follow-up: RocksDB manifest mtime vs `leankg.db` |
 | FR-OPS-EMBED-CPU | Must Have | `docker-compose.embed.yml`: `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 10g`. MCP `docker-compose.rocksdb.yml`: multi-project default `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 6g` (override down for single-project Local 2g KPI) |
+| FR-SEM-07 / REL-054 | Must Have (**P0**) | Cross-link: mega-safe HNSW query path — owned in §5.15; ops evidence still recorded under mega-graph reports |
 
 **Won't Do:** `LEANKG_FORCE_REINDEX=1` as the fix for stale mega-graphs (wipes data).
 
@@ -1904,23 +1941,36 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ## 8. Release Criteria
 
-> **Release checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Kind=`Release` or section 8.* / FR-VE-GATE / REL-052.
+> **Release checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Kind=`Release` or section 8.* / FR-VE-GATE / REL-052 / **REL-054**.
 
-### 8.5 v3.7.2 Embed Resume Gate (CURRENT P0)
+### 8.5 v3.7.2 Embed Resume Gate — **DONE (prior P0)**
 
-> **Status:** PENDING — tracker `REL-052` + `FR-EMBED-RESUME-*` / `US-EMBED-*`.
+> **Status:** **DONE** on PR [#81](https://github.com/FreePeak/LeanKG/pull/81) / [#86](https://github.com/FreePeak/LeanKG/pull/86) — tracker `REL-052` + `FR-EMBED-RESUME-*` / `US-EMBED-*` / `FR-EMBED-TOGGLE-01`.
 >
-> Ship day-2 resume before starting new P1 feature work. Vector Engine PR #80 may merge in parallel; it does **not** replace this gate.
->
-> **Implementation (2026-07-18 — `feature/embed-resume-day2`):** FR-EMBED-RESUME-01..04 + US-EMBED-01..03 **DONE** (unit + e2e + local CLI smoke: second `embed --wait` logs `nothing to embed … HNSW unchanged`). Remaining PARTIAL: optional live Docker MCP smoke / mega-graph wall-time note (`US-EMBED-04`, `FR-EMBED-RESUME-05/06`, `REL-052`).
+> **Current P0** is mega-graph HNSW query safety — see **§8.6** (`REL-054` / `FR-SEM-07`).
 
 **Gate checklist:**
-1. Unchanged second `embed --wait` on RocksDB volume: `embedded≈0`, `skipped_fresh` dominates (FR-EMBED-RESUME-01 / US-EMBED-01) — **DONE** (CLI smoke + e2e)
+1. Unchanged second `embed --wait` on RocksDB volume: `embedded≈0`, `skipped_fresh` dominates (FR-EMBED-RESUME-01 / US-EMBED-01) — **DONE**
 2. Zero-dirty path skips HNSW drop/rebuild (FR-EMBED-RESUME-02 / US-EMBED-03) — **DONE**
-3. Kill mid-run → resume dirty-only (FR-EMBED-RESUME-03 / US-EMBED-02) — **DONE** (per-batch `upsert_fresh`)
-4. No-op index does not stale-all (FR-EMBED-RESUME-04) — **DONE** (`mark_stale_if_changed`)
-5. Day-2 wall time ≪ cold on mega-graph; release note records numbers (FR-EMBED-RESUME-05 / REL-052) — **PARTIAL** (local tiny smoke green; mega-graph evidence optional)
-6. Docker embed-on resumes existing data; cold only when empty (FR-EMBED-RESUME-06 / US-EMBED-04) — **PARTIAL** (shared `build.rs` path + AGENTS; live Docker smoke optional)
+3. Kill mid-run → resume dirty-only (FR-EMBED-RESUME-03 / US-EMBED-02) — **DONE**
+4. No-op index does not stale-all (FR-EMBED-RESUME-04) — **DONE**
+5. Day-2 wall time ≪ cold on mega-graph; release note records numbers (FR-EMBED-RESUME-05 / REL-052) — **DONE** (MCP idle resume evidence 2026-07-20: `skipped_fresh: 147175`, ~2.7 s)
+6. Docker embed-on resumes existing data; cold only when empty (FR-EMBED-RESUME-06 / US-EMBED-04) — **DONE**
+
+### 8.6 v3.7.5 Mega-graph HNSW Semantic Safety Gate (**CURRENT P0**)
+
+> **Status:** **OPEN** — tracker `US-SEM-06` / `FR-SEM-07` / `REL-054`.
+>
+> Ship mega-safe HNSW `semantic_search` / `kg_semantic_context` before treating mega Docker MCP as production-ready for NL retrieval. Small-graph probe (REL-051) does **not** close this gate.
+>
+> **Failure baseline:** [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md) — mega OOM; `/workspace` HNSW GREEN.
+
+**Gate checklist:**
+1. No unbounded `all_elements()` (or equivalent full-graph RAM load) on HNSW semantic seed hydration (FR-SEM-07) — **NOT_DONE**
+2. `semantic_search` on `/workspace-other` returns without OOM/HTTP drop; `/health` stays ok (US-SEM-06 / REL-054) — **NOT_DONE**
+3. `kg_semantic_context` same mega stability AC — **NOT_DONE**
+4. Small `/workspace` HNSW+rerank remains GREEN (no regression) — **PASS** (baseline 2026-07-20)
+5. Report peak RSS + latency in `docs/reports/` after fix (REL-054) — **NOT_DONE**
 
 ## 9. Non-Functional Requirements
 
