@@ -123,7 +123,9 @@ Procedural workflows live in `ontology/workflows.yaml` (plus `concepts.yaml`). F
 3. After successful index (CLI / MCP / auto-index / UI)
 4. Explicit `ontology_control(action=sync)`
 
-Env: `LEANKG_ONTOLOGY_DIR` overrides the ontology directory. Smoke: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md).
+**Sync semantics:** YAML is source of truth. Each sync **clears** the `ontology://` layer then batch-inserts, so renames/removals do not leave duplicate workflow steps. Live correction path (wrong steps → edit YAML → watcher → next `kg_trace_workflow`): [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md).
+
+Env: `LEANKG_ONTOLOGY_DIR` overrides the ontology directory.
 
 ## Semantic Retrieval (optional, `embeddings` feature)
 

@@ -36,6 +36,22 @@ Cozo `code_elements` `:put` keys the **full composite tuple** (including `name` 
 | Watcher: restore → cleared + single row | PASS |
 | `/health` throughout | PASS |
 
+## Sample workflow correction (end-to-end live)
+
+Scenario on disposable `user_order_flow` (YAML restored after):
+
+1. **Wrong** steps synced: `Charge Card Immediately`, `Skip Validation` → Session 1 `kg_trace_workflow` returned those 2 steps.
+2. **User corrects** YAML: remove both wrong steps; add `Validate Cart` → `Reserve Inventory` → `Charge Payment` → `Confirm Order`.
+3. **Watcher auto-sync** (no restart, no explicit sync): log `Ontology auto-sync: … steps=53`; Session 2 returned **only** the 4 correct steps (wrong GIDs gone).
+4. **Next session** (kill + restart `mcp-http`): query `user_order_flow` and alias `checkout-demo` → same 4 correct steps.
+
+| Check | Result |
+|-------|--------|
+| Session 1 retrieves wrong steps | PASS |
+| Watcher applies add/remove/correct | PASS |
+| Session 2 / next session retrieves corrected steps only | PASS |
+| Sample workflow removed from `ontology/workflows.yaml` after test | PASS |
+
 ## Unit / build
 
 ```bash
