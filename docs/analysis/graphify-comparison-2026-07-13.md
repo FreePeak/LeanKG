@@ -1,5 +1,7 @@
 # Graphify vs LeanKG Competitive Comparison
 
+> **Superseded for decisions (2026-07-21):** Use [`graphify-vs-leankg-2026-07-20.md`](graphify-vs-leankg-2026-07-20.md) + PRD §1.1 / v3.7.8 company-adoption queue. This Jul-13 matrix still useful historically; many MCP “Missing” rows are now DONE.
+
 **Date:** 2026-07-13
 **Sources:** [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (v8 / v0.9.13), LeanKG `docs/prd.md`, `README.md`, `docs/mcp-tools.md`
 **Purpose:** Evidence for PRD v3.3 Graphify-inspired enhancements (US-GF / FR-GF)
