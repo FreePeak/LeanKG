@@ -18,6 +18,7 @@ interface GraphCanvasProps {
   searchTerm: string;
   highlightIds: Set<string>;
   onNodeSelect: (nodeId: string | null) => void;
+  onNodeDoubleClick?: (nodeId: string) => void;
   selectedNodeId: string | null;
   layoutMode: 'force' | 'tree' | 'circles';
 }
@@ -29,6 +30,7 @@ export function GraphCanvas({
   searchTerm,
   highlightIds,
   onNodeSelect,
+  onNodeDoubleClick,
   selectedNodeId,
   layoutMode,
 }: GraphCanvasProps) {
@@ -46,6 +48,7 @@ export function GraphCanvas({
       onNodeSelect(id);
       return true;
     },
+    onNodeDoubleClick: (id) => onNodeDoubleClick?.(id),
     onStageClick: () => onNodeSelect(null),
     visibleEdgeTypes: visibleEdges,
     searchTerm,

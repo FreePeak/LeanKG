@@ -97,3 +97,8 @@ export const DEFAULT_VISIBLE_EDGES = [
 /** Mega-graph client gate (aligned with LEANKG_MAX_CACHE_ELEMENTS spirit). */
 export const LARGE_GRAPH_NODE_THRESHOLD = 50_000;
 export const LARGE_GRAPH_EDGE_THRESHOLD = 150_000;
+
+/** First expand-service page (server also caps at 500). */
+export const EXPAND_INITIAL_LIMIT = 500;
+/** Subsequent “Load more” page size — merges into the current canvas. */
+export const EXPAND_LOAD_MORE_LIMIT = 200;

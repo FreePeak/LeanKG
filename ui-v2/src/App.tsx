@@ -17,10 +17,14 @@ import {
   shouldConfirmGraphLoad,
 } from './lib/graph-load-decision';
 import {
+  EXPAND_INITIAL_LIMIT,
+  EXPAND_LOAD_MORE_LIMIT,
   LARGE_GRAPH_EDGE_THRESHOLD,
   LARGE_GRAPH_NODE_THRESHOLD,
 } from './lib/constants';
+import { mergeKnowledgeGraphs, nextExpandOffset } from './lib/graph-merge';
 import type { KnowledgeGraph, GraphNode } from './core/graph/types';
+import { isContainerNode } from './lib/node-kinds';
 import {
   expandService,
   fetchIndexStatus,
@@ -32,10 +36,24 @@ import {
 
 type ViewMode = 'onboarding' | 'loading' | 'exploring' | 'overview';
 
+interface Crumb {
+  label: string;
+  /** Empty path = topology overview */
+  path: string;
+}
+
+/** Pagination cursor for the last expand-service replace (Load more merges). */
+interface ExpandPaging {
+  path: string;
+  nextOffset: number;
+  hasMore: boolean;
+}
+
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('loading');
   const [connected, setConnected] = useState(false);
   const [kg, setKg] = useState<KnowledgeGraph | null>(null);
+  const [topologyKg, setTopologyKg] = useState<KnowledgeGraph | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('force');
   const [sigmaGraph, setSigmaGraph] = useState<Graph<
     SigmaNodeAttributes,
@@ -50,6 +68,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [skipInfo, setSkipInfo] = useState<{ nodes: number; edges: number } | null>(null);
   const [project, setProject] = useUrlProject();
+  const [breadcrumbs, setBreadcrumbs] = useState<Crumb[]>([{ label: 'Overview', path: '' }]);
+  const [expandPaging, setExpandPaging] = useState<ExpandPaging | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  /** Last expand/load-more nodes for sidebar — kept when navigating back to topology overview. */
+  const [sessionExplorerNodes, setSessionExplorerNodes] = useState<GraphNode[]>([]);
 
   const filters = useGraphFilters();
 
@@ -64,6 +87,165 @@ export default function App() {
       setSigmaGraph(g);
     },
     [],
+  );
+
+  const applyGraph = useCallback(
+    (data: KnowledgeGraph, mode: LayoutMode = layoutMode) => {
+      setKg(data);
+      rebuildLayout(data, mode);
+      setSelectedId(null);
+      setHighlightIds(new Set());
+    },
+    [layoutMode, rebuildLayout],
+  );
+
+  const applyExpandPage = useCallback(
+    (path: string, page: { graph: KnowledgeGraph; hasMore: boolean; limit: number; offset: number }) => {
+      applyGraph(page.graph);
+      setSessionExplorerNodes(page.graph.nodes);
+      setExpandPaging({
+        path,
+        nextOffset: nextExpandOffset(page.offset, page.limit),
+        hasMore: page.hasMore,
+      });
+    },
+    [applyGraph],
+  );
+
+  const loadTopologyOverview = useCallback(async () => {
+    setViewMode('loading');
+    setError(null);
+    try {
+      const topo = await fetchServiceTopology();
+      setTopologyKg(topo);
+      applyGraph(topo);
+      setExpandPaging(null);
+      setBreadcrumbs([{ label: 'Overview', path: '' }]);
+      setViewMode('exploring');
+      setStatusText(`Topology overview · ${topo.nodeCount} nodes`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+      setViewMode('exploring');
+    }
+  }, [applyGraph]);
+
+  const drillIntoPath = useCallback(
+    async (path: string, label: string, fromCrumbs?: Crumb[]) => {
+      if (!path) return;
+      setViewMode('loading');
+      setError(null);
+      try {
+        const page = await expandService(path, true, project || undefined, {
+          limit: EXPAND_INITIAL_LIMIT,
+          offset: 0,
+        });
+        applyExpandPage(path, page);
+        const base = fromCrumbs ?? breadcrumbs;
+        const next = [...base.filter((c) => c.path !== path), { label, path }];
+        if (!next.some((c) => c.path === '')) {
+          next.unshift({ label: 'Overview', path: '' });
+        }
+        setBreadcrumbs(next);
+        setViewMode('exploring');
+        const moreHint = page.hasMore ? ` · has more` : '';
+        setStatusText(`Expanded · ${label} · ${page.graph.nodeCount} nodes${moreHint}`);
+        filters.resetToStructuralDefaults();
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
+        setViewMode('exploring');
+      }
+    },
+    [applyExpandPage, breadcrumbs, filters, project],
+  );
+
+  const loadMoreNodes = useCallback(async () => {
+    if (!expandPaging?.hasMore || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const page = await expandService(expandPaging.path, true, project || undefined, {
+        limit: EXPAND_LOAD_MORE_LIMIT,
+        offset: expandPaging.nextOffset,
+      });
+      if (page.graph.nodeCount === 0) {
+        setExpandPaging({ ...expandPaging, hasMore: false });
+        setStatusText(`All nodes loaded · ${kg?.nodeCount ?? 0} nodes`);
+        return;
+      }
+      setKg((prev) => {
+        const merged = prev
+          ? mergeKnowledgeGraphs(prev, page.graph)
+          : page.graph;
+        rebuildLayout(merged, layoutMode);
+        setSessionExplorerNodes(merged.nodes);
+        setStatusText(
+          `Loaded ${merged.nodeCount} nodes (+${page.graph.nodeCount}) · offset ${expandPaging.nextOffset}`,
+        );
+        return merged;
+      });
+      setExpandPaging({
+        path: expandPaging.path,
+        nextOffset: nextExpandOffset(expandPaging.nextOffset, page.limit),
+        hasMore: page.hasMore,
+      });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [expandPaging, loadingMore, project, rebuildLayout, layoutMode, kg?.nodeCount]);
+
+  const onNodeDoubleClick = useCallback(
+    (nodeId: string) => {
+      const node = kg?.nodes.find((n) => n.id === nodeId);
+      if (!node || !isContainerNode(node)) return;
+      let path = String(node.properties.filePath || '').trim();
+      // Topology root often has absolute project path; expand API wants '.' / relative.
+      if (!path || path === project || path === `${project}/`) {
+        path = '.';
+      }
+      const label = String(node.properties.name || node.label || nodeId);
+      void (async () => {
+        // Re-assert serve RocksDB matches URL ?project= before expand (avoids
+        // expanding a sibling mount while the status bar still says /workspace).
+        if (project) {
+          try {
+            const switched = await switchProject(project, false);
+            if (switched.project_path && switched.project_path !== project) {
+              setError(
+                `Cannot expand: serve is on ${switched.project_path}, expected ${project}`,
+              );
+              return;
+            }
+          } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : String(err));
+            return;
+          }
+        }
+        await drillIntoPath(path, label);
+      })();
+    },
+    [kg, drillIntoPath, project],
+  );
+
+  const onBreadcrumb = useCallback(
+    (crumb: Crumb, index: number) => {
+      if (crumb.path === '') {
+        if (topologyKg) {
+          applyGraph(topologyKg);
+          setExpandPaging(null);
+          setBreadcrumbs([{ label: 'Overview', path: '' }]);
+          setViewMode('exploring');
+          setStatusText(`Topology overview · ${topologyKg.nodeCount} nodes`);
+        } else {
+          void loadTopologyOverview();
+        }
+        return;
+      }
+      const parents = breadcrumbs.slice(0, index);
+      void drillIntoPath(crumb.path, crumb.label, parents);
+    },
+    [topologyKg, applyGraph, loadTopologyOverview, breadcrumbs, drillIntoPath],
   );
 
   const loadGraph = useCallback(
@@ -96,71 +278,116 @@ export default function App() {
 
         if (skip && !force) {
           setSkipInfo({ nodes: nodeCount ?? 0, edges: edgeCount ?? 0 });
+          const params = new URLSearchParams(window.location.search);
+          const expandPath = params.get('path');
           try {
             const topo = await fetchServiceTopology();
-            setKg(topo);
-            rebuildLayout(topo, layoutMode);
+            setTopologyKg(topo);
+            applyGraph(topo);
+            setExpandPaging(null);
+            setBreadcrumbs([{ label: 'Overview', path: '' }]);
+            setViewMode('overview');
+            setStatusText('Overview (graph skipped — mega-graph gate)');
+            // Deep-link ?path= still drills in (replace-graph) without loading full mega graph.
+            if (expandPath) {
+              void drillIntoPath(expandPath, expandPath, [{ label: 'Overview', path: '' }]);
+            }
           } catch {
             setKg({ nodes: [], relationships: [], nodeCount: 0, relationshipCount: 0 });
             setSigmaGraph(null);
+            setExpandPaging(null);
+            setViewMode('overview');
+            setStatusText('Overview (graph skipped — mega-graph gate)');
           }
-          setViewMode('overview');
-          setStatusText('Overview (graph skipped — mega-graph gate)');
           return;
         }
 
         let data: KnowledgeGraph;
+        let paging: ExpandPaging | null = null;
+        const expandOpts = { limit: EXPAND_INITIAL_LIMIT, offset: 0 };
         try {
           const params = new URLSearchParams(window.location.search);
           const expandPath = params.get('path');
           const wantExpand = params.get('expand') === '1';
           const topo = await fetchServiceTopology();
+          setTopologyKg(topo);
           const topoHasSingle = topo.nodes.length === 1;
           if (expandPath) {
-            data = await expandService(expandPath, true);
-          } else if (topo.nodes.length >= 1 && !(wantExpand || topoHasSingle)) {
-            data = topo;
-          } else if ((wantExpand || topoHasSingle) && topo.nodes.length >= 1) {
+            const page = await expandService(
+              expandPath,
+              true,
+              project || undefined,
+              expandOpts,
+            );
+            data = page.graph;
+            paging = {
+              path: expandPath,
+              nextOffset: nextExpandOffset(page.offset, page.limit),
+              hasMore: page.hasMore,
+            };
+            setBreadcrumbs([
+              { label: 'Overview', path: '' },
+              { label: expandPath, path: expandPath },
+            ]);
+          } else if (wantExpand || topoHasSingle) {
             const root = topo.nodes[0];
-            const path = String(root.properties.filePath || '.');
-            data = await expandService(path, true);
-            // Absolute project root used to expand to 0 nodes — fall back to topology.
-            if (data.nodeCount === 0) {
-              data = await expandService('.', true);
+            const path = root ? String(root.properties.filePath || '.') : '.';
+            let page;
+            try {
+              page = await expandService(path, true, project || undefined, expandOpts);
+            } catch {
+              page = await expandService('.', true, project || undefined, expandOpts);
             }
-            if (data.nodeCount === 0) {
-              data = topo;
+            if (page.graph.nodeCount === 0) {
+              page = await expandService('.', true, project || undefined, expandOpts);
             }
+            data = page.graph;
+            paging = {
+              path: path === project || path === `${project}/` ? '.' : path,
+              nextOffset: nextExpandOffset(page.offset, page.limit),
+              hasMore: page.hasMore,
+            };
+            setBreadcrumbs([{ label: 'Overview', path: '' }]);
+          } else if (topo.nodes.length > 1) {
+            data = topo;
+            setBreadcrumbs([{ label: 'Overview', path: '' }]);
           } else {
-            data = await expandService('.', true);
+            const page = await expandService('.', true, project || undefined, expandOpts);
+            data = page.graph;
+            paging = {
+              path: '.',
+              nextOffset: nextExpandOffset(page.offset, page.limit),
+              hasMore: page.hasMore,
+            };
+            setBreadcrumbs([{ label: 'Overview', path: '' }]);
+          }
+          if (data.nodeCount === 0 && topo.nodes.length > 0) {
+            data = topo;
+            paging = null;
           }
         } catch {
-          try {
-            data = await expandService('.', true);
-          } catch {
-            data = { nodes: [], relationships: [], nodeCount: 0, relationshipCount: 0 };
-          }
+          data = await fetchServiceTopology();
+          setTopologyKg(data);
+          paging = null;
+          setBreadcrumbs([{ label: 'Overview', path: '' }]);
         }
 
-        if (data.nodeCount === 0) {
-          try {
-            data = await fetchServiceTopology();
-          } catch {
-            /* keep empty */
-          }
+        applyGraph(data);
+        setExpandPaging(paging);
+        if (paging) {
+          setSessionExplorerNodes(data.nodes);
         }
-
-        setKg(data);
-        rebuildLayout(data, layoutMode);
-        setSkipInfo(null);
         setViewMode('exploring');
-        setStatusText(`Loaded ${data.nodeCount} nodes`);
+        const moreHint = paging?.hasMore ? ' · has more' : '';
+        setStatusText(
+          `Loaded ${data.nodeCount} nodes / ${data.relationshipCount} edges${moreHint}`,
+        );
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
         setViewMode('onboarding');
       }
     },
-    [layoutMode, project, rebuildLayout, setProject],
+    [project, setProject, applyGraph, drillIntoPath],
   );
 
   useEffect(() => {
@@ -171,14 +398,23 @@ export default function App() {
       setConnected(ok);
       if (!ok) {
         setViewMode('onboarding');
-        setStatusText('Start leankg serve on :8080');
         return;
       }
-      if (project) {
+      const params = new URLSearchParams(window.location.search);
+      const proj = params.get('project');
+      if (proj) {
         try {
-          await switchProject(project);
-        } catch {
-          // project switch may be unsupported in some builds — continue
+          const switched = await switchProject(proj, false);
+          setProject(switched.project_path || proj);
+          // Confirm serve actually opened this RocksDB (not a stale sibling mount).
+          const status = await fetchIndexStatus();
+          if (status.project_path && status.project_path !== proj) {
+            setError(
+              `Project switch mismatch: requested ${proj} but serve has ${status.project_path}`,
+            );
+          }
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : String(err));
         }
       }
       await loadGraph(false);
@@ -186,14 +422,12 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once
   }, []);
 
   useEffect(() => {
-    if (!kg) return;
-    if (viewMode !== 'exploring' && viewMode !== 'overview') return;
-    rebuildLayout(kg, layoutMode);
-  }, [layoutMode, kg, rebuildLayout, viewMode]);
+    if (kg) rebuildLayout(kg, layoutMode);
+  }, [layoutMode, kg, rebuildLayout]);
 
   const onSearchSubmit = async () => {
     if (!searchTerm.trim()) {
@@ -215,7 +449,6 @@ export default function App() {
           }
         }
       }
-      // Also fuzzy-match loaded node names
       if (kg) {
         const q = searchTerm.toLowerCase();
         for (const n of kg.nodes) {
@@ -260,6 +493,31 @@ export default function App() {
         onLayoutMode={setLayoutMode}
       />
 
+      {breadcrumbs.length > 0 && viewMode !== 'onboarding' && (
+        <nav
+          data-testid="graph-breadcrumbs"
+          className="h-8 shrink-0 border-b border-border-subtle bg-deep/80 flex items-center gap-1 px-4 text-xs overflow-x-auto"
+        >
+          {breadcrumbs.map((c, i) => (
+            <span key={`${c.path}-${i}`} className="flex items-center gap-1 shrink-0">
+              {i > 0 && <span className="text-text-muted">/</span>}
+              <button
+                type="button"
+                data-testid={`crumb-${i}`}
+                onClick={() => onBreadcrumb(c, i)}
+                className={`px-1.5 py-0.5 rounded ${
+                  i === breadcrumbs.length - 1
+                    ? 'text-text-primary font-medium'
+                    : 'text-accent hover:underline'
+                }`}
+              >
+                {c.label}
+              </button>
+            </span>
+          ))}
+        </nav>
+      )}
+
       {viewMode === 'onboarding' && (
         <div
           data-testid="onboarding"
@@ -288,7 +546,10 @@ export default function App() {
           <FileTreePanel
             collapsed={leftCollapsed}
             onToggle={() => setLeftCollapsed((v) => !v)}
-            nodes={kg?.nodes ?? []}
+            nodes={
+              sessionExplorerNodes.length > 0 ? sessionExplorerNodes : (kg?.nodes ?? [])
+            }
+            projectPath={project || undefined}
             allNodeTypes={filters.allNodeTypes}
             visibleLabels={filters.visibleLabels}
             visibleEdges={filters.visibleEdgeTypes}
@@ -298,6 +559,9 @@ export default function App() {
             onDepth={filters.setDepthFilter}
             onResetFilters={filters.resetToStructuralDefaults}
             onSelectNode={setSelectedId}
+            onOpenFolder={(path, label) => {
+              void drillIntoPath(path || '.', label);
+            }}
             selectedId={selectedId}
           />
           <div className="relative flex-1 min-w-0 min-h-0 h-full flex flex-col">
@@ -308,10 +572,33 @@ export default function App() {
               searchTerm={searchTerm}
               highlightIds={highlightIds}
               onNodeSelect={setSelectedId}
+              onNodeDoubleClick={onNodeDoubleClick}
               selectedNodeId={selectedId}
               layoutMode={layoutMode}
             />
             <CodePanel node={selectedNode} onClose={() => setSelectedId(null)} />
+            {expandPaging?.hasMore && viewMode === 'exploring' && (
+              <div
+                data-testid="load-more-banner"
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 rounded-lg bg-elevated border border-border-default shadow-glow-soft"
+              >
+                <span className="text-xs text-text-secondary">
+                  Showing {kg?.nodeCount ?? 0} nodes
+                  {expandPaging.hasMore ? ' · more available' : ''}
+                </span>
+                <button
+                  type="button"
+                  data-testid="load-more-nodes"
+                  disabled={loadingMore}
+                  onClick={() => void loadMoreNodes()}
+                  className="text-xs px-2 py-1 rounded bg-accent text-white disabled:opacity-50"
+                >
+                  {loadingMore
+                    ? 'Loading…'
+                    : `Load more (+${EXPAND_LOAD_MORE_LIMIT})`}
+                </button>
+              </div>
+            )}
             {viewMode === 'overview' && (
               <div
                 data-testid="mega-graph-banner"
@@ -331,6 +618,12 @@ export default function App() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {error && viewMode !== 'onboarding' && (
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-30 max-w-lg px-3 py-2 rounded bg-red-950/90 border border-red-500/40 text-red-200 text-xs">
+          {error}
         </div>
       )}
 

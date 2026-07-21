@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-21 — **v3.7.9-ont-proc-auto DONE** — P0 procedural ontology auto-update closed (`US-ONT-PROC-01` / `FR-ONT-PROC-*` / `REL-059`). Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). **Next:** company adoption P1.  
+**Last synced:** 2026-07-21 — PR #92 merge: UI v2 load-more + folder sidebar (`US-UI2-10..12` / `FR-UI2-12..14` / `REL-060..061`); main P0 ont-proc-auto **DONE** (`REL-059`).
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §3.18 / §5.21  
 
@@ -37,12 +37,12 @@
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **470** |
+| **Total tracked** | **478** |
 | NOT_DONE | 61 |
 | PENDING | 25 |
 | PARTIAL | 13 |
 | OPEN | 1 |
-| DONE | 367 |
+| DONE | 375 |
 | WONT_DO | 3 |
 | Open work | **100** |
 
@@ -478,6 +478,14 @@ Evidence: [`ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-
 | **P1** | `US-UI2-03` | User Story | **DONE** | Must Have | Node select opens /api/file code panel | 3.17 UI v2 |
 | **P1** | `US-UI2-04` | User Story | **DONE** | Must Have | Server search + QueryFAB /api/query | 3.17 UI v2 |
 | **P1** | `US-UI2-05` | User Story | **DONE** | Must Have | Mega-graph skip + Load graph anyway | 3.17 UI v2 |
+| **P1** | `US-UI2-10` | User Story | **DONE** | Must Have | Double-click Service/Folder replace-graph expand | 3.17 UI v2 |
+| **P1** | `US-UI2-11` | User Story | **DONE** | Must Have | Load more (+200) merges expand pages into current graph | 3.17 UI v2 |
+| **P1** | `US-UI2-12` | User Story | **DONE** | Must Have | Hierarchical Folders & files sidebar + session tree | 3.17 UI v2 |
+| **P1** | `FR-UI2-12` | FR | **DONE** | Must Have | expandService replace-graph + CodePanel file gate | 5.19 UI v2 |
+| **P1** | `FR-UI2-13` | FR | **DONE** | Must Have | expand pagination + Load more merge (+200) | 5.19 UI v2 |
+| **P1** | `FR-UI2-14` | FR | **DONE** | Must Have | Explore sidebar hierarchical Folders & files | 5.19 UI v2 |
+| **P1** | `REL-060` | Release | **DONE** | Must Have | Service/Folder expand replace-graph + no /api/file 400 | 5.19 UI v2 |
+| **P1** | `REL-061` | Release | **DONE** | Must Have | expand Load more merge pagination + sidebar tree | 5.19 UI v2 |
 | **P1** | `US-V2-01` | User Story | **DONE** | Must Have | Environment namespacing ('local' / 'staging' / 'production' / 'upcoming') on nodes/edges; … | 3.12 Team Knowledge Infrastructure (US-V2) — merge |
 | **P1** | `US-V2-02` | User Story | **DONE** | Must Have | Incident knowledge layer — contribute/query incidents linked to services | 3.12 Team Knowledge Infrastructure (US-V2) — merge |
 | **P1** | `US-V2-03` | User Story | **DONE** | Must Have | Enhanced service context (deps, incidents, env) in one MCP call | 3.12 Team Knowledge Infrastructure (US-V2) — merge |
