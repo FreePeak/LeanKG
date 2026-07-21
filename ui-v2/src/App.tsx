@@ -31,6 +31,7 @@ import {
   fetchServiceTopology,
   probeBackend,
   searchCode,
+  parseProjectParam,
   switchProject,
 } from './services/backend-client';
 
@@ -261,8 +262,9 @@ export default function App() {
         setIndexLine(
           `index: elements=${nodeCount ?? '?'} rels=${edgeCount ?? '?'} path=${status.project_path ?? ''}`,
         );
-        if (status.project_path && !project) {
-          setProject(String(status.project_path));
+        if (!project) {
+          const serveProject = parseProjectParam(status.project_path);
+          if (serveProject) setProject(serveProject);
         }
 
         const explicit = parseSkipGraphParam(
@@ -401,7 +403,7 @@ export default function App() {
         return;
       }
       const params = new URLSearchParams(window.location.search);
-      const proj = params.get('project');
+      const proj = parseProjectParam(params.get('project'));
       if (proj) {
         try {
           const switched = await switchProject(proj, false);

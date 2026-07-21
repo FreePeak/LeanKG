@@ -1,12 +1,12 @@
 # Render / onrender production image (leankg.onrender.com).
-# Multi-stage: UI (node) → Rust builder → slim runtime.
+# Multi-stage: UI (node) → Rust builder (+ demo index) → slim runtime.
 # Starter Render pipeline = 2 CPU / 8 GB RAM — single-stage + parallel rustc OOMs.
 FROM node:20-bookworm AS ui
 WORKDIR /ui
 COPY ui-v2/package.json ui-v2/package-lock.json ./
 RUN npm ci
 COPY ui-v2/ ./
-ARG UI_EMBED_REV=2026-07-21-onrender-rca3
+ARG UI_EMBED_REV=2026-07-21-onrender-rca4
 RUN echo "UI_EMBED_REV=${UI_EMBED_REV}" && npm run build
 
 FROM rust:1-bookworm AS builder
@@ -28,7 +28,7 @@ COPY src ./src
 COPY benches ./benches
 COPY ontology/ ./ontology/
 COPY --from=ui /ui/dist/ ./src/embed/
-ARG UI_EMBED_REV=2026-07-21-onrender-rca3
+ARG UI_EMBED_REV=2026-07-21-onrender-rca4
 RUN test -f src/embed/index.html \
     && grep -q '<title>LeanKG</title>' src/embed/index.html \
     && printf '{"ui":"ui-v2","rev":"%s","source":"Dockerfile"}\n' "${UI_EMBED_REV}" > src/embed/ui-build.json
@@ -37,6 +37,11 @@ RUN test -f src/embed/index.html \
 RUN cargo build --release --features embeddings \
     && strip target/release/leankg \
     && cp target/release/leankg /usr/local/bin/leankg
+
+# Bake LeanKG source graph for leankg.onrender.com (regression: multi-stage shipped binary-only).
+RUN leankg init --path .leankg \
+    && leankg index src \
+    && test -f .leankg/leankg.db
 
 FROM debian:bookworm-slim AS runtime
 
@@ -49,9 +54,16 @@ RUN apt-get update \
         libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/bin/leankg /usr/local/bin/leankg
+WORKDIR /app
 
-ENV PORT=8080
+COPY --from=builder /usr/local/bin/leankg /usr/local/bin/leankg
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/ontology ./ontology
+COPY --from=builder /app/.leankg ./.leankg
+COPY --from=builder /app/leankg.yaml ./leankg.yaml
+
+ENV LEANKG_SERVE_PROJECT=/app \
+    PORT=8080
 EXPOSE 8080 9699
 
 # Render health checks hit this path (index status is always available).

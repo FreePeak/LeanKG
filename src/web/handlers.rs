@@ -3383,6 +3383,16 @@ pub async fn api_switch_path(
         };
     }
 
+    if project_path == "/" || project_path.trim().is_empty() {
+        return ApiResponse::<PathSwitchResponse> {
+            success: false,
+            data: None,
+            error: Some(
+                "Invalid project path: filesystem root is not a LeanKG project".to_string(),
+            ),
+        };
+    }
+
     let absolute_path = path_obj.to_string_lossy().to_string();
     let db_path = path_obj.join(".leankg");
 

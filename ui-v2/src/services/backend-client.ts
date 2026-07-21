@@ -189,9 +189,16 @@ export async function switchProject(path: string, reindex = false): Promise<{
   return unwrapEnvelope(json, 'Project switch failed');
 }
 
+/** Filesystem root is never a LeanKG project (OnRender bug: stale `?project=/` links). */
+export function isUsableProjectPath(value: string | null | undefined): boolean {
+  if (value == null) return false;
+  const trimmed = value.trim();
+  return trimmed !== '' && trimmed !== '/' && trimmed !== '.';
+}
+
 export function parseProjectParam(value: string | null | undefined): string | undefined {
-  if (value == null || value.trim() === '') return undefined;
-  return value.trim();
+  if (!isUsableProjectPath(value)) return undefined;
+  return value!.trim();
 }
 
 export function writeProjectToUrl(project: string | undefined) {
