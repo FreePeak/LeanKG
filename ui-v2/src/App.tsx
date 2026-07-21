@@ -176,7 +176,7 @@ export default function App() {
         const merged = prev
           ? mergeKnowledgeGraphs(prev, page.graph)
           : page.graph;
-        rebuildLayout(merged);
+        rebuildLayout(merged, layoutMode);
         setSessionExplorerNodes(merged.nodes);
         setStatusText(
           `Loaded ${merged.nodeCount} nodes (+${page.graph.nodeCount}) · offset ${expandPaging.nextOffset}`,
@@ -193,7 +193,7 @@ export default function App() {
     } finally {
       setLoadingMore(false);
     }
-  }, [expandPaging, loadingMore, project, rebuildLayout]);
+  }, [expandPaging, loadingMore, project, rebuildLayout, layoutMode, kg?.nodeCount]);
 
   const onNodeDoubleClick = useCallback(
     (nodeId: string) => {
