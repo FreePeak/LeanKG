@@ -90,6 +90,20 @@ mcp_status → find_function / query_file → get_context → impact/deps tools
 
 `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
 
+### Doc↔code join (structural markdown ↔ file keys)
+
+After `mcp_index_docs`, path aliases resolve on read; markdown refs resolve to indexed file keys on write.
+
+```
+1. FR / US requirement ID → search_by_requirement / get_traceability / link_element
+2. Known file or doc path → get_files_for_doc / find_related_docs (canonical docs/… keys)
+3. Domain / workflow → concept_search → kg_trace_workflow
+4. Fuzzy NL → semantic_search → kg_semantic_context
+5. Fallback → search_code / Read
+```
+
+Miss payloads include `tried[]` — do not assume empty graph when aliases fail.
+
 ### If mcp_status is not ready (but HTTP health was OK)
 
 Try other known container mounts from `LEANKG_PROJECT_DIRS`, then fall back to default Grep/Glob/Read.

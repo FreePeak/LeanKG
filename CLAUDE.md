@@ -73,6 +73,8 @@ Core tools: `query_file`, `get_dependencies`, `get_dependents`, `get_impact_radi
 
 Doc/Traceability tools: `get_files_for_doc`, `get_doc_structure`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`, `find_related_docs`
 
+**Doc↔code prefer-order (v3.7.13):** `search_by_requirement` / `get_traceability` for `FR-*` / `US-*` IDs → `get_files_for_doc` / `find_related_docs` (after `mcp_index_docs`, canonical `docs/…` paths) → `concept_search` / `kg_trace_workflow` → `semantic_search` → `search_code`.
+
 ## Verification Status
 
 See `docs/implementation-feature-verification-2026-03-25.md` for test results.

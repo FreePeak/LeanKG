@@ -1745,6 +1745,160 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - **Given** a successful `leankg index` / MCP index that changes files referenced by workflow steps, **When** the index completes, **Then** procedural nodes are refreshed (or a documented MCP `ontology_sync` / `ontology_control` action is available and used by default hooks).
 - **Won't Do in P0:** LLM auto-extraction of new workflows from arbitrary code (manual/agent-authored YAML remains the source of truth).
 
+### 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 **P2**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-DOCJOIN-*` / `FR-DOCJOIN-*` / `REL-063`.  
+> **Baseline (DONE):** Documentation-structure mapping FR-51–56 / US-10 / US-25–26 / REL-017–018 — `doc_indexer` creates `document` / section nodes, `references` + `documented_by` edges, `mcp_index_docs`, auto-index when `docs/` exists.  
+> **Gap evidence (2026-07-21 review):**
+> 1. **Target identity mismatch** — `extract_code_references` stores bare paths (`handler.rs`, `src/foo.rs`); code index uses `path/to/file.rs::symbol` (and file nodes). Many `documented_by` edges never join to elements agents query.
+> 2. **Doc argument key mismatch** — nodes keyed as `docs/{relative}.md`; callers pass `README.md` / `./docs/…` → empty `get_files_for_doc`.
+> 3. **Sparse live edges** — feature tests and live MCP probes often return empty `files` / `related_docs` even when markdown exists (not indexed, or keys wrong).
+> 4. **Mega-graph** — `get_doc_structure` / `get_doc_tree` refuse unbounded `all_elements()` above ~50k (tracked separately as `FR-SURF-06` P3).
+> 5. **Authoring dependency** — edges only appear for link / backtick / bare filename refs outside fenced code blocks; PRD tables rarely cite every symbol.
+>
+> **Related layers (do not conflate):** BusinessLogic annotations + `search_by_requirement` / `get_traceability` remain the reliable **requirement ID ↔ symbol** bridge; ontology (`concept_search` / `kg_trace_workflow`) is a third layer.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-DOCJOIN-01 | Must Have (**P2**) | As an AI agent, when a markdown doc mentions a source file, **I want** `documented_by` / `references` to attach to the **same keys** as the code index, **so that** `find_related_docs` and `get_traceability` return real neighbors |
+| US-DOCJOIN-02 | Must Have (**P2**) | As an AI agent, when I pass a human path (`README.md`, `docs/prd.md`, `./docs/prd.md`), **I want** doc query tools to resolve to the indexed document key, **so that** I do not get empty results from alias mismatch |
+| US-DOCJOIN-03 | Should Have (**P2**) | As a company adopting LeanKG, **I want** clear prefer-order and markdown authoring practices, **so that** agents use annotations for FR IDs and write extractable file refs for structural glue |
+
+#### US-DOCJOIN-01 — Resolve markdown refs to indexed code keys (Must Have)
+
+**Acceptance criteria:**
+- **Given** a fixture repo with `docs/guide.md` containing `` `src/lib/foo.rs` `` (outside fences) and an indexed file element for that path, **When** `mcp_index_docs` (or auto doc-index) runs, **Then** at least one `references` edge targets a key that `get_relationships` / file lookup recognizes as that file (not only the bare basename).
+- **Given** the same fixture, **When** `find_related_docs(file=…)` is called with the indexed file path (with and without `./` prefix), **Then** `related_docs` is non-empty and includes the document qualified name.
+- **Given** a mention that cannot be resolved to any indexed file, **When** edges are written, **Then** either no edge is written **or** the edge carries `confidence_label=AMBIGUOUS` (or equivalent metadata) and is excluded from default related-doc results unless `include_unresolved=true`.
+- **Won't Do:** Full symbol-span NLP (“function Foo in the auth module”); optional best-effort `::symbol` upgrade is Could Have only.
+
+#### US-DOCJOIN-02 — Normalize doc path args (Must Have)
+
+**Acceptance criteria:**
+- **Given** an indexed document `docs/prd.md`, **When** `get_files_for_doc` is called with any of `docs/prd.md`, `./docs/prd.md`, `prd.md` (if unambiguous under docs root), **Then** results match the canonical document key.
+- **Given** `find_related_docs` / `get_files_for_doc`, **When** the path cannot be normalized, **Then** the error/empty payload names the tried aliases (debug-friendly), not a silent empty list without hint.
+- **Given** mega-graphs, **When** path normalization runs, **Then** it does **not** require a full `all_elements()` scan (keyed lookup / prefix index only).
+
+#### US-DOCJOIN-03 — Prefer-order + authoring practices (Should Have)
+
+**Acceptance criteria:**
+- **Given** `docs/mcp-tools.md` and `using-leankg` (or AGENTS prefer-order), **When** agents need requirement↔code, **Then** guidance prefers `search_by_requirement` / `get_traceability` / annotations over hoping markdown edges exist.
+- **Given** authoring guidance in §5.22, **When** writers add code mentions in product docs, **Then** they use markdown links or backticks to repo-relative paths **outside** fenced blocks; FR IDs use `link_element` / annotations.
+- **Given** `FR-SURF-06`, **When** DOCJOIN ships, **Then** mega-safe doc-structure work may reuse path normalization helpers but remains a separate P3 story.
+
+### 5.19 UI v2 Graph Explorer (v3.7.10)
+
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057` / `REL-060` / `REL-061`.  
+> **Evidence:** [`docs/reports/ui-v2-gitnexus-parity-*.md`](reports/) (required before claiming GitNexus parity).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-UI2-01 | Must Have | New `ui-v2/` Vite+React+Tailwind+Sigma app; do not modify `ui/` or `src/embed/` in Phase 1 |
+| FR-UI2-02 | Must Have | 3-pane exploring shell: FileTree+Filters / GraphCanvas / Code panel + Header + StatusBar |
+| FR-UI2-03 | Must Have | Layout modes Force / Tree / Circles (GitNexus-shell behavior) |
+| FR-UI2-04 | Must Have | Data plane uses LeanKG REST envelope `{success,data,error}`: topology, expand-service, children, search, file, query, index/status, project/switch, clusters |
+| FR-UI2-05 | Must Have | Preserve US-MG-03/04 filter defaults (`DEFAULT_NODE_TYPE_ORDER`, `DEFAULT_VISIBLE_LABELS`) |
+| FR-UI2-06 | Must Have | Mega-graph skip via `decideSkipGraph` (~50k nodes) + Load anyway |
+| FR-UI2-07 | Must Have | Vitest units (adapter, load-decision, constants, client, url-restore) + Playwright Phase-1 e2e matrix |
+| FR-UI2-12 | Must Have | Double-click Service/Folder/Directory → `expandService(path, all=true)` **replaces** `kg` (not merge); CodePanel `/api/file` only for content-bearing types; breadcrumb back to topology; `/api/file` returns clear directory error |
+| FR-UI2-13 | Must Have | Expand-service `?limit=`/`?offset=` + correct `hasMore`; UI default page 500; **Load more (+200)** **merges** by node/edge id into current `kg`; pagination cursor advances by requested limit |
+| FR-UI2-14 | Must Have | Explore sidebar hierarchical Folders & files (`buildExplorerTree`); include Directory/Folder; synthesize parents from paths; prefer `src` over demos; folder double-click → `drillIntoPath` |
+| REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
+| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw Cozo `POST /api/query` |
+| FR-UI2-09 | Must Have | Build ui-v2 into `src/embed/` (or equivalent); `leankg serve` + Docker Option A serve ui-v2 by default |
+| FR-UI2-10 | Should Have | Cluster legend + show/hide filters wired to `/api/graph/clusters` |
+| FR-UI2-11 | Should Have | Port incidents / env / conflicts panels from legacy `ui/` into ui-v2 |
+| REL-057 | Must Have | Cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default |
+| REL-060 | Must Have | Proof: Service select does not 400 `/api/file`; double-click replaces graph with expand-service subgraph |
+| REL-061 | Must Have | Proof: expand page 500 then Load more grows canvas (merge); sidebar folders/files update |
+
+
+**Won't Do (Phase 1 residual):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
+
+### 5.20 Company cost / competitive ROI (v3.7.8)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-COST-*` / `FR-COST-*` / `REL-058`.  
+> **Narrative:** §1.1. **Evidence target:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) + a short manager brief under `docs/reports/`.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| US-COST-01 | Must Have | As an engineering manager, I can read a one-pager that shows why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company monorepo scale |
+| FR-COST-01 | Must Have | Publish ROI brief: token/tool-call floors (Section 9), multi-repo Docker TCO, mega-graph safety, ops/traceability differentiators; link §1.1 queue |
+| FR-GF-21 | Must Have | CLI/MCP `export html` — single-file bounded subgraph/community; document node budget |
+| FR-GF-22 | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wall |
+| FR-GF-23 | Should Have | Expand `leankg install` platforms (start Cursor + Claude + Codex; grow toward Graphify breadth) |
+| FR-GF-24 | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redirect; document for Cursor + Claude Code |
+| REL-058 | Must Have | Manager ROI brief checked into `docs/reports/` and linked from README competitive section |
+
+**Won't Do:** Claiming LOCOMO memory-suite wins; multimodal ingest as a cost strategy.
+
+### 5.21 Procedural ontology auto-update (v3.7.9) — **CURRENT P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-ONT-PROC-*` / `US-ONT-PROC-*` / `REL-059`.  
+> **Related:** `FR-A02` (docs/automation) stays P1; this section is the **runtime** auto-update.  
+> **Baseline:** Boot sync in `entrypoint.sh` + CLI `leankg ontology sync` only; no YAML watch during MCP use.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-ONT-PROC-01 | Must Have (**P0**) | While `mcp-http` / `leankg serve` runs, watch `ontology/workflows.yaml` and `ontology/concepts.yaml` (project + configured source dir); debounce (≥1s) and run idempotent ontology sync into the served DB without dropping the HTTP listener |
+| FR-ONT-PROC-02 | Must Have (**P0**) | Docker/boot skip marker must consider **both** `concepts.yaml` and `workflows.yaml` mtimes (and force re-sync when either is newer than `.leankg/ontology_synced`) |
+| FR-ONT-PROC-03 | Must Have (**P0**) | After successful index (CLI or MCP), refresh procedural ontology (re-bind step `code_refs` / re-sync YAML) or expose MCP `ontology_control(action=sync\|status)` and invoke it from the index completion path |
+| REL-059 | Must Have (**P0**) | Live smoke documented in `docs/reports/`: (1) edit workflow step → `kg_trace_workflow` updates without restart; (2) boot with stale workflows.yaml triggers sync; (3) sync never blocks `/health` beyond existing ontology timeout policy |
+
+**Won't Do (P0):** Automatic LLM generation of new workflows from code; replacing YAML as source of truth; blocking MCP bind on sync (keep timeout/skip escape).
+
+---
+
+### 5.22 Doc↔Code Join Quality (v3.7.13) — **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-DOCJOIN-*` / `US-DOCJOIN-*` / `REL-063`.  
+> **Does not reopen** FR-51–56 as NOT_DONE — those delivered structure mapping. This section is **join quality + agent UX**.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCJOIN-01 | Must Have (**P2**) | After extracting a markdown code ref, **resolve** to an indexed file-level element key (normalize `./`, project-relative, strip anchors). Prefer longest path match under the project root. Write `references` / `documented_by` using resolved keys |
+| FR-DOCJOIN-02 | Must Have (**P2**) | Normalize `doc` / `file` args on `get_files_for_doc`, `find_related_docs`, and related handlers: try canonical `docs/…` keys and common aliases before returning empty |
+| FR-DOCJOIN-03 | Must Have (**P2**) | Persist useful `metadata.context` (snippet ≤100 chars) on `references` edges; set `confidence_label=EXTRACTED` for regex/link extractions (align with FR-GF-07 when that lands; until then local metadata field is OK) |
+| FR-DOCJOIN-04 | Must Have (**P2**) | Automated tests: unit tests for path normalize + resolve; integration fixture (temp `docs/` + `src/`) asserting non-empty `get_files_for_doc` / `find_related_docs` after `index` + `index_docs` |
+| FR-DOCJOIN-05 | Should Have (**P2**) | Sync prefer-order in `docs/mcp-tools.md`, AGENTS/CLAUDE doc tools section, and `using-leankg`: annotations/traceability first for FR IDs; markdown tools after `mcp_index_docs` with **canonical `docs/…` paths** |
+| FR-DOCJOIN-06 | Could Have (**P2**) | Optional best-effort upgrade of `` `file.rs::symbol` `` or “`symbol` in `file`” to function/class qualified names when unique in the index |
+| REL-063 | Must Have (**P2**) | Evidence report under `docs/reports/`: fixture test output + live MCP smoke on `/workspace` after `mcp_index_docs` (non-empty round-trip for at least one known doc↔file pair). Note RocksDB lock contention if `/workspace` unavailable |
+
+**Won't Do (this track):** Replacing annotations with markdown-only traceability; unbounded doc-tree scans on mega-graphs (see FR-SURF-06); LLM rewriting of all docs to insert links.
+
+#### Best practices — implementing (engineers)
+
+1. **Order of work (smallest risk first)**  
+   - (A) **FR-DOCJOIN-02** path aliases on read path — fixes empty tools without reindex.  
+   - (B) **FR-DOCJOIN-01** resolve-on-write in `doc_indexer` + reindex docs.  
+   - (C) **FR-DOCJOIN-03** metadata / confidence.  
+   - (D) **FR-DOCJOIN-04/REL-063** tests + smoke.  
+   - (E) **FR-DOCJOIN-05** docs/skills sync.  
+   - Keep **FR-SURF-06** (mega-safe structure) after (A); share normalize helpers.
+2. **Worktree** — `feature/doc-join-quality` (or split `doc-path-normalize` then `doc-ref-resolve`); do not block Wave 1a.
+3. **Resolver rules** — resolve only to existing indexed file elements; never invent paths; basename-only matches require uniqueness else AMBIGUOUS / drop.
+4. **Idempotent reindex** — `mcp_index_docs` / auto doc-index must upsert edges without duplicating relationship rows for the same (source, target, rel_type).
+5. **Observability** — debug log counts: extracted refs, resolved, unresolved, alias hits on query tools (timestamped; no host secrets).
+
+#### Best practices — testing (QA / agents)
+
+| Layer | What to run | Pass criteria |
+|-------|-------------|---------------|
+| **Unit** | Path normalize + resolve table (aliases, `./`, basename unique/ambiguous, fence skip) | Pure functions; no DB |
+| **Integration** | TempDir: one `.rs` file + one `.md` with backtick path → `index` + `index_docs` → `get_files_for_doc` + `find_related_docs` | Non-empty both directions |
+| **Regression** | Existing `tests/mcp_tools_full_tests.rs` doc tools + `redundant_tools_matrix` | No tool removals in this track |
+| **Live MCP** | Health `:9699` → `mcp_status(project=…)` → `mcp_index_docs` → round-trip on a known pair | Document in REL-063; if RocksDB LOCK on `/workspace`, use another ready mount or local stdio and note it |
+| **Negative** | Call `get_files_for_doc` with unknown alias | Hint lists tried keys; no panic |
+| **Mega** | On >50k element project, doc **join** tools stay keyed; structure tools still refuse until FR-SURF-06 | No OOM from DOCJOIN |
+
+**Authoring checklist (for denser graphs without code changes):**
+- Prefer markdown links or single-backtick paths to repo-relative files (e.g. `src/path/foo.rs`), **outside** fenced code blocks.
+- Prefer `link_element` / annotations for `FR-*` / `US-*` IDs.
+- After large doc moves, re-run `mcp_index_docs` (or full index with docs auto-pass).
+
+---
+
 ### 3.20 Graph Engineering curriculum gaps (US-GE) — v3.7.14 **P2**
 
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-GE-*` / `FR-GE-*` / `REL-064`.  
@@ -1825,6 +1979,55 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | REL-059 | Must Have (**P0**) | Live smoke documented in `docs/reports/`: (1) edit workflow step → `kg_trace_workflow` updates without restart; (2) boot with stale workflows.yaml triggers sync; (3) sync never blocks `/health` beyond existing ontology timeout policy |
 
 **Won't Do (P0):** Automatic LLM generation of new workflows from code; replacing YAML as source of truth; blocking MCP bind on sync (keep timeout/skip escape).
+
+### 5.22 Doc↔Code Join Quality (v3.7.13) — **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-DOCJOIN-*` / `US-DOCJOIN-*` / `REL-063`.  
+> **Does not reopen** FR-51–56 as NOT_DONE — those delivered structure mapping. This section is **join quality + agent UX**.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCJOIN-01 | Must Have (**P2**) | After extracting a markdown code ref, **resolve** to an indexed file-level element key (normalize `./`, project-relative, strip anchors). Prefer longest path match under the project root. Write `references` / `documented_by` using resolved keys |
+| FR-DOCJOIN-02 | Must Have (**P2**) | Normalize `doc` / `file` args on `get_files_for_doc`, `find_related_docs`, and related handlers: try canonical `docs/…` keys and common aliases before returning empty |
+| FR-DOCJOIN-03 | Must Have (**P2**) | Persist useful `metadata.context` (snippet ≤100 chars) on `references` edges; set `confidence_label=EXTRACTED` for regex/link extractions (align with FR-GF-07 when that lands; until then local metadata field is OK) |
+| FR-DOCJOIN-04 | Must Have (**P2**) | Automated tests: unit tests for path normalize + resolve; integration fixture (temp `docs/` + `src/`) asserting non-empty `get_files_for_doc` / `find_related_docs` after `index` + `index_docs` |
+| FR-DOCJOIN-05 | Should Have (**P2**) | Sync prefer-order in `docs/mcp-tools.md`, AGENTS/CLAUDE doc tools section, and `using-leankg`: annotations/traceability first for FR IDs; markdown tools after `mcp_index_docs` with **canonical `docs/…` paths** |
+| FR-DOCJOIN-06 | Could Have (**P2**) | Optional best-effort upgrade of `` `file.rs::symbol` `` or “`symbol` in `file`” to function/class qualified names when unique in the index |
+| REL-063 | Must Have (**P2**) | Evidence report under `docs/reports/`: fixture test output + live MCP smoke on `/workspace` after `mcp_index_docs` (non-empty round-trip for at least one known doc↔file pair). Note RocksDB lock contention if `/workspace` unavailable |
+
+**Won't Do (this track):** Replacing annotations with markdown-only traceability; unbounded doc-tree scans on mega-graphs (see FR-SURF-06); LLM rewriting of all docs to insert links.
+
+#### Best practices — implementing (engineers)
+
+1. **Order of work (smallest risk first)**  
+   - (A) **FR-DOCJOIN-02** path aliases on read path — fixes empty tools without reindex.  
+   - (B) **FR-DOCJOIN-01** resolve-on-write in `doc_indexer` + reindex docs.  
+   - (C) **FR-DOCJOIN-03** metadata / confidence.  
+   - (D) **FR-DOCJOIN-04/REL-063** tests + smoke.  
+   - (E) **FR-DOCJOIN-05** docs/skills sync.  
+   - Keep **FR-SURF-06** (mega-safe structure) after (A); share normalize helpers.
+2. **Worktree** — `feature/doc-join-quality` (or split `doc-path-normalize` then `doc-ref-resolve`); do not block Wave 1a.
+3. **Resolver rules** — resolve only to existing indexed file elements; never invent paths; basename-only matches require uniqueness else AMBIGUOUS / drop.
+4. **Idempotent reindex** — `mcp_index_docs` / auto doc-index must upsert edges without duplicating relationship rows for the same (source, target, rel_type).
+5. **Observability** — debug log counts: extracted refs, resolved, unresolved, alias hits on query tools (timestamped; no host secrets).
+
+#### Best practices — testing (QA / agents)
+
+| Layer | What to run | Pass criteria |
+|-------|-------------|---------------|
+| **Unit** | Path normalize + resolve table (aliases, `./`, basename unique/ambiguous, fence skip) | Pure functions; no DB |
+| **Integration** | TempDir: one `.rs` file + one `.md` with backtick path → `index` + `index_docs` → `get_files_for_doc` + `find_related_docs` | Non-empty both directions |
+| **Regression** | Existing `tests/mcp_tools_full_tests.rs` doc tools + `redundant_tools_matrix` | No tool removals in this track |
+| **Live MCP** | Health `:9699` → `mcp_status(project=…)` → `mcp_index_docs` → round-trip on a known pair | Document in REL-063; if RocksDB LOCK on `/workspace`, use another ready mount or local stdio and note it |
+| **Negative** | Call `get_files_for_doc` with unknown alias | Hint lists tried keys; no panic |
+| **Mega** | On >50k element project, doc **join** tools stay keyed; structure tools still refuse until FR-SURF-06 | No OOM from DOCJOIN |
+
+**Authoring checklist (for denser graphs without code changes):**
+- Prefer markdown links or single-backtick paths to repo-relative files (e.g. `src/path/foo.rs`), **outside** fenced code blocks.
+- Prefer `link_element` / annotations for `FR-*` / `US-*` IDs.
+- After large doc moves, re-run `mcp_index_docs` (or full index with docs auto-pass).
+
+---
 
 ### 5.23 Graph Engineering curriculum gaps (v3.7.14) — Focus **P2**
 

@@ -46,20 +46,26 @@ Many “Missing” rows in the Jul-13 matrix are **DONE** in LeanKG MCP/CLI: `sh
 
 ---
 
-## Ordered backlog (PRD Focus P1 → P2)
+## Ordered backlog (PRD Focus P1 waves → P2)
 
-1. `US-COST-01` / `FR-COST-01` / `REL-058` — manager ROI brief  
-2. `US-GF-14` / `FR-GF-22` — three-verb narrative  
-3. `US-GF-17` / `FR-GF-24` — always-on install/hooks  
-4. `US-GF-04` / `FR-GF-07..09` / `REL-043` — honest edges  
-5. `US-GF-06` / `FR-GF-13` — auto GRAPH_REPORT.md  
-6. `US-GF-13` / `FR-GF-21` — HTML export  
-7. `US-UI2-06` / `FR-UI2-08` — NL Query FAB  
-8. `US-UI2-07` / `FR-UI2-09` / `REL-057` — ui-v2 cutover  
+> **Updated 2026-07-21 (v3.7.12):** Wave **1a** MCP surface hard-delete + skills/rules/setup sync inserted before three-verb. Tracker SoT: [`prd-task-tracker.md`](../prd-task-tracker.md).
 
-**P2:** `US-GF-15`, `US-GF-16`, `US-UI2-08`, `US-UI2-09`, `FR-GF-16`, `FR-GF-23`, `FR-UI2-10..11`
+| Wave | IDs | Intent |
+|-----:|-----|--------|
+| **0a** | `US-COST-01` / `FR-COST-01` / `REL-058` | Manager ROI brief + README link |
+| **0b** | `US-UI2-07` / `FR-UI2-09` / `REL-057` | ui-v2 cutover evidence closeout |
+| **1a** | `US-SURF-06..07` / `FR-SURF-07..11` / `REL-062` | Hard-delete soft-deprecated tools + sync agent surfaces |
+| **1b** | `US-GF-14` / `FR-GF-22` | Three-verb narrative |
+| **1c** | `US-GF-17` / `FR-GF-24` | Always-on install/hooks (**cost lever #1**) |
+| **2a** | `US-GF-04` / `FR-GF-07..09` / `REL-043` | Honest edges |
+| **2b** | `US-GF-06` / `FR-GF-13` | Auto GRAPH_REPORT.md |
+| **2c** | `US-GF-13` / `FR-GF-21` | HTML export |
+| **3** | `US-UI2-06` / `FR-UI2-08` | NL Query FAB |
+| **4** | `US-MG-02` / `FR-MG-03` | Single-repo expand |
 
-**Won't Do:** multimodal; NetworkX primary; 36-lang race; vis.js-only UI.
+**P2:** `US-GF-15`, `US-GF-16`, `US-UI2-08`, `US-UI2-09`, `FR-GF-16`, `FR-GF-23`, `FR-UI2-10..11`, demoted CBM/lang/REST leftovers
+
+**P3 / Won't interrupt:** Track E 3D (`REL-041`); `FR-SURF-06` doc merge; multimodal; NetworkX primary; 36-lang race; vis.js-only UI.
 
 ---
 

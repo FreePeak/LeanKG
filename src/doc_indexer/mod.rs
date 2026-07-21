@@ -1,4 +1,8 @@
 #![allow(dead_code)]
+mod paths;
+
+pub use paths::{resolve_code_ref, resolve_doc_key, resolve_file_key};
+
 use crate::db::models::{CodeElement, Relationship};
 use crate::db::schema::CozoDb;
 use crate::graph::GraphEngine;
@@ -26,6 +30,14 @@ impl DocIndexer {
         &self,
         docs_path: &Path,
     ) -> Result<DocIndexResult, Box<dyn std::error::Error>> {
+        self.index_docs_with_graph(docs_path, None)
+    }
+
+    pub fn index_docs_with_graph(
+        &self,
+        docs_path: &Path,
+        graph: Option<&GraphEngine>,
+    ) -> Result<DocIndexResult, Box<dyn std::error::Error>> {
         let mut documents = Vec::new();
         let mut sections = Vec::new();
         let mut relationships = Vec::new();
@@ -48,7 +60,7 @@ impl DocIndexer {
             if path.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd" {
-                        match self.parse_doc_file(path, docs_path) {
+                        match self.parse_doc_file(path, docs_path, graph) {
                             Ok((doc, secs, rels, _children)) => {
                                 documents.push(doc);
                                 sections.extend(secs);
@@ -97,6 +109,7 @@ impl DocIndexer {
         &self,
         path: &Path,
         docs_root: &Path,
+        graph: Option<&GraphEngine>,
     ) -> Result<
         (
             CodeElement,
@@ -144,27 +157,67 @@ impl DocIndexer {
         let code_refs = self.extract_code_references(&content);
         let mut relationships = heading_rels;
 
-        for (target, _context) in code_refs {
-            let target_clone = target.clone();
+        let mut resolved_count = 0u32;
+        let mut skipped_count = 0u32;
+
+        for (target, context) in code_refs {
+            let resolved_target = match graph {
+                Some(g) => match resolve_code_ref(g, &target) {
+                    Some(qn) => {
+                        if qn != target {
+                            resolved_count += 1;
+                        }
+                        qn
+                    }
+                    None => {
+                        skipped_count += 1;
+                        tracing::debug!(
+                            target: "leankg::docjoin",
+                            doc = %qualified_name,
+                            raw_ref = %target,
+                            "doc join: unresolved markdown code ref"
+                        );
+                        continue;
+                    }
+                },
+                None => target.clone(),
+            };
+
+            let snippet: String = context.chars().take(100).collect();
+            let edge_meta = serde_json::json!({
+                "context": snippet,
+                "confidence_label": "EXTRACTED",
+            });
+
             relationships.push(Relationship {
                 id: None,
                 source_qualified: qualified_name.clone(),
-                target_qualified: target,
+                target_qualified: resolved_target.clone(),
                 rel_type: "references".to_string(),
                 confidence: 1.0,
-                metadata: serde_json::json!({}),
+                metadata: edge_meta.clone(),
                 ..Default::default()
             });
 
             relationships.push(Relationship {
                 id: None,
-                source_qualified: target_clone,
+                source_qualified: resolved_target,
                 target_qualified: qualified_name.clone(),
                 rel_type: "documented_by".to_string(),
                 confidence: 1.0,
-                metadata: serde_json::json!({}),
+                metadata: edge_meta,
                 ..Default::default()
             });
+        }
+
+        if graph.is_some() && (resolved_count > 0 || skipped_count > 0) {
+            tracing::debug!(
+                target: "leankg::docjoin",
+                doc = %qualified_name,
+                resolved = resolved_count,
+                skipped = skipped_count,
+                "doc join: ref resolve summary"
+            );
         }
 
         Ok((doc, sections, relationships, Vec::new()))
@@ -440,7 +493,7 @@ pub fn index_docs_directory(
     let result = {
         let db = graph.db();
         let indexer = DocIndexer::new(db.clone());
-        indexer.index_docs(docs_path)?
+        indexer.index_docs_with_graph(docs_path, Some(graph))?
     };
 
     if !result.documents.is_empty() {
