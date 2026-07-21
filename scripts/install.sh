@@ -501,6 +501,7 @@ const ROUTING_BLOCK = `
   Gate: curl -sf http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
 
   Prefer-order (HTTP healthy):
+  0. get_overview_context(project=…) — session start; not load_layer(L0) alone
   1. mcp_status(project=…) — container path e.g. /workspace for Docker
   2. DISCOVER: concept_search → semantic_search → search_code / find_function
   3. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
@@ -508,13 +509,14 @@ const ROUTING_BLOCK = `
   5. DOCS: get_traceability / find_related_docs / get_files_for_doc
   6. TESTING: get_tested_by / detect_changes
   7. ORCHESTRATE: orchestrate(intent) when unsure which tool
+  8. ENV: env= on search/kg_* (never search_by_environment — removed)
 </tool_selection_hierarchy>
 
 <forbidden_actions>
   - Do NOT call LeanKG when :9699 health failed
   - Do NOT pass host Mac paths as project= against Docker MCP (use /workspace)
   - Do NOT use Grep for code search when LeanKG is healthy and returns hits
-  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact)
+  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment)
 </forbidden_actions>
 `;
 
@@ -878,7 +880,7 @@ function buildSessionContext(input) {
   - Do NOT call LeanKG when :9699 health failed
   - Do NOT pass host Mac paths as project= against Docker MCP
   - Do NOT use Grep when LeanKG is healthy and returns hits
-  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact)
+  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment)
 </forbidden_actions>
 
 <project_context>
@@ -1504,10 +1506,14 @@ curl -sf --max-time 2 http://localhost:9699/health
 
 ### When HTTP is healthy
 
+0. `get_overview_context(project=…)` — session start (not `load_layer(L0)` alone)
 1. `mcp_status(project=…)` — Docker: container mount (`/workspace`), not a host Mac path
 2. Prefer-order discover: `concept_search` → `semantic_search` → `search_code` / `find_function`
 3. Exact follow-up: `get_context` / `get_impact_radius` / `get_dependencies` / `get_dependents` / `get_tested_by`
-4. If LeanKG returns empty → fall back to Grep/Glob/Read
+4. Environment filter: `env=` on search / `kg_*` (never `search_by_environment` — removed)
+5. If LeanKG returns empty → fall back to Grep/Glob/Read
+
+See [MCP tools reference](mcp-tools.md) for the full prefer-order and hard-removed tool list (~81 tools with embeddings).
 
 | Instead of | Use LeanKG (HTTP up only) |
 |------------|---------------------------|

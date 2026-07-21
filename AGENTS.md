@@ -253,7 +253,7 @@ Workspaces above `LEANKG_MAX_CACHE_ELEMENTS` (default **50_000** elements) are t
 - Full-scan tools (`get_clusters`, `get_code_tree` without query, nav dumps, annotation full scans) **refuse** with a redirect hint instead of loading 600k+ rows.
 - Incremental auto-index **skips** full-graph dependent expansion on mega-graphs (override with `LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1` to force skip always).
 - Search prefer-order: `concept_search` → `semantic_search` → `search_code`. Semantic context: `semantic_search` → `kg_semantic_context` (embeddings) → `kg_context`.
-- Overview prefer: `get_overview_context` (soft-deprecated: `wake_up`; do not replace with `load_layer(L0)` alone). Prefer `env=` on search/`kg_*` instead of `search_by_environment`. Full redundancy audit: [`docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`](docs/reports/mcp-tool-redundancy-impact-2026-07-20.md).
+- Overview prefer: `get_overview_context` (not `load_layer(L0)` alone). Use `env=` on search/`kg_*` for environment scoping. Hard-removed: `wake_up`, `search_by_environment`. Audit: [`docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`](docs/reports/mcp-tool-redundancy-impact-2026-07-20.md).
 
 Env knobs:
 
