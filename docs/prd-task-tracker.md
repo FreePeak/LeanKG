@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-21 — Wave **1a** MCP hard-delete **DONE** (REL-062); v3.7.14 graph-engineering curriculum gaps (`US-GE-*` / `FR-GE-*` / `REL-064`) docs DONE.
+**Last synced:** 2026-07-21 — Wave **1a** MCP hard-delete **DONE**; P2 DOCJOIN Must Have **DONE** (`feature/doc-join-quality`, `FR-DOCJOIN-06` open) (REL-062); v3.7.14 graph-engineering curriculum gaps (`US-GE-*` / `FR-GE-*` / `REL-064`) docs DONE.
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
 
@@ -133,15 +133,15 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 | # | ID | Status | Intent |
 |--:|----|--------|--------|
-| 1 | `FR-DOCJOIN-02` | NOT_DONE | Normalize `doc`/`file` aliases on query tools (read-path quick win) |
-| 2 | `US-DOCJOIN-02` | PENDING | Human paths resolve to indexed `docs/…` keys |
-| 3 | `FR-DOCJOIN-01` | NOT_DONE | Resolve markdown refs to indexed file keys on write |
-| 4 | `US-DOCJOIN-01` | PENDING | `documented_by` / `references` join to code index keys |
-| 5 | `FR-DOCJOIN-03` | NOT_DONE | Edge `context` + EXTRACTED confidence metadata |
-| 6 | `FR-DOCJOIN-04` | NOT_DONE | Unit + TempDir integration join tests |
-| 7 | `REL-063` | NOT_DONE | Live MCP smoke report under `docs/reports/` |
-| 8 | `FR-DOCJOIN-05` | NOT_DONE | Sync prefer-order / authoring in mcp-tools + skills |
-| 9 | `US-DOCJOIN-03` | PENDING | Prefer annotations for FR IDs; extractable markdown refs |
+| 1 | `FR-DOCJOIN-02` | **DONE** | Normalize `doc`/`file` aliases on query tools (read-path quick win) |
+| 2 | `US-DOCJOIN-02` | **DONE** | Human paths resolve to indexed `docs/…` keys |
+| 3 | `FR-DOCJOIN-01` | **DONE** | Resolve markdown refs to indexed file keys on write |
+| 4 | `US-DOCJOIN-01` | **DONE** | `documented_by` / `references` join to code index keys |
+| 5 | `FR-DOCJOIN-03` | **DONE** | Edge `context` + EXTRACTED confidence metadata |
+| 6 | `FR-DOCJOIN-04` | **DONE** | Unit + TempDir integration join tests |
+| 7 | `REL-063` | **DONE** | Live MCP smoke report under `docs/reports/` |
+| 8 | `FR-DOCJOIN-05` | **DONE** | Sync prefer-order / authoring in mcp-tools + skills |
+| 9 | `US-DOCJOIN-03` | **DONE** | Prefer annotations for FR IDs; extractable markdown refs |
 | 10 | `FR-DOCJOIN-06` | NOT_DONE | Could: best-effort `file::symbol` upgrade when unique |
 
 **Implement order (best practice):** FR-DOCJOIN-02 → 01 → 03 → 04 / REL-063 → 05 / US-DOCJOIN-03 → 06. See PRD §5.22 test matrix.
@@ -199,12 +199,12 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-DOCJOIN-02` | FR | **NOT_DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-01` | FR | **NOT_DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-03` | FR | **NOT_DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-04` | FR | **NOT_DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `REL-063` | Release | **NOT_DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-05` | FR | **NOT_DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-02` | FR | **DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-01` | FR | **DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-03` | FR | **DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-04` | FR | **DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
@@ -258,9 +258,9 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P1** | `US-UI2-07` | User Story | **PENDING** | Must Have | ui-v2 production cutover: embed into src/embed/ / Docker serve; become default explorer | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P1** | `US-SURF-06` | User Story | **DONE** | Must Have | Hard-delete soft-deprecated MCP tools (wake_up, search_by_environment) after grace | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
 | **P1** | `US-SURF-07` | User Story | **DONE** | Must Have | After tool shrink: sync skills, rules, guidelines, and install/setup to reduced roster | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
-| **P2** | `US-DOCJOIN-02` | User Story | **PENDING** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
-| **P2** | `US-DOCJOIN-01` | User Story | **PENDING** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
-| **P2** | `US-DOCJOIN-03` | User Story | **PENDING** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-DOCJOIN-02` | User Story | **DONE** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-DOCJOIN-01` | User Story | **DONE** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-DOCJOIN-03` | User Story | **DONE** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-GE-02` | User Story | **PENDING** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P2** | `US-GE-03` | User Story | **PENDING** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P2** | `US-GE-04` | User Story | **PENDING** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
@@ -337,17 +337,17 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-DOCJOIN-02` | FR | **NOT_DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-01` | FR | **NOT_DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-03` | FR | **NOT_DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-04` | FR | **NOT_DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `REL-063` | Release | **NOT_DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-05` | FR | **NOT_DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-02` | FR | **DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-01` | FR | **DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-03` | FR | **DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-04` | FR | **DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `US-DOCJOIN-02` | User Story | **PENDING** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
-| **P2** | `US-DOCJOIN-01` | User Story | **PENDING** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
-| **P2** | `US-DOCJOIN-03` | User Story | **PENDING** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-DOCJOIN-02` | User Story | **DONE** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-DOCJOIN-01` | User Story | **DONE** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-DOCJOIN-03` | User Story | **DONE** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-GE-02` | User Story | **PENDING** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P2** | `US-GE-03` | User Story | **PENDING** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P2** | `US-GE-04` | User Story | **PENDING** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |

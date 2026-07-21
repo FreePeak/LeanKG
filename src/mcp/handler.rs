@@ -2251,9 +2251,21 @@ impl ToolHandler {
     fn get_files_for_doc(&self, args: &Value) -> Result<Value, String> {
         let doc = args["doc"].as_str().ok_or("Missing 'doc' parameter")?;
 
+        let resolve = crate::doc_indexer::resolve_doc_key(&self.graph_engine, doc);
+        let doc_key = match resolve.resolved {
+            Some(key) => key,
+            None => {
+                return Ok(json!({
+                    "files": [],
+                    "tried": resolve.tried,
+                    "resolved_doc": null,
+                }));
+            }
+        };
+
         let relationships = self
             .graph_engine
-            .get_relationships(doc)
+            .get_relationships(&doc_key)
             .map_err(|e| e.to_string())?;
 
         let files: Vec<_> = relationships
@@ -2262,12 +2274,17 @@ impl ToolHandler {
             .map(|r| {
                 json!({
                     "file": r.target_qualified,
-                    "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or("")
+                    "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or(""),
+                    "confidence_label": r.metadata.get("confidence_label").and_then(|v| v.as_str()).unwrap_or("")
                 })
             })
             .collect();
 
-        Ok(json!({ "files": files }))
+        Ok(json!({
+            "files": files,
+            "resolved_doc": doc_key,
+            "tried": resolve.tried,
+        }))
     }
 
     fn get_doc_structure(&self, _args: &Value) -> Result<Value, String> {
@@ -2502,24 +2519,53 @@ impl ToolHandler {
     fn find_related_docs(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().ok_or("Missing 'file' parameter")?;
 
-        let relationships = self
+        let resolve = crate::doc_indexer::resolve_file_key(&self.graph_engine, file);
+        let file_key = match resolve.resolved {
+            Some(key) => key,
+            None => {
+                return Ok(json!({
+                    "related_docs": [],
+                    "tried": resolve.tried,
+                    "resolved_file": null,
+                }));
+            }
+        };
+
+        let outgoing = self
             .graph_engine
-            .get_relationships(file)
+            .get_relationships(&file_key)
             .map_err(|e| e.to_string())?;
 
-        let related: Vec<_> = relationships
-            .iter()
-            .filter(|r| r.rel_type == "documented_by" || r.rel_type == "references")
-            .map(|r| {
-                json!({
-                    "doc": if r.rel_type == "documented_by" { r.target_qualified.clone() } else { r.source_qualified.clone() },
-                    "relationship": r.rel_type,
-                    "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or("")
-                })
-            })
-            .collect();
+        let incoming = self
+            .graph_engine
+            .get_relationships_for_target(&file_key)
+            .map_err(|e| e.to_string())?;
 
-        Ok(json!({ "related_docs": related }))
+        let mut related = Vec::new();
+
+        for r in outgoing.iter().filter(|r| r.rel_type == "documented_by") {
+            related.push(json!({
+                "doc": r.target_qualified,
+                "relationship": r.rel_type,
+                "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or(""),
+                "confidence_label": r.metadata.get("confidence_label").and_then(|v| v.as_str()).unwrap_or("")
+            }));
+        }
+
+        for r in incoming.iter().filter(|r| r.rel_type == "references") {
+            related.push(json!({
+                "doc": r.source_qualified,
+                "relationship": r.rel_type,
+                "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or(""),
+                "confidence_label": r.metadata.get("confidence_label").and_then(|v| v.as_str()).unwrap_or("")
+            }));
+        }
+
+        Ok(json!({
+            "related_docs": related,
+            "resolved_file": file_key,
+            "tried": resolve.tried,
+        }))
     }
 
     fn get_clusters(&self, args: &Value) -> Result<Value, String> {
