@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-21 — UI v2 Service/Folder replace-graph **DONE** (`US-UI2-10` / `FR-UI2-12` / `REL-057`); CodePanel `/api/file` gated (`US-UI2-03` tightened)
+**Last synced:** 2026-07-21 — UI v2 expand **Load more (+200)** merge pagination (`US-UI2-11` / `FR-UI2-13` / `REL-058`); prior Service/Folder replace-graph **DONE** (`US-UI2-10` / `FR-UI2-12` / `REL-057`)
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md)  
 
@@ -83,6 +83,8 @@
 | **P1** | `US-UI2-03` | User Story | **DONE** | Must Have | Content-bearing select opens /api/file; Service/Folder skip | 3.17 UI v2 |
 | **P1** | `US-UI2-04` | User Story | **DONE** | Must Have | Server search + QueryFAB /api/query | 3.17 UI v2 |
 | **P1** | `US-UI2-05` | User Story | **DONE** | Must Have | Mega-graph skip + Load graph anyway | 3.17 UI v2 |
+| **P1** | `US-UI2-10` | User Story | **DONE** | Must Have | Double-click Service/Folder replace-graph expand | 3.17 UI v2 |
+| **P1** | `US-UI2-11` | User Story | **DONE** | Must Have | Load more (+200) merges expand pages into current graph | 3.17 UI v2 |
 | **P1** | `FR-UI2-01` | FR | **DONE** | Must Have | New ui-v2/ app; leave ui/ and src/embed untouched in Phase 1 | 5.19 UI v2 |
 | **P1** | `FR-UI2-02` | FR | **DONE** | Must Have | 3-pane shell: FileTree+Filters / Canvas / Code + Header + StatusBar | 5.19 UI v2 |
 | **P1** | `FR-UI2-03` | FR | **DONE** | Must Have | Force / Tree / Circles layout modes | 5.19 UI v2 |
@@ -90,7 +92,11 @@
 | **P1** | `FR-UI2-05` | FR | **DONE** | Must Have | Preserve US-MG-03/04 filter defaults | 5.19 UI v2 |
 | **P1** | `FR-UI2-06` | FR | **DONE** | Must Have | decideSkipGraph mega-graph gate + Load anyway | 5.19 UI v2 |
 | **P1** | `FR-UI2-07` | FR | **DONE** | Must Have | Vitest + Playwright Phase-1 parity matrix | 5.19 UI v2 |
+| **P1** | `FR-UI2-12` | FR | **DONE** | Must Have | expandService replace-graph + CodePanel file gate | 5.19 UI v2 |
+| **P1** | `FR-UI2-13` | FR | **DONE** | Must Have | expand pagination + Load more merge (+200) | 5.19 UI v2 |
 | **P1** | `REL-056` | Release | **DONE** | Must Have | ui-v2 GitNexus shell parity report | 5.19 UI v2 |
+| **P1** | `REL-057` | Release | **DONE** | Must Have | Service/Folder expand replace-graph + no /api/file 400 | 5.19 UI v2 |
+| **P1** | `REL-058` | Release | **DONE** | Must Have | expand Load more merge pagination | 5.19 UI v2 |
 | **P0** | `US-SEM-06` | User Story | **DONE** | Must Have | Mega-graph HNSW semantic_search / kg_semantic_context must not OOM MCP | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.… |
 | **P0** | `FR-SEM-07` | FR | **DONE** | Must Have | Mega-safe HNSW path: no unbounded all_elements(); ANN + paginated/keyed hydration; MCP stays healthy under mem_limit | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P0** | `REL-054` | Release | **DONE** | Must Have | Live mega smoke: semantic_search + kg_semantic_context on /workspace-other without OOM/restart | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
