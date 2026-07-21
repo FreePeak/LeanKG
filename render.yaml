@@ -14,4 +14,4 @@ services:
       - key: PORT
         value: 8080
       - key: UI_EMBED_REV
-        value: "2026-07-21-onrender-rca2"
+        value: "2026-07-21-onrender-rca3"

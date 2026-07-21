@@ -1,37 +1,55 @@
 # Render / onrender production image (leankg.onrender.com).
-# Bakes UI v2 into rust_embed (`src/embed/`). Legacy `ui/` is not shipped.
-FROM rust:1-bookworm
-WORKDIR /app
-
-# Cache-bust: bump when OnRender sticks on a stale UI layer.
-ARG UI_EMBED_REV=2026-07-21-onrender-rca2
-
-RUN apt-get update && apt-get install -y clang git curl && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
-
-# Layer-cache npm deps separately from sources (faster Render rebuilds on UI-only changes).
-COPY ui-v2/package.json ui-v2/package-lock.json ./ui-v2/
-WORKDIR /app/ui-v2
+# Multi-stage: UI (node) → Rust builder → slim runtime.
+# Starter Render pipeline = 2 CPU / 8 GB RAM — single-stage + parallel rustc OOMs.
+FROM node:20-bookworm AS ui
+WORKDIR /ui
+COPY ui-v2/package.json ui-v2/package-lock.json ./
 RUN npm ci
 COPY ui-v2/ ./
+ARG UI_EMBED_REV=2026-07-21-onrender-rca3
 RUN echo "UI_EMBED_REV=${UI_EMBED_REV}" && npm run build
 
+FROM rust:1-bookworm AS builder
 WORKDIR /app
+
+# Render Starter build pipeline: 2 CPU, 8 GB RAM (docs.render.com/build-pipeline).
+# ort + rocksdb + thin LTO can exceed 8 GB with default parallel codegen.
+ENV CARGO_BUILD_JOBS=1 \
+    CARGO_PROFILE_RELEASE_LTO=false \
+    CARGO_TERM_COLOR=always
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends clang libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 # benches/ required — Cargo.toml [[bench]] targets fail manifest parse if missing.
 COPY benches ./benches
 COPY ontology/ ./ontology/
-# Always overwrite committed embed with freshly built ui-v2; refuse legacy title "ui".
-RUN rm -rf src/embed/* && cp -r ui-v2/dist/* src/embed/ \
-    && test -f src/embed/index.html \
+COPY --from=ui /ui/dist/ ./src/embed/
+ARG UI_EMBED_REV=2026-07-21-onrender-rca3
+RUN test -f src/embed/index.html \
     && grep -q '<title>LeanKG</title>' src/embed/index.html \
     && printf '{"ui":"ui-v2","rev":"%s","source":"Dockerfile"}\n' "${UI_EMBED_REV}" > src/embed/ui-build.json
 
-# US-CBM-C1 / FR-HNSW-C: build with the `embeddings` feature so semantic
-# tools work out of the box (HNSW-backed semantic_search, embed, smoke-test).
-RUN cargo build --release --features embeddings && strip target/release/leankg \
+# US-CBM-C1 / FR-HNSW-C: embeddings feature for semantic_search on hosted demo.
+RUN cargo build --release --features embeddings \
+    && strip target/release/leankg \
     && cp target/release/leankg /usr/local/bin/leankg
+
+FROM debian:bookworm-slim AS runtime
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/leankg /usr/local/bin/leankg
 
 ENV PORT=8080
 EXPOSE 8080 9699
