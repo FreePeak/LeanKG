@@ -50,14 +50,17 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
           rustup target add ${{ matrix.target }}
 
-      - name: Build Vite UI
+      - name: Build Vite UI (ui-v2 → rust_embed)
         shell: bash
         run: |
-          cd ui
-          bun install
-          bun run build
+          cd ui-v2
+          npm ci
+          npm run build
           rm -rf ../src/embed/*
           cp -r dist/* ../src/embed/
+          test -f ../src/embed/index.html
+          grep -q '<title>LeanKG</title>' ../src/embed/index.html
+          printf '%s\n' '{"ui":"ui-v2","source":"release.yml"}' > ../src/embed/ui-build.json
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
