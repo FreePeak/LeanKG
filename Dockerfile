@@ -19,6 +19,8 @@ RUN echo "UI_EMBED_REV=${UI_EMBED_REV}" && npm run build
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+# benches/ required — Cargo.toml [[bench]] targets fail manifest parse if missing.
+COPY benches ./benches
 COPY ontology/ ./ontology/
 # Always overwrite committed embed with freshly built ui-v2; refuse legacy title "ui".
 RUN rm -rf src/embed/* && cp -r ui-v2/dist/* src/embed/ \
