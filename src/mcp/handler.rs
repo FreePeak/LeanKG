@@ -281,7 +281,6 @@ impl ToolHandler {
             "concept_search" => self.concept_search(arguments),
             "search_annotations" => self.search_annotations(arguments),
             "semantic_search" => self.semantic_search(arguments),
-            "wake_up" => self.wake_up(arguments),
             "generate_doc" => self.generate_doc(arguments),
             "find_large_functions" => self.find_large_functions(arguments),
             "get_tested_by" => self.get_tested_by(arguments),
@@ -309,7 +308,6 @@ impl ToolHandler {
             "link_element" => self.link_element_tool(arguments),
             "add_documentation" => self.add_documentation(arguments),
             // Versioning tools
-            "search_by_environment" => self.search_by_environment(arguments),
             "get_upcoming_changes" => self.get_upcoming_changes(arguments),
             "promote_environment" => self.promote_environment(arguments),
             // Incident and environment tools
@@ -1656,7 +1654,7 @@ impl ToolHandler {
         }))
     }
 
-    /// US-GN-08: Aggregate wake_up + L0 identity + L1 critical facts
+    /// US-GN-08: Aggregate L0 identity + L1 critical facts + project summary
     /// into a single resource-like MCP response that an agent can
     /// consume at session start. Equivalent to MCP Resources for
     /// overview context (leankg-mcp doesn't currently expose the
@@ -3320,37 +3318,6 @@ impl ToolHandler {
     // Version/Branch Tagging Tools
     // ========================================================================
 
-    fn search_by_environment(&self, args: &Value) -> Result<Value, String> {
-        let environment = args["environment"].as_str().ok_or("Missing environment")?;
-        let limit = args["limit"].as_u64().unwrap_or(20).min(50) as usize;
-
-        let knowledge =
-            db::get_knowledge_by_environment(self.graph_engine.db(), environment, limit)
-                .map_err(|e| format!("Failed to search by environment: {}", e))?;
-
-        let results: Vec<Value> = knowledge
-            .iter()
-            .map(|e| {
-                json!({
-                    "id": e.id,
-                    "knowledge_type": e.knowledge_type,
-                    "title": e.title,
-                    "content_preview": truncate_str(&e.content, 200),
-                    "branch": e.branch,
-                    "author": e.author,
-                    "environment": e.environment,
-                    "created_at": e.created_at
-                })
-            })
-            .collect();
-
-        Ok(json!({
-            "environment": environment,
-            "results": results,
-            "count": results.len()
-        }))
-    }
-
     fn get_upcoming_changes(&self, args: &Value) -> Result<Value, String> {
         let limit = args["limit"].as_u64().unwrap_or(20).min(50) as usize;
         let branch_filter = args["branch"].as_str();
@@ -3797,37 +3764,6 @@ impl ToolHandler {
         }
 
         Ok(response)
-    }
-
-    fn wake_up(&self, args: &Value) -> Result<Value, String> {
-        let project_path = args["project"].as_str().unwrap_or(".");
-        let cache_path = std::path::Path::new(project_path)
-            .join(".leankg")
-            .join("wake_up.txt");
-
-        if let Ok(cached) = std::fs::read_to_string(&cache_path) {
-            if !cached.trim().is_empty() {
-                return Ok(json!({
-                    "context": cached,
-                    "source": "cache",
-                }));
-            }
-        }
-
-        let summary = self
-            .graph_engine
-            .wake_up_summary()
-            .unwrap_or_else(|e| format!("LeanKG project (context generation error: {})", e));
-
-        if let Some(parent) = cache_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&cache_path, &summary);
-
-        Ok(json!({
-            "context": summary,
-            "source": "generated",
-        }))
     }
 
     /// FR-B20: Get architecture overview.

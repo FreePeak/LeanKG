@@ -42,7 +42,6 @@ MUTATING = {
     "agent_diary_write",
     "report_query_outcome",
     "export_graph_snapshot",
-    "wake_up",
 }
 
 # Full-graph / heavy tools — safe on small projects; skip on mega-graphs unless opted in.
@@ -70,7 +69,6 @@ MEGA_GRAPH_HEAVY = {
     "load_layer",
     "temporal_query",
     "timeline",
-    "search_by_environment",
     "search_by_requirement",
     "query_incidents",
     "find_env_conflicts",

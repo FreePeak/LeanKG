@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- MCP: hard-delete `wake_up` and `search_by_environment`; prefer
+  `get_overview_context` and `env=` on search/`kg_*` (~81 tools with
+  embeddings). Agent docs, install hooks, and plugin manifests synced
+  (Wave 1a / REL-062).
+
 ### Added
 - Procedural ontology auto-update while serving: debounce-watch
   `ontology/workflows.yaml` + `concepts.yaml`, post-index refresh,

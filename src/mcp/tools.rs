@@ -246,7 +246,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_overview_context".to_string(),
-                description: "US-GN-08: Return the project overview context (identity, critical facts, recent hotspots) as a single MCP-callable resource. Acts as an MCP-Resources-style agent context shortcut for wake_up + L0/L1 layers.".to_string(),
+                description: "US-GN-08: Session-start overview (L0 identity + L1 critical facts + project summary). Prefer over load_layer(L0) alone. Replaces removed wake_up tool.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -873,20 +873,6 @@ impl ToolRegistry {
 
             // Version/Branch Tagging Tools
             ToolDefinition {
-                name: "search_by_environment".to_string(),
-                description: "DEPRECATED (FR-SURF-05): prefer env= on search_code / semantic_search / concept_search / kg_* tools. Still searches code elements and knowledge filtered by environment (production, staging, dev, upcoming, local).".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                                                "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming", "local"], "description": "Environment to filter by (use 'local' for default-indexed code)"},
-                        "query": {"type": "string", "description": "Optional: search query to further filter results"},
-                        "limit": {"type": "integer", "description": "Max results (default: 20)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["environment"]
-                }),
-            },
-            ToolDefinition {
                 name: "get_upcoming_changes".to_string(),
                 description: "Get knowledge entries and code elements tagged as 'upcoming' (feature branch changes not yet in main). Shows what's coming in the next release.".to_string(),
                 input_schema: json!({
@@ -965,17 +951,6 @@ impl ToolRegistry {
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "wake_up".to_string(),
-                description: "DEPRECATED (FR-SURF-04): prefer get_overview_context (L0+L1 style overview). Do not replace with load_layer(L0) alone — wake_up is L0+L1 (~170 tok). Still loads cached project identity + critical facts from .leankg/wake_up.txt.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": []
                 }),
             },
 
@@ -1160,7 +1135,14 @@ mod tests {
         assert!(names.contains(&"find_related_docs"));
         assert!(names.contains(&"query_graph"));
         assert!(names.contains(&"shortest_path"));
-        for removed in ["mcp_hello", "mcp_impact", "get_doc_for_file"] {
+        for removed in [
+            "mcp_hello",
+            "mcp_impact",
+            "get_doc_for_file",
+            "find_clones",
+            "wake_up",
+            "search_by_environment",
+        ] {
             assert!(
                 !names.contains(&removed),
                 "removed tool `{removed}` must not be registered"

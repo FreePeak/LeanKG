@@ -25,9 +25,9 @@
 //! get_upcoming_changes, kg_concept_map, kg_context, kg_ontology_status,
 //! kg_self_test, kg_semantic_context, kg_trace_workflow, link_element,
 //! load_layer, promote_environment, query_incidents, report_query_outcome,
-//! resolve_with_lsp, search_annotations, search_by_environment,
+//! resolve_with_lsp, search_annotations,
 //! search_knowledge, semantic_search, shortest_path, temporal_query,
-//! timeline, update_knowledge, wake_up, query_graph
+//! timeline, update_knowledge, query_graph
 
 use leankg::db::schema::{init_db, run_script, CozoDb};
 use leankg::graph::GraphEngine;
@@ -155,7 +155,6 @@ fn every_tested_tool_is_registered() {
         "report_query_outcome",
         "resolve_with_lsp",
         "search_annotations",
-        "search_by_environment",
         "search_knowledge",
         "semantic_search",
         "shortest_path",
@@ -163,7 +162,6 @@ fn every_tested_tool_is_registered() {
         "temporal_query",
         "timeline",
         "update_knowledge",
-        "wake_up",
     ];
     for name in required {
         // `kg_semantic_context` is `#[cfg(feature = "embeddings")]`-gated; only
@@ -527,13 +525,6 @@ mod graph_features {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn wake_up_returns_project_summary() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "wake_up", json!({})).await.expect("wake_up");
-        assert!(!resp.to_string().is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn load_layer_returns_layer_payload() {
         let (handler, _tmp) = make_handler().await;
         let resp = call(&handler, "load_layer", json!({}))
@@ -839,19 +830,6 @@ mod ontology {
 
 mod environment {
     use super::*;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn search_by_environment_filters() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(
-            &handler,
-            "search_by_environment",
-            json!({"environment": "local"}),
-        )
-        .await
-        .expect("search_by_environment");
-        assert!(!resp.to_string().is_empty());
-    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn get_upcoming_changes_returns_payload() {
