@@ -1,26 +1,40 @@
 {
-  "generated": "2026-07-21",
+  "generated": "2026-07-21T14:00:00+07:00",
   "source": "docs/prd.md",
   "counts": {
-    "DONE": 375,
-    "PARTIAL": 13,
-    "PENDING": 25,
-    "NOT_DONE": 61,
-    "WONT_DO": 3,
-    "OPEN": 1
+    "total": 496,
+    "by_status": {
+      "NOT_DONE": 68,
+      "PENDING": 28,
+      "PARTIAL": 13,
+      "OPEN": 1,
+      "DONE": 383,
+      "WONT_DO": 3
+    },
+    "open_work": 110,
+    "open_by_focus": {
+      "P2": 77,
+      "P1": 23,
+      "P3": 10
+    },
+    "by_kind": {
+      "FR": 257,
+      "Release": 63,
+      "User Story": 176
+    }
   },
   "tasks": [
     {
       "id": "FR-B05",
       "kind": "FR",
       "title": "Benchmark harness vs CBM (50-edge samples)",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "NOT_DONE",
-      "notes": "[ ]",
+      "notes": "[ ] 2026-07-21 priority reorder: CBM harness after packaging; not blocking adoption",
       "section": "5.10 CBM Structural Parity Requirements (merged)",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
@@ -29,50 +43,50 @@
       "title": "Single-repo projects treated as single service \u2014 root double-click loads everything",
       "priority": "Must Have",
       "status": "NOT_DONE",
-      "notes": "[ ]",
+      "notes": "[ ] 2026-07-21 priority reorder: Wave 4 UI correctness after packaging",
       "section": "5.7 Massive Graph UI (DONE)",
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 0
+      "ve_suborder": 10
     },
     {
       "id": "REL-032",
       "kind": "Release",
       "title": "Swift / Vue / Svelte / SQL DDL \u2014 extractors present ('swift.rs' / 'sfc.rs' / 'sql.rs') but **not wired** into \u2026",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "NOT_DONE",
-      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026",
+      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026 2026-07-21 priority reorder: Language breadth not ROI; extractors exist, index-walk later",
       "section": "8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
       "id": "REL-040",
       "kind": "Release",
       "title": "REST API auth wiring + mutation endpoints (mutation endpoints still partial)",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "NOT_DONE",
-      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026",
+      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026 2026-07-21 priority reorder: REST mutation polish; not agent-cost lever",
       "section": "8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
       "id": "REL-041",
       "kind": "Release",
       "title": "3D graph UI Track E ('graph-ui/'; keep 2D 'ui/')",
-      "priority": "Must Have",
+      "priority": "Could Have",
       "status": "NOT_DONE",
-      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026",
+      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026 2026-07-21 priority reorder: Track E 3D is aspirational; ui-v2 is company explorer",
       "section": "8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P3",
+      "focus_rank": 3,
       "ve_suborder": 0
     },
     {
@@ -98,7 +112,7 @@
       "section": "5.9 Graphify-Inspired Features",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 2,
+      "ve_suborder": 4,
       "focus_rank": 1
     },
     {
@@ -111,7 +125,7 @@
       "section": "5.9 Graphify-Inspired Features",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 3,
+      "ve_suborder": 5,
       "focus_rank": 1
     },
     {
@@ -125,7 +139,7 @@
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 4
+      "ve_suborder": 6
     },
     {
       "id": "FR-GF-08",
@@ -138,7 +152,7 @@
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 4
+      "ve_suborder": 6
     },
     {
       "id": "FR-GF-09",
@@ -151,7 +165,7 @@
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 4
+      "ve_suborder": 6
     },
     {
       "id": "REL-043",
@@ -164,7 +178,7 @@
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 4
+      "ve_suborder": 6
     },
     {
       "id": "FR-GF-13",
@@ -177,7 +191,7 @@
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 5
+      "ve_suborder": 7
     },
     {
       "id": "FR-GF-21",
@@ -189,7 +203,7 @@
       "section": "5.9 Graphify-Inspired Features",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 6,
+      "ve_suborder": 8,
       "focus_rank": 1
     },
     {
@@ -202,7 +216,7 @@
       "section": "5.19 UI v2 Graph Explorer",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 7,
+      "ve_suborder": 9,
       "focus_rank": 1
     },
     {
@@ -215,7 +229,7 @@
       "section": "5.19 UI v2 Graph Explorer",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 8,
+      "ve_suborder": 2,
       "focus_rank": 1
     },
     {
@@ -228,7 +242,7 @@
       "section": "5.19 UI v2 Graph Explorer",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 8,
+      "ve_suborder": 2,
       "focus_rank": 1
     },
     {
@@ -237,11 +251,11 @@
       "title": "Automate/document ontology sync for concepts + workflows YAML",
       "priority": "Should Have",
       "status": "NOT_DONE",
-      "notes": "P1 docs/automation; runtime auto-update is US-ONT-PROC-01 / FR-ONT-PROC-* P0 (v3.7.9)",
+      "notes": "P1 docs/automation; runtime auto-update is US-ONT-PROC-01 / FR-ONT-PROC-* P0 (v3.7.9) 2026-07-21 priority reorder: Runtime auto-update DONE (FR-ONT-PROC); remainder is docs",
       "section": "5.10 CBM Structural Parity Requirements (merged)",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
@@ -807,39 +821,39 @@
       "id": "US-CBM-A1",
       "kind": "User Story",
       "title": "Correct MCP 'project' routing (multi-mount \u2260 wrong RocksDB project)",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "PENDING",
-      "notes": "PENDING (ops; freepeak\u2260be historically)",
+      "notes": "PENDING (ops; freepeak\u2260be historically) 2026-07-21 priority reorder: Multi-mount routing reliability; after adoption packaging",
       "section": "3.11 CBM Structural Parity Stories (US-CBM) \u2014 merged from 'p\u2026",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
       "id": "US-CBM-A4",
       "kind": "User Story",
       "title": "Moat smoke (ontology + routing) gates Phase 1 \u201cdone\u201d",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "PENDING",
-      "notes": "PENDING",
+      "notes": "PENDING 2026-07-21 priority reorder: Moat smoke gate; after packaging",
       "section": "3.11 CBM Structural Parity Stories (US-CBM) \u2014 merged from 'p\u2026",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
       "id": "US-CBM-D3",
       "kind": "User Story",
       "title": "Re-evaluate dual-run after typed-resolve Phase",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "PENDING",
-      "notes": "PENDING",
+      "notes": "PENDING 2026-07-21 priority reorder: Depends on typed-resolve phase",
       "section": "3.11 CBM Structural Parity Stories (US-CBM) \u2014 merged from 'p\u2026",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
@@ -852,7 +866,7 @@
       "section": "3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17)",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 2,
+      "ve_suborder": 4,
       "focus_rank": 1
     },
     {
@@ -865,7 +879,7 @@
       "section": "3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17)",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 3,
+      "ve_suborder": 5,
       "focus_rank": 1
     },
     {
@@ -878,7 +892,7 @@
       "section": "3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17)",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 6,
+      "ve_suborder": 8,
       "focus_rank": 1
     },
     {
@@ -891,7 +905,7 @@
       "section": "3.17 UI v2 \u2014 GitNexus Shell Adapted (US-UI2)",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 7,
+      "ve_suborder": 9,
       "focus_rank": 1
     },
     {
@@ -904,7 +918,7 @@
       "section": "3.17 UI v2 \u2014 GitNexus Shell Adapted (US-UI2)",
       "prd_line": null,
       "focus": "P1",
-      "ve_suborder": 8,
+      "ve_suborder": 2,
       "focus_rank": 1
     },
     {
@@ -1132,26 +1146,26 @@
       "id": "US-08",
       "kind": "User Story",
       "title": "Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP)",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL \u2014 Go/TS/Python/Rust/Java/Kotlin (+Dart/XML/TF/CI) indexed; C++/C#/Ruby/P\u2026",
+      "notes": "PARTIAL \u2014 Go/TS/Python/Rust/Java/Kotlin (+Dart/XML/TF/CI) indexed; C++/C#/Ruby/P\u2026 2026-07-21 priority reorder: Core langs production; remainder is breadth",
       "section": "3.1 Core MVP Stories (US-01 to US-18)",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
       "id": "US-CBM-A2",
       "kind": "User Story",
       "title": "Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync)",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL (tools exist; sync/activation ops-dependent)",
+      "notes": "PARTIAL (tools exist; sync/activation ops-dependent) 2026-07-21 priority reorder: Ontology online largely works post ont-proc; residual smoke",
       "section": "3.11 CBM Structural Parity Stories (US-CBM) \u2014 merged from 'p\u2026",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
@@ -1160,37 +1174,37 @@
       "title": "Single-repo projects expand fully on service double-click (no multi-level drilling)",
       "priority": "Must Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL (expand-service called, FR-MG-03 still pending)",
+      "notes": "PARTIAL (expand-service called, FR-MG-03 still pending) 2026-07-21 priority reorder: Wave 4 UI correctness after packaging",
       "section": "3.8 Massive Graph Stories (US-MG-01 to US-MG-05)",
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 0
+      "ve_suborder": 10
     },
     {
       "id": "US-MP-02",
       "kind": "User Story",
       "title": "Layered Context Loading (L0-L3) \u2014 explicit token budgets per layer: L0 identity (~50 tok), L1 critical facts (\u2026",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL ('wake_up' returns L0+L1; 'load_layer' MCP tool registered but minimal)",
+      "notes": "PARTIAL ('wake_up' returns L0+L1; 'load_layer' MCP tool registered but minimal) 2026-07-21 priority reorder: L0-L3 partial; polish after adoption",
       "section": "3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08)",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
       "id": "US-MP-08",
       "kind": "User Story",
       "title": "Folder Structure as Graph Edges \u2014 directories as first-class 'directory' nodes with 'contains' edges (dir\u2192dir,\u2026",
-      "priority": "Must Have",
+      "priority": "Should Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL \u2014 'generate_physical_structure' creates 'directory' / 'File' / 'Project'\u2026",
+      "notes": "PARTIAL \u2014 'generate_physical_structure' creates 'directory' / 'File' / 'Project'\u2026 2026-07-21 priority reorder: Directory edges partial; polish after adoption",
       "section": "3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08)",
       "prd_line": null,
-      "focus": "P1",
-      "focus_rank": 1,
+      "focus": "P2",
+      "focus_rank": 2,
       "ve_suborder": 0
     },
     {
@@ -1230,7 +1244,7 @@
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 4
+      "ve_suborder": 6
     },
     {
       "id": "US-GF-06",
@@ -1243,7 +1257,7 @@
       "prd_line": null,
       "focus": "P1",
       "focus_rank": 1,
-      "ve_suborder": 5
+      "ve_suborder": 7
     },
     {
       "id": "US-LANG-02",
@@ -6223,6 +6237,240 @@
       "focus": "P1",
       "focus_rank": 1,
       "ve_suborder": 0
+    },
+    {
+      "id": "US-SURF-06",
+      "kind": "User Story",
+      "title": "Hard-delete soft-deprecated MCP tools (wake_up, search_by_environment) after grace",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "3.16 MCP Tool Surface Rationalization (US-SURF) \u2014 v3.7.12",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "US-SURF-07",
+      "kind": "User Story",
+      "title": "After tool shrink: sync skills, rules, guidelines, and install/setup to reduced roster",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "3.16 MCP Tool Surface Rationalization (US-SURF) \u2014 v3.7.12",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "FR-SURF-07",
+      "kind": "FR",
+      "title": "Hard-delete wake_up from ToolRegistry + handlers; matrix AlreadyRemoved; smoke MUTATING list cleaned",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "5.18 MCP Tool Surface Rationalization (v3.7.12)",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "FR-SURF-08",
+      "kind": "FR",
+      "title": "Hard-delete search_by_environment; callers use env= on search_code/semantic_search/concept_search/kg_*",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "5.18 MCP Tool Surface Rationalization (v3.7.12)",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "FR-SURF-09",
+      "kind": "FR",
+      "title": "Sync repo guidelines: AGENTS.md, CLAUDE.md, docs/mcp-tools.md, mcp-setup.md, agentic-instructions.md, cli-reference \u2014 no deleted tool names as preferred",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "5.18 MCP Tool Surface Rationalization (v3.7.12)",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "FR-SURF-10",
+      "kind": "FR",
+      "title": "Sync using-leankg skill + leankg-first / mandatory-workflow-loop / skill-auto-invoke rules to post-shrink prefer-order (path\u00b7explain\u00b7query)",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "5.18 MCP Tool Surface Rationalization (v3.7.12)",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "FR-SURF-11",
+      "kind": "FR",
+      "title": "Sync install/setup: scripts/install.sh, mcp-smoke-tools.py, cursor/opencode/claude plugin manifests \u2014 drop deleted tools from lists",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "5.18 MCP Tool Surface Rationalization (v3.7.12)",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "REL-062",
+      "kind": "Release",
+      "title": "Evidence: list_tools before/after hard-delete + grep-clean skills/rules/docs/setup of deleted tool names",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 \u2014 Wave 1a hard-delete wake_up + search_by_environment; agent surface synced (REL-062)",
+      "section": "5.18 MCP Tool Surface Rationalization (v3.7.12)",
+      "prd_line": 0,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 3
+    },
+    {
+      "id": "FR-DOCJOIN-01",
+      "kind": "FR",
+      "title": "Resolve markdown code refs to indexed file-level CodeElement keys on write",
+      "priority": "Must Have",
+      "status": "NOT_DONE",
+      "notes": "[ ] 2026-07-21 review: bare-path targets miss qualified/file keys; resolve longest path match; AMBIGUOUS/drop if unresolved",
+      "section": "5.22 Doc\u2194Code Join Quality (v3.7.13)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 91
+    },
+    {
+      "id": "FR-DOCJOIN-02",
+      "kind": "FR",
+      "title": "Normalize doc/file path aliases on get_files_for_doc and find_related_docs",
+      "priority": "Must Have",
+      "status": "NOT_DONE",
+      "notes": "[ ] Canonical docs/\u2026 keys; try README.md \u2194 docs/README.md \u2194 ./docs/\u2026; hint tried aliases on miss; no all_elements()",
+      "section": "5.22 Doc\u2194Code Join Quality (v3.7.13)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 90
+    },
+    {
+      "id": "FR-DOCJOIN-03",
+      "kind": "FR",
+      "title": "Persist references edge context snippet + EXTRACTED confidence metadata",
+      "priority": "Must Have",
+      "status": "NOT_DONE",
+      "notes": "[ ] metadata.context \u2264100 chars; align with FR-GF-07 when available",
+      "section": "5.22 Doc\u2194Code Join Quality (v3.7.13)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 92
+    },
+    {
+      "id": "FR-DOCJOIN-04",
+      "kind": "FR",
+      "title": "Unit + TempDir integration tests for doc\u2194code join round-trip",
+      "priority": "Must Have",
+      "status": "NOT_DONE",
+      "notes": "[ ] normalize/resolve tables; index+index_docs \u2192 get_files_for_doc + find_related_docs non-empty",
+      "section": "5.22 Doc\u2194Code Join Quality (v3.7.13)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 93
+    },
+    {
+      "id": "FR-DOCJOIN-05",
+      "kind": "FR",
+      "title": "Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges",
+      "priority": "Should Have",
+      "status": "NOT_DONE",
+      "notes": "[ ] FR IDs \u2192 search_by_requirement/get_traceability; markdown tools after mcp_index_docs with docs/\u2026 paths",
+      "section": "5.22 Doc\u2194Code Join Quality (v3.7.13)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 95
+    },
+    {
+      "id": "FR-DOCJOIN-06",
+      "kind": "FR",
+      "title": "Optional best-effort upgrade of file::symbol mentions to unique function/class keys",
+      "priority": "Could Have",
+      "status": "NOT_DONE",
+      "notes": "[ ] Only when unique in index; otherwise leave file-level",
+      "section": "5.22 Doc\u2194Code Join Quality (v3.7.13)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 96
+    },
+    {
+      "id": "REL-063",
+      "kind": "Release",
+      "title": "Evidence: fixture + live MCP smoke for doc\u2194code join quality (docs/reports/)",
+      "priority": "Must Have",
+      "status": "NOT_DONE",
+      "notes": "[ ] Non-empty round-trip on /workspace after mcp_index_docs; note RocksDB LOCK if mount unavailable",
+      "section": "5.22 Doc\u2194Code Join Quality (v3.7.13)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 94
+    },
+    {
+      "id": "US-DOCJOIN-01",
+      "kind": "User Story",
+      "title": "Markdown documented_by/references attach to same keys as code index",
+      "priority": "Must Have",
+      "status": "PENDING",
+      "notes": "[ ] ACs in prd.md \u00a73.19; depends FR-DOCJOIN-01/03/04",
+      "section": "3.19 Doc\u2194Code Join Quality (US-DOCJOIN) \u2014 v3.7.13",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 91
+    },
+    {
+      "id": "US-DOCJOIN-02",
+      "kind": "User Story",
+      "title": "Doc query tools accept human path aliases for indexed docs/\u2026 keys",
+      "priority": "Must Have",
+      "status": "PENDING",
+      "notes": "[ ] ACs in prd.md \u00a73.19; depends FR-DOCJOIN-02",
+      "section": "3.19 Doc\u2194Code Join Quality (US-DOCJOIN) \u2014 v3.7.13",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 90
+    },
+    {
+      "id": "US-DOCJOIN-03",
+      "kind": "User Story",
+      "title": "Prefer-order + authoring practices for annotations vs markdown edges",
+      "priority": "Should Have",
+      "status": "PENDING",
+      "notes": "[ ] ACs in prd.md \u00a73.19; depends FR-DOCJOIN-05",
+      "section": "3.19 Doc\u2194Code Join Quality (US-DOCJOIN) \u2014 v3.7.13",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 95
     }
   ],
   "meta": {
@@ -6232,29 +6480,85 @@
     "update_rule": "Edit this file (and JSON) when closing work. Link new IDs from PRD narrative sections.",
     "sort": "status(NOT_DONE\u2192PENDING\u2192PARTIAL\u2192OPEN\u2192DONE\u2192WONT_DO) \u2192 focus(P0..P3) \u2192 MoSCoW \u2192 ve_suborder \u2192 id",
     "focus_legend": {
-      "P0": "CLOSED \u2014 procedural ontology auto-update (see smoke report); next open work is P1 company adoption",
-      "P1": "CURRENT next \u2014 company adoption / Graphify packaging (US-COST / US-GF-*)",
-      "P2": "Should Have",
-      "P3": "Could Have / aspirational OPEN"
+      "P0": "CLOSED \u2014 procedural ontology auto-update",
+      "P1": "NOW \u2014 company adoption waves 0\u20134 including Wave 1a MCP surface cleanup",
+      "P2": "Next \u2014 reliability, semantic UX, install breadth, CBM leftovers",
+      "P3": "Backlog \u2014 Track E 3D, FR-SURF-06 doc merge, aspirational OPEN"
     },
-    "updated": "2026-07-21-v3.7.9-ont-proc-auto-done",
-    "sync_note": "v3.7.9 P0 procedural ontology auto-update CLOSED (US-ONT-PROC-01 / FR-ONT-PROC-* / REL-059); company adoption remains P1",
+    "updated": "2026-07-21 \u2014 v3.7.13 DOCJOIN P2 join-quality backlog added",
+    "sync_note": "P2 DOCJOIN after Wave 1a; FR-51-56 remain DONE; FR-SURF-06 stays P3",
     "company_adoption_order": [
       "US-COST-01",
+      "US-UI2-07",
+      "US-SURF-06",
+      "US-SURF-07",
       "US-GF-14",
       "US-GF-17",
       "US-GF-04",
       "US-GF-06",
       "US-GF-13",
       "US-UI2-06",
-      "US-UI2-07"
+      "US-MG-02"
     ],
-    "p0_current": [
-      "US-ONT-PROC-01",
-      "FR-ONT-PROC-01",
-      "FR-ONT-PROC-02",
-      "FR-ONT-PROC-03",
-      "REL-059"
+    "p0_current": [],
+    "implementation_waves": {
+      "0_closeouts": [
+        "US-COST-01",
+        "FR-COST-01",
+        "REL-058",
+        "US-UI2-07",
+        "FR-UI2-09",
+        "REL-057"
+      ],
+      "1a_mcp_surface_cleanup": [
+        "US-SURF-06",
+        "US-SURF-07",
+        "FR-SURF-07",
+        "FR-SURF-08",
+        "FR-SURF-09",
+        "FR-SURF-10",
+        "FR-SURF-11",
+        "REL-062"
+      ],
+      "1b_agent_cost_narrative": [
+        "US-GF-14",
+        "FR-GF-22"
+      ],
+      "1c_always_on_hooks": [
+        "US-GF-17",
+        "FR-GF-24"
+      ],
+      "2_trust_artifacts": [
+        "US-GF-04",
+        "FR-GF-07",
+        "FR-GF-08",
+        "FR-GF-09",
+        "REL-043",
+        "US-GF-06",
+        "FR-GF-13",
+        "US-GF-13",
+        "FR-GF-21"
+      ],
+      "3_human_nl": [
+        "US-UI2-06",
+        "FR-UI2-08"
+      ],
+      "4_ui_correctness": [
+        "US-MG-02",
+        "FR-MG-03"
+      ]
+    },
+    "p2_docjoin": [
+      "FR-DOCJOIN-01",
+      "FR-DOCJOIN-02",
+      "FR-DOCJOIN-03",
+      "FR-DOCJOIN-04",
+      "FR-DOCJOIN-05",
+      "FR-DOCJOIN-06",
+      "REL-063",
+      "US-DOCJOIN-01",
+      "US-DOCJOIN-02",
+      "US-DOCJOIN-03"
     ]
   }
 }

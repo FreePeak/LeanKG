@@ -39,6 +39,7 @@ bash scripts/install.sh cursor
 
 | Task | Prefer (HTTP up) | Fallback (HTTP down / empty) |
 |------|------------------|------------------------------|
+| Session overview | `get_overview_context` | — |
 | NL / domain “where is auth?” | `concept_search` → `semantic_search` | Grep |
 | Exact symbol name | `search_code` / `find_function` | Grep |
 | Read hit | `get_context` | Read |
@@ -59,8 +60,10 @@ User asks about codebase
 
 ## Prefer-order (FR-SURF-02)
 
+- Overview: `get_overview_context` → optional `load_layer` → `get_architecture` (not `load_layer(L0)` alone)
 - Search: `concept_search` → `semantic_search` → `search_code`
 - Semantic context: `semantic_search` → `kg_semantic_context` → `kg_context`
+- Environment: `env=` on search / `kg_*` (hard-removed: `search_by_environment`)
 - File context: `get_context` (default); `ctx_read` for compression modes
 
 ## Canonical skill
