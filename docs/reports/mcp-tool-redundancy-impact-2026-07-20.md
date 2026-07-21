@@ -118,6 +118,7 @@ See `TOOL_CLASSIFICATION` in [`tests/redundant_tools_matrix.rs`](../../tests/red
 
 ## Follow-up (optional later PR)
 
-1. Hard-delete `wake_up` + `search_by_environment` after one release grace  
-2. FR-SURF-06 mega-safe merge of doc structure tools  
-3. Expand `docs/mcp-tools.md` full catalog (prefer-order section added in this PR; full 84-row table can grow incrementally)
+1. ~~Hard-delete `wake_up` + `search_by_environment` after one release grace~~ → **Promoted to P1 Wave 1a** (`US-SURF-06` / `FR-SURF-07..08` / `REL-062`)  
+2. **Mandatory companion:** sync skills / rules / guidelines / setup (`US-SURF-07` / `FR-SURF-09..11`) in the **same wave** as hard-deletes  
+3. FR-SURF-06 mega-safe merge of doc structure tools (remains P3)  
+4. Expand `docs/mcp-tools.md` full catalog (prefer-order section added; full table can grow incrementally after shrink)
