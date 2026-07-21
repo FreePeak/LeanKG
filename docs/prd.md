@@ -1,6 +1,6 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.8-ui-v2-service-expand
+**Version:** 3.7.9-ui-v2-load-more
 **Date:** 2026-07-21
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
@@ -30,6 +30,14 @@
 ---
 
 ## Changelog
+
+### v3.7.9-ui-v2-load-more - Expand-service pagination + Load more (2026-07-21)
+
+| ID | Priority | Focus | Summary |
+|----|----------|-------|---------|
+| US-UI2-11 / FR-UI2-13 | Must Have | **P1** | Default expand page 500 nodes; **Load more (+200)** merges into current graph (500→700); `hasMore` from expand-service |
+
+**New content:** §3.17 US-UI2-11; §5.19 FR-UI2-13. Fixes root `all_content` `has_more` (was always false when using page `rows.len()` as total).
 
 ### v3.7.8-ui-v2-service-expand - Service/Folder replace-graph + CodePanel file gate (2026-07-21)
 
@@ -1556,9 +1564,9 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - Merging the intentional search triple or semantic triple into one tool
 - Quoting a “64 → 57” shrink without recounting the live registry
 
-### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.8
+### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.9
 
-> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056` / `REL-057`.  
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056` / `REL-057` / `REL-058`.  
 > **Design:** [`docs/erd/ui-v2-erd.md`](erd/ui-v2-erd.md).  
 > **Separate from:** Track E 3D `graph-ui/` (`REL-041` / `US-CBM-E1`).
 
@@ -1570,12 +1578,14 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | US-UI2-04 | Must Have | As a developer, I search via `/api/search` and run raw queries via QueryFAB `/api/query` |
 | US-UI2-05 | Must Have | As a developer on a mega-graph, the UI skips full canvas load and offers “Load graph anyway” |
 | US-UI2-10 | Must Have | As a developer on a multi-service topology, I double-click a Service/Folder/Directory and the canvas **replaces** with that path’s expand-service subgraph (`all=true`); breadcrumbs return me to overview |
+| US-UI2-11 | Must Have | As a developer on a large expand (e.g. multi-repo workspace), I see the first **500** nodes and can **Load more (+200)** to **merge** additional pages into the same graph (500→700→…) without replacing |
+| US-UI2-12 | Must Have | As a developer, the left Explore sidebar shows a **folder + file** tree (not files-only); `src` sorts above `examples`; double-click a folder drills the graph into that path |
 
 **Phase 1 out of scope:** browser LLM agent, analyze/upload, Processes Mermaid, replacing `src/embed/`.
 
-### 5.19 UI v2 Graph Explorer (v3.7.8)
+### 5.19 UI v2 Graph Explorer (v3.7.9)
 
-> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057`.  
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057` / `REL-058`.  
 > **Evidence:** [`docs/reports/ui-v2-gitnexus-parity-*.md`](reports/) (required before claiming GitNexus parity).
 
 | ID | Priority | Requirement |
@@ -1588,8 +1598,11 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-UI2-06 | Must Have | Mega-graph skip via `decideSkipGraph` (~50k nodes) + Load anyway |
 | FR-UI2-07 | Must Have | Vitest units (adapter, load-decision, constants, client, url-restore) + Playwright Phase-1 e2e matrix |
 | FR-UI2-12 | Must Have | Double-click Service/Folder/Directory → `expandService(path, all=true)` **replaces** `kg` (not merge); CodePanel `/api/file` only for content-bearing types; breadcrumb back to topology; `/api/file` returns clear directory error |
+| FR-UI2-13 | Must Have | Expand-service `?limit=`/`?offset=` + correct `hasMore`; UI default page 500; **Load more (+200)** **merges** by node/edge id into current `kg`; pagination cursor advances by requested limit |
+| FR-UI2-14 | Must Have | Explore sidebar hierarchical Folders & files (`buildExplorerTree`); include Directory/Folder; synthesize parents from paths; prefer `src` over demos; folder double-click → `drillIntoPath` |
 | REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
 | REL-057 | Must Have | Proof: Service select does not 400 `/api/file`; double-click replaces graph with expand-service subgraph |
+| REL-058 | Must Have | Proof: expand page 500 then Load more grows canvas (merge); `hasMore` false at end |
 
 **Won't Do (Phase 1):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
 
