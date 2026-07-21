@@ -287,20 +287,24 @@ cd "$MCP_PROJECT" || { echo "FATAL: cannot cd to $MCP_PROJECT"; exit 1; }
 # Option A: same container serves MCP (:9699) + REST UI API (:8080).
 # UI v2 (Vite) proxies /api → host :8080; agents keep using MCP :9699.
 # Disable with LEANKG_SERVE_HTTP=0 when you only need MCP (saves a process).
+#
+# IMPORTANT: do NOT start serve with cwd=$MCP_PROJECT when that mount is a
+# multi-repo tree. Default UI project is LeanKG at /workspace (override with
+# LEANKG_SERVE_PROJECT). MCP keeps using $MCP_PROJECT independently.
 SERVE_PORT="${LEANKG_SERVE_PORT:-8080}"
+SERVE_PROJECT="${LEANKG_SERVE_PROJECT:-/workspace}"
 case "${LEANKG_SERVE_HTTP:-1}" in
     0|false|FALSE|no|NO|off|OFF)
         echo "=== Skipping leankg serve (LEANKG_SERVE_HTTP=${LEANKG_SERVE_HTTP}) ==="
         ;;
     *)
-        echo "=== Starting web REST API (leankg serve) on port $SERVE_PORT ==="
-        # Same cwd + LEANKG_DB_ENGINE/LEANKG_ROCKSDB_ROOT as MCP so UI sees Docker RocksDB.
-        # Background child; container stop kills the cgroup (MCP remains PID 1 via exec).
-        leankg serve --port "$SERVE_PORT" &
+        echo "=== Starting web REST API (leankg serve) on port $SERVE_PORT (project=$SERVE_PROJECT) ==="
+        # Explicit --project so UI opens LeanKG RocksDB, not the MCP multi-repo cwd.
+        leankg serve --port "$SERVE_PORT" --project "$SERVE_PROJECT" &
         SERVE_PID=$!
         sleep 0.5
         if kill -0 "$SERVE_PID" 2>/dev/null; then
-            echo "  serve PID $SERVE_PID — UI REST http://0.0.0.0:$SERVE_PORT (host map 8080:8080)"
+            echo "  serve PID $SERVE_PID — UI REST http://0.0.0.0:$SERVE_PORT project=$SERVE_PROJECT"
         else
             echo "  WARN: leankg serve failed to start; UI REST :$SERVE_PORT unavailable (MCP still starting)"
         fi

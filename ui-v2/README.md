@@ -1,6 +1,7 @@
 # LeanKG UI v2 — README
 
-GitNexus-inspired graph explorer for LeanKG.  
+LeanKG’s graph explorer **uses the [GitNexus](https://github.com/abhigyanpatwari/GitNexus) UI shell** (`gitnexus-web`: 3-pane layout, Force / Tree / Circles, Sigma, mega-graph skip).  
+The data plane is rewritten for LeanKG `leankg serve` REST (`/api/graph/*`, `/api/file`, `/api/search`) — not GitNexus APIs.  
 Phase 1: exploring shell only — no browser LLM agent.
 
 **Production path:** `npm run build` → copy `dist/*` into `src/embed/` → `leankg serve` / onrender / Docker `:8080` serve the embedded UI. Dev still uses Vite on `:5173`.
@@ -70,11 +71,23 @@ Fresh captures (Force / Tree / Circles / Query / Search / Mega-skip / Code panel
 Viewport / smoothness RCA:
 
 → [`docs/reports/ui-v2-empty-panel-smoothness-rca-2026-07-20.md`](../docs/reports/ui-v2-empty-panel-smoothness-rca-2026-07-20.md)
+
+## Navigation (US-UI2-10 / FR-UI2-12)
+
+| Action | Result |
+|--------|--------|
+| Single-click File / Function / … | Code panel loads `/api/file` |
+| Single-click Service / Folder / Directory | Code panel shows metadata only (no `/api/file`) |
+| Double-click Service / Folder / Directory | `expand-service?all=true` **replaces** the canvas; breadcrumbs → Overview |
+
+RCA: [`docs/reports/root_cause_api_file_service_folder_400.md`](../docs/reports/root_cause_api_file_service_folder_400.md).
+
 ## Features (Phase 1)
 
 - Force / Tree / Circles layouts (Sigma + graphology)
 - Left explore: node/edge filters, focus depth, file list
-- Code panel on file/node select (`GET /api/file`)
+- Code panel on content-bearing select (`GET /api/file`); Service/Folder metadata only
+- Double-click Service/Folder replaces graph via expand-service
 - Header search (`GET /api/search`) + Query FAB (`POST /api/query`)
 - Mega-graph skip gate + “Load graph anyway”
 - URL: `?path=`, `?skipGraph=`, `?project=`, `?expand=1`
@@ -88,6 +101,6 @@ E2E=1 npm run test:e2e  # Playwright (needs serve :8080)
 
 ## Provenance
 
-Shell / Tree / Circles / Sigma patterns adapted from GitNexus `gitnexus-web`.  
-`backend-client`, schema normalize, and LeanKG wiring written for this repo.  
-Legacy [`ui/`](../ui/) + `src/embed/` unchanged until cutover.
+**UI shell:** adapted from [GitNexus](https://github.com/abhigyanpatwari/GitNexus) `gitnexus-web` (Header, FileTree + filters, Force / Tree / Circles, Code panel, StatusBar, mega-graph skip).  
+**LeanKG wiring:** `backend-client`, schema normalize, and `/api/*` against this repo.  
+Legacy [`ui/`](../ui/) kept for reference; production embed is UI v2 (`src/embed/`).

@@ -101,14 +101,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             }
         }
-        cli::CLICommand::Serve { port } => {
+        cli::CLICommand::Serve { port, project } => {
             let port = port.unwrap_or_else(|| {
                 std::env::var("PORT")
                     .ok()
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(8080)
             });
-            let project_path = find_project_root()?;
+            let project_path = resolve_serve_project(project)?;
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await.ok();
 
@@ -117,17 +117,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("╚═══════════════════════════════════════════════════════════════╝");
             println!();
             println!("🚀 Starting server on http://localhost:{}", port);
+            println!("📁 Project: {}", project_path.display());
             println!();
             web::start_server(port, db_path, None).await?;
         }
-        cli::CLICommand::Web { port } => {
+        cli::CLICommand::Web { port, project } => {
             let port = port.unwrap_or_else(|| {
                 std::env::var("PORT")
                     .ok()
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(8080)
             });
-            let project_path = find_project_root()?;
+            let project_path = resolve_serve_project(project)?;
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await.ok();
 
@@ -136,6 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("╚═══════════════════════════════════════════════════════════════╝");
             println!();
             println!("🚀 Starting server on http://localhost:{}", port);
+            println!("📁 Project: {}", project_path.display());
             println!();
             web::start_server(port, db_path, None).await?;
         }
@@ -791,6 +793,37 @@ fn find_project_root() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
         }
     }
     Ok(current_dir)
+}
+
+/// Resolve the project root for `leankg serve` / `web`.
+/// Prefer `--project`, then `LEANKG_SERVE_PROJECT`, then find_project_root (cwd).
+/// Do **not** default to `LEANKG_MCP_PROJECT` — MCP often points at a multi-repo
+/// mount while the UI demo should open `/workspace` (LeanKG itself).
+fn resolve_serve_project(
+    cli_project: Option<String>,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    if let Some(p) = cli_project {
+        let path = std::path::PathBuf::from(p);
+        if !path.is_dir() {
+            return Err(format!("serve --project is not a directory: {}", path.display()).into());
+        }
+        return Ok(path.canonicalize().unwrap_or(path));
+    }
+    if let Ok(p) = std::env::var("LEANKG_SERVE_PROJECT") {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            let path = std::path::PathBuf::from(trimmed);
+            if !path.is_dir() {
+                return Err(format!(
+                    "LEANKG_SERVE_PROJECT is not a directory: {}",
+                    path.display()
+                )
+                .into());
+            }
+            return Ok(path.canonicalize().unwrap_or(path));
+        }
+    }
+    find_project_root()
 }
 
 fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Error>> {

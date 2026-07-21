@@ -229,13 +229,17 @@ Full methodology: [docs/benchmark.md](docs/benchmark.md)
 - **Token-aware payloads** — targeted subgraphs + TOON responses (~40% smaller MCP payloads)
 - **Team knowledge** — incidents, env conflicts, service topology, Obsidian vault sync
 - **Graph export** — Mermaid, DOT, HTML, SVG, GraphML, Neo4j, portable snapshots
-- **Web UI (v2)** — GitNexus-inspired explorer: Force / Tree / Circles, filters, search, code panel (`ui-v2/` + `leankg serve`)
+- **Web UI (v2)** — explorer shell adapted from [GitNexus](https://github.com/abhigyanpatwari/GitNexus) `gitnexus-web` (Force / Tree / Circles, filters, search, code panel); data plane is LeanKG `/api/*` (`ui-v2/` + `leankg serve`)
 
 Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs/mcp-tools.md](docs/mcp-tools.md) · UI v2: [ui-v2/README.md](ui-v2/README.md)
 
 ---
 
 ## Screenshots
+
+<p align="center">
+  <strong>UI v2</strong> uses the <a href="https://github.com/abhigyanpatwari/GitNexus">GitNexus</a> web exploring shell (layout modes, 3-pane chrome, Sigma) with LeanKG’s REST graph API.
+</p>
 
 <p align="center">
   <img src="docs/reports/screenshots/01-force-src.png" alt="LeanKG UI v2 Force layout" width="90%">
@@ -281,7 +285,7 @@ Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs
   <em>Mega-graph skip gate with “Load graph anyway”.</em>
 </p>
 
-Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-screenshots-2026-07-20.md) · App notes: [ui-v2/README.md](ui-v2/README.md) · Live demo: **https://leankg.onrender.com**
+Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-screenshots-2026-07-20.md) · App notes: [ui-v2/README.md](ui-v2/README.md) · Live demo: **https://leankg.onrender.com** · Shell provenance: [GitNexus](https://github.com/abhigyanpatwari/GitNexus)
 ---
 
 ## How It Works

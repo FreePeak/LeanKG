@@ -133,12 +133,30 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const midFitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutModeRef = useRef<LayoutMode>(options.layoutMode || 'force');
+  // Keep latest callbacks in refs — Sigma listeners mount once (empty deps) and must not
+  // close over the first-render handlers (which often see kg=null and no-op double-click).
+  const onNodeClickRef = useRef(options.onNodeClick);
+  const onNodeDoubleClickRef = useRef(options.onNodeDoubleClick);
+  const onNodeHoverRef = useRef(options.onNodeHover);
+  const onStageClickRef = useRef(options.onStageClick);
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const [selectedNode, setSelectedNodeState] = useState<string | null>(null);
 
   useEffect(() => {
     layoutModeRef.current = options.layoutMode || 'force';
   }, [options.layoutMode]);
+
+  useEffect(() => {
+    onNodeClickRef.current = options.onNodeClick;
+    onNodeDoubleClickRef.current = options.onNodeDoubleClick;
+    onNodeHoverRef.current = options.onNodeHover;
+    onStageClickRef.current = options.onStageClick;
+  }, [
+    options.onNodeClick,
+    options.onNodeDoubleClick,
+    options.onNodeHover,
+    options.onStageClick,
+  ]);
 
   const scheduleFit = useCallback((graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>, animate = true) => {
     const tryFit = (attempt: number) => {
@@ -370,7 +388,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
     sigma.on('clickNode', ({ node }) => {
       clickTimeoutRef.current = setTimeout(() => {
-        const shouldSelect = options.onNodeClick?.(node);
+        const shouldSelect = onNodeClickRef.current?.(node);
         if (shouldSelect !== false) {
           setSelectedNode(node);
         }
@@ -382,21 +400,21 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
         clearTimeout(clickTimeoutRef.current);
         clickTimeoutRef.current = null;
       }
-      options.onNodeDoubleClick?.(node);
+      onNodeDoubleClickRef.current?.(node);
     });
 
     sigma.on('clickStage', () => {
       setSelectedNode(null);
-      options.onStageClick?.();
+      onStageClickRef.current?.();
     });
 
     sigma.on('enterNode', ({ node }) => {
-      options.onNodeHover?.(node);
+      onNodeHoverRef.current?.(node);
       if (containerRef.current) containerRef.current.style.cursor = 'pointer';
     });
 
     sigma.on('leaveNode', () => {
-      options.onNodeHover?.(null);
+      onNodeHoverRef.current?.(null);
       if (containerRef.current) containerRef.current.style.cursor = 'grab';
     });
 

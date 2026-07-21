@@ -33,7 +33,14 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status} ${path}`);
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (body?.error != null) detail = String(body.error);
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new Error(detail || `HTTP ${res.status} ${path}`);
     }
     return res.json() as Promise<T>;
   } finally {
@@ -76,16 +83,53 @@ export async function fetchServiceTopology(): Promise<KnowledgeGraph> {
   return normalizeGraphPayload(data);
 }
 
-export async function expandService(path: string, all = true): Promise<KnowledgeGraph> {
+export interface ExpandPageOptions {
+  limit?: number;
+  offset?: number;
+}
+
+export interface ExpandPage {
+  graph: KnowledgeGraph;
+  hasMore: boolean;
+  limit: number;
+  offset: number;
+}
+
+/** Expand a folder/service path. Pass limit/offset for pagination (default limit 500). */
+export async function expandService(
+  path: string,
+  all = true,
+  projectPath?: string,
+  opts?: ExpandPageOptions,
+): Promise<ExpandPage> {
+  const limit = opts?.limit ?? 500;
+  const offset = opts?.offset ?? 0;
   const q = new URLSearchParams();
-  const normalized = normalizeExpandPath(path);
+  const normalized = normalizeExpandPath(path, projectPath);
   if (normalized) q.set('path', normalized);
   if (all) q.set('all', 'true');
-  const json = await fetchJson<ApiEnvelope<{ nodes: unknown[]; relationships: unknown[] }>>(
-    `/api/graph/expand-service?${q.toString()}`,
-  );
+  q.set('limit', String(limit));
+  q.set('offset', String(offset));
+  const json = await fetchJson<
+    ApiEnvelope<{
+      nodes: unknown[];
+      relationships: unknown[];
+      hasMore?: boolean;
+      has_more?: boolean;
+    }>
+  >(`/api/graph/expand-service?${q.toString()}`);
   const data = unwrapEnvelope(json, 'Failed to expand service');
-  return normalizeGraphPayload(data);
+  const graph = normalizeGraphPayload(data);
+  // Prefer server hasMore; if missing/false but page is full, assume more exist
+  // (old serve used page rows.len() as total and always returned hasMore=false).
+  const serverHasMore = Boolean(data.hasMore ?? data.has_more);
+  const hasMore = serverHasMore || graph.nodeCount >= limit;
+  return {
+    graph,
+    hasMore,
+    limit,
+    offset,
+  };
 }
 
 export async function fetchChildren(parent: string): Promise<KnowledgeGraph> {
@@ -132,12 +176,17 @@ export async function runQuery(query: string): Promise<unknown> {
   return unwrapEnvelope(json, 'Query failed');
 }
 
-export async function switchProject(path: string): Promise<void> {
-  const json = await fetchJson<ApiEnvelope<unknown>>('/api/project/switch', {
+export async function switchProject(path: string, reindex = false): Promise<{
+  project_path?: string;
+  element_count?: number;
+}> {
+  const json = await fetchJson<
+    ApiEnvelope<{ project_path?: string; element_count?: number; needs_indexing?: boolean }>
+  >('/api/project/switch', {
     method: 'POST',
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, reindex }),
   });
-  unwrapEnvelope(json, 'Project switch failed');
+  return unwrapEnvelope(json, 'Project switch failed');
 }
 
 export function parseProjectParam(value: string | null | undefined): string | undefined {

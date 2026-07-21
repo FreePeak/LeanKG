@@ -1,3 +1,6 @@
+# LeanKG on Render (https://leankg.onrender.com)
+# Builds ./Dockerfile → UI v2 embedded via rust_embed; serves `leankg web` on :8080.
+# Auto-deploy should track `main`. After UI changes, clear build cache if title stays "ui".
 services:
   - type: web
     name: leankg
@@ -6,6 +9,9 @@ services:
     region: iad
     plan: free
     port: 8080
+    healthCheckPath: /api/index/status
     envVars:
       - key: PORT
         value: 8080
+      - key: UI_EMBED_REV
+        value: "2026-07-21-load-more"

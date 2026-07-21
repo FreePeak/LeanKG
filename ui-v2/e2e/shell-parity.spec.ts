@@ -106,4 +106,14 @@ test.describe('UI v2 shell parity', () => {
     // Sigma container should track the canvas box (not collapse to ~1/3 height).
     expect(metrics!.sigmaH / metrics!.canvasH).toBeGreaterThan(0.9);
   });
+
+  test('breadcrumbs mount after graph load', async ({ page }) => {
+    await page.goto('/?path=src/cli');
+    await page.waitForTimeout(2000);
+    if (await page.getByTestId('onboarding').isVisible().catch(() => false)) {
+      test.skip(true, 'backend not connected');
+    }
+    await expect(page.getByTestId('graph-breadcrumbs')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('crumb-0')).toContainText('Overview');
+  });
 });
