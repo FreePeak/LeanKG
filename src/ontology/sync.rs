@@ -3,9 +3,15 @@
 //! Used by CLI `leankg ontology sync`, Docker boot, MCP/serve watchers,
 //! post-index hooks, and MCP `ontology_control(action=sync)`.
 
+use crate::db::models::{CodeElement, Relationship};
 use crate::graph::GraphEngine;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Serialize ontology sync across watcher + MCP control + post-index hooks
+/// so SQLite is not written concurrently (avoids `database is locked`).
+static ONTOLOGY_SYNC_LOCK: Mutex<()> = Mutex::new(());
 
 /// Result of syncing ontology YAML into the graph.
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -61,11 +67,27 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Load `concepts.yaml` + `workflows.yaml` from `ontology_dir` and upsert into `graph`.
+/// Load `concepts.yaml` + `workflows.yaml` from `ontology_dir` and replace the
+/// ontology layer in `graph` (YAML is source of truth).
+///
+/// Strategy (same idea as `reindex_file_sync`): clear all existing
+/// `ontology://` rows + their outgoing relationships, then insert fresh.
+/// Avoids Cozo composite-key `:put` duplicates when `name`/`metadata` change.
 ///
 /// When `leankg_dir` is `Some`, touches `.leankg/ontology_synced` on success and
 /// invalidates the graph query cache.
 pub fn sync_from_dir(
+    ontology_dir: &Path,
+    graph: &GraphEngine,
+    leankg_dir: Option<&Path>,
+) -> Result<OntologySyncStats, Box<dyn std::error::Error + Send + Sync>> {
+    let _guard = ONTOLOGY_SYNC_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    sync_from_dir_locked(ontology_dir, graph, leankg_dir)
+}
+
+fn sync_from_dir_locked(
     ontology_dir: &Path,
     graph: &GraphEngine,
     leankg_dir: Option<&Path>,
@@ -84,16 +106,23 @@ pub fn sync_from_dir(
         ..Default::default()
     };
 
+    // Declarative replace: wipe prior ontology layer so renames/removals apply.
+    match with_db_retry(|| graph.clear_ontology_layer()) {
+        Ok(n) => {
+            tracing::debug!("cleared {} prior ontology GID(s) before sync", n);
+        }
+        Err(e) => {
+            tracing::warn!("clear_ontology_layer before sync failed: {}", e);
+        }
+    }
+
+    let mut all_elements: Vec<CodeElement> = Vec::new();
+
     let concepts_file = ontology_dir.join("concepts.yaml");
     if concepts_file.exists() {
         match super::load_concepts_yaml(&concepts_file) {
             Ok(nodes) => {
-                let elements = super::concept_nodes_to_elements(&nodes);
-                for elem in &elements {
-                    if let Err(e) = graph.insert_element(elem) {
-                        tracing::warn!("Failed to insert concept element: {}", e);
-                    }
-                }
+                all_elements.extend(super::concept_nodes_to_elements(&nodes));
                 stats.concepts = nodes.len();
             }
             Err(e) => {
@@ -102,38 +131,35 @@ pub fn sync_from_dir(
         }
     }
 
+    let mut pending_relationships: Vec<Relationship> = Vec::new();
     let workflows_file = ontology_dir.join("workflows.yaml");
     if workflows_file.exists() {
         match super::load_workflows_yaml(&workflows_file) {
             Ok((workflows, steps, failures, relationships)) => {
-                let workflow_elements = super::workflow_nodes_to_elements(&workflows);
-                let step_elements = super::workflow_step_nodes_to_elements(&steps);
-                let failure_elements = super::failure_mode_nodes_to_elements(&failures);
-
-                for elem in workflow_elements
-                    .iter()
-                    .chain(step_elements.iter())
-                    .chain(failure_elements.iter())
-                {
-                    if let Err(e) = graph.insert_element(elem) {
-                        tracing::warn!("Failed to insert workflow element: {}", e);
-                    }
-                }
-
-                for rel in &relationships {
-                    if let Err(e) = graph.insert_relationship(rel) {
-                        tracing::warn!("Failed to insert relationship: {}", e);
-                    }
-                }
-
+                all_elements.extend(super::workflow_nodes_to_elements(&workflows));
+                all_elements.extend(super::workflow_step_nodes_to_elements(&steps));
+                all_elements.extend(super::failure_mode_nodes_to_elements(&failures));
+                pending_relationships = relationships;
                 stats.workflows = workflows.len();
                 stats.workflow_steps = steps.len();
                 stats.failure_modes = failures.len();
-                stats.relationships = relationships.len();
+                stats.relationships = pending_relationships.len();
             }
             Err(e) => {
                 tracing::warn!("Failed to load workflows.yaml: {}", e);
             }
+        }
+    }
+
+    if !all_elements.is_empty() {
+        if let Err(e) = with_db_retry(|| graph.insert_elements(&all_elements)) {
+            tracing::warn!("Failed to insert ontology elements: {}", e);
+        }
+    }
+
+    for rel in &pending_relationships {
+        if let Err(e) = with_db_retry(|| graph.insert_relationship(rel)) {
+            tracing::warn!("Failed to insert relationship: {}", e);
         }
     }
 
@@ -152,6 +178,37 @@ pub fn sync_from_dir(
 
     stats.synced_at_unix = unix_now();
     Ok(stats)
+}
+
+fn is_db_locked_msg(msg: &str) -> bool {
+    let s = msg.to_lowercase();
+    s.contains("database is locked") || s.contains("code 5")
+}
+
+fn with_db_retry<T, E, F>(mut f: F) -> Result<T, E>
+where
+    E: std::fmt::Display,
+    F: FnMut() -> Result<T, E>,
+{
+    const ATTEMPTS: u32 = 8;
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) if is_db_locked_msg(&e.to_string()) && attempt < ATTEMPTS => {
+                let backoff_ms = 25 * u64::from(attempt);
+                tracing::warn!(
+                    "ontology sync: database locked (attempt {}/{}), retry in {}ms",
+                    attempt,
+                    ATTEMPTS,
+                    backoff_ms
+                );
+                std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Sync ontology for a project root (resolves ontology dir + `.leankg` marker).
@@ -261,6 +318,109 @@ mod tests {
         let steps = q.trace_workflow("Test Flow", "local").unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].name, "Step A");
+    }
+
+    #[test]
+    fn sync_from_dir_rename_replaces_not_duplicates() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        let ontology = project.join("ontology");
+        let leankg = project.join(".leankg");
+        std::fs::create_dir_all(&ontology).unwrap();
+        std::fs::create_dir_all(&leankg).unwrap();
+
+        let yaml_v1 = r#"workflows:
+  - id: test_flow
+    name: Test Flow
+    env: local
+    description: unit test workflow
+    aliases: [test-flow]
+    entry_points: []
+    steps:
+      - id: step_a
+        name: Step A Original
+        code_refs: [src/main.rs::main]
+        failure_modes: []
+"#;
+        let yaml_v2 = yaml_v1.replace("Step A Original", "Step A Renamed");
+
+        std::fs::write(ontology.join("workflows.yaml"), yaml_v1).unwrap();
+        let db = init_db(&leankg).unwrap();
+        let graph = GraphEngine::new(db);
+        sync_from_dir(&ontology, &graph, Some(&leankg)).unwrap();
+
+        std::fs::write(ontology.join("workflows.yaml"), &yaml_v2).unwrap();
+        sync_from_dir(&ontology, &graph, Some(&leankg)).unwrap();
+
+        let q = crate::ontology::OntologyQueryEngine::new(graph.db().clone());
+        let steps = q.trace_workflow("Test Flow", "local").unwrap();
+        assert_eq!(
+            steps.len(),
+            1,
+            "rename must not leave duplicate step rows: {:?}",
+            steps.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert_eq!(steps[0].name, "Step A Renamed");
+        assert!(!steps.iter().any(|s| s.name.contains("Original")));
+    }
+
+    #[test]
+    fn sync_from_dir_removed_step_disappears() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        let ontology = project.join("ontology");
+        let leankg = project.join(".leankg");
+        std::fs::create_dir_all(&ontology).unwrap();
+        std::fs::create_dir_all(&leankg).unwrap();
+
+        std::fs::write(
+            ontology.join("workflows.yaml"),
+            r#"workflows:
+  - id: test_flow
+    name: Test Flow
+    env: local
+    description: d
+    aliases: []
+    entry_points: []
+    steps:
+      - id: step_a
+        name: Keep Me
+        code_refs: []
+        failure_modes: []
+      - id: step_b
+        name: Drop Me
+        code_refs: []
+        failure_modes: []
+"#,
+        )
+        .unwrap();
+        let db = init_db(&leankg).unwrap();
+        let graph = GraphEngine::new(db);
+        sync_from_dir(&ontology, &graph, Some(&leankg)).unwrap();
+
+        std::fs::write(
+            ontology.join("workflows.yaml"),
+            r#"workflows:
+  - id: test_flow
+    name: Test Flow
+    env: local
+    description: d
+    aliases: []
+    entry_points: []
+    steps:
+      - id: step_a
+        name: Keep Me
+        code_refs: []
+        failure_modes: []
+"#,
+        )
+        .unwrap();
+        sync_from_dir(&ontology, &graph, Some(&leankg)).unwrap();
+
+        let q = crate::ontology::OntologyQueryEngine::new(graph.db().clone());
+        let steps = q.trace_workflow("Test Flow", "local").unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, "Keep Me");
     }
 
     #[test]

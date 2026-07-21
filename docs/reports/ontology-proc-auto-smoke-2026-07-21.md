@@ -2,39 +2,50 @@
 
 **Branch:** `feature/ontology-proc-auto`  
 **PRD:** §3.18 / §5.21 — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059`  
-**Codebase:** LeanKG 0.19.2
+**Codebase:** LeanKG 0.19.2  
+
+**Live harness:** local `./target/release/leankg mcp-http --port 19799` (feature branch).
+
+## Root cause (duplicates on rename) — fixed
+
+Cozo `code_elements` `:put` keys the **full composite tuple** (including `name` + `metadata`). Ontology sync used bare `insert_element`, so renaming a step left old rows with the same GID.
+
+**Fix (best practice = declarative replace, same idea as `reindex_file_sync`):**
+
+1. `GraphEngine::clear_ontology_layer` — bulk `:rm` ontology relationships (join on `ontology://`) then bulk `:rm` ontology elements
+2. `GraphEngine::upsert_element_by_qualified_name` — rm-by-qn then put (available for single-row cases)
+3. `sync_from_dir` — clear layer → batch `insert_elements` → insert relationships; global `ONTOLOGY_SYNC_LOCK` + SQLite lock retries
 
 ## Acceptance matrix
 
 | # | AC | Evidence | Result |
 |--:|----|----------|--------|
-| 1 | Edit workflow YAML → `kg_trace_workflow` / `trace_workflow` updates without process restart | Unit: `ontology::sync::tests::sync_from_dir_loads_workflows_and_touches_marker` loads YAML into temp DB and `trace_workflow("Test Flow")` returns step; watcher module filters `workflows.yaml` / `concepts.yaml` and debounces ≥1s (`LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS`, default 1500). Watcher wired in `serve_http` / `serve_stdio` / `leankg serve`. | **PASS** |
-| 2 | Boot with marker older than `workflows.yaml` triggers sync | `entrypoint.sh`: skip only when marker is newer than **both** `concepts.yaml` and `workflows.yaml` (FR-ONT-PROC-02). | **PASS** (logic review + code change) |
-| 3 | Sync never blocks `/health` beyond existing ontology timeout policy | Boot path still uses `LEANKG_ONTOLOGY_SYNC_ON_BOOT` (`skip` / `force` / `timeout`, default timeout 45s). In-process watcher sync runs on a background thread and does not bind-block HTTP. | **PASS** |
+| 1 | Edit YAML → `kg_trace_workflow` updates without restart | Live watcher + explicit `ontology_control(sync)` | **PASS** |
+| 2 | Boot marker considers `workflows.yaml` | Shell simulation of `entrypoint.sh` | **PASS** |
+| 3 | Sync does not block `/health` | Health ok throughout live runs | **PASS** |
+| 4 | Rename replaces (no duplicate step rows) | Unit `sync_from_dir_rename_replaces_not_duplicates`; live A/B below | **PASS** |
+| 5 | Removed step disappears | Unit `sync_from_dir_removed_step_disappears` | **PASS** |
 
-## Triggers implemented
+## Live checks (post-fix, :19799)
 
-1. **YAML watch** — `ontology::spawn_ontology_yaml_watcher` during MCP HTTP/stdio and `leankg serve`
-2. **Boot marker** — `.leankg/ontology_synced` vs both YAML mtimes
-3. **Post-index** — CLI `index` / incremental, MCP `mcp_index`, auto-index, web `set_indexing_complete`
-4. **Explicit** — MCP `ontology_control(action=sync|status)` (Admin)
+| Check | Result |
+|-------|--------|
+| Explicit sync: rename → single row with marker | PASS |
+| Explicit sync: restore → marker gone, single row | PASS |
+| Watcher: rename → marker + single row | PASS |
+| Watcher: restore → cleared + single row | PASS |
+| `/health` throughout | PASS |
 
-## Commands run
+## Unit / build
 
 ```bash
-cargo test --release --lib ontology::
-cargo test --release --lib test_ontology_control
-cargo test --release auth::tests::test_required_role_mapping
+cargo test --release --lib ontology::sync::tests
+cargo build --release
 ```
 
-All listed tests passed (39 ontology::* + tool/auth checks).
+4/4 sync tests passed (load, rename-no-dup, remove-step, env resolve).
 
 ## Notes
 
-- Flow **search** is unchanged (`search_workflows` / `kg_trace_workflow`); this release keeps those reads fresh.
-- `code_refs` remain YAML strings at sync time (no symbol rebind from indexer in P0).
-- Won't Do: LLM workflow extraction.
-
-## Follow-up (optional live Docker)
-
-With MCP up: edit `ontology/workflows.yaml` → wait debounce → `ontology_control(status)` then `kg_trace_workflow` and confirm step text; touch only `workflows.yaml` older than marker and restart container to confirm boot sync log line.
+- Docker `:9699` image still needs rebuild from this branch for production.
+- Concurrent SQLite readers during a large clear can briefly see `database is locked`; sync retries; clients should retry reads (test harness does).
