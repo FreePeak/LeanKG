@@ -332,6 +332,9 @@ impl ToolHandler {
                 "embed_control is handled by MCPServer (idle scheduler); unreachable via ToolHandler"
                     .into(),
             ),
+            "ontology_control" => Err(
+                "ontology_control is handled by MCPServer; unreachable via ToolHandler".into(),
+            ),
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 

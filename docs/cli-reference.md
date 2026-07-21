@@ -45,6 +45,12 @@ Complete reference for all LeanKG CLI commands.
 | `leankg docs --link <doc> <element>` | Link documentation to code element |
 | `leankg trace <element>` | Show traceability chain for element |
 | `leankg trace --requirement <id>` | Trace code for a requirement |
+| `leankg ontology sync [--path DIR]` | Sync `concepts.yaml` + `workflows.yaml` into the project DB; touches `.leankg/ontology_synced` |
+| `leankg ontology status` | Show concept/procedural node counts |
+| `leankg ontology context <query>` | Ontology context for a query |
+| `leankg ontology trace <workflow>` | Trace workflow steps (CLI) |
+
+**Ontology auto-update (runtime):** `mcp-http` / `mcp-stdio` / `leankg serve` watch ontology YAML (debounce `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS`, default 1500). Docker boot compares marker to **both** YAML mtimes (`LEANKG_ONTOLOGY_SYNC_ON_BOOT`). Index completion also refreshes ontology. Override source dir with `LEANKG_ONTOLOGY_DIR`.
 
 ## Quick Start
 

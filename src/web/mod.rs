@@ -108,6 +108,15 @@ impl AppState {
         if let Some(graph) = self.graph_engine.read().await.as_ref() {
             graph.invalidate_cache();
         }
+        drop(state);
+
+        // FR-ONT-PROC-03: refresh procedural ontology after UI-triggered index.
+        let project = self.current_project_path.read().await.clone();
+        if let Ok(graph) = self.get_graph_engine().await {
+            if let Err(e) = crate::ontology::sync_for_project(&project, &graph) {
+                tracing::debug!("Ontology post-index sync skipped: {}", e);
+            }
+        }
     }
 
     /// Invalidate the graph engine cache (call after data changes)
@@ -342,6 +351,12 @@ pub async fn start_server(
         .unwrap_or_else(|| db_path.clone());
     let state = AppState::new(db_path.clone(), project_root.clone()).await?;
     state.init_db().await?;
+
+    // FR-ONT-PROC-01: watch ontology YAML while serve is running.
+    // GraphEngine caches are Arc-shared across clones; sync_from_dir invalidates them.
+    if let Ok(graph) = state.get_graph_engine().await {
+        let _ = crate::ontology::spawn_ontology_yaml_watcher(project_root.clone(), graph, |_| {});
+    }
 
     let app = Router::new()
         .route("/", get(root_handler))

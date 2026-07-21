@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+- Procedural ontology auto-update while serving: debounce-watch
+  `ontology/workflows.yaml` + `concepts.yaml`, post-index refresh,
+  Docker boot marker vs **both** YAML mtimes, MCP
+  `ontology_control(action=sync|status)` (FR-ONT-PROC / REL-059).
+
+### Fixed
+- Ontology sync replaces the `ontology://` layer (clear then insert)
+  so YAML renames/removals no longer leave duplicate workflow steps
+  under Cozo composite-key `:put` (REL-059).
+
 ## [0.19.2] - 2026-07-20
 
 ### Fixed

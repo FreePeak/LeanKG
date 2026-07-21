@@ -1,6 +1,6 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.9-ui-v2-load-more
+**Version:** 3.7.10-ui-v2-load-more
 **Date:** 2026-07-21
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
@@ -8,18 +8,14 @@
 **Codebase Version:** 0.19.1 (`origin/main`)
 
 > **Task lists + status live in one place (humans + AI agents):**
-> - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted by Focus P0→P3**)
+> - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **CURRENT P0 (highest):** **Mega-safe `concept_search` / `query_graph` / `get_clusters` serve** — `US-MG-TOOL-01` / `FR-ONT-MEGA-01` / `FR-GF-MEGA-01` / `FR-CL-MEGA-01` / `REL-055`. Evidence: [`docs/reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md`](reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md). HNSW FR-SEM-07 **DONE**; remaining unbounded loads are ontology code_refs + NL subgraph + live Louvain.
+> **P0 CLOSED (v3.7.9):** **Procedural ontology auto-update while using** — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059` **DONE**. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). YAML watch + boot marker (concepts **and** workflows) + post-index sync + MCP `ontology_control`.
 >
-> **Prior P0 Day-2 embed resume COMPLETE** — PR [#81](https://github.com/FreePeak/LeanKG/pull/81) + `embed_control` idle resume on PR [#86](https://github.com/FreePeak/LeanKG/pull/86). Do **not** start new embed-resume work ahead of closing mega-sem OOM.
+> **CURRENT next (P1 — company adoption / cost):** Graphify packaging queue in §1.1 (three-verb → always-on install → honest edges → …). Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
 >
-> **Semantic MCP live probe 2026-07-18 GREEN on small graph** ([`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md)): 3,271 vectors. **FR-SEM-06** path filter **DONE**. FR-SEM-01..03 remain P2. Mega HNSW is a **new P0** (not covered by that small-graph probe).
->
-> **Track (v3.7.4):** **MCP tool surface rationalization** — §3.16 / §5.18 (`US-SURF-*` / `FR-SURF-*`). Prefer docstring prefer-order + 3 hard deletes over large merges/rebrands. Baseline registry ≈**84–85** tools.
->
-> **P0 Vector Engine (v3.7) COMPLETE** — PR [#80](https://github.com/FreePeak/LeanKG/pull/80).
+> **Prior P0 mega-graph serve CLOSED** — `US-MG-TOOL-01` / `REL-055` / `FR-SEM-07` / `REL-054` DONE.
 >
 > This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
 > The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
@@ -31,26 +27,67 @@
 
 ## Changelog
 
-### v3.7.9-ui-v2-load-more - Expand-service pagination + Load more (2026-07-21)
+### v3.7.10-ui-v2-load-more - Expand pagination + folder sidebar (2026-07-21)
 
 | ID | Priority | Focus | Summary |
 |----|----------|-------|---------|
-| US-UI2-11 / FR-UI2-13 | Must Have | **P1** | Default expand page 500 nodes; **Load more (+200)** merges into current graph (500→700); `hasMore` from expand-service |
+| US-UI2-11 / FR-UI2-13 / REL-061 | Must Have | **P1** | Default expand page 500; **Load more (+200)** merges into graph; `hasMore` fixed |
+| US-UI2-12 / FR-UI2-14 | Must Have | **P1** | Hierarchical Folders & files sidebar + session tree across Overview |
 
-**New content:** §3.17 US-UI2-11; §5.19 FR-UI2-13. Fixes root `all_content` `has_more` (was always false when using page `rows.len()` as total).
+**New content:** §3.17 US-UI2-11..12; §5.19 FR-UI2-13..14 / REL-060..061. RCA: `docs/reports/root_cause_expand_examples_hides_src.md`. Deep test: `docs/reports/ui-v2-sidebar-nav-loadmore-deep-test-2026-07-21.md`.
+
+### v3.7.9-ont-proc-auto - Procedural ontology auto-update is P0 (2026-07-21)
+
+> **Trigger:** Live audit — procedural ontology **works** (`kg_trace_workflow`, 10 workflows / 48 steps) but is **static while using**: no watcher, no MCP write path, boot sync only (marker keyed to `concepts.yaml`). Agents editing `workflows.yaml` or reindexing code do not refresh procedural traces without manual `leankg ontology sync` / container restart.
+>
+> **Product intent:** Make procedural ontology a **live** company capability: debounce re-sync on YAML change during `mcp-http` / `serve`, fix boot freshness for `workflows.yaml`, optional sync after index / MCP `ontology_control`. Do **not** expand P0 to full LLM auto-extraction of workflows (that remains a later Could Have).
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-ONT-PROC-01 | Must Have | **P0** | Procedural ontology stays fresh while LeanKG is in use (no manual sync for YAML edits) |
+| FR-ONT-PROC-01 | Must Have | **P0** | Watch `ontology/workflows.yaml` (+ concepts) during MCP/serve; debounce idempotent sync |
+| FR-ONT-PROC-02 | Must Have | **P0** | Boot marker / skip logic considers `workflows.yaml` mtime (not only `concepts.yaml`) |
+| FR-ONT-PROC-03 | Must Have | **P0** | Hook: after successful index (and optional MCP `ontology_sync` / `ontology_control`) refresh procedural nodes + code_refs |
+| REL-059 | Must Have | **P0** | Live smoke: edit YAML → `kg_trace_workflow` updates without process restart |
+| FR-A02 | Should Have | **P1** | Remains docs/automation follow-up; P0 implements the runtime auto-update |
+
+**New content:** §3.18 US-ONT-PROC; §5.21 FR-ONT-PROC + REL-059. Demotes company-adoption queue to **P1 next**.
 
 ### v3.7.8-ui-v2-service-expand - Service/Folder replace-graph + CodePanel file gate (2026-07-21)
 
-> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400 (`Is a directory` / not found). Multi-service topology had no drill-in to **replace** the canvas with that service’s subgraph (legacy `ui/` double-click → `expand-service`). Follow-up: Sigma handlers closed over first-render `kg=null`, so double-click no-op’d until callback refs; onrender/`Dockerfile` rebakes UI v2 with layer-cached npm + `/api/index/status` health check. Follow-up: `/api/file` for graph paths present only on a sibling `LEANKG_PROJECT_DIRS` mount (e.g. `claude-mem/…` under `/workspace-freepeak` while active root is `/workspace`) returned opaque HTTP 400 — multi-root resolve + real 404 + UI error body. Follow-up: UI `?project=/workspace` showed multi-repo trees because entrypoint started `serve` under `LEANKG_MCP_PROJECT` cwd and `/api/project/switch` desynced path vs RocksDB handle — `LEANKG_SERVE_PROJECT` + atomic switch + ghost-path filter.
+> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400. Multi-service topology had no drill-in to **replace** the canvas. Follow-ups: Sigma callback refs; Render bake; cross-mount `/api/file`; `LEANKG_SERVE_PROJECT` + atomic switch.
 
 **Product actions this revision:**
 | ID | Priority | Focus | Intent |
 |----|----------|-------|--------|
 | US-UI2-03 (tighten) | Must Have | **P1** | `/api/file` only for content-bearing nodes; not Service/Folder/Directory |
-| US-UI2-10 / FR-UI2-12 | Must Have | **P1** | Double-click Service/Folder/Directory → `expand-service?all=true` **replaces** exploring graph; breadcrumbs back to topology |
-| REL-057 | Must Have | **P1** | Vitest/e2e proof: no `/api/file` 400 on Service select; replace-graph on double-click |
+| US-UI2-10 / FR-UI2-12 / REL-060 | Must Have | **P1** | Double-click Service/Folder → expand-service **replaces** graph |
 
-**New content:** §3.17 US-UI2-10; §5.19 FR-UI2-12 + REL-057. RCA: `docs/reports/root_cause_api_file_service_folder_400.md`. Deploy: `Dockerfile` + `render.yaml` (UI v2 embed for leankg.onrender.com).
+**New content:** §3.17 US-UI2-10; §5.19 FR-UI2-12 + REL-060. RCA: `docs/reports/root_cause_api_file_service_folder_400.md`.
+
+### v3.7.8-graphify-ui - Company ROI + Graphify packaging backlog (2026-07-21)
+
+> **Trigger:** Deep compare of local Graphify v0.9.20 vs LeanKG (MCP + ui-v2). Goal: prove LeanKG is the better **company** choice for **AI agent cost + efficiency**, then close packaging gaps Graphify still wins on (always-on install, honest edges, report/HTML artifacts, NL UI).
+>
+> **Evidence:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (supersedes Jul-13 matrix for agent/UI gaps that are now closed in MCP).
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-COST-01 / FR-COST-01 / REL-058 | Must Have | **P1** | Manager-facing ROI brief: LeanKG vs grep/cat + vs Graphify (tokens, multi-repo, ops) |
+| US-GF-14 / FR-GF-22 | Must Have | **P1** | Three-verb narrative: path · explain · query first in README / AGENTS / skills |
+| US-GF-17 / FR-GF-24 | Must Have | **P1** | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary **cost lever** |
+| US-GF-04 / FR-GF-07..09 / REL-043 | Must Have | **P1** | Honest edges (EXTRACTED/INFERRED/AMBIGUOUS) in MCP + ui-v2 |
+| US-GF-06 / FR-GF-13 | Must Have | **P1** | Auto `.leankg/GRAPH_REPORT.md` on index + Overview link |
+| US-GF-13 / FR-GF-21 | Must Have | **P1** | Bounded single-file HTML export |
+| US-UI2-06 / FR-UI2-08 | Must Have | **P1** | Query FAB NL mode → `query_graph` |
+| US-UI2-07 / FR-UI2-09 / REL-057 | Must Have | **P1** | ui-v2 production cutover into embed/Docker serve |
+| US-GF-15..16 / US-UI2-08..09 / FR-GF-23 / FR-UI2-10..11 | Should Have | **P2** | Install matrix breadth, reflect skill, cluster legend, ops panels |
+
+**Won't Do (confirmed):** multimodal PDF/image/video; NetworkX primary store; 36-lang race; replace Sigma with vis.js-only UI.
+
+**New content:** §1.1 Enterprise ROI; §3.10 US-GF-13..17; §3.17 US-UI2-06..09; §5.9 FR-GF-21..24; §5.19 FR-UI2-08..11; §5.20 cost/ROI FRs.
 
 ### v3.7.7-ui-v2 - GitNexus-shell 2D UI rebuild (2026-07-20)
 
@@ -454,6 +491,38 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - Deliver code chunks + dependencies JSON to the agent in **&lt; 100ms P95**; idle MCP **&lt; 150MB RSS**
 - Prefer vector+graph scalpel over full-repo dumps (see Section 3.13 / 5.14)
 
+### 1.1 Why LeanKG for the company (vs Graphify / competitors)
+
+> **Audience:** engineering managers deciding which knowledge-graph / AI-context stack to standardize.  
+> **Full matrix:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
+
+**One-line decision:** Graphify is an excellent **personal skill + portable HTML report**. LeanKG is the **company platform**: one shared index, multi-repo Docker, surgical MCP context, ops/traceability, and measured token economics — so every developer’s agent burns fewer tokens on the same monorepo every day.
+
+| Decision criterion | LeanKG | Graphify | Why LeanKG wins at company scale |
+|--------------------|--------|----------|----------------------------------|
+| **$/day AI agent cost** | TOON/RTK + budgeted MCP; A/B ≥61% tokens / ≥84% tool calls vs grep/cat | Budgeted subgraph query; no durable compression stack | Savings compound across **N developers × N sessions/day** on a shared index |
+| **Monorepo / mega-graph** | RocksDB multi-project; mega-safe search/query paths; mem budgets | `graph.json` + 5k HTML viz cap; NetworkX in-memory | Company monorepos (100k–600k+ elements) need a server, not a file |
+| **Multi-repo team deploy** | `LEANKG_PROJECT_DIRS` + Docker HTTP MCP `:9699` + REST `:8080` | Shared HTTP over one `graph.json` | One container serves many mounts; resume embeds day-2 |
+| **Agent depth** | ~85 MCP tools (impact, ontology, services, Android, docs↔req, PR, reflect) | ~9–10 MCP tools | Agents solve blast-radius / env / incident / req-trace without reinventing |
+| **Trust / ops** | Severity-graded impact, incidents, env promotion, service_calls | Edge confidence tags (EXTRACTED/INFERRED) — LeanKG must finish parity | Managers care about **change risk** and **production topology**, not only concept maps |
+| **Human explorer** | Live ui-v2 (Force/Tree/Circles) over REST | Static `graph.html` | Live index stays fresh with watch/auto-index |
+| **Where Graphify still teaches us** | Packaging: always-on install, report/HTML artifacts, honest-edge UX | Skill install + `GRAPH_REPORT.md` + vis.js share | Close these in **P1 queue** below — do **not** chase multimodal |
+
+**Ordered company-adoption queue (Focus P1 — after P0 procedural auto-update):**
+
+1. **US-COST-01** — Publish manager ROI brief (tokens + tool calls + multi-repo TCO)  
+2. **US-GF-14** — Three-verb narrative (path · explain · query) so agents pick cheap tools first  
+3. **US-GF-17** — Always-on graph-first install/hooks (primary **cost lever**: agents stop grepping first)  
+4. **US-GF-04** — Honest edges in MCP + ui-v2 (trust = adoption)  
+5. **US-GF-06** — Auto `GRAPH_REPORT.md` (onboarding without 85-tool wall)  
+6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI)  
+7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb)  
+8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company)
+
+**P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact.
+
+**Explicit non-goals for company ROI:** PDF/image/video graph ingest; replacing CozoDB with NetworkX; chasing 36 languages before typed resolve depth.
+
 **Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
 - **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; Cozo default until callers honor `preferred_ann_backend()`
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
@@ -478,7 +547,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - npm-based installation wrapper (DONE `df0fec2`)
 
 **Competitive notes:**
-- vs [Graphify](https://github.com/Graphify-Labs/graphify): see Section 3.10 / `docs/analysis/graphify-comparison-2026-07-13.md`
+- vs [Graphify](https://github.com/Graphify-Labs/graphify): **company vs personal** — see §1.1 + §3.10 + [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (Jul-13 matrix: [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md); many MCP “Missing” rows are now DONE)
 - vs [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): see Section 3.11 / 5.10 — Lean into business-context depth; close structural gaps; do **not** chase 158-language / Pure-C parity
 - vs LSP-by-default (CBM style): see Section 3.11 / 5.10 — LeanKG now has the bridge + wiring (FR-B03..B07 + FR-B08); `typed`-class edges still PENDING for Go (`FR-B03`) and TS (`FR-B04`).
 - vs mmap-heavy / full-FP32-in-RAM vector stores: LeanKG targets SQ8 hot path + flat payload post-filter (Section 5.14 / 6.10) to protect 256GB SSDs and 16GB laptops.
@@ -500,10 +569,11 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | **Impact radius lacks confidence grades** | `get_impact_radius` returns all edges at equal weight; LLM cannot distinguish "WILL BREAK" from "MIGHT BE AFFECTED" |
 | **No pre-commit risk signal** | No tool exists to assess change risk before commit |
 | **Flat search results** | `search_code` returns symbol matches with no grouping by functional area |
-| **No shortest-path / explain verbs** | Agents cannot ask "how do A and B connect?" or get a single-node dossier (Graphify gap) |
-| **Opaque edge provenance** | Agents cannot tell EXTRACTED vs INFERRED vs AMBIGUOUS relationships at a glance |
-| **No architecture brief artifact** | Missing god-node + surprising-connection report (`GRAPH_REPORT.md`) after index |
-| **No query outcome learning** | Context metrics exist, but agents cannot report whether a graph answer was useful |
+| **No shortest-path / explain verbs** | *(closing)* MCP `shortest_path` / `explain_node` exist; product narrative + UI NL still incomplete — see US-GF-14 / US-UI2-06 |
+| **Opaque edge provenance** | Agents cannot tell EXTRACTED vs INFERRED vs AMBIGUOUS at a glance (US-GF-04 / FR-GF-07..09 — **P1**) |
+| **No architecture brief artifact** | Missing auto god-node + surprising-connection report (`GRAPH_REPORT.md`) after index (US-GF-06 / FR-GF-13 — **P1**) |
+| **Agents still grep first** | Without always-on install/hooks, token savings never materialize at company scale (US-GF-17 — **P1**) |
+| **No query outcome learning** | Context metrics exist; default skill loop for useful/dead_end still weak (US-GF-16 — P2) |
 
 ---
 
@@ -801,11 +871,13 @@ Palace Mapping:
 ```
 </details>
 
-### 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12)
+### 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17)
 
-> **Source:** Competitive analysis of [Graphify](https://github.com/Graphify-Labs/graphify) — AI coding-assistant skill that builds a queryable knowledge graph from code (tree-sitter, no LLM) plus optional docs/media. Key differentiators: `path` / `explain` / `query` agent verbs, every edge tagged `EXTRACTED|INFERRED|AMBIGUOUS`, god-node + surprising-connection reports, WHY/ADR rationale nodes, PR community conflict triage, and a work-memory reflect loop. Full matrix: `docs/analysis/graphify-comparison-2026-07-13.md`.
+> **Source:** Competitive analysis of [Graphify](https://github.com/Graphify-Labs/graphify) — AI coding-assistant skill that builds a queryable knowledge graph from code (tree-sitter, no LLM) plus optional docs/media. Key differentiators: `path` / `explain` / `query` agent verbs, every edge tagged `EXTRACTED|INFERRED|AMBIGUOUS`, god-node + surprising-connection reports, WHY/ADR rationale nodes, PR community conflict triage, and a work-memory reflect loop. Full matrix: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (2026-07-20) + [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md).
 >
 > **LeanKG keep / do not regress:** TOON/RTK token compression, requirement↔code traceability, microservice topology, severity-graded impact radius, CozoDB/RocksDB persistence, multi-project HTTP deploy.
+>
+> **Company rule:** Steal Graphify **packaging** (install, report, honest edges, HTML share). Do **not** chase multimodal or NetworkX. Prioritize §1.1 P1 queue for cost.
 
 
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter IDs for this section (`US-*` / related).
@@ -860,7 +932,8 @@ Palace Mapping:
 **LeanKG adaptation:**
 - Map existing `resolution_method` (`name`, `name_file_hint`, `unresolved`, future `typed`) to provenance labels
 - Store `confidence_label` on Relationship metadata; keep numeric confidence for impact severity
-- Propagate labels through `get_impact_radius`, `get_call_graph`, `shortest_path`, `query_graph`, Web UI edge tooltips
+- Propagate labels through `get_impact_radius`, `get_call_graph`, `shortest_path`, `query_graph`, **and ui-v2 Sigma edge tooltips** (FR-GF-09)
+- Prefer EXTRACTED edges when ranking equal-length paths
 </details>
 
 <details>
@@ -880,9 +953,10 @@ Palace Mapping:
 **Graphify inspiration:** Three artifacts after build: `graph.html`, `GRAPH_REPORT.md`, `graph.json`.
 
 **LeanKG adaptation:**
-- On `index` / `leankg report`: write `.leankg/GRAPH_REPORT.md`
+- On `index` / `leankg report`: write `.leankg/GRAPH_REPORT.md` (FR-GF-13)
 - Sections: god nodes, surprising cross-cluster edges, confidence distribution, 4–5 suggested agent questions
-- Web UI link + MCP `get_graph_report`
+- Web UI Overview link + MCP `get_graph_report` (FR-GF-14 DONE)
+- Optional MCP resources: report / god-nodes / surprises (agent-readable without inventing tool calls)
 </details>
 
 <details>
@@ -928,6 +1002,20 @@ Palace Mapping:
 **US-GF-11 Portable snapshot:** Export merge-friendly `graph-snapshot.json` (relative paths); optional git merge driver. Complements RocksDB deploy — does not replace it.
 
 **US-GF-12 SQL schema:** Optional extractor for `.sql` + `leankg extract --postgres <dsn>` creating table/FK nodes linked to ORM/repository code when detectable.
+</details>
+
+<details>
+<summary>US-GF-13..17: Packaging &amp; company adoption (v3.7.8)</summary>
+
+**US-GF-13 HTML export (Must / P1):** As a developer, I run `leankg export html` (bounded path/community) and get a single-file graph artifact I can open offline or attach to a PR — without replacing the live ui-v2 explorer.
+
+**US-GF-14 Three-verb narrative (Must / P1):** As an agent user, README / AGENTS.md / skills lead with **path · explain · query** before the full MCP catalog, so cheap connection questions do not trigger grep/cat dumps.
+
+**US-GF-15 Install matrix (Should / P2):** As a platform eng, `leankg install` covers Cursor, Claude Code, Codex, OpenCode, Gemini (+ more over time) with graph-first guidance.
+
+**US-GF-16 Reflect skill (Should / P2):** As an agent, default skill guidance calls `report_query_outcome` after useful/dead_end answers and loads LESSONS at session start.
+
+**US-GF-17 Always-on graph-first (Must / P1):** As a company, `leankg install` writes always-apply Cursor rules / Claude PreToolUse (or equivalent) that **nudge** (optional **strict**: block first raw Read) agents to query LeanKG before grep — the primary lever for §1.1 token savings.
 </details>
 
 ### 3.11 CBM Structural Parity Stories (US-CBM) — merged from `prd-structural-parity-cbm.md`
@@ -1337,10 +1425,11 @@ Palace Mapping:
 
 ### 5.9 Graphify-Inspired Features
 
-> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-GF-*`.  
+> Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md). Deploy parity with Graphify HTTP MCP is **not** a gap — LeanKG RocksDB multi-project compose is competitive. Focus requirements on **agent query UX, edge honesty, report/HTML artifacts, always-on install**.  
+> **Promote to Focus P1:** FR-GF-07, FR-GF-08, FR-GF-09, FR-GF-13, FR-GF-21, FR-GF-22, FR-GF-24 (see §1.1 queue).
 
-
-> Evidence: `docs/analysis/graphify-comparison-2026-07-13.md`. Deploy parity with Graphify HTTP MCP is **not** a gap — LeanKG RocksDB multi-project compose is competitive. Focus requirements on agent query UX and edge honesty.
+New FRs (v3.7.8): FR-GF-21..24 — see §5.20 table (shared with cost track for tracker visibility).
 
 
 ### 5.10 CBM Structural Parity Requirements (merged)
@@ -1566,7 +1655,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 
 ### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.9
 
-> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056` / `REL-057` / `REL-058`.  
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056` / `REL-057` / `REL-060` / `REL-061`.  
 > **Design:** [`docs/erd/ui-v2-erd.md`](erd/ui-v2-erd.md).  
 > **Separate from:** Track E 3D `graph-ui/` (`REL-041` / `US-CBM-E1`).
 
@@ -1577,15 +1666,36 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | US-UI2-03 | Must Have | As a developer, I select a **content-bearing** node (File/Function/Method/Class/…) and see syntax-highlighted source via `/api/file`; Service/Folder/Directory selection does **not** call `/api/file` |
 | US-UI2-04 | Must Have | As a developer, I search via `/api/search` and run raw queries via QueryFAB `/api/query` |
 | US-UI2-05 | Must Have | As a developer on a mega-graph, the UI skips full canvas load and offers “Load graph anyway” |
+| US-UI2-06 | Must Have | As a developer, Query FAB default mode runs NL `query_graph`; Advanced mode keeps raw Cozo |
+| US-UI2-07 | Must Have | As a company, ui-v2 is the default explorer embedded in `leankg serve` / Docker (cutover from Phase-1-only `ui-v2/`) |
+| US-UI2-08 | Should Have | As a developer, I filter communities via a cluster legend (Graphify sidebar parity) |
+| US-UI2-09 | Should Have | As an ops engineer, incidents / env / conflicts panels from legacy `ui/` are available in ui-v2 |
 | US-UI2-10 | Must Have | As a developer on a multi-service topology, I double-click a Service/Folder/Directory and the canvas **replaces** with that path’s expand-service subgraph (`all=true`); breadcrumbs return me to overview |
 | US-UI2-11 | Must Have | As a developer on a large expand (e.g. multi-repo workspace), I see the first **500** nodes and can **Load more (+200)** to **merge** additional pages into the same graph (500→700→…) without replacing |
 | US-UI2-12 | Must Have | As a developer, the left Explore sidebar shows a **folder + file** tree (not files-only); `src` sorts above `examples`; double-click a folder drills the graph into that path |
 
-**Phase 1 out of scope:** browser LLM agent, analyze/upload, Processes Mermaid, replacing `src/embed/`.
+**Phase 1 out of scope (closed):** browser LLM agent, analyze/upload, Processes Mermaid.  
+**Phase 2 (this revision):** NL Query FAB + cutover + cluster legend + ops panels (US-UI2-06..09).
 
-### 5.19 UI v2 Graph Explorer (v3.7.9)
+### 3.18 Procedural Ontology Auto-Update (US-ONT-PROC) — v3.7.9 **P0**
 
-> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057` / `REL-058`.  
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-ONT-PROC-*` / `FR-ONT-PROC-*` / `REL-059`.  
+> **Gap evidence:** Procedural layer works (`kg_ontology_status`: 10 workflows / 48 steps; `kg_trace_workflow` live) but only refreshes via manual `leankg ontology sync` or Docker boot sync (`entrypoint.sh`). No in-process watch; boot skip marker ignores `workflows.yaml` mtime.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-ONT-PROC-01 | Must Have (**P0**) | As a developer using LeanKG MCP/serve, when I edit `ontology/workflows.yaml` (or concepts) or finish an index that changes step `code_refs`, **I want** procedural ontology to update **without** a manual sync or container restart, **so that** `kg_trace_workflow` stays accurate while I work |
+
+**Acceptance (US-ONT-PROC-01):**
+- **Given** `mcp-http` or `leankg serve` is running with ontology loaded, **When** I change a workflow step name or `code_refs` in `workflows.yaml` and wait the debounce window, **Then** `kg_trace_workflow` returns the new content without restarting the process.
+- **Given** boot with an existing `.leankg/ontology_synced` marker newer than `concepts.yaml` but older than `workflows.yaml`, **When** the container starts, **Then** sync is **not** skipped solely because of `concepts.yaml`.
+- **Given** a successful `leankg index` / MCP index that changes files referenced by workflow steps, **When** the index completes, **Then** procedural nodes are refreshed (or a documented MCP `ontology_sync` / `ontology_control` action is available and used by default hooks).
+- **Won't Do in P0:** LLM auto-extraction of new workflows from arbitrary code (manual/agent-authored YAML remains the source of truth).
+
+### 5.19 UI v2 Graph Explorer (v3.7.10)
+
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057` / `REL-060` / `REL-061`.  
 > **Evidence:** [`docs/reports/ui-v2-gitnexus-parity-*.md`](reports/) (required before claiming GitNexus parity).
 
 | ID | Priority | Requirement |
@@ -1601,10 +1711,48 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-UI2-13 | Must Have | Expand-service `?limit=`/`?offset=` + correct `hasMore`; UI default page 500; **Load more (+200)** **merges** by node/edge id into current `kg`; pagination cursor advances by requested limit |
 | FR-UI2-14 | Must Have | Explore sidebar hierarchical Folders & files (`buildExplorerTree`); include Directory/Folder; synthesize parents from paths; prefer `src` over demos; folder double-click → `drillIntoPath` |
 | REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
-| REL-057 | Must Have | Proof: Service select does not 400 `/api/file`; double-click replaces graph with expand-service subgraph |
-| REL-058 | Must Have | Proof: expand page 500 then Load more grows canvas (merge); `hasMore` false at end |
+| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw Cozo `POST /api/query` |
+| FR-UI2-09 | Must Have | Build ui-v2 into `src/embed/` (or equivalent); `leankg serve` + Docker Option A serve ui-v2 by default |
+| FR-UI2-10 | Should Have | Cluster legend + show/hide filters wired to `/api/graph/clusters` |
+| FR-UI2-11 | Should Have | Port incidents / env / conflicts panels from legacy `ui/` into ui-v2 |
+| REL-057 | Must Have | Cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default |
+| REL-060 | Must Have | Proof: Service select does not 400 `/api/file`; double-click replaces graph with expand-service subgraph |
+| REL-061 | Must Have | Proof: expand page 500 then Load more grows canvas (merge); sidebar folders/files update |
 
-**Won't Do (Phase 1):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
+
+**Won't Do (Phase 1 residual):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
+
+### 5.20 Company cost / competitive ROI (v3.7.8)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-COST-*` / `FR-COST-*` / `REL-058`.  
+> **Narrative:** §1.1. **Evidence target:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) + a short manager brief under `docs/reports/`.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| US-COST-01 | Must Have | As an engineering manager, I can read a one-pager that shows why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company monorepo scale |
+| FR-COST-01 | Must Have | Publish ROI brief: token/tool-call floors (Section 9), multi-repo Docker TCO, mega-graph safety, ops/traceability differentiators; link §1.1 queue |
+| FR-GF-21 | Must Have | CLI/MCP `export html` — single-file bounded subgraph/community; document node budget |
+| FR-GF-22 | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wall |
+| FR-GF-23 | Should Have | Expand `leankg install` platforms (start Cursor + Claude + Codex; grow toward Graphify breadth) |
+| FR-GF-24 | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redirect; document for Cursor + Claude Code |
+| REL-058 | Must Have | Manager ROI brief checked into `docs/reports/` and linked from README competitive section |
+
+**Won't Do:** Claiming LOCOMO memory-suite wins; multimodal ingest as a cost strategy.
+
+### 5.21 Procedural ontology auto-update (v3.7.9) — **CURRENT P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-ONT-PROC-*` / `US-ONT-PROC-*` / `REL-059`.  
+> **Related:** `FR-A02` (docs/automation) stays P1; this section is the **runtime** auto-update.  
+> **Baseline:** Boot sync in `entrypoint.sh` + CLI `leankg ontology sync` only; no YAML watch during MCP use.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-ONT-PROC-01 | Must Have (**P0**) | While `mcp-http` / `leankg serve` runs, watch `ontology/workflows.yaml` and `ontology/concepts.yaml` (project + configured source dir); debounce (≥1s) and run idempotent ontology sync into the served DB without dropping the HTTP listener |
+| FR-ONT-PROC-02 | Must Have (**P0**) | Docker/boot skip marker must consider **both** `concepts.yaml` and `workflows.yaml` mtimes (and force re-sync when either is newer than `.leankg/ontology_synced`) |
+| FR-ONT-PROC-03 | Must Have (**P0**) | After successful index (CLI or MCP), refresh procedural ontology (re-bind step `code_refs` / re-sync YAML) or expose MCP `ontology_control(action=sync\|status)` and invoke it from the index completion path |
+| REL-059 | Must Have (**P0**) | Live smoke documented in `docs/reports/`: (1) edit workflow step → `kg_trace_workflow` updates without restart; (2) boot with stale workflows.yaml triggers sync; (3) sync never blocks `/health` beyond existing ontology timeout policy |
+
+**Won't Do (P0):** Automatic LLM generation of new workflows from code; replacing YAML as source of truth; blocking MCP bind on sync (keep timeout/skip escape).
 
 ---
 
@@ -2113,17 +2261,20 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ## 10. Out of Scope
 
-1. **Full multi-modal PDF/image/video graph ingest (Graphify-style)** - Code + docs + infra first
+1. **Full multi-modal PDF/image/video graph ingest (Graphify-style)** - Code + docs + infra first; not a company cost lever
 2. **Cloud SaaS hosting of LeanKG** - Self-hosted only (team HTTP MCP / RocksDB / **self-hosted TiKV CloudEngine** is in scope; managed multi-tenant SaaS is not)
 3. **Multi-user collaborative editing of the graph** - Single writer per project DB; shared read via HTTP MCP is OK
 4. **Plugin system** - Future consideration
 5. **Raw Datalog query passthrough** - Security risk (except controlled `run_raw_query`)
-6. **Replacing CozoDB/RocksDB with NetworkX-only primary store** - Snapshot export is additive
+6. **Replacing CozoDB/RocksDB with NetworkX-only primary store** - Snapshot/HTML export is additive
 7. **Full 158-language / Pure-C rewrite (CBM chase)** - Selective languages only
 8. **Split PRD/HLD documents** - This file is the only SoT for narrative/HLD; do not recreate `docs/requirement/prd-*.md` or `docs/design/hld-leankg.md`. Task lists/status live only in [`prd-task-tracker.md`](prd-task-tracker.md)
 9. **Status tables / FR checkboxes inside this PRD** - Forbidden; use the tracker
 10. **Redis/FalkorDB as cold-embed write accelerator** - Rejected v3.6.3; not revived by v3.7 vector engine
 11. **Default cutover from Cozo HNSW before FR-VE-GATE** - Explicitly forbidden
+12. **Replace Sigma live UI with vis.js-only static HTML** - Steal HTML *export*; keep live explorer
+13. **36–40 language grammar race to match Graphify** - Wire tested extractors only; prefer typed resolve depth
+14. **LLM auto-extraction of procedural workflows from arbitrary code (P0)** - YAML remains SoT for v3.7.9; auto-update means watch/sync/index-hook of authored ontology, not Graphiti-style LLM invent
 
 ---
 
@@ -2171,7 +2322,7 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 - rmcp: https://crates.io/crates/rmcp
 - Leiden Algorithm: https://en.wikipedia.org/wiki/Leiden_algorithm
 - MemPalace: https://github.com/milla-jovovich/mempalace
-- Graphify: https://github.com/Graphify-Labs/graphify — `docs/analysis/graphify-comparison-2026-07-13.md`
+- Graphify: https://github.com/Graphify-Labs/graphify — [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (primary) · [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md) (historical)
 - codebase-memory-mcp: https://github.com/DeusData/codebase-memory-mcp — see Section 3.11 / 5.10
 - Context enhancement analysis: `docs/analysis/enhancement-analysis-2026-07-09.md`
 - Roadmap: `docs/roadmap.md`

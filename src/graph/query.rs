@@ -2209,6 +2209,92 @@ impl GraphEngine {
         Ok(())
     }
 
+    /// Delete every `code_elements` row whose `qualified_name` matches (all
+    /// composite-key variants). Cozo `:put` keys the full tuple, so renames
+    /// leave duplicate GID rows — callers must rm-by-qn before put.
+    pub fn remove_elements_by_qualified_name(
+        &self,
+        qualified_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"
+            ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = $qn
+            :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
+        "#
+        );
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "qn".to_string(),
+            serde_json::Value::String(qualified_name.to_string()),
+        );
+        crate::db::schema::run_script(&self.db, &query, params)?;
+        Ok(())
+    }
+
+    /// GID-keyed replace: remove all composite-key variants for this
+    /// `qualified_name`, then `:put` the new row. Safe for ontology sync
+    /// where YAML is SoT and `name`/`metadata` change in place.
+    pub fn upsert_element_by_qualified_name(
+        &self,
+        element: &CodeElement,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.remove_elements_by_qualified_name(&element.qualified_name)?;
+        self.insert_element(element)
+    }
+
+    /// List distinct ontology GIDs (`file_path` starts with `ontology://`).
+    pub fn list_ontology_qualified_names(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")"#
+        );
+        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let mut names: Vec<String> = result
+            .rows
+            .iter()
+            .filter_map(|r| r[0].get_str().map(|s| s.to_string()))
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+
+    /// Declarative wipe of the ontology layer: drop relationships whose source
+    /// is an ontology GID, then delete all `ontology://` code_elements rows
+    /// (including duplicate composite-key variants). Two bulk Cozo scripts
+    /// (not per-GID loops) to avoid SQLite lock storms under concurrent MCP.
+    pub fn clear_ontology_layer(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let qns = self.list_ontology_qualified_names()?;
+        let n = qns.len();
+        let tail = self.code_elements_tail();
+
+        // 1) Remove relationships while ontology elements still exist (join).
+        let rel_query = format!(
+            r#"
+            ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
+                *code_elements[source_qualified, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+                regex_matches(file_path, "^ontology://")
+            :rm relationships {{source_qualified, target_qualified, rel_type, confidence, metadata}}
+        "#
+        );
+        crate::db::schema::run_script(&self.db, &rel_query, Default::default())?;
+
+        // 2) Remove all ontology code_elements (all composite-key variants).
+        let elem_query = format!(
+            r#"
+            ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")
+            :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
+        "#
+        );
+        crate::db::schema::run_script(&self.db, &elem_query, Default::default())?;
+        self.invalidate_cache();
+        Ok(n)
+    }
+
     pub fn get_elements_by_file(
         &self,
         file_path: &str,

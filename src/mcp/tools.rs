@@ -1032,6 +1032,18 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "ontology_control".to_string(),
+                description: "FR-ONT-PROC-03: Sync or inspect procedural/domain ontology YAML into the served DB. Actions: sync (load ontology/concepts.yaml + workflows.yaml, touch .leankg/ontology_synced), status (YAML mtimes, marker, procedural counts). Prefer auto-update via YAML watcher; use sync after manual edits if watcher is off. Admin-only.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["sync", "status"], "description": "sync=load YAML into DB; status=mtimes/marker/counts"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["action"]
+                }),
+            },
+            ToolDefinition {
                 name: "kg_self_test".to_string(),
                 description: "Run a smoke test against every kg_* ontology tool and the live CozoDB schema. Returns per-tool status plus the code_elements and relationships arity/columns. Use this to detect ontology-layer drift (e.g. arity mismatch from a missed schema migration) before any agent relies on kg_*. Safe to call at any time; does not mutate state.".to_string(),
                 input_schema: json!({
@@ -1300,5 +1312,18 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("required");
         assert!(required.iter().any(|v| v.as_str() == Some("action")));
+    }
+
+    #[test]
+    fn test_ontology_control_tool_exists() {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "ontology_control")
+            .expect("ontology_control tool must exist");
+        assert_eq!(
+            tool.input_schema["properties"]["action"]["enum"],
+            serde_json::json!(["sync", "status"])
+        );
     }
 }

@@ -139,6 +139,9 @@ workflows:
     description: Loads concept and workflow definitions from YAML files into the CozoDB knowledge graph.
     entry_points:
       - src/main.rs::handle_ontology_command
+      - src/ontology/sync.rs::sync_from_dir
+      - src/mcp/server.rs::handle_ontology_control
+      - src/ontology/watcher.rs::spawn_ontology_yaml_watcher
     steps:
       - id: load_concepts
         name: Load Concept Definitions
@@ -158,6 +161,7 @@ workflows:
         name: Insert Concepts into DB
         code_refs:
           - src/graph/query.rs::insert_element
+          - src/ontology/sync.rs::sync_from_dir
           - src/main.rs::handle_ontology_command
         failure_modes:
           - duplicate_gid
@@ -166,9 +170,20 @@ workflows:
         name: Insert Relationships
         code_refs:
           - src/graph/query.rs::insert_relationship
+          - src/ontology/sync.rs::sync_from_dir
         failure_modes:
           - dangling_reference
           - relationship_conflict
+      - id: auto_update_while_serving
+        name: Auto-update while MCP/serve runs
+        code_refs:
+          - src/ontology/watcher.rs::spawn_ontology_yaml_watcher
+          - src/mcp/server.rs::spawn_ontology_yaml_watcher_if_present
+          - src/mcp/server.rs::refresh_ontology_after_index
+          - src/mcp/server.rs::handle_ontology_control
+        failure_modes:
+          - yaml_parse_error
+          - db_write_error
       - id: verify_sync
         name: Verify Sync Completeness
         code_refs:
@@ -213,6 +228,7 @@ workflows:
       - id: sync_ontology
         name: Sync Ontology Data
         code_refs:
+          - src/ontology/sync.rs::sync_from_dir
           - src/main.rs::handle_ontology_command
           - entrypoint.sh
         failure_modes:

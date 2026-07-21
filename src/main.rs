@@ -1118,6 +1118,21 @@ async fn index_codebase(
         }
     }
 
+    // FR-ONT-PROC-03: refresh procedural ontology after successful index.
+    if let Some(project_root) = db_path.parent() {
+        match crate::ontology::sync_for_project(project_root, &graph_engine) {
+            Ok(stats) => {
+                println!(
+                    "Ontology refreshed after index (workflows={}, steps={})",
+                    stats.workflows, stats.workflow_steps
+                );
+            }
+            Err(e) => {
+                tracing::debug!("Ontology post-index sync skipped: {}", e);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1177,6 +1192,21 @@ async fn incremental_index_codebase(
                 e
             );
             index_codebase(path, db_path, lang_filter, exclude_patterns, verbose, env).await?;
+        }
+    }
+
+    // FR-ONT-PROC-03: refresh procedural ontology after incremental index.
+    if let Some(project_root) = db_path.parent() {
+        match crate::ontology::sync_for_project(project_root, &graph_engine) {
+            Ok(stats) => {
+                println!(
+                    "Ontology refreshed after incremental index (workflows={}, steps={})",
+                    stats.workflows, stats.workflow_steps
+                );
+            }
+            Err(e) => {
+                tracing::debug!("Ontology post-index sync skipped: {}", e);
+            }
         }
     }
 
@@ -4709,68 +4739,31 @@ fn handle_ontology_command(
                 return Ok(());
             }
 
-            let mut total_nodes = 0;
-            let mut total_relationships = 0;
-
-            // Load concepts
-            let concepts_file = ontology_path.join("concepts.yaml");
-            if concepts_file.exists() {
-                match crate::ontology::load_concepts_yaml(&concepts_file) {
-                    Ok(nodes) => {
-                        let elements = crate::ontology::concept_nodes_to_elements(&nodes);
-                        for elem in &elements {
-                            if let Err(e) = graph.insert_element(elem) {
-                                tracing::warn!("Failed to insert concept element: {}", e);
-                            }
-                        }
-                        println!("  Loaded {} concept nodes", nodes.len());
-                        total_nodes += nodes.len();
+            let leankg = project_path.join(".leankg");
+            match crate::ontology::sync_from_dir(&ontology_path, &graph, Some(&leankg)) {
+                Ok(stats) => {
+                    println!("  Loaded {} concept nodes", stats.concepts);
+                    println!("  Loaded {} workflow nodes", stats.workflows);
+                    println!("  Loaded {} workflow steps", stats.workflow_steps);
+                    println!("  Loaded {} failure modes", stats.failure_modes);
+                    println!("\nOntology sync complete");
+                    println!(
+                        "  Total nodes: {}",
+                        stats.concepts
+                            + stats.workflows
+                            + stats.workflow_steps
+                            + stats.failure_modes
+                    );
+                    println!("  Total relationships: {}", stats.relationships);
+                    if let Some(m) = stats.marker_path {
+                        println!("  Marker: {}", m);
                     }
-                    Err(e) => println!("  Warning: Failed to load concepts.yaml: {}", e),
+                }
+                Err(e) => {
+                    eprintln!("Ontology sync failed: {}", e);
+                    return Err(e);
                 }
             }
-
-            // Load workflows
-            let workflows_file = ontology_path.join("workflows.yaml");
-            if workflows_file.exists() {
-                match crate::ontology::load_workflows_yaml(&workflows_file) {
-                    Ok((workflows, steps, failures, relationships)) => {
-                        let workflow_elements =
-                            crate::ontology::workflow_nodes_to_elements(&workflows);
-                        let step_elements =
-                            crate::ontology::workflow_step_nodes_to_elements(&steps);
-                        let failure_elements =
-                            crate::ontology::failure_mode_nodes_to_elements(&failures);
-
-                        for elem in workflow_elements
-                            .iter()
-                            .chain(step_elements.iter())
-                            .chain(failure_elements.iter())
-                        {
-                            if let Err(e) = graph.insert_element(elem) {
-                                tracing::warn!("Failed to insert workflow element: {}", e);
-                            }
-                        }
-
-                        for rel in &relationships {
-                            if let Err(e) = graph.insert_relationship(rel) {
-                                tracing::warn!("Failed to insert relationship: {}", e);
-                            }
-                        }
-
-                        println!("  Loaded {} workflow nodes", workflows.len());
-                        println!("  Loaded {} workflow steps", steps.len());
-                        println!("  Loaded {} failure modes", failures.len());
-                        total_nodes += workflows.len() + steps.len() + failures.len();
-                        total_relationships += relationships.len();
-                    }
-                    Err(e) => println!("  Warning: Failed to load workflows.yaml: {}", e),
-                }
-            }
-
-            println!("\nOntology sync complete");
-            println!("  Total nodes: {}", total_nodes);
-            println!("  Total relationships: {}", total_relationships);
         }
 
         cli::OntologyCommand::Status => {
