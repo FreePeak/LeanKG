@@ -1,11 +1,11 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.10-ui-v2-load-more
+**Version:** 3.7.14-graph-eng-roadmap
 **Date:** 2026-07-21
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.1 (`origin/main`)
+**Codebase Version:** 0.19.3 (`origin/main`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
@@ -13,7 +13,9 @@
 >
 > **P0 CLOSED (v3.7.9):** **Procedural ontology auto-update while using** — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059` **DONE**. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). YAML watch + boot marker (concepts **and** workflows) + post-index sync + MCP `ontology_control`.
 >
-> **CURRENT next (P1 — company adoption / cost):** Graphify packaging queue in §1.1 (three-verb → always-on install → honest edges → …). Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
+> **CURRENT next (P1 — company adoption waves):** Wave **1a** MCP hard-delete (`wake_up`, `search_by_environment`) **DONE** (`REL-062`). Next: Graphify packaging / cost queue in §1.1. Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
+>
+> **P2 follow-ons (do not preempt P1):** Doc↔code join quality §3.19 / §5.22 (`US-DOCJOIN-*` / `REL-063`); Graph-engineering curriculum gaps §1.2 / §3.20 / §5.23 (`US-GE-*` / `REL-064`). Evidence: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
 >
 > **Prior P0 mega-graph serve CLOSED** — `US-MG-TOOL-01` / `REL-055` / `FR-SEM-07` / `REL-054` DONE.
 >
@@ -26,6 +28,26 @@
 ---
 
 ## Changelog
+
+### v3.7.14-graph-eng-roadmap - Graph Engineering curriculum gaps (2026-07-21)
+
+> **Trigger:** Compare LeanKG to the reconstructed Codez “Graph Engineering with Claude” 14-step scaffold (Jul 20, 2026; article login-walled — step titles inferred). LeanKG already owns the persistent code/knowledge graph + MCP half; gaps are planner/DAG execution, entity resolution, cluster-first navigation, and a closed self-improve write-back loop.
+>
+> **Product intent:** Capture fit as SoT; ship **positioning** now (`REL-064` / `US-GE-01`); park **build** gaps as Focus **P2** (do **not** displace §1.1 company-adoption P1). Do **not** turn LeanKG into Claude’s multi-agent harness.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-GE-01 / FR-GE-01 / REL-064 | Must Have | **P2** (docs **DONE**) | Publish fit matrix: LeanKG = graph memory under agents; adapt curriculum as education |
+| US-GE-02 / FR-GE-02 | Should Have | **P2** | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph |
+| US-GE-03 / FR-GE-03 | Should Have | **P2** | Cross-alias entity resolution beyond `qualified_name` + `typed_resolve` |
+| US-GE-04 / FR-GE-04 | Should Have | **P2** | Cluster-first agent navigation (precomputed neighborhoods default path) |
+| US-GE-05 / FR-GE-05 | Should Have | **P2** | Closed self-improve loop: query outcome → graph write-back → next plan |
+| US-GE-06 / FR-GE-06 | Could Have | **P3** | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) |
+
+**Won't Do:** Own Claude/Cursor harness runtime; OpenTrace-style full ticket/ops/trace graph as core product; full LLM auto-generation of all workflows from arbitrary code.
+
+**New content:** §1.2; §3.20 US-GE; §5.23 FR-GE + REL-064. Analysis: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
 
 ### v3.7.10-ui-v2-load-more - Expand pagination + folder sidebar (2026-07-21)
 
@@ -523,6 +545,33 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 **Explicit non-goals for company ROI:** PDF/image/video graph ingest; replacing CozoDB with NetworkX; chasing 36 languages before typed resolve depth.
 
+### 1.2 Graph Engineering curriculum (vs Codez 14-step scaffold)
+
+> **Audience:** product + eng deciding what LeanKG should steal from the 2026 “graph engineering for Claude” conversation.  
+> **Full matrix:** [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).  
+> **Caveat:** Source article is X login-walled; the 14 step titles in the analysis are a **reconstruction**, not quotes.
+
+**One-line decision:** LeanKG **is** the persistent typed code/knowledge graph + MCP retrieval layer those roadmaps assume. It is **not** (and should not become by default) the agent **planner/harness** that fans work into a DAG. Close P2 gaps that make the graph more useful *to* harnesses; keep §1.1 packaging as the cost lever.
+
+| Curriculum theme (inferred) | LeanKG fit | Product response |
+|-----------------------------|------------|------------------|
+| Typed graph + tree-sitter + embeddings + MCP tools | **Strong** | Keep as moat; teach agents graph-first (overlaps US-GF-14/17) |
+| Invalidation / day-2 honesty | Partial | Incremental index, ontology watch, embed resume — harden mega paths |
+| Planner / graph-shaped execution | **Missing** | US-GE-02 — optional thin planner over MCP tools (P2) |
+| Entity resolution / communities | Partial | US-GE-03 / US-GE-04 (P2) |
+| Self-improving write-back loop | Partial | US-GE-05 (P2); diary/knowledge exist |
+| LLM semantic extraction pass-2 | Partial | US-GE-06 (P3); YAML SoT for procedural ontology |
+| Become the Claude harness | Out of scope | US-GF-17 install/hooks only — **Won't Do** own multi-agent runtime |
+
+**Ordered backlog (Focus P2 — after §1.1 P1 queue):**
+
+1. **US-GE-01** / **REL-064** — Fit matrix + positioning published (**DONE** this revision)  
+2. **US-GE-02** — Graph-aware planner (goal → MCP DAG)  
+3. **US-GE-03** — Cross-alias entity resolution  
+4. **US-GE-04** — Cluster-first navigation for agents  
+5. **US-GE-05** — Closed outcome→graph self-improve loop  
+6. **US-GE-06** — Selective LLM pass-2 (Could)
+
 **Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
 - **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; Cozo default until callers honor `preferred_ann_backend()`
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
@@ -548,6 +597,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 **Competitive notes:**
 - vs [Graphify](https://github.com/Graphify-Labs/graphify): **company vs personal** — see §1.1 + §3.10 + [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (Jul-13 matrix: [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md); many MCP “Missing” rows are now DONE)
+- vs “Graph Engineering with Claude” curriculum (Codez Jul 2026 scaffold): see §1.2 + §3.20 / §5.23 + [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md) — LeanKG = memory layer; gaps = planner/DAG, entity resolution, cluster-first nav, self-improve loop
 - vs [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): see Section 3.11 / 5.10 — Lean into business-context depth; close structural gaps; do **not** chase 158-language / Pure-C parity
 - vs LSP-by-default (CBM style): see Section 3.11 / 5.10 — LeanKG now has the bridge + wiring (FR-B03..B07 + FR-B08); `typed`-class edges still PENDING for Go (`FR-B03`) and TS (`FR-B04`).
 - vs mmap-heavy / full-FP32-in-RAM vector stores: LeanKG targets SQ8 hot path + flat payload post-filter (Section 5.14 / 6.10) to protect 256GB SSDs and 16GB laptops.
@@ -574,6 +624,9 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | **No architecture brief artifact** | Missing auto god-node + surprising-connection report (`GRAPH_REPORT.md`) after index (US-GF-06 / FR-GF-13 — **P1**) |
 | **Agents still grep first** | Without always-on install/hooks, token savings never materialize at company scale (US-GF-17 — **P1**) |
 | **No query outcome learning** | Context metrics exist; default skill loop for useful/dead_end still weak (US-GF-16 — P2) |
+| **Straight-line agent loops over the graph** | Agents call LeanKG tools sequentially; no first-class goal→MCP DAG planner (US-GE-02 — P2) |
+| **Weak cross-alias identity** | Same symbol under naming variants may not merge (US-GE-03 — P2) |
+| **Clusters are secondary** | Louvain/`get_clusters` exist but are not the default agent neighborhood path (US-GE-04 — P2) |
 
 ---
 
@@ -1692,6 +1745,25 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - **Given** a successful `leankg index` / MCP index that changes files referenced by workflow steps, **When** the index completes, **Then** procedural nodes are refreshed (or a documented MCP `ontology_sync` / `ontology_control` action is available and used by default hooks).
 - **Won't Do in P0:** LLM auto-extraction of new workflows from arbitrary code (manual/agent-authored YAML remains the source of truth).
 
+### 3.20 Graph Engineering curriculum gaps (US-GE) — v3.7.14 **P2**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-GE-*` / `FR-GE-*` / `REL-064`.  
+> **Evidence:** [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).  
+> **Relationship to §1.1:** Company-adoption / Graphify packaging remains **P1 CURRENT**. These stories are **P2** (except docs DONE) — do not preempt cost levers.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-GE-01 | Must Have (**P2**, docs **DONE**) | As a product owner, I can point managers/agents at a published fit matrix showing LeanKG as the graph **memory** under agent harnesses — not a straight-line tool dump |
+| US-GE-02 | Should Have (**P2**) | As an agent user, I can ask LeanKG (or a thin companion) to turn a goal into a **DAG of MCP tool/subagent steps** that share graph context and join results |
+| US-GE-03 | Should Have (**P2**) | As an indexer user, symbols that are the same entity under naming variants resolve to one identity (beyond `qualified_name` + `typed_resolve` alone) |
+| US-GE-04 | Should Have (**P2**) | As an agent, I can navigate by **precomputed cluster/neighborhood** as a first-class path (not only rare `get_clusters`) |
+| US-GE-05 | Should Have (**P2**) | As an agent, useful/dead-end query outcomes write back into the graph (or diary/lessons) so the **next** plan improves without manual YAML |
+| US-GE-06 | Could Have (**P3**) | As an ontology author, I can optionally run selective LLM pass-2 extraction for workflows/decisions while YAML remains source of truth |
+
+**Acceptance (US-GE-01):** Analysis checked into `docs/analysis/`; PRD §1.2 + tracker rows exist; competitive notes link the matrix.  
+**Acceptance (US-GE-02..05):** Deferred to implementation PRs — tracker status stays PENDING/NOT_DONE until shipped.  
+**Won't Do:** LeanKG-owned multi-agent Claude runtime; full OpenTrace ticket/ops/trace graph as core; displacing §1.1 P1 queue.
+
 ### 5.19 UI v2 Graph Explorer (v3.7.10)
 
 
@@ -1753,6 +1825,24 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | REL-059 | Must Have (**P0**) | Live smoke documented in `docs/reports/`: (1) edit workflow step → `kg_trace_workflow` updates without restart; (2) boot with stale workflows.yaml triggers sync; (3) sync never blocks `/health` beyond existing ontology timeout policy |
 
 **Won't Do (P0):** Automatic LLM generation of new workflows from code; replacing YAML as source of truth; blocking MCP bind on sync (keep timeout/skip escape).
+
+### 5.23 Graph Engineering curriculum gaps (v3.7.14) — Focus **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-GE-*` / `US-GE-*` / `REL-064`.  
+> **Narrative:** §1.2 / §3.20. **Evidence:** [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).  
+> **Does not preempt** §1.1 / §5.20 company-adoption P1.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-GE-01 | Must Have | Publish fit matrix (Strong / Partial / Missing / Out of scope) for inferred 14-step graph-engineering curriculum vs LeanKG capabilities; link from PRD competitive notes |
+| REL-064 | Must Have | Analysis + PRD §1.2/§3.20/§5.23 + tracker rows landed on `main` |
+| FR-GE-02 | Should Have | Optional graph-aware planner: accept a goal string; emit ordered/parallel MCP tool steps (and optional subagent roles) with shared `project=` context; join/synthesize results without replacing Cursor/Claude as the harness |
+| FR-GE-03 | Should Have | Entity-resolution pass: merge or alias CodeElements that are the same symbol under naming variants; surface confidence; preserve `qualified_name` as canonical when unique |
+| FR-GE-04 | Should Have | Agent-facing cluster/neighborhood navigation: prefer precomputed `cluster_id` (mega-safe) as a discovery path alongside search; document in skills |
+| FR-GE-05 | Should Have | Close self-improve loop: `report_query_outcome` / diary / knowledge write-back feeds a durable artifact agents read on next session (extend existing reflect/diary — do not invent a second memory store) |
+| FR-GE-06 | Could Have | Selective LLM pass-2 extraction for workflow/decision candidates with human/YAML confirm; must not replace procedural YAML SoT |
+
+**Won't Do:** Multi-agent runtime competing with Claude Code/Cursor; OpenTrace-complete ops graph as LeanKG core; full automatic LLM workflow generation without YAML.
 
 ---
 

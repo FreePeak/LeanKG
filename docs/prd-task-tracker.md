@@ -1,13 +1,13 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-21 — Wave **1a** MCP hard-delete (`wake_up`, `search_by_environment`) + agent-surface sync **DONE** (REL-062).
+**Last synced:** 2026-07-21 — Wave **1a** MCP hard-delete **DONE** (REL-062); v3.7.14 graph-engineering curriculum gaps (`US-GE-*` / `FR-GE-*` / `REL-064`) docs DONE.
 **This file is the SoT for task inventory + status.**  
-**PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §3.16 / §3.19 / §5.18 / §5.22  
+**PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
 
 > **Agent rule:** Work **P0 first**, then P1 waves → P2 → P3.  
 > **P0:** Procedural ontology auto-update — **DONE**.  
 > **P1 CURRENT:** Company adoption waves — **Wave 1a = redundant MCP tool cleanup + agent-surface sync**.  
-> **P2 follow-on:** Doc↔code join quality (§3.19 / §5.22) — do **not** interrupt Wave 1a.  
+> **P2 follow-ons:** Doc↔code join (§3.19 / §5.22); graph-engineering curriculum gaps (§1.2 / §3.20 / §5.23) — do **not** interrupt P1 waves.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -38,27 +38,27 @@
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **496** |
-| NOT_DONE | 74 |
-| PENDING | 30 |
+| **Total tracked** | **509** |
+| NOT_DONE | 73 |
+| PENDING | 33 |
 | PARTIAL | 13 |
 | OPEN | 1 |
-| DONE | 375 |
+| DONE | 386 |
 | WONT_DO | 3 |
-| Open work | **118** |
+| Open work | **120** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
-| P1 | 31 |
-| P2 | 77 |
-| P3 | 10 |
+| P1 | 23 |
+| P2 | 85 |
+| P3 | 12 |
 
 | Kind | Count |
 |------|------:|
-| FR | 257 |
-| Release | 63 |
-| User Story | 176 |
+| FR | 263 |
+| Release | 64 |
+| User Story | 182 |
 
 ---
 
@@ -148,6 +148,20 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 ---
 
+
+## Graph Engineering backlog (P2 — after P1 waves)
+
+> Fit matrix: [`analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md). Docs DONE; build gaps do **not** preempt Wave packaging / DOCJOIN priority order.
+
+| # | ID | Status | Intent |
+|--:|----|--------|--------|
+| 1 | `US-GE-01` / `FR-GE-01` / `REL-064` | **DONE** | Publish LeanKG-as-memory-layer fit matrix |
+| 2 | `US-GE-02` / `FR-GE-02` | PENDING / NOT_DONE | Graph-aware planner (goal → MCP DAG) |
+| 3 | `US-GE-03` / `FR-GE-03` | PENDING / NOT_DONE | Cross-alias entity resolution |
+| 4 | `US-GE-04` / `FR-GE-04` | PENDING / NOT_DONE | Cluster-first agent navigation |
+| 5 | `US-GE-05` / `FR-GE-05` | PENDING / NOT_DONE | Closed outcome→graph self-improve loop |
+| 6 | `US-GE-06` / `FR-GE-06` | PENDING / NOT_DONE (P3) | Selective LLM pass-2 (YAML SoT) |
+
 ## Active session — open work (sorted by status, then wave)
 
 > **Sort:** `NOT_DONE` → `PENDING` → `PARTIAL` → `OPEN`, then focus P0→P3, then MoSCoW, then `ve_suborder`, then id.
@@ -168,6 +182,9 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P1** | `FR-SURF-10` | FR | **DONE** | Must Have | Sync using-leankg skill + leankg-first / mandatory-workflow-loop / skill-auto-invoke rules… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `FR-SURF-11` | FR | **DONE** | Must Have | Sync install/setup: scripts/install.sh, mcp-smoke-tools.py, cursor/opencode/claude plugin … | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `REL-062` | Release | **DONE** | Must Have | Evidence: list_tools before/after hard-delete + grep-clean skills/rules/docs/setup of dele… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
+| **P2** | `FR-GE-01` | FR | **DONE** | Must Have | Publish graph-engineering curriculum fit matrix vs LeanKG | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `REL-064` | Release | **DONE** | Must Have | Analysis + PRD §1.2/§3.20/§5.23 + tracker rows on main | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `US-GE-01` | User Story | **DONE** | Must Have | Published fit matrix: LeanKG as graph memory under agent harnesses | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P1** | `FR-GF-22` | FR | **NOT_DONE** | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wa… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-24` | FR | **NOT_DONE** | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redi… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-07` | FR | **NOT_DONE** | Must Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written … | 5.9 Graphify-Inspired Features |
@@ -178,6 +195,10 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P1** | `FR-GF-21` | FR | **NOT_DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **NOT_DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
+| **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-DOCJOIN-02` | FR | **NOT_DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-01` | FR | **NOT_DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-03` | FR | **NOT_DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
@@ -185,6 +206,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `REL-063` | Release | **NOT_DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **NOT_DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
@@ -239,6 +261,10 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `US-DOCJOIN-02` | User Story | **PENDING** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-01` | User Story | **PENDING** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-03` | User Story | **PENDING** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-GE-02` | User Story | **PENDING** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-03` | User Story | **PENDING** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-04` | User Story | **PENDING** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-05` | User Story | **PENDING** | Should Have | Closed self-improve loop: outcome write-back improves next plan | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P1** | `US-GF-14` | User Story | **PENDING** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-17` | User Story | **PENDING** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-13` | User Story | **PENDING** | Must Have | Shareable single-file HTML graph export (leankg export html, bounded subgraph/community) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
@@ -262,6 +288,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `US-UI2-09` | User Story | **PENDING** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
 | **P1** | `FR-COST-01` | FR | **PARTIAL** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `US-COST-01` | User Story | **PARTIAL** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
@@ -293,6 +320,9 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P1** | `FR-SURF-10` | FR | **DONE** | Must Have | Sync using-leankg skill + leankg-first / mandatory-workflow-loop / skill-auto-invoke rules… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `FR-SURF-11` | FR | **DONE** | Must Have | Sync install/setup: scripts/install.sh, mcp-smoke-tools.py, cursor/opencode/claude plugin … | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `REL-062` | Release | **DONE** | Must Have | Evidence: list_tools before/after hard-delete + grep-clean skills/rules/docs/setup of dele… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
+| **P2** | `FR-GE-01` | FR | **DONE** | Must Have | Publish graph-engineering curriculum fit matrix vs LeanKG | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `REL-064` | Release | **DONE** | Must Have | Analysis + PRD §1.2/§3.20/§5.23 + tracker rows on main | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `US-GE-01` | User Story | **DONE** | Must Have | Published fit matrix: LeanKG as graph memory under agent harnesses | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P1** | `FR-GF-22` | FR | **NOT_DONE** | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wa… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-24` | FR | **NOT_DONE** | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redi… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-07` | FR | **NOT_DONE** | Must Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written … | 5.9 Graphify-Inspired Features |
@@ -303,6 +333,10 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P1** | `FR-GF-21` | FR | **NOT_DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **NOT_DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
+| **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-DOCJOIN-02` | FR | **NOT_DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-01` | FR | **NOT_DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-03` | FR | **NOT_DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
@@ -310,9 +344,14 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `REL-063` | Release | **NOT_DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **NOT_DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `US-DOCJOIN-02` | User Story | **PENDING** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-01` | User Story | **PENDING** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-03` | User Story | **PENDING** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
+| **P2** | `US-GE-02` | User Story | **PENDING** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-03` | User Story | **PENDING** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-04` | User Story | **PENDING** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-05` | User Story | **PENDING** | Should Have | Closed self-improve loop: outcome write-back improves next plan | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
@@ -387,6 +426,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `US-UI2-09` | User Story | **PENDING** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
 | **P1** | `FR-COST-01` | FR | **PARTIAL** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `US-COST-01` | User Story | **PARTIAL** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
