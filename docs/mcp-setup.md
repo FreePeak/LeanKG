@@ -2,6 +2,8 @@
 
 LeanKG exposes a Model Context Protocol (MCP) server that AI tools can connect to.
 
+**Tool prefer-order:** See [MCP tools](mcp-tools.md) — overview (`get_overview_context`), search (`concept_search` → `semantic_search` → `search_code`), environment (`env=` on search/`kg_*`). Hard-removed: `wake_up`, `search_by_environment`, and others listed there (~81 tools with embeddings).
+
 ## Automated Setup (Recommended)
 
 Use the install script to install and configure MCP for your AI tool:

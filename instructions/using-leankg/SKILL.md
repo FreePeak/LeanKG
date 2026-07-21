@@ -39,6 +39,13 @@ Do **not** pass a Mac host path (e.g. `/Users/.../leankg`) as `project` against 
 
 ### Prefer-order (discover → exact)
 
+**Session start (overview):**
+```
+get_overview_context(project=…)  # L0+L1 summary — not load_layer(L0) alone
+→ optional load_layer for progressive budgets
+→ get_architecture for deep single-call overview
+```
+
 Natural-language / domain questions:
 
 ```
@@ -76,6 +83,12 @@ mcp_status → find_function / query_file → get_context → impact/deps tools
 | Imports / dependents | `get_dependencies` / `get_dependents` |
 | Tests | `get_tested_by` |
 | NL subgraph | `query_graph` (frontier-local; mega-safe) |
+| Session overview | `get_overview_context` |
+| Environment filter | `env=` on `search_code` / `semantic_search` / `concept_search` / `kg_*` |
+
+### Hard-removed tools (do not call)
+
+`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
 
 ### If mcp_status is not ready (but HTTP health was OK)
 

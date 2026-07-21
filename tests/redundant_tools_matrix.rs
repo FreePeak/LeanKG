@@ -2,7 +2,7 @@
 //!
 //! Every registered tool must appear exactly once in [`TOOL_CLASSIFICATION`].
 //! Overlap relationships live in [`OVERLAP_TABLE`] (documentation + keep-both).
-//! Soft-deprecated tools remain registered; hard-removed tools are asserted absent.
+//! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21).
 //!
 //! Report: `docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`
 //!
@@ -21,8 +21,6 @@ enum Kind {
     Complementary,
     /// Same shape, different domain (e.g. Android nav) — keep both.
     DomainSpecific,
-    /// Soft-deprecated; still registered; prefer replacement (FR-SURF-04/05).
-    SoftDeprecated,
 }
 
 struct ClassEntry {
@@ -41,22 +39,18 @@ struct OverlapEntry {
     note: &'static str,
 }
 
-/// Tools hard-removed (FR-SURF-03 + find_clones hard-delete 2026-07-20).
-const REMOVED_TOOLS: &[&str] = &["mcp_hello", "mcp_impact", "get_doc_for_file", "find_clones"];
+/// Tools hard-removed (FR-SURF-03 + find_clones + FR-SURF-07/08 hard-delete 2026-07-21).
+const REMOVED_TOOLS: &[&str] = &[
+    "mcp_hello",
+    "mcp_impact",
+    "get_doc_for_file",
+    "find_clones",
+    "wake_up",
+    "search_by_environment",
+];
 
 /// Full inventory — must match `ToolRegistry::list_tools()` exactly (one row each).
 const TOOL_CLASSIFICATION: &[ClassEntry] = &[
-    // --- Soft-deprecated (FR-SURF-04 / FR-SURF-05) ---
-    ClassEntry {
-        name: "wake_up",
-        kind: Kind::SoftDeprecated,
-        note: "Prefer get_overview_context (L0+L1). Do not use load_layer(L0) alone.",
-    },
-    ClassEntry {
-        name: "search_by_environment",
-        kind: Kind::SoftDeprecated,
-        note: "Prefer env= on search_code / semantic_search / concept_search / kg_*.",
-    },
     // --- Ops bootstrap ---
     ClassEntry {
         name: "mcp_init",
@@ -158,6 +152,11 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         note: "Ontology coverage diagnostics.",
     },
     ClassEntry {
+        name: "ontology_control",
+        kind: Kind::KeepUnique,
+        note: "FR-ONT-PROC-03 admin sync/status for ontology YAML.",
+    },
+    ClassEntry {
         name: "kg_self_test",
         kind: Kind::KeepUnique,
         note: "Ontology tool smoke; replaces removed mcp_hello.",
@@ -191,12 +190,12 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
     ClassEntry {
         name: "get_overview_context",
         kind: Kind::Complementary,
-        note: "L0+L1 overview; preferred over wake_up.",
+        note: "L0+L1 overview; session-start prefer-order entry.",
     },
     ClassEntry {
         name: "load_layer",
         kind: Kind::Complementary,
-        note: "Progressive L0–L3 layers; not a full wake_up replacement alone.",
+        note: "Progressive L0–L3 layers; not a full overview replacement alone.",
     },
     ClassEntry {
         name: "get_architecture",
@@ -506,16 +505,15 @@ const OVERLAP_TABLE: &[OverlapEntry] = &[
             "search_annotations",
             "search_knowledge",
             "search_by_requirement",
-            "search_by_environment",
         ],
         kind: Kind::DomainSpecific,
         note: "Prefer-order: concept_search → semantic_search → search_code; others entity-scoped.",
     },
     OverlapEntry {
         primary: "get_architecture",
-        related: &["get_overview_context", "wake_up", "load_layer"],
+        related: &["get_overview_context", "load_layer"],
         kind: Kind::Complementary,
-        note: "Deep arch vs overview vs deprecated wake_up vs progressive layers.",
+        note: "Deep arch vs overview vs progressive layers.",
     },
     OverlapEntry {
         primary: "get_graph_schema",
@@ -563,12 +561,12 @@ fn registered() -> HashSet<String> {
 }
 
 #[test]
-fn removed_superseded_tools_are_absent_from_registry() {
+fn hard_removed_tools_are_absent_from_registry() {
     let reg = registered();
     for tool in REMOVED_TOOLS {
         assert!(
             !reg.contains(*tool),
-            "removed tool `{tool}` still registered"
+            "hard-removed tool `{tool}` still registered"
         );
     }
 }
@@ -599,44 +597,6 @@ fn replacement_tools_remain_registered() {
             "kg_semantic_context missing with embeddings feature"
         );
     }
-}
-
-#[test]
-fn soft_deprecated_tools_mark_replacement_in_description() {
-    let tools = ToolRegistry::list_tools();
-    let wake = tools
-        .iter()
-        .find(|t| t.name == "wake_up")
-        .expect("wake_up still registered during deprecation window");
-    assert!(
-        wake.description.contains("DEPRECATED")
-            && wake.description.contains("get_overview_context"),
-        "wake_up must soft-deprecate toward get_overview_context: {}",
-        wake.description
-    );
-
-    let env_search = tools
-        .iter()
-        .find(|t| t.name == "search_by_environment")
-        .expect("search_by_environment still registered");
-    assert!(
-        env_search.description.contains("DEPRECATED")
-            && (env_search.description.contains("env=")
-                || env_search.description.contains("env =")),
-        "search_by_environment must point to env= on primary tools: {}",
-        env_search.description
-    );
-
-    let soft: Vec<_> = TOOL_CLASSIFICATION
-        .iter()
-        .filter(|e| e.kind == Kind::SoftDeprecated)
-        .map(|e| e.name)
-        .collect();
-    assert_eq!(
-        soft,
-        vec!["wake_up", "search_by_environment"],
-        "unexpected SoftDeprecated set: {soft:?}"
-    );
 }
 
 #[test]

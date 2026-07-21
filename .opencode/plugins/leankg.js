@@ -25,10 +25,11 @@ LeanKG is a lightweight knowledge graph for codebase understanding.
 - \`get_dependents\` - Get files depending on target
 - \`get_context\` - Get AI-optimized context for a file
 - \`get_tested_by\` - Get test coverage info
+- \`get_overview_context\` - Session-start L0+L1 overview
+- \`find_related_docs\` - Find documentation related to a change
 - \`query_file\` - Find files by name/pattern
 - \`get_call_graph\` - Get function call chains
 - \`find_large_functions\` - Find oversized functions
-- \`get_doc_for_file\` - Get documentation for a file
 - \`get_traceability\` - Get full traceability chain
 - \`get_code_tree\` - Get codebase structure
 - \`get_doc_tree\` - Get documentation tree

@@ -295,7 +295,7 @@ fn get_cases() -> Vec<CaseDef> {
             id: "C8",
             category: "overview",
             complexity: "complex",
-            tool: "wake_up",
+            tool: "get_overview_context",
             query: "project overview",
         },
     ]
@@ -522,12 +522,15 @@ fn run_leankg(
                 n,
             )
         }
-        "wake_up" => {
+        "get_overview_context" => {
+            let l0 = graph.identity_context("project").unwrap_or_default();
+            let l1 = graph.critical_facts_context().unwrap_or_default();
             let summary = graph
                 .wake_up_summary()
                 .unwrap_or_else(|e| format!("error: {}", e));
-            let n = summary.lines().count();
-            ("wake_up_summary()".to_string(), summary, n)
+            let output = format!("{}\n{}\n{}", l0, l1, summary);
+            let n = output.lines().count();
+            ("get_overview_context()".to_string(), output, n)
         }
         _ => (String::new(), format!("unknown tool: {}", cd.tool), 0),
     };
@@ -587,7 +590,7 @@ fn manual_cmd(cd: &CaseDef) -> String {
         "concept_search" => format!("grep -rn --include='*.rs' -l -i '{}' src/ | wc -l", cd.query.replace(" ", ".*")),
         "kg_context" => format!("grep -rn --include='*.rs' -l -i '{}' src/ docs/ 2>/dev/null | wc -l", cd.query.replace(" ", ".*")),
         "ontology_status" => "grep -rn --include='*.rs' 'concept' src/ontology/ | wc -l".to_string(),
-        "wake_up" => "find src -name '*.rs' | head -20 && echo '---' && find src -name '*.rs' | wc -l".to_string(),
+        "get_overview_context" => "find src -name '*.rs' | head -20 && echo '---' && find src -name '*.rs' | wc -l".to_string(),
         _ => format!("echo 'unknown tool: {}'", cd.tool),
     }
 }
@@ -595,7 +598,7 @@ fn manual_cmd(cd: &CaseDef) -> String {
 fn count_results(cd: &CaseDef, stdout: &str) -> usize {
     let trimmed = stdout.trim();
     match cd.tool {
-        "get_context" | "wake_up" => trimmed.lines().count(),
+        "get_context" | "get_overview_context" => trimmed.lines().count(),
         _ => trimmed.parse::<usize>().unwrap_or(0),
     }
 }

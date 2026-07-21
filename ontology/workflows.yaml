@@ -431,8 +431,8 @@ workflows:
       - id: tag_environment
         name: Tag with Environment
         code_refs:
-          - src/mcp/handler.rs::search_by_environment
           - src/mcp/handler.rs::promote_environment
+          - src/mcp/handler.rs::get_service_context
         failure_modes:
           - environment_mismatch
 
