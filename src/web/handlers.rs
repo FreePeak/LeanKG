@@ -3485,6 +3485,41 @@ pub async fn api_index_status(State(state): State<AppState>) -> impl IntoRespons
     }
 }
 
+/// Fingerprint of the rust_embed UI baked into this binary (OnRender deploy verification).
+#[allow(dead_code)]
+pub async fn api_ui_build() -> impl IntoResponse {
+    let mut payload = serde_json::json!({
+        "ui": "ui-v2",
+        "source": "rust_embed",
+    });
+    if let Some(bytes) = crate::embed::get("ui-build.json") {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            payload = v;
+            if payload.get("ui").is_none() {
+                payload["ui"] = serde_json::json!("ui-v2");
+            }
+        }
+    }
+    // Always advertise whether the HTML shell is LeanKG (ui-v2) vs legacy title "ui".
+    if let Some(html) = crate::embed::get("index.html") {
+        let s = String::from_utf8_lossy(&html);
+        payload["index_title_leankg"] = serde_json::json!(s.contains("<title>LeanKG</title>"));
+        payload["index_title_legacy_ui"] = serde_json::json!(s.contains("<title>ui</title>"));
+        if let Some(cap) = s
+            .split("src=\"/assets/")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+        {
+            payload["index_js"] = serde_json::json!(cap);
+        }
+    }
+    ApiResponse {
+        success: true,
+        data: Some(payload),
+        error: None,
+    }
+}
+
 /// Invalidate all caches - call this after indexing or data changes
 pub async fn api_invalidate_cache(State(state): State<AppState>) -> impl IntoResponse {
     state.invalidate_graph_cache().await;

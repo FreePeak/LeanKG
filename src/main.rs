@@ -3426,29 +3426,54 @@ fn find_ui_dist_path() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. Check ui/dist relative to current working directory
+    // 2. Prefer ui-v2/dist (current explorer shell)
+    let cwd_ui_v2 = std::path::Path::new("ui-v2/dist");
+    if cwd_ui_v2.join("index.html").exists() {
+        println!(
+            "📦 Using UI from current directory: {}",
+            cwd_ui_v2.display()
+        );
+        return Some(cwd_ui_v2.to_path_buf());
+    }
+
+    // 3. Legacy ui/dist (Phase-1 only; do not use for OnRender / releases)
     let cwd_ui = std::path::Path::new("ui/dist");
     if cwd_ui.join("index.html").exists() {
-        println!("📦 Using UI from current directory: {}", cwd_ui.display());
+        println!("📦 Using UI from legacy ui/dist: {}", cwd_ui.display());
         return Some(cwd_ui.to_path_buf());
     }
 
-    // 3. Check ui/dist relative to the executable's directory
-    // This handles binary installations like /usr/local/bin/leankg
+    // 4. Check relative to the executable's directory
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            // Try ../share/leankg/ui/dist (common Linux installation)
-            let share_ui = exe_dir.join("../share/leankg/ui/dist");
-            if share_ui.join("index.html").exists() {
-                let path = share_ui.canonicalize().ok().unwrap_or(share_ui);
+            let share_v2 = exe_dir.join("../share/leankg/ui-v2/dist");
+            if share_v2.join("index.html").exists() {
+                let path = share_v2.canonicalize().ok().unwrap_or(share_v2);
                 println!("📦 Using UI from share directory: {}", path.display());
                 return Some(path);
             }
-            // Try exe_dir/ui/dist (development and macOS brew)
+            let exe_v2 = exe_dir.join("ui-v2/dist");
+            if exe_v2.join("index.html").exists() {
+                let path = exe_v2.canonicalize().ok().unwrap_or(exe_v2);
+                println!("📦 Using UI from executable directory: {}", path.display());
+                return Some(path);
+            }
+            let share_ui = exe_dir.join("../share/leankg/ui/dist");
+            if share_ui.join("index.html").exists() {
+                let path = share_ui.canonicalize().ok().unwrap_or(share_ui);
+                println!(
+                    "📦 Using UI from legacy share directory: {}",
+                    path.display()
+                );
+                return Some(path);
+            }
             let exe_ui = exe_dir.join("ui/dist");
             if exe_ui.join("index.html").exists() {
                 let path = exe_ui.canonicalize().ok().unwrap_or(exe_ui);
-                println!("📦 Using UI from executable directory: {}", path.display());
+                println!(
+                    "📦 Using UI from legacy executable directory: {}",
+                    path.display()
+                );
                 return Some(path);
             }
         }

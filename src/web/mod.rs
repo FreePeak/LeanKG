@@ -311,9 +311,16 @@ async fn serve_embedded_file(path: &str) -> Response {
 
     if let Some(data) = embed::get(file_path) {
         let ct = content_type_for_path(file_path);
-        Response::builder()
+        let mut builder = Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, ct)
+            .header(header::CONTENT_TYPE, ct);
+        // Prevent CDN/browser from pinning a stale HTML shell to old hashed assets.
+        if file_path.ends_with(".html") || file_path == "index.html" {
+            builder = builder
+                .header(header::CACHE_CONTROL, "no-store, must-revalidate")
+                .header("X-LeanKG-UI", "ui-v2");
+        }
+        builder
             .body(Body::from(data.to_vec()))
             .unwrap_or_else(|_| internal_error())
     } else {
@@ -399,6 +406,7 @@ pub async fn start_server(
         .route("/api/query", post(handlers::api_query))
         .route("/api/project/switch", post(handlers::api_switch_path))
         .route("/api/index/status", get(handlers::api_index_status))
+        .route("/api/ui-build", get(handlers::api_ui_build))
         .route(
             "/api/cache/invalidate",
             post(handlers::api_invalidate_cache),

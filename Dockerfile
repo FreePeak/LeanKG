@@ -4,7 +4,7 @@ FROM rust:1-bookworm
 WORKDIR /app
 
 # Cache-bust: bump when OnRender sticks on a stale UI layer.
-ARG UI_EMBED_REV=2026-07-21-load-more
+ARG UI_EMBED_REV=2026-07-21-onrender-rca2
 
 RUN apt-get update && apt-get install -y clang git curl && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
@@ -23,7 +23,8 @@ COPY ontology/ ./ontology/
 # Always overwrite committed embed with freshly built ui-v2; refuse legacy title "ui".
 RUN rm -rf src/embed/* && cp -r ui-v2/dist/* src/embed/ \
     && test -f src/embed/index.html \
-    && grep -q '<title>LeanKG</title>' src/embed/index.html
+    && grep -q '<title>LeanKG</title>' src/embed/index.html \
+    && printf '{"ui":"ui-v2","rev":"%s","source":"Dockerfile"}\n' "${UI_EMBED_REV}" > src/embed/ui-build.json
 
 # US-CBM-C1 / FR-HNSW-C: build with the `embeddings` feature so semantic
 # tools work out of the box (HNSW-backed semantic_search, embed, smoke-test).

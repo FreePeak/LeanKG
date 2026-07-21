@@ -281,3 +281,76 @@ concepts:
       - src/indexer/maven_extractor.rs
     docs:
       - docs/microservices.md
+  - id: ui_v2_explorer
+    type_: domain_entity
+    name: UI v2 Graph Explorer
+    env: local
+    aliases:
+      - ui-v2
+      - GitNexus shell
+      - graph explorer
+    description: Vite+React+Sigma explorer under ui-v2/ — topology overview, expand-service replace-graph, Load more pagination, hierarchical Folders & files sidebar.
+    owned_by:
+      - web
+    code_refs:
+      - ui-v2/src/App.tsx
+      - ui-v2/src/lib/file-tree.ts
+      - ui-v2/src/lib/graph-merge.ts
+      - ui-v2/src/services/backend-client.ts
+    docs:
+      - ui-v2/README.md
+      - docs/reports/ui-v2-sidebar-nav-loadmore-deep-test-2026-07-21.md
+
+  - id: rust_embed_web_ui
+    type_: domain_entity
+    name: Rust-Embedded Web UI
+    env: local
+    aliases:
+      - src/embed
+      - rust_embed
+      - leankg web
+    description: Production UI bytes compiled into the leankg binary via rust_embed from src/embed/; served by leankg web/serve. Must be baked from ui-v2 (title LeanKG), never legacy ui/.
+    owned_by:
+      - web
+    code_refs:
+      - src/embed.rs
+      - src/web/mod.rs::serve_embedded_file
+      - src/web/handlers.rs::api_ui_build
+      - Dockerfile
+    docs:
+      - docs/reports/root_cause_onrender_legacy_ui.md
+
+  - id: onrender_deployment
+    type_: domain_entity
+    name: OnRender Deployment
+    env: prod
+    aliases:
+      - leankg.onrender.com
+      - Render Docker deploy
+    description: Free-tier Render web service builds ./Dockerfile (ui-v2 → embed → cargo) and runs leankg web. Stale images serve Apr-2026 legacy title ui until Manual Deploy + clear build cache.
+    owned_by:
+      - web
+    code_refs:
+      - Dockerfile
+      - render.yaml
+      - .github/workflows/release.yml
+    docs:
+      - docs/reports/root_cause_onrender_legacy_ui.md
+
+  - id: expand_service_pagination
+    type_: domain_entity
+    name: Expand-Service Pagination
+    env: local
+    aliases:
+      - load more graph
+      - expand limit offset
+    description: GET /api/graph/expand-service?limit=&offset= with hasMore; UI default page 500 then Load more (+200) merges into the canvas without replace.
+    owned_by:
+      - web
+      - graph
+    code_refs:
+      - src/web/handlers.rs::api_graph_expand_service
+      - src/graph/query.rs::get_elements_in_folder
+      - ui-v2/src/lib/graph-merge.ts
+    docs:
+      - docs/reports/root_cause_expand_examples_hides_src.md

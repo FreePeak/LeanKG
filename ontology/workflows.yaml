@@ -474,3 +474,85 @@ workflows:
           - src/graph/persistent_cache.rs
         failure_modes:
           - cache_invalidation_error
+
+  - id: onrender_ui_deploy_flow
+    name: OnRender UI Deploy Flow
+    env: prod
+    aliases:
+      - render docker bake
+      - leankg.onrender.com deploy
+    description: Build ui-v2, overwrite src/embed, compile rust_embed into leankg, deploy Render Docker image; verify with /api/ui-build (not legacy title ui).
+    entry_points:
+      - Dockerfile
+    steps:
+      - id: npm_build_ui_v2
+        name: Build ui-v2 production bundle
+        code_refs:
+          - ui-v2/package.json
+          - Dockerfile
+        failure_modes:
+          - npm_ci_failure
+          - typescript_build_error
+      - id: bake_embed
+        name: Copy dist into src/embed and write ui-build.json
+        code_refs:
+          - Dockerfile
+          - src/embed.rs
+        failure_modes:
+          - legacy_title_ui
+          - missing_index_html
+      - id: cargo_release
+        name: Compile leankg with rust_embed
+        code_refs:
+          - src/embed.rs
+          - src/web/mod.rs::start_server
+        failure_modes:
+          - compile_error
+          - stale_docker_layer
+      - id: verify_ui_build
+        name: Verify live UI fingerprint
+        code_refs:
+          - src/web/handlers.rs::api_ui_build
+          - src/web/mod.rs::serve_embedded_file
+        failure_modes:
+          - stuck_old_image
+          - render_cache_not_cleared
+
+  - id: ui_v2_explore_expand_flow
+    name: UI v2 Explore and Expand Flow
+    env: local
+    aliases:
+      - double-click expand
+      - load more sidebar
+    description: User opens explorer, expands a folder/service (replace-graph), optionally Load more merges pages, sidebar Folders & files stay in session across Overview.
+    entry_points:
+      - ui-v2/src/App.tsx
+    steps:
+      - id: load_topology
+        name: Load service topology overview
+        code_refs:
+          - ui-v2/src/services/backend-client.ts
+          - src/web/handlers.rs::api_service_topology
+      - id: drill_expand
+        name: Expand path via expand-service
+        code_refs:
+          - ui-v2/src/App.tsx
+          - src/web/handlers.rs::api_graph_expand_service
+        failure_modes:
+          - wrong_project_rocksdb
+          - examples_flood_first_page
+      - id: load_more_merge
+        name: Load more merge into canvas
+        code_refs:
+          - ui-v2/src/lib/graph-merge.ts
+          - src/graph/query.rs::get_elements_in_folder
+        failure_modes:
+          - has_more_false_bug
+      - id: sidebar_session
+        name: Update Folders & files session tree
+        code_refs:
+          - ui-v2/src/lib/file-tree.ts
+          - ui-v2/src/components/FileTreePanel.tsx
+        failure_modes:
+          - files_only_filter
+          - empty_after_overview
