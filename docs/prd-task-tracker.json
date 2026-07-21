@@ -1,27 +1,13 @@
 {
-  "generated": "2026-07-21T14:00:00+07:00",
+  "generated": "2026-07-21",
   "source": "docs/prd.md",
   "counts": {
-    "total": 496,
-    "by_status": {
-      "NOT_DONE": 68,
-      "PENDING": 28,
-      "PARTIAL": 13,
-      "OPEN": 1,
-      "DONE": 383,
-      "WONT_DO": 3
-    },
-    "open_work": 110,
-    "open_by_focus": {
-      "P2": 77,
-      "P1": 23,
-      "P3": 10
-    },
-    "by_kind": {
-      "FR": 257,
-      "Release": 63,
-      "User Story": 176
-    }
+    "DONE": 386,
+    "PARTIAL": 13,
+    "PENDING": 33,
+    "NOT_DONE": 73,
+    "WONT_DO": 3,
+    "OPEN": 1
   },
   "tasks": [
     {
@@ -6471,6 +6457,175 @@
       "focus": "P2",
       "focus_rank": 2,
       "ve_suborder": 95
+    },
+    {
+      "id": "FR-GE-01",
+      "kind": "FR",
+      "title": "Publish graph-engineering curriculum fit matrix vs LeanKG",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md",
+      "section": "5.23 Graph Engineering curriculum gaps (v3.7.14)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 1
+    },
+    {
+      "id": "FR-GE-02",
+      "kind": "FR",
+      "title": "Optional graph-aware planner: goal \u2192 MCP tool/subagent DAG with join over shared graph",
+      "priority": "Should Have",
+      "status": "NOT_DONE",
+      "notes": "[ ]",
+      "section": "5.23 Graph Engineering curriculum gaps (v3.7.14)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "FR-GE-03",
+      "kind": "FR",
+      "title": "Cross-alias entity resolution beyond qualified_name + typed_resolve",
+      "priority": "Should Have",
+      "status": "NOT_DONE",
+      "notes": "[ ]",
+      "section": "5.23 Graph Engineering curriculum gaps (v3.7.14)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "FR-GE-04",
+      "kind": "FR",
+      "title": "Cluster-first agent navigation via precomputed cluster_id (mega-safe)",
+      "priority": "Should Have",
+      "status": "NOT_DONE",
+      "notes": "[ ]",
+      "section": "5.23 Graph Engineering curriculum gaps (v3.7.14)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "FR-GE-05",
+      "kind": "FR",
+      "title": "Closed self-improve loop: outcome \u2192 diary/knowledge \u2192 next plan",
+      "priority": "Should Have",
+      "status": "NOT_DONE",
+      "notes": "[ ]",
+      "section": "5.23 Graph Engineering curriculum gaps (v3.7.14)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "FR-GE-06",
+      "kind": "FR",
+      "title": "Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT)",
+      "priority": "Could Have",
+      "status": "NOT_DONE",
+      "notes": "[ ]",
+      "section": "5.23 Graph Engineering curriculum gaps (v3.7.14)",
+      "prd_line": null,
+      "focus": "P3",
+      "ve_suborder": null,
+      "moscow_rank": 3
+    },
+    {
+      "id": "REL-064",
+      "kind": "Release",
+      "title": "Analysis + PRD \u00a71.2/\u00a73.20/\u00a75.23 + tracker rows on main",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "v3.7.14",
+      "section": "5.23 Graph Engineering curriculum gaps (v3.7.14)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 1
+    },
+    {
+      "id": "US-GE-01",
+      "kind": "User Story",
+      "title": "Published fit matrix: LeanKG as graph memory under agent harnesses",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "docs DONE",
+      "section": "3.20 Graph Engineering curriculum gaps (US-GE)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 1
+    },
+    {
+      "id": "US-GE-02",
+      "kind": "User Story",
+      "title": "Graph-aware planner: goal \u2192 MCP tool/subagent DAG over shared LeanKG graph",
+      "priority": "Should Have",
+      "status": "PENDING",
+      "notes": "",
+      "section": "3.20 Graph Engineering curriculum gaps (US-GE)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "US-GE-03",
+      "kind": "User Story",
+      "title": "Cross-alias entity resolution for same-symbol naming variants",
+      "priority": "Should Have",
+      "status": "PENDING",
+      "notes": "",
+      "section": "3.20 Graph Engineering curriculum gaps (US-GE)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "US-GE-04",
+      "kind": "User Story",
+      "title": "Cluster-first agent navigation (precomputed neighborhoods)",
+      "priority": "Should Have",
+      "status": "PENDING",
+      "notes": "",
+      "section": "3.20 Graph Engineering curriculum gaps (US-GE)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "US-GE-05",
+      "kind": "User Story",
+      "title": "Closed self-improve loop: outcome write-back improves next plan",
+      "priority": "Should Have",
+      "status": "PENDING",
+      "notes": "",
+      "section": "3.20 Graph Engineering curriculum gaps (US-GE)",
+      "prd_line": null,
+      "focus": "P2",
+      "ve_suborder": null,
+      "moscow_rank": 2
+    },
+    {
+      "id": "US-GE-06",
+      "kind": "User Story",
+      "title": "Selective LLM pass-2 for workflows/decisions (YAML remains SoT)",
+      "priority": "Could Have",
+      "status": "PENDING",
+      "notes": "",
+      "section": "3.20 Graph Engineering curriculum gaps (US-GE)",
+      "prd_line": null,
+      "focus": "P3",
+      "ve_suborder": null,
+      "moscow_rank": 3
     }
   ],
   "meta": {
