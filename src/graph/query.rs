@@ -916,7 +916,6 @@ impl GraphEngine {
                     &query_str,
                     std::collections::BTreeMap::new(),
                 )?;
-                let total_count = result.rows.len();
 
                 let elements: Vec<CodeElement> = result
                     .rows
@@ -943,6 +942,11 @@ impl GraphEngine {
                         }
                     })
                     .collect();
+
+                // Full page ⇒ more rows may exist. (Do not use rows.len() as total_count —
+                // Cozo :limit returns only the page, so offset+limit < rows.len() was always false.)
+                let has_more = elements.len() >= limit;
+                let total_count = offset + elements.len() + if has_more { 1 } else { 0 };
 
                 let element_qns: std::collections::HashSet<String> =
                     elements.iter().map(|e| e.qualified_name.clone()).collect();
@@ -979,7 +983,6 @@ impl GraphEngine {
                     })
                     .collect();
 
-                let has_more = offset + limit < total_count;
                 return Ok(ChildrenResult {
                     elements,
                     relationships,

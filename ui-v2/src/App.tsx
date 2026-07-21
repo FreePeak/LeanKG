@@ -17,9 +17,12 @@ import {
   shouldConfirmGraphLoad,
 } from './lib/graph-load-decision';
 import {
+  EXPAND_INITIAL_LIMIT,
+  EXPAND_LOAD_MORE_LIMIT,
   LARGE_GRAPH_EDGE_THRESHOLD,
   LARGE_GRAPH_NODE_THRESHOLD,
 } from './lib/constants';
+import { mergeKnowledgeGraphs, nextExpandOffset } from './lib/graph-merge';
 import type { KnowledgeGraph, GraphNode } from './core/graph/types';
 import { isContainerNode } from './lib/node-kinds';
 import {
@@ -37,6 +40,13 @@ interface Crumb {
   label: string;
   /** Empty path = topology overview */
   path: string;
+}
+
+/** Pagination cursor for the last expand-service replace (Load more merges). */
+interface ExpandPaging {
+  path: string;
+  nextOffset: number;
+  hasMore: boolean;
 }
 
 export default function App() {
@@ -59,6 +69,10 @@ export default function App() {
   const [skipInfo, setSkipInfo] = useState<{ nodes: number; edges: number } | null>(null);
   const [project, setProject] = useUrlProject();
   const [breadcrumbs, setBreadcrumbs] = useState<Crumb[]>([{ label: 'Overview', path: '' }]);
+  const [expandPaging, setExpandPaging] = useState<ExpandPaging | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  /** Last expand/load-more nodes for sidebar — kept when navigating back to topology overview. */
+  const [sessionExplorerNodes, setSessionExplorerNodes] = useState<GraphNode[]>([]);
 
   const filters = useGraphFilters();
 
@@ -85,6 +99,19 @@ export default function App() {
     [layoutMode, rebuildLayout],
   );
 
+  const applyExpandPage = useCallback(
+    (path: string, page: { graph: KnowledgeGraph; hasMore: boolean; limit: number; offset: number }) => {
+      applyGraph(page.graph);
+      setSessionExplorerNodes(page.graph.nodes);
+      setExpandPaging({
+        path,
+        nextOffset: nextExpandOffset(page.offset, page.limit),
+        hasMore: page.hasMore,
+      });
+    },
+    [applyGraph],
+  );
+
   const loadTopologyOverview = useCallback(async () => {
     setViewMode('loading');
     setError(null);
@@ -92,6 +119,7 @@ export default function App() {
       const topo = await fetchServiceTopology();
       setTopologyKg(topo);
       applyGraph(topo);
+      setExpandPaging(null);
       setBreadcrumbs([{ label: 'Overview', path: '' }]);
       setViewMode('exploring');
       setStatusText(`Topology overview · ${topo.nodeCount} nodes`);
@@ -107,8 +135,11 @@ export default function App() {
       setViewMode('loading');
       setError(null);
       try {
-        const data = await expandService(path, true, project || undefined);
-        applyGraph(data);
+        const page = await expandService(path, true, project || undefined, {
+          limit: EXPAND_INITIAL_LIMIT,
+          offset: 0,
+        });
+        applyExpandPage(path, page);
         const base = fromCrumbs ?? breadcrumbs;
         const next = [...base.filter((c) => c.path !== path), { label, path }];
         if (!next.some((c) => c.path === '')) {
@@ -116,15 +147,53 @@ export default function App() {
         }
         setBreadcrumbs(next);
         setViewMode('exploring');
-        setStatusText(`Expanded · ${label} · ${data.nodeCount} nodes`);
+        const moreHint = page.hasMore ? ` · has more` : '';
+        setStatusText(`Expanded · ${label} · ${page.graph.nodeCount} nodes${moreHint}`);
         filters.resetToStructuralDefaults();
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
         setViewMode('exploring');
       }
     },
-    [applyGraph, breadcrumbs, filters, project],
+    [applyExpandPage, breadcrumbs, filters, project],
   );
+
+  const loadMoreNodes = useCallback(async () => {
+    if (!expandPaging?.hasMore || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const page = await expandService(expandPaging.path, true, project || undefined, {
+        limit: EXPAND_LOAD_MORE_LIMIT,
+        offset: expandPaging.nextOffset,
+      });
+      if (page.graph.nodeCount === 0) {
+        setExpandPaging({ ...expandPaging, hasMore: false });
+        setStatusText(`All nodes loaded · ${kg?.nodeCount ?? 0} nodes`);
+        return;
+      }
+      setKg((prev) => {
+        const merged = prev
+          ? mergeKnowledgeGraphs(prev, page.graph)
+          : page.graph;
+        rebuildLayout(merged);
+        setSessionExplorerNodes(merged.nodes);
+        setStatusText(
+          `Loaded ${merged.nodeCount} nodes (+${page.graph.nodeCount}) · offset ${expandPaging.nextOffset}`,
+        );
+        return merged;
+      });
+      setExpandPaging({
+        path: expandPaging.path,
+        nextOffset: nextExpandOffset(expandPaging.nextOffset, page.limit),
+        hasMore: page.hasMore,
+      });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [expandPaging, loadingMore, project, rebuildLayout]);
 
   const onNodeDoubleClick = useCallback(
     (nodeId: string) => {
@@ -164,6 +233,7 @@ export default function App() {
       if (crumb.path === '') {
         if (topologyKg) {
           applyGraph(topologyKg);
+          setExpandPaging(null);
           setBreadcrumbs([{ label: 'Overview', path: '' }]);
           setViewMode('exploring');
           setStatusText(`Topology overview · ${topologyKg.nodeCount} nodes`);
@@ -214,6 +284,7 @@ export default function App() {
             const topo = await fetchServiceTopology();
             setTopologyKg(topo);
             applyGraph(topo);
+            setExpandPaging(null);
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
             setViewMode('overview');
             setStatusText('Overview (graph skipped — mega-graph gate)');
@@ -224,6 +295,7 @@ export default function App() {
           } catch {
             setKg({ nodes: [], relationships: [], nodeCount: 0, relationshipCount: 0 });
             setSigmaGraph(null);
+            setExpandPaging(null);
             setViewMode('overview');
             setStatusText('Overview (graph skipped — mega-graph gate)');
           }
@@ -231,6 +303,8 @@ export default function App() {
         }
 
         let data: KnowledgeGraph;
+        let paging: ExpandPaging | null = null;
+        const expandOpts = { limit: EXPAND_INITIAL_LIMIT, offset: 0 };
         try {
           const params = new URLSearchParams(window.location.search);
           const expandPath = params.get('path');
@@ -239,7 +313,18 @@ export default function App() {
           setTopologyKg(topo);
           const topoHasSingle = topo.nodes.length === 1;
           if (expandPath) {
-            data = await expandService(expandPath, true, project || undefined);
+            const page = await expandService(
+              expandPath,
+              true,
+              project || undefined,
+              expandOpts,
+            );
+            data = page.graph;
+            paging = {
+              path: expandPath,
+              nextOffset: nextExpandOffset(page.offset, page.limit),
+              hasMore: page.hasMore,
+            };
             setBreadcrumbs([
               { label: 'Overview', path: '' },
               { label: expandPath, path: expandPath },
@@ -247,34 +332,56 @@ export default function App() {
           } else if (wantExpand || topoHasSingle) {
             const root = topo.nodes[0];
             const path = root ? String(root.properties.filePath || '.') : '.';
+            let page;
             try {
-              data = await expandService(path, true, project || undefined);
+              page = await expandService(path, true, project || undefined, expandOpts);
             } catch {
-              data = await expandService('.', true, project || undefined);
+              page = await expandService('.', true, project || undefined, expandOpts);
             }
-            if (data.nodeCount === 0) {
-              data = await expandService('.', true, project || undefined);
+            if (page.graph.nodeCount === 0) {
+              page = await expandService('.', true, project || undefined, expandOpts);
             }
+            data = page.graph;
+            paging = {
+              path: path === project || path === `${project}/` ? '.' : path,
+              nextOffset: nextExpandOffset(page.offset, page.limit),
+              hasMore: page.hasMore,
+            };
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
           } else if (topo.nodes.length > 1) {
             data = topo;
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
           } else {
-            data = await expandService('.', true, project || undefined);
+            const page = await expandService('.', true, project || undefined, expandOpts);
+            data = page.graph;
+            paging = {
+              path: '.',
+              nextOffset: nextExpandOffset(page.offset, page.limit),
+              hasMore: page.hasMore,
+            };
             setBreadcrumbs([{ label: 'Overview', path: '' }]);
           }
           if (data.nodeCount === 0 && topo.nodes.length > 0) {
             data = topo;
+            paging = null;
           }
         } catch {
           data = await fetchServiceTopology();
           setTopologyKg(data);
+          paging = null;
           setBreadcrumbs([{ label: 'Overview', path: '' }]);
         }
 
         applyGraph(data);
+        setExpandPaging(paging);
+        if (paging) {
+          setSessionExplorerNodes(data.nodes);
+        }
         setViewMode('exploring');
-        setStatusText(`Loaded ${data.nodeCount} nodes / ${data.relationshipCount} edges`);
+        const moreHint = paging?.hasMore ? ' · has more' : '';
+        setStatusText(
+          `Loaded ${data.nodeCount} nodes / ${data.relationshipCount} edges${moreHint}`,
+        );
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
         setViewMode('onboarding');
@@ -439,7 +546,10 @@ export default function App() {
           <FileTreePanel
             collapsed={leftCollapsed}
             onToggle={() => setLeftCollapsed((v) => !v)}
-            nodes={kg?.nodes ?? []}
+            nodes={
+              sessionExplorerNodes.length > 0 ? sessionExplorerNodes : (kg?.nodes ?? [])
+            }
+            projectPath={project || undefined}
             allNodeTypes={filters.allNodeTypes}
             visibleLabels={filters.visibleLabels}
             visibleEdges={filters.visibleEdgeTypes}
@@ -449,6 +559,9 @@ export default function App() {
             onDepth={filters.setDepthFilter}
             onResetFilters={filters.resetToStructuralDefaults}
             onSelectNode={setSelectedId}
+            onOpenFolder={(path, label) => {
+              void drillIntoPath(path || '.', label);
+            }}
             selectedId={selectedId}
           />
           <div className="relative flex-1 min-w-0 min-h-0 h-full flex flex-col">
@@ -464,6 +577,28 @@ export default function App() {
               layoutMode={layoutMode}
             />
             <CodePanel node={selectedNode} onClose={() => setSelectedId(null)} />
+            {expandPaging?.hasMore && viewMode === 'exploring' && (
+              <div
+                data-testid="load-more-banner"
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 rounded-lg bg-elevated border border-border-default shadow-glow-soft"
+              >
+                <span className="text-xs text-text-secondary">
+                  Showing {kg?.nodeCount ?? 0} nodes
+                  {expandPaging.hasMore ? ' · more available' : ''}
+                </span>
+                <button
+                  type="button"
+                  data-testid="load-more-nodes"
+                  disabled={loadingMore}
+                  onClick={() => void loadMoreNodes()}
+                  className="text-xs px-2 py-1 rounded bg-accent text-white disabled:opacity-50"
+                >
+                  {loadingMore
+                    ? 'Loading…'
+                    : `Load more (+${EXPAND_LOAD_MORE_LIMIT})`}
+                </button>
+              </div>
+            )}
             {viewMode === 'overview' && (
               <div
                 data-testid="mega-graph-banner"

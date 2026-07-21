@@ -232,6 +232,19 @@
       "ve_suborder": 0
     },
     {
+      "id": "US-UI2-11",
+      "kind": "User Story",
+      "title": "Load more expand pages merge into current graph (500 then +200)",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 — expand limit/offset + hasMore fix + Load more merge UI",
+      "section": "3.17 UI v2",
+      "prd_line": null,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 0
+    },
+    {
       "id": "FR-UI2-12",
       "kind": "FR",
       "title": "expandService replace-graph + CodePanel file gate + directory /api/file error",
@@ -245,12 +258,38 @@
       "ve_suborder": 0
     },
     {
+      "id": "FR-UI2-13",
+      "kind": "FR",
+      "title": "expand-service pagination + Load more merge (+200) into kg",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 — FR-UI2-13 / REL-058; root has_more fixed",
+      "section": "5.19 UI v2",
+      "prd_line": null,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 0
+    },
+    {
       "id": "REL-057",
       "kind": "Release",
       "title": "ui-v2 Service/Folder expand replace-graph + no /api/file 400",
       "priority": "Must Have",
       "status": "DONE",
       "notes": "DONE 2026-07-21 — Vitest gate + expand replace",
+      "section": "5.19 UI v2",
+      "prd_line": null,
+      "focus": "P1",
+      "focus_rank": 1,
+      "ve_suborder": 0
+    },
+    {
+      "id": "REL-058",
+      "kind": "Release",
+      "title": "ui-v2 expand Load more merge pagination",
+      "priority": "Must Have",
+      "status": "DONE",
+      "notes": "DONE 2026-07-21 — Vitest graph-merge + expand hasMore",
       "section": "5.19 UI v2",
       "prd_line": null,
       "focus": "P1",
