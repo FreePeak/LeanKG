@@ -5,6 +5,7 @@ import {
   DEFAULT_NODE_TYPE_ORDER,
   EDGE_STYLES,
 } from '../lib/constants';
+import { parseProjectParam } from '../services/backend-client';
 
 export function useGraphFilters() {
   const [visibleLabels, setVisibleLabels] = useState<string[]>([...DEFAULT_VISIBLE_LABELS]);
@@ -50,7 +51,7 @@ export function useGraphFilters() {
 export function useUrlProject(): [string | undefined, (p: string | undefined) => void] {
   const [project, setProjectState] = useState<string | undefined>(() => {
     if (typeof window === 'undefined') return undefined;
-    return new URLSearchParams(window.location.search).get('project') ?? undefined;
+    return parseProjectParam(new URLSearchParams(window.location.search).get('project'));
   });
 
   useEffect(() => {
