@@ -136,7 +136,25 @@ export default function App() {
         path = '.';
       }
       const label = String(node.properties.name || node.label || nodeId);
-      void drillIntoPath(path, label);
+      void (async () => {
+        // Re-assert serve RocksDB matches URL ?project= before expand (avoids
+        // expanding a sibling mount while the status bar still says /workspace).
+        if (project) {
+          try {
+            const switched = await switchProject(project, false);
+            if (switched.project_path && switched.project_path !== project) {
+              setError(
+                `Cannot expand: serve is on ${switched.project_path}, expected ${project}`,
+              );
+              return;
+            }
+          } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : String(err));
+            return;
+          }
+        }
+        await drillIntoPath(path, label);
+      })();
     },
     [kg, drillIntoPath, project],
   );
