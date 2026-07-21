@@ -132,9 +132,12 @@ impl AuthManager {
 pub fn required_role(tool_name: &str) -> Role {
     match tool_name {
         // Admin-only: structural changes
-        "mcp_init" | "mcp_index" | "mcp_install" | "promote_environment" | "embed_control" => {
-            Role::Admin
-        }
+        "mcp_init"
+        | "mcp_index"
+        | "mcp_install"
+        | "promote_environment"
+        | "embed_control"
+        | "ontology_control" => Role::Admin,
         // Contributor: knowledge writing
         "add_knowledge" | "update_knowledge" | "delete_knowledge" | "add_annotation"
         | "link_element" | "add_documentation" => Role::Contributor,
@@ -292,6 +295,7 @@ mod tests {
     fn test_required_role_mapping() {
         assert_eq!(required_role("mcp_index"), Role::Admin);
         assert_eq!(required_role("embed_control"), Role::Admin);
+        assert_eq!(required_role("ontology_control"), Role::Admin);
         assert_eq!(required_role("add_knowledge"), Role::Contributor);
         assert_eq!(required_role("search_code"), Role::Viewer);
         assert_eq!(required_role("get_impact_radius"), Role::Viewer);

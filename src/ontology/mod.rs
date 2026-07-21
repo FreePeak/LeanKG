@@ -3,6 +3,8 @@ pub mod loader;
 pub mod procedural;
 pub mod query;
 pub mod safe_discover;
+pub mod sync;
+pub mod watcher;
 
 // Re-export for convenience
 #[allow(unused_imports)]
@@ -30,6 +32,13 @@ pub use safe_discover::{
     mega_graph_threshold, refuse_full_scan_if_mega, skip_incremental_dependents, DiscoverPage,
     DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
 };
+#[allow(unused_imports)]
+pub use sync::{
+    ontology_sync_status, ontology_synced_marker, ontology_watch_debounce_ms, resolve_ontology_dir,
+    sync_for_project, sync_from_dir, touch_ontology_synced_marker, OntologySyncStats,
+};
+#[allow(unused_imports)]
+pub use watcher::spawn_ontology_yaml_watcher;
 
 use serde::{Deserialize, Serialize};
 

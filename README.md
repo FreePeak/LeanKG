@@ -220,6 +220,7 @@ Full methodology: [docs/benchmark.md](docs/benchmark.md)
 ## Key Features
 
 - **MCP-native** — 85+ tools for search, impact, call graphs, ontology, architecture, and team knowledge
+- **Procedural ontology auto-update** — edit `ontology/workflows.yaml` while serving; watcher re-syncs so `kg_trace_workflow` returns corrected steps without restart
 - **Impact radius** — blast radius before you change code, with confidence and severity
 - **Dependency graph** — `imports`, `calls`, `tested_by`, `http_calls`, `service_calls`, tunnels, and more
 - **Semantic search** — CozoDB HNSW over dense embeddings (`--features embeddings`; included in Docker)
@@ -288,7 +289,7 @@ Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-scre
 1. **Extract** — tree-sitter (and language-specific extractors) turn source into `CodeElement` nodes and typed relationships.
 2. **Store** — CozoDB over SQLite (local) or RocksDB (multi-project / Docker) holds the graph + optional HNSW vectors.
 3. **Serve** — MCP stdio (editor agents) or HTTP/SSE (Docker / remote) answers tools like `get_impact_radius`, `search_code`, `semantic_search`, `get_architecture`.
-4. **Refresh** — `--watch` and incremental index keep the graph aligned with the working tree.
+4. **Refresh** — `--watch` and incremental index keep code edges fresh; ontology YAML watch keeps procedural workflows aligned.
 
 ```text
 Repo ──► Indexer ──► Knowledge Graph ──► MCP Tools ──► AI Agent
@@ -316,6 +317,28 @@ leankg mcp-http --port 9699  # HTTP/SSE for Docker / remote
 ```
 
 **Agent search prefer-order** (when `:9699` healthy): `concept_search` → `semantic_search` → `search_code`, then exact tools (`get_context`, impact, deps). Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
+
+### Procedural ontology (auto-update)
+
+While `mcp-http` / `mcp-stdio` / `leankg serve` runs, LeanKG watches `ontology/concepts.yaml` and `ontology/workflows.yaml`, debounces (≥1s), and **replaces** the ontology layer in the served DB so `kg_trace_workflow` stays fresh without a restart.
+
+Typical agent loop:
+
+1. Wrong workflow steps in YAML → `kg_trace_workflow` returns them
+2. User corrects (rename / add / remove steps) and saves YAML
+3. Watcher auto-syncs (YAML is source of truth — old steps disappear, no GID duplicates)
+4. Next session query retrieves only the corrected ordered steps
+
+Ontology also refreshes after index, and Docker boot re-syncs when `.leankg/ontology_synced` is older than **either** YAML file. Prefer `kg_trace_workflow` after edits; use `ontology_control(action=sync|status)` when you need an explicit refresh.
+
+| Knob | Default | Purpose |
+|------|---------|---------|
+| `LEANKG_ONTOLOGY_DIR` | `<project>/ontology` | Override ontology YAML directory |
+| `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS` | `1500` (min 1000) | Debounce for in-process YAML watch |
+| `LEANKG_ONTOLOGY_SYNC_ON_BOOT` | `timeout` | Docker: `skip` / `force` / `timeout` |
+| MCP `ontology_control` | — | `action=sync\|status` (Admin) |
+
+Details: [docs/mcp-tools.md](docs/mcp-tools.md) · Smoke: [docs/reports/ontology-proc-auto-smoke-2026-07-21.md](docs/reports/ontology-proc-auto-smoke-2026-07-21.md)
 
 Setup details: [docs/agentic-instructions.md](docs/agentic-instructions.md) · Skill: [instructions/using-leankg/SKILL.md](instructions/using-leankg/SKILL.md) · Tool catalog: [docs/mcp-tools.md](docs/mcp-tools.md)
 
@@ -353,6 +376,8 @@ leankg embed --init && leankg embed   # needs --features embeddings
 leankg web
 leankg mcp-stdio --watch
 leankg mcp-http --port 9699
+leankg ontology sync                  # concepts + workflows → DB
+leankg ontology trace <workflow>      # ordered procedural steps
 leankg update
 ```
 

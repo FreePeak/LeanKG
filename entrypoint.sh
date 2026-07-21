@@ -200,10 +200,25 @@ if [ -n "$ONTOLOGY_SOURCE_DIR" ]; then
             echo "=== Ontology sync done ==="
             ;;
         *)
-            # Default: skip if marker is newer than concepts.yaml (already synced).
+            # Default: skip if marker is newer than BOTH concepts.yaml and workflows.yaml.
             CONCEPTS_FILE="$ONTOLOGY_SOURCE_DIR/concepts.yaml"
-            if [ -f "$ONTOLOGY_MARKER" ] && [ "$ONTOLOGY_MARKER" -nt "$CONCEPTS_FILE" ]; then
-                echo "=== Ontology already synced (marker newer than concepts.yaml); skipping ==="
+            WORKFLOWS_FILE="$ONTOLOGY_SOURCE_DIR/workflows.yaml"
+            SKIP_SYNC=0
+            if [ -f "$ONTOLOGY_MARKER" ]; then
+                SKIP_SYNC=1
+                if [ -f "$CONCEPTS_FILE" ] && [ ! "$ONTOLOGY_MARKER" -nt "$CONCEPTS_FILE" ]; then
+                    SKIP_SYNC=0
+                fi
+                if [ -f "$WORKFLOWS_FILE" ] && [ ! "$ONTOLOGY_MARKER" -nt "$WORKFLOWS_FILE" ]; then
+                    SKIP_SYNC=0
+                fi
+                # If neither YAML exists, do not skip (fall through to sync attempt).
+                if [ ! -f "$CONCEPTS_FILE" ] && [ ! -f "$WORKFLOWS_FILE" ]; then
+                    SKIP_SYNC=0
+                fi
+            fi
+            if [ "$SKIP_SYNC" -eq 1 ]; then
+                echo "=== Ontology already synced (marker newer than concepts.yaml and workflows.yaml); skipping ==="
             else
                 echo "=== Syncing ontology from $ONTOLOGY_SOURCE_DIR (timeout ${ONTOLOGY_SYNC_TIMEOUT}s) ==="
                 set +e
