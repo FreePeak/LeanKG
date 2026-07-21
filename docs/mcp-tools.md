@@ -2,17 +2,17 @@
 
 LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowledge graph.
 
-Live registry size is **~84** tools (`tools/list`). Prefer-order and redundancy status:
+Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without). Prefer-order and redundancy status:
 
 | Prefer-order | Tools |
 |--------------|-------|
+| Overview | `get_overview_context` → optional `load_layer` → `get_architecture` (not `load_layer(L0)` alone) |
 | Search | `concept_search` → `semantic_search` → `search_code` |
 | Semantic context | `semantic_search` → `kg_semantic_context` → `kg_context` |
-| Overview | `get_overview_context` (not `wake_up`; not `load_layer(L0)` alone) |
+| Environment filter | `env=` on search / `kg_*` tools |
 | File context | `get_context` (skill default); `ctx_read` for compression modes |
 
-**Soft-deprecated (still registered):** `wake_up`, `search_by_environment` — see [redundancy impact report](reports/mcp-tool-redundancy-impact-2026-07-20.md).  
-**Hard-removed:** `mcp_hello`, `mcp_impact`, `get_doc_for_file`.  
+**Hard-removed:** `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment` — see [redundancy impact report](reports/mcp-tool-redundancy-impact-2026-07-20.md).  
 **Machine-checked matrix:** `tests/redundant_tools_matrix.rs` (every tool classified).
 
 ## Core Tools
@@ -46,6 +46,7 @@ Live registry size is **~84** tools (`tools/list`). Prefer-order and redundancy 
 
 | Tool | Description |
 |------|-------------|
+| `get_overview_context` | Session-start L0+L1 overview (replaces removed `wake_up`) |
 | `get_context` | Get AI context for file (minimal, token-optimized) |
 | `get_tested_by` | Get test coverage for a function/file |
 | `find_large_functions` | Find oversized functions by line count |
@@ -157,10 +158,6 @@ Behavior notes:
 - If the reranker fails to load, the tool silently falls back to ANN-order top-N (Q4 option A). `diagnostics.reranker = "fallback_ann"` surfaces this.
 - If the embedding index is older than the last `index` run, `diagnostics.embeddings_stale = true` (still serves, just warns).
 - Worktree scratch copies (`.worktrees/`, `.claude/worktrees/`, `.opencode/worktrees/`) are filtered out by default to avoid duplicate-noise results.
-
-## Auto-Indexing
-
-When the MCP server starts with an existing LeanKG project, it checks if the index is stale (by comparing git HEAD commit time vs database file modification time). If stale, it automatically runs incremental indexing to ensure AI tools have up-to-date context.
 
 ## Auto-Indexing
 

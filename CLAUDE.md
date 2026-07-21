@@ -115,7 +115,20 @@ Local-only mount lists live in gitignored `.dockerfile` / `docker-compose.overri
 #### Step 1: Always Try LeanKG First
 1. Call `mcp_status(project="/workspace")` to check if LeanKG is ready for this repo
 2. If Docker MCP is down / not ready, try other mounts from `LEANKG_PROJECT_DIRS`, then local `mcp_init` only as last resort
-3. Use appropriate LeanKG tool with `project="/workspace"`: `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+3. **Session overview:** `get_overview_context(project="/workspace")` — not `load_layer(L0)` alone
+4. Use appropriate LeanKG tools with `project="/workspace"`: `concept_search` → `semantic_search` → `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
+5. **Environment filter:** `env=` on search / `kg_*` (hard-removed: `search_by_environment`)
+
+#### Prefer-order (canonical)
+
+| Chain | Tools |
+|-------|-------|
+| Overview | `get_overview_context` → optional `load_layer` → `get_architecture` |
+| Search | `concept_search` → `semantic_search` → `search_code` |
+| Env | `env=` on search / `kg_*` |
+| File context | `get_context` (default) |
+
+Hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
 
 #### Step 2: Fallback Only If LeanKG Fails
 - LeanKG returns empty results OR

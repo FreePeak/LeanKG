@@ -1,119 +1,114 @@
 ---
 name: using-leankg
-description: Use for ANY code search, navigation, or finding code logic - "where is X", "find logic Y", "how does Z work", impact analysis, dependencies. LeanKG is MANDATORY first.
+description: >-
+  Code search via LeanKG MCP when HTTP :9699 is healthy; otherwise skip LeanKG
+  and use default Grep/Glob/Read. Invoke before code navigation when LeanKG may apply.
 ---
 
-<EXTREMELY_IMPORTANT>
-STRICT ENFORCEMENT: You MUST follow the 4-Tier Search Fallback Chain EXACTLY.
+# LeanKG Code Search (HTTP-gated)
 
-1. ALWAYS start with `mcp_status` to check LeanKG readiness
-2. If NOT ready, invoke `mcp_init` or `mcp_index` to initialize
-3. Use LeanKG MCP tools for ALL searches (Tier 1)
-4. ONLY fall back to `leankg` CLI if MCP fails (Tier 2)
-5. ONLY fall back to `rtk` if CLI fails (Tier 3)
-6. ONLY fall back to `grep`/`rg` as ABSOLUTE LAST RESORT (Tier 4)
+**LeanKG is preferred when the MCP HTTP server is up.** If health fails, exit this skill immediately and use default Cursor/editor tools.
 
-**NO EXCEPTIONS. NO RATIONALIZATION. Follow the chain.**
-</EXTREMELY_IMPORTANT>
-
-## MANDATORY 4-Tier Search Fallback Chain
-
-```
-When user asks "where is X", "find logic Y", "how does Z work", etc:
-           |
-           v
-TIER 1: LeanKG MCP Server (leankg_mcp_* tools)
-           |
-           mcp_status (ALWAYS check first)
-           search_code("X") or find_function("X") or query_file("X")
-           |
-           +-- Results found --> get_context(file) to read content --> DONE
-           +-- MCP down/error --> TIER 2
-           |
-           v
-TIER 2: leankg CLI command
-           |
-           leankg query "X" --kind name
-           |
-           +-- Results found --> DONE
-           +-- Empty/error --> TIER 3
-           |
-           v
-TIER 3: rtk (rich toolkit grep)
-           |
-           rtk grep "X" --path .
-           rtk file "pattern" --path .
-           |
-           +-- Results found --> DONE
-           +-- Empty --> TIER 4
-           |
-           v
-TIER 4: grep/rg (ABSOLUTE LAST RESORT)
-           |
-           rg "X"
-           grep -rn "X" --include="*.ext"
-```
-
-## ABSOLUTE BANS
-
-- NEVER skip directly to grep/rg when LeanKG is available
-- NEVER use Glob to find code files before checking LeanKG
-- NEVER use Grep tool before exhausting Tiers 1-3
-- The ONLY exception: searching non-code files (config, docs, data files)
-
-## Tier 1: LeanKG MCP Tools (Use in this order)
-
-| Step | Tool | When to Use |
-|------|------|-------------|
-| 1 | `mcp_status` | ALWAYS check first |
-| 2 | `search_code("X")` | Find code by name/type |
-| 3 | `find_function("X")` | Locate function definitions |
-| 4 | `query_file("*X*")` | Find files by name |
-| 5 | `get_impact_radius(file)` | Blast radius for changes |
-| 6 | `get_context(file)` | READ file content (token-optimized) |
-| 7 | `get_dependencies(file)` | Get imports |
-| 8 | `get_dependents(file)` | Get reverse dependencies |
-| 9 | `get_tested_by(file)` | Find tests |
-| 10 | `get_callers("func")` | Find who calls a function |
-| 11 | `get_call_graph("func")` | Full call graph |
-
-## Tier 2: leankg CLI (Only if MCP fails)
+## Gate (ALWAYS FIRST)
 
 ```bash
-leankg status
-leankg query "X" --kind name
-leankg impact file 3
+curl -sf --max-time 2 http://localhost:9699/health
 ```
 
-## Tier 3: rtk Fallback (Only if leankg CLI empty)
+| Result | Next step |
+|--------|-----------|
+| Success (2xx) | Continue with LeanKG MCP below |
+| Fail / timeout / connection refused | **Exit skill.** Use `Grep`, `Glob`, `Read`. Do **not** call LeanKG MCP, `mcp_init`, or leankg CLI |
 
-```bash
-rtk grep "X" --path .
-rtk file "pattern" --path .
+Re-check health only if the user asks or you have reason to believe the server came back.
+
+---
+
+## When HTTP is healthy: LeanKG MCP
+
+### Project path (Docker vs host)
+
+When talking to Docker MCP on `:9699`, pass the **container mount** as `project=`:
+
+| Target | `project=` |
+|--------|------------|
+| This LeanKG repo | `/workspace` |
+| Extra bind (compose override) | `/workspace-other` (or the container side of the bind) |
+
+Do **not** pass a Mac host path (e.g. `/Users/.../leankg`) as `project` against Docker RocksDB.
+
+### Prefer-order (discover → exact)
+
+**Session start (overview):**
+```
+get_overview_context(project=…)  # L0+L1 summary — not load_layer(L0) alone
+→ optional load_layer for progressive budgets
+→ get_architecture for deep single-call overview
 ```
 
-## Tier 4: grep/rg (ABSOLUTE LAST RESORT)
+Natural-language / domain questions:
 
-```bash
-rg "X"
-grep -rn "X" --include="*.ext"
+```
+1. mcp_status(project=…)
+2. concept_search(query=…)     # domain concepts first
+3. semantic_search(query=…)    # HNSW ANN if embeddings exist
+4. search_code / find_function # name/type fallback
+5. get_context / get_impact_radius / get_dependencies / …
+   on the returned qualified_name or file — never full-graph dumps
 ```
 
-## Critical: After search_code returns file paths
+Exact symbol / file known:
 
-**IMPORTANT:** When `search_code` returns results with file paths:
-1. Use `get_context(file_path)` to READ the actual file content
-2. Do NOT just report the file paths - show the code
+```
+mcp_status → find_function / query_file → get_context → impact/deps tools
+```
 
-## Common Triggers
+### Finding Code
 
-| User says... | Start with |
-|--------------|------------|
-| "where is X" | `search_code("X")` or `find_function("X")` |
-| "find the logic" | `search_code("logic_name")` |
-| "how does X work" | `get_context(file)` after search_code |
-| "what calls X" | `get_callers("X")` or `get_call_graph("X")` |
-| "what breaks if I change X" | `get_impact_radius("X")` |
-| "find all files named X" | `query_file("X")` |
-| "who imports X" | `get_dependents("X")` |
-| "what does X depend on" | `get_dependencies("X")` |
+| Task | Tool | Example |
+|------|------|---------|
+| Domain / NL search | `concept_search` | `concept_search(query="authentication", project="/workspace")` |
+| Semantic / meaning | `semantic_search` | `semantic_search(query="payment refund", project="/workspace")` |
+| Name / type search | `search_code` | `search_code(query="Handler", project="/workspace")` |
+| Function definition | `find_function` | `find_function(name="ProcessOrder", project="/workspace")` |
+| File by pattern | `query_file` | `query_file(pattern="auth", project="/workspace")` |
+| Callers / call graph | `get_callers` / `get_call_graph` | pass `project=` |
+
+### Reading & Context (after discovery)
+
+| Task | Tool |
+|------|------|
+| File / symbol context | `get_context` |
+| Blast radius | `get_impact_radius` |
+| Imports / dependents | `get_dependencies` / `get_dependents` |
+| Tests | `get_tested_by` |
+| NL subgraph | `query_graph` (frontier-local; mega-safe) |
+| Session overview | `get_overview_context` |
+| Environment filter | `env=` on `search_code` / `semantic_search` / `concept_search` / `kg_*` |
+
+### Hard-removed tools (do not call)
+
+`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
+
+### If mcp_status is not ready (but HTTP health was OK)
+
+Try other known container mounts from `LEANKG_PROJECT_DIRS`, then fall back to default Grep/Glob/Read.
+
+**Do not** run `mcp_init` or local CLI indexing as a substitute when the preferred path is Docker HTTP MCP.
+
+### If LeanKG returns EMPTY results
+
+Fall back to default mode: `Grep`, `Glob`, `Read`.
+
+---
+
+## Default mode (HTTP down OR LeanKG empty)
+
+```
+Grep / Glob / Read
+```
+
+No Tier 2 leankg CLI. No forced `mcp_init`. Default editor tools are enough.
+
+**BAN:** Do not call LeanKG tools when `:9699` health failed.
+**BAN:** Do not materialize full element/relationship tables on mega graphs — use keyed / ANN / frontier tools only.
