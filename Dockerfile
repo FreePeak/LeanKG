@@ -6,7 +6,7 @@ WORKDIR /ui
 COPY ui-v2/package.json ui-v2/package-lock.json ./
 RUN npm ci
 COPY ui-v2/ ./
-ARG UI_EMBED_REV=2026-07-21-onrender-rca4
+ARG UI_EMBED_REV=2026-07-22-render-ui-tsc-fix
 RUN echo "UI_EMBED_REV=${UI_EMBED_REV}" && npm run build
 
 FROM rust:1-bookworm AS builder
@@ -28,7 +28,7 @@ COPY src ./src
 COPY benches ./benches
 COPY ontology/ ./ontology/
 COPY --from=ui /ui/dist/ ./src/embed/
-ARG UI_EMBED_REV=2026-07-21-onrender-rca4
+ARG UI_EMBED_REV=2026-07-22-render-ui-tsc-fix
 RUN test -f src/embed/index.html \
     && grep -q '<title>LeanKG</title>' src/embed/index.html \
     && printf '{"ui":"ui-v2","rev":"%s","source":"Dockerfile"}\n' "${UI_EMBED_REV}" > src/embed/ui-build.json

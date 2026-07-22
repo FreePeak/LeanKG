@@ -66,3 +66,20 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all -- -D warnings
+
+  ui-v2:
+    name: UI v2 Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui-v2/package-lock.json
+
+      - name: Install and build ui-v2
+        working-directory: ui-v2
+        run: npm ci && npm run build
