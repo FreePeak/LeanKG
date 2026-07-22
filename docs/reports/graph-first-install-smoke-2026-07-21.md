@@ -11,11 +11,11 @@
 
 | Target | Artifact | Behavior |
 |--------|----------|----------|
-| Cursor | `.cursor/rules/leankg-graph-first.mdc` + `~/.cursor/rules/leankg-graph-first.mdc` | `alwaysApply: true` — three verbs + HTTP gate |
+| Cursor | `.cursor/rules/leankg-graph-first.mdc` + `~/.cursor/rules/leankg-graph-first.mdc` | `alwaysApply: true` — discover (`semantic_search`) before `query_graph` + HTTP gate |
 | Cursor | `~/.cursor/plugins/leankg/leankg-bootstrap.md` + sessionStart hook | Injects bootstrap at session start |
 | Claude Code | `~/.claude/plugins/leankg/hooks/hooks.json` | PreToolUse nudge/block when `:9699` healthy |
 | Claude Code | `pretooluse.mjs` | Blocks Bash grep/rg; nudges Read on source files (`LEANKG_STRICT_READ=1` to deny) |
-| All agents | `instructions/using-leankg/SKILL.md` via `install_leankg_skill` | Three verbs before prefer-order |
+| All agents | `instructions/using-leankg/SKILL.md` via `install_leankg_skill` | Prefer-order: semantic before `query_graph` |
 
 Template source: [`instructions/cursor-rules/leankg-graph-first.mdc`](../../instructions/cursor-rules/leankg-graph-first.mdc)
 

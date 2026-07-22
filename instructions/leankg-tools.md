@@ -6,15 +6,19 @@ LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first
 
 ---
 
-## Three verbs (path · explain · query)
+## Prefer-order (discover before connection verbs)
 
-Lead with these before opening the full MCP catalog:
+For fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
 
-| Verb | Question | MCP tool |
-|------|----------|----------|
-| **path** | How does A connect to B? | `shortest_path` |
-| **explain** | What is this symbol and its neighborhood? | `explain_node` |
-| **query** | NL subgraph question | `query_graph` |
+`mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs.
+
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| What is this known symbol? | `explain_node` |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
 
 Gate: `curl -sf --max-time 2 http://localhost:9699/health` — if fail, use Grep/Glob/Read only.
 

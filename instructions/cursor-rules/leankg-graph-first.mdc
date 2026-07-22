@@ -16,23 +16,29 @@ curl -sf --max-time 2 http://localhost:9699/health
 | OK | LeanKG MCP with container `project=` (e.g. `/workspace` for Docker) |
 | Fail / timeout | Grep / Glob / Read only — do **not** call LeanKG MCP |
 
-## Three verbs first (path · explain · query)
+## Prefer-order (discover before connection verbs)
 
-Lead with these before the full tool catalog:
+For fuzzy / natural-language / “where is X?” questions, **discover first** — do **not** open with `query_graph`.
 
-| Verb | Use when | MCP tool |
-|------|----------|----------|
-| **path** | How does A connect to B? | `shortest_path(source, target, project=…)` |
-| **explain** | What is this symbol and its neighborhood? | `explain_node(name_or_qn, project=…)` |
-| **query** | NL subgraph question | `query_graph(question, project=…)` |
+```
+1. get_overview_context(project=…)   # session start
+2. mcp_status(project=…)
+3. concept_search → semantic_search → search_code / find_function
+4. Connection verbs (only with known seeds / endpoints / symbols):
+   path → shortest_path | explain → explain_node | query → query_graph
+5. get_context / get_impact_radius / get_dependencies / get_dependents
+6. Fallback to Grep/Glob/Read only when LeanKG is down or returns empty
+```
 
-## Discover → exact (after verbs)
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| What is this known symbol? | `explain_node` |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
 
-1. `get_overview_context(project=…)` — session start
-2. `mcp_status(project=…)`
-3. `concept_search` → `semantic_search` → `search_code` / `find_function`
-4. `get_context` / `get_impact_radius` / `get_dependencies` / `get_dependents`
-5. Fallback to Grep/Glob/Read only when LeanKG is down or returns empty
+**BAN:** Do not call `query_graph` as the first tool for NL discovery when embeddings/concepts may answer. Use `semantic_search` (and `concept_search`) first; then `query_graph` to expand the frontier.
 
 ## Rules
 

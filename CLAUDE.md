@@ -83,17 +83,21 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ## LeanKG Tools Usage
 
-### Three verbs first (path · explain · query)
+### Prefer-order (discover before connection verbs)
 
-When MCP HTTP on `:9699` is healthy, lead with these cheap connection tools before grep or full-file Read:
+When MCP HTTP on `:9699` is healthy, for fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
 
-| Verb | Question | MCP tool |
-|------|----------|----------|
-| **path** | How does A connect to B? | `shortest_path(source, target, project=…)` |
-| **explain** | What is this symbol and its neighborhood? | `explain_node(name_or_qn, project=…)` |
-| **query** | NL subgraph question | `query_graph(question, project=…)` |
+`get_overview_context` → `mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
 
-Then discover: `get_overview_context` → `concept_search` → `semantic_search` → `search_code` → `get_context` / impact / deps. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| What is this known symbol? | `explain_node` |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
+
+**BAN:** Do not call `query_graph` as the first NL discovery tool when embeddings/concepts may answer. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
 
 ### MANDATORY: Docker MCP project paths (not host paths)
 

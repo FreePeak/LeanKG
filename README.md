@@ -324,17 +324,21 @@ leankg mcp-stdio --watch     # local AI tools
 leankg mcp-http --port 9699  # HTTP/SSE for Docker / remote
 ```
 
-### Three verbs (path · explain · query)
+### Prefer-order (discover before connection verbs)
 
-When `:9699` health is OK, lead with these cheap connection tools before grep or full-file Read:
+When `:9699` health is OK, for fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
 
-| Verb | Question | MCP tool |
-|------|----------|----------|
-| **path** | How does A connect to B? | `shortest_path` |
-| **explain** | What is this symbol and its neighborhood? | `explain_node` |
-| **query** | NL subgraph / "what connects X to Y?" | `query_graph` |
+`get_overview_context` → `mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
 
-Then discover: `get_overview_context` → `concept_search` → `semantic_search` → `search_code` → `get_context` / impact / deps. Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| What is this known symbol? | `explain_node` |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
+
+Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
 
 ### Procedural ontology (auto-update)
 
