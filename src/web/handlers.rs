@@ -78,6 +78,35 @@ pub struct GraphRelationship {
     pub target_id: String,
     #[serde(rename = "type")]
     pub rel_type: String,
+    #[serde(rename = "confidenceLabel")]
+    pub confidence_label: String,
+}
+
+impl GraphRelationship {
+    pub fn from_relationship(r: &crate::db::models::Relationship) -> Self {
+        Self::new(
+            r.source_qualified.clone(),
+            r.target_qualified.clone(),
+            r.rel_type.clone(),
+            r.confidence_label().to_string(),
+        )
+    }
+
+    pub fn new(
+        source_id: String,
+        target_id: String,
+        rel_type: String,
+        confidence_label: String,
+    ) -> Self {
+        let rel_type = rel_type.to_uppercase();
+        Self {
+            id: format!("{}_{}_{}", source_id, rel_type, target_id),
+            source_id,
+            target_id,
+            rel_type,
+            confidence_label,
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -2109,15 +2138,7 @@ pub async fn api_graph_expand_service(
         .relationships
         .iter()
         .filter(|r| keep.contains(&r.source_qualified) && keep.contains(&r.target_qualified))
-        .map(|r| GraphRelationship {
-            id: format!(
-                "{}_{}_{}",
-                r.source_qualified, r.rel_type, r.target_qualified
-            ),
-            source_id: r.source_qualified.clone(),
-            target_id: r.target_qualified.clone(),
-            rel_type: r.rel_type.clone(),
-        })
+        .map(GraphRelationship::from_relationship)
         .collect();
 
     let nodes_count = nodes.len();
@@ -2355,16 +2376,8 @@ pub async fn api_graph_expand_cluster(
                 .collect();
 
             let relationships: Vec<GraphRelationship> = filtered_relationships
-                .iter()
-                .map(|r| GraphRelationship {
-                    id: format!(
-                        "{}_{}_{}",
-                        r.source_qualified, r.rel_type, r.target_qualified
-                    ),
-                    source_id: r.source_qualified.clone(),
-                    target_id: r.target_qualified.clone(),
-                    rel_type: r.rel_type.clone(),
-                })
+                .into_iter()
+                .map(GraphRelationship::from_relationship)
                 .collect();
 
             let nodes_count = nodes.len();
@@ -2683,14 +2696,12 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                     }
                     seen_edges.insert(edge_key);
 
-                    let normalized_type = r.rel_type.to_uppercase();
-
-                    Some(GraphRelationship {
-                        id: format!("{}_{}_{}", src_id, normalized_type, tgt_id),
-                        source_id: src_id,
-                        target_id: tgt_id,
-                        rel_type: normalized_type,
-                    })
+                    Some(GraphRelationship::new(
+                        src_id,
+                        tgt_id,
+                        r.rel_type.clone(),
+                        r.confidence_label().to_string(),
+                    ))
                 })
                 .collect();
 
@@ -2750,15 +2761,7 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                 .filter(|r| {
                     node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified)
                 })
-                .map(|r| GraphRelationship {
-                    id: format!(
-                        "{}_{}_{}",
-                        r.source_qualified, r.rel_type, r.target_qualified
-                    ),
-                    source_id: r.source_qualified.clone(),
-                    target_id: r.target_qualified.clone(),
-                    rel_type: r.rel_type.clone(),
-                })
+                .map(GraphRelationship::from_relationship)
                 .collect();
             ApiResponse {
                 success: true,
@@ -2935,12 +2938,12 @@ pub async fn api_graph_subgraph(
                     seen_edges.insert(edge_key);
 
                     let normalized_type = r.rel_type.to_uppercase();
-                    Some(GraphRelationship {
-                        id: format!("{}_{}_{}", src_id, normalized_type, tgt_id),
-                        source_id: src_id,
-                        target_id: tgt_id,
-                        rel_type: normalized_type,
-                    })
+                    Some(GraphRelationship::new(
+                        src_id,
+                        tgt_id,
+                        normalized_type,
+                        r.confidence_label().to_string(),
+                    ))
                 })
                 .collect();
 
@@ -3061,13 +3064,12 @@ pub async fn api_graph_clusters(State(state): State<AppState>) -> impl IntoRespo
             let relationships: Vec<GraphRelationship> = cluster_edges
                 .iter()
                 .map(|(src, tgt, rel_type)| {
-                    let normalized = rel_type.to_uppercase();
-                    GraphRelationship {
-                        id: format!("cluster_edge:{}_{}_{}", src, normalized, tgt),
-                        source_id: format!("cluster:{}", src),
-                        target_id: format!("cluster:{}", tgt),
-                        rel_type: normalized,
-                    }
+                    GraphRelationship::new(
+                        format!("cluster:{}", src),
+                        format!("cluster:{}", tgt),
+                        rel_type.clone(),
+                        "INFERRED".to_string(),
+                    )
                 })
                 .collect();
 
@@ -3965,15 +3967,7 @@ pub async fn api_graph_children(
                     let relationships: Vec<GraphRelationship> = cr
                         .relationships
                         .iter()
-                        .map(|r| GraphRelationship {
-                            id: format!(
-                                "{}_{}_{}",
-                                r.source_qualified, r.rel_type, r.target_qualified
-                            ),
-                            source_id: r.source_qualified.clone(),
-                            target_id: r.target_qualified.clone(),
-                            rel_type: r.rel_type.clone(),
-                        })
+                        .map(GraphRelationship::from_relationship)
                         .collect();
 
                     ApiResponse {
@@ -4120,15 +4114,7 @@ pub async fn api_graph_expand_node(
                     let relationships: Vec<GraphRelationship> = cr
                         .relationships
                         .iter()
-                        .map(|r| GraphRelationship {
-                            id: format!(
-                                "{}_{}_{}",
-                                r.source_qualified, r.rel_type, r.target_qualified
-                            ),
-                            source_id: r.source_qualified.clone(),
-                            target_id: r.target_qualified.clone(),
-                            rel_type: r.rel_type.clone(),
-                        })
+                        .map(GraphRelationship::from_relationship)
                         .collect();
 
                     ApiResponse {

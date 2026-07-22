@@ -1,0 +1,42 @@
+---
+description: Graph-first agent workflow — query LeanKG before grep/Read when MCP HTTP is healthy
+alwaysApply: true
+---
+
+# LeanKG Graph-First (HTTP-gated)
+
+## Gate (once per session)
+
+```bash
+curl -sf --max-time 2 http://localhost:9699/health
+```
+
+| Health | Mode |
+|--------|------|
+| OK | LeanKG MCP with container `project=` (e.g. `/workspace` for Docker) |
+| Fail / timeout | Grep / Glob / Read only — do **not** call LeanKG MCP |
+
+## Three verbs first (path · explain · query)
+
+Lead with these before the full tool catalog:
+
+| Verb | Use when | MCP tool |
+|------|----------|----------|
+| **path** | How does A connect to B? | `shortest_path(source, target, project=…)` |
+| **explain** | What is this symbol and its neighborhood? | `explain_node(name_or_qn, project=…)` |
+| **query** | NL subgraph question | `query_graph(question, project=…)` |
+
+## Discover → exact (after verbs)
+
+1. `get_overview_context(project=…)` — session start
+2. `mcp_status(project=…)`
+3. `concept_search` → `semantic_search` → `search_code` / `find_function`
+4. `get_context` / `get_impact_radius` / `get_dependencies` / `get_dependents`
+5. Fallback to Grep/Glob/Read only when LeanKG is down or returns empty
+
+## Rules
+
+- Do **not** pass host Mac paths as `project=` against Docker MCP on `:9699`
+- Do **not** grep for code navigation when LeanKG is healthy and returns hits
+- Prefer `get_context` over reading entire source files when exploring indexed code
+- Hard-removed: `wake_up`, `search_by_environment`, `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`

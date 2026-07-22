@@ -78,6 +78,7 @@ impl<'a> ImpactAnalyzer<'a> {
                         affected_with_confidence.push(AffectedElementWithConfidence {
                             element,
                             confidence: rel.confidence,
+                            confidence_label: rel.confidence_label().to_string(),
                             severity,
                             depth: current_depth + 1,
                         });
@@ -113,6 +114,7 @@ impl<'a> ImpactAnalyzer<'a> {
                         affected_with_confidence.push(AffectedElementWithConfidence {
                             element,
                             confidence: rel.confidence,
+                            confidence_label: rel.confidence_label().to_string(),
                             severity,
                             depth: current_depth + 1,
                         });
@@ -170,6 +172,7 @@ impl Default for ImpactScanOptions {
 pub struct AffectedElementWithConfidence {
     pub element: CodeElement,
     pub confidence: f64,
+    pub confidence_label: String,
     pub severity: String,
     pub depth: u32,
 }

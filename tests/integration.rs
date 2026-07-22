@@ -698,8 +698,11 @@ async fn test_get_call_graph_with_real_db() {
                 "get_call_graph('./src/api/auth.rs', depth=1) returned {} calls",
                 calls.len()
             );
-            for (src, tgt, depth) in calls.iter().take(5) {
-                println!("  {} -> {} (depth {})", src, tgt, depth);
+            for edge in calls.iter().take(5) {
+                println!(
+                    "  {} -> {} (depth {}, label {})",
+                    edge.source, edge.target, edge.depth, edge.confidence_label
+                );
             }
         }
         Err(e) => {

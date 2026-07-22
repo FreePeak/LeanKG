@@ -96,6 +96,18 @@ Three new MCP tools are available once a project is indexed:
 
 See [`docs/mcp-tools.md`](docs/mcp-tools.md) → Structure Tools and [`docs/roadmap.md`](docs/roadmap.md) → Phase 1. Requirements: [`docs/prd.md`](docs/prd.md) Sections 3.11 / 5.10.
 
+## Three verbs first (path · explain · query)
+
+When MCP HTTP on `:9699` is healthy, lead with these cheap connection tools before grep or full-file Read:
+
+| Verb | Question | MCP tool |
+|------|----------|----------|
+| **path** | How does A connect to B? | `shortest_path(source, target, project=…)` |
+| **explain** | What is this symbol and its neighborhood? | `explain_node(name_or_qn, project=…)` |
+| **query** | NL subgraph question | `query_graph(question, project=…)` |
+
+Then discover: `get_overview_context` → `concept_search` → `semantic_search` → `search_code` → `get_context` / impact / deps. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+
 ## MANDATORY: LeanKG MCP project paths (Docker vs host)
 
 Cursor agents talking to LeanKG MCP over HTTP (`localhost:9699`, Docker RocksDB) **must** pass **container mount paths** as `project=`. Host filesystem paths do not match RocksDB project keys and return "not initialized" even when the graph is indexed.

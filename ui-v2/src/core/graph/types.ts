@@ -21,6 +21,7 @@ export interface GraphRelationship {
   sourceId: string;
   targetId: string;
   type: string;
+  confidenceLabel?: string;
 }
 
 export interface KnowledgeGraph {

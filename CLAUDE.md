@@ -83,6 +83,18 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ## LeanKG Tools Usage
 
+### Three verbs first (path · explain · query)
+
+When MCP HTTP on `:9699` is healthy, lead with these cheap connection tools before grep or full-file Read:
+
+| Verb | Question | MCP tool |
+|------|----------|----------|
+| **path** | How does A connect to B? | `shortest_path(source, target, project=…)` |
+| **explain** | What is this symbol and its neighborhood? | `explain_node(name_or_qn, project=…)` |
+| **query** | NL subgraph question | `query_graph(question, project=…)` |
+
+Then discover: `get_overview_context` → `concept_search` → `semantic_search` → `search_code` → `get_context` / impact / deps. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+
 ### MANDATORY: Docker MCP project paths (not host paths)
 
 When Cursor's LeanKG MCP talks to the Docker HTTP server on `:9699`, RocksDB keys projects by **in-container** mount paths. Host Mac paths fail with "not initialized" even when the index exists.

@@ -26,6 +26,16 @@ Re-check health only if the user asks or you have reason to believe the server c
 
 ## When HTTP is healthy: LeanKG MCP
 
+### Three verbs first (path · explain · query)
+
+Before the full tool catalog, use these cheap connection verbs:
+
+| Verb | Question | MCP tool |
+|------|----------|----------|
+| **path** | How does A connect to B? | `shortest_path(source, target, project=…)` |
+| **explain** | What is this symbol and its neighborhood? | `explain_node(name_or_qn, project=…)` |
+| **query** | NL subgraph / "what connects X to Y?" | `query_graph(question, project=…)` |
+
 ### Project path (Docker vs host)
 
 When talking to Docker MCP on `:9699`, pass the **container mount** as `project=`:

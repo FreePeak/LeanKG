@@ -55,7 +55,7 @@ We **are** closing Graphify’s packaging wins (honest edges, `GRAPH_REPORT.md`,
 ## Recommended next actions
 
 1. Approve LeanKG as the **company** AI context / KG standard.  
-2. Execute **P1 waves in order** (Wave0 ROI link + ui-v2 cutover closeout → Wave1 always-on hooks → Wave2 honest edges / report / HTML). See PRD §1.1.  
+2. Execute **P1 waves in order** (Wave 0a ROI link + ui-v2 cutover **DONE** → Wave 1b three-verb + Wave 1c hooks **DONE** → Wave 2 honest edges / report / HTML). See PRD §1.1.  
 3. Keep Graphify optional for individuals who want a one-shot HTML map of a small folder — not as the monorepo platform.
 
 ---

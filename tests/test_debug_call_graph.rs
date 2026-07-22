@@ -13,8 +13,11 @@ async fn test_debug_call_graph() {
     match graph.get_call_graph_bounded("./src/main.rs::main", 1, 10) {
         Ok(results) => {
             println!("get_call_graph_bounded returned {} results", results.len());
-            for (src, tgt, depth) in results.iter().take(5) {
-                println!("  {} -> {} (depth={})", src, tgt, depth);
+            for edge in results.iter().take(5) {
+                println!(
+                    "  {} -> {} (depth={}, label={})",
+                    edge.source, edge.target, edge.depth, edge.confidence_label
+                );
             }
         }
         Err(e) => println!("Error: {}", e),

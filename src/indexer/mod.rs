@@ -1371,6 +1371,10 @@ where
         tracing::warn!("Failed to resolve call edges: {}", e);
     }
 
+    if let Err(e) = graph.backfill_confidence_labels() {
+        tracing::warn!("Failed to backfill confidence labels: {}", e);
+    }
+
     Ok(IndexWithProgressResult {
         total_files,
         indexed_files,

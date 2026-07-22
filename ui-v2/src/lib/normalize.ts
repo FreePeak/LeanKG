@@ -55,6 +55,9 @@ export function normalizeGraphPayload(raw: {
       sourceId: String(edge.sourceId ?? edge.source_id ?? ''),
       targetId: String(edge.targetId ?? edge.target_id ?? ''),
       type: String(edge.type ?? edge.rel_type ?? 'REFERENCES').toUpperCase(),
+      confidenceLabel: String(
+        edge.confidenceLabel ?? edge.confidence_label ?? '',
+      ),
     };
   });
 

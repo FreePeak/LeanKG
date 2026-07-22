@@ -305,20 +305,68 @@ impl Relationship {
     /// `query_graph`, `explain_node`, and Web UI edge tooltips so agents
     /// can see whether an edge was explicit in source or resolver-derived.
     pub fn confidence_label(&self) -> &'static str {
-        let method = self
+        if let Some(stored) = self
             .metadata
+            .get("confidence_label")
+            .and_then(|v| v.as_str())
+        {
+            return match stored {
+                "EXTRACTED" => confidence_labels::EXTRACTED,
+                "INFERRED" => confidence_labels::INFERRED,
+                "AMBIGUOUS" => confidence_labels::AMBIGUOUS,
+                _ => confidence_labels::AMBIGUOUS,
+            };
+        }
+        Self::derive_confidence_label(self.confidence, &self.metadata)
+    }
+
+    /// FR-GF-07: Persist derived label into metadata when absent.
+    pub fn stamp_confidence_label_metadata(&mut self) {
+        if self
+            .metadata
+            .get("confidence_label")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty())
+        {
+            return;
+        }
+        let label = Self::derive_confidence_label(self.confidence, &self.metadata);
+        let obj = match self.metadata.as_object_mut() {
+            Some(map) => map,
+            None => {
+                self.metadata = serde_json::json!({});
+                self.metadata.as_object_mut().unwrap()
+            }
+        };
+        obj.insert(
+            "confidence_label".to_string(),
+            serde_json::Value::String(label.to_string()),
+        );
+    }
+
+    fn derive_confidence_label(confidence: f64, metadata: &serde_json::Value) -> &'static str {
+        let method = metadata
             .get("resolution_method")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         match method {
-            "typed" => "EXTRACTED",
-            "name" if self.confidence >= 0.8 => "EXTRACTED",
-            "name_file_hint" if self.confidence >= 0.6 => "INFERRED",
-            "name" => "INFERRED",
-            "unresolved" => "AMBIGUOUS",
-            _ if self.confidence >= 0.8 => "EXTRACTED",
-            _ if self.confidence >= 0.5 => "INFERRED",
-            _ => "AMBIGUOUS",
+            "typed" => confidence_labels::EXTRACTED,
+            "name" if confidence >= 0.8 => confidence_labels::EXTRACTED,
+            "name_file_hint" if confidence >= 0.6 => confidence_labels::INFERRED,
+            "name" => confidence_labels::INFERRED,
+            "unresolved" => confidence_labels::AMBIGUOUS,
+            _ if confidence >= 0.8 => confidence_labels::EXTRACTED,
+            _ if confidence >= 0.5 => confidence_labels::INFERRED,
+            _ => confidence_labels::AMBIGUOUS,
+        }
+    }
+
+    /// Lower rank = higher trust (EXTRACTED first).
+    pub fn confidence_label_rank(label: &str) -> u8 {
+        match label {
+            "EXTRACTED" => 0,
+            "INFERRED" => 1,
+            _ => 2,
         }
     }
 }

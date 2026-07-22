@@ -192,6 +192,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
     const sigma = new Sigma(graph, containerRef.current, {
       allowInvalidContainer: true,
+      enableEdgeEvents: true,
       renderLabels: true,
       labelFont: 'JetBrains Mono, monospace',
       labelSize: 12,
@@ -252,6 +253,44 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
         context.globalAlpha = 0.5;
         context.stroke();
         context.globalAlpha = 1;
+      },
+      defaultDrawEdgeHover: (
+        context: CanvasRenderingContext2D,
+        data: SigmaEdgeAttributes,
+        settings: { labelSize?: number; labelFont?: string; labelWeight?: string },
+      ) => {
+        const label = data.confidenceLabel?.trim();
+        if (!label) return;
+
+        const size = settings.labelSize || 11;
+        const font = settings.labelFont || 'JetBrains Mono, monospace';
+        const weight = settings.labelWeight || '500';
+        const edgeLabel = `${data.relationType || 'EDGE'} · ${label}`;
+
+        context.font = `${weight} ${size}px ${font}`;
+        const textWidth = context.measureText(edgeLabel).width;
+
+        const x = (data as { x?: number }).x ?? 0;
+        const y = (data as { y?: number }).y ?? 0;
+        const paddingX = 8;
+        const paddingY = 5;
+        const height = size + paddingY * 2;
+        const width = textWidth + paddingX * 2;
+        const radius = 4;
+
+        context.fillStyle = '#12121c';
+        context.beginPath();
+        context.roundRect(x - width / 2, y - height / 2, width, height, radius);
+        context.fill();
+
+        context.strokeStyle = typeof data.color === 'string' ? data.color : '#6366f1';
+        context.lineWidth = 1.5;
+        context.stroke();
+
+        context.fillStyle = '#f5f5f7';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(edgeLabel, x, y);
       },
       nodeReducer: (node: string, data: any) => {
         const res = { ...data };
@@ -415,6 +454,14 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
 
     sigma.on('leaveNode', () => {
       onNodeHoverRef.current?.(null);
+      if (containerRef.current) containerRef.current.style.cursor = 'grab';
+    });
+
+    sigma.on('enterEdge', () => {
+      if (containerRef.current) containerRef.current.style.cursor = 'help';
+    });
+
+    sigma.on('leaveEdge', () => {
       if (containerRef.current) containerRef.current.style.cursor = 'grab';
     });
 
