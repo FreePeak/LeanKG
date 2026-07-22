@@ -542,27 +542,24 @@ const ROUTING_BLOCK = `
 <tool_selection_hierarchy>
   Gate: curl -sf --max-time 2 http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
 
-  Three verbs first (path · explain · query):
-  - path → shortest_path(source, target, project=…)
-  - explain → explain_node(name_or_qn, project=…)
-  - query → query_graph(question, project=…)
-
-  Prefer-order (HTTP healthy):
+  Prefer-order (HTTP healthy) — discover BEFORE query_graph:
   0. get_overview_context(project=…) — session start; not load_layer(L0) alone
   1. mcp_status(project=…) — container path e.g. /workspace for Docker
   2. DISCOVER: concept_search → semantic_search → search_code / find_function
-  3. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
-  4. CALLERS: get_callers / get_call_graph
-  5. DOCS: get_traceability / find_related_docs / get_files_for_doc
-  6. TESTING: get_tested_by / detect_changes
-  7. ORCHESTRATE: orchestrate(intent) when unsure which tool
-  8. ENV: env= on search/kg_* (never search_by_environment — removed)
+  3. CONNECTION (after seeds): shortest_path / explain_node / query_graph
+  4. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
+  5. CALLERS: get_callers / get_call_graph
+  6. DOCS: get_traceability / find_related_docs / get_files_for_doc
+  7. TESTING: get_tested_by / detect_changes
+  8. ORCHESTRATE: orchestrate(intent) when unsure which tool
+  9. ENV: env= on search/kg_* (never search_by_environment — removed)
 </tool_selection_hierarchy>
 
 <forbidden_actions>
   - Do NOT call LeanKG when :9699 health failed
   - Do NOT pass host Mac paths as project= against Docker MCP (use /workspace)
   - Do NOT use Grep for code search when LeanKG is healthy and returns hits
+  - Do NOT open NL discovery with query_graph — run concept_search → semantic_search first
   - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment)
 </forbidden_actions>
 `;
@@ -657,8 +654,8 @@ function buildReadGuidance(toolInput) {
   const path = toolInput.path || toolInput.file_path || toolInput.file || "";
   return `LEANKG graph-first: Prefer mcp__leankg__get_context(file="${path}") or explain_node before full Read.
 
-Three verbs: shortest_path · explain_node · query_graph
-Then: concept_search → semantic_search → search_code → get_context
+Discover first: concept_search → semantic_search → search_code → get_context
+Then connection verbs: shortest_path · explain_node · query_graph (after seeds)
 
 Set LEANKG_STRICT_READ=1 to hard-block first Read on source files.`;
 }
@@ -932,21 +929,23 @@ function buildSessionContext(input) {
   const context = `<tool_selection_hierarchy>
   Gate: curl -sf --max-time 2 http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
 
-  Three verbs first: shortest_path · explain_node · query_graph
+  Prefer-order: concept_search → semantic_search → search_code (before query_graph)
 
   1. mcp_status(project=…) — Docker: /workspace (not host Mac path)
   2. DISCOVER: concept_search → semantic_search → search_code / find_function
-  3. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
-  4. CALLERS: get_callers / get_call_graph
-  5. DOCS: get_traceability / find_related_docs / get_files_for_doc
-  6. TESTING: get_tested_by / detect_changes
-  7. ORCHESTRATE: orchestrate(intent) when unsure
+  3. CONNECTION (after seeds): shortest_path / explain_node / query_graph
+  4. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
+  5. CALLERS: get_callers / get_call_graph
+  6. DOCS: get_traceability / find_related_docs / get_files_for_doc
+  7. TESTING: get_tested_by / detect_changes
+  8. ORCHESTRATE: orchestrate(intent) when unsure
 </tool_selection_hierarchy>
 
 <forbidden_actions>
   - Do NOT call LeanKG when :9699 health failed
   - Do NOT pass host Mac paths as project= against Docker MCP
   - Do NOT use Grep when LeanKG is healthy and returns hits
+  - Do NOT open NL discovery with query_graph — run semantic_search first
   - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment)
 </forbidden_actions>
 
@@ -1099,13 +1098,16 @@ HOOKEOF
     cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
 # LeanKG Bootstrap
 
-## Three verbs first (path · explain · query)
+## Prefer-order (discover before connection verbs)
 
-| Verb | MCP tool |
-|------|----------|
-| **path** — how does A connect to B? | `shortest_path` |
-| **explain** — symbol neighborhood | `explain_node` |
-| **query** — NL subgraph | `query_graph` |
+For fuzzy / NL questions: `concept_search` → **`semantic_search`** → `search_code` — **before** `query_graph`.
+
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → `semantic_search` → `search_code` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| Known symbol neighborhood | `explain_node` |
+| Expand subgraph after seeds | `query_graph` |
 
 Gate: `curl -sf --max-time 2 http://localhost:9699/health` — if fail, use Grep/Glob/Read only.
 
@@ -1208,13 +1210,16 @@ HOOKEOF
     cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
 # LeanKG Bootstrap
 
-## Three verbs first (path · explain · query)
+## Prefer-order (discover before connection verbs)
 
-| Verb | MCP tool |
-|------|----------|
-| **path** — how does A connect to B? | `shortest_path` |
-| **explain** — symbol neighborhood | `explain_node` |
-| **query** — NL subgraph | `query_graph` |
+For fuzzy / NL questions: `concept_search` → **`semantic_search`** → `search_code` — **before** `query_graph`.
+
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → `semantic_search` → `search_code` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| Known symbol neighborhood | `explain_node` |
+| Expand subgraph after seeds | `query_graph` |
 
 Gate: `curl -sf --max-time 2 http://localhost:9699/health` — if fail, use Grep/Glob/Read only.
 
@@ -1523,8 +1528,8 @@ install_leankg_skill() {
 
     # Refresh when missing or still on the old mandatory / RTK template.
     local needs_update=1
-    if [ -f "$dest" ] && grep -q 'prefer-order' "$dest" 2>/dev/null \
-        && grep -q 'Three verbs\|path · explain' "$dest" 2>/dev/null \
+    if [ -f "$dest" ] && grep -q 'prefer-order\|Prefer-order\|discover before' "$dest" 2>/dev/null \
+        && grep -q 'semantic_search' "$dest" 2>/dev/null \
         && grep -q 'HTTP-gated\|:9699/health' "$dest" 2>/dev/null \
         && ! grep -q 'STRICT ENFORCEMENT' "$dest" 2>/dev/null; then
         needs_update=0
@@ -1553,9 +1558,11 @@ description: >-
 Gate: `curl -sf --max-time 2 http://localhost:9699/health`
 - Fail → Grep/Glob/Read only (no MCP, no mcp_init)
 - OK → mcp_status(project=…) then prefer-order:
-  concept_search → semantic_search → search_code / find_function → get_context
+  concept_search → semantic_search → search_code / find_function
+  then (after seeds): query_graph / explain_node / shortest_path → get_context
 
 Docker MCP: pass container project= (`/workspace`), not a host Mac path.
+BAN: Do not open NL discovery with query_graph when semantic_search may answer.
 EOF
         fi
     fi
@@ -1573,13 +1580,16 @@ install_agents_instructions() {
 
 ## LeanKG Tools Usage (HTTP-gated)
 
-### Three verbs first (path · explain · query)
+### Prefer-order (discover before connection verbs)
 
-| Verb | Question | MCP tool |
-|------|----------|----------|
-| **path** | How does A connect to B? | `shortest_path` |
-| **explain** | What is this symbol and its neighborhood? | `explain_node` |
-| **query** | NL subgraph question | `query_graph` |
+For fuzzy / NL questions: `concept_search` → **`semantic_search`** → `search_code` — **before** `query_graph`.
+
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → `semantic_search` → `search_code` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| Known symbol neighborhood | `explain_node` |
+| Expand subgraph after seeds | `query_graph` |
 
 ### Gate first
 
@@ -1624,7 +1634,7 @@ EOF
 )
 
     if [ -f "$agents_file" ]; then
-        if grep -q 'prefer-order\|Three verbs\|path · explain' "$agents_file" 2>/dev/null \
+        if grep -q 'prefer-order\|Prefer-order\|discover before\|semantic_search' "$agents_file" 2>/dev/null \
             && grep -q 'HTTP-gated\|:9699/health' "$agents_file" 2>/dev/null \
             && ! grep -q 'MANDATORY RULE - ALWAYS USE LEANKG FIRST\|mcp_init first' "$agents_file" 2>/dev/null; then
             echo "LeanKG instructions already up to date in $agents_file"
