@@ -27,6 +27,7 @@ export interface SigmaEdgeAttributes {
   size: number;
   color: string;
   relationType: string;
+  confidenceLabel?: string;
   type?: string;
   curvature?: number;
   zIndex?: number;
@@ -47,6 +48,8 @@ export interface KGEdge {
   targetId?: string;
   type?: string;
   rel_type?: string;
+  confidenceLabel?: string;
+  confidence_label?: string;
 }
 
 const getScaledNodeSize = (baseSize: number, nodeCount: number): number => {
@@ -262,6 +265,9 @@ export const createSigmaGraph = (
           size: edgeBaseSize * style.sizeMultiplier,
           color: edgeColor,
           relationType: relType,
+          confidenceLabel: String(
+            rel.confidenceLabel ?? rel.confidence_label ?? '',
+          ),
           type: 'curved',
           curvature,
           weight: relType === 'CONTAINS' ? 2.5 : 0.5,
@@ -431,6 +437,7 @@ function kgEdgesFromKnowledgeGraph(kg: KnowledgeGraph): KGEdge[] {
     sourceId: r.sourceId,
     targetId: r.targetId,
     type: r.type,
+    confidenceLabel: r.confidenceLabel,
   }));
 }
 
@@ -489,6 +496,7 @@ export function buildLayoutGraph(
       size: 1.5 * style.sizeMultiplier,
       color: style.color,
       relationType: rel.type,
+      confidenceLabel: rel.confidenceLabel,
       type: 'curved',
       curvature: 0.2,
       weight: 1,
