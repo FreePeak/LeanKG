@@ -29,7 +29,7 @@ Persist and propagate edge provenance (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`) a
 | Check | Result |
 |-------|--------|
 | REST `GraphRelationship.confidenceLabel` | PASS — `src/web/handlers.rs` |
-| Sigma edge hover tooltip | PASS — `defaultDrawEdgeHover` shows `RELTYPE · LABEL` |
+| Sigma edge hover tooltip | PASS — `hoveredEdgeRef` + `edgeReducer` label + `defaultDrawEdgeLabel` shows `RELTYPE · LABEL` on hover (`ui-v2 npm run build` required) |
 
 ## Tests
 

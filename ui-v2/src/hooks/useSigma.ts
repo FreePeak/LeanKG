@@ -126,6 +126,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
   const graphRef = useRef<Graph<SigmaNodeAttributes, SigmaEdgeAttributes> | null>(null);
   const layoutRef = useRef<FA2Layout | null>(null);
   const selectedNodeRef = useRef<string | null>(null);
+  const hoveredEdgeRef = useRef<string | null>(null);
   const visibleEdgeTypesRef = useRef<EdgeType[] | null>(null);
   const searchTermRef = useRef<string>('');
   const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -194,7 +195,12 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       allowInvalidContainer: true,
       enableEdgeEvents: true,
       renderLabels: true,
+      renderEdgeLabels: true,
       labelFont: 'JetBrains Mono, monospace',
+      edgeLabelFont: 'JetBrains Mono, monospace',
+      edgeLabelSize: 11,
+      edgeLabelWeight: '500',
+      edgeLabelColor: { color: '#f5f5f7' },
       labelSize: 12,
       labelWeight: '500',
       labelColor: { color: '#e4e4ed' },
@@ -254,24 +260,25 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
         context.stroke();
         context.globalAlpha = 1;
       },
-      defaultDrawEdgeHover: (
+      defaultDrawEdgeLabel: (
         context: CanvasRenderingContext2D,
-        data: SigmaEdgeAttributes,
-        settings: { labelSize?: number; labelFont?: string; labelWeight?: string },
+        edgeData: { label?: string | null; color?: string },
+        sourceData: { x: number; y: number },
+        targetData: { x: number; y: number },
+        settings: { edgeLabelSize?: number; edgeLabelFont?: string; edgeLabelWeight?: string },
       ) => {
-        const label = data.confidenceLabel?.trim();
-        if (!label) return;
+        const edgeLabel = typeof edgeData.label === 'string' ? edgeData.label.trim() : '';
+        if (!edgeLabel) return;
 
-        const size = settings.labelSize || 11;
-        const font = settings.labelFont || 'JetBrains Mono, monospace';
-        const weight = settings.labelWeight || '500';
-        const edgeLabel = `${data.relationType || 'EDGE'} · ${label}`;
+        const size = settings.edgeLabelSize || 11;
+        const font = settings.edgeLabelFont || 'JetBrains Mono, monospace';
+        const weight = settings.edgeLabelWeight || '500';
 
         context.font = `${weight} ${size}px ${font}`;
         const textWidth = context.measureText(edgeLabel).width;
 
-        const x = (data as { x?: number }).x ?? 0;
-        const y = (data as { y?: number }).y ?? 0;
+        const x = (sourceData.x + targetData.x) / 2;
+        const y = (sourceData.y + targetData.y) / 2;
         const paddingX = 8;
         const paddingY = 5;
         const height = size + paddingY * 2;
@@ -283,7 +290,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
         context.roundRect(x - width / 2, y - height / 2, width, height, radius);
         context.fill();
 
-        context.strokeStyle = typeof data.color === 'string' ? data.color : '#6366f1';
+        context.strokeStyle = typeof edgeData.color === 'string' ? edgeData.color : '#6366f1';
         context.lineWidth = 1.5;
         context.stroke();
 
@@ -405,6 +412,22 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
             res.zIndex = 0;
           }
         }
+
+        const hoveredEdge = hoveredEdgeRef.current;
+        if (hoveredEdge === edge) {
+          const confidence = typeof data.confidenceLabel === 'string' ? data.confidenceLabel.trim() : '';
+          if (confidence) {
+            res.label = `${data.relationType || 'EDGE'} · ${confidence}`;
+            res.color = brightenColor(typeof data.color === 'string' ? data.color : '#2a2a3a', 1.3);
+            res.size = Math.max(2, (data.size || 1) * 2);
+            res.zIndex = Math.max(res.zIndex ?? 0, 3);
+          } else {
+            res.label = null;
+          }
+        } else {
+          res.label = null;
+        }
+
         return res;
       },
     });
@@ -457,11 +480,15 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
       if (containerRef.current) containerRef.current.style.cursor = 'grab';
     });
 
-    sigma.on('enterEdge', () => {
+    sigma.on('enterEdge', ({ edge }) => {
+      hoveredEdgeRef.current = edge;
+      sigma.refresh();
       if (containerRef.current) containerRef.current.style.cursor = 'help';
     });
 
     sigma.on('leaveEdge', () => {
+      hoveredEdgeRef.current = null;
+      sigma.refresh();
       if (containerRef.current) containerRef.current.style.cursor = 'grab';
     });
 
