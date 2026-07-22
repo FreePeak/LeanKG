@@ -1,19 +1,19 @@
 # Roadmap
 
 > **Status SoT:** [`prd-task-tracker.md`](prd-task-tracker.md) (waves + Focus). Narrative: [`prd.md`](prd.md) §1.1.  
-> **Now (2026-07-21):** P1 company-adoption waves 0–4. P0 ontology auto-update **DONE**.  
-> **P2 follow-on:** Doc↔code join quality (`US-DOCJOIN-*` / `FR-DOCJOIN-*`) — [`prd.md`](prd.md) §3.19 / §5.22; after Wave 1a.
+> **Now (2026-07-22):** P1 waves 0a–2a **DONE**. Next: Wave **2b** auto GRAPH_REPORT. P0 ontology auto-update **DONE**.
 
 ## Current implementation order (P1 waves)
 
 | Wave | Focus | What |
 |-----:|-------|------|
-| 0a | Docs | ROI brief README link (`REL-058`) |
-| 0b | UI | ui-v2 cutover evidence (`REL-057`) |
-| **1a** | **MCP surface** | Hard-delete `wake_up` / `search_by_environment` + sync skills/rules/guidelines/setup (`US-SURF-06..07`, `FR-SURF-07..11`, `REL-062`) |
-| 1b | Agent cost | Three-verb narrative (`FR-GF-22`) |
-| 1c | Agent cost | Always-on hooks (`FR-GF-24`) |
-| 2 | Packaging | Honest edges → GRAPH_REPORT → HTML export |
+| 0a | Docs | ROI brief README link (`REL-058`) — **DONE** |
+| 0b | UI | ui-v2 cutover evidence (`REL-057`) — **DONE** |
+| **1a** | **MCP surface** | Hard-delete `wake_up` / `search_by_environment` + sync skills/rules/guidelines/setup — **DONE** |
+| 1b | Agent cost | Three-verb narrative (`FR-GF-22`) — **DONE** |
+| 1c | Agent cost | Always-on hooks (`FR-GF-24`) — **DONE** |
+| **2a** | Packaging | Honest edges (`FR-GF-07..09`) — **DONE** |
+| **2b** | Packaging | Auto GRAPH_REPORT (`FR-GF-13`) — **NEXT** |
 | 3 | UI | NL Query FAB |
 | 4 | UI | Single-repo expand |
 
@@ -67,7 +67,7 @@ PRD: [`prd.md`](prd.md) §1.1 · Analysis: [`analysis/graphify-vs-leankg-2026-07
 | Feature | PRD ID | Status | Description |
 |---------|--------|--------|-------------|
 | Shortest path / explain / NL query | US-GF-01..03 | **Done** (MCP) | Remaining gap is packaging + UI |
-| Edge provenance labels | US-GF-04 / FR-GF-07..09 | **P1 Wave 2a** | EXTRACTED / INFERRED / AMBIGUOUS |
+| Edge provenance labels | US-GF-04 / FR-GF-07..09 | **Done** | EXTRACTED / INFERRED / AMBIGUOUS |
 | GRAPH_REPORT.md | US-GF-06 / FR-GF-13 | **P1 Wave 2b** | Architecture brief on index |
 | HTML export | US-GF-13 / FR-GF-21 | **P1 Wave 2c** | Bounded single-file share |
 | Three-verb + always-on hooks | US-GF-14 / US-GF-17 | **P1 Wave 1** | Primary cost lever |

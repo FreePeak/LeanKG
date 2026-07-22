@@ -265,6 +265,48 @@ configure_opencode() {
     echo "Configured LeanKG plugin and MCP for OpenCode at $config_file"
 }
 
+install_cursor_graph_first_rule() {
+    local rule_src=""
+    if [ -n "${LEANKG_REPO_ROOT:-}" ] && [ -f "${LEANKG_REPO_ROOT}/instructions/cursor-rules/leankg-graph-first.mdc" ]; then
+        rule_src="${LEANKG_REPO_ROOT}/instructions/cursor-rules/leankg-graph-first.mdc"
+    elif [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+        local _root
+        _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+        if [ -n "$_root" ] && [ -f "$_root/instructions/cursor-rules/leankg-graph-first.mdc" ]; then
+            rule_src="$_root/instructions/cursor-rules/leankg-graph-first.mdc"
+        fi
+    elif [ -f "$(pwd)/instructions/cursor-rules/leankg-graph-first.mdc" ]; then
+        rule_src="$(pwd)/instructions/cursor-rules/leankg-graph-first.mdc"
+    else
+        local rule_url="${INSTRUCTIONS_DIR}/cursor-rules/leankg-graph-first.mdc"
+        local tmp_rule
+        tmp_rule=$(mktemp)
+        if curl -fsSL "$rule_url" -o "$tmp_rule" 2>/dev/null; then
+            rule_src="$tmp_rule"
+        fi
+    fi
+
+    if [ -z "$rule_src" ] || [ ! -f "$rule_src" ]; then
+        echo "WARN: leankg-graph-first.mdc template not found — skipping Cursor rule install" >&2
+        return 1
+    fi
+
+    local installed=0
+    if [ -d ".cursor" ] || [ -f ".cursor/mcp.json" ]; then
+        mkdir -p ".cursor/rules"
+        cp "$rule_src" ".cursor/rules/leankg-graph-first.mdc"
+        echo "Installed always-apply graph-first rule: .cursor/rules/leankg-graph-first.mdc"
+        installed=1
+    fi
+
+    mkdir -p "$HOME/.cursor/rules"
+    cp "$rule_src" "$HOME/.cursor/rules/leankg-graph-first.mdc"
+    echo "Installed always-apply graph-first rule: ~/.cursor/rules/leankg-graph-first.mdc"
+    installed=1
+
+    [ "$installed" = "1" ]
+}
+
 configure_cursor() {
     local config_dir="$HOME/.cursor"
     local config_file="$config_dir/mcp.json"
@@ -443,7 +485,7 @@ setup_claude_hooks() {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-pretooluse.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.mjs\""
           }
         ]
       }
@@ -454,7 +496,7 @@ setup_claude_hooks() {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/leankg-posttooluse.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse.mjs\""
           }
         ]
       }
@@ -498,7 +540,12 @@ const input = JSON.parse(raw);
 
 const ROUTING_BLOCK = `
 <tool_selection_hierarchy>
-  Gate: curl -sf http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
+  Gate: curl -sf --max-time 2 http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
+
+  Three verbs first (path · explain · query):
+  - path → shortest_path(source, target, project=…)
+  - explain → explain_node(name_or_qn, project=…)
+  - query → query_graph(question, project=…)
 
   Prefer-order (HTTP healthy):
   0. get_overview_context(project=…) — session start; not load_layer(L0) alone
@@ -532,26 +579,23 @@ HOOKEOF
 #!/usr/bin/env node
 /**
  * LeanKG PreToolUse Hook
- * Provides LeanKG context when code search is detected.
- * Only blocks Bash commands that use raw grep/find.
+ * Nudges (or strictly blocks) raw grep/Read when LeanKG HTTP is healthy.
  */
 import { spawnSync } from "node:child_process";
 
-// ─── LeanKG Tools Mapping ───
 const LEANKG_TOOLS = {
+  shortest_path: "How does A connect to B?",
+  explain_node: "What is this symbol and its neighborhood?",
+  query_graph: "NL subgraph question",
   search_code: "Search code by name/type",
   find_function: "Locate function definitions",
-  query_file: "Find files by name/pattern",
-  get_impact_radius: "Calculate blast radius",
-  get_dependencies: "Get direct imports",
-  get_dependents: "Get files depending on target",
   get_context: "Get AI-optimized file context",
-  get_tested_by: "Get test coverage",
-  get_call_graph: "Get function call graph",
-  get_callers: "Get who calls a function",
+  get_impact_radius: "Calculate blast radius",
 };
 
-// ─── Read stdin ───
+const SOURCE_EXT = /\.(rs|go|ts|tsx|js|jsx|py|java|kt|swift|cs|cpp|c|h|rb|php|sql|yaml|yml|toml|md)$/i;
+const STRICT_READ = process.env.LEANKG_STRICT_READ === "1";
+
 function readStdin() {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -566,12 +610,10 @@ function readStdin() {
   });
 }
 
-// ─── Check if LeanKG is available ───
-function isLeanKGMCPReady() {
+function isLeanKGHttpHealthy() {
   try {
-    const result = spawnSync("cargo", ["run", "--release", "--", "status"], {
-      cwd: process.cwd(),
-      timeout: 5000,
+    const result = spawnSync("curl", ["-sf", "--max-time", "2", "http://localhost:9699/health"], {
+      timeout: 3000,
     });
     return result.status === 0;
   } catch {
@@ -579,42 +621,46 @@ function isLeanKGMCPReady() {
   }
 }
 
-// ─── Only block Bash with grep/find - allow other tools ───
-function shouldBlockTool(toolName, toolInput) {
+function isBashRawSearch(toolName, toolInput) {
   if (toolName !== "Bash") return false;
-
   const cmd = (toolInput.command || "").toLowerCase();
-
-  // Build commands always allowed
   const isBuildCmd = /^(cargo|npm|pnpm|yarn|go|make|cmake|rustc)/.test(cmd);
   if (isBuildCmd) return false;
-
-  // Only block if using raw grep/find in bash
   const hasRawSearch = /\b(grep|rg|ag|ack|find|fd|fzf)\b/.test(cmd);
   const isLeankgCmd = cmd.includes("leankg");
-
   return hasRawSearch && !isLeankgCmd;
 }
 
-function buildGuidance(toolInput) {
+function isSourceRead(toolName, toolInput) {
+  if (toolName !== "Read") return false;
+  const path = toolInput.path || toolInput.file_path || toolInput.file || "";
+  if (!path || typeof path !== "string") return false;
+  if (path.includes("node_modules/") || path.includes("/.git/")) return false;
+  return SOURCE_EXT.test(path);
+}
+
+function buildBashGuidance(toolInput) {
   const cmd = toolInput.command || "";
   const match = cmd.match(/['"]([^'"]+)['"]/);
   const query = match ? match[1] : "";
-
   const toolsList = Object.entries(LEANKG_TOOLS)
     .map(([name, desc]) => `  - mcp__leankg__${name}: ${desc}`)
     .join("\n");
-
-  return `LEANKG ENFORCEMENT: Raw search via Bash is blocked.
-
-Use LeanKG MCP tools instead:
+  return `LEANKG: Raw Bash search blocked. Use graph-first tools:
 ${toolsList}
 
-REQUIRED WORKFLOW:
-1. mcp__leankg__mcp_status → confirm LeanKG is ready
-2. For code search: mcp__leankg__search_code("${query}") or mcp__leankg__find_function("${query}")
+Try: mcp__leankg__search_code("${query}") or mcp__leankg__concept_search("${query}")
+Original: Bash(${JSON.stringify(toolInput)})`;
+}
 
-The original tool call: Bash(${JSON.stringify(toolInput)})`;
+function buildReadGuidance(toolInput) {
+  const path = toolInput.path || toolInput.file_path || toolInput.file || "";
+  return `LEANKG graph-first: Prefer mcp__leankg__get_context(file="${path}") or explain_node before full Read.
+
+Three verbs: shortest_path · explain_node · query_graph
+Then: concept_search → semantic_search → search_code → get_context
+
+Set LEANKG_STRICT_READ=1 to hard-block first Read on source files.`;
 }
 
 async function main() {
@@ -626,21 +672,39 @@ async function main() {
     const toolName = input.tool_name || "";
     const toolInput = input.tool_input || {};
 
-    if (!shouldBlockTool(toolName, toolInput)) {
+    const healthy = isLeanKGHttpHealthy();
+    if (!healthy) process.exit(0);
+
+    if (isBashRawSearch(toolName, toolInput)) {
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: buildBashGuidance(toolInput),
+        },
+      }) + "\n");
       process.exit(0);
     }
 
-    const leanKGReady = isLeanKGMCPReady();
-    if (!leanKGReady) process.exit(0);
+    if (isSourceRead(toolName, toolInput)) {
+      if (STRICT_READ) {
+        console.log(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: buildReadGuidance(toolInput),
+          },
+        }) + "\n");
+        process.exit(0);
+      }
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          additionalContext: buildReadGuidance(toolInput),
+        },
+      }) + "\n");
+    }
 
-    // LeanKG ready - block Bash search commands
-    console.log(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: buildGuidance(toolInput),
-      },
-    }) + "\n");
     process.exit(0);
   } catch {
     process.exit(0);
@@ -866,7 +930,10 @@ function buildSessionContext(input) {
   const projectType = detectProjectType(cwd);
 
   const context = `<tool_selection_hierarchy>
-  Gate: curl -sf http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
+  Gate: curl -sf --max-time 2 http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
+
+  Three verbs first: shortest_path · explain_node · query_graph
+
   1. mcp_status(project=…) — Docker: /workspace (not host Mac path)
   2. DISCOVER: concept_search → semantic_search → search_code / find_function
   3. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
@@ -1029,11 +1096,18 @@ HOOKEOF
 
     chmod +x "$plugin_dir/hooks/sessionstart.mjs" "$plugin_dir/hooks/pretooluse.mjs" "$plugin_dir/hooks/posttooluse.mjs" "$plugin_dir/hooks/version-check.mjs" "$plugin_dir/hooks/session-init.mjs" "$plugin_dir/hooks/summarize.mjs"
     
-    if [ ! -f "$plugin_dir/leankg-bootstrap.md" ]; then
-        cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
+    cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
 # LeanKG Bootstrap
 
-LeanKG is a lightweight knowledge graph for codebase understanding.
+## Three verbs first (path · explain · query)
+
+| Verb | MCP tool |
+|------|----------|
+| **path** — how does A connect to B? | `shortest_path` |
+| **explain** — symbol neighborhood | `explain_node` |
+| **query** — NL subgraph | `query_graph` |
+
+Gate: `curl -sf --max-time 2 http://localhost:9699/health` — if fail, use Grep/Glob/Read only.
 
 **Multi-Project Support:**
 LeanKG uses a single HTTP server that supports multiple projects. Each tool accepts a `project` parameter to specify the target project directory. The server routes queries to the correct `.leankg` database automatically.
@@ -1077,8 +1151,7 @@ Before ANY codebase search/navigation, you MUST:
 | Manual dependency tracing | `get_impact_radius(file="X", project="/path")` or `get_dependencies(file="X", project="/path")` |
 | Reading entire files | `get_context(file="X", project="/path")` (token-optimized) |
 BOOTSTRAPEOF
-        echo "Created leankg-bootstrap.md for Claude Code"
-    fi
+    echo "Refreshed leankg-bootstrap.md for Claude Code"
     
     if [ "$hooks_installed" = true ]; then
         echo "Configured LeanKG hooks for Claude Code"
@@ -1132,11 +1205,18 @@ HOOKEOF
         hooks_installed=true
     fi
     
-    if [ ! -f "$plugin_dir/leankg-bootstrap.md" ]; then
-        cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
+    cat > "$plugin_dir/leankg-bootstrap.md" <<'BOOTSTRAPEOF'
 # LeanKG Bootstrap
 
-LeanKG is a lightweight knowledge graph for codebase understanding.
+## Three verbs first (path · explain · query)
+
+| Verb | MCP tool |
+|------|----------|
+| **path** — how does A connect to B? | `shortest_path` |
+| **explain** — symbol neighborhood | `explain_node` |
+| **query** — NL subgraph | `query_graph` |
+
+Gate: `curl -sf --max-time 2 http://localhost:9699/health` — if fail, use Grep/Glob/Read only.
 
 **Multi-Project Support:**
 LeanKG uses a single HTTP server that supports multiple projects. Each tool accepts a `project` parameter to specify the target project directory. The server routes queries to the correct `.leankg` database automatically.
@@ -1180,8 +1260,7 @@ Before ANY codebase search/navigation, you MUST:
 | Manual dependency tracing | `get_impact_radius(file="X", project="/path")` or `get_dependencies(file="X", project="/path")` |
 | Reading entire files | `get_context(file="X", project="/path")` (token-optimized) |
 BOOTSTRAPEOF
-        echo "Created leankg-bootstrap.md for Cursor"
-    fi
+    echo "Refreshed leankg-bootstrap.md for Cursor"
     
     if [ "$hooks_installed" = true ]; then
         echo "Configured LeanKG hooks for Cursor"
@@ -1445,6 +1524,7 @@ install_leankg_skill() {
     # Refresh when missing or still on the old mandatory / RTK template.
     local needs_update=1
     if [ -f "$dest" ] && grep -q 'prefer-order' "$dest" 2>/dev/null \
+        && grep -q 'Three verbs\|path · explain' "$dest" 2>/dev/null \
         && grep -q 'HTTP-gated\|:9699/health' "$dest" 2>/dev/null \
         && ! grep -q 'STRICT ENFORCEMENT' "$dest" 2>/dev/null; then
         needs_update=0
@@ -1493,6 +1573,14 @@ install_agents_instructions() {
 
 ## LeanKG Tools Usage (HTTP-gated)
 
+### Three verbs first (path · explain · query)
+
+| Verb | Question | MCP tool |
+|------|----------|----------|
+| **path** | How does A connect to B? | `shortest_path` |
+| **explain** | What is this symbol and its neighborhood? | `explain_node` |
+| **query** | NL subgraph question | `query_graph` |
+
 ### Gate first
 
 ```bash
@@ -1536,7 +1624,8 @@ EOF
 )
 
     if [ -f "$agents_file" ]; then
-        if grep -q 'prefer-order\|HTTP-gated\|:9699/health' "$agents_file" 2>/dev/null \
+        if grep -q 'prefer-order\|Three verbs\|path · explain' "$agents_file" 2>/dev/null \
+            && grep -q 'HTTP-gated\|:9699/health' "$agents_file" 2>/dev/null \
             && ! grep -q 'MANDATORY RULE - ALWAYS USE LEANKG FIRST\|mcp_init first' "$agents_file" 2>/dev/null; then
             echo "LeanKG instructions already up to date in $agents_file"
         elif grep -qi "LEANKG" "$agents_file" 2>/dev/null; then
@@ -1583,6 +1672,8 @@ main() {
             update_binary "$platform"
             # Reinstall hooks on update (they may have new features)
             setup_claude_hooks
+            install_cursor_graph_first_rule || true
+            setup_cursor_hooks
             # Remove old skill (replaced by hooks)
             remove_old_skill
             echo "LeanKG hooks updated, old skill removed."
@@ -1618,6 +1709,7 @@ main() {
                 ;;
             cursor)
                 configure_cursor
+                install_cursor_graph_first_rule || true
                 setup_cursor_hooks
                 install_leankg_skill "$HOME/.cursor/skills" "cursor"
                 install_agents_instructions "$HOME/.cursor/AGENTS.md"
