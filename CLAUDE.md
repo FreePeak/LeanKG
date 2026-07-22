@@ -83,6 +83,22 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ## LeanKG Tools Usage
 
+### Prefer-order (discover before connection verbs)
+
+When MCP HTTP on `:9699` is healthy, for fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
+
+`get_overview_context` → `mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
+
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| What is this known symbol? | `explain_node` |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
+
+**BAN:** Do not call `query_graph` as the first NL discovery tool when embeddings/concepts may answer. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+
 ### MANDATORY: Docker MCP project paths (not host paths)
 
 When Cursor's LeanKG MCP talks to the Docker HTTP server on `:9699`, RocksDB keys projects by **in-container** mount paths. Host Mac paths fail with "not initialized" even when the index exists.

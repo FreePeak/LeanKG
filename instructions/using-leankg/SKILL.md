@@ -46,16 +46,19 @@ get_overview_context(project=…)  # L0+L1 summary — not load_layer(L0) alone
 → get_architecture for deep single-call overview
 ```
 
-Natural-language / domain questions:
+Natural-language / domain questions (**discover before `query_graph`**):
 
 ```
 1. mcp_status(project=…)
 2. concept_search(query=…)     # domain concepts first
-3. semantic_search(query=…)    # HNSW ANN if embeddings exist
+3. semantic_search(query=…)    # HNSW ANN if embeddings exist — REQUIRED before query_graph
 4. search_code / find_function # name/type fallback
-5. get_context / get_impact_radius / get_dependencies / …
+5. query_graph / explain_node / shortest_path  # only after seeds / known endpoints
+6. get_context / get_impact_radius / get_dependencies / …
    on the returned qualified_name or file — never full-graph dumps
 ```
+
+**BAN:** Do not call `query_graph` as the first NL discovery tool. Run `concept_search` → `semantic_search` first; use `query_graph` to expand the frontier after hits.
 
 Exact symbol / file known:
 
@@ -82,13 +85,9 @@ mcp_status → find_function / query_file → get_context → impact/deps tools
 | Blast radius | `get_impact_radius` |
 | Imports / dependents | `get_dependencies` / `get_dependents` |
 | Tests | `get_tested_by` |
-| NL subgraph | `query_graph` (frontier-local; mega-safe) |
+| NL subgraph (after discovery) | `query_graph` (frontier-local; mega-safe) — **not** first-hop NL |
 | Session overview | `get_overview_context` |
 | Environment filter | `env=` on `search_code` / `semantic_search` / `concept_search` / `kg_*` |
-
-### Hard-removed tools (do not call)
-
-`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
 
 ### Doc↔code join (structural markdown ↔ file keys)
 
@@ -103,6 +102,10 @@ After `mcp_index_docs`, path aliases resolve on read; markdown refs resolve to i
 ```
 
 Miss payloads include `tried[]` — do not assume empty graph when aliases fail.
+
+### Hard-removed tools (do not call)
+
+`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
 
 ### If mcp_status is not ready (but HTTP health was OK)
 

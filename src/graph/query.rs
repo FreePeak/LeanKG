@@ -2081,21 +2081,23 @@ impl GraphEngine {
         &self,
         relationship: &Relationship,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let metadata_str = serde_json::to_string(&relationship.metadata)?;
+        let mut rel = relationship.clone();
+        rel.stamp_confidence_label_metadata();
+        let metadata_str = serde_json::to_string(&rel.metadata)?;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "sq".to_string(),
-            serde_json::Value::String(relationship.source_qualified.clone()),
+            serde_json::Value::String(rel.source_qualified.clone()),
         );
         params.insert(
             "tq".to_string(),
-            serde_json::Value::String(relationship.target_qualified.clone()),
+            serde_json::Value::String(rel.target_qualified.clone()),
         );
         params.insert(
             "rt".to_string(),
-            serde_json::Value::String(relationship.rel_type.clone()),
+            serde_json::Value::String(rel.rel_type.clone()),
         );
-        params.insert("cn".to_string(), serde_json::json!(relationship.confidence));
+        params.insert("cn".to_string(), serde_json::json!(rel.confidence));
         params.insert("md".to_string(), serde_json::Value::String(metadata_str));
 
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] <- [[ $sq, $tq, $rt, $cn, $md ]] :put relationships { source_qualified, target_qualified, rel_type, confidence, metadata }"#;
@@ -2103,6 +2105,45 @@ impl GraphEngine {
         crate::db::schema::run_script(&self.db, &query, params)?;
 
         Ok(())
+    }
+
+    /// FR-GF-08: Backfill `confidence_label` metadata for relationships
+    /// missing it (bounded pagination for mega-graph safety).
+    pub fn backfill_confidence_labels(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        const PAGE: usize = 1000;
+        const MAX_PAGES: usize = 500;
+        let mut updated = 0usize;
+        let mut offset = 0usize;
+
+        for _ in 0..MAX_PAGES {
+            let (batch, _) = self.get_relationships_paginated(PAGE, offset)?;
+            if batch.is_empty() {
+                break;
+            }
+            let mut to_write = Vec::new();
+            for mut rel in batch {
+                let had = rel
+                    .metadata
+                    .get("confidence_label")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.is_empty());
+                if had {
+                    continue;
+                }
+                rel.stamp_confidence_label_metadata();
+                to_write.push(rel);
+            }
+            if !to_write.is_empty() {
+                self.insert_relationships(&to_write)?;
+                updated += to_write.len();
+            }
+            offset += PAGE;
+        }
+
+        if updated > 0 {
+            self.invalidate_cache();
+        }
+        Ok(updated)
     }
 
     pub fn insert_relationships(
@@ -2118,13 +2159,15 @@ impl GraphEngine {
         let batch_data: Vec<serde_json::Value> = relationships
             .iter()
             .map(|rel| {
+                let mut stamped = rel.clone();
+                stamped.stamp_confidence_label_metadata();
                 let metadata_str =
-                    serde_json::to_string(&rel.metadata).unwrap_or_else(|_| "{}".to_string());
+                    serde_json::to_string(&stamped.metadata).unwrap_or_else(|_| "{}".to_string());
                 serde_json::json!([
-                    rel.source_qualified.clone(),
-                    rel.target_qualified.clone(),
-                    rel.rel_type.clone(),
-                    rel.confidence,
+                    stamped.source_qualified.clone(),
+                    stamped.target_qualified.clone(),
+                    stamped.rel_type.clone(),
+                    stamped.confidence,
                     metadata_str
                 ])
             })
@@ -2863,7 +2906,7 @@ impl GraphEngine {
         source_qualified: &str,
         max_depth: u32,
         max_results: usize,
-    ) -> Result<Vec<(String, String, u32)>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<CallGraphEdge>, Box<dyn std::error::Error>> {
         // Resolve short function name to full qualified name
         let resolved = if source_qualified.contains("::") {
             normalize_path(source_qualified)
@@ -2873,7 +2916,7 @@ impl GraphEngine {
                 .unwrap_or_else(|| source_qualified.to_string())
         };
 
-        let mut all_calls: Vec<(String, String, u32)> = Vec::new();
+        let mut all_calls: Vec<CallGraphEdge> = Vec::new();
         let mut frontier: Vec<String> = vec![resolved.clone()];
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -2899,7 +2942,7 @@ impl GraphEngine {
                 };
 
                 let query = format!(
-                    r#"?[src, tgt] :=
+                    r#"?[src, tgt, conf, meta] :=
                        *relationships[src, tgt, rel_type, conf, meta, _],
                        rel_type = "calls",
                        {}
@@ -2910,10 +2953,30 @@ impl GraphEngine {
                 let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
                 for row in &result.rows {
                     let tgt = row[1].get_str().unwrap_or("").to_string();
+                    let confidence = row[2].get_float().unwrap_or(0.0);
+                    let metadata: serde_json::Value = row[3]
+                        .get_str()
+                        .and_then(|s| serde_json::from_str(s).ok())
+                        .unwrap_or_else(|| serde_json::json!({}));
+                    let rel = crate::db::models::Relationship {
+                        id: None,
+                        source_qualified: src.clone(),
+                        target_qualified: tgt.clone(),
+                        rel_type: "calls".to_string(),
+                        confidence,
+                        metadata,
+                        env: "local".to_string(),
+                    };
                     if !visited.contains(&tgt) && !tgt.starts_with("__unresolved__") {
                         next_frontier.push(tgt.clone());
                     }
-                    all_calls.push((src.clone(), tgt, depth + 1));
+                    all_calls.push(CallGraphEdge {
+                        source: src.clone(),
+                        target: tgt,
+                        depth: depth + 1,
+                        confidence,
+                        confidence_label: rel.confidence_label().to_string(),
+                    });
                 }
             }
             frontier = next_frontier;
@@ -4122,6 +4185,16 @@ pub struct ServiceGraph {
     pub total_connections: usize,
 }
 
+/// FR-GF-09: Single call-graph edge with provenance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallGraphEdge {
+    pub source: String,
+    pub target: String,
+    pub depth: u32,
+    pub confidence: f64,
+    pub confidence_label: String,
+}
+
 /// US-GF-01: A single hop in a shortest_path result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathHop {
@@ -4472,61 +4545,114 @@ impl GraphEngine {
         // must stay within MCP request latency even when no path exists.
         const MAX_BFS_VISITS: usize = 120;
 
-        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut queue: std::collections::VecDeque<(String, Vec<PathHop>)> =
-            std::collections::VecDeque::new();
-        queue.push_back((source_qn.clone(), Vec::new()));
-        visited.insert(source_qn.clone());
-
-        while let Some((current, path)) = queue.pop_front() {
-            if visited.len() > MAX_BFS_VISITS {
-                break;
-            }
-            if path.len() >= max_hops {
-                continue;
-            }
-            let rels = self
-                .get_relationships_involving_elements_fast(std::slice::from_ref(&current), None)?;
-            for rel in rels {
-                let next = if rel.source_qualified == current {
-                    rel.target_qualified.clone()
-                } else if rel.target_qualified == current {
-                    rel.source_qualified.clone()
-                } else {
-                    continue;
-                };
-                if !visited.insert(next.clone()) {
-                    continue;
-                }
-                let mut new_path = path.clone();
-                new_path.push(PathHop {
-                    from: current.clone(),
-                    to: next.clone(),
-                    rel_type: rel.rel_type.clone(),
-                    confidence: rel.confidence,
-                    confidence_label: rel.confidence_label().to_string(),
-                    source_file: rel
-                        .metadata
-                        .get("source_file")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                });
-                if next == target_qn {
-                    return Ok(Some(ShortestPathResult {
-                        source: source_qn,
-                        target: target_qn,
-                        hops: new_path.len(),
-                        path: new_path,
-                    }));
-                }
-                if visited.len() <= MAX_BFS_VISITS {
-                    queue.push_back((next, new_path));
-                }
-            }
+        fn path_label_score(path: &[PathHop]) -> u32 {
+            path.iter()
+                .map(|h| {
+                    u32::from(crate::db::models::Relationship::confidence_label_rank(
+                        &h.confidence_label,
+                    ))
+                })
+                .sum()
         }
 
-        Ok(None)
+        let mut frontier: Vec<(String, Vec<PathHop>)> = vec![(source_qn.clone(), Vec::new())];
+        let mut best_result: Option<ShortestPathResult> = None;
+        let mut visits = 0usize;
+
+        for _depth in 0..max_hops {
+            if frontier.is_empty() {
+                break;
+            }
+
+            let mut next_frontier: Vec<(String, Vec<PathHop>)> = Vec::new();
+            let mut best_at_level: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
+            let mut found_target_this_level = false;
+
+            for (current, path) in frontier {
+                if visits > MAX_BFS_VISITS {
+                    break;
+                }
+                visits += 1;
+
+                let rels = self.get_relationships_involving_elements_fast(
+                    std::slice::from_ref(&current),
+                    None,
+                )?;
+                let mut neighbors: Vec<(String, crate::db::models::Relationship)> = Vec::new();
+                for rel in rels {
+                    let next = if rel.source_qualified == current {
+                        rel.target_qualified.clone()
+                    } else if rel.target_qualified == current {
+                        rel.source_qualified.clone()
+                    } else {
+                        continue;
+                    };
+                    neighbors.push((next, rel));
+                }
+                neighbors.sort_by(|a, b| {
+                    crate::db::models::Relationship::confidence_label_rank(a.1.confidence_label())
+                        .cmp(&crate::db::models::Relationship::confidence_label_rank(
+                            b.1.confidence_label(),
+                        ))
+                });
+
+                for (next, rel) in neighbors {
+                    let mut new_path = path.clone();
+                    new_path.push(PathHop {
+                        from: current.clone(),
+                        to: next.clone(),
+                        rel_type: rel.rel_type.clone(),
+                        confidence: rel.confidence,
+                        confidence_label: rel.confidence_label().to_string(),
+                        source_file: rel
+                            .metadata
+                            .get("source_file")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    });
+
+                    if next == target_qn {
+                        let candidate = ShortestPathResult {
+                            source: source_qn.clone(),
+                            target: target_qn.clone(),
+                            hops: new_path.len(),
+                            path: new_path,
+                        };
+                        let replace = match &best_result {
+                            None => true,
+                            Some(prev) if candidate.hops < prev.hops => true,
+                            Some(prev) if candidate.hops == prev.hops => {
+                                path_label_score(&candidate.path) < path_label_score(&prev.path)
+                            }
+                            _ => false,
+                        };
+                        if replace {
+                            best_result = Some(candidate);
+                        }
+                        found_target_this_level = true;
+                        continue;
+                    }
+
+                    let score = path_label_score(&new_path);
+                    if let Some(&prev_score) = best_at_level.get(&next) {
+                        if score >= prev_score {
+                            continue;
+                        }
+                    }
+                    best_at_level.insert(next.clone(), score);
+                    next_frontier.push((next, new_path));
+                }
+            }
+
+            if found_target_this_level {
+                break;
+            }
+            frontier = next_frontier;
+        }
+
+        Ok(best_result)
     }
 
     /// Resolve a free-form input (qualified_name, exact name, or fuzzy
@@ -6435,6 +6561,94 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].source_qualified, "src/a.rs::a");
         assert_eq!(out[0].target_qualified, "src/b.rs::b");
+    }
+
+    #[test]
+    fn insert_relationship_stamps_confidence_label_metadata() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "a", "function", "src/a.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "b", "function", "src/b.rs", "rust", 1, 5);
+        let rel = Relationship {
+            source_qualified: "src/a.rs::a".to_string(),
+            target_qualified: "src/b.rs::b".to_string(),
+            rel_type: "calls".to_string(),
+            confidence: 0.95,
+            metadata: serde_json::json!({"resolution_method": "typed"}),
+            ..Default::default()
+        };
+        engine.insert_relationship(&rel).unwrap();
+        let stored = engine
+            .get_relationships("src/a.rs::a")
+            .unwrap()
+            .into_iter()
+            .find(|r| r.target_qualified == "src/b.rs::b")
+            .expect("edge stored");
+        assert_eq!(
+            stored
+                .metadata
+                .get("confidence_label")
+                .and_then(|v| v.as_str()),
+            Some("EXTRACTED")
+        );
+    }
+
+    #[test]
+    fn backfill_confidence_labels_noop_when_already_stamped() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "a", "function", "src/a.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "b", "function", "src/b.rs", "rust", 1, 5);
+        insert_test_rel(&engine, "src/a.rs::a", "src/b.rs::b", "calls", 0.9);
+        let n = engine.backfill_confidence_labels().unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn shortest_path_prefers_extracted_on_equal_length() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "a", "function", "src/a.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "b", "function", "src/b.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "c", "function", "src/c.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "d", "function", "src/d.rs", "rust", 1, 5);
+
+        let inferred = Relationship {
+            source_qualified: String::new(),
+            target_qualified: String::new(),
+            rel_type: "calls".to_string(),
+            confidence: 0.55,
+            metadata: serde_json::json!({"resolution_method": "name"}),
+            ..Default::default()
+        };
+        let extracted = Relationship {
+            source_qualified: String::new(),
+            target_qualified: String::new(),
+            rel_type: "calls".to_string(),
+            confidence: 0.95,
+            metadata: serde_json::json!({"resolution_method": "typed"}),
+            ..Default::default()
+        };
+
+        let mut ab = inferred.clone();
+        ab.source_qualified = "src/a.rs::a".into();
+        ab.target_qualified = "src/b.rs::b".into();
+        let mut bd = inferred.clone();
+        bd.source_qualified = "src/b.rs::b".into();
+        bd.target_qualified = "src/d.rs::d".into();
+        let mut ac = extracted.clone();
+        ac.source_qualified = "src/a.rs::a".into();
+        ac.target_qualified = "src/c.rs::c".into();
+        let mut cd = extracted.clone();
+        cd.source_qualified = "src/c.rs::c".into();
+        cd.target_qualified = "src/d.rs::d".into();
+
+        engine.insert_relationships(&[ab, bd, ac, cd]).unwrap();
+
+        let path = engine
+            .shortest_path("src/a.rs::a", "src/d.rs::d", 3)
+            .unwrap()
+            .expect("path should exist");
+        assert_eq!(path.hops, 2);
+        assert_eq!(path.path[0].to, "src/c.rs::c");
+        assert!(path.path.iter().all(|h| h.confidence_label == "EXTRACTED"));
     }
 
     #[test]

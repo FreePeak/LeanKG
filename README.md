@@ -183,6 +183,10 @@ graph LR
 
 > **On cost:** LeanKG’s win on every codebase is **precision and speed** — fewer tool calls, faster answers. Token savings are real and **scale-dependent**: modest on small repos, material on large monorepos multiplied by team-wide agent usage.
 
+### Company ROI vs grep and Graphify
+
+For engineering managers choosing a team-wide stack: [LeanKG vs Graphify — Company ROI Brief](docs/reports/leankg-vs-graphify-company-roi-2026-07-21.md) (token/tool-call floors, multi-repo Docker TCO, mega-graph safety, ops/traceability). The primary adoption lever is always-on graph-first install (`curl …/install.sh | bash -s -- cursor` or `claude`) so agents query the graph before grep.
+
 ---
 
 ## Measured Results
@@ -307,20 +311,34 @@ Repo ──► Indexer ──► Knowledge Graph ──► MCP Tools ──► A
 
 | Agent | Auto-setup | Notes |
 |-------|------------|--------|
-| Cursor | Yes | Per-project install; session hook; skill `using-leankg` |
-| Claude Code | Yes | Plugin + full lifecycle hooks |
+| Cursor | Yes | Per-project install; always-on graph-first rule + session hook; skill `using-leankg` |
+| Claude Code | Yes | Plugin + full lifecycle hooks (PreToolUse nudge) |
 | OpenCode | Yes | Plugin + skill |
 | Gemini CLI | Yes | MCP + skill / agent docs |
 | Codex / Antigravity / Kilo | Yes | MCP + skill / agent docs |
 | Docker MCP HTTP | Yes | Shared RocksDB; multi-repo mounts |
 
 ```bash
-leankg setup                 # configure MCP + hooks
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
 leankg mcp-stdio --watch     # local AI tools
 leankg mcp-http --port 9699  # HTTP/SSE for Docker / remote
 ```
 
-**Agent search prefer-order** (when `:9699` healthy): `concept_search` → `semantic_search` → `search_code`, then exact tools (`get_context`, impact, deps). Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
+### Prefer-order (discover before connection verbs)
+
+When `:9699` health is OK, for fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
+
+`get_overview_context` → `mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
+
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| What is this known symbol? | `explain_node` |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
+
+Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
 
 ### Procedural ontology (auto-update)
 

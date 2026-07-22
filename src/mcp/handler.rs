@@ -1233,6 +1233,7 @@ impl ToolHandler {
                 "type": a.element.element_type,
                 "file": a.element.file_path,
                 "confidence": a.confidence,
+                "confidence_label": a.confidence_label,
                 "severity": a.severity,
                 "depth": a.depth
             })).collect::<Vec<_>>()
@@ -1890,11 +1891,13 @@ impl ToolHandler {
 
         let calls: Vec<_> = call_graph
             .iter()
-            .map(|(src, tgt, d)| {
+            .map(|edge| {
                 json!({
-                    "source": src,
-                    "target": tgt,
-                    "depth": d
+                    "source": edge.source,
+                    "target": edge.target,
+                    "depth": edge.depth,
+                    "confidence": edge.confidence,
+                    "confidence_label": edge.confidence_label,
                 })
             })
             .collect();
@@ -2275,7 +2278,7 @@ impl ToolHandler {
                 json!({
                     "file": r.target_qualified,
                     "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or(""),
-                    "confidence_label": r.metadata.get("confidence_label").and_then(|v| v.as_str()).unwrap_or("")
+                    "confidence_label": r.confidence_label(),
                 })
             })
             .collect();
@@ -2548,7 +2551,7 @@ impl ToolHandler {
                 "doc": r.target_qualified,
                 "relationship": r.rel_type,
                 "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or(""),
-                "confidence_label": r.metadata.get("confidence_label").and_then(|v| v.as_str()).unwrap_or("")
+                "confidence_label": r.confidence_label(),
             }));
         }
 
@@ -2557,7 +2560,7 @@ impl ToolHandler {
                 "doc": r.source_qualified,
                 "relationship": r.rel_type,
                 "context": r.metadata.get("context").and_then(|v| v.as_str()).unwrap_or(""),
-                "confidence_label": r.metadata.get("confidence_label").and_then(|v| v.as_str()).unwrap_or("")
+                "confidence_label": r.confidence_label(),
             }));
         }
 

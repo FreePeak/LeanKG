@@ -1,12 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-21 — Wave **1a** MCP hard-delete **DONE**; P2 DOCJOIN Must Have **DONE** (`feature/doc-join-quality`, `FR-DOCJOIN-06` open) (REL-062); v3.7.14 graph-engineering curriculum gaps (`US-GE-*` / `FR-GE-*` / `REL-064`) docs DONE.
+**Last synced:** 2026-07-22 — Wave **2a** honest edges **DONE**; Wave **1c** always-on graph-first hooks **DONE**; Wave **1b** three-verb narrative **DONE**; Wave **0a/0b** ROI link + ui-v2 cutover evidence **DONE**; Wave **1a** MCP hard-delete **DONE**; P2 DOCJOIN Must Have **DONE** (`FR-DOCJOIN-06` open).
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
 
 > **Agent rule:** Work **P0 first**, then P1 waves → P2 → P3.  
 > **P0:** Procedural ontology auto-update — **DONE**.  
-> **P1 CURRENT:** Company adoption waves — **Wave 1a = redundant MCP tool cleanup + agent-surface sync**.  
+> **P1 CURRENT:** Company adoption waves — **Wave 2b = auto GRAPH_REPORT** (next). Waves 0a–2a **DONE**.  
 > **P2 follow-ons:** Doc↔code join (§3.19 / §5.22); graph-engineering curriculum gaps (§1.2 / §3.20 / §5.23) — do **not** interrupt P1 waves.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
@@ -39,18 +39,18 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **509** |
-| NOT_DONE | 73 |
-| PENDING | 33 |
-| PARTIAL | 13 |
+| NOT_DONE | 63 |
+| PENDING | 30 |
+| PARTIAL | 10 |
 | OPEN | 1 |
-| DONE | 386 |
+| DONE | 401 |
 | WONT_DO | 3 |
-| Open work | **120** |
+| Open work | **104** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
-| P1 | 23 |
+| P1 | 8 |
 | P2 | 85 |
 | P3 | 12 |
 
@@ -82,16 +82,28 @@ Evidence: [`ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-
 
 | Wave | Goal | IDs (implement) | Why |
 |-----:|------|-----------------|-----|
-| **0a** | Publish ROI | `US-COST-01` / `FR-COST-01` / `REL-058` | Brief exists; link README |
-| **0b** | ui-v2 cutover closeout | `US-UI2-07` / `FR-UI2-09` / `REL-057` | Embed present; finish evidence |
-| **1a** | **MCP redundant-tool cleanup + agent surface sync** | `US-SURF-06..07` / `FR-SURF-07..11` / `REL-062` | Hard-delete `wake_up` + `search_by_environment`; sync skills/rules/guidelines/setup |
-| **1b** | Three-verb narrative | `US-GF-14` / `FR-GF-22` | Agents pick cheap tools on **shrunk** roster |
-| **1c** | Always-on hooks | `US-GF-17` / `FR-GF-24` | Primary token-cost lever (install what skills say) |
-| **2a** | Honest edges | `US-GF-04` / `FR-GF-07..09` / `REL-043` | Trust = adoption |
+| **0a** | Publish ROI | `US-COST-01` / `FR-COST-01` / `REL-058` | **DONE** — brief + README link |
+| **0b** | ui-v2 cutover closeout | `US-UI2-07` / `FR-UI2-09` / `REL-057` | **DONE** — embed + evidence report |
+| **1a** | **MCP redundant-tool cleanup + agent surface sync** | `US-SURF-06..07` / `FR-SURF-07..11` / `REL-062` | **DONE** |
+| **1b** | Three-verb narrative | `US-GF-14` / `FR-GF-22` | **DONE** — path · explain · query first in docs/skills |
+| **1c** | Always-on hooks | `US-GF-17` / `FR-GF-24` | **DONE** — Cursor rule + Claude PreToolUse nudge |
+| **2a** | Honest edges | `US-GF-04` / `FR-GF-07..09` / `REL-043` | **DONE** — write-path stamp + MCP + ui-v2 |
 | **2b** | Auto GRAPH_REPORT | `US-GF-06` / `FR-GF-13` | Onboarding without tool wall |
 | **2c** | HTML export | `US-GF-13` / `FR-GF-21` | Shareable PR/CI artifact |
 | **3** | NL Query FAB | `US-UI2-06` / `FR-UI2-08` | Humans use same cheap verb |
 | **4** | Single-repo expand | `US-MG-02` / `FR-MG-03` | UI correctness |
+
+Evidence: [`honest-edges-smoke-2026-07-22.md`](reports/honest-edges-smoke-2026-07-22.md)
+
+### Wave 2a detail (honest edges)
+
+| ID | Status | Intent |
+|----|--------|--------|
+| `US-GF-04` | DONE | EXTRACTED / INFERRED / AMBIGUOUS on all relationship surfaces |
+| `FR-GF-07` | DONE | Persist `confidence_label` on every edge write |
+| `FR-GF-08` | DONE | Write-time map + reindex backfill |
+| `FR-GF-09` | DONE | MCP + path ranking + ui-v2 propagation |
+| `REL-043` | DONE | Smoke report + tests |
 
 ### Wave 1a detail (MCP surface)
 
@@ -173,9 +185,9 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P1** | `REL-058` | Release | **NOT_DONE** | Must Have | Manager ROI brief checked into docs/reports/ and linked from README competitive section | 5.20 Company cost / competitive ROI (v3.7.8) |
-| **P1** | `FR-UI2-09` | FR | **NOT_DONE** | Must Have | Build ui-v2 into src/embed/; leankg serve + Docker serve ui-v2 by default | 5.19 UI v2 Graph Explorer |
-| **P1** | `REL-057` | Release | **NOT_DONE** | Must Have | ui-v2 cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default | 5.19 UI v2 Graph Explorer |
+| **P1** | `REL-058` | Release | **DONE** | Must Have | Manager ROI brief checked into docs/reports/ and linked from README competitive section | 5.20 Company cost / competitive ROI (v3.7.8) |
+| **P1** | `FR-UI2-09` | FR | **DONE** | Must Have | Build ui-v2 into src/embed/; leankg serve + Docker serve ui-v2 by default | 5.19 UI v2 Graph Explorer |
+| **P1** | `REL-057` | Release | **DONE** | Must Have | ui-v2 cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-SURF-07` | FR | **DONE** | Must Have | Hard-delete wake_up from ToolRegistry + handlers; matrix AlreadyRemoved; smoke MUTATING li… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `FR-SURF-08` | FR | **DONE** | Must Have | Hard-delete search_by_environment; callers use env= on search_code/semantic_search/concept… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `FR-SURF-09` | FR | **DONE** | Must Have | Sync repo guidelines: AGENTS.md, CLAUDE.md, docs/mcp-tools.md, mcp-setup.md, agentic-instr… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
@@ -185,12 +197,12 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `FR-GE-01` | FR | **DONE** | Must Have | Publish graph-engineering curriculum fit matrix vs LeanKG | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `REL-064` | Release | **DONE** | Must Have | Analysis + PRD §1.2/§3.20/§5.23 + tracker rows on main | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `US-GE-01` | User Story | **DONE** | Must Have | Published fit matrix: LeanKG as graph memory under agent harnesses | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P1** | `FR-GF-22` | FR | **NOT_DONE** | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wa… | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-24` | FR | **NOT_DONE** | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redi… | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-07` | FR | **NOT_DONE** | Must Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written … | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-08` | FR | **NOT_DONE** | Must Have | Map 'resolution_method' → 'confidence_label' at edge write time; backfill on reindex | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-09` | FR | **NOT_DONE** | Must Have | Propagate 'confidence_label' in impact, call_graph, path, query_graph, Web UI | 5.9 Graphify-Inspired Features |
-| **P1** | `REL-043` | Release | **NOT_DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P1** | `FR-GF-22` | FR | **DONE** | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wa… | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-24` | FR | **DONE** | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redi… | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-07` | FR | **DONE** | Must Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written … | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-08` | FR | **DONE** | Must Have | Map 'resolution_method' → 'confidence_label' at edge write time; backfill on reindex | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-09` | FR | **DONE** | Must Have | Propagate 'confidence_label' in impact, call_graph, path, query_graph, Web UI | 5.9 Graphify-Inspired Features |
+| **P1** | `REL-043` | Release | **DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `FR-GF-13` | FR | **NOT_DONE** | Must Have | Auto-generate '.leankg/GRAPH_REPORT.md' on every index (CLI 'leankg report' / MCP 'get_gra… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-21` | FR | **NOT_DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **NOT_DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
@@ -255,7 +267,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P3** | `REL-041` | Release | **NOT_DONE** | Could Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `US-UI2-07` | User Story | **PENDING** | Must Have | ui-v2 production cutover: embed into src/embed/ / Docker serve; become default explorer | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P1** | `US-UI2-07` | User Story | **DONE** | Must Have | ui-v2 production cutover: embed into src/embed/ / Docker serve; become default explorer | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P1** | `US-SURF-06` | User Story | **DONE** | Must Have | Hard-delete soft-deprecated MCP tools (wake_up, search_by_environment) after grace | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
 | **P1** | `US-SURF-07` | User Story | **DONE** | Must Have | After tool shrink: sync skills, rules, guidelines, and install/setup to reduced roster | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
 | **P2** | `US-DOCJOIN-02` | User Story | **DONE** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
@@ -265,8 +277,8 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `US-GE-03` | User Story | **PENDING** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P2** | `US-GE-04` | User Story | **PENDING** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P2** | `US-GE-05` | User Story | **PENDING** | Should Have | Closed self-improve loop: outcome write-back improves next plan | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P1** | `US-GF-14` | User Story | **PENDING** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P1** | `US-GF-17` | User Story | **PENDING** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P1** | `US-GF-14` | User Story | **DONE** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P1** | `US-GF-17` | User Story | **DONE** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-13` | User Story | **PENDING** | Must Have | Shareable single-file HTML graph export (leankg export html, bounded subgraph/community) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-UI2-06` | User Story | **PENDING** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-CBM-A1` | User Story | **PENDING** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
@@ -290,9 +302,9 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P1** | `FR-COST-01` | FR | **PARTIAL** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
-| **P1** | `US-COST-01` | User Story | **PARTIAL** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
-| **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P1** | `FR-COST-01` | FR | **DONE** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
+| **P1** | `US-COST-01` | User Story | **DONE** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
+| **P1** | `US-GF-04` | User Story | **DONE** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-GF-06` | User Story | **PARTIAL** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
@@ -311,9 +323,9 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P1** | `REL-058` | Release | **NOT_DONE** | Must Have | Manager ROI brief checked into docs/reports/ and linked from README competitive section | 5.20 Company cost / competitive ROI (v3.7.8) |
-| **P1** | `FR-UI2-09` | FR | **NOT_DONE** | Must Have | Build ui-v2 into src/embed/; leankg serve + Docker serve ui-v2 by default | 5.19 UI v2 Graph Explorer |
-| **P1** | `REL-057` | Release | **NOT_DONE** | Must Have | ui-v2 cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default | 5.19 UI v2 Graph Explorer |
+| **P1** | `REL-058` | Release | **DONE** | Must Have | Manager ROI brief checked into docs/reports/ and linked from README competitive section | 5.20 Company cost / competitive ROI (v3.7.8) |
+| **P1** | `FR-UI2-09` | FR | **DONE** | Must Have | Build ui-v2 into src/embed/; leankg serve + Docker serve ui-v2 by default | 5.19 UI v2 Graph Explorer |
+| **P1** | `REL-057` | Release | **DONE** | Must Have | ui-v2 cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-SURF-07` | FR | **DONE** | Must Have | Hard-delete wake_up from ToolRegistry + handlers; matrix AlreadyRemoved; smoke MUTATING li… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `FR-SURF-08` | FR | **DONE** | Must Have | Hard-delete search_by_environment; callers use env= on search_code/semantic_search/concept… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
 | **P1** | `FR-SURF-09` | FR | **DONE** | Must Have | Sync repo guidelines: AGENTS.md, CLAUDE.md, docs/mcp-tools.md, mcp-setup.md, agentic-instr… | 5.18 MCP Tool Surface Rationalization (v3.7.12) |
@@ -323,12 +335,12 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P2** | `FR-GE-01` | FR | **DONE** | Must Have | Publish graph-engineering curriculum fit matrix vs LeanKG | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `REL-064` | Release | **DONE** | Must Have | Analysis + PRD §1.2/§3.20/§5.23 + tracker rows on main | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `US-GE-01` | User Story | **DONE** | Must Have | Published fit matrix: LeanKG as graph memory under agent harnesses | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P1** | `FR-GF-22` | FR | **NOT_DONE** | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wa… | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-24` | FR | **NOT_DONE** | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redi… | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-07` | FR | **NOT_DONE** | Must Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written … | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-08` | FR | **NOT_DONE** | Must Have | Map 'resolution_method' → 'confidence_label' at edge write time; backfill on reindex | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-GF-09` | FR | **NOT_DONE** | Must Have | Propagate 'confidence_label' in impact, call_graph, path, query_graph, Web UI | 5.9 Graphify-Inspired Features |
-| **P1** | `REL-043` | Release | **NOT_DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P1** | `FR-GF-22` | FR | **DONE** | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wa… | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-24` | FR | **DONE** | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redi… | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-07` | FR | **DONE** | Must Have | Relationship metadata field 'confidence_label' ∈ {EXTRACTED, INFERRED, AMBIGUOUS} written … | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-08` | FR | **DONE** | Must Have | Map 'resolution_method' → 'confidence_label' at edge write time; backfill on reindex | 5.9 Graphify-Inspired Features |
+| **P1** | `FR-GF-09` | FR | **DONE** | Must Have | Propagate 'confidence_label' in impact, call_graph, path, query_graph, Web UI | 5.9 Graphify-Inspired Features |
+| **P1** | `REL-043` | Release | **DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `FR-GF-13` | FR | **NOT_DONE** | Must Have | Auto-generate '.leankg/GRAPH_REPORT.md' on every index (CLI 'leankg report' / MCP 'get_gra… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-21` | FR | **NOT_DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **NOT_DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
@@ -400,11 +412,11 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
 | **P3** | `REL-041` | Release | **NOT_DONE** | Could Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P1** | `US-UI2-07` | User Story | **PENDING** | Must Have | ui-v2 production cutover: embed into src/embed/ / Docker serve; become default explorer | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P1** | `US-UI2-07` | User Story | **DONE** | Must Have | ui-v2 production cutover: embed into src/embed/ / Docker serve; become default explorer | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P1** | `US-SURF-06` | User Story | **DONE** | Must Have | Hard-delete soft-deprecated MCP tools (wake_up, search_by_environment) after grace | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
 | **P1** | `US-SURF-07` | User Story | **DONE** | Must Have | After tool shrink: sync skills, rules, guidelines, and install/setup to reduced roster | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
-| **P1** | `US-GF-14` | User Story | **PENDING** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P1** | `US-GF-17` | User Story | **PENDING** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P1** | `US-GF-14` | User Story | **DONE** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P1** | `US-GF-17` | User Story | **DONE** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-13` | User Story | **PENDING** | Must Have | Shareable single-file HTML graph export (leankg export html, bounded subgraph/community) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-UI2-06` | User Story | **PENDING** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-CBM-A1` | User Story | **PENDING** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
@@ -428,9 +440,9 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
-| **P1** | `FR-COST-01` | FR | **PARTIAL** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
-| **P1** | `US-COST-01` | User Story | **PARTIAL** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
-| **P1** | `US-GF-04` | User Story | **PARTIAL** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
+| **P1** | `FR-COST-01` | FR | **DONE** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
+| **P1** | `US-COST-01` | User Story | **DONE** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
+| **P1** | `US-GF-04` | User Story | **DONE** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-GF-06` | User Story | **PARTIAL** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |

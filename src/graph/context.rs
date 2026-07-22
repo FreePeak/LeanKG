@@ -444,6 +444,7 @@ mod tests {
             results.push(super::super::traversal::AffectedElementWithConfidence {
                 element: elem1.clone(),
                 confidence: 0.9,
+                confidence_label: "EXTRACTED".to_string(),
                 severity: "WILL BREAK".to_string(),
                 depth: 1,
             });
@@ -454,6 +455,7 @@ mod tests {
             results.push(super::super::traversal::AffectedElementWithConfidence {
                 element: elem2.clone(),
                 confidence: 0.5,
+                confidence_label: "INFERRED".to_string(),
                 severity: "MAY BE AFFECTED".to_string(),
                 depth: 2,
             });

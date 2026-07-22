@@ -2,72 +2,86 @@
 
 ## Core Principle
 
-LeanKG is a **pre-built knowledge graph**. Prefer it when MCP HTTP `:9699` is healthy. If health fails, use Grep/Glob/Read — do **not** call LeanKG or `mcp_init`.
-
-Gate:
-
-```bash
-curl -sf --max-time 2 http://localhost:9699/health
-```
-
-Docker MCP: pass container `project=` (e.g. `/workspace`), not a host Mac path.
+LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first — never grep/ripgrep unless the tool returns no results.
 
 ---
 
-## Semantic Discovery (prefer-order — FR-SURF-02)
+## Prefer-order (discover before connection verbs)
 
-**Search triple:** `concept_search` → `semantic_search` → `search_code`  
-**Semantic triple:** `semantic_search` → `kg_semantic_context` → `kg_context`
+For fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
 
-1. `concept_search(query="...")` — domain concepts / aliases first.
-2. `semantic_search(query="...", limit=20, offset=0)` — HNSW+rerank when embeddings exist, else ontology-first.
-3. `search_code(query="...")` / `find_function(name="...")` — name/type filters after the above.
-4. Then exact tools on hits: `get_context`, `get_impact_radius`, `get_dependencies`, …
-5. `kg_semantic_context(query="...", env="local")` — ranked seeds + hop graph (needs embeddings).
-6. `kg_context(query="...")` — ontology expand without vectors.
+`mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs.
+
+| Question type | First tools |
+|---------------|-------------|
+| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
+| How A↔B? (known endpoints) | `shortest_path` |
+| What is this known symbol? | `explain_node` |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
+
+Gate: `curl -sf --max-time 2 http://localhost:9699/health` — if fail, use Grep/Glob/Read only.
+
+---
+
+## Semantic Discovery (v3.6.2 — CozoDB HNSW preferred)
+
+When the binary was built with `--features embeddings` AND the embedding
+index has been built (`leankg embed` after `leankg index`), prefer the
+**HNSW-backed** vector retrieval tools. They return semantically similar
+code, ontology nodes, and graph context, ranked by cross-encoder rerank:
+
+1. `kg_semantic_context(query="...", env="local")` — best for natural-language questions ("where do we validate access rights", "how does the refund flow work"). Returns ranked seed nodes + 1-2 hop graph context.
+2. `semantic_search(query="...", limit=20, offset=0)` — paginated ontology+HNSW fallback; pagination is the safe default on mega-graphs.
+
+If `kg_semantic_context` returns "No embedded vectors found", fall back
+to the ontology layer:
+
+3. `kg_context(query="...")` — ontology-aware concept expansion (no embeddings required).
+4. `search_code(query="...")` / `find_function(name="...")` — bounded name search.
 
 ---
 
 ## Tool Selection Flowchart
 
 ```
-User asks about codebase → curl :9699/health
-  │ fail → Grep/Glob/Read
-  │ ok → mcp_status(project=…)
+User asks about codebase → mcp_status (check initialized)
   │
-  ├─ NL / domain "Where is auth?" ───────────► concept_search → semantic_search
-  │                                              then get_context on a hit
-  ├─ Exact name "Find ProcessOrder" ─────────► find_function / search_code
+  ├─ "Where is X?" / "Find Y" ───────────────► search_code or find_function
+  │   ├─ by name/type ─────────────────────────► search_code(query="X")
+  │   └─ exact function ───────────────────────► find_function(name="parseJson")
+  │                                              scope to file: find_function(name="foo", file="src/bar.rs")
   │
-  ├─ "What breaks if I change X?" ───────────► get_impact_radius(file="X", depth=2)
+  ├─ "What breaks if I change X?" ────────────► get_impact_radius(file="X", depth=2)
   │   └─ use depth<=2 for token budgets (depth=3 returns hundreds of nodes)
   │
-  ├─ "How does X work?" / call chain ────────► get_call_graph(function="X")
+  ├─ "How does X work?" / call chain ─────────► get_call_graph(function="X")
   │   └─ keep depth≤2, avoid depth>3 (neighbor explosion)
   │
-  ├─ "Who calls X?" / callers ───────────────► get_callers(function="X")
+  ├─ "Who calls X?" / callers ────────────────► get_callers(function="X")
   │
-  ├─ "What does X import/use?" ──────────────► get_dependencies(file="X")
-  ├─ "What uses X?" ─────────────────────────► get_dependents(file="X")
+  ├─ "What does X import/use?" ───────────────► get_dependencies(file="X")
+  ├─ "What uses X?" ──────────────────────────► get_dependents(file="X")
   │
-  ├─ "Show me file context" / read large file ► ctx_read(file="X", mode=adaptive)
+  ├─ "Show me file context" / read large file ─► ctx_read(file="X", mode=adaptive)
   │   └─ modes: adaptive, signatures (smallest), full, map, diff, lines("1-20,30-40")
   │
-  ├─ "Get minimal AI context for prompt" ────► get_context(file="X", signature_only=true)
+  ├─ "Get minimal AI context for prompt" ─────► get_context(file="X", signature_only=true)
   │
-  ├─ "What tests cover X?" ──────────────────► get_tested_by(file="X")
+  ├─ "What tests cover X?" ───────────────────► get_tested_by(file="X")
   │
-  ├─ "Show me all files/folders" ────────────► get_code_tree(limit=50)
+  ├─ "Show me all files/folders" ─────────────► get_code_tree(limit=50)
   │
-  ├─ "Find oversized functions" ─────────────► find_large_functions(min_lines=50, limit=20)
+  ├─ "Find oversized functions" ──────────────► find_large_functions(min_lines=50, limit=20)
   │
-  ├─ Natural language router ────────────────► orchestrate(intent="...")
-  │   └─ file param optional — only for impact/dependency intents
+  ├─ Natural language query (any of the above) ─► orchestrate(intent="...")
+  │   └─ file param is OPTIONAL — only needed for impact/dependency queries
+  │      e.g. orchestrate(intent="show me impact of changing src/lib.rs", file="src/lib.rs")
   │
-  ├─ "What docs reference X?" ───────────────► find_related_docs(file="X")
-  ├─ "What code is in this doc?" ────────────► get_files_for_doc(doc="docs/X.md")
+  ├─ "What docs reference X?" ─────────────────► find_related_docs(file="X")
+  ├─ "What code is in this doc?" ─────────────► get_files_for_doc(doc="docs/X.md")
   │
-  └─ Pre-commit risk check ──────────────────► detect_changes(scope="staged"|"all")
+  └─ Pre-commit risk check ───────────────────► detect_changes(scope="staged"|"all")
 ```
 
 ---
