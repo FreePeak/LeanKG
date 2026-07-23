@@ -1,13 +1,13 @@
 {
-  "generated": "2026-07-21",
+  "generated": "2026-07-22",
   "source": "docs/prd.md",
   "counts": {
     "DONE": 395,
+    "NOT_DONE": 67,
+    "PENDING": 30,
     "PARTIAL": 13,
-    "PENDING": 33,
-    "NOT_DONE": 73,
-    "WONT_DO": 3,
     "OPEN": 1,
+    "WONT_DO": 3,
     "by_status": {
       "NOT_DONE": 67,
       "PENDING": 30,
@@ -6724,5 +6724,297 @@
       "US-DOCJOIN-02",
       "US-DOCJOIN-03"
     ]
-  }
+  },
+  "items": [
+    {
+      "id": "US-DOCEMBED-01",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Semantic search over embedded docs",
+      "prd_section": "3.21",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-DOCEMBED-02",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Doc metadata for embedding blobs",
+      "prd_section": "3.21",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-DOCEMBED-03",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Stale-mark docs after index_docs",
+      "prd_section": "3.21",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-DOCEMBED-01",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "classify document/doc_section Doc blobs",
+      "prd_section": "5.24",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-DOCEMBED-02",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "doc_indexer metadata enrichment",
+      "prd_section": "5.24",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-DOCEMBED-03",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "mark_stale_if_changed after doc index",
+      "prd_section": "5.24",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-DOCEMBED-04",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Doc-aware prefer-order in tools/skills",
+      "prd_section": "5.24",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-EMBED-PERF-01",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "CLI --types perf for mega mounts",
+      "prd_section": "3.22",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-EMBED-PERF-02",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "struct/property/constructor Code blobs",
+      "prd_section": "3.22",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-EMBED-PERF-03",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "--full enrolls untracked QNs",
+      "prd_section": "3.22",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-EMBED-TYPES-01",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "parse_type_filter perf preset",
+      "prd_section": "5.25",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-EMBED-TYPES-02",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Perf type token list",
+      "prd_section": "5.25",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-EMBED-TYPES-03",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "struct/property/constructor classify Code",
+      "prd_section": "5.25",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-EMBED-TYPES-04",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Full embed enrolls untracked",
+      "prd_section": "5.25",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-INDEX-INV-01",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Persist index_inventory totals",
+      "prd_section": "3.23",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-INDEX-INV-01",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "index_inventory Cozo relation",
+      "prd_section": "5.26",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-INDEX-INV-02",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Refresh after index/embed",
+      "prd_section": "5.26",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-INDEX-INV-03",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "mcp_status inventory field",
+      "prd_section": "5.26",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-INDEX-INV-04",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "CLI status inventory",
+      "prd_section": "5.26",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-TEST-ED-01",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Full unit matrix",
+      "prd_section": "3.24",
+      "ve_suborder": 15
+    },
+    {
+      "id": "US-TEST-ED-02",
+      "kind": "User Story",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Live MCP fixture+mega tests",
+      "prd_section": "3.24",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-TEST-ED-01",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "cargo test embeddings green",
+      "prd_section": "5.27",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-TEST-ED-02",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Live fixture script/report",
+      "prd_section": "5.27",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-TEST-ED-03",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Live mega probes",
+      "prd_section": "5.27",
+      "ve_suborder": 15
+    },
+    {
+      "id": "FR-TEST-ED-04",
+      "kind": "FR",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Tracker gated on REL evidence",
+      "prd_section": "5.27",
+      "ve_suborder": 15
+    },
+    {
+      "id": "REL-065",
+      "kind": "Release",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Fixture live embed-doc smoke",
+      "prd_section": "5.24",
+      "ve_suborder": 15
+    },
+    {
+      "id": "REL-066",
+      "kind": "Release",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Mega perf embed coverage report",
+      "prd_section": "5.25",
+      "ve_suborder": 15
+    },
+    {
+      "id": "REL-067",
+      "kind": "Release",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Mega inventory report",
+      "prd_section": "5.26",
+      "ve_suborder": 15
+    },
+    {
+      "id": "REL-068",
+      "kind": "Release",
+      "status": "DONE",
+      "priority": "Must Have",
+      "focus": "P1",
+      "title": "Master embed-doc-inventory test report",
+      "prd_section": "5.27",
+      "ve_suborder": 15
+    }
+  ]
 }
