@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.6](https://github.com/FreePeak/LeanKG/compare/v0.19.5...v0.19.6) (2026-07-23)
+
+
+### Features
+
+* **benchmark:** codegraph-style cross-tool agent A/B harness (US-CT-BMK) — Alamofire verified ([025ce8b](https://github.com/FreePeak/LeanKG/commit/025ce8b2a111945a653ac8f9bdf9a76d9e09b924))
+
+
+### Bug Fixes
+
+* use html_url instead of url in release-please verify step ([f708b29](https://github.com/FreePeak/LeanKG/commit/f708b29e75159efcdc5c8c78eefd0e8813d5a2c8))
+* use html_url instead of url in release-please verify step ([6c02160](https://github.com/FreePeak/LeanKG/commit/6c02160d340c196e72808b32088b024350575a2d))
+
 ## [0.19.5](https://github.com/FreePeak/LeanKG/compare/v0.19.4...v0.19.5) (2026-07-23)
 
 
