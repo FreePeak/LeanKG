@@ -138,10 +138,13 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: manifest.json
-          # Target a throwaway branch name so the action cannot collide
-          # with the production release PR even if a maintainer forgets
-          # to clean up.
-          target-branch: dry-run-${{ github.run_id }}
+          # Target the current branch so the action diffs against the
+          # parent commit. The release-eligible commit set on this
+          # branch includes the manifest fix (`fix: ...`) which should
+          # produce a patch-bump candidate version. Setting a real
+          # target branch lets the action compute and log a non-empty
+          # version for verification.
+          target-branch: ${{ github.ref_name }}
           # Critical: do not open a real PR, do not push a tag, do not
           # create a GitHub Release. The action will still compute and
           # log the next version.
