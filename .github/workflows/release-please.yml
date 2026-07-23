@@ -109,18 +109,20 @@ jobs:
   # ----------------------------------------------------------------------
   # Test-only job — REMOVE after the live pipeline is verified on main.
   # Triggered via `gh workflow run release-please.yml --ref <branch>`.
-  # Loads the same configuration files and computes the next release,
-  # but does NOT push a release branch, tag, or GitHub Release. Use this
-  # to validate the pipeline end-to-end before relying on it in
-  # production.
+  # Loads the same configuration files and runs the action end-to-end
+  # with `skip-github-release: true` so it pushes the release branch
+  # and opens (or updates) the release PR but never creates a tag or
+  # GitHub Release. Use this to validate the pipeline end-to-end
+  # before relying on it in production.
   # ----------------------------------------------------------------------
   release-please-dry-run:
     name: Release Please (dry run)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
+      contents: write
+      pull-requests: write
+      issues: write
     concurrency:
       group: release-please-dry-run-${{ github.ref }}
       cancel-in-progress: true
@@ -138,18 +140,17 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: manifest.json
-          # Target the current branch so the action diffs against the
-          # parent commit. Release Please's release-PR branch in
-          # release-please-config.json is overridden for this run via
-          # the explicit `branch` value passed through pull-request,
-          # but we also pass target-branch to keep it explicit.
+          # Target the run branch so the action diffs against the
+          # parent commit. The release-PR branch name comes from
+          # release-please-config.json['packages']['.']['pull-request']['branch']
+          # so the PR cannot accidentally target main.
           target-branch: ${{ github.ref_name }}
-          # Critical guards: do not push a tag, do not create a GitHub
-          # Release. We do allow the action to open (or update) a
-          # throwaway PR so it can compute and emit the next version.
-          # The PR's target/base branch is overridden to the run branch
-          # via the dry-run target-branch above, so the PR cannot
-          # accidentally target main.
+          # Critical: do not push a tag, do not create a GitHub Release.
+          # We do allow the action to open (or update) the release PR
+          # so the version / tag / pr outputs are populated for
+          # verification. Close the dry-run PR without merging; the
+          # Cargo.toml / Cargo.lock / CHANGELOG.md bumps live only on
+          # the dry-run branch and are discarded.
           skip-github-release: true
 
       - name: Verify dry-run output
@@ -172,3 +173,12 @@ jobs:
             exit 1
           fi
           echo "Dry-run OK: next release would be ${TAG} (PR=${PR:-none})"
+
+      - name: Close dry-run release PR
+        if: always() && steps.release-dry.outputs.pr != ''
+        env:
+          PR: ${{ steps.release-dry.outputs.pr }}
+        run: |
+          set -euo pipefail
+          echo "Closing dry-run release PR ${PR}"
+          gh pr close "${PR}" --delete-branch=false --comment "Dry-run release; cleanup." || true
