@@ -4,7 +4,7 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "release-type": "cargo",
+      "release-type": "rust",
       "package-name": "leankg",
       "version-file": "Cargo.toml",
       "changelog-path": "CHANGELOG.md",
