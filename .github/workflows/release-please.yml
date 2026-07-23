@@ -105,3 +105,66 @@ jobs:
           if [ "${RELEASE_CREATED:-false}" != "true" ] && [ -z "${PR:-}" ]; then
             echo "No release PR required for this push"
           fi
+
+  # ----------------------------------------------------------------------
+  # Test-only job — REMOVE after the live pipeline is verified on main.
+  # Triggered via `gh workflow run release-please.yml --ref <branch>`.
+  # Loads the same configuration files and computes the next release,
+  # but does NOT push a release branch, tag, or GitHub Release. Use this
+  # to validate the pipeline end-to-end before relying on it in
+  # production.
+  # ----------------------------------------------------------------------
+  release-please-dry-run:
+    name: Release Please (dry run)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: release-please-dry-run-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Show baseline
+        run: |
+          echo "Ref: ${{ github.ref }}"
+          echo "Manifest: $(cat manifest.json)"
+          echo "Cargo.toml version: $(grep '^version' Cargo.toml | head -1)"
+
+      - name: Release Please dry run
+        id: release-dry
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: manifest.json
+          # Target a throwaway branch name so the action cannot collide
+          # with the production release PR even if a maintainer forgets
+          # to clean up.
+          target-branch: dry-run-${{ github.run_id }}
+          # Critical: do not open a real PR, do not push a tag, do not
+          # create a GitHub Release. The action will still compute and
+          # log the next version.
+          skip-github-pull-request: true
+          skip-github-release: true
+
+      - name: Verify dry-run output
+        if: always()
+        env:
+          VERSION: ${{ steps.release-dry.outputs.version }}
+          TAG: ${{ steps.release-dry.outputs.tag_name }}
+          PR: ${{ steps.release-dry.outputs.pr }}
+        run: |
+          set -euo pipefail
+          echo "Dry-run computed version: ${VERSION:-<empty>}"
+          echo "Dry-run computed tag:    ${TAG:-<empty>}"
+          echo "Dry-run computed PR:     ${PR:-<empty>}"
+          if [ -z "${VERSION:-}" ]; then
+            echo "::warning::Release Please did not compute a version"
+            exit 1
+          fi
+          if [ -n "${PR:-}" ]; then
+            echo "::error::Release Please unexpectedly produced a PR in dry-run mode"
+            exit 1
+          fi
+          echo "Dry-run OK: next release would be ${TAG} (PR=${PR:-none})"
