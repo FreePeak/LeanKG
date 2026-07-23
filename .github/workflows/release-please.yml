@@ -182,3 +182,12 @@ jobs:
           set -euo pipefail
           echo "Closing dry-run release PR ${PR}"
           gh pr close "${PR}" --delete-branch=false --comment "Dry-run release; cleanup." || true
+
+      - name: Delete dry-run release branch
+        if: always()
+        env:
+          BRANCH: release-please--branches--test/release-please-dry-run--components--leankg
+        run: |
+          set -euo pipefail
+          echo "Deleting dry-run release branch ${BRANCH}"
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" || true
