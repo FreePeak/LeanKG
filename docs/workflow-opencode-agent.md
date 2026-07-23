@@ -4,6 +4,11 @@
 
 This document defines the workflow pattern for OpenCode AI agent to implement features in LeanKG. Each feature implementation follows a structured process: **Update Docs → Implement → Test → Commit → Create PR → Review & Merge → Release**.
 
+The release step (Step 8) is now automated through the
+[`.github/workflows/release-please.yml`](../../.github/workflows/release-please.yml)
+workflow once the change is merged to `main` and the CI quality checks pass.
+See [Automated Releases](#automated-releases) for the end-to-end process.
+
 ## Core Principle: One Feature Per Branch
 
 Every distinct feature or fix should be:
@@ -16,6 +21,149 @@ Every distinct feature or fix should be:
 7. Released as a new version after merge
 
 ---
+
+## Automated Releases
+
+LeanKG uses an automated semantic-version release pipeline driven by GitHub
+Actions and the [Release Please](https://github.com/googleapis/release-please)
+action. The pipeline replaces the manual version-bump + tag-push steps that
+used to live in `Step 8`.
+
+### Versioning policy
+
+LeanKG follows [Semantic Versioning 2.0](https://semver.org/) `vX.Y.Z`:
+
+| Bump | Trigger | Examples |
+|------|---------|----------|
+| Minor (`Y`) | `feat:` commits merged to `main` | `v1.8.3` → `v1.9.0` |
+| Patch (`Z`) | `fix:`, `perf:`, or other release-eligible conventional commits | `v1.8.3` → `v1.8.4` |
+| Major (`X`) | **Never auto-incremented.** A maintainer opens a release PR and updates `[package].version` in `Cargo.toml` to the next major by hand | `v1.8.3` → `v2.0.0` |
+
+Release Please treats `feat:` as feature and `fix:`, `perf:`, `refactor:` as
+patch-eligible. `docs:`, `chore:`, `test:`, `style:`, `ci:` commits do **not**
+trigger a release by default; they are bundled into the next release PR that
+contains a `feat:` or `fix:` commit.
+
+### Pipeline at a glance
+
+```text
+push to main / merge of PR
+   └── CI: cargo test --lib, cargo fmt --check, cargo clippy, ui-v2 build
+        └── Release Please opens / updates release PR
+             ├── bumps Cargo.toml version (minor or patch only)
+             ├── appends an entry to CHANGELOG.md
+             └── opens the GitHub Release on merge of the release PR
+```
+
+### How it works
+
+1. **Conventional commits.** Every merge to `main` must use a
+   [Conventional Commits](https://www.conventionalcommits.org/) prefix:
+   `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `chore:`, `test:`,
+   `style:`, `ci:`, or `build:`. A scope (`feat(cli): ...`) is recommended but
+   optional. Any commit whose body contains `BREAKING CHANGE:` is ignored by
+   this pipeline — major releases are handled manually.
+2. **Release Please runs on push to `main`** once CI is green. It scans the
+   commits since the last `v*` tag, calculates the next minor or patch
+   version, and opens (or updates) the **release PR**.
+3. **Release PR.** The release PR updates `Cargo.toml`, `Cargo.lock`, and
+   `CHANGELOG.md`. Reviewers check the version bump and changelog, then merge
+   the release PR with squash.
+4. **Release publication.** On merge of the release PR, Release Please creates
+   an annotated `vX.Y.Z` tag and publishes a GitHub Release with the
+   generated notes.
+
+### Files touched by the pipeline
+
+| File | Action | Source |
+|------|--------|--------|
+| `Cargo.toml` | bumps `[package].version` | Release Please via `cargo` strategy |
+| `Cargo.lock` | refreshed via `cargo build` in the workflow | Release Please |
+| `CHANGELOG.md` | appends a release section with categorized commits | Release Please |
+
+### Required permissions and secrets
+
+- Repository secret `GITHUB_TOKEN` (automatically provided by GitHub
+  Actions) must allow `contents: write` and `pull-requests: write`. The
+  workflow declares the permissions it needs explicitly and does not request
+  any extra scopes.
+- No additional secret is required for the default setup. If the release job
+  needs to publish to crates.io later, add the `CARGO_REGISTRY_TOKEN` secret.
+
+### Required repository settings
+
+- Branch protection on `main` must require status checks from the `CI`
+  workflow (`Test Suite`, `Format Check`, `Clippy Lints`, `UI v2 Typecheck`).
+- The release PR is opened against `main`; `main` must accept squash merges
+  so the linear history is preserved.
+
+### Conventional-commit cheatsheet for LeanKG
+
+| Commit type | Triggers release? | Allowed scopes |
+|-------------|-------------------|----------------|
+| `feat:` | Yes — minor bump | `cli`, `mcp`, `web`, `indexer`, `graph`, `db`, `embed`, `ui-v2`, `release` |
+| `fix:` | Yes — patch bump | same as above |
+| `perf:` | Yes — patch bump | same as above |
+| `refactor:` | Yes — patch bump | same as above |
+| `docs:` | No | `readme`, `prd`, `cli-reference`, `mcp-tools` |
+| `chore:` | No | `deps`, `tooling` |
+| `test:` | No | unit, integration, e2e |
+| `ci:` | No | `ci`, `release` |
+| `build:` | No | `cargo`, `docker` |
+| `style:` | No | rustfmt, ui styling |
+
+### Local verification before pushing
+
+```bash
+# Confirm the commit subject matches the convention
+git log --oneline -5
+
+# Run the same checks CI runs locally
+cargo fmt --all -- --check
+cargo clippy --all -- -D warnings
+cargo test --lib
+
+# Build the UI v2 assets (if changed)
+(cd ui-v2 && npm ci && npm run build)
+```
+
+If a commit message is malformed, amend it (`git commit --amend`) before
+pushing — once the change reaches `main`, Release Please will skip it.
+
+### Handling a major release (manual)
+
+1. Open a PR titled `feat!: start vX.0.0 development cycle` (or include
+   `BREAKING CHANGE:` in the body) that updates `[package].version` in
+   `Cargo.toml` to `X.0.0` and adds a new `## [X.0.0]` section to
+   `CHANGELOG.md` summarizing the breaking changes.
+2. Wait for the `CI` workflow to pass.
+3. Merge the PR with squash. Release Please will detect the manual version
+   bump, create the `vX.0.0` tag, and publish the GitHub Release without
+   recomputing the version.
+
+### Rollback or hotfix release
+
+```bash
+# Cherry-pick the fix on a branch off the existing tag
+git checkout -b fix/<short-description> vX.Y.Z
+git cherry-pick <commit-sha>
+
+# Open a PR with the conventional prefix `fix:` or `perf:`
+# Release Please will produce a vX.Y.(Z+1) release PR on merge to main
+```
+
+Do not rebase or rewrite tags that already exist on the remote; Release Please
+will detect the divergence and refuse to publish until the inconsistency is
+resolved.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Release Please opens no PR after a merge | The commits since the last tag only contain `docs:`, `chore:`, `test:`, `style:`, `ci:`, `build:` | Wait for the next `feat:` or `fix:` commit, or open the release manually |
+| Release PR bumps the wrong version | A previous commit was rewritten or the tag is missing on `origin` | Confirm `git ls-remote --tags origin | grep vX.Y.Z` returns the expected tag; re-tag locally and push |
+| `cargo build` fails in the release PR | The Cargo.lock change is out of sync with the workspace | Re-run `cargo build --release` locally, commit the lockfile, and push |
+| Workflow fails with `403 Forbidden` on Release Please | The `GITHUB_TOKEN` lacks `contents: write` | Update the workflow's `permissions:` block and the repository settings |
 
 ## Standard Feature Implementation Workflow
 
@@ -192,32 +340,28 @@ gh pr merge --squash --delete-branch
 # gh pr merge --admin --delete-branch
 ```
 
+For a manual major release, follow the [Handling a major release (manual)](#handling-a-major-release-manual)
+section instead of merging the release PR normally.
+
 ### Step 8: Release New Version
 
-After merge:
+Releases are produced automatically by the
+[`.github/workflows/release-please.yml`](../../.github/workflows/release-please.yml)
+workflow on every push to `main`. The merge of the **release PR** is what
+publishes the tag and the GitHub Release.
 
-```bash
-# Pull latest main
-git checkout main
-git pull origin main
+Manual actions required after merge of a feature PR:
 
-# Bump version in Cargo.toml
-# Edit version from X.Y.Z to X.Y.Z+1
+1. Wait for the `CI` workflow to finish green on `main`.
+2. Wait for Release Please to open (or update) a release PR with the new
+   version in `Cargo.toml` and a new section in `CHANGELOG.md`.
+3. Review the release PR: verify the version bump level (minor vs. patch) and
+   the changelog entries are correct.
+4. Merge the release PR with squash. Release Please will create the
+   `vX.Y.Z` tag and the GitHub Release automatically.
 
-# Run cargo build to update Cargo.lock (required to sync Cargo.lock with new version)
-cargo build
-
-# Commit version bump (both Cargo.toml and updated Cargo.lock)
-git add -A
-git commit -m "release: vX.Y.Z"
-
-# Push
-git push origin main
-
-# Create and push tag
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin vX.Y.Z
-```
+For a major release, follow the [Handling a major release (manual)](#handling-a-major-release-manual)
+section instead.
 
 ---
 
@@ -435,6 +579,8 @@ gh release create vX.Y.Z --notes "Release notes"
 
 ## Document Revision
 
-**Version:** 1.0  
-**Date:** 2026-03-25  
+**Version:** 1.1  
+**Date:** 2026-07-23  
+**Change:** Added the [Automated Releases](#automated-releases) section and
+replaced the manual release step with the Release Please pipeline.  
 **Based on:** LeanKG Phase 2 implementation session

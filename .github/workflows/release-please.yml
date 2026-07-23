@@ -1,0 +1,160 @@
+name: Release Please
+
+# Automated semantic-version release pipeline for LeanKG.
+#
+# On every push to main:
+#   1. Scans the commits since the latest v* tag.
+#   2. Determines the next minor (feat) or patch (fix, perf, refactor)
+#      version using conventional commits.
+#   3. Opens (or updates) a release PR that bumps Cargo.toml and
+#      appends a section to CHANGELOG.md.
+#   4. On merge of the release PR, pushes an annotated vX.Y.Z tag and
+#      publishes the GitHub Release.
+#
+# The companion `.github/workflows/release.yml` (already in main) listens
+# for the new v* tag and is responsible for publishing crates.io and
+# building the cross-platform binary artifacts. This file owns the
+# versioning, changelog, and tag/release step; `release.yml` owns the
+# artifact step.
+#
+# Major releases are NOT auto-created. See the
+# "Handling a major release (manual)" section in
+# docs/workflow-opencode-agent.md for the manual major-release procedure.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# Allow only one release run at a time; cancel duplicate runs that
+# arrived while the previous run was still processing. This avoids
+# two release-please runs racing over the same set of commits.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Pin a specific major version of the action so behavior is
+          # reproducible. Bump deliberately and review the changelog
+          # when upgrading.
+          release-type: cargo
+          package-name: leankg
+          # Version file managed by the cargo strategy.
+          version-file: Cargo.toml
+          # Open / update the release PR against main.
+          target-branch: main
+          # Publish the GitHub Release immediately on merge of the
+          # release PR; not a draft.
+          skip-github-release: false
+          draft: false
+          # Repo-local config so the release PR / changelog behavior
+          # is tracked in this repository instead of relying on
+          # external defaults.
+          config: |
+            bump-minor-pre-major: true
+            bump-patch-for-minor-pre-major: true
+            include-component-in-tag: false
+            packages:
+              leankg:
+                release-type: cargo
+                package-name: leankg
+                version-file: Cargo.toml
+                changelog-path: CHANGELOG.md
+                changelog-sections:
+                  - type: feat
+                    section: Features
+                  - type: fix
+                    section: Bug Fixes
+                  - type: perf
+                    section: Performance
+                  - type: refactor
+                    section: Refactoring
+                  - type: revert
+                    section: Reverts
+                exclude-types:
+                  - docs
+                  - chore
+                  - test
+                  - style
+                  - ci
+                  - build
+                skip-github-release: false
+                draft: false
+                pull-request:
+                  base-branch: main
+                  branch: release-please--branches--main
+                  labels:
+                    - release
+                    - automated
+                  reviewers: []
+                  body: |
+                    ## Release summary
+
+                    - **Next version:** {{version}}
+                    - **Bump level:** {{bump-type}}
+                    - **Release PR:** {{pr}}
+
+                    This PR was generated automatically by the
+                    `release-please.yml` GitHub Actions workflow.
+                    Review the changelog entries and the version bump
+                    before merging. On merge, the `v{{version}}` tag and
+                    GitHub Release will be created.
+
+                    See `docs/workflow-opencode-agent.md` for the
+                    release policy and troubleshooting guidance.
+
+      - name: Verify release output
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERSION:-}" ]; then
+            echo "Release Please did not report a version"
+            exit 1
+          fi
+          if [ -z "${TAG:-}" ]; then
+            echo "Release Please did not report a tag"
+            exit 1
+          fi
+          if [ -z "${RELEASE_URL:-}" ]; then
+            echo "Release Please did not report a release URL"
+            exit 1
+          fi
+          echo "Published ${TAG} (${RELEASE_URL})"
+
+      - name: Summarize run
+        if: always()
+        env:
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          PR: ${{ steps.release.outputs.pr }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "release_created=${RELEASE_CREATED:-false}"
+          echo "pr=${PR:-}"
+          echo "tag=${TAG:-}"
+          echo "version=${VERSION:-}"
+          # Allow runs that did not create a release (no release-eligible
+          # commits, or a PR was already open) to finish without failing
+          # the workflow.
+          if [ "${RELEASE_CREATED:-false}" != "true" ] && [ -z "${PR:-}" ]; then
+            echo "No release PR required for this push"
+          fi
