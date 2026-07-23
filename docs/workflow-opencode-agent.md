@@ -92,7 +92,7 @@ workflow inputs. Editing these files is how the pipeline is customized.
 | File | Purpose |
 |------|---------|
 | [`release-please-config.json`](../../release-please-config.json) | Top-level config: bump policy, package definitions, changelog sections, exclude types, release-PR branch / labels / body |
-| [`manifest.json`](../../manifest.json) | Maps the repository path (`.`) to a Release Please package: `release-type: cargo`, `package-name: leankg`, `version-file: Cargo.toml` |
+| [`manifest.json`](../../manifest.json) | Maps the repository path (`.`) to the **current semantic-version string** (e.g. `".": "0.19.4"`). Values are strings, not objects. Update this value whenever `Cargo.toml`'s `[package].version` is bumped outside of Release Please. |
 
 The `.github/workflows/release-please.yml` workflow only declares supported
 action inputs: `token`, `config-file`, `manifest-file`, and `target-branch`.
@@ -184,6 +184,7 @@ resolved.
 | `cargo build` fails in the release PR | The Cargo.lock change is out of sync with the workspace | Re-run `cargo build --release` locally, commit the lockfile, and push |
 | Workflow fails with `403 Forbidden` on Release Please | The `GITHUB_TOKEN` lacks `contents: write` | Update the workflow's `permissions:` block and the repository settings |
 | Release Please fails with `Unknown release type: cargo` or `Unexpected input(s) 'package-name', 'version-file', 'draft', 'config'` | The workflow uses inline action inputs that Release Please v4 rejects | Move `release-type`, `package-name`, `version-file`, changelog sections, and exclude types into `release-please-config.json` and `manifest.json`, and pass only `config-file` and `manifest-file` from the workflow |
+| Release Please fails with `versionString.match is not a function` | `manifest.json` maps the package path to an object instead of the current version string | Make `manifest.json["."]` a string equal to `[package].version` in `Cargo.toml` (e.g. `".": "0.19.4"`); package metadata belongs in `release-please-config.json`, not in the manifest |
 
 ## Standard Feature Implementation Workflow
 
@@ -599,10 +600,10 @@ gh release create vX.Y.Z --notes "Release notes"
 
 ## Document Revision
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Date:** 2026-07-23  
-**Change:** Documented Release Please v4 configuration via
-`release-please-config.json` and `manifest.json`, added the troubleshooting
-row for `Unknown release type: cargo`, and noted that inline action inputs
-are no longer accepted.  
+**Change:** Clarified that `manifest.json` values must be version strings
+(not objects), added the troubleshooting row for
+`versionString.match is not a function`, and updated the manifest entry
+description in the configuration table.  
 **Based on:** LeanKG Phase 2 implementation session
