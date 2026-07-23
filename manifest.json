@@ -1,7 +1,3 @@
 {
-  ".": {
-    "release-type": "cargo",
-    "package-name": "leankg",
-    "version-file": "Cargo.toml"
-  }
+  ".": "0.19.4"
 }
