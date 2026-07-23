@@ -71,7 +71,9 @@ set +e
 ( cd "${REPO_PATH}" && \
   claude -p "${PROMPT}" \
     ${MODEL:+--model "${MODEL}"} \
-    --strict-mcp-config "${MCP_CONFIG_PATH}" \
+    --bare \
+    --mcp-config "${MCP_CONFIG_PATH}" \
+    --strict-mcp-config \
     --output-format json \
     --dangerously-skip-permissions \
     --no-session-persistence \
@@ -91,6 +93,9 @@ FILE_READS="0"
 NUM_TURNS="0"
 STOP_REASON="unknown"
 RESULT_CHARS="0"
+ACTUAL_MODEL=""
+MCP_SERVERS=""
+MCP_TOOLS="0"
 PROMPT_CHARS=$(printf '%s' "${PROMPT}" | wc -c | tr -d ' ')
 
 # Parse the JSON envelope. `claude -p --output-format json` returns a JSON
@@ -147,6 +152,44 @@ def get_result_element(d):
             return d
     return {}
 
+def get_init_element(d):
+    """Find the {type: 'system', subtype: 'init'} element regardless of shape."""
+    events = d if isinstance(d, list) else [d]
+    for elem in events:
+        if not isinstance(elem, dict):
+            continue
+        if elem.get("type") == "system" and elem.get("subtype") == "init":
+            return elem
+    return {}
+
+def get_mcp_summary(init_elem):
+    """Extract the actual model + MCP server/tool names from the init event.
+
+    This is the ground truth of whether the MCP server attached: the harness
+    can lie about flags, but the init event cannot. If `mcp_servers` is empty
+    in this event, no MCP server reached the model — the run is invalid for
+    the WITH arm.
+    """
+    if not isinstance(init_elem, dict):
+        return "", [], 0
+    actual_model = str(init_elem.get("model", "") or "")
+    raw_servers = init_elem.get("mcp_servers", []) or []
+    if not isinstance(raw_servers, list):
+        raw_servers = []
+    server_names = [
+        str(s.get("name", "")) if isinstance(s, dict) else str(s)
+        for s in raw_servers
+        if s
+    ]
+    tools = init_elem.get("tools", []) or []
+    if not isinstance(tools, list):
+        tools = []
+    mcp_tool_count = sum(
+        1 for t in tools
+        if isinstance(t, str) and t.startswith("mcp__")
+    )
+    return actual_model, server_names, mcp_tool_count
+
 def walk_tool_uses(d):
     """Count tool_use blocks and Read invocations across all events."""
     tool_calls = 0
@@ -202,6 +245,8 @@ if tool_calls == 0 or file_reads == 0:
     if file_reads == 0:
         file_reads = walk_reads
 
+init_elem = get_init_element(data)
+actual_model, mcp_server_names, mcp_tool_count = get_mcp_summary(init_elem)
 print(f"COST={total_cost}")
 print(f"INPUT={input_tokens}")
 print(f"OUTPUT={output_tokens}")
@@ -211,6 +256,9 @@ print(f"STOP={stop_reason}")
 print(f"RESULT_CHARS={result_chars}")
 print(f"TOOL_CALLS={tool_calls}")
 print(f"FILE_READS={file_reads}")
+print(f"ACTUAL_MODEL={actual_model}")
+print(f"MCP_SERVERS={','.join(mcp_server_names)}")
+print(f"MCP_TOOLS={mcp_tool_count}")
 PY
   )
   while IFS='=' read -r key value; do
@@ -224,26 +272,64 @@ PY
       RESULT_CHARS) RESULT_CHARS="${value}" ;;
       TOOL_CALLS) TOOL_CALLS="${value}" ;;
       FILE_READS) FILE_READS="${value}" ;;
+      ACTUAL_MODEL) ACTUAL_MODEL="${value}" ;;
+      MCP_SERVERS) MCP_SERVERS="${value}" ;;
+      MCP_TOOLS) MCP_TOOLS="${value}" ;;
     esac
   done <<< "${PARSED}"
+fi
+
+# Defaults if the parser didn't emit them (e.g. parse failure)
+ACTUAL_MODEL="${ACTUAL_MODEL:-}"
+MCP_SERVERS="${MCP_SERVERS:-}"
+MCP_TOOLS="${MCP_TOOLS:-0}"
+
+# Compute validity from the ground-truth init event. If any rule fails, the
+# JSONL row still gets written (so we keep a paper trail) but is flagged
+# `valid: false` with a reason. The aggregator filters these out.
+INVALID_REASONS=()
+if [[ "${EXIT_CODE}" != "0" ]]; then
+  INVALID_REASONS+=("exit_code=${EXIT_CODE}")
+fi
+if [[ "${TOTAL_COST}" == "0" || "${TOTAL_COST}" == "0.0" ]]; then
+  INVALID_REASONS+=("zero_cost")
+fi
+if [[ "${ARM}" == "with" && -z "${MCP_SERVERS}" ]]; then
+  INVALID_REASONS+=("no_mcp_attached")
+fi
+if [[ -n "${INVALID_REASONS[*]:-}" ]]; then
+  VALID="false"
+  INVALID_REASON="$(IFS='|'; echo "${INVALID_REASONS[*]}")"
+else
+  VALID="true"
+  INVALID_REASON=""
 fi
 
 # Emit the JSON line. Use python for safe quoting.
 python3 - "${REPO_PATH}" "${ARM}" "${RUN_IDX}" "${MODEL}" "${PROMPT_CHARS}" \
   "${EXIT_CODE}" "${DURATION_S}" "${TOTAL_COST}" "${INPUT_TOKENS}" \
   "${OUTPUT_TOKENS}" "${CACHE_READ_TOKENS}" "${TOOL_CALLS}" "${FILE_READS}" \
-  "${NUM_TURNS}" "${STOP_REASON}" "${RESULT_CHARS}" "${OUTPUT_PATH}" <<'PY'
+  "${NUM_TURNS}" "${STOP_REASON}" "${RESULT_CHARS}" \
+  "${ACTUAL_MODEL}" "${MCP_SERVERS}" "${MCP_TOOLS}" \
+  "${VALID}" "${INVALID_REASON}" "${OUTPUT_PATH}" <<'PY'
 import json, pathlib, sys
 
 (repo_path, arm, run_idx, model, prompt_chars, exit_code, duration_s,
  total_cost, input_tokens, output_tokens, cache_read, tool_calls, file_reads,
- num_turns, stop_reason, result_chars, output_path) = sys.argv[1:]
+ num_turns, stop_reason, result_chars,
+ actual_model, mcp_servers, mcp_tools,
+ valid, invalid_reason, output_path) = sys.argv[1:]
 
 record = {
     "repo": pathlib.Path(repo_path).name,
     "arm": arm,
     "run_idx": int(run_idx),
     "model": model if model else None,
+    "actual_model": actual_model or None,
+    "mcp_servers": [s for s in (mcp_servers or "").split(",") if s],
+    "mcp_tool_count": int(mcp_tools),
+    "valid": valid == "true",
+    "invalid_reason": invalid_reason or None,
     "prompt_chars": int(prompt_chars),
     "exit_code": int(exit_code),
     "duration_s": round(float(duration_s), 3),
@@ -265,4 +351,8 @@ with out.open("a", encoding="utf-8") as fh:
 PY
 
 # Surface progress on stderr so the user can follow the long run
-echo "  ${ARM} run ${RUN_IDX}: exit=${EXIT_CODE} dur=${DURATION_S}s cost=\$${TOTAL_COST} tools=${TOOL_CALLS} reads=${FILE_READS}" >&2
+VALID_TAG=""
+if [[ "${VALID}" != "true" ]]; then
+  VALID_TAG=" [INVALID: ${INVALID_REASON}]"
+fi
+echo "  ${ARM} run ${RUN_IDX}: exit=${EXIT_CODE} dur=${DURATION_S}s cost=\$${TOTAL_COST} tools=${TOOL_CALLS} reads=${FILE_READS} model=${ACTUAL_MODEL:-?} mcp=[${MCP_SERVERS:-none}]${VALID_TAG}" >&2

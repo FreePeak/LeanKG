@@ -63,13 +63,15 @@ cd benchmarks/cross_tool
 # 1. Clone the 7 benchmark repos at pinned refs (depth 1)
 make setup
 
-# 2. Run one repo end-to-end (use the default claude model)
+# 2a. One repo end-to-end (default claude model)
 make all REPO=gin N=4
 
-# 3. Run the full 7-repo suite
-make full N=4
+# 2b. OR: full 7-repo suite, dispatched in parallel via one subagent per repo
+#     (recommended). Each subagent runs both arms for its repo:
+bash run_repo.sh <slug> 4
+#     Dispatch all 7 in parallel; the orchestrator aggregates afterwards:
 
-# 4. Just the report from existing JSONL
+# 3. Just the report from existing JSONL
 make report
 ```
 
@@ -78,7 +80,31 @@ Override defaults:
 ```bash
 make full LEANKG_BIN=/abs/path/to/leankg N=4 MODEL=sonnet
 make with REPO=django N=8
+LEANKG_BIN=/abs/path/to/leankg bash run_repo.sh django 4 sonnet
 ```
+
+### Parallel dispatch (recommended for the full suite)
+
+`make full` runs the 7 repos serially (one repo at a time), which can take
+~90-120 minutes wall-clock. The recommended path is to dispatch **one Task
+subagent per repo** in parallel — all 7 repos run concurrently, total
+wall-clock is bounded by the slowest repo (typically vscode or django).
+
+Each subagent receives a prompt like:
+
+> Run this bash command and report what it prints:
+>
+> ```bash
+> LEANKG_BIN=/Users/linh.doan/work/harvey/freepeak/leankg/.worktrees/feature/cross-tool-benchmark/target/release/leankg \
+>   bash /Users/linh.doan/work/harvey/freepeak/leankg/.worktrees/feature/cross-tool-benchmark/benchmarks/cross_tool/run_repo.sh \
+>   <slug> 4 sonnet
+> ```
+>
+> Do not modify any files. Just run the command, wait for it to finish,
+> then report the last 20 lines.
+
+Each repo writes to `benchmarks/cross_tool/results/runs/<DATE>/<slug>/...`
+so the 7 subagents don't conflict on output paths.
 
 ## Per-repo question set
 
