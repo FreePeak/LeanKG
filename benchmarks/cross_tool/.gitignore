@@ -1,0 +1,9 @@
+# Cloned benchmark repos (set up by `make setup`)
+repos/
+
+# Scratch / claude session files (transcript JSON, stderr logs, tmp configs)
+scratch/
+**/scratch/
+
+# Editor / OS noise
+.DS_Store
