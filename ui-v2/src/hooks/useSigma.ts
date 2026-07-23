@@ -407,7 +407,7 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
         }
         return res;
       },
-    });
+    } as any);
 
     sigmaRef.current = sigma;
     if (typeof window !== 'undefined') {
