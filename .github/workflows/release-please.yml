@@ -3,19 +3,22 @@ name: Release Please
 # Automated semantic-version release pipeline for LeanKG.
 #
 # On every push to main:
-#   1. Scans the commits since the latest v* tag.
-#   2. Determines the next minor (feat) or patch (fix, perf, refactor)
+#   1. Reads the supported Release Please configuration from
+#      `release-please-config.json` and `manifest.json` at the repo
+#      root.
+#   2. Scans the commits since the latest v* tag.
+#   3. Determines the next minor (feat) or patch (fix, perf, refactor)
 #      version using conventional commits.
-#   3. Opens (or updates) a release PR that bumps Cargo.toml and
+#   4. Opens (or updates) a release PR that bumps Cargo.toml and
 #      appends a section to CHANGELOG.md.
-#   4. On merge of the release PR, pushes an annotated vX.Y.Z tag and
+#   5. On merge of the release PR, pushes an annotated vX.Y.Z tag and
 #      publishes the GitHub Release.
 #
-# The companion `.github/workflows/release.yml` (already in main) listens
-# for the new v* tag and is responsible for publishing crates.io and
-# building the cross-platform binary artifacts. This file owns the
-# versioning, changelog, and tag/release step; `release.yml` owns the
-# artifact step.
+# The companion `.github/workflows/release.yml` listens for the new v*
+# tag and is responsible for publishing crates.io and building the
+# cross-platform binary artifacts. This file owns the versioning,
+# changelog, and tag/release step; `release.yml` owns the artifact
+# step.
 #
 # Major releases are NOT auto-created. See the
 # "Handling a major release (manual)" section in
@@ -48,74 +51,18 @@ jobs:
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Pin a specific major version of the action so behavior is
-          # reproducible. Bump deliberately and review the changelog
-          # when upgrading.
-          release-type: cargo
-          package-name: leankg
-          # Version file managed by the cargo strategy.
-          version-file: Cargo.toml
+          # Pin to a major version. Release Please v4 reads the
+          # supported inputs below; the `release-type`, `package-name`,
+          # `version-file`, `draft`, and inline `config` inputs from
+          # earlier revisions are not accepted and must live in the
+          # config/manifest files instead.
+          config-file: release-please-config.json
+          manifest-file: manifest.json
           # Open / update the release PR against main.
           target-branch: main
           # Publish the GitHub Release immediately on merge of the
           # release PR; not a draft.
           skip-github-release: false
-          draft: false
-          # Repo-local config so the release PR / changelog behavior
-          # is tracked in this repository instead of relying on
-          # external defaults.
-          config: |
-            bump-minor-pre-major: true
-            bump-patch-for-minor-pre-major: true
-            include-component-in-tag: false
-            packages:
-              leankg:
-                release-type: cargo
-                package-name: leankg
-                version-file: Cargo.toml
-                changelog-path: CHANGELOG.md
-                changelog-sections:
-                  - type: feat
-                    section: Features
-                  - type: fix
-                    section: Bug Fixes
-                  - type: perf
-                    section: Performance
-                  - type: refactor
-                    section: Refactoring
-                  - type: revert
-                    section: Reverts
-                exclude-types:
-                  - docs
-                  - chore
-                  - test
-                  - style
-                  - ci
-                  - build
-                skip-github-release: false
-                draft: false
-                pull-request:
-                  base-branch: main
-                  branch: release-please--branches--main
-                  labels:
-                    - release
-                    - automated
-                  reviewers: []
-                  body: |
-                    ## Release summary
-
-                    - **Next version:** {{version}}
-                    - **Bump level:** {{bump-type}}
-                    - **Release PR:** {{pr}}
-
-                    This PR was generated automatically by the
-                    `release-please.yml` GitHub Actions workflow.
-                    Review the changelog entries and the version bump
-                    before merging. On merge, the `v{{version}}` tag and
-                    GitHub Release will be created.
-
-                    See `docs/workflow-opencode-agent.md` for the
-                    release policy and troubleshooting guidance.
 
       - name: Verify release output
         if: steps.release.outputs.release_created == 'true'
