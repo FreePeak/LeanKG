@@ -193,6 +193,35 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 5 | `US-GE-05` / `FR-GE-05` | PENDING / NOT_DONE | Closed outcome→graph self-improve loop |
 | 6 | `US-GE-06` / `FR-GE-06` | PENDING / NOT_DONE (P3) | Selective LLM pass-2 (YAML SoT) |
 
+## Cross-Tool Agent A/B Benchmark (US-CT-BMK) (P2 — adds public evidence)
+
+> Methodology: codegraph/graphify-style headless-agent harness on the
+> same 7 repos codegraph publishes (VS Code, Excalidraw, Django, Tokio,
+> OkHttp, Gin, Alamofire). Replicates `colbymchenry/codegraph` 7-repo suite
+> (re-validated 2026-07-21, Opus 4.8). Complements the existing grep A/B
+> harness (`benchmark/README.md`) which proves the *index* saves tokens;
+> this harness proves the *MCP integration* saves the agent real money
+> on real workloads.
+
+|| # | ID | Status | Intent |
+|--:|----|--------|--------|
+| 1 | `US-CT-BMK-01` / `FR-CT-BMK-01` | **DONE** | `benchmarks/cross_tool/` harness (Makefile + `run_one.sh` + `aggregate.py` + repos.yaml) |
+| 2 | `US-CT-BMK-02` / `FR-CT-BMK-02` | **DONE** | Parser handles real `claude -p --output-format json` envelope (verified 2026-07-23, CLI 2.1.201) |
+| 3 | `US-CT-BMK-03` / `FR-CT-BMK-03` | **DONE** | Methodology doc + report ingestion into `docs/benchmark.md` |
+| 4 | `REL-CT-BMK-01` | **DONE** | Gin pilot (4 runs/arm) — 44% time win, 31% cost win |
+| 5 | `REL-CT-BMK-02` | PARTIAL | Full 7-repo suite re-validated (in progress, see `benchmarks/cross_tool/results/cross_tool-2026-07-23.md` once green) |
+
+**Evidence:** [`docs/cross-tool-benchmark.md`](cross-tool-benchmark.md) · [`benchmarks/cross_tool/`](../benchmarks/cross_tool/) · [`benchmarks/cross_tool/README.md`](../benchmarks/cross_tool/README.md)
+
+**Re-run on demand:**
+
+```bash
+cd benchmarks/cross_tool
+make setup                                  # clone 7 repos at pinned refs (depth 1)
+make full N=4                               # full suite, ~90-120 min on MiniMax-M3
+make report                                 # regenerate Markdown + JSON from JSONL
+```
+
 ## Active session — open work (sorted by status, then wave)
 
 > **Sort:** `NOT_DONE` → `PENDING` → `PARTIAL` → `OPEN`, then focus P0→P3, then MoSCoW, then `ve_suborder`, then id.

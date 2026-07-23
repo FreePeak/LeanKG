@@ -36,3 +36,27 @@ See [benchmark/README.md](../benchmark/README.md) for detailed test methodology.
 ## Detailed Results
 
 See [docs/analysis/ab-testing-results-2026-04-08.md](analysis/ab-testing-results-2026-04-08.md) for complete analysis.
+
+## Cross-Tool Agent A/B Benchmark (US-CT-BMK)
+
+A separate harness compares a fixed `claude -p` agent answering one
+architecture question on 7 real codebases — **WITH** LeanKG MCP enabled
+vs **WITHOUT** (empty MCP config, built-in Read/Grep/Bash available to both).
+
+This is the codegraph/graphify-style headless-agent benchmark that proves
+the agent reaches for the LeanKG MCP server on real workloads. See:
+
+- Methodology + caveats: [docs/cross-tool-benchmark.md](cross-tool-benchmark.md)
+- Harness: [benchmarks/cross_tool/](../benchmarks/cross_tool/)
+- Latest report: [benchmarks/cross_tool/results/cross_tool-2026-07-23.md](../benchmarks/cross_tool/results/cross_tool-2026-07-23.md)
+
+Latest headline (Gin pilot, 4 runs/arm, MiniMax-M3 default model):
+
+| Metric | WITH LeanKG | WITHOUT (grep) | Delta |
+|---|---|---|---|
+| Tool calls | 7 | 9 | -22% |
+| Wall-clock | 1m 7s | 1m 59s | -44% |
+| File reads | 4 | 4 | 0% |
+| Cost | $0.37 | $0.53 | -31% |
+
+(The full 7-repo suite is reproduced via `make full` in the bench dir.)
