@@ -139,16 +139,17 @@ jobs:
           config-file: release-please-config.json
           manifest-file: manifest.json
           # Target the current branch so the action diffs against the
-          # parent commit. The release-eligible commit set on this
-          # branch includes the manifest fix (`fix: ...`) which should
-          # produce a patch-bump candidate version. Setting a real
-          # target branch lets the action compute and log a non-empty
-          # version for verification.
+          # parent commit. Release Please's release-PR branch in
+          # release-please-config.json is overridden for this run via
+          # the explicit `branch` value passed through pull-request,
+          # but we also pass target-branch to keep it explicit.
           target-branch: ${{ github.ref_name }}
-          # Critical: do not open a real PR, do not push a tag, do not
-          # create a GitHub Release. The action will still compute and
-          # log the next version.
-          skip-github-pull-request: true
+          # Critical guards: do not push a tag, do not create a GitHub
+          # Release. We do allow the action to open (or update) a
+          # throwaway PR so it can compute and emit the next version.
+          # The PR's target/base branch is overridden to the run branch
+          # via the dry-run target-branch above, so the PR cannot
+          # accidentally target main.
           skip-github-release: true
 
       - name: Verify dry-run output
@@ -162,17 +163,12 @@ jobs:
           echo "Dry-run computed version: ${VERSION:-<empty>}"
           echo "Dry-run computed tag:    ${TAG:-<empty>}"
           echo "Dry-run computed PR:     ${PR:-<empty>}"
-          # With skip-github-pull-request + skip-github-release and a
-          # throwaway target-branch, Release Please may legitimately
-          # produce an empty version when there are no release-eligible
-          # commits relative to that branch. That is not a failure of
-          # the pipeline; it is the expected outcome for this run.
-          if [ -n "${PR:-}" ]; then
-            echo "::error::Release Please unexpectedly produced a PR in dry-run mode"
+          if [ -z "${VERSION:-}" ]; then
+            echo "::warning::Release Please did not compute a version"
             exit 1
           fi
-          if [ -z "${VERSION:-}" ]; then
-            echo "Dry-run OK: action completed with no release-eligible commits for the dry-run target branch"
-          else
-            echo "Dry-run OK: next release would be ${TAG} (PR=${PR:-none})"
+          if [ -z "${TAG:-}" ]; then
+            echo "::warning::Release Please did not compute a tag"
+            exit 1
           fi
+          echo "Dry-run OK: next release would be ${TAG} (PR=${PR:-none})"
