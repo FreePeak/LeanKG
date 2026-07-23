@@ -1916,6 +1916,23 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
     println!("  Classes: {}", classes);
     println!("  Annotations: {}", annotations.len());
 
+    let graph = graph::GraphEngine::new(db.clone());
+    match crate::graph::inventory::load_latest_inventory(&db) {
+        Ok(Some(inv)) => {
+            println!("  Inventory ({}):", inv.computed_at);
+            println!("    Vectors: {}", inv.total_vectors);
+            println!("    Documents: {}", inv.total_documents);
+            println!("    Est. vector bytes: {}", inv.estimated_vector_bytes);
+        }
+        Ok(None) => {
+            if let Ok(inv) = crate::graph::inventory::refresh_index_inventory(&graph, "cli_status")
+            {
+                println!("  Inventory refreshed: {} vectors", inv.total_vectors);
+            }
+        }
+        Err(e) => eprintln!("  Warning: inventory load failed: {}", e),
+    }
+
     Ok(())
 }
 

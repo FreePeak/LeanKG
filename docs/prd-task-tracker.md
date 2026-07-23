@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-22 — Wave **2a** honest edges **DONE**; Wave **1c** always-on graph-first hooks **DONE**; Wave **1b** three-verb narrative **DONE**; Wave **0a/0b** ROI link + ui-v2 cutover evidence **DONE**; Wave **1a** MCP hard-delete **DONE**; P2 DOCJOIN Must Have **DONE** (`FR-DOCJOIN-06` open).
+**Last synced:** 2026-07-22 — v3.7.15 embed-doc-inventory wave — Wave **2a** honest edges **DONE**; Wave **1c** always-on graph-first hooks **DONE**; Wave **1b** three-verb narrative **DONE**; Wave **0a/0b** ROI link + ui-v2 cutover evidence **DONE**; Wave **1a** MCP hard-delete **DONE**; P2 DOCJOIN Must Have **DONE** (`FR-DOCJOIN-06` open).
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
 
@@ -160,6 +160,25 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 ---
 
+
+
+## P1 — Embed doc + inventory (v3.7.15 — CURRENT)
+
+> Narrative: [`prd.md`](prd.md) §3.21–3.24 / §5.24–5.27. Evidence: [`embed-doc-inventory-test-2026-07-22.md`](reports/embed-doc-inventory-test-2026-07-22.md).
+
+| # | ID | Status | Intent |
+|--:|----|--------|--------|
+| 1 | `FR-DOCEMBED-01` | **DONE** | classify document/doc_section → Doc blobs |
+| 2 | `FR-DOCEMBED-02` | **DONE** | doc metadata title/heading_path/first_paragraph |
+| 3 | `FR-DOCEMBED-03` | **DONE** | stale-mark after index_docs |
+| 4 | `US-DOCEMBED-01` | **DONE** | semantic_search doc hits |
+| 5 | `FR-EMBED-TYPES-01` | **DONE** | `--types perf` preset |
+| 6 | `FR-INDEX-INV-01` | **DONE** | Cozo index_inventory |
+| 7 | `FR-TEST-ED-01` | **DONE** | Full unit matrix green |
+| 8 | `REL-065` | **DONE** | Live fixture `/workspace` evidence |
+| 9 | `REL-066` | **DONE** | Mega perf embed coverage |
+| 10 | `REL-067` | **DONE** | Mega inventory evidence |
+| 11 | `REL-068` | **DONE** | Master test report |
 
 ## Graph Engineering backlog (P2 — after P1 waves)
 

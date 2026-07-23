@@ -863,6 +863,10 @@ pub fn index_files_parallel_with_typed_resolve(
         }
     }
 
+    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {
+        tracing::warn!("index_inventory refresh after index failed: {}", e);
+    }
+
     Ok(total)
 }
 
@@ -1074,6 +1078,13 @@ pub fn index_file_sync(
 
     let _ = graph.insert_elements(&elements);
     let _ = graph.insert_relationships(&relationships);
+
+    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {
+        tracing::warn!(
+            "index_inventory refresh after index_file_sync failed: {}",
+            e
+        );
+    }
 
     Ok(elements.len())
 }

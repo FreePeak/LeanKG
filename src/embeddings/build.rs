@@ -280,12 +280,19 @@ impl Default for BuildOptions {
 }
 
 /// Parse a `--types` flag value into a `BuildOptions::type_filter`. Empty
-/// string or `all` => embed every type. Comma-separated list => embed only
-/// those types. Match is case-insensitive.
+/// string or `all` => embed every type. `perf` => mega perf preset.
 pub fn parse_type_filter(raw: &str) -> Option<std::collections::HashSet<String>> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("all") {
         return None;
+    }
+    if trimmed.eq_ignore_ascii_case("perf") {
+        return Some(
+            text_blob::PERF_TYPE_PRESET
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+        );
     }
     Some(
         trimmed
@@ -457,6 +464,7 @@ pub(crate) fn orphan_rows_from_work(
 }
 
 fn nothing_to_embed_report(
+    graph: &GraphEngine,
     db: &CozoDb,
     considered: usize,
     skipped_fresh: usize,
@@ -473,6 +481,9 @@ fn nothing_to_embed_report(
         0,
         index_size as u64,
     );
+    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "embed_noop") {
+        tracing::warn!("index_inventory refresh after embed noop failed: {}", e);
+    }
     Ok(BuildReport {
         considered_count: considered,
         embedded_count: 0,
@@ -557,7 +568,7 @@ pub fn run(
     // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone
     // (and do not load the ONNX model).
     if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
-        return nothing_to_embed_report(db, considered.max(skipped_fresh), skipped_fresh);
+        return nothing_to_embed_report(graph, db, considered.max(skipped_fresh), skipped_fresh);
     }
 
     // Orphan-only: reap without loading ONNX / touching HNSW bulk rebuild.
@@ -573,6 +584,7 @@ pub fn run(
         remove_vectors(db, &orphan_qns)?;
         state::delete_state_rows(db, &orphan_rows)?;
         let index_size = count_vectors(db)?;
+        let _ = crate::graph::inventory::refresh_index_inventory(graph, "embed_orphan_reap");
         return Ok(BuildReport {
             considered_count: considered.max(skipped_fresh),
             embedded_count: 0,
@@ -679,6 +691,10 @@ pub fn run(
 
     let index_size = count_vectors(db)?;
 
+    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "embed") {
+        tracing::warn!("index_inventory refresh after embed failed: {}", e);
+    }
+
     Ok(BuildReport {
         considered_count: considered,
         embedded_count: embedded,
@@ -755,7 +771,7 @@ pub fn build_index_parallel(
 
     // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone.
     if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
-        return nothing_to_embed_report(db, considered.max(skipped_fresh), skipped_fresh)
+        return nothing_to_embed_report(graph, db, considered.max(skipped_fresh), skipped_fresh)
             .map_err(|e| e.to_string());
     }
 
@@ -1847,5 +1863,18 @@ mod tests {
             false,
             Some("completed")
         ));
+    }
+
+    #[test]
+    fn parse_type_filter_perf_expands_preset() {
+        let filter = parse_type_filter("perf").expect("perf preset");
+        assert!(filter.contains("function"));
+        assert!(filter.contains("document"));
+        assert_eq!(filter.len(), text_blob::PERF_TYPE_PRESET.len());
+    }
+
+    #[test]
+    fn parse_type_filter_all_is_none() {
+        assert!(parse_type_filter("all").is_none());
     }
 }

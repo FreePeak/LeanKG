@@ -52,5 +52,6 @@ pub use state::{
     ensure_embedding_state_table, has_any, list_all, list_orphans, list_stale,
     mark_stale_for_qualified_names, upsert_fresh, EmbeddingStateRow, FreshRow, StateCounts,
 };
+pub use text_blob::PERF_TYPE_PRESET;
 #[allow(unused_imports)]
 pub use text_blob::{build_blob, classify, BlobKind};

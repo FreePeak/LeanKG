@@ -42,16 +42,28 @@ pub enum BlobKind {
 /// Classify a CodeElement into a blob-construction strategy. Returns `Skip`
 /// for element types that should not be embedded (e.g. clusters, processes
 /// that duplicate the code they group).
+/// Perf embed preset for mega cold/full runs (FR-EMBED-TYPES-02).
+pub const PERF_TYPE_PRESET: &[&str] = &[
+    "function",
+    "method",
+    "class",
+    "interface",
+    "file",
+    "struct",
+    "property",
+    "constructor",
+    "document",
+    "doc_section",
+];
+
 pub fn classify(element_type: &str) -> BlobKind {
-    match element_type {
-        "file" | "function" | "class" | "module" | "method" | "trait" | "interface" => {
-            BlobKind::Code
-        }
+    match element_type.to_ascii_lowercase().as_str() {
+        "file" | "function" | "class" | "module" | "method" | "trait" | "interface" | "struct"
+        | "property" | "constructor" => BlobKind::Code,
+        "document" | "doc_section" => BlobKind::Doc,
         "domain_entity" | "service" | "api_endpoint" | "data_store" | "environment"
         | "known_issue" | "playbook" | "playbook_step" | "team_knowledge" | "workflow"
         | "workflow_step" | "decision_point" | "failure_mode" => BlobKind::Ontology,
-        // Skip clusters/processes/etc.: they're grouping abstractions whose
-        // members already get embedded individually.
         _ => BlobKind::Skip,
     }
 }
@@ -291,10 +303,23 @@ mod tests {
     #[test]
     fn classify_known_types() {
         assert_eq!(classify("function"), BlobKind::Code);
-        assert_eq!(classify("class"), BlobKind::Code);
+        assert_eq!(classify("struct"), BlobKind::Code);
+        assert_eq!(classify("document"), BlobKind::Doc);
+        assert_eq!(classify("File"), BlobKind::Code);
         assert_eq!(classify("workflow"), BlobKind::Ontology);
-        assert_eq!(classify("domain_entity"), BlobKind::Ontology);
         assert_eq!(classify("cluster"), BlobKind::Skip);
+    }
+
+    #[test]
+    fn doc_blob_uses_title_and_paragraph() {
+        let mut el = make_element("document", "PRD", "docs/prd.md");
+        el.metadata = serde_json::json!({
+            "title": "LeanKG PRD",
+            "first_paragraph": "Product requirements for embedding."
+        });
+        let blob = build_blob(&el).unwrap();
+        assert!(blob.contains("LeanKG PRD"));
+        assert!(blob.contains("Product requirements"));
     }
 
     #[test]

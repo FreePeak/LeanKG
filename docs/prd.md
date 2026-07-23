@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.14-graph-eng-roadmap
-**Date:** 2026-07-21
+**Version:** 3.7.15-embed-doc-inventory
+**Date:** 2026-07-22
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
@@ -28,6 +28,22 @@
 ---
 
 ## Changelog
+
+### v3.7.15-embed-doc-inventory - Doc embed, perf types, index inventory (2026-07-22)
+
+> **Trigger:** Mega mount embed coverage ~37% (function+method only); docs graph-indexed but not in `embedding_vectors`; incremental embed blind spot for untracked QNs; `embed_control` ignored `project=`.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-DOCEMBED-01..03 / FR-DOCEMBED-01..04 / REL-065 | Must Have | **P1** | Embed + query `document` / `doc_section`; enrich doc metadata; stale-mark after `mcp_index_docs` |
+| US-EMBED-PERF-01..03 / FR-EMBED-TYPES-01..04 / REL-066 | Must Have | **P1** | CLI `--types perf` preset for mega cold/full runs |
+| US-INDEX-INV-01 / FR-INDEX-INV-01..04 / REL-067 | Must Have | **P1** | Cozo `index_inventory` totals after index/embed; `mcp_status(include_counts=true)` |
+| US-TEST-ED-01..02 / FR-TEST-ED-01..04 / REL-068 | Must Have | **P1** | Full unit matrix + live fixture/mega MCP evidence gates |
+
+**Perf type preset:** `function,method,class,interface,file,struct,property,constructor,document,doc_section`
+
+**New content:** §3.21–3.24; §5.24–5.27. Evidence: `docs/reports/embed-doc-inventory-test-2026-07-22.md`.
 
 ### v3.7.14-graph-eng-roadmap - Graph Engineering curriculum gaps (2026-07-21)
 
@@ -2046,6 +2062,85 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-GE-06 | Could Have | Selective LLM pass-2 extraction for workflow/decision candidates with human/YAML confirm; must not replace procedural YAML SoT |
 
 **Won't Do:** Multi-agent runtime competing with Claude Code/Cursor; OpenTrace-complete ops graph as LeanKG core; full automatic LLM workflow generation without YAML.
+
+### 3.21 Document embed + query (US-DOCEMBED) — v3.7.15 **P1**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-DOCEMBED-*` / `FR-DOCEMBED-*` / `REL-065`.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-DOCEMBED-01 | Must Have (**P1**) | As an agent, I want PRD/markdown docs embedded so `semantic_search` returns `document` / `doc_section` hits |
+| US-DOCEMBED-02 | Must Have (**P1**) | As an indexer, doc nodes carry `title`, `heading_path`, `first_paragraph` metadata for richer blobs |
+| US-DOCEMBED-03 | Must Have (**P1**) | After `mcp_index_docs`, doc QNs are marked stale in `embedding_state` for incremental embed |
+
+**Verified by:** unit `tests/embed_doc_inventory.rs` / live fixture REL-065 (`/workspace`).
+
+### 3.22 Embed types perf preset (US-EMBED-PERF) — v3.7.15 **P1**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-EMBED-PERF-01 | Must Have (**P1**) | As ops, I run `embed --types perf` to expand beyond `function,method` on mega mounts |
+| US-EMBED-PERF-02 | Must Have (**P1**) | `struct` / `property` / `constructor` classify as Code blobs |
+| US-EMBED-PERF-03 | Must Have (**P1**) | One `--full` pass enrolls untracked QNs after classify expansion |
+
+**Verified by:** unit `parse_type_filter` + REL-066 mega inventory.
+
+### 3.23 Index inventory (US-INDEX-INV) — v3.7.15 **P1**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-INDEX-INV-01 | Must Have (**P1**) | As ops, I see element/rel/vector totals persisted in Cozo `index_inventory` after index/embed |
+
+**Verified by:** unit inventory tests / REL-067 mega probes.
+
+### 3.24 Embed + inventory test gates (US-TEST-ED) — v3.7.15 **P1**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-TEST-ED-01 | Must Have (**P1**) | Full unit + TempDir integration for every FR in this revision |
+| US-TEST-ED-02 | Must Have (**P1**) | Live MCP tests on `/workspace` fixture + `/workspace-other` mega with evidence reports |
+
+
+### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCEMBED-01 | Must Have | `classify` maps `document` / `doc_section` → `BlobKind::Doc`; non-empty `build_doc_blob` |
+| FR-DOCEMBED-02 | Must Have | `doc_indexer` stores `title`, `heading_path`, `first_paragraph` on documents and sections |
+| FR-DOCEMBED-03 | Must Have | After `index_docs_directory`, mark doc QNs stale via `mark_stale_if_changed` |
+| FR-DOCEMBED-04 | Must Have | Prefer-order: `search_by_requirement` → `mcp_index_docs` → `semantic_search` doc hits |
+| REL-065 | Must Have | Live fixture report: index_docs → embed subset → semantic doc hit → doc↔code round-trip |
+
+### 5.25 Embed types perf (FR-EMBED-TYPES) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-EMBED-TYPES-01 | Must Have | `parse_type_filter("perf")` expands to perf preset list |
+| FR-EMBED-TYPES-02 | Must Have | Perf preset: `function,method,class,interface,file,struct,property,constructor,document,doc_section` |
+| FR-EMBED-TYPES-03 | Must Have | `struct` / `property` / `constructor` → Code blobs |
+| FR-EMBED-TYPES-04 | Must Have | `--full` enrolls elements with no `embedding_state` row |
+| REL-066 | Must Have | Mega report: `--full --types perf` coverage + per-type sample |
+
+### 5.26 Index inventory (FR-INDEX-INV) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-INDEX-INV-01 | Must Have | Cozo relation `index_inventory` key=`latest` with element/rel/vector totals + estimated bytes |
+| FR-INDEX-INV-02 | Must Have | Refresh after code index, doc index, and embed |
+| FR-INDEX-INV-03 | Must Have | `mcp_status(include_counts=true)` includes `inventory` |
+| FR-INDEX-INV-04 | Must Have | CLI `status` prints inventory when present |
+| REL-067 | Must Have | Mega inventory aligns with post-embed vector totals |
+
+### 5.27 Test gates (FR-TEST-ED) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-TEST-ED-01 | Must Have | `cargo test --release --features embeddings` green for matrix in plan |
+| FR-TEST-ED-02 | Must Have | Live fixture script: health → status → index_docs → embed → semantic_search doc |
+| FR-TEST-ED-03 | Must Have | Live mega: `embed_control(project=)` routing + inventory coverage |
+| FR-TEST-ED-04 | Must Have | Tracker rows NOT_DONE until REL-065..068 attached |
+| REL-068 | Must Have | Master report linking unit + live sections |
+
 
 ---
 

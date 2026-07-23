@@ -224,9 +224,43 @@ impl MCPServer {
         None
     }
 
+    /// Resolve `<project>/.leankg` for MCP `project=` routing (multi-mount RocksDB).
+    fn resolve_project_db_path(fp: &str) -> Option<PathBuf> {
+        if let Some(found) = Self::find_leankg_for_path(fp) {
+            return Some(found);
+        }
+        let path = if fp.starts_with('/') {
+            PathBuf::from(fp)
+        } else {
+            std::env::current_dir().ok()?.join(fp)
+        };
+        let project_root = if path.is_file() {
+            path.parent()?.to_path_buf()
+        } else {
+            path
+        };
+        if !project_root.is_dir() {
+            return None;
+        }
+        let candidate = project_root.join(".leankg");
+        let rocksdb = std::env::var("LEANKG_DB_ENGINE")
+            .unwrap_or_else(|_| "sqlite".to_string())
+            .eq_ignore_ascii_case("rocksdb");
+        if rocksdb {
+            let central = crate::db::schema::central_project_storage_path(&candidate);
+            if central.join("data/CURRENT").exists() || central.join("manifest").exists() {
+                return Some(candidate);
+            }
+        }
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        None
+    }
+
     fn get_graph_engine_for_path(&self, file_path: Option<&String>) -> Result<GraphEngine, String> {
         let project_db_path = if let Some(fp) = file_path {
-            if let Some(leankg_path) = Self::find_leankg_for_path(fp.as_str()) {
+            if let Some(leankg_path) = Self::resolve_project_db_path(fp.as_str()) {
                 tracing::debug!(
                     "Routing query for '{}' to database at {}",
                     fp,
@@ -238,7 +272,9 @@ impl MCPServer {
                 self.get_db_path()
             }
         } else {
-            Self::find_leankg_for_path(".").unwrap_or_else(|| self.get_db_path())
+            Self::resolve_project_db_path(".")
+                .or_else(|| Self::find_leankg_for_path("."))
+                .unwrap_or_else(|| self.get_db_path())
         };
 
         {
@@ -248,12 +284,25 @@ impl MCPServer {
             }
         }
 
-        let project_db_path = project_db_path
-            .canonicalize()
-            .or_else(|_| std::env::current_dir().map(|d| d.join(&project_db_path)))
-            .map_err(|e| format!("Failed to resolve db path: {}", e))?;
+        let project_db_path = match project_db_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) if project_db_path.is_absolute() => project_db_path,
+            Err(_) => std::env::current_dir()
+                .map(|d| d.join(&project_db_path))
+                .map_err(|e| format!("Failed to resolve db path: {}", e))?,
+        };
 
-        if !project_db_path.exists() {
+        let rocksdb_central_ok = {
+            let rocksdb = std::env::var("LEANKG_DB_ENGINE")
+                .unwrap_or_else(|_| "sqlite".to_string())
+                .eq_ignore_ascii_case("rocksdb");
+            rocksdb && {
+                let central = crate::db::schema::central_project_storage_path(&project_db_path);
+                central.join("data/CURRENT").exists() || central.join("manifest").exists()
+            }
+        };
+
+        if !project_db_path.exists() && !rocksdb_central_ok {
             return Err(
                 "LeanKG not initialized. No .leankg directory found. Run 'leankg init' first."
                     .to_string(),
@@ -582,11 +631,24 @@ impl MCPServer {
             .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("status");
-        let leankg_dir = self.get_db_path();
+        let project_path = arguments
+            .get("project")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let leankg_dir = if let Some(ref p) = project_path {
+            Self::resolve_project_db_path(p).unwrap_or_else(|| self.get_db_path())
+        } else {
+            self.get_db_path()
+        };
         match action {
             "status" => {
                 let mut status = crate::embeddings::embed_job_status(&leankg_dir);
-                if let Ok(graph) = self.get_graph_engine() {
+                let graph_result = if let Some(ref p) = project_path {
+                    self.get_graph_engine_for_path(Some(p))
+                } else {
+                    self.get_graph_engine()
+                };
+                if let Ok(graph) = graph_result {
                     if let Ok(pre) = crate::embeddings::embed_resume_preflight(graph.db()) {
                         status["resume_preflight"] = serde_json::json!({
                             "vectors_existing": pre.vectors_existing,
@@ -595,6 +657,14 @@ impl MCPServer {
                             "has_embed_data": pre.has_embed_data,
                         });
                     }
+                    if let Ok(Some(inv)) =
+                        crate::graph::inventory::load_latest_inventory(graph.db())
+                    {
+                        status["inventory"] = crate::graph::inventory::inventory_to_json(&inv);
+                    }
+                }
+                if let Some(ref p) = project_path {
+                    status["project"] = serde_json::Value::String(p.clone());
                 }
                 Ok(serde_json::json!({
                     "status": "ok",
@@ -2162,7 +2232,7 @@ impl MCPServer {
         };
 
         let project_db_path = if let Some(ref fp) = file_path {
-            if let Some(leankg_path) = Self::find_leankg_for_path(fp.as_str()) {
+            if let Some(leankg_path) = Self::resolve_project_db_path(fp.as_str()) {
                 tracing::debug!(
                     "Routing query for '{}' to database at {}",
                     fp,
@@ -2174,7 +2244,9 @@ impl MCPServer {
                 self.get_db_path()
             }
         } else {
-            Self::find_leankg_for_path(".").unwrap_or_else(|| self.get_db_path())
+            Self::resolve_project_db_path(".")
+                .or_else(|| Self::find_leankg_for_path("."))
+                .unwrap_or_else(|| self.get_db_path())
         };
 
         let graph_engine = self.get_graph_engine_for_path(file_path.as_ref())?;

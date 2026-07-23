@@ -135,6 +135,7 @@ impl DocIndexer {
         });
 
         let headings = self.extract_headings(&content);
+        let first_paragraph = Self::extract_first_paragraph(&content);
         let doc = CodeElement {
             qualified_name: qualified_name.clone(),
             element_type: "document".to_string(),
@@ -148,11 +149,14 @@ impl DocIndexer {
                 "category": category,
                 "title": title,
                 "headings": headings,
+                "first_paragraph": first_paragraph,
+                "heading_path": [title.clone()],
             }),
             ..Default::default()
         };
 
-        let (sections, heading_rels) = self.extract_sections(&content, &qualified_name, path);
+        let (sections, heading_rels) =
+            self.extract_sections(&content, &qualified_name, path, &title);
 
         let code_refs = self.extract_code_references(&content);
         let mut relationships = heading_rels;
@@ -254,11 +258,50 @@ impl DocIndexer {
         headings
     }
 
+    fn extract_first_paragraph(content: &str) -> String {
+        let mut past_title = false;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with("# ") {
+                past_title = true;
+                continue;
+            }
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            if !past_title {
+                continue;
+            }
+            return trimmed.chars().take(500).collect();
+        }
+        String::new()
+    }
+
+    fn section_first_paragraph(content: &str, start_line: u32, end_line: u32) -> String {
+        let mut line_num = 0u32;
+        for line in content.lines() {
+            line_num += 1;
+            if line_num < start_line || line_num > end_line {
+                continue;
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            return trimmed.chars().take(500).collect();
+        }
+        String::new()
+    }
+
     fn extract_sections(
         &self,
         content: &str,
         doc_qualified: &str,
         path: &Path,
+        doc_title: &str,
     ) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut sections = Vec::new();
         let mut relationships = Vec::new();
@@ -281,7 +324,11 @@ impl DocIndexer {
                         line_end: line_num - 1,
                         language: "markdown".to_string(),
                         parent_qualified: Some(doc_qualified.to_string()),
-                        metadata: serde_json::json!({}),
+                        metadata: serde_json::json!({
+                            "title": sec_name,
+                            "heading_path": [doc_title, sec_name],
+                            "first_paragraph": Self::section_first_paragraph(content, sec_start, line_num - 1),
+                        }),
                         ..Default::default()
                     });
 
@@ -312,7 +359,11 @@ impl DocIndexer {
                 line_end: line_num,
                 language: "markdown".to_string(),
                 parent_qualified: Some(doc_qualified.to_string()),
-                metadata: serde_json::json!({}),
+                metadata: serde_json::json!({
+                    "title": sec_name,
+                    "heading_path": [doc_title, sec_name],
+                    "first_paragraph": Self::section_first_paragraph(content, sec_start, line_num),
+                }),
                 ..Default::default()
             });
 
@@ -506,6 +557,27 @@ pub fn index_docs_directory(
 
     if !result.relationships.is_empty() {
         graph.insert_relationships(&result.relationships)?;
+    }
+
+    #[cfg(feature = "embeddings")]
+    {
+        let items: Vec<(String, String)> = result
+            .documents
+            .iter()
+            .chain(result.sections.iter())
+            .filter_map(|e| {
+                let blob = crate::embeddings::text_blob::build_blob(e)?;
+                let hash = crate::embeddings::text_blob::content_hash_for(&blob);
+                Some((e.qualified_name.clone(), hash))
+            })
+            .collect();
+        if !items.is_empty() {
+            let _ = crate::embeddings::state::mark_stale_if_changed(graph.db(), &items);
+        }
+    }
+
+    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "doc_index") {
+        tracing::warn!("index_inventory refresh after doc_index failed: {}", e);
     }
 
     Ok(result)
