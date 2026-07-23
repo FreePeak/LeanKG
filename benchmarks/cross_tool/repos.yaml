@@ -1,0 +1,64 @@
+# Benchmark repositories.
+#
+# Each entry is one corpus cloned once with `git clone --depth 1` and indexed by
+# the same LeanKG build that serves the agent. Same set as
+# `colbymchenry/codegraph` 7-repo suite (re-validated 2026-07-21), so our
+# numbers are directly comparable to the published codegraph tables.
+#
+# Fields:
+#   slug:    short identifier used as the JSONL key and table row label
+#   url:     git clone URL (use --depth 1)
+#   ref:     pin to a specific commit/tag for reproducibility
+#   language: primary language (used for the report table only)
+#   loc_band: approximate lines-of-code range for sanity check (not enforced)
+#   prompt:  the architecture question given to the agent verbatim
+
+repos:
+  - slug: vscode
+    url: https://github.com/microsoft/vscode.git
+    ref: 1.95.0
+    language: TypeScript
+    loc_band: "1.5M"
+    prompt: "How does the extension host communicate with the main process?"
+
+  - slug: excalidraw
+    url: https://github.com/excalidraw/excalidraw.git
+    ref: master
+    language: TypeScript
+    loc_band: "60k"
+    prompt: "How does Excalidraw render and update canvas elements?"
+
+  - slug: django
+    url: https://github.com/django/django.git
+    ref: stable/5.1.x
+    language: Python
+    loc_band: "300k"
+    prompt: "How does Django's ORM build and execute a query from a QuerySet?"
+
+  - slug: tokio
+    url: https://github.com/tokio-rs/tokio.git
+    ref: tokio-1.52.x
+    language: Rust
+    loc_band: "100k"
+    prompt: "How does tokio schedule and run async tasks on its runtime?"
+
+  - slug: okhttp
+    url: https://github.com/square/okhttp.git
+    ref: parent-5.0.0
+    language: Java
+    loc_band: "120k"
+    prompt: "How does OkHttp process a request through its interceptor chain?"
+
+  - slug: gin
+    url: https://github.com/gin-gonic/gin.git
+    ref: v1.10.0
+    language: Go
+    loc_band: "20k"
+    prompt: "How does gin route requests through its middleware chain?"
+
+  - slug: alamofire
+    url: https://github.com/Alamofire/Alamofire.git
+    ref: 5.10.0
+    language: Swift
+    loc_band: "20k"
+    prompt: "How does Alamofire build, send, and validate a request?"
