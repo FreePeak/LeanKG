@@ -3,14 +3,18 @@
 # Reproduces the codegraph 7-repo suite (re-validated 2026-07-21, Opus 4.8)
 # against LeanKG's MCP server. Each repo, each arm, each N runs.
 #
-# Usage:
-#   make setup                         # clone the 7 repos at pinned refs
-#   make index REPO=gin                # build LeanKG index for one repo
-#   make with    REPO=gin N=4 MODEL=sonnet
-#   make without REPO=gin N=4 MODEL=sonnet
-#   make report                       # aggregate results/*.jsonl -> results/cross_tool-YYYY-MM-DD.md
-#   make all REPO=gin N=4 MODEL=sonnet # = setup + with + without + report
-#   make full MODEL=sonnet N=4         # = full 7-repo x 2 arm x N run suite
+# Usage (single repo):
+#   make setup                          # clone the 7 repos at pinned refs
+#   make index   REPO=gin               # build LeanKG index for one repo
+#   make with    REPO=gin N=4
+#   make without REPO=gin N=4
+#   make report                        # aggregate JSONL -> cross_tool-YYYY-MM-DD.md
+#   make all     REPO=gin N=4          # = with + without + report
+#
+# Usage (parallel via subagents — recommended for the full suite):
+#   The orchestrator (main chat or another tool) dispatches one Task tool call
+#   per repo with `bash benchmarks/cross_tool/run_repo.sh <slug> 4` and waits
+#   for all 7 to finish in parallel. Then `make report`.
 #
 # Pin `claude` CLI: 2.1.201 was verified working on 2026-07-23.
 
@@ -40,9 +44,13 @@ help:
 	@echo "  with    REPO=<slug> N=<n> MODEL=<m>  run WITH-arm (LeanKG MCP) N times"
 	@echo "  without REPO=<slug> N=<n> MODEL=<m>  run WITHOUT-arm (empty MCP) N times"
 	@echo "  report                        aggregate JSONL -> Markdown + JSON"
-	@echo "  full MODEL=<m> N=<n>          run full 7-repo x 2 arm x N suite"
 	@echo "  all REPO=<slug> N=<n> MODEL=<m>  run a single repo both arms + report"
+	@echo "  full MODEL=<m> N=<n>          run full 7-repo x 2 arm x N suite SERIALLY (slow)"
 	@echo "  clean                         remove scratch + cloned repos + results"
+	@echo ""
+	@echo "Recommended: dispatch one subagent per repo via the Task tool and run"
+	@echo "  bash benchmarks/cross_tool/run_repo.sh <slug> 4"
+	@echo "in each, then 'make report' to aggregate."
 
 check-claude:
 	@test -n "$(CLAUDE_BIN)" || (echo "ERROR: 'claude' CLI not on PATH" && exit 2)

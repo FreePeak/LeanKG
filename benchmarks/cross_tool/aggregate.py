@@ -87,17 +87,66 @@ def load_yaml_fallback(path: Path) -> dict[str, Any]:
 
 
 def load_runs(results_root: Path) -> list[dict[str, Any]]:
-    runs: list[dict[str, Any]] = []
+    """Load per-run JSONL rows, dropping invalid runs and warning on model mixing.
+
+    A run is dropped if any of the following holds:
+      * `exit_code != 0` (process died / was killed)
+      * `total_cost_usd == 0` (no API call actually completed)
+      * `valid == false` with a non-empty `invalid_reason` (e.g. WITH-arm run
+        that did not actually attach the MCP server)
+
+    All rows are still returned so the caller can decide what to do; invalid
+    rows are returned with `valid=False` and a `dropped_reason` populated.
+    """
+    rows: list[dict[str, Any]] = []
+    dropped = 0
     for path in sorted(results_root.rglob("*.jsonl")):
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
+        for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw.strip()
             if not line:
                 continue
             try:
-                runs.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError as exc:
-                print(f"warn: malformed JSONL in {path}: {exc}", file=sys.stderr)
-    return runs
+                print(f"warn: malformed JSONL in {path}:{lineno}: {exc}", file=sys.stderr)
+                continue
+            row["_source_path"] = str(path)
+            reasons = []
+            if row.get("exit_code", 0) != 0:
+                reasons.append(f"exit_code={row.get('exit_code')}")
+            if float(row.get("total_cost_usd", 0) or 0) <= 0:
+                reasons.append("zero_cost")
+            existing = row.get("invalid_reason")
+            if existing and str(existing).strip():
+                reasons.append(str(existing))
+            if reasons:
+                row["valid"] = False
+                row["dropped_reason"] = "|".join(reasons)
+                dropped += 1
+            else:
+                row.setdefault("valid", True)
+            rows.append(row)
+    if dropped:
+        print(
+            f"info: dropped {dropped} invalid run(s); see report footer.",
+            file=sys.stderr,
+        )
+
+    # Per (repo, arm), all valid runs should report the same actual_model.
+    # Different actual_models inside one cell = apples vs oranges.
+    by_cell: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for r in rows:
+        if not r.get("valid"):
+            continue
+        model = r.get("actual_model") or r.get("model") or "unknown"
+        by_cell[(r["repo"], r["arm"])].add(model)
+    for (repo, arm), models in sorted(by_cell.items()):
+        if len(models) > 1:
+            print(
+                f"warn: {repo}/{arm} mixes models: {sorted(models)}",
+                file=sys.stderr,
+            )
+    return rows
 
 
 def median_or_none(values: list[float]) -> float | None:
@@ -156,6 +205,10 @@ def build_report(
     for r in runs:
         by_repo[r["repo"]].append(r)
 
+    # Only valid runs count toward medians / IQR / averages.
+    valid_runs = [r for r in runs if r.get("valid")]
+    invalid_runs = [r for r in runs if not r.get("valid")]
+
     meta_by_repo = {m["slug"]: m for m in repos_meta}
 
     rows: list[dict[str, Any]] = []
@@ -166,7 +219,9 @@ def build_report(
         repo_name = meta.get("repo_name", slug)
         # Allow either key: repos.yaml uses 'slug' but the actual cloned dir
         # name may differ (e.g. vscode vs VSCode). Fall back to slug.
-        repo_runs = by_repo.get(slug) or by_repo.get(repo_name) or by_repo.get(meta.get("clone_dir", slug)) or []
+        repo_runs_all = by_repo.get(slug) or by_repo.get(repo_name) or by_repo.get(meta.get("clone_dir", slug)) or []
+        repo_runs = [r for r in repo_runs_all if r.get("valid")]
+        repo_dropped = [r for r in repo_runs_all if not r.get("valid")]
 
         with_runs = [r for r in repo_runs if r["arm"] == "with"]
         without_runs = [r for r in repo_runs if r["arm"] == "without"]
@@ -223,16 +278,25 @@ def build_report(
     lines.append(f"**Date:** {today}  ")
     lines.append(f"**Method:** `claude -p` headless; WITH = LeanKG MCP stdio; WITHOUT = empty MCP config. Built-in Read/Grep/Bash available to both.  ")
     lines.append(f"**Runs per arm per repo:** median reported (matches codegraph methodology).  ")
-    lines.append(f"**Total runs in this report:** {len(runs)}.")
+    lines.append(
+        f"**Total runs loaded:** {len(runs)} (valid: {len(valid_runs)}, "
+        f"dropped: {len(invalid_runs)}).  "
+    )
     lines.append("")
     lines.append("## Per-Repo Results")
     lines.append("")
-    lines.append("| Codebase | Language | Tool calls (WITH / WITHOUT) | Time (WITH / WITHOUT) | File reads (WITH / WITHOUT) | Tokens (WITH / WITHOUT) | Cost (WITH / WITHOUT) |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+    lines.append(
+        "| Codebase | Language | N (WITH / WITHOUT) | "
+        "Tool calls (WITH / WITHOUT) | Time (WITH / WITHOUT) | "
+        "File reads (WITH / WITHOUT) | Tokens (WITH / WITHOUT) | "
+        "Cost (WITH / WITHOUT) |"
+    )
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in rows:
         w, wo = row["with"], row["without"]
         lines.append(
             f"| **{row['codebase']}** | {row['language']} | "
+            f"{w['n']} / {wo['n']} | "
             f"{fmt_int(w['tool_calls'])} / {fmt_int(wo['tool_calls'])} | "
             f"{fmt_dur(w['duration_s'])} / {fmt_dur(wo['duration_s'])} | "
             f"{fmt_int(w['file_reads'])} / {fmt_int(wo['file_reads'])} | "
@@ -271,7 +335,8 @@ def build_report(
     lines.append("| --- | --- | --- | --- |")
     for meta in repos_meta:
         slug = meta["slug"]
-        repo_runs = by_repo.get(slug, [])
+        repo_runs_all = by_repo.get(slug, [])
+        repo_runs = [r for r in repo_runs_all if r.get("valid")]
         with_runs = [r for r in repo_runs if r["arm"] == "with"]
         without_runs = [r for r in repo_runs if r["arm"] == "without"]
         if not with_runs and not without_runs:
@@ -283,19 +348,40 @@ def build_report(
             f"{iqr([r['duration_s'] for r in with_runs])} / {iqr([r['duration_s'] for r in without_runs])} |"
         )
 
+    # Dropped-run footer — surface every rejected run so silent harness bugs
+    # cannot quietly disappear.
+    if invalid_runs:
+        lines.append("")
+        lines.append("## Dropped Runs")
+        lines.append("")
+        lines.append(
+            f"{len(invalid_runs)} run(s) excluded from medians/averages above."
+        )
+        lines.append("")
+        lines.append("| Repo | Arm | Run | Model | Reason |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for r in invalid_runs:
+            lines.append(
+                f"| {r['repo']} | {r['arm']} | {r['run_idx']} | "
+                f"{r.get('actual_model') or r.get('model') or '?'} | "
+                f"{r.get('dropped_reason') or 'invalid'} |"
+            )
+
     lines.append("")
     lines.append("## Methodology")
     lines.append("")
     lines.append("- Same harness as `colbymchenry/codegraph` 7-repo suite (re-validated 2026-07-21, Opus 4.8).")
     lines.append("- Each arm = `claude -p <prompt>` headless, same question per repo, median of N runs.")
-    lines.append("- `--strict-mcp-config` ensures no fallback MCP servers pollute either arm.")
+    lines.append("- `--mcp-config <file> --strict-mcp-config` loads only the file's MCP servers; nothing else.")
+    lines.append("- `--bare` disables CLAUDE.md auto-discovery, hooks, LSP, plugins, and attribution so the run is hermetic.")
     lines.append("- Repos cloned with `git clone --depth 1` and pinned to the tag in `repos.yaml`.")
-    lines.append("- LeanKG index is rebuilt (`leankg init`) before every WITH-arm run to keep runs deterministic.")
+    lines.append("- LeanKG index is rebuilt (`leankg init && leankg index`) before every WITH-arm run to keep runs deterministic.")
+    lines.append("- Each run records `actual_model`, `mcp_servers`, and `mcp_tool_count` from the session init event so model routing / MCP attachment can be audited after the fact.")
     lines.append("")
     lines.append("## Caveats")
     lines.append("")
     lines.append("- Self-reported single-vendor benchmarks; treat as best-case.")
-    lines.append("- Cost and token numbers depend on the Claude model version; pin via `--model`.")
+    lines.append("- Cost and token numbers depend on the Claude model version; pin via `--model`. The harness records the actual model used in each run for auditing.")
     lines.append("- Larger repos like VS Code dominate the average; report median-of-medians when sample sizes grow.")
 
     md = "\n".join(lines) + "\n"
@@ -303,8 +389,14 @@ def build_report(
     json_payload = {
         "date": today,
         "n_runs_total": len(runs),
+        "n_runs_valid": len(valid_runs),
+        "n_runs_dropped": len(invalid_runs),
         "rows": rows,
         "averages_pct": {k: (sum(v) / len(v) if v else None) for k, v in avg_acc.items()},
+        "dropped_runs": [
+            {k: v for k, v in r.items() if k != "_source_path"}
+            for r in invalid_runs
+        ],
         "raw_runs": runs,
     }
     return md, json_payload

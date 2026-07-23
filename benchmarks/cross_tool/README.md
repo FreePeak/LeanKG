@@ -55,15 +55,21 @@ Prereqs:
 # 1. Clone the 7 benchmark repos at pinned refs (depth 1)
 make setup
 
-# 2. Smoke-test on Gin (~110 files, fast) — 4 runs each arm
+# 2a. Smoke-test on Gin (~110 files, fast) — 4 runs each arm
 make with    REPO=gin N=4 MODEL=sonnet
 make without REPO=gin N=4 MODEL=sonnet
 make report
 
-# 3. Full suite — 7 repos × 2 arms × N runs (~90 min on Sonnet)
+# 2b. Full suite — 7 repos × 2 arms × N runs
+#     Recommended: dispatch one subagent per repo in parallel
+#     via the Task tool. Each subagent runs:
+#       LEANKG_BIN=/abs/path/to/leankg bash run_repo.sh <slug> 4 sonnet
+#     Total wall-clock bounded by the slowest repo (typically vscode).
+
+# 2c. Or run serially (slower, ~90 min)
 make full MODEL=sonnet N=4
 
-# 4. Just the report
+# 3. Just the report
 make report
 ```
 
@@ -72,6 +78,7 @@ Override defaults:
 ```bash
 make full MODEL=opus N=4 LEANKG_BIN=/abs/path/to/leankg
 make with REPO=django N=8 MODEL=sonnet
+LEANKG_BIN=/abs/path/to/leankg bash run_repo.sh django 4 sonnet
 ```
 
 ## Methodology notes
