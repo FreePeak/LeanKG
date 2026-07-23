@@ -1,0 +1,40 @@
+{
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "release-type": "cargo",
+      "package-name": "leankg",
+      "version-file": "Cargo.toml",
+      "changelog-path": "CHANGELOG.md",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "refactor", "section": "Refactoring" },
+        { "type": "revert", "section": "Reverts" }
+      ],
+      "exclude-types": [
+        "docs",
+        "chore",
+        "test",
+        "style",
+        "ci",
+        "build"
+      ],
+      "skip-github-release": false,
+      "draft": false,
+      "pull-request": {
+        "base-branch": "main",
+        "branch": "release-please--branches--main",
+        "labels": [
+          "release",
+          "automated"
+        ],
+        "reviewers": [],
+        "body": "## Release summary\n\n- **Next version:** {{version}}\n- **Bump level:** {{bump-type}}\n- **Release PR:** {{pr}}\n\nThis PR was generated automatically by the `release-please.yml` GitHub Actions workflow. Review the changelog entries and the version bump before merging. On merge, the `v{{version}}` tag and GitHub Release will be created.\n\nSee `docs/workflow-opencode-agent.md` for the release policy and troubleshooting guidance."
+      }
+    }
+  }
+}
