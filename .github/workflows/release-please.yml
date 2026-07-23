@@ -69,7 +69,7 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
           TAG: ${{ steps.release.outputs.tag_name }}
-          RELEASE_URL: ${{ steps.release.outputs.url }}
+          HTML_URL: ${{ steps.release.outputs.html_url }}
         run: |
           set -euo pipefail
           if [ -z "${VERSION:-}" ]; then
@@ -80,11 +80,7 @@ jobs:
             echo "Release Please did not report a tag"
             exit 1
           fi
-          if [ -z "${RELEASE_URL:-}" ]; then
-            echo "Release Please did not report a release URL"
-            exit 1
-          fi
-          echo "Published ${TAG} (${RELEASE_URL})"
+          echo "Published ${TAG} (${HTML_URL:-})"
 
       - name: Summarize run
         if: always()
