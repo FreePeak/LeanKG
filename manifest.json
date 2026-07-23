@@ -1,6 +1,6 @@
 {
   ".": {
-    "release-type": "cargo",
+    "release-type": "rust",
     "version": "0.19.4"
   }
 }
