@@ -786,7 +786,17 @@ impl ToolHandler {
             "functions": self.graph_engine.count_by_element_type("function").unwrap_or(0),
             "classes": self.graph_engine.count_by_element_type("class").unwrap_or(0)
                 + self.graph_engine.count_by_element_type("struct").unwrap_or(0),
-            "annotations": self.graph_engine.count_business_logic().unwrap_or(0)
+            "annotations": self.graph_engine.count_business_logic().unwrap_or(0),
+            "inventory": crate::graph::inventory::refresh_index_inventory(&self.graph_engine, "mcp_status")
+                .ok()
+                .map(|inv| crate::graph::inventory::inventory_to_json(&inv))
+                .or_else(|| {
+                    crate::graph::inventory::load_latest_inventory(self.graph_engine.db())
+                        .ok()
+                        .flatten()
+                        .map(|inv| crate::graph::inventory::inventory_to_json(&inv))
+                })
+                .unwrap_or(serde_json::json!({}))
         }))
     }
 
