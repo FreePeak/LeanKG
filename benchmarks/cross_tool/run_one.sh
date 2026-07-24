@@ -49,6 +49,15 @@ MODEL="${5:-}"              # optional: if empty, claude -p uses its default
 MCP_CONFIG_PATH="${6:?mcp_config_path required}"
 OUTPUT_PATH="${7:?output_path required}"
 
+# Claude Code 2.1+ strips ToolSearch under --bare, which makes MCP tools
+# undiscoverable to the agent. For the WITH arm we want MCP tools to be
+# available, so we drop --bare there. WITHOUT arm keeps --bare for hermetic
+# isolation (no global CLAUDE.md / hooks / plugins).
+BARE_FLAG="--bare"
+if [[ "${ARM}" == "with" ]]; then
+  BARE_FLAG=""
+fi
+
 if [[ ! -d "${REPO_PATH}" ]]; then
   echo "ERROR: repo path does not exist: ${REPO_PATH}" >&2
   exit 2
@@ -71,7 +80,7 @@ set +e
 ( cd "${REPO_PATH}" && \
   claude -p "${PROMPT}" \
     ${MODEL:+--model "${MODEL}"} \
-    --bare \
+    ${BARE_FLAG} \
     --mcp-config "${MCP_CONFIG_PATH}" \
     --strict-mcp-config \
     --output-format json \
