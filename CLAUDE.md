@@ -87,17 +87,19 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 When MCP HTTP on `:9699` is healthy, for fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
 
-`get_overview_context` → `mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
+`get_overview_context` → `mcp_status` → `concept_search` → **`search_knowledge`** → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
 
 | Question type | First tools |
 |---------------|-------------|
-| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
+| Fuzzy / meaning / domain NL | `concept_search` → **`search_knowledge`** → **`semantic_search`** → `search_code` |
 | Exact symbol / file name | `find_function` / `search_code` / `query_file` |
 | How A↔B? (known endpoints) | `shortest_path` |
 | What is this known symbol? | `explain_node` |
 | Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
 
 **BAN:** Do not call `query_graph` as the first NL discovery tool when embeddings/concepts may answer. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+
+**Dynamic ontology (agent memory):** Agents persist discoveries as `add_ontology_concept` (concept-level: bugs, design insights, domain logic) and `add_ontology_workflow` (procedural: fix sequences, debug procedures, release flows). These survive YAML re-syncs and appear in `concept_search` results. Use `add_knowledge` for free-form notes; `search_knowledge` matches both title and content. Delete only dynamic rows with `delete_ontology_concept`.
 
 ### MANDATORY: Docker MCP project paths (not host paths)
 
