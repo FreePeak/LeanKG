@@ -13,6 +13,23 @@ pub struct ProjectConfig {
     /// FR-LSP-B: optional prefab / user LSP server block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lsp: Option<crate::lsp::config::LspConfig>,
+    /// Remote source configuration for indexing from non-local sources.
+    /// When set, overrides the local `project.root` and syncs content to
+    /// `.leankg/sources/` before indexing. CLI flags `--source`, `--auth`,
+    /// and `--ref-name` take precedence over config values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceConfig {
+    /// Source URI: gs://bucket, s3://bucket, git+https://..., etc.
+    pub uri: String,
+    /// Auth credential: access token, key file path, or env var reference.
+    pub auth: Option<String>,
+    /// Git reference (branch/tag/commit), only for git sources.
+    #[serde(default)]
+    pub ref_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +220,7 @@ impl Default for ProjectConfig {
             microservice: None,
             auth: AuthSettings::default(),
             lsp: None,
+            source: None,
         }
     }
 }
