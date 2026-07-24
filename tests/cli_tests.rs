@@ -639,3 +639,78 @@ fn test_cli_export_custom_output() {
         _ => panic!("expected Export command"),
     }
 }
+
+#[test]
+fn test_cli_index_with_source_flag() {
+    let args = TestArgs::try_parse_from([
+        "leankg",
+        "index",
+        "--source",
+        "git+https://github.com/user/repo.git",
+    ])
+    .unwrap();
+    match args.command {
+        CLICommand::Index {
+            source,
+            ref_name,
+            auth,
+            ..
+        } => {
+            assert_eq!(source.as_deref(), Some("git+https://github.com/user/repo.git"));
+            assert_eq!(ref_name, None);
+            assert_eq!(auth, None);
+        }
+        _ => panic!("expected Index command"),
+    }
+}
+
+#[test]
+fn test_cli_index_with_source_and_ref_and_auth() {
+    let args = TestArgs::try_parse_from([
+        "leankg",
+        "index",
+        "--source",
+        "git+https://github.com/user/repo.git",
+        "--ref-name",
+        "develop",
+        "--auth",
+        "ghp_token123",
+    ])
+    .unwrap();
+    match args.command {
+        CLICommand::Index {
+            source,
+            ref_name,
+            auth,
+            ..
+        } => {
+            assert_eq!(
+                source.as_deref(),
+                Some("git+https://github.com/user/repo.git")
+            );
+            assert_eq!(ref_name.as_deref(), Some("develop"));
+            assert_eq!(auth.as_deref(), Some("ghp_token123"));
+        }
+        _ => panic!("expected Index command"),
+    }
+}
+
+#[test]
+fn test_cli_index_with_gcs_source() {
+    let args = TestArgs::try_parse_from([
+        "leankg",
+        "index",
+        "--source",
+        "gs://my-bucket/code",
+        "--auth",
+        "ya29.token",
+    ])
+    .unwrap();
+    match args.command {
+        CLICommand::Index { source, auth, .. } => {
+            assert_eq!(source.as_deref(), Some("gs://my-bucket/code"));
+            assert_eq!(auth.as_deref(), Some("ya29.token"));
+        }
+        _ => panic!("expected Index command"),
+    }
+}
