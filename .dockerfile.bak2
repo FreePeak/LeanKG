@@ -1,0 +1,35 @@
+# Local-only docker compose overrides for THIS machine.
+# This file is .gitignored. Edit freely; never commit.
+
+# LeanKG source tree on this host.
+HOST_PROJECT_PATH=/Users/linh.doan/work/harvey/freepeak/leankg
+CONTAINER_PROJECT_PATH=/workspace
+
+# Side-by-side projects scanned/indexed on startup.
+# Comma-separated (entrypoint splits on commas).
+LEANKG_PROJECT_DIRS=/workspace,/workspace-be,/workspace-freepeak
+LEANKG_MCP_PROJECT=/workspace
+
+# Multiple projects are mounted via docker-compose's bind-mount list.
+# Additional mounts live in docker-compose.override.yml.
+LEANKG_EMBED_ON_BOOT=0
+# Day-2 resume: in-process incremental embed after MCP bind (skip fresh).
+LEANKG_EMBED_BACKGROUND=0
+LEANKG_EMBED_BACKGROUND_FULL=0
+LEANKG_EMBED_FAST=1
+LEANKG_EMBED_MODEL=bge-q
+# Soft pause under MCP mem_limit 6g.
+LEANKG_EMBED_MAX_MB=3072
+LEANKG_EMBED_BACKGROUND_WORKERS=1
+LEANKG_EMBED_BACKGROUND_BATCH=32
+# Entrypoint cold index only if RocksDB missing; skip MCP freshness reindex
+# so mega-graph does not OOM on every recreate (FR-MG-AUTO-01).
+LEANKG_AUTO_INDEX=1
+LEANKG_SKIP_FRESHNESS_CHECK=1
+
+# Keep MCP searchable on mega-graphs (see generated_docs/root_cause_mcp_search_unavailable.md)
+LEANKG_ONTOLOGY_SYNC_ON_BOOT=timeout
+LEANKG_ONTOLOGY_SYNC_TIMEOUT_SECS=45
+
+# UI REST (leankg serve) project — LeanKG source mount, not MCP multi-repo.
+LEANKG_SERVE_PROJECT=/workspace

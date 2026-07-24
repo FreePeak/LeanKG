@@ -307,6 +307,10 @@ impl ToolHandler {
             "add_annotation" => self.add_annotation(arguments),
             "link_element" => self.link_element_tool(arguments),
             "add_documentation" => self.add_documentation(arguments),
+            // Dynamic ontology tools (agent memory)
+            "add_ontology_concept" => self.add_ontology_concept(arguments),
+            "add_ontology_workflow" => self.add_ontology_workflow(arguments),
+            "delete_ontology_concept" => self.delete_ontology_concept(arguments),
             // Versioning tools
             "get_upcoming_changes" => self.get_upcoming_changes(arguments),
             "promote_environment" => self.promote_environment(arguments),
@@ -3374,6 +3378,319 @@ impl ToolHandler {
     }
 
     // ========================================================================
+    // Dynamic Ontology Tools (agent memory)
+    // ========================================================================
+
+    fn add_ontology_concept(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let type_ = args["type_"].as_str().ok_or("Missing 'type_'")?;
+        let description = args["description"]
+            .as_str()
+            .ok_or("Missing 'description'")?;
+        let env = args["env"].as_str().unwrap_or("local");
+        let aliases: Vec<String> = args["aliases"].as_array().map_or(Vec::new(), |a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+        let code_refs: Vec<String> = args["code_refs"].as_array().map_or(Vec::new(), |a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+        let docs: Vec<String> = args["docs"].as_array().map_or(Vec::new(), |a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+
+        let id = format!("agent-{}", uuid_simple());
+        let scope = "agent".to_string();
+
+        let mut metadata =
+            crate::ontology::ConceptMetadata::new(env, &scope, type_, &id, name, description);
+        metadata = metadata.with_aliases(aliases);
+        metadata.source = Some("dynamic".to_string());
+        metadata = metadata.with_code_refs(code_refs);
+        metadata = metadata.with_docs(docs);
+
+        let node = crate::ontology::ConceptNode {
+            gid: metadata.gid.clone(),
+            name: name.to_string(),
+            element_type: type_.to_string(),
+            aliases: metadata.aliases.clone(),
+            description: description.to_string(),
+            env: env.to_string(),
+            metadata,
+        };
+
+        let elements = crate::ontology::concept_nodes_to_elements(&[node]);
+        for elem in &elements {
+            self.graph_engine
+                .insert_element(elem)
+                .map_err(|e| format!("Failed to insert concept: {}", e))?;
+        }
+        self.graph_engine.invalidate_cache();
+
+        Ok(json!({
+            "gid": elements[0].qualified_name,
+            "name": name,
+            "type": type_,
+            "source": "dynamic",
+            "status": "created"
+        }))
+    }
+
+    fn add_ontology_workflow(&self, args: &Value) -> Result<Value, String> {
+        let name = args["name"].as_str().ok_or("Missing 'name'")?;
+        let description = args["description"]
+            .as_str()
+            .ok_or("Missing 'description'")?;
+        let env = args["env"].as_str().unwrap_or("local");
+        let aliases: Vec<String> = args["aliases"].as_array().map_or(Vec::new(), |a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+        let steps_raw = args["steps"].as_array().ok_or("Missing 'steps' array")?;
+
+        let workflow_id = format!("agent-wf-{}", uuid_simple());
+        let scope = "agent".to_string();
+
+        let mut wf_metadata =
+            crate::ontology::WorkflowMetadata::new(env, &scope, &workflow_id, name, description);
+        wf_metadata.aliases = aliases
+            .iter()
+            .map(|a| crate::ontology::normalize_alias(a))
+            .collect();
+        wf_metadata.source = Some("dynamic".to_string());
+        wf_metadata.step_count = Some(steps_raw.len());
+
+        let workflow_node = crate::ontology::WorkflowNode {
+            gid: wf_metadata.gid.clone(),
+            name: name.to_string(),
+            element_type: "workflow".to_string(),
+            aliases: wf_metadata.aliases.clone(),
+            description: description.to_string(),
+            env: env.to_string(),
+            metadata: wf_metadata,
+        };
+
+        let mut all_elements: Vec<CodeElement> = Vec::new();
+        let mut all_relationships: Vec<Relationship> = Vec::new();
+
+        all_elements.extend(crate::ontology::workflow_nodes_to_elements(
+            std::slice::from_ref(&workflow_node),
+        ));
+
+        for (i, step) in steps_raw.iter().enumerate() {
+            let step_name = step["name"].as_str().unwrap_or("unnamed");
+            let step_desc = step["description"].as_str().unwrap_or("");
+            let step_code_refs: Vec<String> =
+                step["code_refs"].as_array().map_or(Vec::new(), |a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                });
+            let step_failure_modes: Vec<String> =
+                step["failure_modes"].as_array().map_or(Vec::new(), |a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                });
+
+            let step_id = format!("{}-step-{}", workflow_id, i);
+            let mut step_meta = crate::ontology::WorkflowStepMetadata::new(
+                env,
+                &scope,
+                &workflow_id,
+                &step_id,
+                i,
+                step_desc,
+            );
+            step_meta.aliases = vec![crate::ontology::normalize_alias(step_name)];
+            step_meta.code_refs = step_code_refs;
+            step_meta.failure_modes = step_failure_modes.clone();
+            step_meta.source = Some("dynamic".to_string());
+
+            let step_node = crate::ontology::WorkflowStepNode {
+                gid: step_meta.gid.clone(),
+                name: step_name.to_string(),
+                element_type: "workflow_step".to_string(),
+                workflow_gid: workflow_node.gid.clone(),
+                order: i,
+                description: step_desc.to_string(),
+                env: env.to_string(),
+                metadata: step_meta,
+            };
+
+            all_elements.extend(crate::ontology::workflow_step_nodes_to_elements(
+                std::slice::from_ref(&step_node),
+            ));
+
+            // has_step relationship
+            all_relationships.push(Relationship {
+                id: None,
+                source_qualified: workflow_node.gid.clone(),
+                target_qualified: step_node.gid.clone(),
+                rel_type: "has_step".to_string(),
+                confidence: 1.0,
+                metadata: serde_json::json!({}),
+                env: env.to_string(),
+            });
+
+            // next_step relationships
+            if i > 0 {
+                let _prev_gid = format!("{}-step-{}", workflow_id, i - 1);
+                let prev_scope = scope.clone();
+                let prev_gid_full = crate::ontology::OntologyGid {
+                    env: env.to_string(),
+                    scope: prev_scope,
+                    ontology_type: "workflow_step".to_string(),
+                    id: format!("{}-step-{}", workflow_id, i - 1),
+                    version: "v1".to_string(),
+                }
+                .to_string();
+                all_relationships.push(Relationship {
+                    id: None,
+                    source_qualified: prev_gid_full,
+                    target_qualified: step_node.gid.clone(),
+                    rel_type: "next_step".to_string(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({}),
+                    env: env.to_string(),
+                });
+            }
+
+            // failure mode nodes + has_failure_mode relationships
+            for fm_name in &step_failure_modes {
+                let fm_id = format!("{}-fm-{}", step_id, uuid_simple());
+                let fm_scope = scope.clone();
+                let fm_gid = crate::ontology::OntologyGid {
+                    env: env.to_string(),
+                    scope: fm_scope.clone(),
+                    ontology_type: "failure_mode".to_string(),
+                    id: fm_id.clone(),
+                    version: "v1".to_string(),
+                }
+                .to_string();
+                let fm_meta = crate::ontology::FailureModeMetadata {
+                    gid: fm_gid.clone(),
+                    ontology: "procedural".to_string(),
+                    ontology_layer: "procedural".to_string(),
+                    aliases: vec![crate::ontology::normalize_alias(fm_name)],
+                    description: format!("Failure mode for step: {}", step_name),
+                    source: Some("dynamic".to_string()),
+                    ..Default::default()
+                };
+                let fm_node = crate::ontology::FailureModeNode {
+                    gid: fm_gid,
+                    name: fm_name.to_string(),
+                    element_type: "failure_mode".to_string(),
+                    description: fm_meta.description.clone(),
+                    env: env.to_string(),
+                    metadata: fm_meta,
+                };
+                all_elements.extend(crate::ontology::failure_mode_nodes_to_elements(
+                    std::slice::from_ref(&fm_node),
+                ));
+                all_relationships.push(Relationship {
+                    id: None,
+                    source_qualified: step_node.gid.clone(),
+                    target_qualified: fm_node.gid.clone(),
+                    rel_type: "has_failure_mode".to_string(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({}),
+                    env: env.to_string(),
+                });
+            }
+        }
+
+        for elem in &all_elements {
+            self.graph_engine
+                .insert_element(elem)
+                .map_err(|e| format!("Failed to insert ontology element: {}", e))?;
+        }
+        for rel in &all_relationships {
+            self.graph_engine
+                .insert_relationship(rel)
+                .map_err(|e| format!("Failed to insert ontology relationship: {}", e))?;
+        }
+        self.graph_engine.invalidate_cache();
+
+        Ok(json!({
+            "gid": workflow_node.gid,
+            "name": name,
+            "type": "workflow",
+            "steps": steps_raw.len(),
+            "source": "dynamic",
+            "status": "created"
+        }))
+    }
+
+    fn delete_ontology_concept(&self, args: &Value) -> Result<Value, String> {
+        let gid = args["gid"].as_str().ok_or("Missing 'gid'")?;
+
+        // Verify it's a dynamic row before deleting
+        let graph_engine = self.graph_engine.clone();
+        let elements = graph_engine
+            .get_elements_by_qualified_names(&[gid.to_string()])
+            .map_err(|e| format!("Failed to look up element: {}", e))?;
+
+        let elem = elements
+            .get(gid)
+            .ok_or_else(|| format!("Element not found: {}", gid))?;
+
+        if !elem.file_path.starts_with("ontology://") {
+            return Err("Refusing to delete non-ontology element".to_string());
+        }
+
+        let source_is_dynamic =
+            elem.metadata.get("source").and_then(|v| v.as_str()) == Some("dynamic");
+
+        if !source_is_dynamic {
+            return Err(format!(
+                "Refusing to delete YAML-sourced ontology element. Only 'source: dynamic' elements can be deleted via this tool. GID: {}", gid
+            ));
+        }
+
+        // Delete the element itself
+        self.graph_engine
+            .remove_elements_by_qualified_name(gid)
+            .map_err(|e| format!("Failed to delete element: {}", e))?;
+
+        // If it's a workflow, also delete child steps and their failure modes
+        if elem.element_type == "workflow" {
+            // Find and delete steps where parent_qualified = this workflow GID
+            let find_steps_query = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow_step", parent_qualified = $gid"#;
+            let mut params = std::collections::BTreeMap::new();
+            params.insert(
+                "gid".to_string(),
+                serde_json::Value::String(gid.to_string()),
+            );
+            if let Ok(result) =
+                crate::db::schema::run_script(self.graph_engine.db(), find_steps_query, params)
+            {
+                for row in &result.rows {
+                    if let Some(step_gid) = row[0].get_str() {
+                        let _ = self
+                            .graph_engine
+                            .remove_elements_by_qualified_name(step_gid);
+                    }
+                }
+            }
+        }
+
+        self.graph_engine.invalidate_cache();
+
+        Ok(json!({
+            "gid": gid,
+            "type": elem.element_type,
+            "status": "deleted"
+        }))
+    }
+
+    // ========================================================================
     // Version/Branch Tagging Tools
     // ========================================================================
 
@@ -3645,6 +3962,8 @@ impl ToolHandler {
             "total_aliases": status.total_aliases,
             "nodes_missing_aliases": status.nodes_missing_aliases,
             "workflows_without_failure_modes": status.workflows_without_failure_modes,
+            "dynamic_concepts": status.dynamic_concepts,
+            "dynamic_workflows": status.dynamic_workflows,
         }))
     }
 

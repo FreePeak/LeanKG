@@ -917,7 +917,7 @@ pub fn search_knowledge(
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
     let regex_pattern = format!(".*{}.*", query_str.to_lowercase());
     let mut conditions = vec![format!(
-        "regex_matches(lowercase(title), \"{}\")",
+        "(regex_matches(lowercase(title), \"{0}\") or regex_matches(lowercase(content), \"{0}\"))",
         regex_pattern
     )];
     let mut params = std::collections::BTreeMap::new();

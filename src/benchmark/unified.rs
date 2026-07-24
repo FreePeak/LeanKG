@@ -514,6 +514,8 @@ fn run_leankg(
                     total_aliases: 0,
                     nodes_missing_aliases: 0,
                     workflows_without_failure_modes: 0,
+                    dynamic_concepts: 0,
+                    dynamic_workflows: 0,
                 });
             let n = status.concept_counts.values().sum::<usize>();
             (
