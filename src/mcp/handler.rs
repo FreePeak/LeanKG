@@ -3479,9 +3479,9 @@ impl ToolHandler {
         let mut all_elements: Vec<CodeElement> = Vec::new();
         let mut all_relationships: Vec<Relationship> = Vec::new();
 
-        all_elements.extend(crate::ontology::workflow_nodes_to_elements(&[
-            workflow_node.clone(),
-        ]));
+        all_elements.extend(crate::ontology::workflow_nodes_to_elements(
+            std::slice::from_ref(&workflow_node),
+        ));
 
         for (i, step) in steps_raw.iter().enumerate() {
             let step_name = step["name"].as_str().unwrap_or("unnamed");
@@ -3524,9 +3524,9 @@ impl ToolHandler {
                 metadata: step_meta,
             };
 
-            all_elements.extend(crate::ontology::workflow_step_nodes_to_elements(&[
-                step_node.clone(),
-            ]));
+            all_elements.extend(crate::ontology::workflow_step_nodes_to_elements(
+                std::slice::from_ref(&step_node),
+            ));
 
             // has_step relationship
             all_relationships.push(Relationship {
@@ -3591,9 +3591,9 @@ impl ToolHandler {
                     env: env.to_string(),
                     metadata: fm_meta,
                 };
-                all_elements.extend(crate::ontology::failure_mode_nodes_to_elements(&[
-                    fm_node.clone()
-                ]));
+                all_elements.extend(crate::ontology::failure_mode_nodes_to_elements(
+                    std::slice::from_ref(&fm_node),
+                ));
                 all_relationships.push(Relationship {
                     id: None,
                     source_qualified: step_node.gid.clone(),
@@ -3645,10 +3645,8 @@ impl ToolHandler {
             return Err("Refusing to delete non-ontology element".to_string());
         }
 
-        let source_is_dynamic = elem
-            .metadata
-            .get("source")
-            .and_then(|v| v.as_str()) == Some("dynamic");
+        let source_is_dynamic =
+            elem.metadata.get("source").and_then(|v| v.as_str()) == Some("dynamic");
 
         if !source_is_dynamic {
             return Err(format!(

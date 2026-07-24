@@ -2304,36 +2304,56 @@ impl GraphEngine {
         Ok(names)
     }
 
+    /// List all ontology elements with full metadata (for dynamic row preservation).
+    pub fn list_ontology_elements(&self) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")"#
+        );
+        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let rows = result.rows;
+
+        let elements: Vec<CodeElement> = rows
+            .iter()
+            .map(|row| {
+                let parent_qualified = row[7].get_str().map(String::from);
+                let cluster_id = row[8].get_str().map(String::from);
+                let cluster_label = row[9].get_str().map(String::from);
+                let metadata_str = row[10].get_str().unwrap_or("{}");
+                let env = row[11].get_str().unwrap_or("local").to_string();
+                CodeElement {
+                    qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                    element_type: row[1].get_str().unwrap_or("").to_string(),
+                    name: row[2].get_str().unwrap_or("").to_string(),
+                    file_path: row[3].get_str().unwrap_or("").to_string(),
+                    line_start: row[4].get_int().unwrap_or(0) as u32,
+                    line_end: row[5].get_int().unwrap_or(0) as u32,
+                    language: row[6].get_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    env,
+                }
+            })
+            .collect();
+
+        Ok(elements)
+    }
+
     /// Declarative wipe of the ontology layer: drop relationships whose source
     /// is an ontology GID, then delete all `ontology://` code_elements rows
     /// (including duplicate composite-key variants). Two bulk Cozo scripts
     /// (not per-GID loops) to avoid SQLite lock storms under concurrent MCP.
-    ///
-    /// When `preserve_dynamic` is true, rows whose metadata contains
-    /// `"source":"dynamic"` are excluded from the wipe so agent-discovered
-    /// concepts and workflows survive YAML re-syncs.
     pub fn clear_ontology_layer(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        self.clear_ontology_layer_filtered(false)
-    }
-
-    /// Clear only YAML-sourced ontology rows, preserving dynamic (`source: "dynamic"`) rows.
-    pub fn clear_yaml_ontology_layer(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        self.clear_ontology_layer_filtered(true)
-    }
-
-    fn clear_ontology_layer_filtered(
-        &self,
-        preserve_dynamic: bool,
-    ) -> Result<usize, Box<dyn std::error::Error>> {
-        let qns = self.list_ontology_qualified_names()?;
-        let n = qns.len();
+        // Inline the qualified names query since list_ontology_qualified_names was removed
         let tail = self.code_elements_tail();
-
-        let dynamic_exclusion = if preserve_dynamic {
-            r#", not(regex_matches(metadata, "\"source\":\"dynamic\""))"#
-        } else {
-            ""
-        };
+        let count_query = format!(
+            r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")"#
+        );
+        let result = crate::db::schema::run_script(&self.db, &count_query, Default::default())?;
+        let n = result.rows.len();
+        let _ = n;
 
         // 1) Remove relationships while ontology elements still exist (join).
         let rel_query = format!(
@@ -2341,7 +2361,7 @@ impl GraphEngine {
             ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
                 *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
                 *code_elements[source_qualified, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
-                regex_matches(file_path, "^ontology://"){dynamic_exclusion}
+                regex_matches(file_path, "^ontology://")
             :rm relationships {{source_qualified, target_qualified, rel_type, confidence, metadata}}
         "#
         );
@@ -2351,7 +2371,7 @@ impl GraphEngine {
         let elem_query = format!(
             r#"
             ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
-                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://"){dynamic_exclusion}
+                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")
             :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
         "#
         );
