@@ -7,9 +7,7 @@
 
 use leankg::sources::git::GitSource;
 use leankg::sources::local::LocalSource;
-use leankg::sources::{
-    parse_source_uri, ProgressReporter, Source, SourceFactory, SourceUri,
-};
+use leankg::sources::{parse_source_uri, ProgressReporter, Source, SourceFactory, SourceUri};
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
@@ -68,10 +66,7 @@ async fn local_source_resolves_existing_path() {
 
     assert!(resolved.is_dir());
     assert!(resolved.join("hello.go").exists());
-    assert!(progress
-        .messages
-        .iter()
-        .any(|m| m.contains("local source")));
+    assert!(progress.messages.iter().any(|m| m.contains("local source")));
     assert_eq!(src.name(), "local");
 }
 
@@ -120,7 +115,10 @@ async fn git_source_clones_local_repo_into_staging() {
     assert!(
         synced.join("main.go").exists(),
         "expected main.go in synced dir, got: {:?}",
-        std::fs::read_dir(&synced).unwrap().flatten().collect::<Vec<_>>()
+        std::fs::read_dir(&synced)
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>()
     );
     assert!(
         synced.join(".git").exists(),

@@ -35,12 +35,29 @@ pub trait Source: Send + Sync {
 /// Parsed representation of a `--source` URI.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SourceUri {
-    Local { path: String },
-    Gcs { bucket: String, prefix: String },
-    S3 { bucket: String, prefix: String },
-    Git { url: String },
-    Sftp { user: String, host: String, port: u16, path: String },
-    GoogleDrive { folder_id: String },
+    Local {
+        path: String,
+    },
+    Gcs {
+        bucket: String,
+        prefix: String,
+    },
+    S3 {
+        bucket: String,
+        prefix: String,
+    },
+    Git {
+        url: String,
+    },
+    Sftp {
+        user: String,
+        host: String,
+        port: u16,
+        path: String,
+    },
+    GoogleDrive {
+        folder_id: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -66,22 +83,20 @@ pub enum SourceError {
 /// | `sftp://user@host:port/path` | `Sftp` |
 /// | `gdrive://folder-id` | `GoogleDrive` |
 pub fn parse_source_uri(uri: &str) -> Result<SourceUri, SourceError> {
-    if uri.starts_with("gs://") {
-        let rest = &uri[5..];
+    if let Some(rest) = uri.strip_prefix("gs://") {
         let (bucket, prefix) = split_bucket_prefix(rest);
         Ok(SourceUri::Gcs { bucket, prefix })
-    } else if uri.starts_with("s3://") {
-        let rest = &uri[5..];
+    } else if let Some(rest) = uri.strip_prefix("s3://") {
         let (bucket, prefix) = split_bucket_prefix(rest);
         Ok(SourceUri::S3 { bucket, prefix })
-    } else if uri.starts_with("git+") {
-        let git_url = uri.strip_prefix("git+").unwrap_or(uri).to_string();
-        if git_url.is_empty() {
+    } else if let Some(rest) = uri.strip_prefix("git+") {
+        if rest.is_empty() {
             return Err(SourceError::InvalidUri(uri.to_string()));
         }
-        Ok(SourceUri::Git { url: git_url })
-    } else if uri.starts_with("sftp://") {
-        let rest = &uri[7..];
+        Ok(SourceUri::Git {
+            url: rest.to_string(),
+        })
+    } else if let Some(rest) = uri.strip_prefix("sftp://") {
         let (user_host_port, path) = match rest.find('/') {
             Some(idx) => (&rest[..idx], rest[idx..].to_string()),
             None => (rest, "/".to_string()),
@@ -104,8 +119,7 @@ pub fn parse_source_uri(uri: &str) -> Result<SourceUri, SourceError> {
             port,
             path,
         })
-    } else if uri.starts_with("gdrive://") {
-        let folder_id = &uri[9..];
+    } else if let Some(folder_id) = uri.strip_prefix("gdrive://") {
         Ok(SourceUri::GoogleDrive {
             folder_id: folder_id.to_string(),
         })
@@ -134,15 +148,16 @@ impl SourceFactory {
         ref_name: Option<&str>,
     ) -> Result<Box<dyn Source>, SourceError> {
         match uri {
-            SourceUri::Local { path } => Ok(Box::new(local::LocalSource {
-                path: path.clone(),
-            })),
+            SourceUri::Local { path } => Ok(Box::new(local::LocalSource { path: path.clone() })),
             SourceUri::Gcs { bucket, prefix } => Ok(Box::new(gcs::GcsSource {
                 bucket: bucket.clone(),
                 prefix: prefix.clone(),
                 auth: auth.map(|s| s.to_string()),
             })),
-            SourceUri::S3 { bucket: _, prefix: _ } => {
+            SourceUri::S3 {
+                bucket: _,
+                prefix: _,
+            } => {
                 // ponytail: S3Source is planned for Phase 5, not yet implemented.
                 // For now, return auth-required error until the implementation lands.
                 Err(SourceError::UnsupportedScheme(
@@ -152,7 +167,9 @@ impl SourceFactory {
             SourceUri::Git { url } => Ok(Box::new(git::GitSource {
                 url: url.clone(),
                 auth: auth.map(|s| s.to_string()),
-                ref_name: ref_name.map(|s| s.to_string()).unwrap_or_else(|| "main".to_string()),
+                ref_name: ref_name
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "main".to_string()),
             })),
             SourceUri::Sftp { .. } => {
                 // ponytail: SftpSource is Phase 6.
@@ -183,7 +200,12 @@ pub fn uri_staging_dir(uri: &SourceUri) -> String {
         }
         SourceUri::S3 { bucket, prefix } => format!("s3_{}_{}", bucket, prefix),
         SourceUri::Git { url } => format!("git_{}", url),
-        SourceUri::Sftp { user, host, port, path } => {
+        SourceUri::Sftp {
+            user,
+            host,
+            port,
+            path,
+        } => {
             format!("sftp_{}@{}:{}{}", user, host, port, path)
         }
         SourceUri::GoogleDrive { folder_id } => format!("gdrive_{}", folder_id),

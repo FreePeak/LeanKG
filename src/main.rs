@@ -1008,6 +1008,7 @@ fn has_extension_recursive(dir: &std::path::Path, ext: &str, max_depth: u32) -> 
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn index_codebase(
     path: &str,
     db_path: &std::path::Path,
@@ -1175,6 +1176,7 @@ async fn index_codebase(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn incremental_index_codebase(
     path: &str,
     db_path: &std::path::Path,
@@ -1221,7 +1223,10 @@ async fn incremental_index_codebase(
             .join("sources");
         tokio::fs::create_dir_all(&staging_root).await?;
 
-        println!("Re-syncing source '{}' for incremental index...", src.name());
+        println!(
+            "Re-syncing source '{}' for incremental index...",
+            src.name()
+        );
         let mut progress = sources::CliProgress;
         let synced = src
             .sync_to_local(&staging_root, &mut progress)
@@ -1288,7 +1293,18 @@ async fn incremental_index_codebase(
                 "Incremental index failed: {}. Falling back to full index.",
                 e
             );
-            index_codebase(&sync_path, db_path, lang_filter, exclude_patterns, verbose, env, None, None, None).await?;
+            index_codebase(
+                &sync_path,
+                db_path,
+                lang_filter,
+                exclude_patterns,
+                verbose,
+                env,
+                None,
+                None,
+                None,
+            )
+            .await?;
         }
     }
 

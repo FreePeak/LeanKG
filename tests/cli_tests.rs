@@ -656,7 +656,10 @@ fn test_cli_index_with_source_flag() {
             auth,
             ..
         } => {
-            assert_eq!(source.as_deref(), Some("git+https://github.com/user/repo.git"));
+            assert_eq!(
+                source.as_deref(),
+                Some("git+https://github.com/user/repo.git")
+            );
             assert_eq!(ref_name, None);
             assert_eq!(auth, None);
         }

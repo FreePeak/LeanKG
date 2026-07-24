@@ -20,10 +20,7 @@ impl Source for LocalSource {
             std::env::current_dir()?.join(p)
         };
         let canonical = std::fs::canonicalize(&resolved).unwrap_or(resolved);
-        progress.report(&format!(
-            "local source at {}",
-            canonical.display()
-        ));
+        progress.report(&format!("local source at {}", canonical.display()));
         Ok(canonical)
     }
 

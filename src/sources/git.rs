@@ -31,10 +31,7 @@ impl Source for GitSource {
             fetch_and_checkout(&local_dir, &self.ref_name, progress)?;
         } else {
             tokio::fs::create_dir_all(&local_dir).await?;
-            progress.report(&format!(
-                "cloning {} (ref: {})...",
-                self.url, self.ref_name
-            ));
+            progress.report(&format!("cloning {} (ref: {})...", self.url, self.ref_name));
             let clone_url = maybe_inject_auth(&self.url, self.auth.as_deref());
             clone_repo(&clone_url, &local_dir, &self.ref_name, progress)?;
         }
@@ -70,7 +67,9 @@ fn clone_repo(
     cmd.args(["clone", "--depth", "1", "--branch", ref_name, url])
         .arg(dir);
 
-    let output = cmd.output().map_err(|e| format!("git clone failed: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("git clone failed: {}", e))?;
 
     if !output.status.success() {
         let _stderr = String::from_utf8_lossy(&output.stderr);
@@ -154,10 +153,7 @@ fn fetch_and_checkout(
         Ok(o) if o.status.success() => progress.report("pulled latest"),
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
-            progress.report(&format!(
-                "git pull skipped ({}): {}",
-                o.status, stderr
-            ));
+            progress.report(&format!("git pull skipped ({}): {}", o.status, stderr));
             // Shallow depth may prevent ff-only pull. Attempt to reset to
             // the remote tracking branch to pick up new commits.
             progress.report("attempting fetch --unshallow + reset...");

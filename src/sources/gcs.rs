@@ -79,8 +79,8 @@ impl GcsSource {
                 return Err(format!("GCS list returned {}: {}", status, body).into());
             }
 
-            let parsed: serde_json::Value = serde_json::from_str(&body)
-                .map_err(|e| format!("GCS list parse: {}", e))?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| format!("GCS list parse: {}", e))?;
 
             if let Some(items) = parsed["items"].as_array() {
                 for item in items {
@@ -115,21 +115,14 @@ impl Source for GcsSource {
         progress: &mut dyn ProgressReporter,
     ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.resolve_token()?;
-        progress.report(&format!(
-            "listing gs://{}/{} ...",
-            self.bucket, self.prefix
-        ));
+        progress.report(&format!("listing gs://{}/{} ...", self.bucket, self.prefix));
 
         let objects = self.list_objects(&token).await?;
         let total = objects.len();
         progress.report(&format!("found {} objects in bucket", total));
 
         if total == 0 {
-            return Err(format!(
-                "no objects found in gs://{}/{}",
-                self.bucket, self.prefix
-            )
-            .into());
+            return Err(format!("no objects found in gs://{}/{}", self.bucket, self.prefix).into());
         }
 
         let dir_name = super::uri_staging_dir(&super::SourceUri::Gcs {
@@ -195,7 +188,7 @@ impl Source for GcsSource {
             downloaded += 1;
             total_bytes += body.len() as u64;
 
-            if downloaded % 100 == 0 || downloaded == total {
+            if downloaded.is_multiple_of(100) || downloaded == total {
                 progress.report(&format!(
                     "synced {}/{} objects ({} MiB)",
                     downloaded,
