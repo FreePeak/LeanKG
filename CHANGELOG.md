@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.7](https://github.com/FreePeak/LeanKG/compare/v0.19.6...v0.19.7) (2026-07-24)
+
+
+### Features
+
+* dynamic ontology CRUD for agent memory ([0a1ab26](https://github.com/FreePeak/LeanKG/commit/0a1ab26f236006150bff77aed201a36277bfd17b))
+
 ## [0.19.6](https://github.com/FreePeak/LeanKG/compare/v0.19.5...v0.19.6) (2026-07-23)
 
 
