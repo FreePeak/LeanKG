@@ -70,6 +70,10 @@ pub struct WorkflowStepDef {
     pub failure_modes: Vec<String>,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub feature_ids: Vec<String>,
+    #[serde(default)]
+    pub user_story_ids: Vec<String>,
 }
 
 /// Root structure for aliases.yaml
@@ -240,7 +244,9 @@ pub fn load_workflows_yaml(
                 "", // steps don't have separate descriptions in current format
             )
             .with_code_refs(step_def.code_refs.clone())
-            .with_failure_modes(step_def.failure_modes.clone());
+            .with_failure_modes(step_def.failure_modes.clone())
+            .with_feature_ids(step_def.feature_ids.clone())
+            .with_user_story_ids(step_def.user_story_ids.clone());
 
             step_nodes.push(step_node.clone());
 

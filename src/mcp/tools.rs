@@ -1104,6 +1104,48 @@ impl ToolRegistry {
                     "required": []
                 }),
             },
+
+            // PRD-in-KG Traceability Tools
+            ToolDefinition {
+                name: "index_prd".to_string(),
+                description: "Parse a PRD markdown document into structured knowledge graph entries. Extracts FR-* (feature requirements) and US-* (user stories), creates knowledge_entries, and auto-links features to ontology workflows by matching code paths.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "source_doc": {"type": "string", "description": "Path to the PRD markdown file (default: docs/prd.md)"},
+                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Environment tag (default: production)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "get_feature_flow".to_string(),
+                description: "Given a feature requirement ID (e.g. FR-ONT-PROC-01), returns the full implementation chain: FR → linked ontology workflows → ordered steps with code_refs and failure_modes → annotated code elements. Reverse traceability for devs.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "feature_id": {"type": "string", "description": "Feature requirement ID to trace (e.g., FR-ONT-PROC-01)"},
+                        "env": {"type": "string", "description": "Ontology environment (default: local)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["feature_id"]
+                }),
+            },
+            ToolDefinition {
+                name: "get_traceability_matrix".to_string(),
+                description: "Returns a PO-facing traceability matrix: all feature requirements (FR-*) with their workflow count, annotated code element count, and documentation coverage. Filter by feature_id or status tag.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "feature_id": {"type": "string", "description": "Optional: filter by specific feature ID"},
+                        "status": {"type": "string", "description": "Optional: filter by status tag (e.g., Must-Have, P0)"},
+                        "limit": {"type": "integer", "description": "Max results (default: 50, max: 100)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": []
+                }),
+            },
         ]
     }
 }

@@ -323,6 +323,10 @@ impl ToolHandler {
             "get_architecture" => self.get_architecture(arguments),
             "get_graph_schema" => self.get_graph_schema(arguments),
             "find_dead_code" => self.find_dead_code(arguments),
+            // PRD-in-KG traceability tools
+            "index_prd" => self.index_prd(arguments),
+            "get_feature_flow" => self.get_feature_flow(arguments),
+            "get_traceability_matrix" => self.get_traceability_matrix(arguments),
             #[cfg(feature = "embeddings")]
             "kg_semantic_context" => self.kg_semantic_context(arguments),
             #[cfg(feature = "embeddings")]
@@ -3370,6 +3374,284 @@ impl ToolHandler {
             "documents_processed": result.documents.len(),
             "total_references": result.relationships.len(),
             "status": "indexed"
+        }))
+    }
+
+    // ========================================================================
+    // PRD-in-KG Traceability Tools
+    // ========================================================================
+
+    fn index_prd(&self, args: &Value) -> Result<Value, String> {
+        let source_doc = args["source_doc"].as_str().unwrap_or("docs/prd.md");
+
+        // Resolve project path: use `project` arg or fall back to cwd
+        let project_root = args["project"]
+            .as_str()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+        let doc_path = project_root.join(source_doc);
+        if !doc_path.exists() {
+            return Err(format!("PRD document not found: {}", doc_path.display()));
+        }
+        let content =
+            std::fs::read_to_string(&doc_path).map_err(|e| format!("Failed to read PRD: {}", e))?;
+
+        let parsed = crate::prd_indexer::parse_prd_markdown(&content);
+        let env = args["environment"].as_str().unwrap_or("production");
+        let mut created = 0usize;
+        let mut updated = 0usize;
+        let mut workflow_links = 0usize;
+
+        // Upsert requirements as knowledge entries
+        let req_entries =
+            crate::prd_indexer::requirements_to_knowledge_entries(&parsed.requirements, env);
+        for entry in &req_entries {
+            let existing = db::get_knowledge_entry(self.graph_engine.db(), &entry.id)
+                .map_err(|e| format!("DB error: {}", e))?;
+            if existing.is_some() {
+                db::update_knowledge_entry(self.graph_engine.db(), entry)
+                    .map_err(|e| format!("Failed to update knowledge entry: {}", e))?;
+                updated += 1;
+            } else {
+                db::create_knowledge_entry(self.graph_engine.db(), entry)
+                    .map_err(|e| format!("Failed to create knowledge entry: {}", e))?;
+                created += 1;
+            }
+        }
+
+        // Upsert user stories as knowledge entries
+        let us_entries =
+            crate::prd_indexer::user_stories_to_knowledge_entries(&parsed.user_stories, env);
+        for entry in &us_entries {
+            let existing = db::get_knowledge_entry(self.graph_engine.db(), &entry.id)
+                .map_err(|e| format!("DB error: {}", e))?;
+            if existing.is_some() {
+                db::update_knowledge_entry(self.graph_engine.db(), entry)
+                    .map_err(|e| format!("Failed to update knowledge entry: {}", e))?;
+                updated += 1;
+            } else {
+                db::create_knowledge_entry(self.graph_engine.db(), entry)
+                    .map_err(|e| format!("Failed to create knowledge entry: {}", e))?;
+                created += 1;
+            }
+        }
+
+        // Auto-link FRs to ontology workflows by matching code paths
+        for req in &parsed.requirements {
+            for code_path in &req.code_paths {
+                // Search for workflow steps referencing this code path
+                let wf_query = format!(
+                    r#"?[qualified_name, parent_qualified] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow_step", str_contains(metadata, "{}")"#,
+                    code_path
+                );
+                let wf_params = std::collections::BTreeMap::new();
+                if let Ok(result) =
+                    crate::db::schema::run_script(self.graph_engine.db(), &wf_query, wf_params)
+                {
+                    for row in &result.rows {
+                        if let Some(parent) = row.get(1).and_then(|v| v.get_str()) {
+                            if !parent.is_empty() {
+                                let _ = db::link_feature_workflow(
+                                    self.graph_engine.db(),
+                                    &req.id,
+                                    parent,
+                                );
+                                workflow_links += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(json!({
+            "requirements_created": created,
+            "requirements_updated": updated,
+            "workflow_links": workflow_links,
+            "total_requirements": parsed.requirements.len(),
+            "total_user_stories": parsed.user_stories.len(),
+            "errors": parsed.errors,
+            "source_doc": source_doc
+        }))
+    }
+
+    fn get_feature_flow(&self, args: &Value) -> Result<Value, String> {
+        let feature_id = args["feature_id"]
+            .as_str()
+            .ok_or("Missing 'feature_id' parameter")?;
+
+        // Resolve feature from knowledge_entries
+        let feature_entry = db::search_knowledge(
+            self.graph_engine.db(),
+            feature_id,
+            Some("prd_mapping"),
+            None,
+            5,
+        )
+        .map_err(|e| format!("DB error: {}", e))?
+        .into_iter()
+        .find(|e| e.feature_id.as_deref() == Some(feature_id));
+
+        let feature_info = feature_entry.map(|e| {
+            json!({
+                "id": e.feature_id.unwrap_or_default(),
+                "title": e.title,
+                "description": e.content,
+            })
+        });
+
+        // Get linked workflows
+        let workflow_ids = db::get_workflows_for_feature(self.graph_engine.db(), feature_id)
+            .map_err(|e| format!("DB error: {}", e))?;
+
+        let mut workflows = Vec::new();
+        let query_engine =
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+        for wf_id in &workflow_ids {
+            // Trace the workflow to get ordered steps
+            let env = args["env"].as_str().unwrap_or("local");
+            match query_engine.trace_workflow(wf_id, env) {
+                Ok(steps) => {
+                    let step_nodes: Vec<_> = steps
+                        .iter()
+                        .map(|s| {
+                            json!({
+                                "id": s.gid,
+                                "name": s.name,
+                                "order": s.order,
+                                "description": s.description,
+                                "code_refs": s.metadata.code_refs,
+                                "failure_modes": s.metadata.failure_modes,
+                            })
+                        })
+                        .collect();
+                    workflows.push(json!({
+                        "id": wf_id,
+                        "name": wf_id,
+                        "steps": step_nodes
+                    }));
+                }
+                Err(_e) => {
+                    // Try as workflow name/GID resolve
+                    let query_str = format!(
+                        r#"?[qualified_name, name] := *code_elements[qualified_name, element_type, name, _, _, _, _, _, _, _, _, _, _], element_type = "workflow", name = "{}""#,
+                        wf_id
+                    );
+                    let wf_params = std::collections::BTreeMap::new();
+                    if let Ok(result) =
+                        crate::db::schema::run_script(self.graph_engine.db(), &query_str, wf_params)
+                    {
+                        for row in &result.rows {
+                            if let Some(gid) = row.first().and_then(|v| v.get_str()) {
+                                if let Ok(steps) = query_engine.trace_workflow(gid, env) {
+                                    let step_nodes: Vec<_> = steps
+                                        .iter()
+                                        .map(|s| {
+                                            json!({
+                                                "id": s.gid, "name": s.name, "order": s.order,
+                                                "description": s.description,
+                                                "code_refs": s.metadata.code_refs,
+                                                "failure_modes": s.metadata.failure_modes,
+                                            })
+                                        })
+                                        .collect();
+                                    workflows.push(
+                                        json!({ "id": gid, "name": wf_id, "steps": step_nodes }),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also get business_logic entries annotated with this FR
+        let bl_entries = db::search_business_logic(self.graph_engine.db(), feature_id)
+            .map_err(|e| format!("DB error: {}", e))?;
+        let annotated_elements: Vec<_> = bl_entries
+            .iter()
+            .filter(|bl| bl.feature_id.as_deref() == Some(feature_id))
+            .map(|bl| {
+                json!({
+                    "element": bl.element_qualified,
+                    "description": bl.description,
+                    "user_story_id": bl.user_story_id,
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "feature": feature_info,
+            "workflows": workflows,
+            "annotated_elements": annotated_elements,
+        }))
+    }
+
+    fn get_traceability_matrix(&self, args: &Value) -> Result<Value, String> {
+        let feature_id_filter = args["feature_id"].as_str();
+        let status_filter = args["status"].as_str();
+        let limit = args["limit"].as_u64().unwrap_or(50).min(100) as usize;
+
+        // Get all PRD requirement knowledge entries
+        let all_entries = db::search_knowledge(
+            self.graph_engine.db(),
+            "FR-",
+            Some("prd_mapping"),
+            None,
+            limit,
+        )
+        .map_err(|e| format!("DB error: {}", e))?;
+
+        let mut matrix = Vec::new();
+        for entry in &all_entries {
+            let fid = match &entry.feature_id {
+                Some(f) => f.clone(),
+                None => continue,
+            };
+            if let Some(filter) = feature_id_filter {
+                if fid != filter {
+                    continue;
+                }
+            }
+
+            // Get workflow count for this feature
+            let wf_ids =
+                db::get_workflows_for_feature(self.graph_engine.db(), &fid).unwrap_or_default();
+
+            // Get annotated element count from business_logic
+            let bl = db::search_business_logic(self.graph_engine.db(), &fid).unwrap_or_default();
+            let annotated_count = bl
+                .iter()
+                .filter(|b| b.feature_id.as_deref() == Some(fid.as_str()))
+                .count();
+
+            // Get doc count (knowledge entries with this feature_id)
+            let doc_entries = db::search_knowledge(self.graph_engine.db(), &fid, None, None, 50)
+                .unwrap_or_default();
+            let doc_count = doc_entries.len();
+
+            if let Some(status) = status_filter {
+                if !entry.tags.contains(status) {
+                    continue;
+                }
+            }
+
+            matrix.push(json!({
+                "feature_id": fid,
+                "title": entry.title,
+                "status": entry.tags,
+                "workflow_count": wf_ids.len(),
+                "annotated_element_count": annotated_count,
+                "doc_count": doc_count,
+            }));
+        }
+
+        Ok(json!({
+            "matrix": matrix,
+            "total": matrix.len()
         }))
     }
 

@@ -20,6 +20,7 @@ pub mod mcp;
 pub mod obsidian;
 pub mod ontology;
 pub mod orchestrator;
+pub mod prd_indexer;
 pub mod registry;
 #[cfg(feature = "embeddings")]
 pub mod retrieval;
