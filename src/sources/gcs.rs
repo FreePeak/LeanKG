@@ -2,8 +2,7 @@ use super::{ProgressReporter, Source};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const GCS_LIST_URL: &str = "https://storage.googleapis.com/storage/v1/b";
-const GCS_DOWNLOAD_URL: &str = "https://storage.googleapis.com/storage/v1/b";
+const GCS_DEFAULT_ENDPOINT: &str = "https://storage.googleapis.com/storage/v1/b";
 
 /// Fetch source code from a GCS bucket.
 ///
@@ -13,6 +12,14 @@ const GCS_DOWNLOAD_URL: &str = "https://storage.googleapis.com/storage/v1/b";
 /// 1. `--auth <token>` -- a raw OAuth 2.0 access token.
 ///    Obtain via: `gcloud auth print-access-token`
 /// 2. `GCS_ACCESS_TOKEN` env var -- same as above.
+///
+/// ## Endpoint override (emulator support)
+///
+/// When `STORAGE_EMULATOR_HOST` is set, the source targets that base URL
+/// instead of the public `storage.googleapis.com`. This matches the convention
+/// used by the official GCS client libraries so a fake-gcs-server or other
+/// emulator can be pointed at without code changes. The endpoint is built as
+/// `<base>/storage/v1/b` to mirror the official SDK path resolution.
 ///
 /// ponytail: service-account JSON with JWT signing would need `rsa` + `pkcs8`
 /// crates. For now, pass a pre-fetched access token. Add when JWT support
@@ -24,14 +31,44 @@ pub struct GcsSource {
 }
 
 impl GcsSource {
-    fn resolve_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    /// Resolve the GCS JSON API base URL (`<endpoint>/storage/v1/b`).
+    /// Priority: explicit override -> `STORAGE_EMULATOR_HOST` -> public default.
+    pub fn resolve_endpoint(&self) -> String {
+        if let Ok(override_endpoint) = std::env::var("GCS_ENDPOINT") {
+            let trimmed = override_endpoint.trim_end_matches('/');
+            return format!("{}/storage/v1/b", trimmed);
+        }
+        if let Ok(emulator_host) = std::env::var("STORAGE_EMULATOR_HOST") {
+            let trimmed = emulator_host.trim_end_matches('/');
+            return format!("{}/storage/v1/b", trimmed);
+        }
+        GCS_DEFAULT_ENDPOINT.to_string()
+    }
+
+    /// Bearer token used for all requests. Returns `None` when targeting an
+    /// emulator (which typically accepts any token or no token at all).
+    pub fn resolve_bearer_token(&self) -> Option<String> {
+        if std::env::var("STORAGE_EMULATOR_HOST").is_ok() {
+            // fake-gcs-server accepts any bearer token. Send a non-empty value
+            // so the request shape matches production without leaking real tokens.
+            return Some("emulator".to_string());
+        }
         if let Some(auth) = &self.auth {
             if !auth.trim().is_empty() {
-                return Ok(auth.clone());
+                return Some(auth.clone());
             }
         }
         if let Ok(token) = std::env::var("GCS_ACCESS_TOKEN") {
-            return Ok(token);
+            return Some(token);
+        }
+        None
+    }
+
+    /// Legacy wrapper: returns Err when no token can be resolved.
+    /// New code should prefer `resolve_bearer_token` so emulators can bypass auth.
+    fn require_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(t) = self.resolve_bearer_token() {
+            return Ok(t);
         }
         Err(
             "GCS source requires auth: pass --auth <access-token> or set GCS_ACCESS_TOKEN env var.\n\
@@ -44,13 +81,14 @@ impl GcsSource {
     async fn list_objects(
         &self,
         access_token: &str,
+        endpoint: &str,
     ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
         let client = reqwest::Client::new();
         let mut objects = Vec::new();
         let mut page_token: Option<String> = None;
 
         loop {
-            let url = format!("{}/{}/o", GCS_LIST_URL, self.bucket);
+            let url = format!("{}/{}/o", endpoint, self.bucket);
             let mut query_params: Vec<(&str, &str)> = Vec::new();
             if !self.prefix.is_empty() {
                 query_params.push(("prefix", self.prefix.as_str()));
@@ -114,10 +152,14 @@ impl Source for GcsSource {
         staging_root: &Path,
         progress: &mut dyn ProgressReporter,
     ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
-        let token = self.resolve_token()?;
-        progress.report(&format!("listing gs://{}/{} ...", self.bucket, self.prefix));
+        let token = self.require_token()?;
+        let endpoint = self.resolve_endpoint();
+        progress.report(&format!(
+            "listing gs://{}/{} via {} ...",
+            self.bucket, self.prefix, endpoint
+        ));
 
-        let objects = self.list_objects(&token).await?;
+        let objects = self.list_objects(&token, &endpoint).await?;
         let total = objects.len();
         progress.report(&format!("found {} objects in bucket", total));
 
@@ -155,7 +197,7 @@ impl Source for GcsSource {
 
             let url = format!(
                 "{}/{}/o/{}",
-                GCS_DOWNLOAD_URL,
+                endpoint,
                 self.bucket,
                 percent_encode(obj_name)
             );
