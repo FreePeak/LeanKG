@@ -170,6 +170,10 @@ pub struct WorkflowStepMetadata {
     #[serde(default)]
     pub failure_modes: Vec<String>,
     #[serde(default)]
+    pub feature_ids: Vec<String>,
+    #[serde(default)]
+    pub user_story_ids: Vec<String>,
+    #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
     pub stale: bool,
@@ -207,6 +211,8 @@ impl WorkflowStepMetadata {
             description: description.to_string(),
             code_refs: Vec::new(),
             failure_modes: Vec::new(),
+            feature_ids: Vec::new(),
+            user_story_ids: Vec::new(),
             source: None,
             stale: false,
             stale_reason: None,
@@ -221,6 +227,16 @@ impl WorkflowStepMetadata {
 
     pub fn with_failure_modes(mut self, modes: Vec<String>) -> Self {
         self.failure_modes = modes;
+        self
+    }
+
+    pub fn with_feature_ids(mut self, ids: Vec<String>) -> Self {
+        self.feature_ids = ids;
+        self
+    }
+
+    pub fn with_user_story_ids(mut self, ids: Vec<String>) -> Self {
+        self.user_story_ids = ids;
         self
     }
 }
@@ -313,6 +329,16 @@ impl WorkflowStepNode {
 
     pub fn with_failure_modes(mut self, modes: Vec<String>) -> Self {
         self.metadata = self.metadata.with_failure_modes(modes);
+        self
+    }
+
+    pub fn with_feature_ids(mut self, ids: Vec<String>) -> Self {
+        self.metadata = self.metadata.with_feature_ids(ids);
+        self
+    }
+
+    pub fn with_user_story_ids(mut self, ids: Vec<String>) -> Self {
+        self.metadata = self.metadata.with_user_story_ids(ids);
         self
     }
 }

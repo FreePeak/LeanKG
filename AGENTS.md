@@ -384,6 +384,8 @@ Core tools: `query_file`, `get_dependencies`, `get_dependents`, `get_impact_radi
 
 Doc/Traceability tools: `get_files_for_doc`, `get_doc_structure`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`, `find_related_docs`
 
+PRD-in-KG tools (v3.8.0): `index_prd` (parse PRD markdown into KG), `get_feature_flow` (FR → workflow → steps → code_refs forward chain), `get_traceability_matrix` (PO-facing FR coverage matrix)
+
 **Doc↔code prefer-order (v3.7.13):** `search_by_requirement` / `get_traceability` for `FR-*` / `US-*` IDs → `get_files_for_doc` / `find_related_docs` (after `mcp_index_docs`, canonical `docs/…` paths) → `concept_search` / `kg_trace_workflow` → `semantic_search` → `search_code`.
 
 Cluster tools: `get_clusters`, `get_cluster_context`
@@ -400,4 +402,4 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ---
 
-*Last updated: 2026-07-17*
+*Last updated: 2026-07-24*
