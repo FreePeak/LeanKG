@@ -488,7 +488,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_code".to_string(),
-                description: "Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination. Prefer-order (search): try after concept_search and semantic_search when you need name/type filters.".to_string(),
+                description: "[PREFER: for NL queries try semantic_search first] Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination. Prefer-order (search): try after concept_search and semantic_search when you need name/type filters.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {

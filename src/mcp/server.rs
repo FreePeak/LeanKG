@@ -2354,7 +2354,7 @@ impl ServerHandler for MCPServer {
                 .with_title("LeanKG")
                 .with_description("Lightweight knowledge graph for codebase understanding")
         )
-        .with_instructions("LeanKG - Lightweight knowledge graph for codebase understanding. Use tools to query code elements, dependencies, impact radius, and traceability.")
+        .with_instructions("LeanKG: an indexed knowledge graph of the CURRENT WORKING DIRECTORY (the repo you are analyzing). Always query it first via ToolSearch(\"leankg\") to discover MCP tools, then call mcp__leankg__mcp_status to verify the index. PREFER-ORDER: mcp__leankg__get_overview_context → mcp__leankg__concept_search → mcp__leankg__semantic_search → mcp__leankg__search_code. For fuzzy/NL/domain questions use mcp__leankg__semantic_search (or mcp__leankg__concept_search). For exact symbol names use mcp__leankg__find_function. Do NOT call mcp__leankg__query_graph as the first discovery tool. Read/Grep/Bash remain available as fallback.")
     }
 
     async fn list_tools(

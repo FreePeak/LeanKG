@@ -40,7 +40,7 @@ to the ontology layer:
 ```
 User asks about codebase → mcp_status (check initialized)
   │
-  ├─ "Where is X?" / "Find Y" ───────────────► search_code or find_function
+  ├─ "Where is X?" / "Find Y" (fuzzy / NL / domain) ─► concept_search → semantic_search
   │   ├─ by name/type ─────────────────────────► search_code(query="X")
   │   └─ exact function ───────────────────────► find_function(name="parseJson")
   │                                              scope to file: find_function(name="foo", file="src/bar.rs")
@@ -1942,7 +1942,13 @@ impl ToolHandler {
                 page.total_estimate = page.results.len();
                 page.has_more = false;
             }
-            return Ok(crate::ontology::safe_discover::discover_page_to_json(&page));
+            let mut json = crate::ontology::safe_discover::discover_page_to_json(&page);
+            if is_natural_language_query(query) {
+                json["_prefer_hint"] = json!(
+                    "This query looks like natural language. Try semantic_search or concept_search for better results on domain/fuzzy questions."
+                );
+            }
+            return Ok(json);
         }
 
         let limit = crate::ontology::safe_discover::clamp_limit(limit);
@@ -1967,7 +1973,10 @@ impl ToolHandler {
             })
             .collect();
 
-        Ok(json!({
+        // Detect NL-like queries: contains spaces, a question word, or no CamelCase/snake_case.
+        let looks_nl = is_natural_language_query(query);
+
+        let mut response = json!({
             "results": matches,
             "count": matches.len(),
             "limit": limit,
@@ -1975,7 +1984,13 @@ impl ToolHandler {
             "total_estimate": total_estimate,
             "has_more": offset + matches.len() < total_estimate,
             "method": "name"
-        }))
+        });
+        if looks_nl {
+            response["_prefer_hint"] = json!(
+                "This query looks like natural language. Try semantic_search or concept_search for better results on domain/fuzzy questions."
+            );
+        }
+        Ok(response)
     }
 
     fn concept_search(&self, args: &Value) -> Result<Value, String> {
@@ -3904,6 +3919,44 @@ fn generate_review_prompt(elements: &[CodeElement], _relationships: &[Relationsh
     prompt += "- Evaluate error handling patterns\n";
 
     prompt
+}
+
+/// Heuristic to detect natural-language vs symbol-name queries.
+/// Returns true if the query looks like a question/domain phrase rather
+/// than an exact symbol name (CamelCase / snake_case / single token).
+fn is_natural_language_query(query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return false;
+    }
+    let has_spaces = q.contains(' ');
+    let has_question = q.contains('?');
+    if !has_spaces && !has_question {
+        let has_upper = q.chars().any(|c| c.is_uppercase());
+        let has_underscore = q.contains('_');
+        let has_dot = q.contains('.');
+        let all_ident = q
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-' || c == '/');
+        if has_underscore || has_dot || has_upper || all_ident {
+            return false;
+        }
+    }
+    if has_spaces || has_question {
+        return true;
+    }
+    let lower = q.to_lowercase();
+    let question_words = [
+        "what", "where", "how", "why", "who", "when", "which", "does", "do", "is", "are", "can",
+        "should", "could", "would", "find", "show", "explain", "describe", "tell",
+    ];
+    for w in &question_words {
+        let prefix = format!("{} ", w);
+        if lower.starts_with(w) || lower.contains(&prefix) {
+            return true;
+        }
+    }
+    false
 }
 
 fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {

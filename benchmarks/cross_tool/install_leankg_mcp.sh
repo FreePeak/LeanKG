@@ -34,7 +34,7 @@ case "${MODE}" in
     "leankg": {
       "type": "stdio",
       "command": "${BIN_PATH}",
-      "args": ["mcp-stdio", "--watch"]
+      "args": ["mcp-stdio"]
     }
   }
 }

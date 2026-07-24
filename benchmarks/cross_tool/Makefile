@@ -69,7 +69,7 @@ index: check-leankg
 	@test -n "$(REPO)" || (echo "ERROR: REPO=<slug> required" && exit 2)
 	@echo "Indexing $(REPO) with LeanKG..."
 	@rm -rf $(REPOS_DIR)/$(REPO)/.leankg
-	@cd $(REPOS_DIR)/$(REPO) && $(LEANKG_BIN) init && $(LEANKG_BIN) index .
+	@cd $(REPOS_DIR)/$(REPO) && $(LEANKG_BIN) init && $(LEANKG_BIN) index . && $(LEANKG_BIN) embed --wait
 
 with: check-claude check-leankg
 	@test -n "$(REPO)" || (echo "ERROR: REPO=<slug> required" && exit 2)
