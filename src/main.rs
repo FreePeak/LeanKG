@@ -1227,7 +1227,22 @@ async fn incremental_index_codebase(
             .sync_to_local(&staging_root, &mut progress)
             .await
             .map_err(|e| format!("source sync failed: {}", e))?;
-        synced.to_string_lossy().to_string()
+
+        // For remote sources, always do a full index after sync since
+        // incremental diff on the staged dir won't detect source changes.
+        println!("Remote source synced. Falling back to full index on latest content.");
+        return index_codebase(
+            &synced.to_string_lossy(),
+            db_path,
+            lang_filter,
+            exclude_patterns,
+            verbose,
+            env,
+            source_uri,
+            ref_name,
+            auth,
+        )
+        .await;
     } else {
         path.to_string()
     };
@@ -1273,7 +1288,7 @@ async fn incremental_index_codebase(
                 "Incremental index failed: {}. Falling back to full index.",
                 e
             );
-            index_codebase(&sync_path, db_path, lang_filter, exclude_patterns, verbose, env, source_uri, ref_name, auth).await?;
+            index_codebase(&sync_path, db_path, lang_filter, exclude_patterns, verbose, env, None, None, None).await?;
         }
     }
 

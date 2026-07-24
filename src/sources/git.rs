@@ -158,6 +158,32 @@ fn fetch_and_checkout(
                 "git pull skipped ({}): {}",
                 o.status, stderr
             ));
+            // Shallow depth may prevent ff-only pull. Attempt to reset to
+            // the remote tracking branch to pick up new commits.
+            progress.report("attempting fetch --unshallow + reset...");
+            let _ = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["fetch", "--unshallow"])
+                .output();
+            let rebase = Command::new("git")
+                .current_dir(repo_dir)
+                .args(["merge", "--ff-only", &format!("origin/{}", ref_name)])
+                .output();
+            match rebase {
+                Ok(r) if r.status.success() => progress.report("fast-forward after unshallow"),
+                _ => {
+                    progress.report("reset to origin/HEAD as fallback");
+                    let reset = Command::new("git")
+                        .current_dir(repo_dir)
+                        .args(["reset", "--hard", &format!("origin/{}", ref_name)])
+                        .output();
+                    if let Ok(r) = reset {
+                        if r.status.success() {
+                            progress.report("reset to origin/HEAD OK");
+                        }
+                    }
+                }
+            }
         }
         Err(e) => progress.report(&format!("git pull error (non-fatal): {}", e)),
     }
