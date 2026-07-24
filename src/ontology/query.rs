@@ -902,6 +902,8 @@ impl OntologyQueryEngine {
         let mut workflow_gids: Vec<String> = Vec::new();
         let mut workflows_with_failure_modes: std::collections::HashSet<String> =
             std::collections::HashSet::new();
+        let mut dynamic_concepts: usize = 0;
+        let mut dynamic_workflows: usize = 0;
 
         // Get all ontology nodes with metadata
         let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], regex_matches(file_path, "ontology://")"#;
@@ -941,6 +943,21 @@ impl OntologyQueryEngine {
                     *concept_counts.entry(element_type.to_string()).or_insert(0) += 1;
                 }
 
+                // Count dynamic (agent-discovered) elements
+                let source = metadata
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if source == "dynamic" {
+                    if is_procedural_type(element_type) {
+                        if element_type == "workflow" {
+                            dynamic_workflows += 1;
+                        }
+                    } else {
+                        dynamic_concepts += 1;
+                    }
+                }
+
                 if element_type == "workflow" {
                     workflow_gids.push(qualified_name.to_string());
                 } else if element_type == "workflow_step" {
@@ -972,6 +989,8 @@ impl OntologyQueryEngine {
             total_aliases,
             nodes_missing_aliases,
             workflows_without_failure_modes,
+            dynamic_concepts,
+            dynamic_workflows,
         })
     }
 }
@@ -1169,6 +1188,8 @@ pub struct OntologyStatus {
     pub total_aliases: usize,
     pub nodes_missing_aliases: usize,
     pub workflows_without_failure_modes: usize,
+    pub dynamic_concepts: usize,
+    pub dynamic_workflows: usize,
 }
 
 /// Per-tool smoke-test result. `ok=true` means the call completed without

@@ -106,8 +106,9 @@ fn sync_from_dir_locked(
         ..Default::default()
     };
 
-    // Declarative replace: wipe prior ontology layer so renames/removals apply.
-    match with_db_retry(|| graph.clear_ontology_layer()) {
+    // Declarative replace: wipe prior YAML-sourced ontology layer so renames/removals
+    // apply, while preserving dynamic (agent-discovered) concepts and workflows.
+    match with_db_retry(|| graph.clear_yaml_ontology_layer()) {
         Ok(n) => {
             tracing::debug!("cleared {} prior ontology GID(s) before sync", n);
         }

@@ -268,8 +268,9 @@ Workspaces above `LEANKG_MAX_CACHE_ELEMENTS` (default **50_000** elements) are t
 - Discovery tools (`search_code`, `semantic_search`, `concept_search`, `query_file`) use **ontology-first + paginated** paths (`limit`/`offset`, max page 50).
 - Full-scan tools (`get_clusters`, `get_code_tree` without query, nav dumps, annotation full scans) **refuse** with a redirect hint instead of loading 600k+ rows.
 - Incremental auto-index **skips** full-graph dependent expansion on mega-graphs (override with `LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1` to force skip always).
-- Search prefer-order: `concept_search` → `semantic_search` → `search_code`. Semantic context: `semantic_search` → `kg_semantic_context` (embeddings) → `kg_context`.
+- Search prefer-order: `concept_search` → `search_knowledge` → `semantic_search` → `search_code`. Semantic context: `semantic_search` → `kg_semantic_context` (embeddings) → `kg_context`.
 - Overview prefer: `get_overview_context` (not `load_layer(L0)` alone). Use `env=` on search/`kg_*` for environment scoping. Hard-removed: `wake_up`, `search_by_environment`. Audit: [`docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`](docs/reports/mcp-tool-redundancy-impact-2026-07-20.md).
+- **Dynamic ontology**: Agents can persist discoveries via `add_ontology_concept` and `add_ontology_workflow` (survive YAML re-syncs) and `add_knowledge` (free-form notes). Search `concept_search` and `search_knowledge` before raw code search.
 
 Env knobs:
 

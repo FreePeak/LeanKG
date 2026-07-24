@@ -2308,10 +2308,32 @@ impl GraphEngine {
     /// is an ontology GID, then delete all `ontology://` code_elements rows
     /// (including duplicate composite-key variants). Two bulk Cozo scripts
     /// (not per-GID loops) to avoid SQLite lock storms under concurrent MCP.
+    ///
+    /// When `preserve_dynamic` is true, rows whose metadata contains
+    /// `"source":"dynamic"` are excluded from the wipe so agent-discovered
+    /// concepts and workflows survive YAML re-syncs.
     pub fn clear_ontology_layer(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        self.clear_ontology_layer_filtered(false)
+    }
+
+    /// Clear only YAML-sourced ontology rows, preserving dynamic (`source: "dynamic"`) rows.
+    pub fn clear_yaml_ontology_layer(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        self.clear_ontology_layer_filtered(true)
+    }
+
+    fn clear_ontology_layer_filtered(
+        &self,
+        preserve_dynamic: bool,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         let qns = self.list_ontology_qualified_names()?;
         let n = qns.len();
         let tail = self.code_elements_tail();
+
+        let dynamic_exclusion = if preserve_dynamic {
+            r#", not(regex_matches(metadata, "\"source\":\"dynamic\""))"#
+        } else {
+            ""
+        };
 
         // 1) Remove relationships while ontology elements still exist (join).
         let rel_query = format!(
@@ -2319,7 +2341,7 @@ impl GraphEngine {
             ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
                 *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
                 *code_elements[source_qualified, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
-                regex_matches(file_path, "^ontology://")
+                regex_matches(file_path, "^ontology://"){dynamic_exclusion}
             :rm relationships {{source_qualified, target_qualified, rel_type, confidence, metadata}}
         "#
         );
@@ -2329,7 +2351,7 @@ impl GraphEngine {
         let elem_query = format!(
             r#"
             ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
-                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")
+                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://"){dynamic_exclusion}
             :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
         "#
         );

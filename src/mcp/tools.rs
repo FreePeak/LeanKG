@@ -816,7 +816,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_knowledge".to_string(),
-                description: "Search all knowledge entries by keyword. Filters by knowledge type and environment. Returns matching entries with titles, content snippets, and metadata.".to_string(),
+                description: "Search all knowledge entries by keyword. Filters by knowledge type and environment. Matches both title and content fields. Returns matching entries with titles, content snippets, and metadata.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -868,6 +868,62 @@ impl ToolRegistry {
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["file_path"]
+                }),
+            },
+
+            // ========================================================================
+            // Dynamic Ontology Tools (agent memory)
+            // ========================================================================
+
+            ToolDefinition {
+                name: "add_ontology_concept".to_string(),
+                description: "Add a dynamic ontology concept at runtime. Agent discoveries about code semantics, architecture, bugs, or domain logic are persisted as searchable ontology concepts. These survive YAML re-syncs and appear in concept_search results.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Concise name for the concept (e.g., 'order_refund_flow', 'auth_token_cache_bug')"},
+                        "type_": {"type": "string", "enum": ["domain_entity", "service", "api_endpoint", "data_store", "known_issue", "playbook", "team_knowledge"], "description": "Concept element type"},
+                        "description": {"type": "string", "description": "What the agent learned — context, decision rationale, bug details, or system design insight"},
+                        "aliases": {"type": "array", "items": {"type": "string"}, "description": "Alternative names/aliases for searchability"},
+                        "code_refs": {"type": "array", "items": {"type": "string"}, "description": "Code elements this concept relates to (e.g., ['src/api/orders.rs::refund'])"},
+                        "docs": {"type": "array", "items": {"type": "string"}, "description": "Related documentation paths"},
+                        "env": {"type": "string", "default": "local", "description": "Environment scope for the concept"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["name", "type_", "description"]
+                }),
+            },
+            ToolDefinition {
+                name: "add_ontology_workflow".to_string(),
+                description: "Add a dynamic procedural workflow at runtime. Captures step-by-step processes the agent discovers: debugging procedures, release processes, fix sequences, CI/CD flows, or decision trees. Workflow steps can reference code elements and failure modes.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Workflow name (e.g., 'hotfix_release_process', 'debug_auth_token_failure')"},
+                        "description": {"type": "string", "description": "What this workflow is for — when to use it, what problem it solves"},
+                        "steps": {"type": "array", "items": {"type": "object", "properties": {
+                            "name": {"type": "string", "description": "Step name"},
+                            "description": {"type": "string", "description": "What this step does"},
+                            "code_refs": {"type": "array", "items": {"type": "string"}, "description": "Code elements used in this step"},
+                            "failure_modes": {"type": "array", "items": {"type": "string"}, "description": "Known failure modes for this step"}
+                        }, "required": ["name"]}, "description": "Ordered steps in the workflow"},
+                        "aliases": {"type": "array", "items": {"type": "string"}, "description": "Alternative names for searchability"},
+                        "env": {"type": "string", "default": "local", "description": "Environment scope for the workflow"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["name", "description", "steps"]
+                }),
+            },
+            ToolDefinition {
+                name: "delete_ontology_concept".to_string(),
+                description: "Remove a dynamically-added ontology concept or workflow. Only deletes rows with source:dynamic in metadata — never touches YAML-derived concepts. Also removes orphaned workflow steps and failure modes.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "gid": {"type": "string", "description": "Global ID (GID) of the concept or workflow to delete"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["gid"]
                 }),
             },
 
