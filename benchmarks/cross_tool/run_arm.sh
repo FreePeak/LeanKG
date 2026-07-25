@@ -67,10 +67,11 @@ for i in $(seq 1 "${N}"); do
   if [[ "${ARM}" == "with" ]]; then
     rm -rf "${REPO_PATH}/.leankg"
     if [[ "${DRY_RUN}" == "1" ]]; then
-      echo "  [dry] would run: (cd ${REPO_PATH} && ${LEANKG_BIN} init && ${LEANKG_BIN} index .)" >&2
+      echo "  [dry] would run: (cd ${REPO_PATH} && ${LEANKG_BIN} init && ${LEANKG_BIN} index . && ${LEANKG_BIN} embed --wait)" >&2
     else
       ( cd "${REPO_PATH}" && "${LEANKG_BIN}" init ) >/dev/null 2>&1
       ( cd "${REPO_PATH}" && "${LEANKG_BIN}" index . ) >/dev/null 2>&1
+      ( cd "${REPO_PATH}" && "${LEANKG_BIN}" embed --wait ) >/dev/null 2>&1
     fi
   fi
 
