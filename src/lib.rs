@@ -22,6 +22,7 @@ pub mod ontology;
 pub mod orchestrator;
 pub mod prd_indexer;
 pub mod registry;
+pub mod report;
 #[cfg(feature = "embeddings")]
 pub mod retrieval;
 pub mod runtime;

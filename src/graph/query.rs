@@ -4477,6 +4477,16 @@ pub mod folder_gn {
     }
 }
 
+/// US-GF-06: A cross-cluster edge that may surprise the reader.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurprisingEdge {
+    pub source_qualified: String,
+    pub target_qualified: String,
+    pub cluster_source: String,
+    pub cluster_target: String,
+    pub reason: String,
+}
+
 /// US-GF-06: Aggregated graph report. Renders to `GRAPH_REPORT.md`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphReport {
@@ -4488,6 +4498,7 @@ pub struct GraphReport {
     pub class_count: usize,
     pub god_nodes: Vec<GodNode>,
     pub confidence_distribution: Vec<LabelCount>,
+    pub surprising_edges: Vec<SurprisingEdge>,
     pub suggested_questions: Vec<String>,
 }
 
@@ -4512,6 +4523,24 @@ impl GraphReport {
             out.push_str(&format!("| {} | {} | {:.1}% |\n", c.label, c.count, c.pct));
         }
         out.push('\n');
+
+        out.push_str("## Surprising Cross-Cluster Edges\n\n");
+        if self.surprising_edges.is_empty() {
+            out.push_str("_No cross-cluster edges detected._\n\n");
+        } else {
+            out.push_str("| Source | Target | Source Cluster | Target Cluster | Reason |\n|---|---|---|---|---|\n");
+            for e in &self.surprising_edges {
+                out.push_str(&format!(
+                    "| {} | {} | {} | {} | {} |\n",
+                    e.source_qualified,
+                    e.target_qualified,
+                    e.cluster_source,
+                    e.cluster_target,
+                    e.reason
+                ));
+            }
+            out.push('\n');
+        }
 
         out.push_str("## Top God Nodes\n\n");
         if self.god_nodes.is_empty() {
@@ -5114,6 +5143,67 @@ impl GraphEngine {
             ),
         ];
 
+        // Surprising cross-cluster edges
+        let max_edges: usize = std::env::var("LEANKG_MAX_REPORT_EDGES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000);
+        let god_by_qn: std::collections::HashMap<&str, &GodNode> = god_nodes
+            .iter()
+            .map(|g| (g.qualified_name.as_str(), g))
+            .collect();
+        let mut surprising: Vec<SurprisingEdge> = Vec::new();
+        for r in rels.iter().take(max_edges) {
+            if surprising.len() >= 10 {
+                break;
+            }
+            let src_id = r.source_qualified.as_str();
+            let tgt_id = r.target_qualified.as_str();
+            let src_in_god = god_by_qn.contains_key(src_id);
+            let tgt_in_god = god_by_qn.contains_key(tgt_id);
+            if !src_in_god && !tgt_in_god {
+                continue;
+            }
+            let src_cluster = elements
+                .iter()
+                .find(|e| e.qualified_name == src_id)
+                .and_then(|e| e.cluster_id.as_deref())
+                .unwrap_or("");
+            let tgt_cluster = elements
+                .iter()
+                .find(|e| e.qualified_name == tgt_id)
+                .and_then(|e| e.cluster_id.as_deref())
+                .unwrap_or("");
+            if src_cluster.is_empty() && tgt_cluster.is_empty() {
+                continue;
+            }
+            if src_cluster == tgt_cluster {
+                continue;
+            }
+            let reason = format!(
+                "{} (cluster {}) connects to {} (cluster {})",
+                src_id,
+                if src_cluster.is_empty() {
+                    "none"
+                } else {
+                    src_cluster
+                },
+                tgt_id,
+                if tgt_cluster.is_empty() {
+                    "none"
+                } else {
+                    tgt_cluster
+                },
+            );
+            surprising.push(SurprisingEdge {
+                source_qualified: src_id.to_string(),
+                target_qualified: tgt_id.to_string(),
+                cluster_source: src_cluster.to_string(),
+                cluster_target: tgt_cluster.to_string(),
+                reason,
+            });
+        }
+
         Ok(GraphReport {
             project: project_name.to_string(),
             total_elements,
@@ -5123,6 +5213,7 @@ impl GraphEngine {
             class_count,
             god_nodes,
             confidence_distribution: confidence_dist,
+            surprising_edges: surprising,
             suggested_questions,
         })
     }
@@ -6784,12 +6875,14 @@ mod tests {
                     pct: 40.0,
                 },
             ],
+            surprising_edges: vec![],
             suggested_questions: vec!["Question 1?".into()],
         };
         let md = report.to_markdown();
         assert!(md.contains("# Graph Report: demo"));
         assert!(md.contains("Total elements: 10"));
         assert!(md.contains("EXTRACTED"));
+        assert!(md.contains("Surprising Cross-Cluster Edges"));
         assert!(md.contains("Suggested Questions"));
         assert!(md.contains("Question 1?"));
     }

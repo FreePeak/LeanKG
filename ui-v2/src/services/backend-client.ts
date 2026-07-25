@@ -207,3 +207,9 @@ export function writeProjectToUrl(project: string | undefined) {
   else url.searchParams.delete('project');
   window.history.replaceState({}, '', url.toString());
 }
+
+export async function fetchGraphReport(): Promise<string> {
+  const json = await fetchJson<ApiEnvelope<{ markdown: string }>>('/api/graph/report');
+  const data = unwrapEnvelope(json, 'Failed to load graph report');
+  return data.markdown;
+}

@@ -344,6 +344,22 @@ impl ToolHandler {
             _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
+        // US-GF-06 / FR-GF-13: auto-write GRAPH_REPORT.md after successful index
+        if result.is_ok() && (tool_name == "mcp_index" || tool_name == "mcp_index_docs") {
+            let project_path = std::env::var("LEANKG_MCP_PROJECT")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .or_else(|| std::env::current_dir().ok());
+            if let Some(pp) = project_path {
+                let db_path = pp.join(".leankg");
+                if let Err(e) =
+                    crate::report::write::write_graph_report_after_index(&pp, &db_path).await
+                {
+                    tracing::warn!("GRAPH_REPORT auto-write skipped after {}: {}", tool_name, e);
+                }
+            }
+        }
+
         // Apply token budget enforcement
         let result = result.map(|response| TokenBudget::apply(response, tool_name));
 
@@ -1502,6 +1518,24 @@ impl ToolHandler {
             .graph_engine
             .generate_graph_report(project_name)
             .map_err(|e| e.to_string())?;
+        // Persist to disk when format is not json
+        if format != "json" {
+            if let Some(project_path) = std::env::var("LEANKG_MCP_PROJECT")
+                .ok()
+                .map(std::path::PathBuf::from)
+            {
+                let db_path = project_path.join(".leankg");
+                let pp = project_path.clone();
+                // Spawn a background task so the MCP response isn't delayed
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::report::write::write_graph_report_after_index(&pp, &db_path).await
+                    {
+                        tracing::warn!("MCP get_graph_report persist: {}", e);
+                    }
+                });
+            }
+        }
         if format == "json" {
             return Ok(json!({ "report": report }));
         }
