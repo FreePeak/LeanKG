@@ -27,6 +27,7 @@ import type { KnowledgeGraph, GraphNode } from './core/graph/types';
 import { isContainerNode } from './lib/node-kinds';
 import {
   expandService,
+  fetchGraphReport,
   fetchIndexStatus,
   fetchServiceTopology,
   probeBackend,
@@ -74,6 +75,10 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   /** Last expand/load-more nodes for sidebar — kept when navigating back to topology overview. */
   const [sessionExplorerNodes, setSessionExplorerNodes] = useState<GraphNode[]>([]);
+
+  const [graphReport, setGraphReport] = useState<string | null>(null);
+  const [reportExpanded, setReportExpanded] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
 
   const filters = useGraphFilters();
 
@@ -431,6 +436,24 @@ export default function App() {
     if (kg) rebuildLayout(kg, layoutMode);
   }, [layoutMode, kg, rebuildLayout]);
 
+  const loadGraphReport = useCallback(async () => {
+    if (graphReport) {
+      setReportExpanded((v) => !v);
+      return;
+    }
+    setReportLoading(true);
+    setError(null);
+    try {
+      const md = await fetchGraphReport();
+      setGraphReport(md);
+      setReportExpanded(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReportLoading(false);
+    }
+  }, [graphReport]);
+
   const onSearchSubmit = async () => {
     if (!searchTerm.trim()) {
       setHighlightIds(new Set());
@@ -518,6 +541,28 @@ export default function App() {
             </span>
           ))}
         </nav>
+      )}
+
+      {breadcrumbs.some((c) => c.path === '') && (
+        <div className="shrink-0 border-b border-border-subtle bg-deep/60 px-4 py-1.5">
+          <button
+            type="button"
+            data-testid="graph-report-toggle"
+            onClick={loadGraphReport}
+            disabled={reportLoading}
+            className="text-xs text-accent hover:underline"
+          >
+            {reportLoading ? 'Loading...' : reportExpanded ? 'Hide graph report' : 'Show graph report'}
+          </button>
+          {reportExpanded && graphReport && (
+            <pre
+              data-testid="graph-report-content"
+              className="mt-1 max-h-96 overflow-y-auto text-[11px] text-text-secondary bg-deep/80 rounded p-2 whitespace-pre-wrap leading-relaxed"
+            >
+              {graphReport}
+            </pre>
+          )}
+        </div>
       )}
 
       {viewMode === 'onboarding' && (
