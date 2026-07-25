@@ -1,6 +1,6 @@
 # LeanKG Makefile
 
-.PHONY: help build test lint run clean mcp-stdio mcp-http mcp-http-auth mcp-http-watch kill docker-build docker-push docker-run
+.PHONY: help build test lint run clean mcp-stdio mcp-http mcp-http-auth mcp-http-watch kill docker-build docker-push docker-run docker-reload docker-reload-tag docker-sync-binary docker-pull
 
 DOCKER_IMAGE ?= freepeak/leankg
 DOCKER_TAG ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -19,6 +19,9 @@ help:
 	@echo "  kill            Kill all leankg MCP processes"
 	@echo ""
 	@echo "Docker targets:"
+	@echo "  docker-reload    Pull latest Hub image + recreate container (no build)"
+	@echo "  docker-reload-tag Pull pinned version tag + recreate (interactive)"
+	@echo "  docker-sync-binary  Build Linux binary + bind-mount onto Hub runtime"
 	@echo "  docker-build    Build freepeak/leankg image (Dockerfile.rocksdb)"
 	@echo "  docker-push     Push freepeak/leankg:VERSION and :latest"
 	@echo "  docker-run      Run with HOST_DIR mounted at /workspace (default: \$$PWD)"
@@ -108,6 +111,20 @@ docker-run:
 		$(DOCKER_IMAGE):latest
 	@echo "LeanKG MCP listening on http://localhost:9699 (project: $(HOST_DIR))"
 	@echo "Health: curl http://localhost:9699/health"
+
+# Docker reload (no rebuild) — prefer these for version upgrades
+docker-reload:
+	./scripts/docker-reload.sh
+
+docker-reload-tag:
+	@read -p "Image tag (e.g., 0.19.4): " tag; \
+	LEANKG_IMAGE=freepeak/leankg:$$tag ./scripts/docker-reload.sh
+
+docker-sync-binary:
+	./scripts/docker-sync-binary.sh
+
+docker-pull:
+	docker pull $(DOCKER_IMAGE):latest
 
 # === Installation ===
 
