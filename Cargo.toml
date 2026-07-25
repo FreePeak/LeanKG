@@ -1,6 +1,6 @@
 [package]
 name = "leankg"
-version = "0.19.6"
+version = "0.19.7"
 edition = "2021"
 description = "Lightweight Knowledge Graph for AI-Assisted Development"
 license = "Apache-2.0"

@@ -38,6 +38,18 @@ pub enum CLICommand {
         /// Version tag for this index (semver or git sha)
         #[arg(long)]
         version: Option<String>,
+        /// Source URI for remote indexing (gs://bucket, git+https://..., etc.)
+        /// When provided, content is synced to a local staging directory before indexing.
+        /// Without this flag, indexes the local filesystem path as before.
+        #[arg(long)]
+        source: Option<String>,
+        /// Git branch/tag/commit to check out (used with --source git+...)
+        #[arg(long)]
+        ref_name: Option<String>,
+        /// Auth credential for the source (access token, key path, or service account JSON)
+        /// Prefer env vars (GCS_ACCESS_TOKEN, GIT_TOKEN, etc.) when possible.
+        #[arg(long)]
+        auth: Option<String>,
     },
     /// Query the knowledge graph
     Query {

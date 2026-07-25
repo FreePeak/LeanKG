@@ -1,8 +1,9 @@
 services:
   leankg:
-    build:
-      context: .
-      dockerfile: Dockerfile.rocksdb
+    # Pull from Docker Hub by default — no local rebuild.
+    # To publish a new image: docker compose -f docker-compose.build.yml build
+    image: ${LEANKG_IMAGE:-freepeak/leankg:latest}
+    pull_policy: ${LEANKG_PULL_POLICY:-missing}
     env_file:
       # Local-only configuration that overrides the defaults below. This file
       # is .gitignored so user-specific host paths and project locations never

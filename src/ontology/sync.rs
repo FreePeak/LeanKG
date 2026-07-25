@@ -106,13 +106,84 @@ fn sync_from_dir_locked(
         ..Default::default()
     };
 
-    // Declarative replace: wipe prior ontology layer so renames/removals apply.
+    // Snapshot dynamic (agent-discovered) ontology rows before clearing.
+    // YAML sync clears ALL ontology rows then re-inserts from YAML;
+    // dynamic rows must survive this replace cycle.
+    let dynamic_elements: Vec<CodeElement> = graph.list_ontology_elements().unwrap_or_default();
+    let dynamic_elements: Vec<CodeElement> = dynamic_elements
+        .into_iter()
+        .filter(|e| e.metadata.get("source").and_then(|v| v.as_str()) == Some("dynamic"))
+        .collect();
+
+    // Declarative replace: wipe prior ontology layer so renames/removals apply,
+    // then re-insert dynamic rows.
     match with_db_retry(|| graph.clear_ontology_layer()) {
         Ok(n) => {
             tracing::debug!("cleared {} prior ontology GID(s) before sync", n);
         }
         Err(e) => {
             tracing::warn!("clear_ontology_layer before sync failed: {}", e);
+        }
+    }
+
+    if !dynamic_elements.is_empty() {
+        if let Err(e) = with_db_retry(|| graph.insert_elements(&dynamic_elements)) {
+            tracing::warn!("Failed to re-insert dynamic ontology elements: {}", e);
+        }
+    }
+    graph.invalidate_cache();
+
+    if !dynamic_elements.is_empty() {
+        // Re-insert dynamic relationships (has_step, next_step, has_failure_mode).
+        // These are needed to trace workflows in dynamic workflows.
+        // They are re-derived from dynamic workflow elements on each sync.
+        for elem in &dynamic_elements {
+            if elem.element_type == "workflow" {
+                // Find dynamic steps with this workflow as parent
+                let steps: Vec<CodeElement> = graph
+                    .list_ontology_elements()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|e| {
+                        e.parent_qualified.as_deref() == Some(&elem.qualified_name)
+                            && e.metadata.get("source").and_then(|v| v.as_str()) == Some("dynamic")
+                    })
+                    .collect();
+                for step in &steps {
+                    graph
+                        .insert_relationship(&Relationship {
+                            id: None,
+                            source_qualified: elem.qualified_name.clone(),
+                            target_qualified: step.qualified_name.clone(),
+                            rel_type: "has_step".to_string(),
+                            confidence: 1.0,
+                            metadata: serde_json::json!({}),
+                            env: elem.env.clone(),
+                        })
+                        .ok();
+                }
+                // next_step between consecutive dynamic steps
+                let mut sorted_steps = steps;
+                sorted_steps.sort_by_key(|s| {
+                    s.metadata
+                        .get("order")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize
+                });
+                for pair in sorted_steps.windows(2) {
+                    graph
+                        .insert_relationship(&Relationship {
+                            id: None,
+                            source_qualified: pair[0].qualified_name.clone(),
+                            target_qualified: pair[1].qualified_name.clone(),
+                            rel_type: "next_step".to_string(),
+                            confidence: 1.0,
+                            metadata: serde_json::json!({}),
+                            env: elem.env.clone(),
+                        })
+                        .ok();
+                }
+            }
         }
     }
 

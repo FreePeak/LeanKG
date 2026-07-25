@@ -235,8 +235,8 @@ Hub: https://hub.docker.com/r/freepeak/leankg (`linux/arm64` tags `:latest` / `:
 ### Single-project (build from source)
 
 ```bash
-# Start with RocksDB in Docker
-docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up --build
+# Start from Hub image (no local build)
+docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up -d
 
 # Stop
 docker compose -f docker-compose.rocksdb.yml down
@@ -253,6 +253,30 @@ Environment variables for RocksDB (defaults are built into compose):
 
 The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-other`).
 
+### Reload without rebuild (primary path)
+
+The base compose file (`docker-compose.rocksdb.yml`) pulls a Hub image — no local Rust build. Use these scripts instead of `docker compose up --build`:
+
+| Scenario | Command |
+|----------|---------|
+| New Hub version available | `scripts/docker-reload.sh` |
+| Local source change, no Hub tag yet | `scripts/docker-sync-binary.sh` |
+
+Both keep RocksDB + model volumes; only the container runtime changes.
+
+`scripts/docker-reload.sh` — pulls `$LEANKG_IMAGE` (default `freepeak/leankg:latest`) and recreates the container with `up -d --no-build --force-recreate`. Pin a version via env:
+```bash
+LEANKG_IMAGE=freepeak/leankg:0.19.4 scripts/docker-reload.sh
+```
+
+`scripts/docker-sync-binary.sh` — builds the Linux `leankg` binary in a cached `rust:1-bookworm` builder (incremental, no image layers) and bind-mounts it over the Hub runtime image. Use when your local `Cargo.toml` version is not yet published to Hub.
+
+To publish a new Hub image (intentional build, not day-to-day):
+```bash
+docker compose -f docker-compose.build.yml build
+docker compose -f docker-compose.build.yml push
+```
+
 ### Multi-repo workspace roots (nested git)
 
 Some mounts (e.g. a polyrepo directory that contains many service repos under `platform-*/*`) are **not** a git repository at the root. MCP auto-index still treats them as git-backed when nested `.git` directories are found (bounded depth scan). Freshness uses the latest `HEAD` commit time across nested repos; incremental indexing unions changed/untracked files from each nested repo with paths prefixed relative to the workspace root.
@@ -268,8 +292,9 @@ Workspaces above `LEANKG_MAX_CACHE_ELEMENTS` (default **50_000** elements) are t
 - Discovery tools (`search_code`, `semantic_search`, `concept_search`, `query_file`) use **ontology-first + paginated** paths (`limit`/`offset`, max page 50).
 - Full-scan tools (`get_clusters`, `get_code_tree` without query, nav dumps, annotation full scans) **refuse** with a redirect hint instead of loading 600k+ rows.
 - Incremental auto-index **skips** full-graph dependent expansion on mega-graphs (override with `LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1` to force skip always).
-- Search prefer-order: `concept_search` → `semantic_search` → `search_code`. Semantic context: `semantic_search` → `kg_semantic_context` (embeddings) → `kg_context`.
+- Search prefer-order: `concept_search` → `search_knowledge` → `semantic_search` → `search_code`. Semantic context: `semantic_search` → `kg_semantic_context` (embeddings) → `kg_context`.
 - Overview prefer: `get_overview_context` (not `load_layer(L0)` alone). Use `env=` on search/`kg_*` for environment scoping. Hard-removed: `wake_up`, `search_by_environment`. Audit: [`docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`](docs/reports/mcp-tool-redundancy-impact-2026-07-20.md).
+- **Dynamic ontology**: Agents can persist discoveries via `add_ontology_concept` and `add_ontology_workflow` (survive YAML re-syncs) and `add_knowledge` (free-form notes). Search `concept_search` and `search_knowledge` before raw code search.
 
 Env knobs:
 
