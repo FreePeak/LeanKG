@@ -235,8 +235,8 @@ Hub: https://hub.docker.com/r/freepeak/leankg (`linux/arm64` tags `:latest` / `:
 ### Single-project (build from source)
 
 ```bash
-# Start with RocksDB in Docker
-docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up --build
+# Start from Hub image (no local build)
+docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up -d
 
 # Stop
 docker compose -f docker-compose.rocksdb.yml down
@@ -252,6 +252,30 @@ Environment variables for RocksDB (defaults are built into compose):
 - `LEANKG_SERVE_PORT=8080` -- REST listen port inside the container
 
 The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-other`).
+
+### Reload without rebuild (primary path)
+
+The base compose file (`docker-compose.rocksdb.yml`) pulls a Hub image — no local Rust build. Use these scripts instead of `docker compose up --build`:
+
+| Scenario | Command |
+|----------|---------|
+| New Hub version available | `scripts/docker-reload.sh` |
+| Local source change, no Hub tag yet | `scripts/docker-sync-binary.sh` |
+
+Both keep RocksDB + model volumes; only the container runtime changes.
+
+`scripts/docker-reload.sh` — pulls `$LEANKG_IMAGE` (default `freepeak/leankg:latest`) and recreates the container with `up -d --no-build --force-recreate`. Pin a version via env:
+```bash
+LEANKG_IMAGE=freepeak/leankg:0.19.4 scripts/docker-reload.sh
+```
+
+`scripts/docker-sync-binary.sh` — builds the Linux `leankg` binary in a cached `rust:1-bookworm` builder (incremental, no image layers) and bind-mounts it over the Hub runtime image. Use when your local `Cargo.toml` version is not yet published to Hub.
+
+To publish a new Hub image (intentional build, not day-to-day):
+```bash
+docker compose -f docker-compose.build.yml build
+docker compose -f docker-compose.build.yml push
+```
 
 ### Multi-repo workspace roots (nested git)
 

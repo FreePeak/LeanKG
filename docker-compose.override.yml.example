@@ -8,7 +8,7 @@
 #   docker compose \
 #     -f docker-compose.rocksdb.yml \
 #     -f docker-compose.override.yml \
-#     --env-file .dockerfile up -d
+#     --env-file .dockerfile up -d --no-build
 #
 # The `services.leankg.volumes` list below is APPENDED to the volumes in
 # docker-compose.rocksdb.yml. The named `leankg-rocksdb` volume is still
@@ -17,9 +17,15 @@
 # Important: any container path you bind-mount here MUST also appear in
 # `.dockerfile`'s `LEANKG_PROJECT_DIRS` (comma-separated) so the entrypoint
 # can find and index it on startup. See `.dockerfile.example`.
+#
+# To pin a specific image tag, uncomment the image: line below.
+# The base compose already pulls ${LEANKG_IMAGE:-freepeak/leankg:latest}
+# from Hub; no local build needed.
 
 services:
   leankg:
+    # Pin a specific version tag for reproducible reloads.
+    # image: freepeak/leankg:0.19.4
     volumes:
       # Example: serve a second repo at /workspace-other
       # (replace the host path with your actual repo location).
