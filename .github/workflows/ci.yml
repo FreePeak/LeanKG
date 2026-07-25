@@ -83,3 +83,66 @@ jobs:
       - name: Install and build ui-v2
         working-directory: ui-v2
         run: npm ci && npm run build
+
+  gcs-e2e:
+    name: GCS Source E2E (Docker)
+    runs-on: ubuntu-latest
+    # The E2E test runs against a fake-gcs-server service container. The
+    # server's default HTTPS scheme is overridden via FAKE_GCS_SCHEME=http
+    # because GitHub service containers do not support entrypoint/command
+    # overrides (only `env:`), and the test client uses STORAGE_EMULATOR_HOST
+    # with `http://`.
+    services:
+      fake-gcs-server:
+        image: fsouza/fake-gcs-server:latest
+        env:
+          FAKE_GCS_SCHEME: http
+          FAKE_GCS_PORT: "4443"
+          FAKE_GCS_EXTERNAL_URL: http://localhost:4443
+        ports:
+          - 4443:4443
+        options: >-
+          --health-cmd "wget -qO- http://localhost:4443/storage/v1/b || exit 1"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-gcs-e2e-target-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-gcs-e2e-target-${{ hashFiles('**/Cargo.lock') }}-
+
+      - name: Build GCS E2E test binary
+        run: cargo test --release --test sources_gcs_e2e_tests --no-run
+
+      - name: Wait for fake-gcs-server
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:4443/storage/v1/b >/dev/null 2>&1; then
+              echo "fake-gcs-server ready"
+              exit 0
+            fi
+            echo "waiting for fake-gcs-server ($i)..."
+            sleep 1
+          done
+          echo "fake-gcs-server did not become ready" >&2
+          exit 1
+
+      - name: Run GCS E2E
+        env:
+          STORAGE_EMULATOR_HOST: http://localhost:4443
+        run: cargo test --release --test sources_gcs_e2e_tests -- --nocapture

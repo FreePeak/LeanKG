@@ -22,6 +22,7 @@ mod registry;
 #[cfg(feature = "embeddings")]
 mod retrieval;
 mod runtime;
+mod sources;
 mod watcher;
 mod web;
 
@@ -69,6 +70,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             env,
             service_name,
             version,
+            source,
+            ref_name,
+            auth,
         } => {
             let _service_name = service_name;
             let _version = version;
@@ -87,6 +91,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &exclude_patterns,
                     verbose,
                     &env,
+                    source.as_deref(),
+                    ref_name.as_deref(),
+                    auth.as_deref(),
                 )
                 .await?;
             } else {
@@ -97,6 +104,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &exclude_patterns,
                     verbose,
                     &env,
+                    source.as_deref(),
+                    ref_name.as_deref(),
+                    auth.as_deref(),
                 )
                 .await?;
             }
@@ -998,6 +1008,7 @@ fn has_extension_recursive(dir: &std::path::Path, ext: &str, max_depth: u32) -> 
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn index_codebase(
     path: &str,
     db_path: &std::path::Path,
@@ -1005,6 +1016,9 @@ async fn index_codebase(
     exclude_patterns: &[String],
     verbose: bool,
     env: &str,
+    source_uri: Option<&str>,
+    ref_name: Option<&str>,
+    auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = env;
     let db = db::schema::init_db(db_path)?;
@@ -1023,7 +1037,33 @@ async fn index_codebase(
         config::ProjectConfig::default()
     };
 
-    let index_path = if path == "." {
+    // Resolve the effective source: CLI flags take precedence over leankg.yaml config.
+    let effective_source = source_uri.or(config.source.as_ref().map(|s| s.uri.as_str()));
+    let effective_auth = auth.or(config.source.as_ref().and_then(|s| s.auth.as_deref()));
+    let effective_ref_name =
+        ref_name.or(config.source.as_ref().and_then(|s| s.ref_name.as_deref()));
+
+    let index_path = if let Some(src_uri) = effective_source {
+        let uri = sources::parse_source_uri(src_uri)
+            .map_err(|e| format!("invalid source URI '{}': {}", src_uri, e))?;
+        let src = sources::SourceFactory::create(&uri, effective_auth, effective_ref_name)
+            .map_err(|e| format!("cannot create source for '{}': {}", src_uri, e))?;
+
+        let staging_root = db_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(".leankg")
+            .join("sources");
+        tokio::fs::create_dir_all(&staging_root).await?;
+
+        println!("Syncing from source '{}'...", src.name());
+        let mut progress = sources::CliProgress;
+        let synced = src
+            .sync_to_local(&staging_root, &mut progress)
+            .await
+            .map_err(|e| format!("source sync failed: {}", e))?;
+        synced.to_string_lossy().to_string()
+    } else if path == "." {
         config.project.root.to_string_lossy().to_string()
     } else {
         path.to_string()
@@ -1136,6 +1176,7 @@ async fn index_codebase(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn incremental_index_codebase(
     path: &str,
     db_path: &std::path::Path,
@@ -1143,6 +1184,9 @@ async fn incremental_index_codebase(
     exclude_patterns: &[String],
     verbose: bool,
     env: &str,
+    source_uri: Option<&str>,
+    ref_name: Option<&str>,
+    auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = env;
     let db = db::schema::init_db(db_path)?;
@@ -1150,9 +1194,67 @@ async fn incremental_index_codebase(
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
 
-    println!("Performing incremental indexing for {}...", path);
+    // Resolve the effective source: CLI flags take precedence over leankg.yaml config.
+    let config_path = db_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("leankg.yaml");
+    let config = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)?;
+        serde_yaml::from_str::<config::ProjectConfig>(&content).unwrap_or_default()
+    } else {
+        config::ProjectConfig::default()
+    };
+    let effective_source = source_uri.or(config.source.as_ref().map(|s| s.uri.as_str()));
+    let effective_auth = auth.or(config.source.as_ref().and_then(|s| s.auth.as_deref()));
+    let effective_ref_name =
+        ref_name.or(config.source.as_ref().and_then(|s| s.ref_name.as_deref()));
 
-    match indexer::incremental_index_sync(&graph_engine, &mut parser_manager, path).await {
+    let sync_path: String = if let Some(src_uri) = effective_source {
+        let uri = sources::parse_source_uri(src_uri)
+            .map_err(|e| format!("invalid source URI '{}': {}", src_uri, e))?;
+        let src = sources::SourceFactory::create(&uri, effective_auth, effective_ref_name)
+            .map_err(|e| format!("cannot create source for '{}': {}", src_uri, e))?;
+
+        let staging_root = db_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(".leankg")
+            .join("sources");
+        tokio::fs::create_dir_all(&staging_root).await?;
+
+        println!(
+            "Re-syncing source '{}' for incremental index...",
+            src.name()
+        );
+        let mut progress = sources::CliProgress;
+        let synced = src
+            .sync_to_local(&staging_root, &mut progress)
+            .await
+            .map_err(|e| format!("source sync failed: {}", e))?;
+
+        // For remote sources, always do a full index after sync since
+        // incremental diff on the staged dir won't detect source changes.
+        println!("Remote source synced. Falling back to full index on latest content.");
+        return index_codebase(
+            &synced.to_string_lossy(),
+            db_path,
+            lang_filter,
+            exclude_patterns,
+            verbose,
+            env,
+            source_uri,
+            ref_name,
+            auth,
+        )
+        .await;
+    } else {
+        path.to_string()
+    };
+
+    println!("Performing incremental indexing for {}...", sync_path);
+
+    match indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &sync_path).await {
         Ok(result) => {
             if result.changed_files.is_empty() && result.dependent_files.is_empty() {
                 println!("No changes detected since last index.");
@@ -1191,7 +1293,18 @@ async fn incremental_index_codebase(
                 "Incremental index failed: {}. Falling back to full index.",
                 e
             );
-            index_codebase(path, db_path, lang_filter, exclude_patterns, verbose, env).await?;
+            index_codebase(
+                &sync_path,
+                db_path,
+                lang_filter,
+                exclude_patterns,
+                verbose,
+                env,
+                None,
+                None,
+                None,
+            )
+            .await?;
         }
     }
 
