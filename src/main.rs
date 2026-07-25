@@ -74,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             source,
             ref_name,
             auth,
+            benchmark,
         } => {
             let _service_name = service_name;
             let _version = version;
@@ -84,6 +85,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_ref()
                 .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
                 .unwrap_or_default();
+
+            // Live A/B benchmark before indexing
+            let doc_bench = if benchmark {
+                println!("[benchmark] Running baseline queries...");
+                let db = db::schema::init_db(&db_path)?;
+                let ge = graph::GraphEngine::new(db);
+                let bench = benchmark::live::DocIndexBenchmark::default();
+                let baseline = bench.run_baseline(&ge);
+                for r in &baseline {
+                    println!(
+                        "  [baseline] {} {}: {:.1}ms, {} results",
+                        r.query_type, r.query, r.latency_ms, r.result_count
+                    );
+                }
+                bench.stream_progress(0, 1, "baseline complete");
+                Some((bench, baseline))
+            } else {
+                None
+            };
+
+            let index_start = std::time::Instant::now();
+
             if incremental {
                 incremental_index_codebase(
                     path.as_deref().unwrap_or("."),
@@ -110,6 +133,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     auth.as_deref(),
                 )
                 .await?;
+            }
+
+            let index_elapsed = index_start.elapsed();
+
+            // Live A/B benchmark after indexing
+            if let Some((doc_bench, baseline)) = doc_bench {
+                println!("[benchmark] Running after-index queries...");
+                let db_after = db::schema::init_db(&db_path)?;
+                let ge_after = graph::GraphEngine::new(db_after);
+                let after = doc_bench.run_after(&ge_after);
+                doc_bench.stream_progress(1, 1, "after complete");
+
+                let report = doc_bench.generate_report(
+                    &baseline,
+                    &after,
+                    index_elapsed.as_secs_f64(),
+                    0,
+                    0,
+                    0,
+                );
+                println!("\n{}", report);
+
+                let reporter = benchmark::live::LiveReporter::new(std::path::PathBuf::from(
+                    "benchmark/results",
+                ));
+                match reporter.save_report("doc-index-benchmark", &report) {
+                    Ok(p) => println!("\nReport saved: {}", p.display()),
+                    Err(e) => eprintln!("Warning: Failed to save benchmark report: {}", e),
+                }
             }
         }
         cli::CLICommand::Serve { port, project } => {
@@ -462,9 +514,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             background,
             workers,
             types,
+            benchmark,
         } => {
             run_embed(
-                init, full, batch_size, &project, wait, status, cancel, background, workers, &types,
+                init, full, batch_size, &project, wait, status, cancel, background, workers,
+                &types, benchmark,
             )?;
         }
         #[cfg(feature = "embeddings")]
@@ -5127,6 +5181,7 @@ fn run_embed(
     background: bool,
     workers: usize,
     types_filter: &str,
+    benchmark: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if init {
         let report = embeddings::init_models()?;
@@ -5162,11 +5217,65 @@ fn run_embed(
         .into());
     }
 
-    // Foreground mode (--wait) or background-spawned child (--background):
-    // do the actual work. Everything else falls through to the spawn branch.
-    if wait || background {
+    // Live A/B benchmark before embedding.
+    let embed_bench = if benchmark {
+        println!("[benchmark] Running semantic search baseline...");
+        let bench = benchmark::live::EmbedBenchmark::default();
+        let db = db::schema::init_db(&leankg_dir)?;
+        let ge = graph::GraphEngine::new(db);
+        let baseline = bench.run_semantic_baseline(&ge);
+        for r in &baseline {
+            println!(
+                "  [baseline] {}: {:.1}ms, {} results, F1={:.2}",
+                r.query, r.latency_ms, r.result_count, r.f1_score
+            );
+        }
+        Some((bench, baseline))
+    } else {
+        None
+    };
+
+    let embed_start = std::time::Instant::now();
+
+    // Foreground mode (--wait): run synchronously, then after queries + report.
+    if wait {
+        run_embed_worker(
+            false,
+            full,
+            batch_size,
+            &project_path,
+            &leankg_dir,
+            workers,
+            types_filter,
+        )?;
+        let elapsed = embed_start.elapsed().as_secs_f64();
+
+        // Run after-benchmark queries and generate report.
+        if let Some((bench, baseline)) = embed_bench {
+            let db_after = db::schema::init_db(&leankg_dir)?;
+            let ge_after = graph::GraphEngine::new(db_after);
+            let count = ge_after.count_elements().unwrap_or(0);
+            let throughput = count as f64 / elapsed.max(0.001);
+
+            println!("[benchmark] Running after-embed queries...");
+            let after = bench.run_semantic_after(&ge_after);
+            let report = bench.generate_embed_report(&baseline, &after, throughput);
+            println!("\n{}", report);
+
+            let reporter =
+                benchmark::live::LiveReporter::new(std::path::PathBuf::from("benchmark/results"));
+            match reporter.save_report("embed-benchmark", &report) {
+                Ok(p) => println!("\nReport saved: {}", p.display()),
+                Err(e) => eprintln!("Warning: Failed to save embed benchmark report: {}", e),
+            }
+        }
+        return Ok(());
+    }
+
+    // Background-spawned child (--background): delegate to worker directly.
+    if background {
         return run_embed_worker(
-            init,
+            false,
             full,
             batch_size,
             &project_path,
@@ -5190,6 +5299,10 @@ fn run_embed(
         }
     }
     let _ = std::fs::remove_file(&lock_path);
+
+    if benchmark {
+        println!("[benchmark] warning: --benchmark requires --wait for after-embed measurements; skipping after queries.");
+    }
 
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);

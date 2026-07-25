@@ -50,6 +50,9 @@ pub enum CLICommand {
         /// Prefer env vars (GCS_ACCESS_TOKEN, GIT_TOKEN, etc.) when possible.
         #[arg(long)]
         auth: Option<String>,
+        /// Run live A/B benchmark before and after indexing.
+        #[arg(long)]
+        benchmark: bool,
     },
     /// Query the knowledge graph
     Query {
@@ -332,6 +335,9 @@ pub enum CLICommand {
         /// Pass `--types all` to embed every embeddable type regardless of size.
         #[arg(long, default_value = "")]
         types: String,
+        /// Run live A/B benchmark measuring semantic search quality before and after embedding.
+        #[arg(long)]
+        benchmark: bool,
     },
     /// One-shot embedding retrieval for CLI testing (requires
     /// --features embeddings). Useful for validating the retrieve→rerank→
