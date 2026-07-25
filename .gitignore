@@ -24,3 +24,4 @@ node_modules/
 # committed.
 docker-compose.override.yml
 vendor/
+actionlint/
