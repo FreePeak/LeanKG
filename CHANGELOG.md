@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.8](https://github.com/FreePeak/LeanKG/compare/v0.19.7...v0.19.8) (2026-07-25)
+
+
+### Features
+
+* Docker reload without image rebuild ([#115](https://github.com/FreePeak/LeanKG/issues/115)) ([81441c8](https://github.com/FreePeak/LeanKG/commit/81441c8901498f41a6c17f25b6df1c31fe8d4dec))
+* **mcp:** make semantic_search discoverable for AI agents ([#113](https://github.com/FreePeak/LeanKG/issues/113)) ([23a6457](https://github.com/FreePeak/LeanKG/commit/23a6457b8e38cc163b7d57418fdfd19ddcafb50b))
+* **sources:** add remote source indexing (GCP, git, local) ([#111](https://github.com/FreePeak/LeanKG/issues/111)) ([5c84995](https://github.com/FreePeak/LeanKG/commit/5c84995b21ef2f8ff098602d119415929cb61229))
+
 ## [0.19.7](https://github.com/FreePeak/LeanKG/compare/v0.19.6...v0.19.7) (2026-07-24)
 
 
