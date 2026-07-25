@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.9](https://github.com/FreePeak/LeanKG/compare/v0.19.8...v0.19.9) (2026-07-25)
+
+
+### Features
+
+* PRD-in-KG pipeline with feature-flow mapping ([#110](https://github.com/FreePeak/LeanKG/issues/110)) ([019defd](https://github.com/FreePeak/LeanKG/commit/019defd10e5541c049022bb61e8d1aae88143ffc))
+
+
+### Bug Fixes
+
+* remove gcs-e2e job from CI pipeline ([#119](https://github.com/FreePeak/LeanKG/issues/119)) ([320be68](https://github.com/FreePeak/LeanKG/commit/320be689fe182c68e05cb7abce92802dc0db4147))
+
 ## [0.19.8](https://github.com/FreePeak/LeanKG/compare/v0.19.7...v0.19.8) (2026-07-25)
 
 
