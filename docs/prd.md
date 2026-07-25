@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.7.15-embed-doc-inventory
-**Date:** 2026-07-22
+**Version:** 3.8.0-prd-in-kg
+**Date:** 2026-07-24
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
@@ -28,6 +28,25 @@
 ---
 
 ## Changelog
+
+### v3.8.0-prd-in-kg - PRD-in-KG pipeline with feature-flow mapping (2026-07-24)
+
+> **Trigger:** No first-class PRD entities in the KG; FR-*/US-* are just string IDs in `business_logic`. PO/dev teams need full traceability: FR → workflow → steps → code files, plus a coverage matrix.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-PRD-KG-01 / FR-PRD-KG-01..03 / REL-070 | Must Have | **P1** | Parse `docs/prd.md` into structured KG entries (FR-*/US-* as `knowledge_entries` with `prd_mapping` type) |
+| US-PRD-KG-02 / FR-PRD-KG-04 | Must Have | **P1** | `feature_workflow_links` CozoDB relation connecting FRs to ontology workflows |
+| US-PRD-KG-03 / FR-PRD-KG-05 | Must Have | **P1** | `get_feature_flow` MCP tool: FR → linked workflows → ordered steps → code_refs forward chain |
+| US-PRD-KG-04 / FR-PRD-KG-06 | Must Have | **P1** | `get_traceability_matrix` MCP tool: PO-facing FR coverage matrix (workflow count, annotated elements, doc links) |
+| US-PRD-KG-05 / FR-PRD-KG-07 | Must Have | **P1** | `index_prd` MCP tool: idempotent PRD parser with auto-linking to ontology workflows via code_ref matching |
+| US-PRD-KG-06 / FR-PRD-KG-08 | Should Have | **P2** | `ontology/workflows.yaml` enriched with optional `feature_ids`/`user_story_ids` per step |
+
+**New files:** `src/prd_indexer/mod.rs` (PRD markdown parser + knowledge_entry converters).  
+**Modified files:** `src/db/models.rs` (+FeatureWorkflowLink), `src/db/schema.rs` (migration 002), `src/db/mod.rs` (+CRUD), `src/mcp/handler.rs` (+3 handlers), `src/mcp/tools.rs` (+3 tool defs), `src/lib.rs`/`src/main.rs` (+mod), `src/ontology/procedural.rs` (+feature_ids/user_story_ids fields), `src/ontology/loader.rs` (+WorkflowStepDef fields).
+
+**New content:** AGENTS.md, docs/mcp-tools.md updated with PRD-in-KG tools.
 
 ### v3.7.15-embed-doc-inventory - Doc embed, perf types, index inventory (2026-07-22)
 
