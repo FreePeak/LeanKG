@@ -3441,10 +3441,12 @@ impl ToolHandler {
         // Auto-link FRs to ontology workflows by matching code paths
         for req in &parsed.requirements {
             for code_path in &req.code_paths {
-                // Search for workflow steps referencing this code path
+                // Extract just the file part (before :: if present)
+                let file_part = code_path.split("::").next().unwrap_or(code_path);
+                // Search for workflow steps referencing this file path in name or code_refs
                 let wf_query = format!(
-                    r#"?[qualified_name, parent_qualified] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow_step", str_contains(metadata, "{}")"#,
-                    code_path
+                    r#"?[qualified_name, parent_qualified, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow_step", str_contains(metadata, "{}")"#,
+                    file_part
                 );
                 let wf_params = std::collections::BTreeMap::new();
                 if let Ok(result) =

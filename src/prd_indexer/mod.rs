@@ -45,8 +45,11 @@ pub fn parse_prd_markdown(content: &str) -> PrdParseResult {
     let mut user_stories: Vec<PrdUserStory> = Vec::new();
     let errors: Vec<String> = Vec::new();
 
-    let fr_re = Regex::new(r"FR-[A-Z0-9-]+").unwrap();
-    let us_re = Regex::new(r"US-[A-Z0-9-]+").unwrap();
+    // Standalone FR/US pattern - conservative: requires at least 2 hyphen-separated segments
+    // (e.g., FR-ONT-PROC-01, FR-SURF-01, FR-GE-01, FR-SEM-07)
+    // Avoids picking up fragments like "FR-05" from prose
+    let fr_re = Regex::new(r"\b(FR-[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)+(?:-\d+)?)\b").unwrap();
+    let us_re = Regex::new(r"\b(US-[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)+(?:-\d+)?)\b").unwrap();
 
     // Parse PRD version changelog table rows.
     // Format: | ID | Priority | Focus | Intent |
