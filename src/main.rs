@@ -18,6 +18,7 @@ mod mcp;
 mod obsidian;
 mod ontology;
 mod orchestrator;
+mod prd_indexer;
 mod registry;
 #[cfg(feature = "embeddings")]
 mod retrieval;

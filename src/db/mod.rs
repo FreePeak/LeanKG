@@ -1028,8 +1028,98 @@ fn row_to_knowledge_entry(row: &[cozo::DataValue]) -> models::KnowledgeEntry {
 }
 
 // ============================================================================
-// Incident CRUD
+// Feature-Workflow Link CRUD
 // ============================================================================
+
+pub fn link_feature_workflow(
+    db: &CozoDb,
+    feature_id: &str,
+    workflow_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let query = r#"?[feature_id, workflow_id] <- [[ $feat, $wf ]] :put feature_workflow_links { feature_id, workflow_id }"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "feat".to_string(),
+        serde_json::Value::String(feature_id.to_string()),
+    );
+    params.insert(
+        "wf".to_string(),
+        serde_json::Value::String(workflow_id.to_string()),
+    );
+    crate::db::schema::run_script(db, query, params)?;
+    Ok(())
+}
+
+pub fn unlink_feature_workflow(
+    db: &CozoDb,
+    feature_id: &str,
+    workflow_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let find_query = r#"?[feature_id, workflow_id] := *feature_workflow_links[feature_id, workflow_id], feature_id = $feat, workflow_id = $wf"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "feat".to_string(),
+        serde_json::Value::String(feature_id.to_string()),
+    );
+    params.insert(
+        "wf".to_string(),
+        serde_json::Value::String(workflow_id.to_string()),
+    );
+    let result = crate::db::schema::run_script(db, find_query, params)?;
+    if !result.rows.is_empty() {
+        let del_query =
+            r#":delete feature_workflow_links where feature_id = $feat, workflow_id = $wf"#;
+        let mut del_params = std::collections::BTreeMap::new();
+        del_params.insert(
+            "feat".to_string(),
+            serde_json::Value::String(feature_id.to_string()),
+        );
+        del_params.insert(
+            "wf".to_string(),
+            serde_json::Value::String(workflow_id.to_string()),
+        );
+        crate::db::schema::run_script(db, del_query, del_params)?;
+    }
+    Ok(())
+}
+
+pub fn get_workflows_for_feature(
+    db: &CozoDb,
+    feature_id: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let query =
+        r#"?[workflow_id] := *feature_workflow_links[feature_id, workflow_id], feature_id = $feat"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "feat".to_string(),
+        serde_json::Value::String(feature_id.to_string()),
+    );
+    let result = crate::db::schema::run_script(db, query, params)?;
+    Ok(result
+        .rows
+        .iter()
+        .filter_map(|r| r.first().and_then(|v| v.get_str().map(String::from)))
+        .collect())
+}
+
+pub fn get_features_for_workflow(
+    db: &CozoDb,
+    workflow_id: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let query =
+        r#"?[feature_id] := *feature_workflow_links[feature_id, workflow_id], workflow_id = $wf"#;
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "wf".to_string(),
+        serde_json::Value::String(workflow_id.to_string()),
+    );
+    let result = crate::db::schema::run_script(db, query, params)?;
+    Ok(result
+        .rows
+        .iter()
+        .filter_map(|r| r.first().and_then(|v| v.get_str().map(String::from)))
+        .collect())
+}
 
 pub fn create_incident(
     db: &CozoDb,

@@ -561,6 +561,13 @@ pub struct KnowledgeEntry {
     pub updated_at: i64,
 }
 
+/// Links a feature requirement ID (e.g. FR-ONT-PROC-01) to an ontology workflow ID.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeatureWorkflowLink {
+    pub feature_id: String,
+    pub workflow_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Role {
     Admin,

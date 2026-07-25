@@ -70,6 +70,9 @@ Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without).
 |------|-------------|
 | `get_traceability` | Get full traceability chain for a code element |
 | `search_by_requirement` | Find code elements related to a requirement |
+| `index_prd` | Parse a PRD markdown document into structured KG entries. Extracts FR-* and US-* into `knowledge_entries`, auto-links features to ontology workflows by matching code paths. Args: `source_doc` (default: `docs/prd.md`), `environment`. |
+| `get_feature_flow` | Given a feature requirement ID (e.g. `FR-ONT-PROC-01`), returns the full implementation chain: FR → linked ontology workflows → ordered steps with `code_refs` and `failure_modes` → annotated code elements. Args: `feature_id` (required), `env`. |
+| `get_traceability_matrix` | PO-facing traceability matrix: all FR-* with workflow count, annotated element count, and doc coverage. Filter by `feature_id` or `status` tag. Args: `feature_id` (optional), `status` (optional), `limit`. |
 
 ## Structure Tools
 

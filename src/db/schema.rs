@@ -450,6 +450,22 @@ fn run_migrations(
         record_migration(db, "001_knowledge_entries", now)?;
     }
 
+    // Migration 002: Create feature_workflow_links table
+    if !applied.contains("002_feature_workflow_links") {
+        tracing::info!("Running migration 002_feature_workflow_links...");
+        let create_fw_links =
+            r#":create feature_workflow_links {feature_id: String, workflow_id: String}"#;
+        if let Err(e) = run_script(db, create_fw_links, Default::default()) {
+            tracing::warn!("Migration 002 failed (may already exist): {:?}", e);
+        }
+        // Create index on feature_id
+        let fw_index = r#"::index create feature_workflow_links:feature_id_index { feature_id }"#;
+        if let Err(e) = run_script(db, fw_index, Default::default()) {
+            tracing::debug!("feature_workflow_links index creation note: {:?}", e);
+        }
+        record_migration(db, "002_feature_workflow_links", now)?;
+    }
+
     // Migration 002-005 have been consolidated into migration 006.
     // The old migration IDs are recorded as applied to skip the stacked
     // :replace chain that caused schema drift (environment vs env columns).
