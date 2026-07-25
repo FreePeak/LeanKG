@@ -1,0 +1,15 @@
+# Optional compose file: build a new image from source.
+# Only use this when you intend to publish a new Hub image.
+# For day-to-day reloads, use scripts/docker-reload.sh (Hub pull).
+#
+# Usage:
+#   docker compose -f docker-compose.build.yml build
+#   docker compose -f docker-compose.build.yml push   # after build
+
+services:
+  leankg:
+    build:
+      context: .
+      dockerfile: Dockerfile.rocksdb
+    # No image: pin here — the build file is for publish workflows;
+    # the base docker-compose.rocksdb.yml already selects the Hub image.
