@@ -39,18 +39,18 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **509** |
-| NOT_DONE | 63 |
+| NOT_DONE | 61 |
 | PENDING | 30 |
 | PARTIAL | 10 |
 | OPEN | 1 |
-| DONE | 401 |
+| DONE | 403 |
 | WONT_DO | 3 |
-| Open work | **104** |
+| Open work | **102** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
-| P1 | 8 |
+| P1 | 6 |
 | P2 | 85 |
 | P3 | 12 |
 
@@ -88,7 +88,7 @@ Evidence: [`ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-
 | **1b** | Three-verb narrative | `US-GF-14` / `FR-GF-22` | **DONE** — path · explain · query first in docs/skills |
 | **1c** | Always-on hooks | `US-GF-17` / `FR-GF-24` | **DONE** — Cursor rule + Claude PreToolUse nudge |
 | **2a** | Honest edges | `US-GF-04` / `FR-GF-07..09` / `REL-043` | **DONE** — write-path stamp + MCP + ui-v2 |
-| **2b** | Auto GRAPH_REPORT | `US-GF-06` / `FR-GF-13` | Onboarding without tool wall |
+| **2b** | Auto GRAPH_REPORT | `US-GF-06` / `FR-GF-13` | **DONE** |
 | **2c** | HTML export | `US-GF-13` / `FR-GF-21` | Shareable PR/CI artifact |
 | **3** | NL Query FAB | `US-UI2-06` / `FR-UI2-08` | Humans use same cheap verb |
 | **4** | Single-repo expand | `US-MG-02` / `FR-MG-03` | UI correctness |
@@ -104,6 +104,15 @@ Evidence: [`honest-edges-smoke-2026-07-22.md`](reports/honest-edges-smoke-2026-0
 | `FR-GF-08` | DONE | Write-time map + reindex backfill |
 | `FR-GF-09` | DONE | MCP + path ranking + ui-v2 propagation |
 | `REL-043` | DONE | Smoke report + tests |
+
+### Wave 2b detail (auto GRAPH_REPORT)
+
+| ID | Status | Intent |
+|----|--------|--------|
+| `US-GF-06` | DONE | Contributor sees `.leankg/GRAPH_REPORT.md` after every `leankg index` without a separate `leankg report` step |
+| `FR-GF-13` | DONE | Auto-write `.leankg/GRAPH_REPORT.md` on CLI index + MCP `mcp_index` + Docker auto-index; soft-fail; skip-unchanged; ui-v2 Overview card; Surprising Cross-Cluster Edges section |
+
+Evidence: [`auto-graph-report-2026-07-25.md`](reports/auto-graph-report-2026-07-25.md)
 
 ### Wave 1a detail (MCP surface)
 

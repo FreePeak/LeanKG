@@ -396,6 +396,7 @@ pub async fn start_server(
         )
         .route("/api/graph/subgraph", get(handlers::api_graph_subgraph))
         .route("/api/graph/clusters", get(handlers::api_graph_clusters))
+        .route("/api/graph/report", get(handlers::api_graph_report))
         .route("/api/graph/children", get(handlers::api_graph_children))
         .route(
             "/api/graph/expand-node",

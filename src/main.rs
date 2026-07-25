@@ -20,6 +20,7 @@ mod ontology;
 mod orchestrator;
 mod prd_indexer;
 mod registry;
+mod report;
 #[cfg(feature = "embeddings")]
 mod retrieval;
 mod runtime;
@@ -111,6 +112,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await?;
             }
+            // US-GF-06 / FR-GF-13: auto-write GRAPH_REPORT.md after index
+            let _ =
+                crate::report::write::write_graph_report_after_index(&project_path, &db_path).await;
         }
         cli::CLICommand::Serve { port, project } => {
             let port = port.unwrap_or_else(|| {

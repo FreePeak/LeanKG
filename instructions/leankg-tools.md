@@ -6,24 +6,6 @@ LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first
 
 ---
 
-## Prefer-order (discover before connection verbs)
-
-For fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
-
-`mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs.
-
-| Question type | First tools |
-|---------------|-------------|
-| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
-| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
-| How A↔B? (known endpoints) | `shortest_path` |
-| What is this known symbol? | `explain_node` |
-| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
-
-Gate: `curl -sf --max-time 2 http://localhost:9699/health` — if fail, use Grep/Glob/Read only.
-
----
-
 ## Semantic Discovery (v3.6.2 — CozoDB HNSW preferred)
 
 When the binary was built with `--features embeddings` AND the embedding
@@ -47,7 +29,7 @@ to the ontology layer:
 ```
 User asks about codebase → mcp_status (check initialized)
   │
-  ├─ "Where is X?" / "Find Y" ───────────────► search_code or find_function
+  ├─ "Where is X?" / "Find Y" (fuzzy / NL / domain) ─► concept_search → semantic_search
   │   ├─ by name/type ─────────────────────────► search_code(query="X")
   │   └─ exact function ───────────────────────► find_function(name="parseJson")
   │                                              scope to file: find_function(name="foo", file="src/bar.rs")

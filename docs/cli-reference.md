@@ -12,7 +12,7 @@ Complete reference for all LeanKG CLI commands.
 | `leankg lsp-resolve <file> <line> <col>` | Resolve definition/references via LSP bridge (or hybrid fallback) |
 | `leankg lsp-list` | List catalogued LSP servers |
 | `leankg lsp-install <lang>` | Install the preferred LSP server for a language |
-| `leankg index [path]` | Index source files at the given path |
+| `leankg index [path]` | Index source files at the given path; auto-writes `.leankg/GRAPH_REPORT.md` on completion |
 | `leankg index` with `typed_resolve: go,ts` | Produce `resolution_method=typed` CALLS edges via in-process hybrid resolver (Go/TS MVP) |
 
 | `leankg index --incremental` | Only index changed files (git-based) |
@@ -30,6 +30,7 @@ Complete reference for all LeanKG CLI commands.
 | `leankg query <text> --kind name` | Query the knowledge graph by name/type/rel/pattern/content |
 | `leankg query "<question>" --kind subgraph` | US-GF-03 / FR-GF-06: NL scoped subgraph (same as `graph-query`) |
 | `leankg graph-query "<question>"` | US-GF-03: seed → expand → budget trim subgraph with provenance labels |
+| `leankg report` | Manually generate and write `GRAPH_REPORT.md` (auto-written after every `leankg index`) |
 | `leankg path <a> <b>` | US-GF-01: shortest path between two symbols |
 | `leankg explain <symbol>` | US-GF-02: node dossier (degree, cluster, neighbors) |
 | `leankg gods` | US-GF-05: top-degree god nodes |

@@ -2978,6 +2978,55 @@ pub async fn api_graph_subgraph(
 /// Get cluster overview for semantic zooming (Zoom Level 0)
 /// Returns top-level clusters instead of all individual nodes
 #[allow(dead_code)]
+pub async fn api_graph_report(State(state): State<AppState>) -> impl IntoResponse {
+    let project = state.current_project_path.read().await.clone();
+
+    let markdown = match state.get_graph_engine().await {
+        Ok(engine) => match engine.generate_graph_report(
+            project
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project"),
+        ) {
+            Ok(report) => {
+                let md = report.to_markdown();
+                let out_path = project.join(".leankg").join("GRAPH_REPORT.md");
+                if let Some(parent) = out_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&out_path, &md);
+                md
+            }
+            Err(e) => {
+                return Json(super::ApiResponse::<serde_json::Value> {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                })
+                .into_response();
+            }
+        },
+        Err(e) => {
+            return Json(super::ApiResponse::<serde_json::Value> {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            })
+            .into_response();
+        }
+    };
+
+    Json(super::ApiResponse {
+        success: true,
+        data: Some(serde_json::json!({"markdown": markdown})),
+        error: None,
+    })
+    .into_response()
+}
+
+/// Get cluster overview for semantic zooming (Zoom Level 0)
+/// Returns top-level clusters instead of all individual nodes
+#[allow(dead_code)]
 pub async fn api_graph_clusters(State(state): State<AppState>) -> impl IntoResponse {
     let elements_result: Result<Vec<_>, String> = match state.get_graph_engine().await {
         Ok(g) => g.all_elements().map_err(|e| e.to_string()),
