@@ -20,6 +20,7 @@ mod ontology;
 mod orchestrator;
 mod prd_indexer;
 mod registry;
+mod report;
 #[cfg(feature = "embeddings")]
 mod retrieval;
 mod runtime;

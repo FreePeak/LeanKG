@@ -1,6 +1,6 @@
 [package]
 name = "leankg"
-version = "0.19.8"
+version = "0.19.9"
 edition = "2021"
 description = "Lightweight Knowledge Graph for AI-Assisted Development"
 license = "Apache-2.0"
@@ -115,6 +115,22 @@ redis = { version = "0.27", features = ["aio", "tokio-comp"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[[example]]
+name = "bench_embed_stress"
+required-features = ["embeddings"]
+
+[[example]]
+name = "bench_fastembed_smoke"
+required-features = ["embeddings"]
+
+[[example]]
+name = "bench_embed_infer"
+required-features = ["embeddings"]
+
+[[example]]
+name = "bench_redis_writer"
+required-features = ["embeddings"]
 
 [[bench]]
 name = "vector_engine_ab"
