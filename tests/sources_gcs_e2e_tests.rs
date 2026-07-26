@@ -399,3 +399,105 @@ async fn gcs_source_with_prefix_filters_objects() {
         std::env::remove_var("STORAGE_EMULATOR_HOST");
     }
 }
+
+#[tokio::test]
+async fn gcs_index_from_bucket_populates_graph() {
+    if is_explicit_skip() {
+        return;
+    }
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let emulator = match resolve_or_start_emulator() {
+        Some(e) => e,
+        None => return,
+    };
+    let addr = emulator.addr.clone();
+
+    let bucket = "leankg-index-bucket";
+    let project = "leankg-index";
+    create_bucket(&addr, bucket, project).expect("create_bucket");
+
+    // Upload a small multi-file fixture with functions that should be indexed
+    upload_object(
+        &addr,
+        bucket,
+        "main.go",
+        b"package main\nfunc main() { println(add(1, 2)) }\nfunc add(a, b int) int { return a + b }\n",
+    )
+    .expect("upload main.go");
+    upload_object(
+        &addr,
+        bucket,
+        "lib/math.go",
+        b"package lib\nfunc Mul(a, b int) int { return a * b }\n",
+    )
+    .expect("upload math.go");
+
+    // Create a temp project and sync then index
+    let tmp_dir = TempDir::new().expect("tmpdir");
+    let db_path = tmp_dir.path().join(".leankg/leankg.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).expect("create .leankg");
+
+    // Initialize DB schema
+    let db = leankg::db::schema::init_db(&db_path).expect("init_db");
+    let graph_engine = leankg::graph::GraphEngine::new(db);
+
+    // Sync GCS source to staging dir
+    let staging_root = tmp_dir.path().join(".leankg/sources");
+    let src = GcsSource {
+        bucket: bucket.to_string(),
+        prefix: String::new(),
+        auth: None,
+    };
+    let mut progress = CollectingProgress { messages: vec![] };
+    let synced = src
+        .sync_to_local(&staging_root, &mut progress)
+        .await
+        .expect("gcs sync");
+
+    // Index the synced directory
+    let mut parser_manager = leankg::indexer::ParserManager::new();
+    parser_manager.init_parsers().expect("init parsers");
+
+    // Find files and index them
+    let files =
+        leankg::indexer::find_files_sync(&synced.to_string_lossy()).expect("find_files_sync");
+    let indexed_count = leankg::indexer::index_files_parallel(
+        &graph_engine,
+        &files,
+        false, // verbose
+    )
+    .expect("index files");
+
+    // Assert the index found elements
+    assert!(
+        indexed_count > 0,
+        "should have indexed at least 1 file, got {}",
+        indexed_count
+    );
+    println!("Indexed {} files from GCS bucket", indexed_count);
+
+    // Query the graph for expected functions
+    let elements = graph_engine
+        .search_by_name_typed("main", None, 10)
+        .expect("search main");
+    assert!(
+        elements.iter().any(|e| e.name == "main"),
+        "expected 'main' function; got: {:?}",
+        elements
+    );
+
+    let mul_elements = graph_engine
+        .search_by_name_typed("Mul", None, 10)
+        .expect("search Mul");
+    assert!(
+        mul_elements.iter().any(|e| e.name == "Mul"),
+        "expected 'Mul' function; got: {:?}",
+        mul_elements
+    );
+
+    let we_started_emulator = emulator.guard.is_some();
+    drop(emulator);
+    if we_started_emulator {
+        std::env::remove_var("STORAGE_EMULATOR_HOST");
+    }
+}

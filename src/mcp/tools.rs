@@ -1020,6 +1020,7 @@ impl ToolRegistry {
                         "env": {"type": "string", "enum": ["production", "staging", "local"], "default": "local", "description": "Environment to search"},
                         "limit": {"type": "integer", "default": 20, "description": "Page size (default: 20, max: 50)"},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
+                        "kind": {"type": "string", "enum": ["all", "code", "docs"], "default": "all", "description": "Filter results by kind: 'all' (code + docs), 'code' (functions, classes, methods, etc.), 'docs' (documents and doc_sections only)"},
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["query"]
