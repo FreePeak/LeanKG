@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.10](https://github.com/FreePeak/LeanKG/compare/v0.19.9...v0.19.10) (2026-07-25)
+
+
+### Features
+
+* auto GRAPH_REPORT.md on index (US-GF-06 / FR-GF-13) ([#122](https://github.com/FreePeak/LeanKG/issues/122)) ([95c0244](https://github.com/FreePeak/LeanKG/commit/95c0244f5bec17df18b58f98d96948d0644389cf))
+
 ## [0.19.9](https://github.com/FreePeak/LeanKG/compare/v0.19.8...v0.19.9) (2026-07-25)
 
 
