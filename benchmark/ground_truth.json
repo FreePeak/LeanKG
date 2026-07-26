@@ -1,0 +1,22 @@
+{
+  "documentation": [
+    "src/doc/generator.rs::DocGenerator",
+    "src/doc/templates.rs::render_template"
+  ],
+  "knowledge graph": [
+    "src/graph/query.rs::GraphEngine",
+    "src/db/schema.rs::init_db"
+  ],
+  "How to index": [
+    "src/cli/mod.rs::Index",
+    "src/main.rs::run_index"
+  ],
+  "document indexing process": [
+    "src/indexer/extractor.rs::EntityExtractor",
+    "src/doc/generator.rs::regenerate_for_file"
+  ],
+  "markdown parsing": [
+    "src/indexer/extractor.rs::extract_from_source",
+    "src/doc/templates.rs::render_claude_template"
+  ]
+}

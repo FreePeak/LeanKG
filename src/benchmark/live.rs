@@ -1,5 +1,6 @@
 use crate::graph;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// Result of a single baseline/after query measurement.
@@ -22,6 +23,10 @@ pub struct SemanticResult {
     pub precision: f64,
     pub recall: f64,
     pub f1_score: f64,
+    pub success: bool,
+    pub error: Option<String>,
+    /// True when F1 is a heuristic proxy (ground-truth fixture missing).
+    pub proxy: bool,
 }
 
 /// Quality delta between before and after embedding.
@@ -125,6 +130,41 @@ impl DocIndexBenchmark {
                             },
                         }
                     }
+                    "semantic_search" | "concept_search" => {
+                        #[cfg(feature = "embeddings")]
+                        {
+                            match run_real_semantic(engine, term, 50, 20) {
+                                Ok((qns, latency_ms, err_opt)) => QueryResult {
+                                    query: q.clone(),
+                                    query_type: query_type.to_string(),
+                                    latency_ms,
+                                    result_count: qns.len(),
+                                    success: err_opt.is_none(),
+                                    error: err_opt,
+                                },
+                                Err(e) => QueryResult {
+                                    query: q.clone(),
+                                    query_type: query_type.to_string(),
+                                    latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                    result_count: 0,
+                                    success: false,
+                                    error: Some(format!("pipeline: {}", e)),
+                                },
+                            }
+                        }
+                        #[cfg(not(feature = "embeddings"))]
+                        QueryResult {
+                            query: q.clone(),
+                            query_type: query_type.to_string(),
+                            latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                            result_count: 0,
+                            success: false,
+                            error: Some(
+                                "embeddings feature disabled; build with --features embeddings"
+                                    .into(),
+                            ),
+                        }
+                    }
                     _ => QueryResult {
                         query: q.clone(),
                         query_type: query_type.to_string(),
@@ -183,15 +223,17 @@ impl DocIndexBenchmark {
         ));
         md.push_str(&format!("**Timestamp**: {}\n\n", ts));
 
-        md.push_str("| Query | Type | Before (ms) | Before (results) | After (ms) | After (results) | Delta (ms) | Delta (results) |\n");
-        md.push_str("|-------|------|-------------|------------------|------------|-----------------|------------|----------------|\n");
+        md.push_str("| Query | Type | Before (ms) | Before (results) | After (ms) | After (results) | Delta (ms) | Delta (results) | Status |\n");
+        md.push_str("|-------|------|-------------|------------------|------------|-----------------|------------|----------------|--------|\n");
 
         for (b, a) in baseline.iter().zip(after.iter()) {
             let delta_ms = a.latency_ms - b.latency_ms;
             let delta_res = a.result_count as i64 - b.result_count as i64;
             let delta_sign_res = if delta_res >= 0 { "+" } else { "" };
+            let b_status = status_label_qr(b);
+            let a_status = status_label_qr(a);
             md.push_str(&format!(
-                "| {} | {} | {:.1} | {} | {:.1} | {} | {:.1} | {}{}{} |\n",
+                "| {} | {} | {:.1} | {} | {:.1} | {} | {:.1} | {}{}{} | {}→{} |\n",
                 truncate(&b.query, 28),
                 b.query_type,
                 b.latency_ms,
@@ -208,6 +250,8 @@ impl DocIndexBenchmark {
                 } else {
                     " (same)"
                 },
+                b_status,
+                a_status,
             ));
         }
 
@@ -259,35 +303,98 @@ impl EmbedBenchmark {
         engine: &graph::GraphEngine,
         _phase: &str,
     ) -> Vec<SemanticResult> {
+        let truth_map = load_ground_truth();
         self.queries
             .iter()
             .map(|q| {
                 let start = Instant::now();
-                // Use search_by_name_typed as a proxy for semantic search
-                // since the full retrieval pipeline requires MCP server context.
-                let els = engine.search_by_name_typed(q, None, 50);
-                let latency = start.elapsed().as_secs_f64() * 1000.0;
-                let count = els.as_ref().map(|v| v.len()).unwrap_or(0);
-                // Ground truth is unknown in synthetic benchmark; use
-                // result_count as a quality proxy (more results = better coverage).
-                let precision = if count > 0 { 1.0 } else { 0.0 };
-                let recall = if count > 0 {
-                    (count as f64 / 50.0).min(1.0)
-                } else {
-                    0.0
+                let term = q.split_once(':').map(|x| x.1).unwrap_or(q);
+
+                #[cfg(feature = "embeddings")]
+                let (retrieved_qns, count, error, success) =
+                    match run_real_semantic(engine, term, 50, 20) {
+                        Ok((qns, _latency, err_opt)) => {
+                            let c = qns.len();
+                            let is_ok = err_opt.is_none();
+                            (qns, c, err_opt, is_ok)
+                        }
+                        Err(e) => (Vec::new(), 0usize, Some(format!("pipeline: {}", e)), false),
+                    };
+
+                #[cfg(not(feature = "embeddings"))]
+                let (retrieved_qns, count, error, success): (
+                    Vec<String>,
+                    usize,
+                    Option<String>,
+                    bool,
+                ) = {
+                    let els = engine.search_by_name_typed(q, None, 50);
+                    let c = els.as_ref().map(|v| v.len()).unwrap_or(0);
+                    (
+                        Vec::new(),
+                        c,
+                        Some("embeddings feature disabled".into()),
+                        false,
+                    )
                 };
-                let f1 = if precision + recall > 0.0 {
-                    2.0 * precision * recall / (precision + recall)
+
+                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+                let (precision, recall, f1, proxy) = if let Some(truth) = truth_map.as_ref() {
+                    let query_key = term.trim().to_lowercase();
+                    let matched_truth = truth.iter().find(|(k, _)| k.to_lowercase() == query_key);
+                    if let Some((_, expected)) = matched_truth {
+                        if !retrieved_qns.is_empty() {
+                            let (p, r, f) = compute_f1(&retrieved_qns, expected);
+                            (p, r, f, false)
+                        } else if cfg!(feature = "embeddings") {
+                            // Real pipeline returned count but we didn't capture QNs.
+                            // Use count-based proxy with ground-truth size.
+                            (0.0, 0.0, 0.0, true)
+                        } else {
+                            (0.0, 0.0, 0.0, true)
+                        }
+                    } else {
+                        // Query not in ground truth; use heuristic proxy.
+                        let p = if count > 0 { 1.0 } else { 0.0 };
+                        let r = if count > 0 {
+                            (count as f64 / 50.0).min(1.0)
+                        } else {
+                            0.0
+                        };
+                        let f = if p + r > 0.0 {
+                            2.0 * p * r / (p + r)
+                        } else {
+                            0.0
+                        };
+                        (p, r, f, true)
+                    }
                 } else {
-                    0.0
+                    // No ground-truth fixture; heuristic proxy.
+                    let p = if count > 0 { 1.0 } else { 0.0 };
+                    let r = if count > 0 {
+                        (count as f64 / 50.0).min(1.0)
+                    } else {
+                        0.0
+                    };
+                    let f = if p + r > 0.0 {
+                        2.0 * p * r / (p + r)
+                    } else {
+                        0.0
+                    };
+                    (p, r, f, true)
                 };
+
                 SemanticResult {
                     query: q.clone(),
-                    latency_ms: latency,
+                    latency_ms,
                     result_count: count,
                     precision,
                     recall,
                     f1_score: f1,
+                    success,
+                    error,
+                    proxy,
                 }
             })
             .collect()
@@ -345,21 +452,25 @@ impl EmbedBenchmark {
         md.push_str(&format!("**Timestamp**: {}\n\n", ts));
 
         md.push_str("## Semantic Search Quality\n\n");
-        md.push_str("| Query | Before (ms) | Before (results) | Before F1 | After (ms) | After (results) | After F1 | Delta (ms) | Delta F1 |\n");
-        md.push_str("|-------|-------------|------------------|-----------|------------|-----------------|----------|------------|----------|\n");
+        md.push_str("| Query | Before (ms) | Before (results) | Before F1 | Before Status | After (ms) | After (results) | After F1 | After Status | Delta (ms) | Delta F1 |\n");
+        md.push_str("|-------|-------------|------------------|-----------|---------------|------------|-----------------|----------|--------------|------------|----------|\n");
 
         for (b, a) in baseline.iter().zip(after.iter()) {
             let delta_ms = a.latency_ms - b.latency_ms;
             let delta_f1 = a.f1_score - b.f1_score;
+            let b_status = status_label(b);
+            let a_status = status_label(a);
             md.push_str(&format!(
-                "| {} | {:.1} | {} | {:.2} | {:.1} | {} | {:.2} | {:.1} | {:.2} |\n",
-                truncate(&b.query, 22),
+                "| {} | {:.1} | {} | {:.2} | {} | {:.1} | {} | {:.2} | {} | {:.1} | {:.2} |\n",
+                truncate(&b.query, 18),
                 b.latency_ms,
                 b.result_count,
                 b.f1_score,
                 a.latency_ms,
                 a.result_count,
                 a.f1_score,
+                b_status,
+                a_status,
                 delta_ms,
                 delta_f1,
             ));
@@ -453,6 +564,97 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Format a short status label for markdown tables: "ok" or "err:…".
+fn status_label(r: &SemanticResult) -> String {
+    if r.success {
+        if r.proxy {
+            "ok*".to_string()
+        } else {
+            "ok".to_string()
+        }
+    } else if let Some(ref e) = r.error {
+        let short = truncate(e, 30);
+        format!("err:{}", short)
+    } else {
+        "err".to_string()
+    }
+}
+
+fn status_label_qr(r: &QueryResult) -> String {
+    if r.success {
+        "ok".to_string()
+    } else if let Some(ref e) = r.error {
+        let short = truncate(e, 30);
+        format!("err:{}", short)
+    } else {
+        "err".to_string()
+    }
+}
+
+/// Load the ground-truth fixture from benchmark/ground_truth.json.
+/// Returns None when the file is missing or malformed.
+fn load_ground_truth() -> Option<HashMap<String, Vec<String>>> {
+    let path = std::path::Path::new("benchmark/ground_truth.json");
+    if !path.exists() {
+        return None;
+    }
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// Compute precision, recall, F1 from retrieved QNs vs ground-truth QNs.
+fn compute_f1(retrieved: &[String], truth: &[String]) -> (f64, f64, f64) {
+    if retrieved.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    if truth.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    let truth_set: std::collections::HashSet<&str> = truth.iter().map(|s| s.as_str()).collect();
+    let mut hits = 0usize;
+    for qn in retrieved {
+        if truth_set.contains(qn.as_str()) {
+            hits += 1;
+        }
+    }
+    let precision = hits as f64 / retrieved.len() as f64;
+    let recall = hits as f64 / truth.len() as f64;
+    let f1 = if precision + recall > 0.0 {
+        2.0 * precision * recall / (precision + recall)
+    } else {
+        0.0
+    };
+    (precision, recall, f1)
+}
+
+/// Run the `SemanticRetrievalPipeline` on a query.
+/// Returns `(retrieved_qns, latency_ms, error)`.
+#[cfg(feature = "embeddings")]
+fn run_real_semantic(
+    engine: &graph::GraphEngine,
+    query: &str,
+    ann_top_k: usize,
+    rerank_top_n: usize,
+) -> Result<(Vec<String>, f64, Option<String>), Box<dyn std::error::Error>> {
+    use crate::retrieval::pipeline::{RetrieveOptions, SemanticRetrievalPipeline};
+
+    let start = Instant::now();
+    let pipeline = SemanticRetrievalPipeline::new(engine.db().clone())?;
+    let opts = RetrieveOptions {
+        env: None,
+        ann_top_k: Some(ann_top_k),
+        rerank_top_n,
+        include_worktrees: false,
+        include_ontology_steps: false,
+        embeddings_stale: false,
+    };
+    let r = pipeline.retrieve(query, &opts)?;
+    let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let qns: Vec<String> = r.seeds.iter().map(|s| s.qualified_name.clone()).collect();
+    Ok((qns, latency_ms, None))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,6 +710,9 @@ mod tests {
             precision: 1.0,
             recall: 0.2,
             f1_score: 0.3333,
+            success: true,
+            error: None,
+            proxy: true,
         }];
         let after = vec![SemanticResult {
             query: "semantic_search:doc indexing".to_string(),
@@ -516,6 +721,9 @@ mod tests {
             precision: 1.0,
             recall: 0.5,
             f1_score: 0.6667,
+            success: true,
+            error: None,
+            proxy: true,
         }];
         let report = bench.generate_embed_report(&baseline, &after, 1200.0);
         assert!(report.contains("Live A/B Benchmark: Embedding"));
@@ -532,6 +740,9 @@ mod tests {
             precision: 0.5,
             recall: 0.4,
             f1_score: 0.4444,
+            success: true,
+            error: None,
+            proxy: true,
         }];
         let after = vec![SemanticResult {
             query: "q1".to_string(),
@@ -540,6 +751,9 @@ mod tests {
             precision: 0.8,
             recall: 0.6,
             f1_score: 0.6857,
+            success: true,
+            error: None,
+            proxy: true,
         }];
         let delta = bench.compute_quality_delta(&baseline, &after);
         assert!(delta.f1_delta > 0.0);
