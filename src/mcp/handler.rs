@@ -2,7 +2,7 @@ use crate::compress::{FileReader, ReadMode, ResponseCompressor};
 use crate::db;
 use crate::db::models::{CodeElement, ContextMetric, KnowledgeEntry, Relationship};
 use crate::db::record_metric;
-use crate::graph::{GraphEngine, ImpactAnalyzer};
+use crate::graph::{export, export_select, GraphEngine, ImpactAnalyzer};
 use crate::mcp::token_budget::TokenBudget;
 use crate::orchestrator::QueryOrchestrator;
 use glob;
@@ -272,6 +272,7 @@ impl ToolHandler {
             "get_overview_context" => self.get_overview_context(arguments),
             "get_pr_impact" => self.get_pr_impact(arguments),
             "export_graph_snapshot" => self.export_graph_snapshot(arguments),
+            "export_html" => self.export_html_handler(arguments),
             "get_graph_report" => self.get_graph_report(arguments),
             "query_graph" => self.query_graph(arguments),
             "shortest_path" => self.shortest_path(arguments),
@@ -1818,6 +1819,41 @@ impl ToolHandler {
         Ok(json!({
             "written": written,
             "path": out.display().to_string(),
+        }))
+    }
+
+    fn export_html_handler(&self, args: &Value) -> Result<Value, String> {
+        let out_path = args["out_path"].as_str().unwrap_or(".leankg/graph.html");
+        let path_prefix = args["path"].as_str();
+        let community = args["community"].as_str();
+        let file_scope = args["file"].as_str();
+        let depth = args["depth"].as_u64().unwrap_or(3) as u32;
+        let max_nodes = args["max_nodes"].as_u64().map(|v| v as usize);
+
+        let (elements, relationships, meta) = export_select::select_elements_and_relationships(
+            &self.graph_engine,
+            path_prefix,
+            community,
+            file_scope,
+            depth,
+            max_nodes,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let exporter = export::HtmlExporter::new();
+        let html = exporter.generate_html_with_meta(&elements, &relationships, &meta);
+
+        let out = std::path::Path::new(out_path);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(out, &html).map_err(|e| e.to_string())?;
+
+        Ok(json!({
+            "path": out.display().to_string(),
+            "nodes": elements.len(),
+            "edges": relationships.len(),
+            "truncated": meta.truncated,
         }))
     }
 

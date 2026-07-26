@@ -1,4 +1,5 @@
 use crate::db::models::{CodeElement, Relationship};
+use crate::graph::export_select::ExportMeta;
 use std::collections::HashMap;
 
 pub struct HtmlExporter;
@@ -24,7 +25,51 @@ impl HtmlExporter {
         let legend = self.generate_legend();
         let search_html = self.generate_search_html();
         let colors_json = self.generate_color_config();
+        let banner = String::new();
 
+        self.render_full_html(
+            &nodes_json,
+            &edges_json,
+            &legend,
+            &search_html,
+            &colors_json,
+            &banner,
+        )
+    }
+
+    pub fn generate_html_with_meta(
+        &self,
+        elements: &[CodeElement],
+        relationships: &[Relationship],
+        meta: &ExportMeta,
+    ) -> String {
+        let nodes_json = self.generate_nodes_json(elements);
+        let edges_json = self.generate_edges_json(relationships);
+        let legend = self.generate_legend();
+        let search_html = self.generate_search_html();
+        let colors_json = self.generate_color_config();
+        let banner = meta.banner_html();
+
+        self.render_full_html(
+            &nodes_json,
+            &edges_json,
+            &legend,
+            &search_html,
+            &colors_json,
+            &banner,
+        )
+    }
+
+    fn render_full_html(
+        &self,
+        nodes_json: &str,
+        edges_json: &str,
+        legend: &str,
+        search_html: &str,
+        colors_json: &str,
+        banner: &str,
+    ) -> String {
+        let vis_bundle = include_str!("../embed/vis-network.min.js");
         format!(
             r#"<!DOCTYPE html>
 <html lang="en">
@@ -32,7 +77,6 @@ impl HtmlExporter {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LeanKG Graph Visualization</title>
-    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
         * {{
             margin: 0;
@@ -151,6 +195,7 @@ impl HtmlExporter {
     </style>
 </head>
 <body>
+    {banner}
     <div id="header">
         <h1>LeanKG Graph</h1>
         {search_html}
@@ -166,103 +211,122 @@ impl HtmlExporter {
     </div>
     <div id="tooltip"></div>
 
+    <script type="text/javascript">{vis_bundle}</script>
     <script type="text/javascript">
-        const nodes = new vis.DataSet({nodes_json});
-        const edges = new vis.DataSet({edges_json});
-        const colors = {colors_json};
-
-        const container = document.getElementById('mynetwork');
-        const data = {{ nodes, edges }};
-        const options = {{
-            nodes: {{
-                shape: 'dot',
-                size: 15,
-                font: {{ color: '#eee', size: 12, face: 'Helvetica' }},
-                borderWidth: 2,
-                shadow: true
-            }},
-            edges: {{
-                width: 1.5,
-                color: {{ color: '#555', highlight: '#e94560' }},
-                arrows: {{ to: {{ enabled: true, scaleFactor: 0.5 }} }},
-                font: {{ color: '#888', size: 10, align: 'middle' }},
-                smooth: {{ type: 'continuous' }}
-            }},
-            physics: {{
-                forceAtlas2Based: {{
-                    gravitationalConstant: -50,
-                    centralGravity: 0.01,
-                    springLength: 150,
-                    springConstant: 0.08,
-                    damping: 0.4
-                }},
-                solver: 'forceAtlas2Based',
-                stabilization: {{ iterations: 100 }}
-            }},
-            interaction: {{
-                hover: true,
-                tooltipDelay: 200,
-                zoomView: true,
-                dragView: true
-            }},
-            groups: {{
-                function: {{ color: {{ background: '#4ecdc4', border: '#45b7aa' }} }},
-                struct: {{ color: {{ background: '#ff6b6b', border: '#ee5a5a' }} }},
-                class: {{ color: {{ background: '#ffd93d', border: '#f0c929' }} }},
-                module: {{ color: {{ background: '#6bcb77', border: '#5ab868' }} }},
-                file: {{ color: {{ background: '#4d96ff', border: '#3d86ef' }} }},
-                interface: {{ color: {{ background: '#c9b1ff', border: '#b8a1ff' }} }},
-                enum: {{ color: {{ background: '#ff9f43', border: '#f08c30' }} }},
-                trait: {{ color: {{ background: '#f8b500', border: '#e0a500' }} }},
-                type: {{ color: {{ background: '#a8e6cf', border: '#95d5ba' }} }},
-                default: {{ color: {{ background: '#888', border: '#666' }} }}
+        (function() {{
+            var errorLog = document.getElementById('error-log') || (function() {{
+                var el = document.createElement('div');
+                el.id = 'error-log';
+                el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#c00;color:#fff;padding:10px;z-index:9999;font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto;';
+                document.body.prepend(el);
+                return el;
+            }})();
+            function logError(msg) {{
+                errorLog.textContent += '[ERROR] ' + msg + '\\n';
+                console.error(msg);
             }}
-        }};
+            function checkGlobal(name) {{
+                var v = window[name];
+                logError(name + '=' + (typeof v) + (v ? ' ok' : ' UNDEFINED'));
+                return v;
+            }}
+            try {{
+                var V = window['vis'];
+                if (!V || typeof V.DataSet !== 'function') {{
+                    logError('vis bundle loaded but DataSet missing');
+                    return;
+                }}
 
-        const network = new vis.Network(container, data, options);
+                var nodesData = {nodes_json};
+                var edgesData = {edges_json};
+                var colors = {colors_json};
 
-        network.on("stabilizationIterationsDone", function() {{
-            network.setOptions({{ physics: {{ enabled: false }} }});
-        }});
+                var nodes = new V.DataSet(nodesData);
+                var edges = new V.DataSet(edgesData);
 
-        network.on("hoverNode", function(params) {{
-            const node = nodes.get(params.node);
-            const tooltip = document.getElementById('tooltip');
-            tooltip.innerHTML = `
-                <h4>${{node.label}}</h4>
-                <p><strong>Type:</strong> <code>${{node.group}}</code></p>
-                <p><strong>File:</strong> <code>${{node.file}}</code></p>
-                <p><strong>Lines:</strong> ${{node.lines ? node.lines[0] : '?'}} - ${{node.lines ? node.lines[1] : '?'}}</p>
-                ${{node.cluster ? `<p><strong>Cluster:</strong> ${{node.cluster}}</p>` : ''}}
-            `;
-            tooltip.style.display = 'block';
-            tooltip.style.left = (params.event.center.x + 10) + 'px';
-            tooltip.style.top = (params.event.center.y + 10) + 'px';
-        }});
+                var container = document.getElementById('mynetwork');
+                if (!container) {{ logError('mynetwork div missing'); return; }}
 
-        network.on("blurNode", function() {{
-            document.getElementById('tooltip').style.display = 'none';
-        }});
+                var data = {{ nodes: nodes, edges: edges }};
+                var options = {{
+                    nodes: {{
+                        shape: 'dot',
+                        size: 15,
+                        font: {{ color: '#eee', size: 12, face: 'Helvetica' }},
+                        borderWidth: 2,
+                        shadow: true
+                    }},
+                    edges: {{
+                        width: 1.5,
+                        color: {{ color: '#555', highlight: '#e94560' }},
+                        arrows: {{ to: {{ enabled: true, scaleFactor: 0.5 }} }},
+                        font: {{ color: '#888', size: 10, align: 'middle' }},
+                        smooth: {{ type: 'continuous' }}
+                    }},
+                    physics: {{
+                        forceAtlas2Based: {{
+                            gravitationalConstant: -50,
+                            centralGravity: 0.01,
+                            springLength: 150,
+                            springConstant: 0.08,
+                            damping: 0.4
+                        }},
+                        solver: 'forceAtlas2Based',
+                        stabilization: {{ iterations: 100 }}
+                    }},
+                    interaction: {{
+                        hover: true,
+                        tooltipDelay: 200,
+                        zoomView: true,
+                        dragView: true
+                    }},
+                    groups: {{
+                        function: {{ color: {{ background: '#4ecdc4', border: '#45b7aa' }} }},
+                        struct: {{ color: {{ background: '#ff6b6b', border: '#ee5a5a' }} }},
+                        class: {{ color: {{ background: '#ffd93d', border: '#f0c929' }} }},
+                        module: {{ color: {{ background: '#6bcb77', border: '#5ab868' }} }},
+                        file: {{ color: {{ background: '#4d96ff', border: '#3d86ef' }} }},
+                        interface: {{ color: {{ background: '#c9b1ff', border: '#b8a1ff' }} }},
+                        enum: {{ color: {{ background: '#ff9f43', border: '#f08c30' }} }},
+                        trait: {{ color: {{ background: '#f8b500', border: '#e0a500' }} }},
+                        type: {{ color: {{ background: '#a8e6cf', border: '#95d5ba' }} }},
+                        default: {{ color: {{ background: '#888', border: '#666' }} }}
+                    }}
+                }};
 
-        document.getElementById('node-count').textContent = nodes.length;
-        document.getElementById('edge-count').textContent = edges.length;
+                var network = new V.Network(container, data, options);
+                network.fit({{ animation: false }});
 
-        const searchInput = document.getElementById('search-input');
-        const filterSelect = document.getElementById('filter-select');
+                network.on("stabilizationIterationsDone", function() {{
+                    network.setOptions({{ physics: {{ enabled: false }} }});
+                    network.fit({{ animation: false }});
+                }});
 
-        function filterNodes() {{
-            const query = searchInput.value.toLowerCase();
-            const filter = filterSelect.value;
+                network.on("hoverNode", function(params) {{
+                    var node = nodes.get(params.node);
+                    var tooltip = document.getElementById('tooltip');
+                    tooltip.innerHTML = [
+                        '<h4>' + node.label + '</h4>',
+                        '<p><strong>Type:</strong> <code>' + node.group + '</code></p>',
+                        '<p><strong>File:</strong> <code>' + (node.file || '') + '</code></p>',
+                        '<p><strong>Lines:</strong> ' + (node.lines ? node.lines[0] + ' - ' + node.lines[1] : '?') + '</p>',
+                        node.cluster ? '<p><strong>Cluster:</strong> ' + node.cluster + '</p>' : ''
+                    ].join('');
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (params.event.center.x + 10) + 'px';
+                    tooltip.style.top = (params.event.center.y + 10) + 'px';
+                }});
 
-            nodes.forEach(function(node) {{
-                const matchesQuery = node.label.toLowerCase().includes(query);
-                const matchesFilter = filter === 'all' || node.group === filter;
-                nodes.update({{ id: node.id, hidden: !(matchesQuery && matchesFilter) }});
-            }});
-        }}
+                network.on("blurNode", function() {{
+                    document.getElementById('tooltip').style.display = 'none';
+                }});
 
-        searchInput.addEventListener('input', filterNodes);
-        filterSelect.addEventListener('change', filterNodes);
+                document.getElementById('node-count').textContent = nodes.length;
+                document.getElementById('edge-count').textContent = edges.length;
+            }} catch(e) {{
+                logError('CAUGHT: ' + e.message + ' | stack: ' + (e.stack || 'none'));
+            }}
+        }})();
     </script>
 </body>
 </html>"#,
@@ -270,13 +334,18 @@ impl HtmlExporter {
             edges_json = edges_json,
             legend = legend,
             search_html = search_html,
-            colors_json = colors_json
+            colors_json = colors_json,
+            banner = banner,
+            vis_bundle = vis_bundle,
         )
     }
 
     fn generate_nodes_json(&self, elements: &[CodeElement]) -> String {
+        // Safety dedupe: any call path that skips export_select still produces unique ids
+        let mut seen = std::collections::HashSet::new();
         let nodes: Vec<serde_json::Value> = elements
             .iter()
+            .filter(|e| seen.insert(&e.qualified_name))
             .map(|e| {
                 let label = e.name.clone();
                 let group = e.element_type.clone();
@@ -309,7 +378,7 @@ impl HtmlExporter {
                     "to": r.target_qualified,
                     "label": r.rel_type,
                     "arrows": "to",
-                    "title": format!("Confidence: {:.2}", r.confidence)
+                    "title": format!("{} Confidence: {:.2}", r.confidence_label(), r.confidence),
                 })
             })
             .collect();
@@ -555,7 +624,7 @@ impl SvgExporter {
     }
 
     fn get_node_color_class(&self, element_type: &str, colors: &HashMap<String, String>) -> String {
-        let color = colors.get(element_type).unwrap_or(&"#888".to_string());
+        let _color = colors.get(element_type).unwrap_or(&"#888".to_string());
         format!("node-{}", element_type)
     }
 }
@@ -837,22 +906,41 @@ fn xml_escape(s: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_html_exporter_generates_valid_html() {
-        let exporter = HtmlExporter::new();
-        let elements = vec![CodeElement {
-            qualified_name: "test.rs::func".to_string(),
-            element_type: "function".to_string(),
-            name: "func".to_string(),
-            file_path: "test.rs".to_string(),
-            line_start: 1,
-            line_end: 10,
+    fn make_element(
+        qualified_name: &str,
+        name: &str,
+        element_type: &str,
+        file_path: &str,
+        line_start: u32,
+        line_end: u32,
+    ) -> CodeElement {
+        CodeElement {
+            qualified_name: qualified_name.to_string(),
+            element_type: element_type.to_string(),
+            name: name.to_string(),
+            file_path: file_path.to_string(),
+            line_start,
+            line_end,
             language: "rust".to_string(),
             parent_qualified: None,
             cluster_id: None,
-            cluster_label: Some("TestCluster".to_string()),
+            cluster_label: None,
             metadata: serde_json::json!({}),
-            ..Default::default()}];
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_html_exporter_generates_valid_html() {
+        let exporter = HtmlExporter::new();
+        let elements = vec![make_element(
+            "test.rs::func",
+            "func",
+            "function",
+            "test.rs",
+            1,
+            10,
+        )];
         let relationships = vec![];
 
         let html = exporter.generate_html(&elements, &relationships);
@@ -866,19 +954,14 @@ mod tests {
     #[test]
     fn test_svg_exporter_generates_valid_svg() {
         let exporter = SvgExporter::new();
-        let elements = vec![CodeElement {
-            qualified_name: "test.rs::func".to_string(),
-            element_type: "function".to_string(),
-            name: "func".to_string(),
-            file_path: "test.rs".to_string(),
-            line_start: 1,
-            line_end: 10,
-            language: "rust".to_string(),
-            parent_qualified: None,
-            cluster_id: None,
-            cluster_label: None,
-            metadata: serde_json::json!({}),
-            ..Default::default()}];
+        let elements = vec![make_element(
+            "test.rs::func",
+            "func",
+            "function",
+            "test.rs",
+            1,
+            10,
+        )];
         let relationships = vec![];
 
         let svg = exporter.generate_svg(&elements, &relationships);
@@ -891,19 +974,14 @@ mod tests {
     #[test]
     fn test_graphml_exporter_generates_valid_graphml() {
         let exporter = GraphMlExporter::new();
-        let elements = vec![CodeElement {
-            qualified_name: "test.rs::func".to_string(),
-            element_type: "function".to_string(),
-            name: "func".to_string(),
-            file_path: "test.rs".to_string(),
-            line_start: 1,
-            line_end: 10,
-            language: "rust".to_string(),
-            parent_qualified: None,
-            cluster_id: None,
-            cluster_label: None,
-            metadata: serde_json::json!({}),
-            ..Default::default()}];
+        let elements = vec![make_element(
+            "test.rs::func",
+            "func",
+            "function",
+            "test.rs",
+            1,
+            10,
+        )];
         let relationships = vec![];
 
         let graphml = exporter.generate_graphml(&elements, &relationships);
@@ -917,19 +995,14 @@ mod tests {
     #[test]
     fn test_neo4j_exporter_generates_valid_cypher() {
         let exporter = Neo4jExporter::new();
-        let elements = vec![CodeElement {
-            qualified_name: "test.rs::func".to_string(),
-            element_type: "function".to_string(),
-            name: "func".to_string(),
-            file_path: "test.rs".to_string(),
-            line_start: 1,
-            line_end: 10,
-            language: "rust".to_string(),
-            parent_qualified: None,
-            cluster_id: None,
-            cluster_label: Some("TestCluster".to_string()),
-            metadata: serde_json::json!({}),
-            ..Default::default()}];
+        let elements = vec![make_element(
+            "test.rs::func",
+            "func",
+            "function",
+            "test.rs",
+            1,
+            10,
+        )];
         let relationships = vec![];
 
         let cypher = exporter.generate_cypher(&elements, &relationships);
@@ -944,5 +1017,25 @@ mod tests {
         assert_eq!(xml_escape("<test>"), "&lt;test&gt;");
         assert_eq!(xml_escape("a & b"), "a &amp; b");
         assert_eq!(xml_escape("\"quote\""), "&quot;quote&quot;");
+    }
+
+    // RC1: generate_nodes_json dedupes qualified_name duplicates
+    #[test]
+    fn test_generate_nodes_json_dedupes_duplicate_ids() {
+        let exporter = HtmlExporter::new();
+        let dup_name = "dup.rs::foo".to_string();
+        let elements = vec![
+            make_element(&dup_name, "foo", "function", "dup.rs", 1, 5),
+            make_element(&dup_name, "foo", "function", "dup.rs", 10, 15),
+        ];
+
+        let json = exporter.generate_nodes_json(&elements);
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.len(),
+            1,
+            "duplicate qualified_name must produce single node"
+        );
+        assert_eq!(parsed[0]["id"], dup_name);
     }
 }
