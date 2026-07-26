@@ -504,10 +504,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             file,
             depth,
+            path,
+            community,
+            max_nodes,
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            export_graph(&output, &format, file.as_deref(), depth, &db_path)?;
+            export_graph(
+                &output,
+                &format,
+                file.as_deref(),
+                depth,
+                path.as_deref(),
+                community.as_deref(),
+                max_nodes,
+                &db_path,
+            )?;
         }
         cli::CLICommand::Annotate {
             element,
@@ -3222,11 +3234,15 @@ async fn start_api_server_async(
     api::start_api_server(port, db_path, require_auth).await
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_graph(
     output: &str,
     format: &str,
     file_scope: Option<&str>,
     depth: u32,
+    path_prefix: Option<&str>,
+    community_id: Option<&str>,
+    max_nodes: usize,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !db_path.exists() {
@@ -3236,56 +3252,90 @@ fn export_graph(
     let db = db::schema::init_db(db_path)?;
     let engine = graph::GraphEngine::new(db);
 
-    let (elements, relationships) = if let Some(file) = file_scope {
-        // Scoped export: BFS traversal from file. We only need a
-        // subset of elements so the per-file BFS is bounded and
-        // materializing it is fine.
-        let mut visited_files = std::collections::HashSet::new();
-        let mut queue = vec![(file.to_string(), 0u32)];
-        let mut scoped_rels = Vec::new();
+    // HTML format uses the shared select helper for scoping + truncation.
+    // Also use it for dot/mermaid when a scope is given.
+    if format == "html" || path_prefix.is_some() || community_id.is_some() || file_scope.is_some() {
+        let max_nodes_opt = if format == "html" {
+            Some(max_nodes)
+        } else {
+            None
+        };
 
-        while let Some((current, d)) = queue.pop() {
-            if d >= depth || !visited_files.insert(current.clone()) {
-                continue;
+        let (elements, relationships, meta) =
+            graph::export_select::select_elements_and_relationships(
+                &engine,
+                path_prefix,
+                community_id,
+                file_scope,
+                depth,
+                max_nodes_opt,
+            )?;
+
+        if format == "html" {
+            let exporter = graph::export::HtmlExporter::new();
+            let html = exporter.generate_html_with_meta(&elements, &relationships, &meta);
+            let out_path = if output == "graph.json" {
+                std::path::PathBuf::from(".leankg/graph.html")
+            } else {
+                std::path::PathBuf::from(output)
+            };
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)?;
             }
-            if let Ok(rels) = engine.get_relationships(&current) {
-                for rel in &rels {
-                    queue.push((rel.target_qualified.clone(), d + 1));
-                }
-                scoped_rels.extend(rels);
-            }
+            std::fs::write(&out_path, &html)?;
+            println!(
+                "Exported {} nodes and {} edges to {} (format: html)",
+                elements.len(),
+                relationships.len(),
+                out_path.display(),
+            );
+            return Ok(());
         }
 
-        let mut scoped_elements: Vec<_> = Vec::new();
-        for_each_with_filter(
-            &engine,
-            |e| visited_files.contains(&e.file_path),
-            |e| {
-                scoped_elements.push(e);
-            },
-        )?;
-        (scoped_elements, scoped_rels)
-    } else if format == "json" {
-        // For full-graph JSON export we stream directly to disk so
-        // peak RAM is O(1) per element, not the 470 MB we used to
-        // hold. Other formats (dot, mermaid) need the full Vec for
-        // their string assembly, so they keep the legacy path which
-        // is already bounded by the existing budget / cache code.
+        let content = match format {
+            "json" => export_json(&elements, &relationships)?,
+            "dot" => export_dot(&elements, &relationships),
+            "mermaid" => export_mermaid(&relationships),
+            _ => {
+                return Err(format!(
+                    "Unknown format '{}'. Supported: json, dot, mermaid, html",
+                    format
+                )
+                .into())
+            }
+        };
+
+        std::fs::write(output, &content)?;
+        println!(
+            "Exported {} nodes and {} edges to {} (format: {})",
+            elements.len(),
+            relationships.len(),
+            output,
+            format
+        );
+        return Ok(());
+    }
+
+    // Legacy path: for full-graph JSON, stream directly.
+    if format == "json" {
         export_json_streaming(output, &engine)?;
         println!("Exported streaming JSON to {}", output);
         return Ok(());
-    } else {
-        (engine.all_elements()?, engine.all_relationships()?)
-    };
+    }
+
+    // Full-graph dot/mermaid (no scope given).
+    let (elements, relationships) = (engine.all_elements()?, engine.all_relationships()?);
 
     let content = match format {
         "json" => export_json(&elements, &relationships)?,
         "dot" => export_dot(&elements, &relationships),
         "mermaid" => export_mermaid(&relationships),
         _ => {
-            return Err(
-                format!("Unknown format '{}'. Supported: json, dot, mermaid", format).into(),
+            return Err(format!(
+                "Unknown format '{}'. Supported: json, dot, mermaid, html",
+                format
             )
+            .into())
         }
     };
 

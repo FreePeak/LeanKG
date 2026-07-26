@@ -382,7 +382,7 @@ pub enum CLICommand {
         /// Output file path
         #[arg(long, default_value = "graph.json")]
         output: String,
-        /// Export format: json, dot, or mermaid
+        /// Export format: json, dot, mermaid, or html
         #[arg(long, default_value = "json")]
         format: String,
         /// Scope export to a specific file's subgraph
@@ -391,6 +391,16 @@ pub enum CLICommand {
         /// Max depth for subgraph traversal (used with --file)
         #[arg(long, default_value = "3")]
         depth: u32,
+        /// Scope export to a path prefix (e.g. "src")
+        #[arg(long)]
+        path: Option<String>,
+        /// Scope export to a community/cluster id
+        #[arg(long)]
+        community: Option<String>,
+        /// Maximum nodes to include (default 5000). On unbound mega-graphs
+        /// without scope, the export refuses.
+        #[arg(long, default_value = "5000")]
+        max_nodes: usize,
     },
     /// Annotate code element with business logic description
     Annotate {

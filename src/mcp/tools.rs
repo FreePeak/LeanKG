@@ -216,6 +216,22 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "export_html".to_string(),
+                description: "US-GF-21: Export knowledge graph as an interactive HTML visualization (vis-network). Supports scoping by file, path prefix, or community cluster, and a maximum-node budget with a truncation banner.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "out_path": {"type": "string", "default": ".leankg/graph.html"},
+                        "project": {"type": "string", "description": "Project path (container path for Docker MCP)"},
+                        "file": {"type": "string", "description": "Scope to a specific file's subgraph"},
+                        "depth": {"type": "integer", "default": 3, "description": "Max depth for file-scoped traversal"},
+                        "path": {"type": "string", "description": "Scope to a path prefix (e.g. src)"},
+                        "community": {"type": "string", "description": "Scope to a community/cluster id"},
+                        "max_nodes": {"type": "integer", "default": 5000, "description": "Maximum nodes before truncation"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "get_pr_impact".to_string(),
                 description: "US-GF-08: PR impact dashboard. Given changed files, returns cluster overlap and severity (LOW / MEDIUM / HIGH). Use to triage merge-order risk before pushing.".to_string(),
                 input_schema: json!({
