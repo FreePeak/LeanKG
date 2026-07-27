@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.15](https://github.com/FreePeak/LeanKG/compare/v0.19.14...v0.19.15) (2026-07-27)
+
+
+### Bug Fixes
+
+* dispatch release.yml from release-please.yml ([c7bebaa](https://github.com/FreePeak/LeanKG/commit/c7bebaa86cd4c860dfc6d23312fde8dad475168d))
+
 ## [0.19.14](https://github.com/FreePeak/LeanKG/compare/v0.19.13...v0.19.14) (2026-07-27)
 
 
