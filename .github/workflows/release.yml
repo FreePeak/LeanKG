@@ -104,6 +104,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARTIFACT: release/${{ matrix.artifact }}
           TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
         run: |
           set -euo pipefail
           # softprops/action-gh-release@v2 fails on workflow_dispatch when
