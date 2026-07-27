@@ -99,10 +99,19 @@ jobs:
           fi
         shell: bash
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          # workflow_dispatch supplies an arbitrary tag; tag-push runs use
-          # github.ref_name (refs/tags/v0.19.12 → v0.19.12).
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          generate_release_notes: true
-          files: release/${{ matrix.artifact }}
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT: release/${{ matrix.artifact }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # softprops/action-gh-release@v2 fails on workflow_dispatch when
+          # github.ref_name == "main" (tries to fetch refs/heads/main as a
+          # release tag and aborts). Use gh CLI directly instead.
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            echo "ERROR: GitHub release for $TAG does not exist. Was release-please.yml run?"
+            exit 1
+          fi
+          # Upload with --clobber so retries overwrite existing assets.
+          gh release upload "$TAG" "$ARTIFACT" --clobber
