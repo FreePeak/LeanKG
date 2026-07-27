@@ -286,9 +286,10 @@ fn archive_extract(
             let archive_stderr = child
                 .stderr
                 .take()
-                .and_then(|mut s| {
+                .map(|mut s| {
                     let mut buf = String::new();
-                    s.read_to_string(&mut buf).ok().map(|_| buf)
+                    let _ = s.read_to_string(&mut buf);
+                    buf
                 })
                 .unwrap_or_default();
             let archive_stderr = if archive_stderr.is_empty() {
