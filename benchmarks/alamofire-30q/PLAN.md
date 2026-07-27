@@ -92,23 +92,69 @@ benchmarks/alamofire-30q/
 
 ### Phase B — LeanKG embeddings
 
-- [ ] Rebuild: `cargo build --release --features embeddings` (in progress)
-- [ ] Re-init Alamofire with Swift `leankg.yaml` patch
-- [ ] `leankg index .` then `leankg embed --wait`
-- [ ] Verify: `leankg status` shows vectors > 0
+- [x] Rebuild: `cargo build --release --features embeddings`
+- [x] Re-init Alamofire with Swift `leankg.yaml` patch
+- [x] `leankg index .` then `leankg embed --wait` (**4,208 vectors**)
+- [x] Verify embed pipeline completed (inventory counter may still show 0 — known quirk)
 
 ### Phase C — Parallel harness
 
 - [x] Add `run_parallel.sh`
-- [x] Pin model via `MODEL=sonnet`
-- [x] N=1 per question
+- [x] Pin model via `MODEL` (default haiku; machine may route to MiniMax)
+- [x] N=1 per question + `Q_PARALLEL=5`
 
 ### Phase D — Execute & report
 
 - [x] Clear stale partial runs (Q01–Q04)
-- [ ] Run parallel 10Q × 3 arms
-- [ ] `aggregate.py` → `alamofire-10q-<DATE>.md` + `.json`
-- [ ] Deliver final comparison table
+- [x] Run parallel 10Q × 3 arms (~3.7 min wall-clock)
+- [x] `aggregate.py` → `alamofire-10q-2026-07-27.md` + `.json`
+- [x] Deliver final comparison table (see Final Report below)
+
+### Phase E — Objective-C LeanKG support (NEW)
+
+Alamofire itself is Swift-first, but LeanKG needs ObjC for real iOS monorepos
+(Swift↔ObjC bridging, RN legacy bridge, mixed pods). Plan:
+
+- [ ] Add `.m` / `.mm` / `.h` to `find_files_sync` + `detect_languages` / `get_language`
+- [ ] Add `tree-sitter-objc` **or** regex `ObjCExtractor` (v0) mirroring `SwiftExtractor`
+- [ ] Wire extractor in `extract_elements_for_file` (classes, categories, protocols, methods, imports)
+- [ ] Extract `@interface` / `@implementation` / `@protocol` / `@property` / message sends as edges
+- [ ] Optional: `@objc` / bridging name candidates on Swift side (later)
+- [ ] Unit fixtures under `tests/fixtures/objc/` + index smoke on a small ObjC sample
+- [ ] Document in `docs/` / AGENTS: ObjC support tier (regex vs AST)
+
+**Out of scope for Alamofire 10Q run** (no `.m` in Alamofire Source). Needed before
+benchmarking mixed iOS apps (e.g. Charts, realm-swift, wikipedia-ios).
+
+### Phase F — Native iOS / protocol deep-dive questions (NEW)
+
+Expand the question bank beyond “how does X work” into **protocol composition**,
+**URLSession/NSObject bridging**, **queue affinity**, and **concurrency**.
+
+- [x] Author `questions-ios-deep.yaml` (15 deep questions: D01–D15)
+- [ ] Run parallel 3-arm bench with `QUESTIONS=questions-ios-deep.yaml` (or merge subset into main set)
+- [ ] Aggregate → `alamofire-ios-deep-<DATE>.{md,json}`
+- [ ] Compare protocol-heavy Qs: graph tools should beat grep on witness / conformer discovery
+
+#### Deep-dive question map
+
+| ID | Category | Focus |
+|----|----------|-------|
+| D01 | Protocol | `URLConvertible` / `URLRequestConvertible` witness defaults |
+| D02 | Protocol | `RequestAdapter` + `RequestRetrier` → `RequestInterceptor` |
+| D03 | Protocol | `ServerTrustEvaluating` + composite pinning |
+| D04 | NativeIOS | `SessionDelegate` as `NSObject` + URLSession callback bridge |
+| D05 | Protocol | `EventMonitor` / multiplex vs closure |
+| D06 | Protocol | `Authenticator` + `AuthenticationCredential` refresh |
+| D07 | NativeIOS | `Protected<T>` + `Lock` / unfair lock |
+| D08 | Protocol | `ResponseSerializer` hierarchy + associated types |
+| D09 | NativeIOS | async/await continuations in `Concurrency.swift` |
+| D10 | Protocol | `RedirectHandler` + `CachedResponseHandler` |
+| D11 | NativeIOS | `Request.State` ↔ `URLSessionTask` lifecycle |
+| D12 | Protocol | `AlamofireExtended` `.af` namespace pattern |
+| D13 | NativeIOS | `WebSocketRequest` / `URLSessionWebSocketTask` |
+| D14 | Protocol | `UploadableConvertible` / multipart uploadables |
+| D15 | NativeIOS | `rootQueue` serial affinity + `RequestSetup` lazy/eager |
 
 ---
 
