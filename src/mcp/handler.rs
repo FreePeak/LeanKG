@@ -2233,6 +2233,7 @@ impl ToolHandler {
         let env = args["env"].as_str().unwrap_or("local");
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
+        let kind = args["kind"].as_str().unwrap_or("all");
 
         // FR-HNSW-D: when the embeddings feature is on AND an embedding
         // index exists, route through CozoDB HNSW (BGE-small-en-v1.5) →
@@ -2241,7 +2242,7 @@ impl ToolHandler {
         // rows), so the tool stays useful on slim installs.
         #[cfg(feature = "embeddings")]
         if embeddings_index_available(self.graph_engine.db()) {
-            return run_hnsw_semantic_search(&self.graph_engine, query, env, limit, offset);
+            return run_hnsw_semantic_search(&self.graph_engine, query, env, limit, offset, kind);
         }
 
         // Always ontology-first + paginated — never load env-wide element dumps.
@@ -2254,6 +2255,22 @@ impl ToolHandler {
             true,
         )
         .map_err(|e| format!("Semantic search failed: {}", e))?;
+
+        // Apply kind filter
+        let mut page = page;
+        let total_estimate = page.results.len();
+        page.results.retain(|e| {
+            if kind == "all" {
+                return true;
+            }
+            match kind {
+                "code" => e.element_type != "document" && e.element_type != "doc_section",
+                "docs" => e.element_type == "document" || e.element_type == "doc_section",
+                _ => true,
+            }
+        });
+        page.total_estimate = page.results.len();
+        page.has_more = page.offset + page.results.len() < total_estimate;
 
         let mut body = crate::ontology::safe_discover::discover_page_to_json(&page);
         if let Some(obj) = body.as_object_mut() {
@@ -4702,6 +4719,7 @@ fn run_hnsw_semantic_search(
     env: &str,
     limit: usize,
     offset: usize,
+    kind: &str,
 ) -> Result<Value, String> {
     use crate::retrieval::{RetrieveOptions, SemanticRetrievalPipeline};
 
@@ -4725,6 +4743,17 @@ fn run_hnsw_semantic_search(
     let seeds_json: Vec<Value> = retrieval
         .seeds
         .iter()
+        .filter(|s| {
+            if kind == "all" {
+                return true;
+            }
+            let et: &str = &s.element_type;
+            match kind {
+                "code" => !matches!(et, "document" | "doc_section"),
+                "docs" => matches!(et, "document" | "doc_section"),
+                _ => true,
+            }
+        })
         .map(|s| {
             json!({
                 "qualified_name": s.qualified_name,

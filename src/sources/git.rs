@@ -1,4 +1,5 @@
 use super::{ProgressReporter, Source};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -41,6 +42,64 @@ impl Source for GitSource {
 
     fn name(&self) -> &str {
         "git"
+    }
+
+    /// Poll remote tip SHA via `git ls-remote` without cloning.
+    async fn remote_fingerprint(
+        &self,
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let fetch_url = maybe_inject_auth(&self.url, self.auth.as_deref());
+        let output = tokio::process::Command::new("git")
+            .args(["ls-remote", &fetch_url, &self.ref_name])
+            .output()
+            .await
+            .map_err(|e| format!("git ls-remote failed: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git ls-remote failed: {}", stderr).into());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // First field of first line is the commit SHA
+        let sha = stdout.split_whitespace().next().unwrap_or("").to_string();
+        if sha.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(sha))
+    }
+
+    /// Materialize content without persistent clone: try `git archive --remote`
+    /// first, fall back to shallow clone.
+    async fn materialize_ephemeral(
+        &self,
+        staging_root: &Path,
+        progress: &mut dyn ProgressReporter,
+    ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+        let dir_name = super::uri_staging_dir(&super::SourceUri::Git {
+            url: self.url.clone(),
+        });
+        let local_dir = staging_root.join(&dir_name);
+
+        let fetch_url = maybe_inject_auth(&self.url, self.auth.as_deref());
+
+        // Try git archive --remote first (no clone, pure HTTP archive)
+        progress.report(&format!(
+            "downloading archive for {} @ {}...",
+            self.url, self.ref_name
+        ));
+        if let Ok(()) = archive_extract(&fetch_url, &self.ref_name, &local_dir, progress) {
+            return Ok(local_dir);
+        }
+
+        // Fall back to shallow clone (still avoids full history)
+        progress.report("archive download failed; falling back to shallow clone");
+        if local_dir.exists() {
+            std::fs::remove_dir_all(&local_dir).ok();
+        }
+        tokio::fs::create_dir_all(&local_dir).await?;
+        clone_repo(&fetch_url, &local_dir, &self.ref_name, progress)?;
+        Ok(local_dir)
     }
 }
 
@@ -185,4 +244,96 @@ fn fetch_and_checkout(
     }
 
     Ok(())
+}
+
+/// Download a git archive (tar) for the given ref and extract it into `dest`.
+/// Uses `git archive --remote` which is a no-clone operation over HTTP/SSH.
+/// Returns Err if the remote does not support git archive or the ref is invalid.
+fn archive_extract(
+    url: &str,
+    ref_name: &str,
+    dest: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if dest.exists() {
+        std::fs::remove_dir_all(dest).map_err(|e| format!("remove old staging: {}", e))?;
+    }
+    std::fs::create_dir_all(dest).map_err(|e| format!("create staging dir: {}", e))?;
+
+    let mut child = std::process::Command::new("git")
+        .args(["archive", "--remote", url, ref_name, "--format=tar"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("git archive --remote spawn failed: {}", e))?;
+
+    let tar_output = std::process::Command::new("tar")
+        .args(["-xC", &dest.to_string_lossy()])
+        .stdin(std::process::Stdio::from(child.stdout.take().unwrap()))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("tar extraction failed: {}", e))?;
+
+    let archive_status = child
+        .wait()
+        .map_err(|e| format!("git archive wait: {}", e))?;
+
+    if !archive_status.success() || !tar_output.status.success() {
+        std::fs::remove_dir_all(dest).ok();
+        let err_msg = if !archive_status.success() {
+            // Read stderr from the child process that has already completed
+            let archive_stderr = child
+                .stderr
+                .take()
+                .map(|mut s| {
+                    let mut buf = String::new();
+                    let _ = s.read_to_string(&mut buf);
+                    buf
+                })
+                .unwrap_or_default();
+            let archive_stderr = if archive_stderr.is_empty() {
+                "git archive failed with unknown error"
+            } else {
+                &archive_stderr
+            };
+            format!("git archive failed: {}", archive_stderr)
+        } else {
+            let stderr = String::from_utf8_lossy(&tar_output.stderr);
+            format!("tar extraction failed: {}", stderr)
+        };
+        return Err(err_msg.into());
+    }
+
+    progress.report(&format!("archive extracted to {}", dest.display()));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_maybe_inject_auth_no_token() {
+        assert_eq!(
+            maybe_inject_auth("https://github.com/user/repo.git", None),
+            "https://github.com/user/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_maybe_inject_auth_with_token() {
+        assert_eq!(
+            maybe_inject_auth("https://github.com/user/repo.git", Some("ghp_token123")),
+            "https://oauth2:ghp_token123@github.com/user/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_maybe_inject_auth_ssh_unchanged() {
+        assert_eq!(
+            maybe_inject_auth("git@github.com:user/repo.git", Some("token")),
+            "git@github.com:user/repo.git"
+        );
+    }
 }
