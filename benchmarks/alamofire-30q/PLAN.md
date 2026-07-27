@@ -282,9 +282,19 @@ patterns, and #import dependency chains — all strengths of graph tools vs grep
 - [x] Clone `repos/typhoon` (appsquickly/Typhoon)
 - [x] Author `questions-typhoon-objc.yaml` (T01–T10, ObjC-specific)
 - [x] Ping test: LeanKG index on Typhoon — **883 files, 4884 elements, 5892 relationships**
-- [ ] Run parallel 3-arm bench (LeanKG / CodeGraph / none)
-- [ ] Aggregate → `typhoon-objc-<DATE>.{md,json}`
-- [ ] Compare: does regex ObjC extractor beat No Graph? Does CodeGraph handle ObjC?
+- [x] Run parallel 3-arm bench (LeanKG / CodeGraph / none)
+- [x] Aggregate → `results/questions-typhoon-objc-2026-07-27.{md,json}`
+- [x] Compare: does regex ObjC extractor beat No Graph? Does CodeGraph handle ObjC?
+
+**Phase G results** (3 arms, N=1, 10 ObjC questions, MiniMax-M3, 626 .m/.h files):
+
+| Arm | Runs | Tools | Time | Reads | Total tok | Cost |
+|-----|------|-------|------|-------|-----------|------|
+| LeanKG | 23 | 10 | 3m20s | 3 | 49.1k | $0.45 |
+| CodeGraph | 23 | 10 | 3m4s | 1 | 45.8k | $0.45 |
+| No Graph | 25 | 13 | 3m53s | 5 | 33.6k | $0.47 |
+
+vs No Graph: LeanKG −14% time, −23% tools, −40% reads, −4% cost. CodeGraph −21% time, −23% tools, −80% reads, −3% cost. 4 runs dropped (exit_code=1). Both graph arms beat No Graph on all efficiency metrics. Regex ObjC extractor holds up — LeanKG wins on structural Qs (T01 protocol chain, T03 factory graph, T06 config injection). CodeGraph wins where model knowledge alone suffices (T05 storyboard, T10 patcher).
 
 #### Typhoon index stats
 | Metric | Value |

@@ -127,7 +127,7 @@ def fmt_pct(a: float | None, b: float | None) -> str:
     return f"{sign}{pct:.0f}%"
 
 
-def build_report(questions: list[dict[str, Any]], runs: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def build_report(questions: list[dict[str, Any]], runs: list[dict[str, Any]], yaml_data: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
     valid_runs = [r for r in runs if r.get("valid")]
     invalid_runs = [r for r in runs if not r.get("valid")]
 
@@ -139,7 +139,9 @@ def build_report(questions: list[dict[str, Any]], runs: list[dict[str, Any]]) ->
     lines.append("# Alamofire 30-Question 3-Way Benchmark Report")
     lines.append("")
     lines.append(f"**Date:** {today}")
-    lines.append(f"**Repo:** Alamofire (Swift, 98 source files, ~20k LOC)")
+    q_repo = (yaml_data or {}).get("repo", "Unknown")
+    q_lang = (yaml_data or {}).get("language", "")
+    lines.append(f"**Repo:** {q_repo}{f' ({q_lang})' if q_lang else ''}")
     lines.append(f"**Method:** `claude -p` headless; 3 arms: LeanKG MCP / CodeGraph MCP / No graph (built-in Read/Grep/Bash)")
     lines.append(f"**Total valid runs:** {len(valid_runs)} | Dropped: {len(invalid_runs)}")
     lines.append("")
@@ -272,7 +274,8 @@ def build_report(questions: list[dict[str, Any]], runs: list[dict[str, Any]]) ->
     lines.append("")
     lines.append("## Methodology")
     lines.append("")
-    lines.append("- 30 architecture questions covering Core, Features, and Extensions layers of Alamofire (Swift).")
+    q_count = len(questions)
+    lines.append(f"- {q_count} architecture questions covering {q_repo}{f' ({q_lang})' if q_lang else ''}.")
     lines.append("- Each arm = `claude -p` headless with `--strict-mcp-config`, `--output-format json`, `--dangerously-skip-permissions`.")
     lines.append("- LeanKG index rebuilt before its arm; CodeGraph index pre-built.")
     lines.append("- N=3 runs per arm per question; median reported.")
@@ -323,7 +326,7 @@ def main() -> int:
     if not runs:
         print(f"warn: no runs found under {args.results}", file=sys.stderr)
 
-    md, payload = build_report(questions, runs)
+    md, payload = build_report(questions, runs, yaml_data=questions_data)
 
     date_stamp = args.date or dt.date.today().isoformat()
     base_name = args.name or f"alamofire-30q-{date_stamp}"

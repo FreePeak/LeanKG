@@ -1,29 +1,29 @@
 # Alamofire 30-Question 3-Way Benchmark Report
 
 **Date:** 2026-07-27
-**Repo:** Alamofire (Swift, 98 source files, ~20k LOC)
+**Repo:** Alamofire (Swift)
 **Method:** `claude -p` headless; 3 arms: LeanKG MCP / CodeGraph MCP / No graph (built-in Read/Grep/Bash)
-**Total valid runs:** 41 | Dropped: 4
+**Total valid runs:** 71 | Dropped: 4
 
 ## Per-Arm Summary (median across 30 questions)
 
 | Arm | Runs | Tool calls | Time | File reads | Input tok | Output tok | Total tok | turns | Cost |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **LeanKG** | 13 | 7 | 2m40s | 2 | 36,800 | 3,033 | 39,833 | 8 | $0.35 |
-| **CodeGraph** | 13 | 7 | 2m19s | 1 | 28,193 | 3,997 | 32,190 | 8 | $0.38 |
-| **No Graph** | 15 | 10 | 3m8s | 4 | 23,654 | 3,227 | 26,881 | 11 | $0.34 |
+| **LeanKG** | 23 | 10 | 3m20s | 3 | 45,681 | 3,459 | 49,140 | 11 | $0.45 |
+| **CodeGraph** | 23 | 10 | 3m4s | 1 | 40,914 | 4,875 | 45,789 | 11 | $0.45 |
+| **No Graph** | 25 | 13 | 3m53s | 5 | 29,941 | 3,637 | 33,578 | 12 | $0.47 |
 
 ## Efficiency Gains vs No Graph (baseline)
 
 | Metric | LeanKG vs None | CodeGraph vs None | LeanKG vs CodeGraph |
 | --- | --- | --- | --- |
-| Total tokens | +48% | +20% | +24% |
-| Input tokens | +56% | +19% | +31% |
-| Wall-clock time | -15% | -26% | +15% |
-| Tool calls | -30% | -30% | +0% |
-| File reads | -50% | -75% | +100% |
-| Cost | +2% | +13% | -10% |
-| Agent turns | -27% | -27% | +0% |
+| Total tokens | +46% | +36% | +7% |
+| Input tokens | +53% | +37% | +12% |
+| Wall-clock time | -14% | -21% | +9% |
+| Tool calls | -23% | -23% | +0% |
+| File reads | -40% | -80% | +200% |
+| Cost | -4% | -3% | -1% |
+| Agent turns | -8% | -8% | +0% |
 
 ## Per-Question Results (median per arm)
 
@@ -195,7 +195,7 @@ _How does Session enqueue work onto rootQueue vs underlying URLSession delegate 
 
 ## Methodology
 
-- 30 architecture questions covering Core, Features, and Extensions layers of Alamofire (Swift).
+- 15 architecture questions covering Alamofire (Swift).
 - Each arm = `claude -p` headless with `--strict-mcp-config`, `--output-format json`, `--dangerously-skip-permissions`.
 - LeanKG index rebuilt before its arm; CodeGraph index pre-built.
 - N=3 runs per arm per question; median reported.
