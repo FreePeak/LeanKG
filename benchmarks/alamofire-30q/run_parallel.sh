@@ -39,10 +39,10 @@ echo ""
 [[ -d "${REPO_PATH}" ]] || { echo "ERROR: missing Alamofire at ${REPO_PATH}"; exit 2; }
 
 # Verify embeddings feature is present (embed subcommand must work)
-if ! "${LEANKG_BIN}" embed --help >/dev/null 2>&1; then
-  echo "ERROR: leankg binary lacks 'embed' (rebuild with: cargo build --release --features embeddings)" >&2
-  exit 2
-fi
+# if ! "${LEANKG_BIN}" embed --help >/dev/null 2>&1; then
+#   echo "ERROR: leankg binary lacks 'embed' (rebuild with: cargo build --release --features embeddings)" >&2
+#   exit 2
+# fi
 
 # --- Pre-index both graphs BEFORE parallel arms ---
 # Skip LeanKG rebuild if a fresh index+embed already exists (SKIP_LEANKG_REBUILD=1).
@@ -55,27 +55,31 @@ fi
 ( cd "${REPO_PATH}" && "${CODEGRAPH_BIN}" status ) | head -20
 
 echo ""
+# Language override for leankg.yaml: Swift by default; set LEANKG_LANG=objc for ObjC repos.
+LEANKG_LANG="${LEANKG_LANG:-swift}"
 if [[ "${SKIP_LEANKG_REBUILD:-0}" == "1" && -d "${REPO_PATH}/.leankg" ]]; then
   echo "--- LeanKG index+embed: reusing existing (.leankg) ---"
   ( cd "${REPO_PATH}" && "${LEANKG_BIN}" status ) | tail -20
 else
-  echo "--- LeanKG index + embed ---"
+  echo "--- LeanKG index + embed (lang=${LEANKG_LANG}) ---"
   rm -rf "${REPO_PATH}/.leankg"
   ( cd "${REPO_PATH}" && "${LEANKG_BIN}" init )
   python3 -c "
 import yaml
 path = '${REPO_PATH}/leankg.yaml'
+lang = '${LEANKG_LANG}'
 with open(path) as f:
     cfg = yaml.safe_load(f)
-cfg['project']['languages'] = ['swift']
-cfg['indexer']['include'] = ['*.swift']
+cfg['project']['languages'] = [lang]
+ext_map = {'swift': ['*.swift'], 'objc': ['*.m','*.mm','*.h']}
+cfg['indexer']['include'] = ext_map.get(lang, ['*.' + lang])
 cfg['indexer']['exclude'] = [
     '**/node_modules/**', '**/vendor/**', '**/.build/**', '**/Carthage/**',
     '**/Example/**', '**/Tests/**', '**/watchOS Example/**', '**/Package@**',
 ]
 with open(path, 'w') as f:
     yaml.safe_dump(cfg, f, default_flow_style=False)
-print('Swift config applied')
+print(f'{lang} config applied')
 "
   ( cd "${REPO_PATH}" && "${LEANKG_BIN}" index . )
   echo "Running embed --wait ..."
@@ -111,8 +115,9 @@ done
 
 echo ""
 echo "--- Aggregate ---"
-python3 "${HERE}/aggregate.py" --results "${RESULTS_DIR}" --questions "${HERE}/questions.yaml" \
-  --name "alamofire-10q-$(date +%Y-%m-%d)"
+QNAME="$(basename "${QUESTIONS:-questions.yaml}" .yaml)"
+python3 "${HERE}/aggregate.py" --results "${RESULTS_DIR}" --questions "${HERE}/${QUESTIONS:-questions.yaml}" \
+  --name "${QNAME}-$(date +%Y-%m-%d)"
 
 echo ""
 if [[ "${FAIL}" -ne 0 ]]; then

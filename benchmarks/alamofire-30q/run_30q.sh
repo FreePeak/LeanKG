@@ -40,7 +40,7 @@ if [[ -z "${CLAUDE_BIN}" ]]; then
 fi
 
 DATE="$(date +%Y-%m-%d)"
-QUESTIONS_YAML="${BENCH_DIR}/questions.yaml"
+QUESTIONS_YAML="${BENCH_DIR}/${QUESTIONS:-questions.yaml}"
 ARM_OUTPUT_DIR="${RESULTS_DIR}/runs/${DATE}/${ARM}"
 mkdir -p "${ARM_OUTPUT_DIR}"
 

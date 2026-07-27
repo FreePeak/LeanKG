@@ -132,9 +132,9 @@ Expand the question bank beyond “how does X work” into **protocol compositio
 **URLSession/NSObject bridging**, **queue affinity**, and **concurrency**.
 
 - [x] Author `questions-ios-deep.yaml` (15 deep questions: D01–D15)
-- [ ] Run parallel 3-arm bench with `QUESTIONS=questions-ios-deep.yaml` (or merge subset into main set)
-- [ ] Aggregate → `alamofire-ios-deep-<DATE>.{md,json}`
-- [ ] Compare protocol-heavy Qs: graph tools should beat grep on witness / conformer discovery
+- [x] Run parallel 3-arm bench with `QUESTIONS=questions-ios-deep.yaml` (or merge subset into main set)
+- [x] Aggregate → `results/questions-ios-deep-2026-07-27.{md,json}`
+- [x] Compare protocol-heavy Qs: graph tools should beat grep on witness / conformer discovery
 
 #### Deep-dive question map
 
@@ -156,9 +156,22 @@ Expand the question bank beyond “how does X work” into **protocol compositio
 | D14 | Protocol | `UploadableConvertible` / multipart uploadables |
 | D15 | NativeIOS | `rootQueue` serial affinity + `RequestSetup` lazy/eager |
 
+**Phase F results** (3 arms, N=1, 15 protocol-heavy questions, MiniMax-M3):
+
+| Arm | Runs | Tools | Time | Reads | Total tok | Cost |
+|-----|------|-------|------|-------|-----------|------|
+| LeanKG | 13 | 7 | 2m40s | 2 | 39.8k | $0.35 |
+| CodeGraph | 13 | 7 | 2m19s | 1 | 32.2k | $0.38 |
+| No Graph | 15 | 10 | 3m8s | 4 | 26.9k | $0.34 |
+
+vs No Graph: LeanKG −15% time, −30% tools, −50% reads, +2% cost. CodeGraph −26% time, −30% tools, −75% reads, +13% cost. 4 runs dropped (exit_code=1). Both graph arms cut time and file reads significantly vs grep; cost is close.
+
+Full report: [`results/questions-ios-deep-2026-07-27.md`](results/questions-ios-deep-2026-07-27.md)
+
 ---
 
 ## Metrics (unchanged)
+
 
 | Metric | Source |
 |--------|--------|
@@ -259,3 +272,50 @@ python3 $BENCH/aggregate.py --results $BENCH/results --questions $BENCH/question
 
 Notes: On this small Swift repo with regex LeanKG, **No Graph sometimes wins tokens/cost**; LeanKG wins wall-clock (−18%) and file reads (−50%) vs none. CodeGraph has fewest file reads (−67%) but higher tokens/cost. N=1 + small corpus → high variance; treat as directional.
 
+
+### Phase G — Typhoon ObjC benchmark (NEW)
+
+Obtain a real ObjC-only repo (Typhoon, DI framework) for a first-pass ObjC extractor
+benchmark. Questions focus on categories, @protocol conformance, method dispatch
+patterns, and #import dependency chains — all strengths of graph tools vs grep.
+
+- [x] Clone `repos/typhoon` (appsquickly/Typhoon)
+- [x] Author `questions-typhoon-objc.yaml` (T01–T10, ObjC-specific)
+- [x] Ping test: LeanKG index on Typhoon — **883 files, 4884 elements, 5892 relationships**
+- [ ] Run parallel 3-arm bench (LeanKG / CodeGraph / none)
+- [ ] Aggregate → `typhoon-objc-<DATE>.{md,json}`
+- [ ] Compare: does regex ObjC extractor beat No Graph? Does CodeGraph handle ObjC?
+
+#### Typhoon index stats
+| Metric | Value |
+|--------|-------|
+| Total ObjC files (.m/.mm/.h) | 626 (263 .m + 363 .h) |
+| Swift files | 6 (examples only) |
+| LeanKG index total files | 883 |
+| LeanKG elements extracted | 4884 |
+| LeanKG relationships | 5892 |
+| Auto-detect | "swift" only (`.m`/`.h` missing from `detect_languages()`) — cosmetic |
+| Extractor wiring | ✅ ObjCExtractor fires on all `.m`/`.mm`/`.h` via `extract_elements_for_file` |
+
+#### Auto-detect gap
+`detect_languages()` in `src/main.rs` doesn't include `.m`, `.mm`, `.h` extensions.
+**Extraction works fine** — `extract_elements_for_file` fires on file extension,
+not on `leankg.yaml` languages list. The `leankg.yaml` languages entry only shows
+"swift" which is cosmetic. Fix would be adding `(".m", "objc")`, `(".h", "objc")`
+to `detect_languages()` ext_lang map.
+
+---
+
+## Repos table
+
+| Repo | Language | Files | Purpose |
+|------|----------|-------|---------|
+| Alamofire | Swift | 118 | 10Q main benchmark |
+| Typhoon | ObjC | 626 | Phase G — ObjC extractor stress test |
+
+## Language Support (updated)
+
+| Language | Status | Notes |
+|----------|--------|-------|
+| **Swift** | YES (regex) | Wired: `find_files_sync`, `get_language`, `detect_languages`, `SwiftExtractor` in `extract_elements_for_file`. Re-index: **118 files, 8001 elements, 289 classes, 4208 embed vectors**. No tree-sitter-swift. |
+| **Objective-C** | **YES (regex v0)** | Wired: `find_files_sync`, `get_language`, `ObjCExtractor` in `extract_elements_for_file` + `index_file_sync`. `.m`/`.mm`/`.h` extensions. Extracts: `@interface` (class), `@implementation`, `@protocol` (interface), `@property`, `-/+` methods, categories, `#import`/`@import`. 4 unit tests. First real bench: Typhoon (~626 .m/.h files). No tree-sitter-objc. Regex v0 — no C functions, blocks, typedef, protocol conformance edges. |
