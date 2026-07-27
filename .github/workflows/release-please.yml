@@ -70,6 +70,7 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           TAG: ${{ steps.release.outputs.tag_name }}
           HTML_URL: ${{ steps.release.outputs.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${VERSION:-}" ]; then
@@ -81,6 +82,21 @@ jobs:
             exit 1
           fi
           echo "Published ${TAG} (${HTML_URL:-})"
+
+          # release-please-action v4 may push a lightweight tag, which does
+          # NOT trigger on.push.tags in release.yml (GitHub quirk).
+          # Replace the ref with an annotated tag object so release.yml fires.
+          TYPE=$(gh api repos/${{ github.repository }}/git/refs/tags/$TAG --jq '.object.type')
+          if [ "$TYPE" = "commit" ]; then
+            SHA=$(gh api repos/${{ github.repository }}/git/refs/tags/$TAG --jq '.object.sha')
+            echo "Converting lightweight tag $TAG to annotated tag (was type=$TYPE)"
+            TAG_OBJ=$(gh api repos/${{ github.repository }}/git/tags \
+              -f tag="$TAG" -f message="Release $TAG" \
+              -f object="$SHA" -f type="commit" --jq '.sha')
+            gh api repos/${{ github.repository }}/git/refs/tags/$TAG \
+              -f sha="$TAG_OBJ" -X PATCH
+            echo "Annotated tag $TAG (object $TAG_OBJ) pushed"
+          fi
 
       - name: Summarize run
         if: always()
