@@ -5671,7 +5671,7 @@ fn run_semantic_context(
         .into());
     }
 
-    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
+    let mut pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
     let opts = retrieval::RetrieveOptions {
         env: Some(env.to_string()),
         ann_top_k: top_k,
@@ -5789,7 +5789,7 @@ fn run_smoke_test(project: &str) -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
+    let mut pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
     let queries = [
         "embedding inference for code elements",
         "how does the reranker score documents",

@@ -4355,7 +4355,10 @@ impl ToolHandler {
     fn kg_semantic_context(&self, args: &Value) -> Result<Value, String> {
         use crate::embeddings as emb;
         use crate::graph::traversal::traverse_seeds;
-        use crate::retrieval::{RetrieveOptions, SemanticRetrievalPipeline};
+        use crate::retrieval::{
+            is_upper_type, score_functions, traverse_to_functions, RetrieveOptions,
+            SemanticRetrievalPipeline, UpperSeed,
+        };
 
         let query = args["query"]
             .as_str()
@@ -4384,7 +4387,7 @@ impl ToolHandler {
         }
 
         let t0 = std::time::Instant::now();
-        let pipeline = SemanticRetrievalPipeline::new(self.graph_engine.db().clone())
+        let mut pipeline = SemanticRetrievalPipeline::new(self.graph_engine.db().clone())
             .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
         let t_pipeline_ms = t0.elapsed().as_millis() as u64;
 
@@ -4453,7 +4456,87 @@ impl ToolHandler {
                 .collect();
         }
 
-        let total_ms = t0.elapsed().as_millis() as u64;
+        // ---- Top-down ontology traversal: upper seeds → functions ----
+        // Same engine as `semantic_search`: high-level seeds (class /
+        // doc / workflow / concept) drive a downward walk to the
+        // function nodes that implement the intent, re-ranked by a
+        // composite embedding of "{upper_name}\n{function_blob}".
+        // The existing additive `traversed` array above is unchanged —
+        // it shows the immediate neighborhood of every seed type; this
+        // new `functions` array is the function-focused deliverable.
+        let mut functions_json: Vec<Value> = Vec::new();
+        let mut func_count_discovered = 0usize;
+        let mut func_count_after_dedup = 0usize;
+        let mut t_functions_ms = 0u64;
+        {
+            let upper_seeds: Vec<UpperSeed> = retrieval
+                .seeds
+                .iter()
+                .filter(|s| is_upper_type(&s.element_type))
+                .map(|s| UpperSeed::with_name(&s.qualified_name, &s.element_type, ""))
+                .collect();
+            if !upper_seeds.is_empty() {
+                let t3 = std::time::Instant::now();
+                let discovered =
+                    traverse_to_functions(&self.graph_engine, &upper_seeds, Some(env.as_str()))
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(
+                                target: "leankg::mcp",
+                                error = %e,
+                                "kg_semantic_context ontology traversal failed"
+                            );
+                            Vec::new()
+                        });
+                func_count_discovered = discovered.len();
+                if !discovered.is_empty() {
+                    let query_vec: Vec<f32> = {
+                        let cached = pipeline.last_query_vector();
+                        if cached.is_empty() {
+                            emb::Embedder::new()
+                                .and_then(|em| em.embed(&[query.to_string()]).map(|v| v[0].clone()))
+                                .unwrap_or_default()
+                        } else {
+                            cached.to_vec()
+                        }
+                    };
+                    let scored = if query_vec.is_empty() {
+                        discovered
+                    } else {
+                        match emb::Embedder::new().and_then(|embedder| {
+                            score_functions(&self.graph_engine, &query_vec, discovered, &embedder)
+                        }) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "leankg::mcp",
+                                    error = %e,
+                                    "kg_semantic_context composite scoring failed"
+                                );
+                                Vec::new()
+                            }
+                        }
+                    };
+                    func_count_after_dedup = scored.len();
+                    functions_json = scored
+                        .iter()
+                        .map(|f| {
+                            json!({
+                                "qualified_name": f.qualified_name,
+                                "element_type": f.element_type,
+                                "file_path": f.file_path,
+                                "env": f.env,
+                                "composite_score": f.composite_score,
+                                "via_upper": f.via_upper,
+                                "via_upper_type": f.via_upper_type,
+                                "via_edge": f.via_edge,
+                                "hop": f.hop,
+                            })
+                        })
+                        .collect();
+                }
+                t_functions_ms = t3.elapsed().as_millis() as u64;
+            }
+        }
 
         let seeds_json: Vec<Value> = retrieval
             .seeds
@@ -4480,6 +4563,7 @@ impl ToolHandler {
             "env": env,
             "seeds": seeds_json,
             "traversed": traversed_json,
+            "functions": functions_json,
         });
 
         if debug {
@@ -4498,11 +4582,17 @@ impl ToolHandler {
                     "capped": traverse_capped,
                     "neighbor_count": total_neighbors,
                 },
+                "ontology_traversal": {
+                    "discovered_function_count": func_count_discovered,
+                    "after_dedup_count": func_count_after_dedup,
+                    "latency_ms": t_functions_ms,
+                },
                 "latency_ms": {
                     "pipeline_init": t_pipeline_ms,
                     "retrieve": t_retrieve_ms,
                     "traverse": t_traverse_ms,
-                    "total": total_ms,
+                    "functions": t_functions_ms,
+                    "total": t0.elapsed().as_millis() as u64,
                 },
             });
             if !edges_json.is_empty() {
@@ -4703,7 +4793,10 @@ fn run_hnsw_semantic_search(
     limit: usize,
     offset: usize,
 ) -> Result<Value, String> {
-    use crate::retrieval::{RetrieveOptions, SemanticRetrievalPipeline};
+    use crate::retrieval::{
+        is_function_target, is_upper_type, score_functions, traverse_to_functions,
+        RetrieveOptions, SemanticRetrievalPipeline, UpperSeed,
+    };
 
     // top_k must be ≥ limit + offset so pagination has headroom.
     let top_k = (limit + offset).max(50);
@@ -4716,16 +4809,126 @@ fn run_hnsw_semantic_search(
         embeddings_stale: false,
     };
 
-    let pipeline = SemanticRetrievalPipeline::new(engine.db().clone())
+    let mut pipeline = SemanticRetrievalPipeline::new(engine.db().clone())
         .map_err(|e| format!("Failed to init HNSW pipeline: {}", e))?;
     let retrieval = pipeline
         .retrieve(query, &opts)
         .map_err(|e| format!("HNSW retrieve failed: {}", e))?;
 
-    let seeds_json: Vec<Value> = retrieval
-        .seeds
+    // ---- Partition reranked seeds by role -----------------------------
+    //   direct_functions: HNSW hits that are themselves functions — keep
+    //     their cross-encoder rerank_score (already well-ranked).
+    //   upper_seeds: HNSW hits that are high-level nodes (class / doc /
+    //     workflow / concept / …) — these become the *origins* of a
+    //     top-down traversal that discovers the functions implementing
+    //     the intent.
+    // Seeds of any other type are dropped from `results` but counted in
+    // diagnostics.
+    let mut direct_functions: Vec<&crate::retrieval::Seed> = Vec::new();
+    let mut upper_seeds_raw: Vec<&crate::retrieval::Seed> = Vec::new();
+    let mut other_dropped = 0usize;
+    for s in &retrieval.seeds {
+        if is_function_target(&s.element_type) {
+            direct_functions.push(s);
+        } else if is_upper_type(&s.element_type) {
+            upper_seeds_raw.push(s);
+        } else {
+            other_dropped += 1;
+        }
+    }
+
+    // ---- Top-down traversal: upper nodes → functions ------------------
+    // For each upper seed, walk down the graph per the per-type
+    // `downward_rule_for` policy (the "ontology distance from that node
+    // type to a function"), collecting function targets. Then re-rank
+    // every discovered function against the original intent with a
+    // *composite* embedding of "{upper_name}\n{function_blob}".
+    let mut traversed_count = 0usize;
+    let mut traversed_after_dedup = 0usize;
+    let mut scored_functions: Vec<crate::retrieval::DiscoveredFunction> = Vec::new();
+    if !upper_seeds_raw.is_empty() {
+        let upper_seeds: Vec<UpperSeed> = upper_seeds_raw
+            .iter()
+            .map(|s| {
+                // Seed has no display-name field; derive a human label
+                // from the qualified_name's trailing segment (e.g.
+                // "src/x.rs::Foo" -> "Foo", "ontology://...:refund:v1"
+                // -> "refund" via UpperSeed's own fallback logic).
+                UpperSeed::with_name(&s.qualified_name, &s.element_type, "")
+            })
+            .collect();
+        let discovered =
+            traverse_to_functions(engine, &upper_seeds, Some(env)).unwrap_or_else(|e| {
+                tracing::warn!(
+                    target: "leankg::mcp",
+                    error = %e,
+                    "semantic_search ontology traversal failed; returning direct hits only"
+                );
+                Vec::new()
+            });
+        traversed_count = discovered.len();
+        if !discovered.is_empty() {
+            // Reuse the query embedding the pipeline already computed so
+            // the intent is embedded exactly once per request.
+            let query_vec: Vec<f32> = {
+                let cached = pipeline.last_query_vector();
+                if !cached.is_empty() {
+                    cached.to_vec()
+                } else {
+                    // Defensive fallback — should not happen after retrieve().
+                    use crate::embeddings::Embedder;
+                    Embedder::new()
+                        .and_then(|em| em.embed(&[query.to_string()]).map(|v| v[0].clone()))
+                        .unwrap_or_default()
+                }
+            };
+            if !query_vec.is_empty() {
+                use crate::embeddings::Embedder;
+                let embedder = Embedder::new().map_err(|e| format!("Embedder init failed: {e}"))?;
+                scored_functions = score_functions(engine, &query_vec, discovered, &embedder)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(
+                            target: "leankg::mcp",
+                            error = %e,
+                            "semantic_search composite scoring failed; keeping traversal order"
+                        );
+                        Vec::new()
+                    });
+            }
+            traversed_after_dedup = scored_functions.len();
+        }
+    }
+
+    // ---- Merge pools (per-pool, then interleave by score) -------------
+    // The two pools use incomparable score scales (cross-encoder vs
+    // cosine), so normalize each pool to [0,1] via min-max and interleave
+    // by the normalized rank. The original score is preserved on each
+    // entry under its source-specific key.
+    let direct_scores: Vec<f32> = direct_functions
         .iter()
-        .map(|s| {
+        .map(|s| s.rerank_score.unwrap_or(0.0))
+        .collect();
+    let (direct_min, direct_max) = min_max(&direct_scores);
+    let trav_scores: Vec<f32> = scored_functions
+        .iter()
+        .map(|f| f.composite_score.unwrap_or(0.0))
+        .collect();
+    let (trav_min, trav_max) = min_max(&trav_scores);
+
+    // Build merged entries with a normalized `rank_score` for ordering.
+    // Dedup by QN: a function present in both pools keeps its DIRECT
+    // entry (cross-encoder is the stronger signal); the traversed
+    // duplicate is recorded as enrichment only.
+    let mut seen_qn: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut merged: Vec<(f32, Value)> = Vec::new();
+
+    for (s, &raw) in direct_functions.iter().zip(direct_scores.iter()) {
+        if !seen_qn.insert(s.qualified_name.clone()) {
+            continue;
+        }
+        let norm = normalize(raw, direct_min, direct_max);
+        merged.push((
+            norm,
             json!({
                 "qualified_name": s.qualified_name,
                 "element_type": s.element_type,
@@ -4733,21 +4936,72 @@ fn run_hnsw_semantic_search(
                 "env": s.env,
                 "ann_distance": s.ann_distance,
                 "rerank_score": s.rerank_score,
+                "composite_score": null,
+                "rank_score": norm,
+                "source": "direct",
+                "via_upper": null,
+                "via_edge": null,
+                "hop": null,
+            }),
+        ));
+    }
+    for (f, &raw) in scored_functions.iter().zip(trav_scores.iter()) {
+        if !seen_qn.insert(f.qualified_name.clone()) {
+            // Already surfaced as a direct hit; skip the traversed dup.
+            continue;
+        }
+        let norm = normalize(raw, trav_min, trav_max);
+        merged.push((
+            norm,
+            json!({
+                "qualified_name": f.qualified_name,
+                "element_type": f.element_type,
+                "file_path": f.file_path,
+                "env": f.env,
+                "ann_distance": null,
+                "rerank_score": null,
+                "composite_score": f.composite_score,
+                "rank_score": norm,
+                "source": "traversed",
+                "via_upper": f.via_upper,
+                "via_edge": f.via_edge,
+                "hop": f.hop,
+            }),
+        ));
+    }
+    // Interleave by normalized rank score, descending.
+    merged.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let results_all: Vec<Value> = merged.into_iter().map(|(_, v)| v).collect();
+    let total_estimate = results_all.len();
+    let page: Vec<Value> = results_all.into_iter().skip(offset).take(limit).collect();
+    let has_more = offset + page.len() < total_estimate;
+
+    // Upper-type seeds that drove the traversal — diagnostic context so
+    // agents can see *which* class / doc / workflow the functions came
+    // from, without polluting the function-focused `results`.
+    let upper_matches: Vec<Value> = upper_seeds_raw
+        .iter()
+        .map(|s| {
+            json!({
+                "qualified_name": s.qualified_name,
+                "element_type": s.element_type,
+                "file_path": s.file_path,
+                "rerank_score": s.rerank_score,
             })
         })
         .collect();
-
-    let total_estimate = seeds_json.len();
-    let page: Vec<Value> = seeds_json.into_iter().skip(offset).take(limit).collect();
-    let has_more = offset + page.len() < total_estimate;
 
     Ok(json!({
         "query": query,
         "env": env,
         "limit": limit,
         "offset": offset,
-        "method": "hnsw+rerank",
+        "method": "hnsw+ontology-traverse",
         "results": page,
+        "upper_matches": upper_matches,
         "total_estimate": total_estimate,
         "has_more": has_more,
         "ann_candidate_count": retrieval.ann_candidate_count,
@@ -4756,7 +5010,47 @@ fn run_hnsw_semantic_search(
             retrieval.reranker_status,
             crate::embeddings::RerankerStatus::Active
         ),
+        "traversal": {
+            "upper_seed_count": upper_seeds_raw.len(),
+            "direct_function_count": direct_functions.len(),
+            "traversed_function_count": traversed_count,
+            "traversed_after_dedup": traversed_after_dedup,
+            "other_dropped": other_dropped,
+        },
     }))
+}
+
+/// Min/max of a non-empty f32 slice; `(0.0, 0.0)` when empty (which makes
+/// [`normalize`] return 1.0 for every element — the safe "all tie at the
+/// top" behaviour for a single-element pool).
+#[cfg(feature = "embeddings")]
+fn min_max(xs: &[f32]) -> (f32, f32) {
+    if xs.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mut lo = f32::INFINITY;
+    let mut hi = f32::NEG_INFINITY;
+    for &x in xs {
+        if x < lo {
+            lo = x;
+        }
+        if x > hi {
+            hi = x;
+        }
+    }
+    (lo, hi)
+}
+
+/// Min-max normalize `x` into [0,1]. When the pool is degenerate
+/// (`max == min`), every element maps to 1.0 so it competes at the top
+/// of the merged ranking rather than being buried.
+#[cfg(feature = "embeddings")]
+fn normalize(x: f32, min: f32, max: f32) -> f32 {
+    if max <= min {
+        return 1.0;
+    }
+    let n = (x - min) / (max - min);
+    n.clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

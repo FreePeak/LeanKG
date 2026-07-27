@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-07-22 — v3.7.15 embed-doc-inventory wave — Wave **2a** honest edges **DONE**; Wave **1c** always-on graph-first hooks **DONE**; Wave **1b** three-verb narrative **DONE**; Wave **0a/0b** ROI link + ui-v2 cutover evidence **DONE**; Wave **1a** MCP hard-delete **DONE**; P2 DOCJOIN Must Have **DONE** (`FR-DOCJOIN-06` open).
+**Last synced:** 2026-07-27 — `FR-SEM-08` ontology-guided top-down traversal in `semantic_search` (+`kg_semantic_context` `functions[]` array) **DONE**. Prior: 2026-07-22 — v3.7.15 embed-doc-inventory wave — Wave **2a** honest edges **DONE**; Wave **1c** always-on graph-first hooks **DONE**; Wave **1b** three-verb narrative **DONE**; Wave **0a/0b** ROI link + ui-v2 cutover evidence **DONE**; Wave **1a** MCP hard-delete **DONE**; P2 DOCJOIN Must Have **DONE** (`FR-DOCJOIN-06` open).
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
 
@@ -38,12 +38,12 @@
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **509** |
+| **Total tracked** | **510** |
 | NOT_DONE | 61 |
 | PENDING | 30 |
 | PARTIAL | 10 |
 | OPEN | 1 |
-| DONE | 403 |
+| DONE | 404 |
 | WONT_DO | 3 |
 | Open work | **102** |
 
@@ -699,6 +699,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-V2-10` | User Story | **DONE** | Must Have | Multi-repo / shared RocksDB HTTP backend for teams | 3.12 Team Knowledge Infrastructure (US-V2) — merged from 'pr… |
 | **P1** | `US-SEM-05` | User Story | **DONE** | Must Have | Exclude UI-bundle / benchmark noise from semantic seeds (embed/assets + src/benchmark gate… | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) |
 | **P1** | `FR-SEM-06` | FR | **DONE** | Must Have | Path filter: always drop embed/assets/; query-gate src/benchmark/ unless query contains be… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P1** | `FR-SEM-08` | FR | **DONE** | Should Have | Ontology-guided top-down traversal in `semantic_search` (+`kg_semantic_context`): upper seeds (class/doc/workflow/concept) walk down to function targets via per-type `downward_rule_for`, re-ranked by composite embed `"{upper_name}\n{func_blob}"`; per-pool normalize + merge; `code_refs` fallback for ontology nodes. See `docs/plans/2026-07-27-semantic-search-ontology-traversal.md`. | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P1** | `FR-MG-AUTO-01` | FR | **DONE** | Must Have | LEANKG_SKIP_FRESHNESS_CHECK=1 skips MCP auto-index; document mega-graph 6g/3g/cpus6 + AUTO… | 5.17 Mega-graph MCP auto-index + embed ops (v3.7.3) |
 | **P1** | `FR-OPS-EMBED-CPU` | FR | **DONE** | Must Have | Compose envelope: cpus 6, mem_reservation 3g; MCP mem_limit 6g; embed mem_limit 10g | 5.17 Mega-graph MCP auto-index + embed ops (v3.7.3) |
 | **P2** | `FR-01 to FR-07` | FR | **DONE** | Should Have | Code Indexing and Dependency Graph | 5.1 Core Features (DONE) |
