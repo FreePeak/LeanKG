@@ -17,9 +17,22 @@ on:
 permissions:
   contents: write
 
+# Cancel any older release.yml run for the same tag so manual re-dispatch
+# (after the auto-dispatch from release-please) does not race the build
+# matrix and double-attach assets.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   publish-crates:
     runs-on: ubuntu-latest
+    # crates.io rejects re-publishing an existing version. An older release
+    # run (or a manual retry after the tag was created by release-please)
+    # will hit this and the whole workflow run turns red, even though all
+    # four binary builds succeeded and uploaded assets. Don't poison the
+    # overall status for a cosmetic crates.io step.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
