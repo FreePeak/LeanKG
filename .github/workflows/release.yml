@@ -53,12 +53,25 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${CRATE_VERSION#v}"
-          echo "Checking crates.io for leankg ${VERSION}…"
+          echo "Publishing leankg ${VERSION} (Cargo.toml says $(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2))"
+          # Idempotency: skip when the version is already on crates.io.
+          # crates.io requires a User-Agent or it returns 403, so set one
+          # explicitly.
           STATUS=$(curl -fsSL -A "leankg-release-ci" -o /dev/null -w '%{http_code}' \
             "https://crates.io/api/v1/crates/leankg/${VERSION}" || true)
           if [ "$STATUS" = "200" ]; then
-            echo "leankg ${VERSION} already published — skipping."
+            echo "leankg ${VERSION} already on crates.io — skipping."
             exit 0
+          fi
+          # If Cargo.toml's version disagrees with the tag (e.g. the tag
+          # was pushed before release-please bumped Cargo.toml, or this is
+          # a manual retry against an older tag), patch Cargo.toml to match
+          # the tag so `cargo publish` doesn't try to re-publish the
+          # previously released version.
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "Cargo.toml version ${CARGO_VERSION} != tag ${VERSION}; patching Cargo.toml"
+            sed -i.bak "0,/^version = \"${CARGO_VERSION}\"/s//version = \"${VERSION}\"/" Cargo.toml
           fi
           echo "Not on crates.io (HTTP ${STATUS}); publishing leankg ${VERSION}"
           cargo publish --allow-dirty
