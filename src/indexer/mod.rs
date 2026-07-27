@@ -4,6 +4,7 @@ pub mod extractor;
 pub mod git;
 pub mod git_workspace;
 pub mod microservice;
+pub mod objc;
 pub mod parser;
 pub mod process_processor;
 pub mod regex_cache;
@@ -254,7 +255,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let mut files = Vec::new();
     let extensions = [
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod", "xml", "dart", "swift",
+        "mod", "xml", "dart", "swift", "m", "mm", "h",
     ];
     let config_files = [
         "package.json",
@@ -354,6 +355,7 @@ fn get_language(file_path: &str) -> Option<&'static str> {
         "kt" | "kts" => Some("kotlin"),
         "dart" => Some("dart"),
         "swift" => Some("swift"),
+        "m" | "mm" | "h" => Some("objc"),
         _ => None,
     }
 }
@@ -418,6 +420,17 @@ fn extract_elements_for_file(
     // Swift: regex-based extractor (no tree-sitter-swift binding yet).
     if file_path.ends_with(".swift") {
         let extractor = crate::indexer::swift::SwiftExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
+    }
+
+    // Objective-C: regex-based v0 extractor for .m, .mm, .h.
+    if file_path.ends_with(".m") || file_path.ends_with(".mm") || file_path.ends_with(".h") {
+        let extractor = crate::indexer::objc::ObjCExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         return Ok(ParsedFile {
             element_count: elements.len(),
@@ -984,6 +997,8 @@ pub fn index_file_sync(
         "kotlin"
     } else if file_path.ends_with(".dart") {
         "dart"
+    } else if file_path.ends_with(".m") || file_path.ends_with(".mm") || file_path.ends_with(".h") {
+        "objc"
     } else {
         return Ok(0);
     };

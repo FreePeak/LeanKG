@@ -115,13 +115,13 @@ benchmarks/alamofire-30q/
 Alamofire itself is Swift-first, but LeanKG needs ObjC for real iOS monorepos
 (Swift↔ObjC bridging, RN legacy bridge, mixed pods). Plan:
 
-- [ ] Add `.m` / `.mm` / `.h` to `find_files_sync` + `detect_languages` / `get_language`
-- [ ] Add `tree-sitter-objc` **or** regex `ObjCExtractor` (v0) mirroring `SwiftExtractor`
-- [ ] Wire extractor in `extract_elements_for_file` (classes, categories, protocols, methods, imports)
-- [ ] Extract `@interface` / `@implementation` / `@protocol` / `@property` / message sends as edges
-- [ ] Optional: `@objc` / bridging name candidates on Swift side (later)
-- [ ] Unit fixtures under `tests/fixtures/objc/` + index smoke on a small ObjC sample
-- [ ] Document in `docs/` / AGENTS: ObjC support tier (regex vs AST)
+- [x] Add `.m` / `.mm` / `.h` to `find_files_sync` + `detect_languages` / `get_language`
+- [x] Add `tree-sitter-objc` **or** regex `ObjCExtractor` (v0) mirroring `SwiftExtractor`
+- [x] Wire extractor in `extract_elements_for_file` (classes, categories, protocols, methods, imports)
+- [x] Extract `@interface` / `@implementation` / `@protocol` / `@property` / message sends as edges
+- [x] Optional: `@objc` / bridging name candidates on Swift side (later) — deferred
+- [x] Unit fixtures under `tests/fixtures/objc/` + index smoke on a small ObjC sample
+- [x] Document in `docs/` / AGENTS: ObjC support tier (regex vs AST)
 
 **Out of scope for Alamofire 10Q run** (no `.m` in Alamofire Source). Needed before
 benchmarking mixed iOS apps (e.g. Charts, realm-swift, wikipedia-ios).
@@ -231,7 +231,7 @@ python3 $BENCH/aggregate.py --results $BENCH/results --questions $BENCH/question
 | Language | Status | Notes |
 |----------|--------|-------|
 | **Swift** | YES (regex) | Wired: `find_files_sync`, `get_language`, `detect_languages`, `SwiftExtractor` in `extract_elements_for_file`. Re-index: **118 files, 8001 elements, 289 classes, 4208 embed vectors**. No tree-sitter-swift. |
-| **Objective-C** | **NOT supported** | No `.m`/`.mm` in find_files, no extractor, no tree-sitter-objc. Not needed for Alamofire (Swift-only) benchmark. |
+| **Objective-C** | **YES (regex v0)** | Wired: `find_files_sync`, `get_language`, `ObjCExtractor` in `extract_elements_for_file` + `index_file_sync`. `.m`/`.mm`/`.h` extensions. Extracts: `@interface` (class), `@implementation`, `@protocol` (interface), `@property`, `-/+` methods, categories, `#import`/`@import`. 4 unit tests in `indexer::objc::tests`. No tree-sitter-objc. Regex v0 — no C functions, blocks, typedef, protocol conformance edges. Not needed for Alamofire (Swift-only) benchmark — ready for mixed iOS apps next. |
 
 ## Speed Optimizations Applied
 
