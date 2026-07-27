@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.14](https://github.com/FreePeak/LeanKG/compare/v0.19.13...v0.19.14) (2026-07-27)
+
+
+### Bug Fixes
+
+* move tag-annotation step to release-please.yml (correct workflow) ([a88a948](https://github.com/FreePeak/LeanKG/commit/a88a9488676611b632f99c4830a4829292f91295))
+
 ## [0.19.13](https://github.com/FreePeak/LeanKG/compare/v0.19.12...v0.19.13) (2026-07-27)
 
 
