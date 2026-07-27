@@ -76,6 +76,22 @@ get_download_url() {
     echo "https://github.com/$REPO/releases/download/v${version}/${BINARY_NAME}-${platform}.tar.gz"
 }
 
+# Resolve the actual asset URL via the GitHub API. Returns the asset id
+# URL (Accept: application/octet-stream redirects to browser_download_url).
+# Empty string means the asset is not attached to this release.
+get_asset_url() {
+    local version="$1"
+    local platform="$2"
+    local asset_name="${BINARY_NAME}-${platform}.tar.gz"
+    if ! command -v jq > /dev/null 2>&1; then
+        return 1
+    fi
+    curl -fsSL "https://api.github.com/repos/$REPO/releases/tags/v${version}" \
+        | jq -r --arg n "$asset_name" \
+                 '.assets[]? | select(.name == $n) | .url' \
+        | head -1
+}
+
 get_installed_version() {
     local binary_path="${INSTALL_DIR}/${BINARY_NAME}"
     if [ -x "$binary_path" ]; then
@@ -86,7 +102,20 @@ get_installed_version() {
 }
 
 get_latest_version() {
-    curl -fsSL "$GITHUB_API" | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 | sed 's/v//'
+    # Pick the newest release that has at least one attached asset. Newer
+    # tags with zero assets (e.g. v0.19.5–v0.19.12 from a broken release
+    # pipeline) would otherwise 404 every installer.
+    if command -v jq > /dev/null 2>&1; then
+        curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=20" \
+            | jq -r '[.[] | select(.assets | length > 0)] | .[0].tag_name' \
+            | sed 's/v//'
+    else
+        curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=20" \
+            | grep -oE '"tag_name": "[^"]*"|"name": "[^"]*\.(tar\.gz|zip)"' \
+            | awk 'NR%2{tag=$0} /tar\.gz|zip/{if(tag){print tag; tag=""}}' \
+            | head -1 \
+            | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4 | sed 's/v//'
+    fi
 }
 
 check_for_updates() {
@@ -148,8 +177,14 @@ update_binary() {
 
     echo "Updating LeanKG for ${platform}..."
 
-    local url
+    local url asset_url
     url=$(get_download_url "$platform" "$latest")
+    asset_url=$(get_asset_url "$latest" "$platform" || true)
+    if [ -z "$asset_url" ]; then
+        echo "ERROR: no ${BINARY_NAME}-${platform}.tar.gz attached to v${latest}." >&2
+        echo "Try again later or check https://github.com/$REPO/releases/tag/v${latest}" >&2
+        return 1
+    fi
 
     echo "Downloading from $url..."
 
@@ -162,7 +197,7 @@ update_binary() {
     }
     trap cleanup EXIT
 
-    curl -fsSL -o "$tar_path" "$url"
+    curl -fsSL -H "Accept: application/octet-stream" -o "$tar_path" "$asset_url"
 
     mkdir -p "$INSTALL_DIR"
 
@@ -193,8 +228,14 @@ install_binary() {
 
     echo "Installing LeanKG for ${platform}..."
 
-    local url
+    local url asset_url
     url=$(get_download_url "$platform" "$latest")
+    asset_url=$(get_asset_url "$latest" "$platform" || true)
+    if [ -z "$asset_url" ]; then
+        echo "ERROR: no ${BINARY_NAME}-${platform}.tar.gz attached to v${latest}." >&2
+        echo "Try again later or check https://github.com/$REPO/releases/tag/v${latest}" >&2
+        return 1
+    fi
 
     echo "Downloading v$latest from $url..."
 
@@ -207,7 +248,7 @@ install_binary() {
     }
     trap cleanup EXIT
 
-    curl -fsSL -o "$tar_path" "$url"
+    curl -fsSL -H "Accept: application/octet-stream" -o "$tar_path" "$asset_url"
 
     mkdir -p "$INSTALL_DIR"
 

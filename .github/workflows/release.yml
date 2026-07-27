@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on version tags like v1.0.0, v0.0.1
+  # Manual retry: re-run the build/upload for an already-released tag.
+  # Used when release-please pushed a lightweight tag (no `push` event
+  # would fire and binaries were never attached), or when the build
+  # failed after the GitHub Release was created (binaries missing).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish binaries for (e.g. v0.19.11)'
+        required: true
 
 permissions:
   contents: write
@@ -60,6 +69,15 @@ jobs:
           cp -r dist/* ../src/embed/
           test -f ../src/embed/index.html
           grep -q '<title>LeanKG</title>' ../src/embed/index.html
+          # RC3 guard: src/graph/export.rs `include_str!`s vis-network.min.js.
+          # Fail loudly at the UI-build step (not deep inside `cargo build`)
+          # when the Vite build no longer emits it.
+          if ! test -f ../src/embed/vis-network.min.js; then
+            echo "ERROR: vis-network.min.js missing from ui-v2 build."
+            echo "  src/graph/export.rs:72 requires it via include_str!."
+            echo "  Add vis-network to ui-v2/package.json deps or vendor a copy here."
+            exit 1
+          fi
           printf '%s\n' '{"ui":"ui-v2","source":"release.yml"}' > ../src/embed/ui-build.json
 
       - name: Build
@@ -74,10 +92,17 @@ jobs:
           fi
           cp target/${{ matrix.target }}/release/leankg$EXT release/leankg
           tar -czf release/${{ matrix.artifact }} -C release leankg
+          # Sanity: refuse to upload a zero-byte artifact (catches tar/empty-target bugs).
+          if [ ! -s "release/${{ matrix.artifact }}" ]; then
+            echo "ERROR: release/${{ matrix.artifact }} is empty"
+            exit 1
+          fi
         shell: bash
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          # workflow_dispatch supplies an arbitrary tag; tag-push runs use
+          # github.ref_name (refs/tags/v0.19.12 → v0.19.12).
+          tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: release/${{ matrix.artifact }}
