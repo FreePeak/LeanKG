@@ -411,6 +411,8 @@ Doc/Traceability tools: `get_files_for_doc`, `get_doc_structure`, `get_traceabil
 
 PRD-in-KG tools (v3.8.0): `index_prd` (parse PRD markdown into KG), `get_feature_flow` (FR → workflow → steps → code_refs forward chain), `get_traceability_matrix` (PO-facing FR coverage matrix)
 
+**`semantic_search` (FR-SEM-08):** NL → functions via `method: "hnsw+ontology-traverse"`. HNSW + cross-encoder rerank, then high-level seeds (class / doc / workflow / concept) drive an **ontology-guided top-down traversal** to the function targets, re-ranked by a composite embed of `"{upper_name}\n{func_blob}"`. Two pools (direct = cross-encoder `rerank_score`; traversed = `composite_score` + `via_upper`/`via_edge`/`hop`) are normalized and merged by `rank_score`. Each result carries `source: "direct" | "traversed"`. `kg_semantic_context` exposes the same discovered functions in a sibling `functions[]` array (its additive `traversed[]` neighborhood is unchanged). See `docs/plans/2026-07-27-semantic-search-ontology-traversal.md`.
+
 **Doc↔code prefer-order (v3.7.13):** `search_by_requirement` / `get_traceability` for `FR-*` / `US-*` IDs → `get_files_for_doc` / `find_related_docs` (after `mcp_index_docs`, canonical `docs/…` paths) → `concept_search` / `kg_trace_workflow` → `semantic_search` → `search_code`.
 
 Cluster tools: `get_clusters`, `get_cluster_context`
@@ -427,4 +429,4 @@ See `docs/implementation-feature-verification-2026-03-25.md` for test results.
 
 ---
 
-*Last updated: 2026-07-24*
+*Last updated: 2026-07-27*

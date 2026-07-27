@@ -140,7 +140,8 @@ These tools ship only when LeanKG is built with `--features embeddings`. They ad
 
 | Tool | Description |
 |------|-------------|
-| `kg_semantic_context` | Vector retrieve → rerank → traverse. Best for natural-language questions where keyword search misses (e.g., 'where do we validate access rights'). Returns ranked seed nodes plus 1-2 hop graph context. |
+| `semantic_search` | Natural-language → functions. HNSW vector retrieve → cross-encoder rerank → **ontology-guided top-down traversal**: high-level seeds (class / doc / workflow / concept) walk *down* to the function nodes that implement the intent, re-ranked by a composite embedding of `"{upper_name}\n{function_blob}"`. Returns a merged, deduplicated function list. Each result carries `source: "direct"` (HNSW + cross-encoder) or `source: "traversed"` (composite-scored), plus `via_upper` / `via_edge` / `hop` for traversed hits. |
+| `kg_semantic_context` | Vector retrieve → rerank → traverse. Best for natural-language questions where keyword search misses (e.g., 'where do we validate access rights'). Returns ranked seed nodes, 1-2 hop additive `traversed[]` neighborhood, **and a `functions[]` array** of composite-scored functions discovered by the same ontology-guided top-down traversal as `semantic_search`. |
 | `embed_control` | US-EMBED-05: arm/disarm in-process day-2 embed when boot FG is off. Actions: `on` (idle-gated Incremental resume, default `mode=partial`), `off` (cooperative cancel), `status` (`mode`, `vectors_existing`, `skipped_fresh`, `armed`/`waiting_idle`/`running`/`paused_yield`). Does not wipe existing RocksDB vectors. |
 
 Setup (one-time):
@@ -153,17 +154,21 @@ cargo run --release --features embeddings -- embed               # build the emb
 Then call from any MCP client:
 
 ```json
-{ "tool": "kg_semantic_context", "arguments": { "query": "where is refund failure handled" } }
+{ "tool": "semantic_search", "arguments": { "query": "where is refund failure handled", "project": "/workspace" } }
 ```
 
-Optional arguments: `env` (default `local`), `top_k` (default 50), `rerank_top_n` (default 10), `traverse` (default true), `include_worktrees` (default false), `debug` (default false).
+`semantic_search` arguments: `query` (required), `env` (default `local`), `limit` (default 20), `offset` (default 0), `project`.
+`kg_semantic_context` arguments: `query` (required), `env` (default `local`), `top_k` (default 50), `rerank_top_n` (default 10), `traverse` (default true), `include_worktrees` (default false), `debug` (default false).
 
-Response shape (debug=false): `{ query, env, seeds[], traversed[] }`. With `debug=true`: adds `diagnostics` with reranker status, candidate counts, per-stage latency, and the edges traversed.
+Response shape:
+- `semantic_search`: `{ query, env, limit, offset, method: "hnsw+ontology-traverse", results[], upper_matches[], total_estimate, has_more, ann_candidate_count, ann_top_k_used, reranker_active, traversal }`. Each `results[]` entry has `qualified_name`, `element_type`, `file_path`, `source`, `rank_score`, and either `rerank_score` (direct) or `composite_score` + `via_upper`/`via_edge`/`hop` (traversed). The two pools are normalized to `[0,1]` and interleaved by `rank_score`.
+- `kg_semantic_context` (debug=false): `{ query, env, seeds[], traversed[], functions[] }`. With `debug=true`: adds `diagnostics` with reranker status, candidate counts, per-stage latency (incl. `functions`), and the edges traversed.
 
 Behavior notes:
 - If the reranker fails to load, the tool silently falls back to ANN-order top-N (Q4 option A). `diagnostics.reranker = "fallback_ann"` surfaces this.
 - If the embedding index is older than the last `index` run, `diagnostics.embeddings_stale = true` (still serves, just warns).
 - Worktree scratch copies (`.worktrees/`, `.claude/worktrees/`, `.opencode/worktrees/`) are filtered out by default to avoid duplicate-noise results.
+- The top-down traversal reuses the already-embedded query vector (no second embed call per request). For `domain_entity` / `workflow` / `workflow_step` upper seeds whose code links live in `metadata.code_refs` rather than DB edges, it falls back to keyed path-prefix resolution (same path as `concept_search`) — no full-table scan.
 
 ## Auto-Indexing
 
