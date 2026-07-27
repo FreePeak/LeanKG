@@ -83,9 +83,10 @@ jobs:
           fi
           echo "Published ${TAG} (${HTML_URL:-})"
 
-          # release-please-action v4 may push a lightweight tag, which does
-          # NOT trigger on.push.tags in release.yml (GitHub quirk).
-          # Replace the ref with an annotated tag object so release.yml fires.
+          # release-please-action v4 creates tags via the GitHub API, not via
+          # `git push`. API-created tags do NOT fire `on.push.tags` events,
+          # so release.yml never runs on a normal release-please release.
+          # Annotate when possible AND explicitly trigger release.yml.
           TYPE=$(gh api repos/${{ github.repository }}/git/refs/tags/$TAG --jq '.object.type')
           if [ "$TYPE" = "commit" ]; then
             SHA=$(gh api repos/${{ github.repository }}/git/refs/tags/$TAG --jq '.object.sha')
@@ -95,8 +96,11 @@ jobs:
               -f object="$SHA" -f type="commit" --jq '.sha')
             gh api repos/${{ github.repository }}/git/refs/tags/$TAG \
               -f sha="$TAG_OBJ" -X PATCH
-            echo "Annotated tag $TAG (object $TAG_OBJ) pushed"
           fi
+          # Always dispatch release.yml — tag annotation alone does not
+          # trigger it (no `git push` happened).
+          echo "Dispatching release.yml for $TAG"
+          gh workflow run release.yml --ref main -f tag="$TAG"
 
       - name: Summarize run
         if: always()
