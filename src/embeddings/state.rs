@@ -289,26 +289,38 @@ pub fn upsert_fresh(db: &CozoDb, updates: &[FreshRow]) -> Result<(), Box<dyn std
     }
     let now = now_iso();
     for chunk in updates.chunks(UPSERT_CHUNK) {
-        let rows: Vec<String> = chunk
+        // Parameterized import (DataValue) instead of string-interpolating
+        // qualified_name / content_hash into a Datalog query. A QN containing
+        // characters that serde_json::Value::String emits raw (e.g. non-ASCII
+        // bytes, backslashes, control chars) broke the CozoDB query parser at
+        // a fixed byte offset mid-batch. import_relations skips script parsing
+        // entirely, matching the safe path already used by upsert_vectors.
+        use cozo::DataValue;
+        let rows: Vec<Vec<DataValue>> = chunk
             .iter()
             .map(|u| {
-                let key_i64 = u.usearch_key as i64;
-                format!(
-                    "[{}, {}, {}, {}, {}]",
-                    serde_json::Value::String(u.qualified_name.clone()),
-                    serde_json::Value::Number(key_i64.into()),
-                    serde_json::Value::String(u.content_hash.clone()),
-                    serde_json::Value::String("fresh".to_string()),
-                    serde_json::Value::String(now.clone()),
-                )
+                vec![
+                    DataValue::Str(u.qualified_name.as_str().into()),
+                    DataValue::from(u.usearch_key as i64),
+                    DataValue::Str(u.content_hash.as_str().into()),
+                    DataValue::Str("fresh".into()),
+                    DataValue::Str(now.as_str().into()),
+                ]
             })
             .collect();
-        let values_clause = rows.join(", ");
-        let query = format!(
-            r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
-               :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
+        let named_rows = cozo::NamedRows::new(
+            vec![
+                "qualified_name".to_string(),
+                "usearch_key".to_string(),
+                "content_hash".to_string(),
+                "state".to_string(),
+                "embedded_at".to_string(),
+            ],
+            rows,
         );
-        crate::db::schema::run_script(db, &query, Default::default())?;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("embedding_state".to_string(), named_rows);
+        db.import_relations(map)?;
     }
     Ok(())
 }
