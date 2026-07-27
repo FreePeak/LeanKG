@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.16](https://github.com/FreePeak/LeanKG/compare/v0.19.15...v0.19.16) (2026-07-27)
+
+
+### Bug Fixes
+
+* force bash shell for gh release upload step ([b69b69d](https://github.com/FreePeak/LeanKG/commit/b69b69d96ff6ab4e1c1a748c2c22314ee59697a6))
+* replace softprops with gh release upload in release.yml ([cbc8c26](https://github.com/FreePeak/LeanKG/commit/cbc8c26466ec9436ad75d392a22c536e1beecbca))
+
 ## [0.19.15](https://github.com/FreePeak/LeanKG/compare/v0.19.14...v0.19.15) (2026-07-27)
 
 
