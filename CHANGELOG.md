@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.12](https://github.com/FreePeak/LeanKG/compare/v0.19.11...v0.19.12) (2026-07-27)
+
+
+### Features
+
+* remote source indexing + hot-reload + doc semantic refresh ([#126](https://github.com/FreePeak/LeanKG/issues/126)) ([bc108a2](https://github.com/FreePeak/LeanKG/commit/bc108a292b5a07cc02b2aa33cd94d40c8aa72162))
+
 ## [0.19.11](https://github.com/FreePeak/LeanKG/compare/v0.19.10...v0.19.11) (2026-07-26)
 
 
