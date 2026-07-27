@@ -2119,6 +2119,24 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | US-TEST-ED-01 | Must Have (**P1**) | Full unit + TempDir integration for every FR in this revision |
 | US-TEST-ED-02 | Must Have (**P1**) | Live MCP tests on `/workspace` fixture + `/workspace-other` mega with evidence reports |
 
+### 3.25 Remote source indexing (US-SRC) — v3.7.16 **P2**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-SRC-01 | Must Have (**P2**) | As an operator, I index internal GitLab repos without a local clone; auth via `GITLAB_TOKEN` or `--auth` |
+| US-SRC-02 | Must Have (**P2**) | As an operator, I index GCS buckets into the knowledge graph using OAuth bearer tokens |
+| US-SRC-WATCH-01 | Must Have (**P2**) | As an operator, `leankg watch --source git+https://...` polls for changes and re-indexes without `git clone`/`git pull` |
+| US-SRC-WATCH-02 | Must Have (**P2**) | As an operator, `leankg watch --source gs://...` polls GCS and delta-downloads only changed objects |
+| US-SRC-WATCH-03 | Must Have (**P2**) | Watch state survives restart (`.leankg/source_watch_state.json`) |
+
+### 3.26 Doc semantic refresh + kind filter (US-REFRESH) — v3.7.16 **P2**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-REFRESH-01 | Must Have (**P2**) | As ops, I run `leankg refresh` to index code + docs + embed in one shot |
+| US-REFRESH-02 | Must Have (**P2**) | As ops, I run `leankg index-docs <path>` as a CLI command (not only MCP) |
+| US-REFRESH-03 | Must Have (**P2**) | As an agent, `semantic_search(..., kind=docs)` returns `document`/`doc_section` hits without code noise |
+
 
 ### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
 
@@ -2159,6 +2177,38 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-TEST-ED-03 | Must Have | Live mega: `embed_control(project=)` routing + inventory coverage |
 | FR-TEST-ED-04 | Must Have | Tracker rows NOT_DONE until REL-065..068 attached |
 | REL-068 | Must Have | Master report linking unit + live sections |
+
+### 5.28 Remote source indexing (FR-SRC) — v3.7.16 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SRC-GIT-01 | Must Have | Git source auth resolves `--auth` → `GITLAB_TOKEN` → `GIT_TOKEN` before falling back to public/anonymous |
+| FR-SRC-GIT-02 | Must Have | Git `clone` / `pull` for HTTPS injects token as `https://oauth2:<token>@host/...`; SSH unchanged |
+| FR-SRC-GIT-03 | Must Have | Incremental index from remote source does not double-sync (sync once, then index staging without re-entering `source_uri`) |
+| FR-SRC-GCS-01 | Must Have | `gs://` source indexes into graph via OAuth bearer token (`GCS_ACCESS_TOKEN` env or `--auth`); emulator via `STORAGE_EMULATOR_HOST` |
+| FR-SRC-GCS-02 | Must Have | CLI help honestly documents OAuth-only GCS auth; no false claims of service-account JSON support |
+| REL-SRC-01 | Must Have | E2e test: `index --source gs://...` populates file/function elements in graph (fake-gcs emulator) |
+
+### 5.29 Remote source hot-reload (FR-SRC-WATCH) — v3.7.16 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SRC-WATCH-01 | Must Have | `Source` trait gains `remote_fingerprint()` and `materialize_ephemeral()` for watch-mode without persistent clone |
+| FR-SRC-WATCH-02 | Must Have | GitLab/git watch detects tip change via `git ls-remote`; materializes via repository archive download (no `git clone`/`pull`) |
+| FR-SRC-WATCH-03 | Must Have | GCS watch detects object changes via generation/etag listing; materializes delta download only |
+| FR-SRC-WATCH-04 | Must Have | `leankg watch --source URI --interval N` polls remote, runs incremental index + optional embed on change |
+| FR-SRC-WATCH-05 | Must Have | Watch state persisted in `.leankg/source_watch_state.json` so restarts do not re-index unchanged content |
+| REL-SRC-WATCH-01 | Must Have | E2e: change file in fake-gcs → watch cycle re-indexes changed content only |
+
+### 5.30 Doc semantic refresh + kind filter (FR-REFRESH + FR-DOCEMBED-04 fix) — v3.7.16 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCEMBED-04 | Must Have | `semantic_search` accepts a `kind=docs` parameter that filters results to `document` / `doc_section` types so NL doc discovery is not drowned by code hits |
+| FR-REFRESH-01 | Must Have | `leankg refresh` runs code index + docs index + embed in one command; default types include `document,doc_section` |
+| FR-REFRESH-02 | Must Have | `leankg index-docs [path]` CLI command exists (not only MCP `mcp_index_docs`) |
+| US-REFRESH-01 | Must Have | As ops, I run one command to fully index and embed both code and docs |
+| REL-REFRESH-01 | Must Have | Live smoke: `refresh --wait` → `semantic_search(..., kind=docs)` returns doc hits for known phrases on `/workspace` |
 
 
 ---

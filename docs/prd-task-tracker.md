@@ -188,6 +188,35 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 9 | `REL-066` | **DONE** | Mega perf embed coverage |
 | 10 | `REL-067` | **DONE** | Mega inventory evidence |
 | 11 | `REL-068` | **DONE** | Master test report |
+| 12 | `FR-DOCEMBED-04` | **PARTIAL** | semantic_search kind=docs filter for doc hits without code noise |
+| 13 | `FR-REFRESH-01` | **DONE** | leankg refresh: index code → index docs → embed in one command |
+
+## P2 — Remote source indexing (v3.7.16 — NEW)
+
+> Narrative: [`prd.md`](prd.md) §3.25 / §5.28–5.30.
+
+| # | ID | Status | Intent |
+|--:|----|--------|--------|
+| 1 | `FR-SRC-GIT-01` | **DONE** | Git auth resolves --auth → GITLAB_TOKEN → GIT_TOKEN |
+| 2 | `FR-SRC-GIT-02` | **DONE** | HTTPS token injection as oauth2:<token>@host |
+| 3 | `FR-SRC-GIT-03` | **DONE** | Fix incremental remote double-sync |
+| 4 | `FR-SRC-GCS-01` | **DONE** | gs:// index into graph via OAuth bearer token |
+| 5 | `FR-SRC-GCS-02` | **DONE** | Honest CLI help for GCS auth |
+| 6 | `REL-SRC-01` | **NOT_DONE** | E2e: index --source gs:// populates graph (fake-gcs) |
+| 7 | `FR-SRC-WATCH-01` | **DONE** | Source trait: remote_fingerprint + materialize_ephemeral |
+| 8 | `FR-SRC-WATCH-02` | **DONE** | Git watch via ls-remote + archive download |
+| 9 | `FR-SRC-WATCH-03` | **DONE** | GCS watch via etag listing + delta download |
+| 10 | `FR-SRC-WATCH-04` | **DONE** | leankg watch --source URI --interval N |
+| 11 | `FR-SRC-WATCH-05` | **DONE** | Watch state persisted in .leankg/source_watch_state.json |
+| 12 | `REL-SRC-WATCH-01` | **NOT_DONE** | E2e: fake-gcs change → watch re-indexes |
+| 13 | `US-SRC-01` | **DONE** | Index internal GitLab repos with GITLAB_TOKEN |
+| 14 | `US-SRC-02` | **DONE** | Index GCS buckets into graph |
+| 15 | `US-SRC-WATCH-01` | **DONE** | leankg watch --source git+https:// for polling |
+| 16 | `US-SRC-WATCH-02` | **DONE** | leankg watch --source gs:// for polling |
+| 17 | `US-REFRESH-01` | **DONE** | leankg refresh one-shot index+embed |
+| 18 | `US-REFRESH-02` | **DONE** | leankg index-docs CLI command |
+| 19 | `US-REFRESH-03` | **DONE** | semantic_search kind=docs filter |
+| 20 | `REL-REFRESH-01` | **NOT_DONE** | Live smoke: refresh → kind=docs returns doc hits |
 
 ## Graph Engineering backlog (P2 — after P1 waves)
 
@@ -275,6 +304,27 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `REL-SRC-01` | Release | **DONE** | Should Have | E2e: index --source gs:// populates graph | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `FR-SRC-WATCH-01` | FR | **DONE** | Should Have | Source trait: remote_fingerprint + materialize_ephemeral | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-02` | FR | **DONE** | Should Have | Git watch via ls-remote + archive download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-04` | FR | **DONE** | Should Have | leankg watch --source URI --interval N | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-05` | FR | **DONE** | Should Have | Watch state persisted in .leankg/source_watch_state.json | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `REL-SRC-WATCH-01` | Release | **NOT_DONE** | Should Have | E2e: fake-gcs change → watch re-indexes | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-DOCEMBED-04` | FR | **DONE** | Should Have | semantic_search kind=docs filter for doc-only hits | 5.30 Doc semantic refresh (FR-REFRESH) |
+| **P2** | `FR-REFRESH-01` | FR | **DONE** | Should Have | leankg refresh: index code → index docs → embed | 5.30 Doc semantic refresh (FR-REFRESH) |
+| **P2** | `FR-REFRESH-02` | FR | **DONE** | Should Have | leankg index-docs CLI command | 5.30 Doc semantic refresh (FR-REFRESH) |
+| **P2** | `US-REFRESH-01` | User Story | **DONE** | Should Have | leankg refresh one-shot index+embed | 3.26 Doc semantic refresh (US-REFRESH) |
+| **P2** | `US-REFRESH-02` | User Story | **DONE** | Should Have | leankg index-docs CLI command | 3.26 Doc semantic refresh (US-REFRESH) |
+| **P2** | `US-REFRESH-03` | User Story | **DONE** | Should Have | semantic_search kind=docs filter | 3.26 Doc semantic refresh (US-REFRESH) |
+| **P2** | `US-SRC-01` | User Story | **DONE** | Should Have | Index internal GitLab repos with GITLAB_TOKEN | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-02` | User Story | **DONE** | Should Have | Index GCS buckets into graph | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-WATCH-01` | User Story | **DONE** | Should Have | leankg watch --source git+https:// polling | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-WATCH-02` | User Story | **DONE** | Should Have | leankg watch --source gs:// polling | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-WATCH-03` | User Story | **DONE** | Should Have | Watch state survives restart | 3.25 Remote source indexing (US-SRC) |
 | **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
@@ -413,6 +463,27 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `REL-SRC-01` | Release | **DONE** | Should Have | E2e: index --source gs:// populates graph | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `FR-SRC-WATCH-01` | FR | **DONE** | Should Have | Source trait: remote_fingerprint + materialize_ephemeral | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-02` | FR | **DONE** | Should Have | Git watch via ls-remote + archive download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-04` | FR | **DONE** | Should Have | leankg watch --source URI --interval N | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-SRC-WATCH-05` | FR | **DONE** | Should Have | Watch state persisted in .leankg/source_watch_state.json | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `REL-SRC-WATCH-01` | Release | **NOT_DONE** | Should Have | E2e: fake-gcs change → watch re-indexes | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `FR-DOCEMBED-04` | FR | **DONE** | Should Have | semantic_search kind=docs filter for doc-only hits | 5.30 Doc semantic refresh (FR-REFRESH) |
+| **P2** | `FR-REFRESH-01` | FR | **DONE** | Should Have | leankg refresh: index code → index docs → embed | 5.30 Doc semantic refresh (FR-REFRESH) |
+| **P2** | `FR-REFRESH-02` | FR | **DONE** | Should Have | leankg index-docs CLI command | 5.30 Doc semantic refresh (FR-REFRESH) |
+| **P2** | `US-REFRESH-01` | User Story | **DONE** | Should Have | leankg refresh one-shot index+embed | 3.26 Doc semantic refresh (US-REFRESH) |
+| **P2** | `US-REFRESH-02` | User Story | **DONE** | Should Have | leankg index-docs CLI command | 3.26 Doc semantic refresh (US-REFRESH) |
+| **P2** | `US-REFRESH-03` | User Story | **DONE** | Should Have | semantic_search kind=docs filter | 3.26 Doc semantic refresh (US-REFRESH) |
+| **P2** | `US-SRC-01` | User Story | **DONE** | Should Have | Index internal GitLab repos with GITLAB_TOKEN | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-02` | User Story | **DONE** | Should Have | Index GCS buckets into graph | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-WATCH-01` | User Story | **DONE** | Should Have | leankg watch --source git+https:// polling | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-WATCH-02` | User Story | **DONE** | Should Have | leankg watch --source gs:// polling | 3.25 Remote source indexing (US-SRC) |
+| **P2** | `US-SRC-WATCH-03` | User Story | **DONE** | Should Have | Watch state survives restart | 3.25 Remote source indexing (US-SRC) |
 | **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `US-DOCJOIN-02` | User Story | **DONE** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-01` | User Story | **DONE** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
