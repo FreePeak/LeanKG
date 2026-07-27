@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           VERSION="${CRATE_VERSION#v}"
           echo "Checking crates.io for leankg ${VERSION}…"
-          STATUS=$(curl -fsSL -o /dev/null -w '%{http_code}' \
+          STATUS=$(curl -fsSL -A "leankg-release-ci" -o /dev/null -w '%{http_code}' \
             "https://crates.io/api/v1/crates/leankg/${VERSION}" || true)
           if [ "$STATUS" = "200" ]; then
             echo "leankg ${VERSION} already published — skipping."
