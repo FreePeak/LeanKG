@@ -46,6 +46,13 @@ jobs:
     name: Release Please
     runs-on: ubuntu-latest
     steps:
+      # `gh workflow run` reads .git/ to resolve the default ref. Without
+      # a checkout the dispatch fails with "fatal: not a git repository"
+      # and release.yml never fires for the auto-created tag.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Release Please
         id: release
         uses: googleapis/release-please-action@v4
