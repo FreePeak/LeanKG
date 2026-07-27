@@ -254,7 +254,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let mut files = Vec::new();
     let extensions = [
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod", "xml", "dart",
+        "mod", "xml", "dart", "swift",
     ];
     let config_files = [
         "package.json",
@@ -353,6 +353,7 @@ fn get_language(file_path: &str) -> Option<&'static str> {
         "java" => Some("java"),
         "kt" | "kts" => Some("kotlin"),
         "dart" => Some("dart"),
+        "swift" => Some("swift"),
         _ => None,
     }
 }
@@ -406,6 +407,17 @@ fn extract_elements_for_file(
 
     if file_path.ends_with(".tf") {
         let extractor = crate::indexer::TerraformExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
+    }
+
+    // Swift: regex-based extractor (no tree-sitter-swift binding yet).
+    if file_path.ends_with(".swift") {
+        let extractor = crate::indexer::swift::SwiftExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         return Ok(ParsedFile {
             element_count: elements.len(),

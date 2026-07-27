@@ -1270,6 +1270,7 @@ fn detect_languages(root: &str, languages: &mut Vec<String>) {
         (".java", "java"),
         (".kt", "kotlin"),
         (".kts", "kotlin"),
+        (".swift", "swift"),
     ];
 
     for (ext, lang) in ext_lang {
