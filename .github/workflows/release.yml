@@ -141,12 +141,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # softprops/action-gh-release@v2 fails on workflow_dispatch when
-          # github.ref_name == "main" (tries to fetch refs/heads/main as a
-          # release tag and aborts). Use gh CLI directly instead.
+          # Ensure the GitHub Release page exists. release-please creates it
+          # for auto-tags; a manually-pushed annotated tag (or a workflow_dispatch
+          # retry of a tag whose release-please PR was opened before this
+          # check existed) leaves no release page and `gh release upload`
+          # silently no-ops or errors out depending on auth scope. Create-if-
+          # missing is idempotent: if the release already exists, gh exits 1
+          # but we ignore it via the || true.
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            echo "ERROR: GitHub release for $TAG does not exist. Was release-please.yml run?"
-            exit 1
+            echo "Creating GitHub Release $TAG (no release page yet)"
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              > /dev/null || true
+            if ! gh release view "$TAG" > /dev/null 2>&1; then
+              echo "ERROR: GitHub release for $TAG still does not exist after create attempt"
+              exit 1
+            fi
           fi
           # Upload with --clobber so retries overwrite existing assets.
           gh release upload "$TAG" "$ARTIFACT" --clobber
