@@ -329,3 +329,52 @@ to `detect_languages()` ext_lang map.
 |----------|--------|-------|
 | **Swift** | YES (regex) | Wired: `find_files_sync`, `get_language`, `detect_languages`, `SwiftExtractor` in `extract_elements_for_file`. Re-index: **118 files, 8001 elements, 289 classes, 4208 embed vectors**. No tree-sitter-swift. |
 | **Objective-C** | **YES (regex v0)** | Wired: `find_files_sync`, `get_language`, `ObjCExtractor` in `extract_elements_for_file` + `index_file_sync`. `.m`/`.mm`/`.h` extensions. Extracts: `@interface` (class), `@implementation`, `@protocol` (interface), `@property`, `-/+` methods, categories, `#import`/`@import`. 4 unit tests. First real bench: Typhoon (~626 .m/.h files). No tree-sitter-objc. Regex v0 — no C functions, blocks, typedef, protocol conformance edges. |
+
+---
+
+## Phase H — Semantic Search Rebuild + Re-benchmark (BOTH repos)
+
+All prior benchmark runs (10Q Alamofire, 15Q iOS deep-dive, 10Q Typhoon) were
+**effectively "no graph"** for the LeanKG arm because:
+
+1. Binary was built **without `--features embeddings`** — `leankg embed` subcommand missing.
+2. **`mcp_tool_count: 0` in all init events** — the LeanKG MCP server was attached
+   but no `mcp__*` tools were discovered by claude. All actual tool calls were
+   `Bash` + `Read` + `Grep` — identical to the "none" arm.
+
+Phase H fixes this end-to-end: rebuild with embeddings, verify MCP tool discovery,
+re-run all 3 question sets against the fixed LeanKG, and compare.
+
+### Todo
+
+- [ ] Rebuild binary: `cargo build --release --features embeddings` in worktree
+- [ ] Fix MCP tool discovery: verify `mcp_tool_count > 0` in init event
+- [ ] Add `MCP_SMOKE_CHECK=1` mode to `run_one_q.sh` — abort run if `mcp_tool_count == 0`
+- [ ] Re-index + re-embed Alamofire (Swift, with embeddings)
+- [ ] Re-index + re-embed Typhoon (ObjC, with embeddings)
+- [ ] Run Phase H-1: Alamofire 10Q (questions.yaml) — 3 arms with semantic_search
+- [ ] Run Phase H-2: Alamofire iOS deep-dive 15Q (questions-ios-deep.yaml)
+- [ ] Run Phase H-3: Typhoon ObjC 10Q (questions-typhoon-objc.yaml)
+- [ ] Aggregate all 3 → compare Phase H results vs pre-H (no-semantic) results
+- [ ] Update Language Support table with "with embeddings" stats
+
+### Expected improvements
+
+| Metric | Pre-H (no MCP tools) | Post-H (semantic_search active) |
+|--------|----------------------|--------------------------------|
+| MCP tool calls | 0 | >0 per run |
+| File reads | ~3–5 (bash+grep) | ~1–2 (MCP direct) |
+| Wall-clock | Bash/Read heavy | MCP direct access |
+| Answer quality | Model prior only | Graph-backed |
+
+### Questions map (re-use existing YAMLs)
+
+| Set | YAML | Repo | Questions | Language |
+|-----|------|------|-----------|----------|
+| H-1 | `questions.yaml` | Alamofire | 10 core | Swift |
+| H-2 | `questions-ios-deep.yaml` | Alamofire | 15 deep-dive | Swift |
+| H-3 | `questions-typhoon-objc.yaml` | Typhoon | 10 ObjC | Objective-C |
+
+Total: 35 questions × 3 arms = 105 agent calls. Estimated wall-clock: ~10–15 min
+at Q_PARALLEL=8 with warm index+embed.
+
