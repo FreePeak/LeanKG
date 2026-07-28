@@ -33,6 +33,10 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # Required for `gh workflow run release.yml` after a tag is created.
+  # Without this, Verify release output fails with HTTP 403
+  # "Resource not accessible by integration".
+  actions: write
 
 # Allow only one release run at a time; cancel duplicate runs that
 # arrived while the previous run was still processing. This avoids
