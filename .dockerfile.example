@@ -51,7 +51,25 @@ LEANKG_MCP_PROJECT=/workspace
 #   IFS=',' read -ra DIRS <<< "$LEANKG_PROJECT_DIRS"
 # so each entry must be separated by `,` (spaces are NOT separators).
 # Omit or leave blank to let the entrypoint fall back to a /workspace* glob.
-LEANKG_PROJECT_DIRS=/workspace
+# When unset, the entrypoint's /workspace* glob picks up /workspace + every
+# side mount below (e.g. /workspace/be, /workspace/freepeak).
+LEANKG_PROJECT_DIRS=
+
+# Side mounts: extra repos the MCP server indexes on boot alongside the
+# primary HOST_PROJECT_PATH. The compose file uses neutral container-path
+# defaults (/workspace/other, /workspace/other2). Override here (gitignored)
+# to your own nicknames so the compose bind mounts match what entrypoint.sh
+# expects.
+#
+# HOST_PROJECT_SIDE_PATH=/path/to/your/other-repo
+# CONTAINER_PROJECT_SIDE_PATH=/workspace/other
+# HOST_PROJECT_SECOND_SIDE_PATH=/path/to/your/another-repo
+# CONTAINER_PROJECT_SECOND_SIDE_PATH=/workspace/other2
+
+# Optional explicit comma-separated list of container paths to index. Most
+# setups can leave this unset and rely on the /workspace* glob fallback.
+# Example with two side repos:
+#   LEANKG_PROJECT_DIRS=/workspace,/workspace/other,/workspace/other2
 
 # Embed (optional overrides — compose/Dockerfile already set safe defaults).
 # Local MCP mem_limit is 2g (PRD Local survival). Offline embed job keeps a

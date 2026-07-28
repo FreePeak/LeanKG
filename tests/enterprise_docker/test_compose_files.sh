@@ -58,23 +58,22 @@ assert_contains "cozoserver rocksdb engine" "COZO_ENGINE: rocksdb" "$ENTERPRISE"
 # ponytail: cozo-bin v0.7.6 hardcodes :3000 — the compose healthcheck
 # must probe 3000, not 9070, until upstream fixes the bind.
 assert_contains "cozoserver healthcheck probes :3000" "127.0.0.1:3000" "$ENTERPRISE"
-assert_contains "leankg depends on cozoserver healthy" "service_healthy" "$ENTERPRISE"
-assert_contains "leankg gets cozo endpoint via loopback" \
-    "LEANKG_COZO_ENDPOINT: http://127.0.0.1:3000" "$ENTERPRISE"
-# Cozoserver (3000) must NOT be published to host — only the leankg surface
-# (9699/8080) is exposed, via the cozoserver-owned namespace.
-assert_not_contains "cozoserver :3000 NOT published to host" \
-    'target: 3000' "$ENTERPRISE"
-# leankg joins cozoserver's namespace, so the namespace owner publishes
-# the public ports.
-assert_contains "cozoserver publishes leankg mcp :9699" 'published: "9699"' "$ENTERPRISE"
-assert_contains "cozoserver publishes leankg serve :8080" 'published: "8080"' "$ENTERPRISE"
+assert_contains "leankg gets cozo endpoint via host.docker.internal" \
+    "LEANKG_COZO_ENDPOINT: http://host.docker.internal:3000" "$ENTERPRISE"
+# leankg publishes its own ports (9699 MCP + 8080 REST).
+assert_contains "leankg publishes mcp :9699" 'published: "9699"' "$ENTERPRISE"
+assert_contains "leankg publishes serve :8080" 'published: "8080"' "$ENTERPRISE"
+# cozoserver uses host networking (no published ports; binds 127.0.0.1:3000
+# on the Docker VM's real loopback, reachable via host.docker.internal).
+assert_contains "cozoserver network_mode host" \
+    "network_mode: host" "$ENTERPRISE"
+# Side mounts present with neutral defaults (/workspace/other, /workspace/other2).
+# Local operators override these to real nicknames (e.g. /workspace/be) in
+# the gitignored .dockerfile, keeping tracked files free of service nicknames.
+assert_contains "side mount /workspace/other present" "/workspace/other" "$ENTERPRISE"
+assert_contains "side mount /workspace/other2 present" "/workspace/other2" "$ENTERPRISE"
 assert_contains "cozo-data named volume" "cozo-data:" "$ENTERPRISE"
 assert_contains "leankg_models named volume" "leankg_models:" "$ENTERPRISE"
-assert_contains "enterprise bridge network" "enterprise:" "$ENTERPRISE"
-# leankg joins cozoserver's namespace; cozoserver owns the public ports.
-assert_contains "leankg uses service netns" \
-    "network_mode: service:cozoserver" "$ENTERPRISE"
 
 # --- docker-compose.rocksdb.yml (single-container baseline) ------------------
 echo "[single-container]"

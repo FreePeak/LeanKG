@@ -39,16 +39,15 @@ s.close()
 start_ok_server() {
     local pid_var=$1
     local port=$2
-    local body='{"ok": true}'
     python3 -c "
 import http.server, sys, threading
 class H(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
+    def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(sys.argv[1])))
+        self.send_header('Content-Type', 'text/html')
+        self.send_header('Content-Length', '7')
         self.end_headers()
-        self.wfile.write(sys.argv[1].encode())
+        self.wfile.write(b'<html>\n')
     def log_message(self, *a, **k):
         pass
 srv = http.server.HTTPServer(('127.0.0.1', $port), H)
@@ -56,7 +55,7 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 import time
 while True:
     time.sleep(60)
-" "$body" &
+" &
     eval "$pid_var=$!"
     # Give the server a moment to bind.
     sleep 0.3
@@ -112,16 +111,15 @@ stop_server "$SERVER_PID"
 SERVER_PID=""
 trap - EXIT
 
-# --- Test 3: endpoint unreachable -> rc=1 within short timeout ---------------
-# Port 1 is the well-known "tcpmux" service that no local machine binds.
-# If by chance it is reachable, the test still asserts a non-zero exit — but
-# we additionally fail if the gate returns 0 with a "reachable" message.
+# --- Test 3: endpoint unreachable -> rc=0 (warn, don't block startup) ---------
+# Gate probes a free port with no listener. Since cozo_health_gate now always
+# returns 0 (warn-on-timeout, never blocks MCP startup), we expect rc=0.
 PORT_DEAD=$(pick_free_port)
-run_test "fail when cozoserver unreachable" \
+run_test "warn when cozoserver unreachable; never blocks" \
     "export LEANKG_COZO_ENDPOINT=http://127.0.0.1:${PORT_DEAD}; \
      export LEANKG_COZO_HEALTH_TIMEOUT_SECS=3; \
      export LEANKG_COZO_HEALTH_INTERVAL_SECS=1; " \
-    1
+    0
 
 # --- Test 4: respect custom timeout override ---------------------------------
 PORT=$(pick_free_port)

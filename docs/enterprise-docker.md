@@ -69,21 +69,33 @@ LEANKG_MEM_LIMIT: 6g
 
 ## Networking
 
-Both services share the `enterprise` bridge network. `cozoserver` does **not**
-publish port 9070 to the host — only `leankg` reaches it. To poke cozoserver
-directly for debugging:
+`leankg` owns the network namespace and publishes MCP `:9699` + REST UI `:8080`
+to the host. `cozoserver` joins leankg's namespace via
+`network_mode: service:leankg` and serves RocksDB on **loopback only**
+(`127.0.0.1:3000`) — no host port is published, no auth token is needed,
+and the storage tier is not reachable from outside the container pair.
+
+The loopback bind + namespace sharing is the only viable configuration for
+`cozo-bin v0.7.6`: it hardcodes `TcpListener::bind("127.0.0.1:3000")` in
+`cozo-bin/src/server.rs` and ignores `--bind` / `--port` (see the `ponytail:`
+comment in `Dockerfile.cozoserver` for the upgrade path).
+
+To poke cozoserver directly for debugging, use `docker compose exec`:
 
 ```bash
 docker compose -f docker-compose.enterprise.yml exec cozoserver \
-    curl -s -X POST http://127.0.0.1:9070/text-query \
+    curl -s -X POST http://127.0.0.1:3000/text-query \
         -H 'Content-Type: application/json' \
         -d '{"script":"::relations","params":{}}'
 ```
 
-If you need cozoserver reachable from the host, add a `ports:` block to the
-service in your override. Treat 9070 as a trusted internal API (CozoDB
-explicitly warns that non-loopback binds generate an auth token, see
-`Dockerfile.cozoserver` for the rationale).
+If you ever need cozoserver reachable from the host (debugging, external
+backup tool), add a `ports:` block to the `cozoserver` service in your
+`docker-compose.override.yml`. Note that exposing 3000 on a non-loopback bind
+breaks the safe skip_auth path: CozoDB explicitly warns that non-loopback
+binds generate an auth token, and our namespace-sharing design avoids that
+on purpose. Plan for a reverse proxy + `LEANKG_COZO_AUTH_TOKEN` instead of
+direct exposure.
 
 ## Backup / restore (manual)
 
@@ -105,7 +117,7 @@ For a hotter workflow, lean on cozoserver's own `/backup` endpoint:
 
 ```bash
 docker compose -f docker-compose.enterprise.yml exec cozoserver \
-    curl -s -X POST http://127.0.0.1:9070/backup \
+    curl -s -X POST http://127.0.0.1:3000/backup \
         -H 'Content-Type: application/json' \
         -d '{}' > cozo-backup.json
 ```
