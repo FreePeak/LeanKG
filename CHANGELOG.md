@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.18](https://github.com/FreePeak/LeanKG/compare/v0.19.17...v0.19.18) (2026-07-28)
+
+
+### Features
+
+* Swift Objective-C indexer wiring + Alamofire 10Q agent benchmark ([#133](https://github.com/FreePeak/LeanKG/issues/133)) ([92d6092](https://github.com/FreePeak/LeanKG/commit/92d60928870c64ae113845ce9035f190134335be))
+
+
+### Bug Fixes
+
+* trigger 0.19.18 after orphaned v0.19.17 tag collision ([ad3cd5e](https://github.com/FreePeak/LeanKG/commit/ad3cd5eed1c60cf875f71960223e7e3bb781a4f8))
+
 ## [0.19.17](https://github.com/FreePeak/LeanKG/compare/v0.19.16...v0.19.17) (2026-07-28)
 
 
