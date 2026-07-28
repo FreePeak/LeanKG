@@ -308,6 +308,48 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 # e.g. LEANKG_EMBED_BACKGROUND=1 in compose / .dockerfile — incremental only.
 ```
 
+### v3.7.3-embed-no-block - HTTP MCP stays responsive while embed runs (2026-07-28) (FR-EMBED-R1 follow-up)
+
+> **Problem:** Even with FR-EMBED-R1's `LEANKG_EMBED_ON_BOOT=0` + `LEANKG_EMBED_BACKGROUND=1` decoupling, the old code path flipped `partial: false` on all `LEANKG_EMBED_BACKGROUND=1` calls — so the in-process embed ran the **heavy parallel** path while MCP served requests. Mega-graph operators saw MCP `/health` flap and `semantic_search` time out for the duration of the background pass.
+>
+> **Fix (this PR, `feat/embed-without-blocking-mcp`):**
+> 1. The MCP in-process embed now defaults to `partial: true` (serial + duty-cycle). Operators can still opt into the heavy parallel path with `LEANKG_EMBED_BACKGROUND_FULL=1`.
+> 2. New knob `LEANKG_EMBED_AUTO_ARM=1` arms the embed on the first idle pass instead of requiring `embed_control(on)` after boot.
+> 3. `LEANKG_EMBED_BACKGROUND_MEGA=1` is the explicit opt-in for forcing a full rebuild on mega-graphs (still gated by `FULL=1`).
+
+**Knobs (settings + where they live):**
+
+| Knob | Default | Effect | Source |
+|------|---------|--------|--------|
+| `LEANKG_EMBED_AUTO_ARM` | `0` | On `1`, the embed idle scheduler (src/mcp/server.rs:541) auto-arms the embed config from env without an `embed_control(on)` call | `spawn_embed_idle_scheduler` first-pass arm |
+| `LEANKG_EMBED_BACKGROUND_PARTIAL` | unset (= follow FULL flip) | `1` → `partial: true`; `0` → `partial: false`. Overrides the default flip on the in-process embed (src/mcp/server.rs:1041 / 1059) | `BackgroundEmbedConfig` flip in `spawn_background_embed_in_process` |
+| `LEANKG_EMBED_BACKGROUND_MEGA` | `0` | Required for full rebuild on a mega-graph (`full=1`); refuses silently without it. | `spawn_background_embed_with_config` gate |
+| `LEANKG_EMBED_BACKGROUND_WORKERS` | `1` (auto-arm) | Parallel workers for the partial resume embed | `auto_arm_cfg_from_env` (src/mcp/server.rs:616) |
+| `LEANKG_EMBED_BACKGROUND_BATCH` | `32` (auto-arm) | Batch size for the partial resume embed | same |
+| `LEANKG_EMBED_BACKGROUND_FULL` | `0` | `1` → opt into the heavy parallel path (requires `LEANKG_EMBED_BACKGROUND_MEGA=1` on mega-graphs); `partial` then defaults to `false` | same |
+| `LEANKG_EMBED_BACKGROUND_TYPES` | unset | Comma-separated type filter (e.g. `function,method`) | same |
+| `LEANKG_EMBED_IDLE_AFTER_SECS` | 30 | MCP-idle window before auto-arm fires | config / compose override |
+| `LEANKG_EMBED_PARTIAL_BATCHES` | 4 | Batches per yield cycle in `partial` mode | config / compose override |
+| `LEANKG_EMBED_PARTIAL_PAUSE_MS` | 500 | Pause between yield cycles in `partial` mode | config / compose override |
+
+**Multi-project mount behavior (`LEANKG_PROJECT_DIRS` / `LEANKG_MCP_PROJECT`):**
+
+`schedule_multi_project_arm` (src/mcp/server.rs:654) spawns one auto-arm task per container boot. Only the **primary** mount (the same path as `LEANKG_MCP_PROJECT`, default `/workspace`) gets armed — side mounts log a one-liner pointing at `docker-compose.embed.yml --profile embed`. Helper split (src/mcp/server.rs:698 `parse_project_dirs` + src/mcp/server.rs:714 `is_primary_project`) is pure and unit-tested.
+
+**Bug fix narrative (kept short):**
+
+- **Before:** `LEANKG_EMBED_BACKGROUND=1` → in-process embed ran parallel workers (4 by `cfg.workers`) with `partial=false`. MCP `/health` and `semantic_search` flapped during the pass.
+- **After:** Default flip is `partial: !full`. With `LEANKG_EMBED_BACKGROUND=0` (the recommended default for MCP) and `LEANKG_EMBED_AUTO_ARM=1`, the scheduler arms a partial-only resume pass that yields + pauses between batches so MCP keeps serving.
+
+**Verification evidence:**
+- Live: `:9699/health` stays `{"status": "ok"}` while a 5× parallel `semantic_search` storm runs (curl ticks: 34/40 ok in 20s burst; all 40 ok post-burst). `embed_control(status)` reports `phase: completed, mode: partial_incremental, vectors_existing: 45195`.
+- Tests (added this PR):
+  - `mcp::server::tests::auto_arm_cfg_from_env_*` (defaults / reads / clamps / case-insensitive)
+  - `mcp::server::tests::partial_flip_default_and_override` (`partial: !full` + `LEANKG_EMBED_BACKGROUND_PARTIAL` override)
+  - `mcp::server::tests::parse_project_dirs_dedups_sorts_and_trims`
+  - `mcp::server::tests::is_primary_project_matches_by_path`
+  - `embeddings::build::tests::background_embed_config_default_partial_true`
+
 ### v3.7.1-sem-mcp-enhance - Semantic MCP live verification → later enhancements (2026-07-17)
 
 > **Evidence:** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md) — Docker HTTP MCP (`project=/workspace`), RocksDB index populated. **No code changes required** for correctness; this revision captures **product enhancements** for a later sprint.
