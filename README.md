@@ -342,6 +342,29 @@ When `:9699` health is OK, for fuzzy / NL / “where is X?” questions **discov
 
 Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
 
+### Background embed without blocking MCP
+
+With persistent RocksDB volumes, the in-process background embed now defaults to **partial / duty-cycled** (serial + yield + pause), so MCP requests keep flowing while the resume pass runs. Operators turn it on at boot via:
+
+```yaml
+# docker-compose.override.yml (key knobs)
+LEANKG_EMBED_BACKGROUND=0   # keep MCP decoupled from embed (FR-EMBED-R1)
+LEANKG_EMBED_AUTO_ARM=1     # arm embed on first idle pass
+LEANKG_EMBED_BACKGROUND_FULL=0   # stay in partial/duty-cycled mode
+LEANKG_EMBED_BACKGROUND_MEGA=1   # opt-in if your graph is mega (opt-in only)
+LEANKG_EMBED_IDLE_AFTER_SECS=30  # idle window before the arm kicks in
+LEANKG_EMBED_PARTIAL_BATCHES=4   # batches per yield cycle
+LEANKG_EMBED_PARTIAL_PAUSE_MS=500
+```
+
+Operator rules of thumb:
+
+- **First run / cold fill** — leave the default `LEANKG_EMBED_BACKGROUND_FULL=0`; the partial path does a serial pass on the smallest needed rows.
+- **Day-2 / resume** — same env, no rebuild cost; `vectors_existing` becomes non-zero and `embed_control(status)` reports `mode: partial_incremental`.
+- **Cold rebuild (escape hatch)** — offline: stop the container, run `docker compose -f docker-compose.embed.yml --profile embed up`, then bring MCP back up. This avoids competing with MCP for RocksDB / RSS.
+
+To inspect / flip mid-flight: `embed_control(action=on|off|status)` over MCP.
+
 ### Procedural ontology (auto-update)
 
 While `mcp-http` / `mcp-stdio` / `leankg serve` runs, LeanKG watches `ontology/concepts.yaml` and `ontology/workflows.yaml`, debounces (≥1s), and **replaces** the ontology layer in the served DB so `kg_trace_workflow` stays fresh without a restart.
