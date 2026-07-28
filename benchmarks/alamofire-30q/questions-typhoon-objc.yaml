@@ -1,0 +1,220 @@
+# Typhoon ObjC architecture questions — regex extractor stress test
+#
+# Focus: @protocol conformance, categories, @property-heavy classes, #import dependency chains.
+# Use with: QUESTIONS=questions-typhoon-objc.yaml REPO_PATH=./repos/typhoon
+#
+# Target: T01–T10, ObjC-specific architecture questions
+repo: Typhoon
+repo_path: ./repos/typhoon
+language: Objective-C
+summary: Objective-C DI framework architecture questions for regex extractor benchmark.
+
+questions:
+  - id: T01
+    category: Protocol
+    prompt: >
+      TyphoonAssembly is the user-facing protocol for declaring dependency injection
+      assemblies. How does it inherit from TyphoonComponentFactory and what categories
+      (e.g. TyphoonAssembly+TyphoonAssemblyFriend) extend its behavior? Explain how
+      assembly definition methods return TyphoonDefinition objects before activation
+      and built instances after activation.
+    key_files:
+      - Source/Factory/Assembly/TyphoonAssembly.h
+      - Source/Factory/Assembly/TyphoonAssembly.m
+      - Source/Factory/Assembly/TyphoonAssembly+TyphoonAssemblyFriend.h
+    key_concepts:
+      - TyphoonAssembly
+      - TyphoonComponentFactory
+      - assembly activation
+      - category extension
+      - TyphoonDefinition
+
+  - id: T02
+    category: Definition
+    prompt: >
+      TyphoonDefinition describes component lifecycle, scope (ObjectGraph/Prototype/
+      Singleton/LazySingleton/WeakSingleton), and factory construction. How does
+      TyphoonBlockDefinition extend TyphoonDefinition with block-based initializers,
+      and how do TyphoonDefinition+InstanceBuilder and TyphoonDefinition+Infrastructure
+      categories add internal wiring? Trace from -[TyphoonDefinition setScope:] to
+      how the factory selects TyphoonComponentsPool vs TyphoonWeakComponentsPool.
+    key_files:
+      - Source/Definition/TyphoonDefinition.h
+      - Source/Definition/TyphoonBlockDefinition.h
+      - Source/Factory/Pool/TyphoonComponentsPool.h
+      - Source/Factory/Pool/TyphoonWeakComponentsPool.h
+    key_concepts:
+      - TyphoonDefinition
+      - TyphoonBlockDefinition
+      - TyphoonScope
+      - ObjectGraph
+      - components pool
+
+  - id: T03
+    category: Factory
+    prompt: >
+      How does TyphoonComponentFactory resolve circular dependencies? The factory
+      maintains a TyphoonCallStack (or similar stack mechanism) during resolution
+      with raiseExceptionIfCircular. Explain how TyphoonRuntimeArguments flow through
+      the stack, how componentForKey:args: resolves vs componentForType:, and where
+      the circular dependency guard triggers.
+    key_files:
+      - Source/Factory/TyphoonComponentFactory.h
+      - Source/Factory/Internal/TyphoonStackElement.h
+      - Source/Factory/Internal/TyphoonRuntimeArguments.h
+    key_concepts:
+      - TyphoonComponentFactory
+      - TyphoonCallStack
+      - TyphoonRuntimeArguments
+      - circular dependency
+      - componentForKey
+
+  - id: T04
+    category: AutoInjection
+    prompt: >
+      TyphoonAutoInjection defines macros (InjectedProtocol, InjectedClass) and
+      TyphoonAutoInjectVisibility flags for auto-wiring properties by class or
+      protocol. How does TyphoonFactoryAutoInjectionPostProcessor walk @property
+      declarations to match definitions? Explain how TyphoonInjectedObject bridges
+      the protocol/class conformance check and where NSObject+PropertyInjection
+      performs the actual setValue:forKey: injection.
+    key_files:
+      - Source/Definition/AutoInjection/TyphoonAutoInjection.h
+      - Source/Definition/AutoInjection/TyphoonFactoryAutoInjectionPostProcessor.h
+      - Source/Definition/AutoInjection/TyphoonInjectedObject.h
+      - Source/Utils/NSObject+PropertyInjection.h
+    key_concepts:
+      - TyphoonAutoInjection
+      - InjectedProtocol
+      - InjectedClass
+      - TyphoonAutoInjectVisibility
+      - property injection
+
+  - id: T05
+    category: Storyboard
+    prompt: >
+      How does TyphoonStoryboard integrate with UIStoryboard for dependency injection
+      in view controllers? Trace from TyphoonStoryboard (UIStoryboard subclass) →
+      TyphoonViewControllerFactory → TyphoonStoryboardProvider →
+      TyphoonComponentFactory+Storyboard category. How does the typhoonKey runtime
+      attribute in IB map to TyphoonDefinition selectors?
+    key_files:
+      - Source/ios/Storyboard/TyphoonStoryboard.h
+      - Source/ios/Storyboard/TyphoonViewControllerFactory.h
+      - Source/ios/Storyboard/TyphoonComponentFactory+Storyboard.h
+      - Source/ios/Storyboard/TyphoonStoryboardProvider.h
+      - Source/ios/Storyboard/TyphoonDefinition+Storyboard.h
+    key_concepts:
+      - TyphoonStoryboard
+      - UIStoryboard
+      - typhoonKey
+      - TyphoonViewControllerFactory
+      - storyboard injection
+
+  - id: T06
+    category: Configuration
+    prompt: >
+      How does TyphoonConfigPostProcessor handle plist/json/property-list config
+      injection? Explain the TyphoonConfiguration protocol hierarchy —
+      TyphoonPlistStyleConfiguration, TyphoonJsonStyleConfiguration,
+      TyphoonPropertyStyleConfiguration — and how TyphoonDefinition+Config wires
+      config values into definition properties via TyphoonInjectionByConfig.
+    key_files:
+      - Source/Configuration/ConfigPostProcessor/TyphoonConfigPostProcessor.h
+      - Source/Configuration/ConfigPostProcessor/TyphoonDefinition+Config.h
+      - Source/Configuration/ConfigPostProcessor/TyphoonConfiguration/TyphoonConfiguration.h
+      - Source/Configuration/ConfigPostProcessor/TyphoonConfiguration/TyphoonPlistStyleConfiguration.h
+      - Source/Definition/Injections/TyphoonInjectionByConfig.h
+    key_concepts:
+      - TyphoonConfigPostProcessor
+      - TyphoonConfiguration
+      - plist config
+      - TyphoonInjectionByConfig
+      - property injection
+
+  - id: T07
+    category: Injection
+    prompt: >
+      How does TyphoonInjectionContext manage injection scope and carry factory/runtime
+      arguments through the injection tree? TyphoonInjectionContext conforms to
+      NSCopying and holds TyphoonComponentFactory + TyphoonRuntimeArguments +
+      raiseExceptionIfCircular. Contrast this with TyphoonInjectionByReference
+      (lookup by key) and TyphoonInjectionByType (lookup by protocol/class) — how
+      do they use the context to resolve instances?
+    key_files:
+      - Source/Definition/Injections/TyphoonInjectionContext.h
+      - Source/Definition/Injections/TyphoonInjectionByReference.h
+      - Source/Definition/Injections/TyphoonInjectionByType.h
+      - Source/Factory/Internal/TyphoonRuntimeArguments.h
+    key_concepts:
+      - TyphoonInjectionContext
+      - TyphoonInjectionByReference
+      - TyphoonInjectionByType
+      - NSCopying
+      - injection scope
+
+  - id: T08
+    category: Imports
+    prompt: >
+      Trace the #import dependency chain starting from the umbrella Typhoon.h header.
+      It imports TyphoonAssembly.h, TyphoonDefinition.h, TyphoonBlockDefinition.h,
+      TyphoonComponentFactory.h, TyphoonBlockComponentFactory.h,
+      TyphoonConfigPostProcessor.h, TyphoonPatcher.h, TyphoonAutoInjection.h,
+      and conditionally TyphooniOS.h. Map the transitive closure of headers:
+      how many total #import directives does this chain pull in, and which core
+      components (Assembly, Definition, Factory, Injections, Configuration,
+      Storyboard, Utils) are brought in through which entry points?
+    key_files:
+      - Source/Typhoon.h
+      - Source/Factory/Assembly/TyphoonAssembly.h
+      - Source/Definition/TyphoonDefinition.h
+      - Source/Factory/TyphoonComponentFactory.h
+    key_concepts:
+      - Typhoon.h umbrella header
+      - #import chain
+      - transitive dependencies
+      - framework modularization
+      - conditional imports
+
+  - id: T09
+    category: Injection
+    prompt: >
+      How does TyphoonMethod bridge method injection with TyphoonParameterInjection?
+      The TyphoonMethod class represents an initializer or factory method with
+      parameter injections. Explain how TyphoonParameterInjection extends
+      TyphoonInjection with parameterIndex, how TyphoonDefinition+InstanceBuilder
+      assembles the parameter list, and how the factory invokes
+      NSInvocation-based initializer calls.
+    key_files:
+      - Source/Definition/Injections/TyphoonInjection.h
+      - Source/Definition/Injections/TyphoonParameterInjection.h
+      - Source/Definition/Internal/TyphoonDefinition+InstanceBuilder.h
+      - Source/Definition/TyphoonMethod.h
+    key_concepts:
+      - TyphoonMethod
+      - TyphoonParameterInjection
+      - TyphoonInjection
+      - NSInvocation
+      - parameterIndex
+
+  - id: T10
+    category: Testing
+    prompt: >
+      How does TyphoonPatcher patch assembly definitions at runtime for testing?
+      TyphoonPatcher extends TyphoonAbstractDetachableComponentFactoryPostProcessor,
+      allowing patchDefinitionWithKey:withObject: and
+      patchDefinitionWithSelector:withObject: with block-based replacements.
+      Explain the detach lifecycle: how TyphoonComponentFactory attaches/detaches
+      post-processors, how TyphoonPatcher stores patches in _patches dictionary,
+      and how TyphoonPatcher+Deprecated separated older patchDefinition: API.
+    key_files:
+      - Source/Test/Patcher/TyphoonPatcher.h
+      - Source/Configuration/TyphoonAbstractDetachableComponentFactoryPostProcessor.h
+      - Source/Configuration/TyphoonInstancePostProcessor.h
+      - Source/Factory/TyphoonComponentFactory.h
+    key_concepts:
+      - TyphoonPatcher
+      - TyphoonAbstractDetachableComponentFactoryPostProcessor
+      - patchDefinitionWithKey
+      - attachDefinitionPostProcessor
+      - integration testing
