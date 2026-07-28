@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.19](https://github.com/FreePeak/LeanKG/compare/v0.19.18...v0.19.19) (2026-07-28)
+
+
+### Bug Fixes
+
+* trigger 0.19.19 after ci-only commits since v0.19.18 ([6cd9702](https://github.com/FreePeak/LeanKG/commit/6cd97025f37909808f9e63153c96a026e5233a12))
+
 ## [0.19.18](https://github.com/FreePeak/LeanKG/compare/v0.19.17...v0.19.18) (2026-07-28)
 
 
