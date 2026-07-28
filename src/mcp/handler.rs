@@ -4794,8 +4794,8 @@ fn run_hnsw_semantic_search(
     offset: usize,
 ) -> Result<Value, String> {
     use crate::retrieval::{
-        is_function_target, is_upper_type, score_functions, traverse_to_functions,
-        RetrieveOptions, SemanticRetrievalPipeline, UpperSeed,
+        is_function_target, is_upper_type, score_functions, traverse_to_functions, RetrieveOptions,
+        SemanticRetrievalPipeline, UpperSeed,
     };
 
     // top_k must be ≥ limit + offset so pagination has headroom.
@@ -4970,9 +4970,7 @@ fn run_hnsw_semantic_search(
         ));
     }
     // Interleave by normalized rank score, descending.
-    merged.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    merged.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
     let results_all: Vec<Value> = merged.into_iter().map(|(_, v)| v).collect();
     let total_estimate = results_all.len();

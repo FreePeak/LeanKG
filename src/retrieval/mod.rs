@@ -15,8 +15,8 @@ pub mod rerank;
 pub use filter_policy::FilterPolicy;
 #[allow(unused_imports)]
 pub use ontology_traversal::{
-    composite_text, cosine, downward_rule_for, is_function_target, is_upper_type,
-    score_functions, traverse_to_functions, DiscoveredFunction, UpperSeed,
+    composite_text, cosine, downward_rule_for, is_function_target, is_upper_type, score_functions,
+    traverse_to_functions, DiscoveredFunction, UpperSeed,
 };
 #[allow(unused_imports)]
 pub use pipeline::{RetrievalResult, RetrieveOptions, Seed, SemanticRetrievalPipeline};

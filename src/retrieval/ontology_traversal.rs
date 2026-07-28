@@ -324,7 +324,9 @@ pub fn traverse_to_functions(
         }
 
         let rule = downward_rule_for(&upper.element_type);
-        let seed_fanout_cap = rule.fanout_cap.min(GLOBAL_FUNCTION_CAP.saturating_sub(total));
+        let seed_fanout_cap = rule
+            .fanout_cap
+            .min(GLOBAL_FUNCTION_CAP.saturating_sub(total));
 
         let mut found_for_this_seed = 0usize;
         let mut visited: HashSet<String> = HashSet::new();
@@ -343,7 +345,9 @@ pub fn traverse_to_functions(
             }
 
             let outgoing = graph.get_relationships(&current).unwrap_or_default();
-            let incoming = graph.get_relationships_for_target(&current).unwrap_or_default();
+            let incoming = graph
+                .get_relationships_for_target(&current)
+                .unwrap_or_default();
 
             for rel in outgoing.iter().chain(incoming.iter()) {
                 if found_for_this_seed >= seed_fanout_cap || total >= GLOBAL_FUNCTION_CAP {
@@ -431,8 +435,14 @@ pub fn traverse_to_functions(
 fn needs_code_refs_fallback(element_type: &str) -> bool {
     matches!(
         element_type,
-        "domain_entity" | "service" | "api_endpoint" | "data_store"
-            | "workflow" | "workflow_step" | "known_issue" | "playbook"
+        "domain_entity"
+            | "service"
+            | "api_endpoint"
+            | "data_store"
+            | "workflow"
+            | "workflow_step"
+            | "known_issue"
+            | "playbook"
             | "team_knowledge"
     )
 }
@@ -475,7 +485,8 @@ fn resolve_code_refs_fallback(
             break;
         }
         // Try exact QN first.
-        let candidates: Vec<CodeElement> = if let Ok(Some(el)) = graph.find_element(raw_ref.trim()) {
+        let candidates: Vec<CodeElement> = if let Ok(Some(el)) = graph.find_element(raw_ref.trim())
+        {
             vec![el]
         } else if let Some((file_part, sym_part)) = raw_ref.trim().split_once("::") {
             // file::symbol form — bounded prefix query filtered by symbol.
@@ -486,8 +497,7 @@ fn resolve_code_refs_fallback(
                 .filter(|e| {
                     let sym_lower = sym_part.to_lowercase();
                     e.name.to_lowercase() == sym_lower
-                        || e
-                            .qualified_name
+                        || e.qualified_name
                             .to_lowercase()
                             .ends_with(&format!("::{}", sym_lower))
                 })
@@ -530,6 +540,7 @@ fn resolve_code_refs_fallback(
 /// Insert a discovered function, deduplicating by QN. If the function
 /// was already discovered via a shorter-or-equal hop, the existing entry
 /// wins; otherwise we overwrite with the shorter path.
+#[allow(clippy::too_many_arguments)]
 fn record_function(
     discovered: &mut Vec<DiscoveredFunction>,
     seen: &mut HashMap<String, usize>,
@@ -578,10 +589,7 @@ fn record_function(
 /// Cosine similarity between two (assumed unit-norm) embedding vectors.
 /// The BGE embedder L2-normalizes its outputs, so cosine = dot product.
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    a.iter()
-        .zip(b.iter())
-        .map(|(x, y)| x * y)
-        .sum()
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
 /// Composite text used to re-embed a discovered function for scoring
@@ -618,10 +626,7 @@ pub fn score_functions(
     // Fetch element blobs in one batch so we don't do N keyed lookups
     // inside the embed loop. Cache by QN in case of dupes.
     let mut blob_cache: HashMap<String, String> = HashMap::new();
-    let qns: Vec<String> = functions
-        .iter()
-        .map(|f| f.qualified_name.clone())
-        .collect();
+    let qns: Vec<String> = functions.iter().map(|f| f.qualified_name.clone()).collect();
     for qn in &qns {
         if blob_cache.contains_key(qn) {
             continue;
@@ -638,7 +643,15 @@ pub fn score_functions(
     // Build composite texts in the same order as `functions`.
     let composite_texts: Vec<String> = functions
         .iter()
-        .map(|f| composite_text(&f.via_upper_name, blob_cache.get(&f.qualified_name).map(|s| s.as_str()).unwrap_or("")))
+        .map(|f| {
+            composite_text(
+                &f.via_upper_name,
+                blob_cache
+                    .get(&f.qualified_name)
+                    .map(|s| s.as_str())
+                    .unwrap_or(""),
+            )
+        })
         .collect();
 
     let borrowed: Vec<String> = composite_texts; // already owned
@@ -671,9 +684,18 @@ mod tests {
         for t in ["class", "struct", "interface", "trait", "module"] {
             let r = downward_rule_for(t);
             assert_eq!(r.hops, 1, "{t} should be 1 hop");
-            assert!(r.edge_types.contains(&"contains"), "{t} should allow contains");
-            assert!(r.edge_types.contains(&"defines"), "{t} should allow defines");
-            assert!(r.edge_types.contains(&"has_method"), "{t} should allow has_method");
+            assert!(
+                r.edge_types.contains(&"contains"),
+                "{t} should allow contains"
+            );
+            assert!(
+                r.edge_types.contains(&"defines"),
+                "{t} should allow defines"
+            );
+            assert!(
+                r.edge_types.contains(&"has_method"),
+                "{t} should allow has_method"
+            );
         }
     }
 
@@ -690,7 +712,10 @@ mod tests {
         for t in ["domain_entity", "service", "api_endpoint", "data_store"] {
             let r = downward_rule_for(t);
             assert_eq!(r.hops, 2, "{t} should be 2 hops");
-            assert!(needs_code_refs_fallback(t), "{t} should need code_refs fallback");
+            assert!(
+                needs_code_refs_fallback(t),
+                "{t} should need code_refs fallback"
+            );
         }
     }
 
@@ -699,7 +724,10 @@ mod tests {
         for t in ["workflow_step", "decision_point", "failure_mode"] {
             let r = downward_rule_for(t);
             assert_eq!(r.hops, 1);
-            assert!(r.edge_types.contains(&"implemented_by"), "{t} should allow implemented_by");
+            assert!(
+                r.edge_types.contains(&"implemented_by"),
+                "{t} should allow implemented_by"
+            );
         }
     }
 
@@ -744,7 +772,10 @@ mod tests {
     fn cosine_identical_vectors_is_one() {
         let a = vec![0.6, 0.8, 0.0];
         let c = cosine(&a, &a);
-        assert!((c - 1.0).abs() < 1e-5, "identical unit vectors: cosine ~ 1, got {c}");
+        assert!(
+            (c - 1.0).abs() < 1e-5,
+            "identical unit vectors: cosine ~ 1, got {c}"
+        );
     }
 
     #[test]
@@ -765,7 +796,10 @@ mod tests {
 
     #[test]
     fn composite_text_joins_upper_name_and_blob() {
-        let t = composite_text("SemanticRetrievalPipeline", "fn retrieve(query) -> Result<...>");
+        let t = composite_text(
+            "SemanticRetrievalPipeline",
+            "fn retrieve(query) -> Result<...>",
+        );
         assert!(t.starts_with("SemanticRetrievalPipeline\n"));
         assert!(t.contains("fn retrieve"));
     }
@@ -778,7 +812,10 @@ mod tests {
 
     #[test]
     fn upper_seed_default_name_uses_trailing_segment() {
-        let s = UpperSeed::new("src/retrieval/pipeline.rs::SemanticRetrievalPipeline", "class");
+        let s = UpperSeed::new(
+            "src/retrieval/pipeline.rs::SemanticRetrievalPipeline",
+            "class",
+        );
         assert_eq!(s.name, "SemanticRetrievalPipeline");
     }
 
@@ -786,9 +823,15 @@ mod tests {
     fn upper_seed_default_name_extracts_ontology_gid_id_not_version() {
         // GID format `ontology://env:scope:type:id:version` → the human
         // id is `refund`, not the `v1` version tag.
-        let s = UpperSeed::new("ontology://local:checkout-service:domain_entity:refund:v1", "domain_entity");
+        let s = UpperSeed::new(
+            "ontology://local:checkout-service:domain_entity:refund:v1",
+            "domain_entity",
+        );
         assert_eq!(s.name, "refund");
-        let s2 = UpperSeed::new("ontology://local:ws:workflow:code_indexing_flow:v2", "workflow");
+        let s2 = UpperSeed::new(
+            "ontology://local:ws:workflow:code_indexing_flow:v2",
+            "workflow",
+        );
         assert_eq!(s2.name, "code_indexing_flow");
     }
 
@@ -884,9 +927,29 @@ mod tests {
             ..Default::default()
         };
 
-        record_function(&mut discovered, &mut seen, &mut total, &el, "C", "class", "C", "contains", 1);
+        record_function(
+            &mut discovered,
+            &mut seen,
+            &mut total,
+            &el,
+            "C",
+            "class",
+            "C",
+            "contains",
+            1,
+        );
         // Later attempt via workflow at 2 hops — must NOT overwrite.
-        record_function(&mut discovered, &mut seen, &mut total, &el, "W", "workflow", "W", "implemented_by", 2);
+        record_function(
+            &mut discovered,
+            &mut seen,
+            &mut total,
+            &el,
+            "W",
+            "workflow",
+            "W",
+            "implemented_by",
+            2,
+        );
 
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].hop, 1);

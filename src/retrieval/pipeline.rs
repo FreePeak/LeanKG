@@ -416,6 +416,7 @@ fn is_worktree_path(path: &str) -> bool {
     PATTERNS.iter().any(|p| path.contains(p))
 }
 
+#[cfg(test)]
 fn truncate(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
         return s.to_string();

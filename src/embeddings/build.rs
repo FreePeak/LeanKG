@@ -338,10 +338,13 @@ fn work_item_from_element(el: &crate::db::models::CodeElement) -> Option<WorkIte
 
 /// Incremental dirty set from `embedding_state` (indexer marks stale/new).
 /// Avoids mega `all_elements` / full pagination just to skip fresh rows.
+type IncrementalDirtyWork =
+    Result<(Vec<WorkItem>, Vec<EmbeddingStateRow>, usize), Box<dyn std::error::Error>>;
+
 fn collect_incremental_dirty_work(
     graph: &GraphEngine,
     opts: &BuildOptions,
-) -> Result<(Vec<WorkItem>, Vec<EmbeddingStateRow>, usize), Box<dyn std::error::Error>> {
+) -> IncrementalDirtyWork {
     let stale_rows = state::list_stale(graph.db())?;
     let orphan_rows = state::list_orphans(graph.db()).unwrap_or_default();
     let fresh = state::count_by_state(graph.db())
@@ -435,11 +438,12 @@ fn partial_slice_gate(batches_done: usize, partial: bool) -> Result<(), String> 
         return Ok(());
     }
     let policy = crate::embeddings::control::PartialEmbedPolicy::default();
-    if batches_done > 0 && batches_done % policy.batches_per_slice == 0 {
-        if policy.yield_on_activity && crate::gc::MemoryGuard::idle_secs_public() < 2 {
-            if !crate::embeddings::control::yield_while_mcp_busy() {
-                return Err("embed cancelled during yield".into());
-            }
+    if batches_done > 0 && batches_done.is_multiple_of(policy.batches_per_slice) {
+        if policy.yield_on_activity
+            && crate::gc::MemoryGuard::idle_secs_public() < 2
+            && !crate::embeddings::control::yield_while_mcp_busy()
+        {
+            return Err("embed cancelled during yield".into());
         }
         std::thread::sleep(std::time::Duration::from_millis(policy.pause_ms));
         if crate::embeddings::control::is_cancel_requested() {
@@ -619,8 +623,7 @@ pub fn run(
     // 3. Batch embed and :put into embedding_vectors.
     let mut embedded = 0usize;
     let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(to_embed.len());
-    let mut batches_done = 0usize;
-    for chunk in to_embed.chunks(opts.batch_size) {
+    for (batches_done, chunk) in to_embed.chunks(opts.batch_size).enumerate() {
         if crate::embeddings::control::is_cancel_requested() {
             return Err("embed cancelled".into());
         }
@@ -645,7 +648,6 @@ pub fn run(
             fresh_rows.push(row);
             embedded += 1;
         }
-        batches_done += 1;
         tracing::info!(
             "embed batch done: running total {}/{} (chunk_size={})",
             embedded,
@@ -910,41 +912,35 @@ pub fn build_index_parallel(
             let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(total);
             let mut pending: Vec<(String, Vec<f32>, String)> = Vec::new();
             let mut done = 0usize;
-            loop {
-                match rx.recv() {
-                    Ok(item) => {
-                        pending.push(item);
-                        if pending.len() >= upsert_chunk {
-                            // Drain any stragglers non-blockingly.
-                            while let Ok(more) = rx.try_recv() {
-                                pending.push(more);
-                                if pending.len() >= upsert_chunk * 2 {
-                                    break;
-                                }
-                            }
-                            let (rows, fresh): (Vec<(String, Vec<f32>)>, Vec<FreshRow>) =
-                                pending.drain(..).fold(
-                                    (Vec::new(), Vec::new()),
-                                    |(mut rows, mut fresh), (qn, vec, hash)| {
-                                        rows.push((qn.clone(), vec));
-                                        fresh.push(FreshRow {
-                                            qualified_name: qn,
-                                            usearch_key: 0,
-                                            content_hash: hash,
-                                        });
-                                        (rows, fresh)
-                                    },
-                                );
-                            upsert_pairs_to_db(&db_for_writer, &rows).map_err(|e| e.to_string())?;
-                            // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
-                            state::upsert_fresh(&db_for_writer, &fresh)
-                                .map_err(|e| e.to_string())?;
-                            done += rows.len();
-                            tracing::info!("writer: flushed {} rows, total {}", rows.len(), done);
-                            fresh_rows.extend(fresh);
+            while let Ok(item) = rx.recv() {
+                pending.push(item);
+                if pending.len() >= upsert_chunk {
+                    // Drain any stragglers non-blockingly.
+                    while let Ok(more) = rx.try_recv() {
+                        pending.push(more);
+                        if pending.len() >= upsert_chunk * 2 {
+                            break;
                         }
                     }
-                    Err(_) => break,
+                    let (rows, fresh): (Vec<(String, Vec<f32>)>, Vec<FreshRow>) =
+                        pending.drain(..).fold(
+                            (Vec::new(), Vec::new()),
+                            |(mut rows, mut fresh), (qn, vec, hash)| {
+                                rows.push((qn.clone(), vec));
+                                fresh.push(FreshRow {
+                                    qualified_name: qn,
+                                    usearch_key: 0,
+                                    content_hash: hash,
+                                });
+                                (rows, fresh)
+                            },
+                        );
+                    upsert_pairs_to_db(&db_for_writer, &rows).map_err(|e| e.to_string())?;
+                    // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
+                    state::upsert_fresh(&db_for_writer, &fresh).map_err(|e| e.to_string())?;
+                    done += rows.len();
+                    tracing::info!("writer: flushed {} rows, total {}", rows.len(), done);
+                    fresh_rows.extend(fresh);
                 }
             }
             // Final flush.
