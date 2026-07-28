@@ -17,10 +17,10 @@
 services:
   leankg-embed:
     profiles: ["embed"]
-    # Must match override / rocksdb arm64 image. When this file is `-f`'d
-    # last, a hardcoded `leankg-leankg:latest` silently overrides arm64.
-    image: ${LEANKG_IMAGE:-freepeak/leankg:arm64}
-    pull_policy: ${LEANKG_PULL_POLICY:-never}
+    # Same default as docker-compose.rocksdb.yml. Override via LEANKG_IMAGE
+    # or docker-compose.override.yml (gitignored) for a local/custom tag.
+    image: ${LEANKG_IMAGE:-freepeak/leankg:latest}
+    pull_policy: ${LEANKG_PULL_POLICY:-missing}
     entrypoint: ["leankg"]
     # LEANKG_MCP_PROJECT selects which mounted root to embed (override per run).
     # Side mounts (e.g. /workspace-other) come from docker-compose.override.yml
