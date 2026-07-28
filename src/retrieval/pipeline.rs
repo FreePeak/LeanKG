@@ -19,6 +19,11 @@ pub struct SemanticRetrievalPipeline {
     embedder: Embedder,
     rerank_stage: RerankStage,
     db: CozoDb,
+    /// Most recent query embedding from [`Self::retrieve`], stashed so
+    /// downstream stages (e.g. ontology-guided composite scoring in
+    /// `retrieval::ontology_traversal`) can reuse it instead of
+    /// re-embedding the query.
+    last_query_vec: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +215,7 @@ impl SemanticRetrievalPipeline {
             embedder,
             rerank_stage,
             db,
+            last_query_vec: Vec::new(),
         })
     }
 
@@ -217,8 +223,16 @@ impl SemanticRetrievalPipeline {
         self.rerank_stage.is_active()
     }
 
+    /// The L2-normalized embedding of the most recent query passed to
+    /// [`Self::retrieve`]. Empty before the first call. Downstream
+    /// ontology-guided composite scoring reuses this so the query is
+    /// embedded exactly once per request.
+    pub fn last_query_vector(&self) -> &[f32] {
+        &self.last_query_vec
+    }
+
     pub fn retrieve(
-        &self,
+        &mut self,
         query: &str,
         opts: &RetrieveOptions,
     ) -> Result<RetrievalResult, Box<dyn std::error::Error>> {
@@ -234,6 +248,9 @@ impl SemanticRetrievalPipeline {
 
         // Stage 2: embed query, run CozoDB HNSW search.
         let qvec = self.embedder.embed(&[query.to_string()])?;
+        // Stash for downstream composite scoring (ontology-guided
+        // traversal) so the query is embedded exactly once per request.
+        self.last_query_vec = qvec[0].clone();
         let raw = self.hnsw_retrieve(&qvec[0], effective_k)?;
         let ann_candidate_count = raw.len();
 
@@ -399,6 +416,7 @@ fn is_worktree_path(path: &str) -> bool {
     PATTERNS.iter().any(|p| path.contains(p))
 }
 
+#[cfg(test)]
 fn truncate(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
         return s.to_string();

@@ -404,15 +404,11 @@ impl DirectEmbedder {
             for &m in mask.iter().take(take) {
                 mask_flat.push(m as i64);
             }
-            for _ in 0..(encoding_length - take) {
-                mask_flat.push(0);
-            }
+            mask_flat.extend(std::iter::repeat_n(0i64, encoding_length - take));
             for &t in types.iter().take(take) {
                 type_ids_flat.push(t as i64);
             }
-            for _ in 0..(encoding_length - take) {
-                type_ids_flat.push(0);
-            }
+            type_ids_flat.extend(std::iter::repeat_n(0i64, encoding_length - take));
         }
         let ids_array = ndarray::Array2::from_shape_vec((batch_size, encoding_length), ids_flat)?;
         let mask_array = ndarray::Array2::from_shape_vec((batch_size, encoding_length), mask_flat)?;

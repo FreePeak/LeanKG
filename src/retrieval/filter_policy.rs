@@ -81,7 +81,7 @@ impl FilterPolicy {
         Self {
             include: ALWAYS_INCLUDE_TYPES.iter().copied().collect(),
             drop: ALWAYS_DROP_TYPES.iter().copied().collect(),
-            gated: QUERY_GATED_DROPS.iter().copied().collect(),
+            gated: QUERY_GATED_DROPS.to_vec(),
         }
     }
 

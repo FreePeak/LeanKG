@@ -302,6 +302,7 @@ async fn staged_repo_files_match_local_indexing_input() {
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ENV_LOCK serializes process env across await
 async fn gcs_source_requires_auth_token() {
     use leankg::sources::gcs::GcsSource;
 
@@ -326,6 +327,7 @@ async fn gcs_source_requires_auth_token() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // ENV_LOCK serializes process env across await
 async fn gcs_source_accepts_auth_via_env() {
     use leankg::sources::gcs::GcsSource;
 

@@ -1,5 +1,6 @@
 target/
 .worktrees/
+.zcode/
 .leankg/
 .cargo_home/
 .DS_Store

@@ -7,10 +7,16 @@
 #![cfg(feature = "embeddings")]
 
 pub mod filter_policy;
+pub mod ontology_traversal;
 pub mod pipeline;
 pub mod rerank;
 
 #[allow(unused_imports)]
 pub use filter_policy::FilterPolicy;
+#[allow(unused_imports)]
+pub use ontology_traversal::{
+    composite_text, cosine, downward_rule_for, is_function_target, is_upper_type, score_functions,
+    traverse_to_functions, DiscoveredFunction, UpperSeed,
+};
 #[allow(unused_imports)]
 pub use pipeline::{RetrievalResult, RetrieveOptions, Seed, SemanticRetrievalPipeline};

@@ -631,16 +631,19 @@ fn compute_f1(retrieved: &[String], truth: &[String]) -> (f64, f64, f64) {
 /// Run the `SemanticRetrievalPipeline` on a query.
 /// Returns `(retrieved_qns, latency_ms, error)`.
 #[cfg(feature = "embeddings")]
+type SemanticRunResult = Result<(Vec<String>, f64, Option<String>), Box<dyn std::error::Error>>;
+
+#[cfg(feature = "embeddings")]
 fn run_real_semantic(
     engine: &graph::GraphEngine,
     query: &str,
     ann_top_k: usize,
     rerank_top_n: usize,
-) -> Result<(Vec<String>, f64, Option<String>), Box<dyn std::error::Error>> {
+) -> SemanticRunResult {
     use crate::retrieval::pipeline::{RetrieveOptions, SemanticRetrievalPipeline};
 
     let start = Instant::now();
-    let pipeline = SemanticRetrievalPipeline::new(engine.db().clone())?;
+    let mut pipeline = SemanticRetrievalPipeline::new(engine.db().clone())?;
     let opts = RetrieveOptions {
         env: None,
         ann_top_k: Some(ann_top_k),

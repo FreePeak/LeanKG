@@ -169,7 +169,7 @@ pub fn resolve_embed_runtime(requested_workers: usize, requested_batch: usize) -
             if b <= 32 {
                 b
             } else {
-                b.max(128).min(256)
+                b.clamp(128, 256)
             }
         } else {
             b

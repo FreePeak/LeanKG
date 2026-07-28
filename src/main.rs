@@ -5499,6 +5499,7 @@ fn maybe_run_embed(_db_path: &std::path::Path) -> Result<(), Box<dyn std::error:
 }
 
 #[cfg(feature = "embeddings")]
+#[allow(clippy::too_many_arguments)]
 fn run_embed(
     init: bool,
     full: bool,
@@ -5750,7 +5751,7 @@ fn run_embed_cancel(lock_path: &std::path::Path) -> Result<(), Box<dyn std::erro
         return Ok(());
     }
     // SAFETY: best-effort signal; we don't own the PID namespace.
-    let ret = unsafe { libc_kill(pid, libc_SIGTERM) };
+    let ret = unsafe { libc_kill(pid, LIBC_SIGTERM) };
     if ret == 0 {
         println!("Sent SIGTERM to embed worker (PID {}).", pid);
     } else {
@@ -5768,7 +5769,7 @@ fn read_lock_pid(lock_path: &std::path::Path) -> Option<u64> {
 #[cfg(feature = "embeddings")]
 fn pid_alive(pid: u64) -> bool {
     // kill(pid, 0) is the canonical liveness check on POSIX.
-    let ret = unsafe { libc_kill(pid, libc_SIGTERM) };
+    let ret = unsafe { libc_kill(pid, LIBC_SIGTERM) };
     // SIGTERM (0) to our own pid is non-fatal; just check ESRCH.
     let _ = ret;
     // Re-check with signal 0 (no-op) to avoid self-killing.
@@ -5786,7 +5787,7 @@ unsafe fn libc_kill(pid: u64, sig: i32) -> i32 {
     kill(pid as i32, sig)
 }
 #[cfg(feature = "embeddings")]
-const libc_SIGTERM: i32 = 15;
+const LIBC_SIGTERM: i32 = 15;
 
 #[cfg(feature = "embeddings")]
 fn run_embed_worker(
@@ -5947,7 +5948,7 @@ fn run_semantic_context(
         .into());
     }
 
-    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
+    let mut pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
     let opts = retrieval::RetrieveOptions {
         env: Some(env.to_string()),
         ann_top_k: top_k,
@@ -6065,7 +6066,7 @@ fn run_smoke_test(project: &str) -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    let pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
+    let mut pipeline = retrieval::SemanticRetrievalPipeline::new(db)?;
     let queries = [
         "embedding inference for code elements",
         "how does the reranker score documents",
@@ -6101,7 +6102,7 @@ fn run_smoke_test(project: &str) -> Result<(), Box<dyn std::error::Error>> {
             let nonempty_seeds = retrieval
                 .seeds
                 .iter()
-                .filter(|s| s.blob_excerpt.trim().len() > 0)
+                .filter(|s| !s.blob_excerpt.trim().is_empty())
                 .count();
             if nonempty_seeds < 3 {
                 failures.push(format!(

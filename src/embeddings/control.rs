@@ -260,7 +260,7 @@ pub fn wait_until_idle_or_cancel(idle_secs: u64) -> bool {
 /// Yield while MCP is busy (activity advanced); return false if cancelled.
 pub fn yield_while_mcp_busy() -> bool {
     set_phase(PHASE_PAUSED);
-    let idle_need = embed_idle_after_secs().min(15).max(1);
+    let idle_need = embed_idle_after_secs().clamp(1, 15);
     loop {
         if is_cancel_requested() {
             return false;
