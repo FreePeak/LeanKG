@@ -18,6 +18,7 @@ PROMPT="${6:?prompt}"
 
 REPO_PATH="${REPO_PATH:?REPO_PATH required}"
 RESULTS_DIR="${RESULTS_DIR:?RESULTS_DIR required}"
+REPO_NAME="${REPO_NAME:-${REPO_PATH##*/}}"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude)}"
 DRY_RUN="${DRY_RUN:-0}"
 DATE="${DATE:-$(date +%Y-%m-%d)}"
@@ -26,6 +27,10 @@ Q_OUTPUT="${RESULTS_DIR}/runs/${DATE}/${ARM}/${Q_ID}"
 mkdir -p "${Q_OUTPUT}"
 RUN_JSON="${Q_OUTPUT}/run_${RUN_IDX}.json"
 RUN_STDERR="${Q_OUTPUT}/run_${RUN_IDX}.stderr.log"
+TOOL_LOG="${Q_OUTPUT}/run_${RUN_IDX}.tools.log"
+
+# MCP_SMOKE_CHECK=1 will abort after init parse if graph arm has mcp_tool_count==0
+SMOKE="${MCP_SMOKE_CHECK:-0}"
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   echo "[${ARM}/${Q_ID}] dry run ${RUN_IDX}: ${PROMPT:0:60}..."
@@ -50,7 +55,7 @@ DURATION_S=$(awk -v s="${START_NS}" -v e="${END_NS}" 'BEGIN { printf "%.3f", (e 
 
 cost="0"; input_tok="0"; output_tok="0"; cache_tok="0"; turns="0"
 stop_reason="unknown"; tool_calls="0"; file_reads="0"; result_chars="0"
-actual_model=""; mcp_servers=""; mcp_tools="0"
+actual_model=""; mcp_servers=""; mcp_tools="0"; tool_names=""
 
 if [[ -s "${RUN_JSON}" ]]; then
   PARSED=$(python3 - "${RUN_JSON}" <<'PYEOF'
@@ -92,6 +97,7 @@ def get_init(d):
 
 def walk_tools(d):
     tc = fr = 0
+    names = []
     for event in (d if isinstance(d, list) else [d]):
         if not isinstance(event, dict): continue
         msg = event.get("message") if isinstance(event.get("message"), dict) else None
@@ -100,17 +106,23 @@ def walk_tools(d):
         for b in content:
             if isinstance(b, dict) and b.get("type") == "tool_use":
                 tc += 1
-                if (b.get("name") or "").lower() == "read": fr += 1
-    return tc, fr
+                name = (b.get("name") or "").strip()
+                names.append(name)
+                if name.lower() == "read": fr += 1
+    return tc, fr, names
 
 result = get_result(data)
 usage = result.get("usage", {}) if isinstance(result, dict) else {}
 tc = num(result.get("tool_use_count", 0), 0)
 fr = num(result.get("file_read_count", 0), 0)
+tool_names = ""
 if tc == 0 or fr == 0:
-    wtc, wfr = walk_tools(data)
+    wtc, wfr, names = walk_tools(data)
     if tc == 0: tc = wtc
     if fr == 0: fr = wfr
+    tool_names = "|".join(names)
+else:
+    tool_names = "resolved_from_envelope"
 init = get_init(data)
 servers = init.get("mcp_servers", []) or []
 snames = [str(s.get("name","")) if isinstance(s, dict) else str(s) for s in servers if s]
@@ -125,6 +137,7 @@ print(f"STOP={result.get('stop_reason','unknown')}")
 print(f"RESULT_CHARS={len(str(result.get('result','')))}")
 print(f"TOOL_CALLS={tc}")
 print(f"FILE_READS={fr}")
+print(f"TOOL_NAMES={tool_names}")
 print(f"ACTUAL_MODEL={init.get('model','') or ''}")
 print(f"MCP_SERVERS={','.join(snames)}")
 print(f"MCP_TOOLS={mcp_n}")
@@ -144,6 +157,7 @@ PYEOF
       ACTUAL_MODEL) actual_model="${value}" ;;
       MCP_SERVERS) mcp_servers="${value}" ;;
       MCP_TOOLS) mcp_tools="${value}" ;;
+      TOOL_NAMES) tool_names="${value}" ;;
     esac
   done <<< "${PARSED}"
 fi
@@ -159,24 +173,41 @@ elif [[ "${ARM}" == "codegraph" && -z "${mcp_servers}" ]]; then
   valid="false"; invalid_reason="no_mcp_attached"
 fi
 
+# MCP smoke check: graph arms must have mcp_tool_count > 0
+if [[ "${SMOKE}" == "1" ]]; then
+  if [[ "${ARM}" == "leankg" || "${ARM}" == "codegraph" ]]; then
+    if [[ "${mcp_tools}" == "0" ]]; then
+      valid="false"; invalid_reason="mcp_tool_count_zero_smoke_abort"
+      echo "SMOKE ABORT [${ARM}/${Q_ID}]: MCP attached (${mcp_servers}) but mcp_tool_count=${mcp_tools}. Aborting arm." >&2
+    fi
+  fi
+fi
+
+# Write tool call log (proves what was actually called during the session)
+if [[ -n "${tool_names}" ]]; then
+  echo "${tool_names}" > "${TOOL_LOG}"
+  echo "[${ARM}/${Q_ID}] tools used: ${tool_names}" >&2
+fi
+
 python3 - "${Q_ID}" "${ARM}" "${RUN_IDX}" "${MODEL}" "${PROMPT}" \
   "${EXIT_CODE}" "${DURATION_S}" "${cost}" "${input_tok}" \
   "${output_tok}" "${cache_tok}" "${tool_calls}" "${file_reads}" \
   "${turns}" "${stop_reason}" "${result_chars}" \
-  "${actual_model}" "${mcp_servers}" "${mcp_tools}" \
-  "${valid}" "${invalid_reason}" "${Q_OUTPUT}" <<'PY'
+  "${actual_model}" "${mcp_servers}" "${mcp_tools}" "${tool_names}" \
+  "${valid}" "${invalid_reason}" "${Q_OUTPUT}" "${REPO_NAME}" <<'PY'
 import json, pathlib, sys
 (q_id, arm, run_idx, model, prompt, exit_code, duration_s,
  cost, input_tok, output_tok, cache_tok, tool_calls, file_reads,
  turns, stop_reason, result_chars,
- actual_model, mcp_servers, mcp_tools,
- valid, invalid_reason, output_dir) = sys.argv[1:]
+ actual_model, mcp_servers, mcp_tools, tool_names_str,
+ valid, invalid_reason, output_dir, repo_name) = sys.argv[1:]
 record = {
-    "question_id": q_id, "repo": "alamofire", "arm": arm,
+    "question_id": q_id, "repo": repo_name, "arm": arm,
     "run_idx": int(run_idx), "model": model or None,
     "actual_model": actual_model or None,
     "mcp_servers": [s for s in (mcp_servers or "").split(",") if s],
     "mcp_tool_count": int(mcp_tools),
+    "tool_names": [n for n in (tool_names_str or "").split("|") if n],
     "valid": valid == "true",
     "invalid_reason": invalid_reason or None,
     "prompt_chars": len(prompt), "exit_code": int(exit_code),

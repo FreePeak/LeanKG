@@ -33,6 +33,8 @@ DRY_RUN="${DRY_RUN:-0}"
 PYTHON="${PYTHON:-python3}"
 
 export LEANKG_BIN CODEGRAPH_BIN RESULTS_DIR REPO_PATH BENCH_DIR
+export REPO_NAME="${REPO_NAME:-${REPO_PATH##*/}}"
+export MCP_SMOKE_CHECK="${MCP_SMOKE_CHECK:-0}"
 
 if [[ -z "${CLAUDE_BIN}" ]]; then
   echo "ERROR: claude CLI not found on PATH" >&2
@@ -40,7 +42,12 @@ if [[ -z "${CLAUDE_BIN}" ]]; then
 fi
 
 DATE="$(date +%Y-%m-%d)"
-QUESTIONS_YAML="${BENCH_DIR}/${QUESTIONS:-questions.yaml}"
+if [[ "${QUESTIONS:-}" == /* ]]; then
+  # Already an absolute path (e.g. passed by phase-h.sh)
+  QUESTIONS_YAML="${QUESTIONS}"
+else
+  QUESTIONS_YAML="${BENCH_DIR}/${QUESTIONS:-questions.yaml}"
+fi
 ARM_OUTPUT_DIR="${RESULTS_DIR}/runs/${DATE}/${ARM}"
 mkdir -p "${ARM_OUTPUT_DIR}"
 
