@@ -536,11 +536,31 @@ impl MCPServer {
     /// - `LEANKG_EMBED_BACKGROUND_BATCH` (default 32)
     /// - `LEANKG_EMBED_BACKGROUND_TYPES` (default = heuristic)
     /// - `LEANKG_EMBED_BACKGROUND_FULL=1` to force a full re-embed
+    /// - `LEANKG_EMBED_AUTO_ARM=1` arms the idle scheduler on first idle pass
     #[cfg(feature = "embeddings")]
     fn spawn_embed_idle_scheduler(&self) {
         let shutdown_flag = self.shutdown_flag.clone();
         let server = self.clone();
         tokio::spawn(async move {
+            // First-pass auto-arm when LEANKG_EMBED_AUTO_ARM=1 (non-blocking
+            // equivalent of LEANKG_EMBED_BACKGROUND=1, but with proper
+            // partial=true + idle gating via embed_control).
+            if !crate::embeddings::is_armed() {
+                let auto_arm = std::env::var("LEANKG_EMBED_AUTO_ARM")
+                    .ok()
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                if auto_arm {
+                    let cfg = Self::auto_arm_cfg_from_env();
+                    crate::embeddings::control::arm_embed(cfg.clone());
+                    tracing::info!(
+                        "embed idle scheduler: auto-armed (workers={}, batch={}, full={})",
+                        cfg.workers,
+                        cfg.batch_size,
+                        cfg.full
+                    );
+                }
+            }
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
@@ -587,6 +607,96 @@ impl MCPServer {
 
     #[cfg(not(feature = "embeddings"))]
     fn spawn_embed_idle_scheduler(&self) {}
+
+    /// Build a default `BackgroundEmbedConfig` from the
+    /// `LEANKG_EMBED_BACKGROUND_*` env vars (used by `LEANKG_EMBED_AUTO_ARM=1`
+    /// and by multi-project arming). Always sets `partial=true` so the duty
+    /// cycle (yield + pause) keeps MCP responsive.
+    #[cfg(feature = "embeddings")]
+    fn auto_arm_cfg_from_env() -> crate::embeddings::BackgroundEmbedConfig {
+        let w: usize = std::env::var("LEANKG_EMBED_BACKGROUND_WORKERS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &usize| (1..=32).contains(n))
+            .unwrap_or(1);
+        let b: usize = std::env::var("LEANKG_EMBED_BACKGROUND_BATCH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &usize| (1..=2048).contains(n))
+            .unwrap_or(32);
+        let f = std::env::var("LEANKG_EMBED_BACKGROUND_FULL")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let types = std::env::var("LEANKG_EMBED_BACKGROUND_TYPES").unwrap_or_default();
+        crate::embeddings::BackgroundEmbedConfig {
+            batch_size: b,
+            workers: w,
+            full: f,
+            types_filter: types,
+            partial: true,
+            rss_fraction: 0.0,
+        }
+    }
+
+    /// Sequential arm for every project in `LEANKG_PROJECT_DIRS`. Each
+    /// project embed runs against the same MCP `GraphEngine` only when its
+    /// path equals `LEANKG_MCP_PROJECT`; side mounts need their own process
+    /// (each project uses its own RocksDB subdirectory, so opening them
+    /// inside MCP would require a second `CozoDb` handle — out of scope for
+    /// the auto-arm path).
+    ///
+    /// ponytail: schedules one arm per project; first one runs while
+    /// subsequent waits for `is_in_process_embed_active() == false`. Add a
+    /// per-project `GraphEngine::open(...)` when side mounts must embed
+    /// inside the same container.
+    #[cfg(feature = "embeddings")]
+    fn schedule_multi_project_arm(shutdown_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        tokio::spawn(async move {
+            let dirs = std::env::var("LEANKG_PROJECT_DIRS").unwrap_or_default();
+            let primary =
+                std::env::var("LEANKG_MCP_PROJECT").unwrap_or_else(|_| "/workspace".to_string());
+            let projects: Vec<String> = dirs
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if projects.is_empty() {
+                return;
+            }
+            // De-dup so we don't arm the same primary twice.
+            let mut projects = projects;
+            projects.sort();
+            projects.dedup();
+            for proj in projects {
+                // Only arm the primary project from inside MCP; side mounts
+                // log a one-liner and rely on the offline embed job.
+                if proj != primary {
+                    tracing::info!(
+                        "embed multi-project: {} is a side mount; run `docker-compose.embed.yml --profile embed` against it for in-process embed",
+                        proj
+                    );
+                    continue;
+                }
+                // Wait for any in-flight embed to finish before re-arming.
+                while crate::embeddings::control::is_in_process_embed_active() {
+                    if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                if shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let cfg = Self::auto_arm_cfg_from_env();
+                crate::embeddings::control::arm_embed(cfg);
+                tracing::info!("embed multi-project: armed primary {}", primary);
+                // One project at a time; loop top exits after primary completes
+                // via the scheduler draining `take_armed_config()`.
+                break;
+            }
+        });
+    }
 
     #[cfg(feature = "embeddings")]
     fn spawn_background_embed_with_config(&self, cfg: crate::embeddings::BackgroundEmbedConfig) {
@@ -927,8 +1037,28 @@ impl MCPServer {
             workers,
             full,
             types_filter,
-            partial: false,
+            // Partial embed (serial + duty-cycle) keeps MCP responsive; full
+            // rebuild only opts into the heavy parallel path via --full.
+            partial: !full,
             rss_fraction: 0.0,
+        };
+        // Optional LEANKG_EMBED_BACKGROUND_PARTIAL override (advanced).
+        let cfg = if let Ok(p) = std::env::var("LEANKG_EMBED_BACKGROUND_PARTIAL") {
+            if p == "0" || p.eq_ignore_ascii_case("false") {
+                crate::embeddings::BackgroundEmbedConfig {
+                    partial: false,
+                    ..cfg
+                }
+            } else if p == "1" || p.eq_ignore_ascii_case("true") {
+                crate::embeddings::BackgroundEmbedConfig {
+                    partial: true,
+                    ..cfg
+                }
+            } else {
+                cfg
+            }
+        } else {
+            cfg
         };
         match crate::embeddings::spawn_background_embed(graph, leankg_dir.clone(), cfg) {
             Ok(Some(handle)) => {
@@ -1433,6 +1563,21 @@ impl MCPServer {
             self.spawn_background_embed_in_process();
         }
         self.spawn_embed_idle_scheduler();
+
+        // Multi-project arm (LEANKG_EMBED_AUTO_ARM=1 only): re-arms the
+        // primary project after the current embed completes. Side mounts
+        // log a hint and rely on the offline embed job.
+        #[cfg(feature = "embeddings")]
+        {
+            let auto_arm = std::env::var("LEANKG_EMBED_AUTO_ARM")
+                .ok()
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            if auto_arm {
+                let shutdown_for_arm = self.shutdown_flag.clone();
+                Self::schedule_multi_project_arm(shutdown_for_arm);
+            }
+        }
 
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),
