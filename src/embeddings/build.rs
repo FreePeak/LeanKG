@@ -1927,4 +1927,23 @@ mod tests {
     fn parse_type_filter_all_is_none() {
         assert!(parse_type_filter("all").is_none());
     }
+
+    /// The MCP in-process embed path relies on `BackgroundEmbedConfig`'s
+    /// `partial` flag defaulting to `true` so the duty-cycle (yield +
+    /// pause) keeps MCP request latency untouched. Pin this contract so
+    /// a future change doesn't accidentally ship a default that blocks
+    /// the server.
+    #[test]
+    fn background_embed_config_default_partial_true() {
+        let cfg = BackgroundEmbedConfig::default();
+        assert!(
+            cfg.partial,
+            "default `partial` must be true to keep MCP responsive"
+        );
+        assert_eq!(cfg.batch_size, 32);
+        assert_eq!(cfg.workers, 1);
+        assert!(!cfg.full);
+        assert!(cfg.types_filter.is_empty());
+        assert_eq!(cfg.rss_fraction, 0.0);
+    }
 }
