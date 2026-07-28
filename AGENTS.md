@@ -1,431 +1,101 @@
-# LeanKG - AI Agent Context
+# LeanKG — Agent Context
 
-## Project Overview
+**Tech stack:** Rust + CozoDB + tree-sitter + MCP
 
-LeanKG is a lightweight knowledge graph for codebase understanding. It indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.
-
-**Tech Stack:** Rust + CozoDB + tree-sitter + MCP
-
-## Quick Start
+## Build & Test
 
 ```bash
-# Index a codebase
-cargo run -- init
-# Optional: prefab LSP + typed_resolve=go,ts (FR-LSP-B)
-cargo run -- init --with-lsp
-cargo run -- index ./src
-
-# Calculate impact radius
-cargo run -- impact src/main.rs 3
-
-# Start MCP server (stdio transport -- for local AI tool integration)
-cargo run -- mcp-stdio --watch
-
-# Start MCP server (HTTP/SSE transport -- for remote clients)
-cargo run -- mcp-http --port 9699
+cargo build --release          # always --release; debug profile has debug=false
+cargo test --lib                # quick unit tests only (CI does this)
+cargo test                      # full suite including integration/e2e
+make lint                       # = cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check      # formatting check
 ```
 
-### Hybrid typed resolve (Go / TypeScript MVP)
+`.opencode.json` auto-loads `instructions/leankg-tools.md` — detailed MCP tool reference.
 
-When `indexer.typed_resolve` is `go,ts` (or `all`), indexing builds a cross-file type registry and upgrades CALLS edges to `resolution_method=typed` without spawning language servers. External LSP (`resolve_with_lsp` / `leankg lsp-resolve`) remains available when servers are installed; `leankg init --with-lsp` writes the prefab `lsp:` block from the server catalog.
-## Development Workflow
+## CLI Quick Reference
 
-**When implementing features, follow:** `docs/workflow-opencode-agent.md`
+| Command | Purpose |
+|---------|---------|
+| `cargo run --release -- init` | Init project |
+| `cargo run --release -- index ./src` | Index codebase |
+| `cargo run --release -- mcp-stdio --watch` | MCP stdio (local AI tools) |
+| `cargo run --release -- mcp-http --port 9699` | MCP HTTP (remote clients) |
+| `cargo run --release -- embed` | Build embedding vectors (after index) |
+| `cargo run --release -- serve` | REST API + embedded UI v2 on :8080 |
+| `cargo run --release -- impact <file> <depth>` | Blast radius calc |
 
-### Pattern: Update Docs -> Implement -> Test -> Commit -> Push -> Bump Version -> Tag
+Embeddings require `--features embeddings` build flag (off by default). Without them, `semantic_search` / `kg_semantic_context` return "no vectors".
 
-1. **Update docs first** - Consolidated PRD+HLD (`docs/prd.md`) for narrative/ACs/HLD. For **all task lists + Done/Pending status**, use [`docs/prd-task-tracker.md`](docs/prd-task-tracker.md) only — do not scan or reintroduce status tables in the PRD.
-2. **Implement** - Follow patterns in `docs/workflow-opencode-agent.md`
-3. **Build & test** - `cargo build && cargo test`
-4. **Commit** - `git commit -m "feat: description"` (one feature per commit)
-5. **Push** - `git pull --rebase && git push`
-6. **Bump version** - Update `version` in `Cargo.toml`
-7. **Tag** - `git tag -a v<version> -m "Release v<version>" && git push origin v<version>` (after version bump)
+## MANDATORY: Docker MCP project paths
 
-### Parallel Subagent Workflow
+When MCP talks to Docker HTTP on `:9699`, **always** pass container mount paths as `project=`. Host paths return "not initialized".
 
-When facing 3+ independent tasks that can work in parallel without shared state:
-
-1. **Dispatch multiple subagents** - One agent per independent problem domain
-2. **Each agent works in isolated `.worktree/`** - Prevents interference between agents
-3. **Each worktree uses feature branch** - Format: `.worktree/<feature-name>/`
-4. **Verify isolation** - Confirm directory is in `.gitignore`
-5. **Run baseline tests** - Ensure clean starting point per worktree
-6. **Agent completes independently** - Agent returns summary of changes
-7. **Merge to main** - After all agents complete, merge each feature branch to main
-
-```
-# Example workflow
-Agent 1 -> .worktree/feature-a/ (works on tests in file_a.test.ts)
-Agent 2 -> .worktree/feature-b/ (works on tests in file_b.test.ts)
-Agent 3 -> .worktree/feature-c/ (works on tests in file_c.test.ts)
-
-# After all complete
-git checkout main
-git merge feature-a
-git merge feature-b
-git merge feature-c
-git push
+```rust
+mcp_status(project="/workspace")              // OK
+search_code(query="fn main", project="/workspace")  // OK
+mcp_status(project="/Users/.../leankg")        // FAILS
 ```
 
-**When to use:**
-- 3+ test files failing with different root causes
-- Multiple subsystems broken independently
-- Each problem can be understood without context from others
+| Mount | `project=` |
+|-------|-----------|
+| This repo | `/workspace` |
+| Side repo | `/workspace-other` (per local `.dockerfile`) |
 
-**When NOT to use:**
-- Failures are related (fix one might fix others)
-- Need to understand full system state
-- Agents would interfere with each other
+Health check: `curl http://localhost:9699/health`. If healthy → use Docker MCP. Else → fall back to stdio + host-path `mcp_init`.
 
-## Key Commands
+## Tool discovery prefer-order
 
-```bash
-cargo build      # Build project
-cargo test       # Run tests
-cargo run -- <cmd>  # Run CLI commands
-```
+Do **not** open with `query_graph`. Discover first:
 
-## Phase 1 Structural Parity Tools (v2.0 PRD)
+`concept_search` → `semantic_search` → `search_code` / `find_function` → connection verbs (impact, deps, context).
 
-Three new MCP tools are available once a project is indexed:
+| Question | First tools |
+|----------|-------------|
+| Fuzzy / NL / domain | `concept_search` → `semantic_search` → `search_code` |
+| Exact symbol / file | `find_function` / `search_code` / `query_file` |
+| How A↔B? | `shortest_path` |
+| What is symbol? | `explain_node` |
+| Expand subgraph | `query_graph` (after seeds known) |
 
-- `get_architecture` — single-call overview (languages, entry points, routes, clusters, hotspots, relationship summary, knowledge count).
-- `get_graph_schema` — element type and relationship type counts.
-- `find_dead_code` — functions with no callers and no `tested_by` edge, with a `min_lines` threshold.
+**Dynamic ontology**: `add_ontology_concept` / `add_ontology_workflow` persist insights across sessions. `add_knowledge` for free-form notes. After YAML edits in `ontology/`, use `kg_trace_workflow` (auto-synced; no manual `leankg ontology sync` needed).
 
-See [`docs/mcp-tools.md`](docs/mcp-tools.md) → Structure Tools and [`docs/roadmap.md`](docs/roadmap.md) → Phase 1. Requirements: [`docs/prd.md`](docs/prd.md) Sections 3.11 / 5.10.
+## Development workflow
 
-## Prefer-order (discover before connection verbs)
+1. Update `docs/prd.md` (narrative + ACs) + `docs/prd-task-tracker.md` (task list)
+2. Implement per `docs/workflow-opencode-agent.md`
+3. `cargo build --release && cargo test`
+4. `git commit -m "feat: description"` (one feature per commit; **no** `Co-Authored-By` or AI attribution)
+5. `git pull --rebase && git push`
+6. Bump `version` in `Cargo.toml`
+7. `git tag -a v<version> -m "Release v<version>" && git push origin v<version>`
 
-When MCP HTTP on `:9699` is healthy, for fuzzy / NL / “where is X?” questions **discover first** — do **not** open with `query_graph`:
-
-`get_overview_context` → `mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
-
-| Question type | First tools |
-|---------------|-------------|
-| Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
-| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
-| How A↔B? (known endpoints) | `shortest_path` |
-| What is this known symbol? | `explain_node` |
-| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
-
-**BAN:** Do not call `query_graph` as the first NL discovery tool when embeddings/concepts may answer. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
-
-## MANDATORY: LeanKG MCP project paths (Docker vs host)
-
-Cursor agents talking to LeanKG MCP over HTTP (`localhost:9699`, Docker RocksDB) **must** pass **container mount paths** as `project=`. Host filesystem paths do not match RocksDB project keys and return "not initialized" even when the graph is indexed.
-
-| Target codebase | Correct `project=` | Wrong (will fail against Docker MCP) |
-|-----------------|--------------------|--------------------------------------|
-| This LeanKG repo (`$PWD` → `/workspace`) | `/workspace` | `/Users/.../leankg`, `./.leankg`, absolute Mac path |
-| Extra monorepo bind (`…:/workspace-other`) | `/workspace-other` | that repo's host path |
-| Optional freepeak bind (`…:/workspace-freepeak`) | `/workspace-freepeak` | that tree's host path |
-
-**Required pattern for every MCP call in this repo:**
-
-```
-mcp_status(project="/workspace")
-search_code(query="…", project="/workspace")
-find_function(name="…", project="/workspace")
-get_context(file="…", project="/workspace")
-```
-
-**Agent checklist (new chat / no prior context):**
-
-1. Prefer Docker MCP when `curl http://localhost:9699/health` is ok
-2. Call `mcp_status(project="/workspace")` first for LeanKG source work
-3. For other indexed trees, use the container side of binds listed in local `LEANKG_PROJECT_DIRS` (gitignored `.dockerfile`)
-4. Never invent or paste personal host bind paths into commits, docs, or chat
-5. Host-path `mcp_init` / local SQLite is only for non-Docker stdio workflows
-
-Chat sessions do **not** share memory. This section is the durable source of truth so agents do not re-discover mounts every session.
-
-## MCP Server Transport Modes
-
-LeanKG supports two MCP transport modes:
-
-### Stdio Transport (Local AI Tools)
-
-For local AI tools (Cursor, Claude Code, opencode, etc.):
-
-```bash
-cargo run -- mcp-stdio --watch
-```
-
-The stdio transport uses the per-project SQLite-backed CozoDB file at `<project>/.leankg/leankg.db`. Use host project paths only with this transport (not with Docker HTTP MCP).
-
-### HTTP/SSE Transport (Remote Clients)
-
-For remote clients or multi-repo setups:
-
-```bash
-# Single project
-cargo run -- mcp-http --port 9699
-
-# Multi-repo routing with auth
-cargo run -- mcp-http --port 9699 --auth "my-secret-token" --project /path/to/project
-```
-
-HTTP endpoints:
-- `POST /mcp` -- JSON-RPC endpoint
-- `GET /mcp/stream` -- SSE (Server-Sent Events) stream
-- `GET /health` -- Health check
-
-Environment variables:
-- `MCP_HTTP_PORT` -- Override port (default: 9699)
-- `MCP_HTTP_AUTH` -- Bearer token for authentication
-
-When the HTTP server runs **inside Docker**, `--project` / MCP `project` must be the **container** path (`/workspace`, `/workspace-other`, …), matching bind mounts and `LEANKG_PROJECT_DIRS`.
-
-## RocksDB Docker Deployment
-
-The HTTP/SSE MCP server supports optional centralized RocksDB storage, useful when a single long-running server handles multiple projects.
-
-### Embed resume rule (P0 — day-2)
-
-**If embedding data already exists** on the named RocksDB volume → **resume** (skip `fresh` vectors; delta only).  
-**If no embedding data exists** for that project → **cold/fresh** fill is allowed.
-
-This applies to **every** path that starts embed:
-
-| Path | Env / command |
-|------|----------------|
-| Standalone | `docker run … embed --wait --project /workspace-other` |
-| In-process MCP | `LEANKG_EMBED_BACKGROUND=1` |
-| Legacy boot | `LEANKG_EMBED_ON_BOOT=1` |
-| Offline setup | `LEANKG_DOCKER_SETUP=1` |
-| One-line up | `scripts/docker-up.sh` |
-
-Turning embed on later (or restarting the container with the same volume) must **not** wipe or full-rebuild. Intentional full rebuild only via `--full`, `LEANKG_EMBED_BACKGROUND_FULL=1`, or `LEANKG_FORCE_REINDEX=1`. Product ACs: [`docs/prd.md`](docs/prd.md) §3.15 / §5.16 / §8.5.
-
-**Mega-graph MCP auto-index OOM escape:** set `LEANKG_SKIP_FRESHNESS_CHECK=1` and/or `LEANKG_AUTO_INDEX=0` (or `mcp.auto_index_on_start: false` in that project's `leankg.yaml`) so Docker MCP does not reindex hundreds of thousands of elements on every start. For serving ~150k+ embedding vectors, use MCP **`mem_limit: 6g`**, **`mem_reservation: 3g`**, **`cpus: "6"`** (compose defaults in `docker-compose.rocksdb.yml`; offline embed in `docker-compose.embed.yml`). Prefer offline `embed` / `index` when you choose. See [`docs/reports/embed-3-workspaces-2026-07-17.md`](docs/reports/embed-3-workspaces-2026-07-17.md) and FR-MG-AUTO-01 / FR-OPS-EMBED-CPU.
-
-**Docker PID 1 + `embed.lock`:** MCP runs as PID 1 in the container. A leftover `<project>/.leankg/embed.lock` containing `1` from a killed prior run used to look “alive” forever and skip `LEANKG_EMBED_BACKGROUND` spawn. Current code treats same-PID locks as stale unless an in-process embed is already active in this process (and clears non-`running` status leftovers). Manual escape: `rm -f "$LEANKG_MCP_PROJECT/.leankg/embed.lock"` then recreate the container.
-
-**Boot must not block search:** `entrypoint.sh` ontology sync is timed (default 45s) or skippable via `LEANKG_ONTOLOGY_SYNC_ON_BOOT=skip`. A hung sync used to prevent `mcp-http` from binding, so `search_code` / `find_function` looked completely broken. In-process `LEANKG_EMBED_BACKGROUND=1` is **skipped on mega-graphs** unless `LEANKG_EMBED_BACKGROUND_MEGA=1` (prefer offline `embed --wait`).
-
-**Procedural ontology auto-update (P0 / FR-ONT-PROC):** While MCP/`serve` runs, LeanKG watches `ontology/workflows.yaml` + `concepts.yaml` (debounce `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS`, default 1500ms) and re-syncs without dropping HTTP. Boot skip marker `.leankg/ontology_synced` must be newer than **both** YAML files. After CLI/MCP index, ontology refreshes automatically. Agents: prefer `kg_trace_workflow` after YAML edits (no manual `leankg ontology sync` required); use `ontology_control(action="sync"|"status")` when needed. Optional source override: `LEANKG_ONTOLOGY_DIR`. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](docs/reports/ontology-proc-auto-smoke-2026-07-21.md).
-
-**Manual MCP embed (preferred when boot embed is off):** with `LEANKG_EMBED_ON_BOOT=0` and `LEANKG_EMBED_BACKGROUND=0`, call MCP `embed_control(action="on")` to arm an idle-gated **Incremental** partial embed (RSS fraction of container budget; yields on tool activity). Use `action="off"` to cooperatively cancel (safe under Docker PID 1). `action="status"` reports `skipped_fresh` / `vectors_existing`. Env knobs: `LEANKG_EMBED_IDLE_AFTER_SECS`, `LEANKG_EMBED_RSS_FRACTION` (default 0.40), `LEANKG_EMBED_PARTIAL_BATCHES`, `LEANKG_EMBED_PARTIAL_PAUSE_MS`.
-
-**UI v2 + MCP (Option A):** `entrypoint.sh` starts `leankg serve --port ${LEANKG_SERVE_PORT:-8080}` in the background, then `exec` MCP as PID 1. Compose publishes `8080:8080` and `9699:9699`. Host Vite (`ui-v2`) proxies `/api` → `:8080`; agents keep MCP on `:9699`. Same RocksDB env and project cwd. Set `LEANKG_SERVE_HTTP=0` for MCP-only.
-
-### One-line run (published image — no Rust)
-
-Index + INT8 embed + MCP (recommended):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
-```
-
-MCP only (skip cold embed):
-
-```bash
-docker run -d --name leankg -p 9699:9699 -p 8080:8080 \
-  -e LEANKG_SERVE_HTTP=1 \
-  -v "$PWD:/workspace" \
-  -v leankg-rocksdb:/data/leankg-rocksdb \
-  -v leankg-models:/root/.cache/leankg \
-  freepeak/leankg:latest
-```
-
-Hub: https://hub.docker.com/r/freepeak/leankg (`linux/arm64` tags `:latest` / `:0.18.2`).
-
-### Single-project (build from source)
-
-```bash
-# Start from Hub image (no local build)
-docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up -d
-
-# Stop
-docker compose -f docker-compose.rocksdb.yml down
-
-# Clean up RocksDB volume
-docker volume rm leankg_leankg-rocksdb
-```
-
-Environment variables for RocksDB (defaults are built into compose):
-- `LEANKG_DB_ENGINE=rocksdb` -- Switch from SQLite to RocksDB
-- `LEANKG_ROCKSDB_ROOT` -- Centralized storage root (default: `$HOME/.leankg-rocksdb`)
-- `LEANKG_SERVE_HTTP=1` -- Start `leankg serve` REST alongside MCP (UI v2); `0` = MCP-only
-- `LEANKG_SERVE_PORT=8080` -- REST listen port inside the container
-
-The MCP server selects its project via `LEANKG_MCP_PROJECT`; the entrypoint scans and auto-indexes any directory listed in `LEANKG_PROJECT_DIRS` (comma-separated, e.g. `/workspace,/workspace-other`).
-
-### Reload without rebuild (primary path)
-
-The base compose file (`docker-compose.rocksdb.yml`) pulls a Hub image — no local Rust build. Use these scripts instead of `docker compose up --build`:
-
-| Scenario | Command |
-|----------|---------|
-| New Hub version available | `scripts/docker-reload.sh` |
-| Local source change, no Hub tag yet | `scripts/docker-sync-binary.sh` |
-
-Both keep RocksDB + model volumes; only the container runtime changes.
-
-`scripts/docker-reload.sh` — pulls `$LEANKG_IMAGE` (default `freepeak/leankg:latest`) and recreates the container with `up -d --no-build --force-recreate`. Pin a version via env:
-```bash
-LEANKG_IMAGE=freepeak/leankg:0.19.4 scripts/docker-reload.sh
-```
-
-`scripts/docker-sync-binary.sh` — builds the Linux `leankg` binary in a cached `rust:1-bookworm` builder (incremental, no image layers) and bind-mounts it over the Hub runtime image. Use when your local `Cargo.toml` version is not yet published to Hub.
-
-To publish a new Hub image (intentional build, not day-to-day):
-```bash
-docker compose -f docker-compose.build.yml build
-docker compose -f docker-compose.build.yml push
-```
-
-### Multi-repo workspace roots (nested git)
-
-Some mounts (e.g. a polyrepo directory that contains many service repos under `platform-*/*`) are **not** a git repository at the root. MCP auto-index still treats them as git-backed when nested `.git` directories are found (bounded depth scan). Freshness uses the latest `HEAD` commit time across nested repos; incremental indexing unions changed/untracked files from each nested repo with paths prefixed relative to the workspace root.
-
-`require_git_for_auto_index: true` in `leankg.yaml` therefore passes when either:
-- the project root itself is a git work tree, or
-- nested git repositories exist under that root.
-
-### Mega-graph / OOM-safe querying
-
-Workspaces above `LEANKG_MAX_CACHE_ELEMENTS` (default **50_000** elements) are treated as mega-graphs:
-
-- Discovery tools (`search_code`, `semantic_search`, `concept_search`, `query_file`) use **ontology-first + paginated** paths (`limit`/`offset`, max page 50).
-- Full-scan tools (`get_clusters`, `get_code_tree` without query, nav dumps, annotation full scans) **refuse** with a redirect hint instead of loading 600k+ rows.
-- Incremental auto-index **skips** full-graph dependent expansion on mega-graphs (override with `LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1` to force skip always).
-- Search prefer-order: `concept_search` → `search_knowledge` → `semantic_search` → `search_code`. Semantic context: `semantic_search` → `kg_semantic_context` (embeddings) → `kg_context`.
-- Overview prefer: `get_overview_context` (not `load_layer(L0)` alone). Use `env=` on search/`kg_*` for environment scoping. Hard-removed: `wake_up`, `search_by_environment`. Audit: [`docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`](docs/reports/mcp-tool-redundancy-impact-2026-07-20.md).
-- **Dynamic ontology**: Agents can persist discoveries via `add_ontology_concept` and `add_ontology_workflow` (survive YAML re-syncs) and `add_knowledge` (free-form notes). Search `concept_search` and `search_knowledge` before raw code search.
-
-Env knobs:
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `LEANKG_MAX_CACHE_ELEMENTS` | 50000 | Mega-graph threshold + in-memory cache gate |
-| `LEANKG_MAX_CLUSTER_ELEMENTS` | 50000 | Refuse Louvain clustering above this |
-| `LEANKG_CODE_TREE_CAP` | 50000 | Cap for small-graph code tree DB fetch |
-| `LEANKG_INCREMENTAL_SKIP_DEPENDENTS` | auto | Force-skip dependents in incremental index |
-
-### Multi-project (side-by-side repos)
-
-To serve additional repos (e.g. another project mounted at `/workspace-other` alongside the LeanKG source tree at `/workspace`):
-
-1. Create `.dockerfile` (local-only, gitignored) — copy from `.dockerfile.example`. Set:
-   ```bash
-   HOST_PROJECT_PATH=/path/to/leankg
-   CONTAINER_PROJECT_PATH=/workspace
-   LEANKG_MCP_PROJECT=/workspace-other
-   LEANKG_PROJECT_DIRS=/workspace,/workspace-other
-   ```
-   Note the **comma-separated** `LEANKG_PROJECT_DIRS` -- `entrypoint.sh` uses `IFS=','`.
-
-2. Create `docker-compose.override.yml` (local-only, gitignored). The committed template adds the bind mount for the second repo:
-   ```yaml
-   services:
-     leankg:
-       volumes:
-         - /Users/you/work/other-repo:/workspace-other
-   ```
-
-
-3. Start with the override file chained in:
-   ```bash
-   docker compose \
-     -f docker-compose.rocksdb.yml \
-     -f docker-compose.override.yml \
-     --env-file .dockerfile \
-     up -d
-   ```
-
-The override file's `volumes:` list is appended to the base compose, so the second bind mount appears alongside `/workspace` and the named RocksDB volume.
-
-Without Docker (host machine):
-
-```bash
-export LEANKG_DB_ENGINE=rocksdb
-export LEANKG_ROCKSDB_ROOT="$HOME/.leankg-rocksdb"
-cargo build --release
-target/release/leankg mcp-http --port 9699 --project /path/to/project
-```
-
-When `LEANKG_DB_ENGINE` is not set, LeanKG uses the default per-project SQLite storage at `<project>/.leankg/leankg.db`.
-
-## UI Development
-
-### UI v2 (GitNexus-shell explorer — embedded default)
-
-App source: `<leankg-codebase>/ui-v2/`. Production assets are copied into `src/embed/` and served by `leankg serve` / `leankg web` (onrender `:8080`, Docker Option A `:8080`).
-
-```bash
-# Terminal A — backend (also serves embedded UI at http://localhost:8080/)
-cargo run --release -- serve
-
-# Terminal B — hot reload during UI work
-cd <leankg-codebase>/ui-v2 && npm install && npm run dev   # :5173, proxies /api → :8080
-
-# After UI changes — refresh embedded assets for Docker / onrender / binary serve
-cd <leankg-codebase>/ui-v2 && npm run build
-rm -rf <leankg-codebase>/src/embed/*
-cp -r <leankg-codebase>/ui-v2/dist/* <leankg-codebase>/src/embed/
-cargo build --release
-
-# Tests
-cd <leankg-codebase>/ui-v2 && npm test && npm run test:e2e
-```
-
-ERD: [`docs/erd/ui-v2-erd.md`](docs/erd/ui-v2-erd.md). Parity: [`docs/reports/ui-v2-gitnexus-parity-2026-07-20.md`](docs/reports/ui-v2-gitnexus-parity-2026-07-20.md).
-
-### Legacy UI (`ui/` — source kept, not embedded)
-
-The previous Vite app remains under `ui/` for reference. It is **not** what `serve` / onrender ship anymore. Do not copy `ui/dist` into `src/embed/`.
-
-**For full backend + embedded UI:**
-```bash
-cargo run --release -- serve   # http://localhost:8080/  (UI v2 + /api)
-```
-
-## Important Files
+## Key source files
 
 | File | Purpose |
 |------|---------|
+| `src/main.rs` | CLI entrypoint |
 | `src/lib.rs` | Module exports |
-| `src/db/models.rs` | Data models (CodeElement, Relationship, BusinessLogic, RelationshipType) |
-| `src/graph/query.rs` | Graph query engine |
+| `src/cli/mod.rs` | Subcommand definitions |
 | `src/mcp/tools.rs` | MCP tool definitions |
 | `src/mcp/handler.rs` | MCP tool handlers |
-| `src/indexer/extractor.rs` | Code parsing with tree-sitter |
-| `src/indexer/microservice.rs` | Microservice gRPC call extraction |
-| `config/microservice-extractor.yaml` | Default rules for microservice relationship extraction |
+| `src/db/models.rs` | Data models |
+| `src/graph/query.rs` | Graph query engine |
+| `src/indexer/extractor.rs` | tree-sitter code parsing |
+| `src/embed.rs` | Embedding pipeline CLI |
 
-## Data Model
+## Multi-project setup (side-by-side repos)
 
-- **CodeElement** - Files, functions, classes with `qualified_name` (e.g., `src/main.rs::main`)
-- **Relationship** - `imports`, `calls`, `tested_by`, `references`, `documented_by`, `service_calls`
-- **ServiceCalls** - Microservice gRPC calls between services via DNS addresses
-- **BusinessLogic** - Annotations linking code to business requirements
+Gitignored local files:
+- `.dockerfile` — copy from `.dockerfile.example`; set `LEANKG_PROJECT_DIRS=/workspace,/workspace-other`
+- `docker-compose.override.yml` — add bind mounts for side repos
 
-## MCP Tools
+Never paste personal host paths into commits.
 
-Core tools: `query_file`, `get_dependencies`, `get_dependents`, `get_impact_radius`, `get_review_context`, `find_function`, `get_call_graph`, `search_code`, `query_graph`, `generate_doc`, `find_large_functions`, `get_tested_by`
+## Parallel subagent workflow
 
-Doc/Traceability tools: `get_files_for_doc`, `get_doc_structure`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`, `find_related_docs`
-
-PRD-in-KG tools (v3.8.0): `index_prd` (parse PRD markdown into KG), `get_feature_flow` (FR → workflow → steps → code_refs forward chain), `get_traceability_matrix` (PO-facing FR coverage matrix)
-
-**`semantic_search` (FR-SEM-08):** NL → functions via `method: "hnsw+ontology-traverse"`. HNSW + cross-encoder rerank, then high-level seeds (class / doc / workflow / concept) drive an **ontology-guided top-down traversal** to the function targets, re-ranked by a composite embed of `"{upper_name}\n{func_blob}"`. Two pools (direct = cross-encoder `rerank_score`; traversed = `composite_score` + `via_upper`/`via_edge`/`hop`) are normalized and merged by `rank_score`. Each result carries `source: "direct" | "traversed"`. `kg_semantic_context` exposes the same discovered functions in a sibling `functions[]` array (its additive `traversed[]` neighborhood is unchanged). See `docs/plans/2026-07-27-semantic-search-ontology-traversal.md`.
-
-**Doc↔code prefer-order (v3.7.13):** `search_by_requirement` / `get_traceability` for `FR-*` / `US-*` IDs → `get_files_for_doc` / `find_related_docs` (after `mcp_index_docs`, canonical `docs/…` paths) → `concept_search` / `kg_trace_workflow` → `semantic_search` → `search_code`.
-
-Cluster tools: `get_clusters`, `get_cluster_context`
-
-Risk tools: `detect_changes`
-
-## Known Limitations
-
-- **Android/Kotlin/XML search** - Search for Android-related code elements (Kotlin, XML layouts, AndroidManifest.xml) may return incomplete results. The indexer finds these files but search indexing has gaps.
-
-## Verification Status
-
-See `docs/implementation-feature-verification-2026-03-25.md` for test results.
+For 3+ independent tasks: dispatch to `.worktree/<feature>/` worktrees with feature branches. Verify isolation (`.gitignore` covers `.worktrees/`). Merge all feature branches after completion.
 
 ---
 

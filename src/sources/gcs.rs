@@ -1,4 +1,5 @@
 use super::{ProgressReporter, Source};
+use sha2::Digest;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -252,6 +253,225 @@ impl Source for GcsSource {
 
     fn name(&self) -> &str {
         "gcs"
+    }
+
+    /// Fingerprint = SHA256 of sorted "(name,generation|etag)" tuples.
+    async fn remote_fingerprint(
+        &self,
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.resolve_bearer_token().unwrap_or_default();
+        let endpoint = self.resolve_endpoint();
+        let objects_with_meta = self.list_objects_with_meta(&token, &endpoint).await?;
+        if objects_with_meta.is_empty() {
+            return Ok(None);
+        }
+        use std::io::Write;
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        for (name, etag) in &objects_with_meta {
+            writeln!(hasher, "{}\0{}", name, etag).ok();
+        }
+        let hash = hex::encode(hasher.finalize());
+        Ok(Some(hash))
+    }
+
+    /// Delta sync: download only new/changed objects, delete local objects
+    /// removed from the bucket.
+    async fn materialize_ephemeral(
+        &self,
+        staging_root: &Path,
+        progress: &mut dyn ProgressReporter,
+    ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.require_token()?;
+        let endpoint = self.resolve_endpoint();
+        let objects_with_meta = self.list_objects_with_meta(&token, &endpoint).await?;
+
+        let dir_name = super::uri_staging_dir(&super::SourceUri::Gcs {
+            bucket: self.bucket.clone(),
+            prefix: self.prefix.clone(),
+        });
+        let local_dir = staging_root.join(&dir_name);
+        tokio::fs::create_dir_all(&local_dir).await?;
+
+        if objects_with_meta.is_empty() {
+            // Remove everything if bucket is empty
+            if local_dir.exists() {
+                tokio::fs::remove_dir_all(&local_dir).await?;
+                tokio::fs::create_dir_all(&local_dir).await?;
+            }
+            return Ok(local_dir);
+        }
+
+        // Build a set of remote relative paths for deletion detection
+        let client = reqwest::Client::new();
+        let mut remote_relative = std::collections::HashSet::new();
+
+        for (obj_name, _etag) in &objects_with_meta {
+            let relative_path = if self.prefix.is_empty() {
+                obj_name.as_str()
+            } else {
+                obj_name
+                    .strip_prefix(&self.prefix)
+                    .unwrap_or(obj_name)
+                    .trim_start_matches('/')
+            };
+            let local_path = local_dir.join(relative_path);
+
+            if let Some(parent) = local_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+
+            let url = format!(
+                "{}/{}/o/{}",
+                endpoint,
+                self.bucket,
+                percent_encode(obj_name)
+            );
+
+            let resp = client
+                .get(&url)
+                .query(&[("alt", "media")])
+                .bearer_auth(&token)
+                .timeout(Duration::from_secs(120))
+                .send()
+                .await
+                .map_err(|e| format!("delta download {} failed: {}", obj_name, e))?;
+
+            let body = resp
+                .bytes()
+                .await
+                .map_err(|e| format!("read {} body: {}", obj_name, e))?;
+
+            if (body.len() as u64) <= super::max_file_size_bytes() {
+                tokio::fs::write(&local_path, &body).await?;
+            }
+            remote_relative.insert(relative_path.to_string());
+        }
+
+        // Remove local files that no longer exist on the remote
+        let mut to_remove = Vec::new();
+        if local_dir.exists() {
+            for entry in walkdir::WalkDir::new(&local_dir)
+                .min_depth(1)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if entry.file_type().is_dir() {
+                    continue;
+                }
+                if let Ok(rel) = entry.path().strip_prefix(&local_dir) {
+                    let rel_str = rel.to_string_lossy().to_string();
+                    if !remote_relative.contains(&rel_str) {
+                        to_remove.push(entry.path().to_path_buf());
+                    }
+                }
+            }
+        }
+        for path in &to_remove {
+            tokio::fs::remove_file(path).await?;
+            progress.report(&format!("removed stale: {}", path.display()));
+        }
+
+        // Clean up empty directories left behind
+        if local_dir.exists() {
+            // Walk in reverse to remove empty dirs bottom-up
+            let mut dirs: Vec<_> = walkdir::WalkDir::new(&local_dir)
+                .min_depth(1)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_dir())
+                .map(|e| e.path().to_path_buf())
+                .collect();
+            dirs.sort_by(|a, b| b.cmp(a)); // reverse sort = bottom-up
+            for d in dirs {
+                if d.read_dir()
+                    .map(|mut i| i.next().is_none())
+                    .unwrap_or(false)
+                {
+                    tokio::fs::remove_dir(&d).await?;
+                }
+            }
+        }
+
+        progress.report(&format!(
+            "delta sync complete: {} objects",
+            objects_with_meta.len()
+        ));
+        Ok(local_dir)
+    }
+}
+
+impl GcsSource {
+    /// List objects with their etag/generation metadata for fingerprinting.
+    async fn list_objects_with_meta(
+        &self,
+        access_token: &str,
+        endpoint: &str,
+    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
+        let client = reqwest::Client::new();
+        let mut objects = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let url = format!("{}/{}/o", endpoint, self.bucket);
+            let mut query_params: Vec<(&str, &str)> = Vec::new();
+            if !self.prefix.is_empty() {
+                query_params.push(("prefix", self.prefix.as_str()));
+            }
+            if let Some(ref token) = page_token {
+                query_params.push(("pageToken", token.as_str()));
+            }
+            query_params.push(("maxResults", "1000"));
+            // Request etag and generation in the response
+            query_params.push(("projection", "noAcl"));
+
+            let resp = client
+                .get(&url)
+                .bearer_auth(access_token)
+                .query(&query_params)
+                .timeout(Duration::from_secs(30))
+                .send()
+                .await
+                .map_err(|e| format!("GCS list meta failed: {}", e))?;
+
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("read GCS list meta body: {}", e))?;
+
+            if !status.is_success() {
+                return Err(format!("GCS list meta returned {}: {}", status, body).into());
+            }
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| format!("GCS list meta parse: {}", e))?;
+
+            if let Some(items) = parsed["items"].as_array() {
+                for item in items {
+                    let name = item["name"].as_str().unwrap_or("").to_string();
+                    let size = item["size"]
+                        .as_str()
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    if name.ends_with('/') && size == 0 {
+                        continue;
+                    }
+                    let etag = item["etag"]
+                        .as_str()
+                        .or_else(|| item["generation"].as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    objects.push((name, etag));
+                }
+            }
+
+            page_token = parsed["nextPageToken"].as_str().map(|s| s.to_string());
+            if page_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(objects)
     }
 }
 

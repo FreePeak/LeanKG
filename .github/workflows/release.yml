@@ -4,23 +4,77 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on version tags like v1.0.0, v0.0.1
+  # Manual retry: re-run the build/upload for an already-released tag.
+  # Used when release-please pushed a lightweight tag (no `push` event
+  # would fire and binaries were never attached), or when the build
+  # failed after the GitHub Release was created (binaries missing).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish binaries for (e.g. v0.19.11)'
+        required: true
 
 permissions:
   contents: write
 
+# Cancel any older release.yml run for the same tag so manual re-dispatch
+# (after the auto-dispatch from release-please) does not race the build
+# matrix and double-attach assets.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   publish-crates:
     runs-on: ubuntu-latest
+    # crates.io rejects re-publishing an existing version. An older release
+    # run (or a manual retry after the tag was created by release-please)
+    # will hit this and the whole workflow run turns red, even though all
+    # four binary builds succeeded and uploaded assets. Skip the publish
+    # entirely when the version is already on crates.io.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Checkout the exact tag (not main HEAD) so Cargo.toml's version
+          # matches the GitHub Release we are populating. Otherwise a manual
+          # retry for v0.19.14 against the current main (v0.19.16) would
+          # try to `cargo publish` v0.19.16 — which is either already on
+          # crates.io (rejected) or, worse, silently bumps the published
+          # version past the tag the user installed.
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - name: Publish to crates.io
-        run: cargo publish --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CRATE_VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${CRATE_VERSION#v}"
+          echo "Publishing leankg ${VERSION} (Cargo.toml says $(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2))"
+          # Idempotency: skip when the version is already on crates.io.
+          # crates.io requires a User-Agent or it returns 403, so set one
+          # explicitly.
+          STATUS=$(curl -fsSL -A "leankg-release-ci" -o /dev/null -w '%{http_code}' \
+            "https://crates.io/api/v1/crates/leankg/${VERSION}" || true)
+          if [ "$STATUS" = "200" ]; then
+            echo "leankg ${VERSION} already on crates.io — skipping."
+            exit 0
+          fi
+          # If Cargo.toml's version disagrees with the tag (e.g. the tag
+          # was pushed before release-please bumped Cargo.toml, or this is
+          # a manual retry against an older tag), patch Cargo.toml to match
+          # the tag so `cargo publish` doesn't try to re-publish the
+          # previously released version.
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "Cargo.toml version ${CARGO_VERSION} != tag ${VERSION}; patching Cargo.toml"
+            sed -i.bak "0,/^version = \"${CARGO_VERSION}\"/s//version = \"${VERSION}\"/" Cargo.toml
+          fi
+          echo "Not on crates.io (HTTP ${STATUS}); publishing leankg ${VERSION}"
+          cargo publish --allow-dirty
 
   build:
     strategy:
@@ -41,6 +95,8 @@ jobs:
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -60,6 +116,15 @@ jobs:
           cp -r dist/* ../src/embed/
           test -f ../src/embed/index.html
           grep -q '<title>LeanKG</title>' ../src/embed/index.html
+          # RC3 guard: src/graph/export.rs `include_str!`s vis-network.min.js.
+          # Fail loudly at the UI-build step (not deep inside `cargo build`)
+          # when the Vite build no longer emits it.
+          if ! test -f ../src/embed/vis-network.min.js; then
+            echo "ERROR: vis-network.min.js missing from ui-v2 build."
+            echo "  src/graph/export.rs:72 requires it via include_str!."
+            echo "  Add vis-network to ui-v2/package.json deps or vendor a copy here."
+            exit 1
+          fi
           printf '%s\n' '{"ui":"ui-v2","source":"release.yml"}' > ../src/embed/ui-build.json
 
       - name: Build
@@ -74,10 +139,38 @@ jobs:
           fi
           cp target/${{ matrix.target }}/release/leankg$EXT release/leankg
           tar -czf release/${{ matrix.artifact }} -C release leankg
+          # Sanity: refuse to upload a zero-byte artifact (catches tar/empty-target bugs).
+          if [ ! -s "release/${{ matrix.artifact }}" ]; then
+            echo "ERROR: release/${{ matrix.artifact }} is empty"
+            exit 1
+          fi
         shell: bash
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          files: release/${{ matrix.artifact }}
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT: release/${{ matrix.artifact }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ensure the GitHub Release page exists. release-please creates it
+          # for auto-tags; a manually-pushed annotated tag (or a workflow_dispatch
+          # retry of a tag whose release-please PR was opened before this
+          # check existed) leaves no release page and `gh release upload`
+          # silently no-ops or errors out depending on auth scope. Create-if-
+          # missing is idempotent: if the release already exists, gh exits 1
+          # but we ignore it via the || true.
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Creating GitHub Release $TAG (no release page yet)"
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              > /dev/null || true
+            if ! gh release view "$TAG" > /dev/null 2>&1; then
+              echo "ERROR: GitHub release for $TAG still does not exist after create attempt"
+              exit 1
+            fi
+          fi
+          # Upload with --clobber so retries overwrite existing assets.
+          gh release upload "$TAG" "$ARTIFACT" --clobber

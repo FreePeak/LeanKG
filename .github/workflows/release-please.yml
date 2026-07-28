@@ -33,6 +33,10 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # Required for `gh workflow run release.yml` after a tag is created.
+  # Without this, Verify release output fails with HTTP 403
+  # "Resource not accessible by integration".
+  actions: write
 
 # Allow only one release run at a time; cancel duplicate runs that
 # arrived while the previous run was still processing. This avoids
@@ -46,6 +50,13 @@ jobs:
     name: Release Please
     runs-on: ubuntu-latest
     steps:
+      # `gh workflow run` reads .git/ to resolve the default ref. Without
+      # a checkout the dispatch fails with "fatal: not a git repository"
+      # and release.yml never fires for the auto-created tag.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Release Please
         id: release
         uses: googleapis/release-please-action@v4
@@ -70,6 +81,7 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           TAG: ${{ steps.release.outputs.tag_name }}
           HTML_URL: ${{ steps.release.outputs.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${VERSION:-}" ]; then
@@ -81,6 +93,25 @@ jobs:
             exit 1
           fi
           echo "Published ${TAG} (${HTML_URL:-})"
+
+          # release-please-action v4 creates tags via the GitHub API, not via
+          # `git push`. API-created tags do NOT fire `on.push.tags` events,
+          # so release.yml never runs on a normal release-please release.
+          # Annotate when possible AND explicitly trigger release.yml.
+          TYPE=$(gh api repos/${{ github.repository }}/git/refs/tags/$TAG --jq '.object.type')
+          if [ "$TYPE" = "commit" ]; then
+            SHA=$(gh api repos/${{ github.repository }}/git/refs/tags/$TAG --jq '.object.sha')
+            echo "Converting lightweight tag $TAG to annotated tag (was type=$TYPE)"
+            TAG_OBJ=$(gh api repos/${{ github.repository }}/git/tags \
+              -f tag="$TAG" -f message="Release $TAG" \
+              -f object="$SHA" -f type="commit" --jq '.sha')
+            gh api repos/${{ github.repository }}/git/refs/tags/$TAG \
+              -f sha="$TAG_OBJ" -X PATCH
+          fi
+          # Always dispatch release.yml — tag annotation alone does not
+          # trigger it (no `git push` happened).
+          echo "Dispatching release.yml for $TAG"
+          gh workflow run release.yml --ref main -f tag="$TAG"
 
       - name: Summarize run
         if: always()

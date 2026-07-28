@@ -30,6 +30,27 @@ pub trait Source: Send + Sync {
 
     /// Human-readable label for logging.
     fn name(&self) -> &str;
+
+    /// Optional: return a fingerprint string for change detection.
+    /// Returns `None` for sources that cannot be polled (local fs).
+    async fn remote_fingerprint(
+        &self,
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let _ = self;
+        Ok(None)
+    }
+
+    /// Optional: materialize content without a persistent VCS clone.
+    /// Only called when `remote_fingerprint()` signals a change.
+    /// Returns the path to the materialized content.
+    /// Default: delegates to `sync_to_local` for backward compat.
+    async fn materialize_ephemeral(
+        &self,
+        staging_root: &Path,
+        progress: &mut dyn ProgressReporter,
+    ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+        self.sync_to_local(staging_root, progress).await
+    }
 }
 
 /// Parsed representation of a `--source` URI.

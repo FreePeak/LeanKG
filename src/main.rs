@@ -32,6 +32,7 @@ mod web;
 mod lsp;
 
 use clap::Parser;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(name = "leankg")]
@@ -478,7 +479,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             show_status(&db_path)?;
         }
-        cli::CLICommand::Watch { path: _ } => {
+        cli::CLICommand::Watch {
+            path: _,
+            source,
+            ref_name,
+            interval,
+            auth,
+            embed,
+        } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
 
@@ -487,6 +495,145 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
 
+            // Remote source polling mode
+            if let Some(source_uri) = source {
+                let ref_name = ref_name.as_deref().unwrap_or("main");
+                let auth_token = auth
+                    .or_else(|| std::env::var("GITLAB_TOKEN").ok())
+                    .or_else(|| std::env::var("GIT_TOKEN").ok())
+                    .or_else(|| std::env::var("GCS_ACCESS_TOKEN").ok());
+                let auth_deref = auth_token.as_deref();
+                let rs_ref_name = ref_name.to_string();
+                let rs_source = source_uri.to_string();
+                let rs_auth = auth_deref.map(|s| s.to_string());
+                let rs_db_path = db_path.clone();
+                let rs_embed = embed;
+
+                println!("╔═══════════════════════════════════════╗");
+                println!("║  LeanKG Remote Source Watcher         ║");
+                println!("╚═══════════════════════════════════════╝");
+                println!("  Source:    {}", rs_source);
+                println!("  Ref:       {}", rs_ref_name);
+                println!("  Interval:  {}s", interval);
+                println!("  Embed:     {}", if rs_embed { "yes" } else { "no" });
+                println!("  DB:        {}", rs_db_path.display());
+                println!("  Press Ctrl+C to stop.\n");
+
+                // Load watch state
+                let state_path = rs_db_path.join("source_watch_state.json");
+
+                let mut last_fingerprint: Option<String> = None;
+                // Load persisted state
+                if let Ok(content) = tokio::fs::read_to_string(&state_path).await {
+                    if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
+                        last_fingerprint = state
+                            .get("fingerprint")
+                            .and_then(|v| v.as_str().map(|s| s.to_string()));
+                    }
+                }
+
+                loop {
+                    let uri = match sources::parse_source_uri(&rs_source) {
+                        Ok(u) => u,
+                        Err(e) => {
+                            eprintln!("[watch] invalid source URI '{}': {}", rs_source, e);
+                            tokio::time::sleep(Duration::from_secs(interval)).await;
+                            continue;
+                        }
+                    };
+
+                    let src = match sources::SourceFactory::create(
+                        &uri,
+                        rs_auth.as_deref(),
+                        Some(&rs_ref_name),
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("[watch] cannot create source: {}", e);
+                            tokio::time::sleep(Duration::from_secs(interval)).await;
+                            continue;
+                        }
+                    };
+
+                    match src.remote_fingerprint().await {
+                        Ok(Some(fp)) => {
+                            if last_fingerprint.as_deref() == Some(&fp) {
+                                // No change; sleep and retry
+                                tokio::time::sleep(Duration::from_secs(interval)).await;
+                                continue;
+                            }
+
+                            println!(
+                                "[watch] change detected ({}). Materializing...",
+                                &fp[..8.min(fp.len())]
+                            );
+
+                            let staging_root = rs_db_path
+                                .parent()
+                                .unwrap_or(std::path::Path::new("."))
+                                .join(".leankg")
+                                .join("sources");
+                            tokio::fs::create_dir_all(&staging_root).await.ok();
+
+                            let mut progress = sources::CliProgress;
+                            match src
+                                .materialize_ephemeral(&staging_root, &mut progress)
+                                .await
+                            {
+                                Ok(synced) => {
+                                    println!("[watch] Running incremental index...");
+                                    let db = match db::schema::init_db(&rs_db_path) {
+                                        Ok(d) => d,
+                                        Err(e) => {
+                                            eprintln!("[watch] DB init failed: {}", e);
+                                            tokio::time::sleep(Duration::from_secs(interval)).await;
+                                            continue;
+                                        }
+                                    };
+                                    let graph = graph::GraphEngine::new(db);
+                                    let mut parser = indexer::ParserManager::new();
+                                    if parser.init_parsers().is_err() {
+                                        eprintln!("[watch] parser init failed");
+                                        tokio::time::sleep(Duration::from_secs(interval)).await;
+                                        continue;
+                                    }
+                                    let files = indexer::find_files_sync(&synced.to_string_lossy())
+                                        .unwrap_or_default();
+                                    match indexer::index_files_parallel(&graph, &files, false) {
+                                        Ok(_n) => println!("[watch] Indexed {} files", files.len()),
+                                        Err(e) => eprintln!("[watch] Index failed: {}", e),
+                                    }
+
+                                    if rs_embed {
+                                        maybe_run_embed(&rs_db_path).ok();
+                                    }
+
+                                    // Persist fingerprint
+                                    last_fingerprint = Some(fp.clone());
+                                    if let Ok(content) = serde_json::to_string(&serde_json::json!({
+                                        "fingerprint": fp
+                                    })) {
+                                        tokio::fs::write(&state_path, content).await.ok();
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[watch] materialize failed: {}", e);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            eprintln!("[watch] source returned empty fingerprint; retrying...");
+                        }
+                        Err(e) => {
+                            eprintln!("[watch] fingerprint error: {}", e);
+                        }
+                    }
+
+                    tokio::time::sleep(Duration::from_secs(interval)).await;
+                }
+            }
+
+            // Local filesystem watching mode (existing behavior)
             println!("╔═══════════════════════════════════════╗");
             println!("║  LeanKG File Watcher                  ║");
             println!("╚═══════════════════════════════════════╝");
@@ -549,6 +696,89 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "embeddings")]
         cli::CLICommand::SmokeTest { project } => {
             run_smoke_test(&project)?;
+        }
+        cli::CLICommand::IndexDocs { path, project } => {
+            let base = std::path::PathBuf::from(&project);
+            let docs_dir = path
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| base.join("docs"));
+            if !docs_dir.exists() {
+                eprintln!("Docs directory not found: {}", docs_dir.display());
+                std::process::exit(1);
+            }
+            let db_path = base.join(".leankg");
+            let db = db::schema::init_db(&db_path)?;
+            let graph = graph::GraphEngine::new(db);
+            let result = doc_indexer::index_docs_directory(&docs_dir, &graph)?;
+            println!("Indexed {:?} documents from {}", result, docs_dir.display());
+        }
+        #[cfg(feature = "embeddings")]
+        cli::CLICommand::Refresh {
+            path,
+            docs,
+            source,
+            ref_name,
+            auth,
+            full,
+            project,
+        } => {
+            let base = std::path::PathBuf::from(&project);
+            let db_path = base.join(".leankg");
+
+            // 1. Index code
+            let index_path = if let Some(src_uri) = source {
+                let uri = sources::parse_source_uri(&src_uri)?;
+                let token_from_env = std::env::var("GITLAB_TOKEN")
+                    .ok()
+                    .or_else(|| std::env::var("GIT_TOKEN").ok());
+                let effective_auth = auth.as_deref().or(token_from_env.as_deref());
+                let src =
+                    sources::SourceFactory::create(&uri, effective_auth, ref_name.as_deref())?;
+                let staging_root = base.join(".leankg").join("sources");
+                tokio::fs::create_dir_all(&staging_root).await?;
+                let mut progress = sources::CliProgress;
+                let synced = src
+                    .sync_to_local(&staging_root, &mut progress)
+                    .await
+                    .map_err(|e| format!("source sync failed: {}", e))?;
+                synced.to_string_lossy().to_string()
+            } else {
+                path.unwrap_or_else(|| ".".to_string())
+            };
+
+            println!("Indexing code from {}...", index_path);
+            let db = db::schema::init_db(&db_path)?;
+            let graph = graph::GraphEngine::new(db);
+            let mut parser = indexer::ParserManager::new();
+            parser.init_parsers()?;
+            let files = indexer::find_files_sync(&index_path)?;
+            let n = indexer::index_files_parallel(&graph, &files, false)?;
+            println!("Indexed {} code files", n);
+
+            // 2. Index docs
+            let docs_dir = docs.map(std::path::PathBuf::from).or_else(|| {
+                let candidate = base.join("docs");
+                if candidate.exists() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            });
+            if let Some(ref dd) = docs_dir {
+                println!("Indexing docs from {}...", dd.display());
+                let result = doc_indexer::index_docs_directory(dd, &graph)?;
+                println!(
+                    "Indexed {} documents and {} sections",
+                    result.documents.len(),
+                    result.sections.len()
+                );
+            }
+
+            // 3. Embed
+            println!("Running embed...");
+            let project_str = project.clone();
+            maybe_run_embed(&base.join(".leankg"))?;
+            println!("Refresh complete.");
         }
         cli::CLICommand::Export {
             output,
@@ -1040,6 +1270,7 @@ fn detect_languages(root: &str, languages: &mut Vec<String>) {
         (".java", "java"),
         (".kt", "kotlin"),
         (".kts", "kotlin"),
+        (".swift", "swift"),
     ];
 
     for (ext, lang) in ext_lang {
@@ -1107,7 +1338,13 @@ async fn index_codebase(
 
     // Resolve the effective source: CLI flags take precedence over leankg.yaml config.
     let effective_source = source_uri.or(config.source.as_ref().map(|s| s.uri.as_str()));
-    let effective_auth = auth.or(config.source.as_ref().and_then(|s| s.auth.as_deref()));
+    // Auth resolution: --auth > GITLAB_TOKEN > GIT_TOKEN > config > none
+    let token_from_env = std::env::var("GITLAB_TOKEN")
+        .ok()
+        .or_else(|| std::env::var("GIT_TOKEN").ok());
+    let effective_auth = auth
+        .or(token_from_env.as_deref())
+        .or(config.source.as_ref().and_then(|s| s.auth.as_deref()));
     let effective_ref_name =
         ref_name.or(config.source.as_ref().and_then(|s| s.ref_name.as_deref()));
 
@@ -1262,19 +1499,28 @@ async fn incremental_index_codebase(
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
 
-    // Resolve the effective source: CLI flags take precedence over leankg.yaml config.
+    // Load project config for source settings
     let config_path = db_path
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .join("leankg.yaml");
-    let config = if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)?;
-        serde_yaml::from_str::<config::ProjectConfig>(&content).unwrap_or_default()
+    let config: config::ProjectConfig = if config_path.exists() {
+        match std::fs::read_to_string(&config_path) {
+            Ok(content) => serde_yaml::from_str(&content).unwrap_or_default(),
+            Err(_) => config::ProjectConfig::default(),
+        }
     } else {
         config::ProjectConfig::default()
     };
+
+    // Resolve the effective source: CLI flags take precedence over leankg.yaml config.
     let effective_source = source_uri.or(config.source.as_ref().map(|s| s.uri.as_str()));
-    let effective_auth = auth.or(config.source.as_ref().and_then(|s| s.auth.as_deref()));
+    let token_from_env = std::env::var("GITLAB_TOKEN")
+        .ok()
+        .or_else(|| std::env::var("GIT_TOKEN").ok());
+    let effective_auth = auth
+        .or(token_from_env.as_deref())
+        .or(config.source.as_ref().and_then(|s| s.auth.as_deref()));
     let effective_ref_name =
         ref_name.or(config.source.as_ref().and_then(|s| s.ref_name.as_deref()));
 
@@ -1303,6 +1549,7 @@ async fn incremental_index_codebase(
 
         // For remote sources, always do a full index after sync since
         // incremental diff on the staged dir won't detect source changes.
+        // Pass source_uri=None to prevent double-sync in index_codebase.
         println!("Remote source synced. Falling back to full index on latest content.");
         return index_codebase(
             &synced.to_string_lossy(),
@@ -1311,9 +1558,9 @@ async fn incremental_index_codebase(
             exclude_patterns,
             verbose,
             env,
-            source_uri,
-            ref_name,
-            auth,
+            None, // source_uri: None to prevent double-sync
+            None, // ref_name: already resolved
+            None, // auth: already resolved
         )
         .await;
     } else {
@@ -5220,6 +5467,37 @@ fn handle_ontology_command(
     Ok(())
 }
 
+/// Thin wrapper for watch-mode embed. Conditionally compiled.
+#[cfg(feature = "embeddings")]
+fn maybe_run_embed(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    println!("[watch] Running incremental embed...");
+    let project_path = db_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let project_str = project_path.to_string_lossy().to_string();
+    run_embed(
+        false, // init
+        false, // full
+        32,    // batch_size
+        &project_str,
+        true,  // wait
+        false, // status
+        false, // cancel
+        false, // background
+        4,     // workers
+        "",    // types_filter
+        false, // benchmark
+    )
+}
+
+/// No-op when embeddings feature is disabled.
+#[cfg(not(feature = "embeddings"))]
+fn maybe_run_embed(_db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("[watch] --embed requires --features embeddings");
+    Ok(())
+}
+
 #[cfg(feature = "embeddings")]
 #[allow(clippy::too_many_arguments)]
 fn run_embed(
@@ -5563,11 +5841,9 @@ fn run_embed_worker(
     // 5 min. Smaller workspaces embed every type. Pass `--types all` to
     // override and embed everything regardless of size.
     let parsed_filter = embeddings::parse_type_filter(types_filter);
-    // Compute the element count ONCE — both the mega-graph heuristic and
-    // the initial status payload need it, so we don't pay two full
-    // `all_elements()` scans (which on a 400k-row workspace costs seconds
-    // to tens of seconds).
-    let total = graph.all_elements().map(|v| v.len()).unwrap_or(0);
+    // Cheap count — never `all_elements()` here (mega-graphs skip the
+    // elements_cache and that full scan alone burns seconds before work).
+    let total = graph.count_elements().unwrap_or(0);
     let opts = embeddings::BuildOptions {
         mode,
         batch_size,

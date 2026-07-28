@@ -46,8 +46,10 @@ pub enum CLICommand {
         /// Git branch/tag/commit to check out (used with --source git+...)
         #[arg(long)]
         ref_name: Option<String>,
-        /// Auth credential for the source (access token, key path, or service account JSON)
-        /// Prefer env vars (GCS_ACCESS_TOKEN, GIT_TOKEN, etc.) when possible.
+        /// Auth credential for remote sources.
+        /// GCS: OAuth access token; prefer GCS_ACCESS_TOKEN env var.
+        /// Git: GitLab/GitHub PAT; prefer GITLAB_TOKEN or GIT_TOKEN env vars.
+        /// Note: GCS service-account JSON is not supported yet.
         #[arg(long)]
         auth: Option<String>,
         /// Run live A/B benchmark before and after indexing.
@@ -266,11 +268,32 @@ pub enum CLICommand {
     },
     /// Show index status
     Status,
-    /// Start file watcher for incremental re-indexing
+    /// Start file watcher for incremental re-indexing.
+    /// Supports local filesystem watching OR remote source polling.
+    /// For remote sources use --source URI --interval SECONDS.
     Watch {
-        /// Path to watch (default: project root)
+        /// Path to watch (default: project root).
+        /// Mutually exclusive with --source.
         #[arg(long)]
         path: Option<String>,
+        /// Remote source URI (git+https:// or gs://).
+        /// When set, polls the remote at --interval instead of watching
+        /// the local filesystem.
+        #[arg(long)]
+        source: Option<String>,
+        /// Ref name for git sources (default: main). Ignored for GCS.
+        #[arg(long)]
+        ref_name: Option<String>,
+        /// Poll interval in seconds (default: 60). Only used with --source.
+        #[arg(long, default_value = "60")]
+        interval: u64,
+        /// Auth credential for the remote source (access token).
+        /// Prefer GITLAB_TOKEN/GIT_TOKEN or GCS_ACCESS_TOKEN env vars.
+        #[arg(long)]
+        auth: Option<String>,
+        /// Also run embed after each detected change.
+        #[arg(long)]
+        embed: bool,
     },
     /// Find oversized functions
     Quality {
@@ -380,6 +403,39 @@ pub enum CLICommand {
     #[cfg(feature = "embeddings")]
     SmokeTest {
         /// Project root (defaults to current working directory).
+        #[arg(long, default_value = ".")]
+        project: String,
+    },
+    /// Index documentation files (markdown, etc.) into the graph.
+    IndexDocs {
+        /// Path to documentation directory.
+        #[arg(long)]
+        path: Option<String>,
+        /// Project root (defaults to current working directory).
+        #[arg(long, default_value = ".")]
+        project: String,
+    },
+    /// Full refresh: index code + docs + embed in one command.
+    #[cfg(feature = "embeddings")]
+    Refresh {
+        /// Path to index (default: project root).
+        path: Option<String>,
+        /// Docs path (default: project_root/docs/).
+        #[arg(long)]
+        docs: Option<String>,
+        /// Source URI for remote indexing.
+        #[arg(long)]
+        source: Option<String>,
+        /// Git ref name.
+        #[arg(long)]
+        ref_name: Option<String>,
+        /// Auth credential.
+        #[arg(long)]
+        auth: Option<String>,
+        /// Full re-embed.
+        #[arg(long)]
+        full: bool,
+        /// Project root.
         #[arg(long, default_value = ".")]
         project: String,
     },
