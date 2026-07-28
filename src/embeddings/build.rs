@@ -336,8 +336,15 @@ fn work_item_from_element(el: &crate::db::models::CodeElement) -> Option<WorkIte
     })
 }
 
+/// Above this stale count, per-row `find_element` is pathological (Cozo
+/// script parse+exec × N) and leaves `embedded=0` for many minutes on
+/// mega-graphs. One paginated scan + HashSet join is O(elements).
+const INCREMENTAL_POINT_LOOKUP_CAP: usize = 2_000;
+
 /// Incremental dirty set from `embedding_state` (indexer marks stale/new).
-/// Avoids mega `all_elements` / full pagination just to skip fresh rows.
+/// Avoids mega `all_elements` / full pagination just to skip fresh rows
+/// when the dirty set is small. Large dirty / cold rebuilds use one
+/// paginated walk keyed by the stale QN set.
 fn collect_incremental_dirty_work(
     graph: &GraphEngine,
     opts: &BuildOptions,
@@ -347,19 +354,66 @@ fn collect_incremental_dirty_work(
     let fresh = state::count_by_state(graph.db())
         .map(|c| c.fresh)
         .unwrap_or(0);
-    let mut work = Vec::with_capacity(stale_rows.len());
-    for row in &stale_rows {
-        if crate::embeddings::control::is_cancel_requested() {
-            return Err("embed cancelled".into());
+    let mut work = Vec::with_capacity(stale_rows.len().min(65_536));
+    if stale_rows.len() > INCREMENTAL_POINT_LOOKUP_CAP {
+        let stale_qns: std::collections::HashSet<&str> = stale_rows
+            .iter()
+            .map(|r| r.qualified_name.as_str())
+            .collect();
+        tracing::info!(
+            "incremental dirty collect: bulk scan (stale_rows={} > cap={})",
+            stale_rows.len(),
+            INCREMENTAL_POINT_LOOKUP_CAP
+        );
+        let total = graph.count_elements().unwrap_or(0);
+        let mut offset = 0usize;
+        let page_size = 5_000usize;
+        loop {
+            if crate::embeddings::control::is_cancel_requested() {
+                return Err("embed cancelled".into());
+            }
+            let (page, _) = graph.get_elements_paginated(page_size, offset)?;
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len();
+            for el in page {
+                if !stale_qns.contains(el.qualified_name.as_str()) {
+                    continue;
+                }
+                if !element_passes_type_filter(&el, opts) {
+                    continue;
+                }
+                if let Some(item) = work_item_from_element(&el) {
+                    work.push(item);
+                }
+            }
+            if offset % 25_000 < page_size {
+                tracing::info!(
+                    "incremental bulk collect progress: offset={}/{} work={}",
+                    offset,
+                    total,
+                    work.len()
+                );
+            }
+            if offset >= total && total > 0 {
+                break;
+            }
         }
-        let Some(el) = graph.find_element(&row.qualified_name)? else {
-            continue;
-        };
-        if !element_passes_type_filter(&el, opts) {
-            continue;
-        }
-        if let Some(item) = work_item_from_element(&el) {
-            work.push(item);
+    } else {
+        for row in &stale_rows {
+            if crate::embeddings::control::is_cancel_requested() {
+                return Err("embed cancelled".into());
+            }
+            let Some(el) = graph.find_element(&row.qualified_name)? else {
+                continue;
+            };
+            if !element_passes_type_filter(&el, opts) {
+                continue;
+            }
+            if let Some(item) = work_item_from_element(&el) {
+                work.push(item);
+            }
         }
     }
     tracing::info!(
