@@ -36,7 +36,7 @@
 
 # Absolute path to the LeanKG source tree on the host. Used as the primary
 # project mount and the container's working directory.
-HOST_PROJECT_PATH=/Users/linh.doan/work/harvey/freepeak/leankg
+HOST_PROJECT_PATH=/path/to/your/project
 
 # Container path where HOST_PROJECT_PATH is mounted. Must match the path
 # the entrypoint script cd's into before starting the MCP server.
