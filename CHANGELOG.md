@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.20](https://github.com/FreePeak/LeanKG/compare/v0.19.19...v0.19.20) (2026-07-28)
+
+
+### Bug Fixes
+
+* offline ARM64 embed under 5 min for mega-graphs ([#139](https://github.com/FreePeak/LeanKG/issues/139)) ([de57009](https://github.com/FreePeak/LeanKG/commit/de570095e0e6d2a77cceedc3e204812db70f8bea))
+
 ## [0.19.19](https://github.com/FreePeak/LeanKG/compare/v0.19.18...v0.19.19) (2026-07-28)
 
 
