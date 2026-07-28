@@ -656,22 +656,14 @@ impl MCPServer {
             let dirs = std::env::var("LEANKG_PROJECT_DIRS").unwrap_or_default();
             let primary =
                 std::env::var("LEANKG_MCP_PROJECT").unwrap_or_else(|_| "/workspace".to_string());
-            let projects: Vec<String> = dirs
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let projects = Self::parse_project_dirs(&dirs);
             if projects.is_empty() {
                 return;
             }
-            // De-dup so we don't arm the same primary twice.
-            let mut projects = projects;
-            projects.sort();
-            projects.dedup();
             for proj in projects {
                 // Only arm the primary project from inside MCP; side mounts
                 // log a one-liner and rely on the offline embed job.
-                if proj != primary {
+                if !Self::is_primary_project(&proj, &primary) {
                     tracing::info!(
                         "embed multi-project: {} is a side mount; run `docker-compose.embed.yml --profile embed` against it for in-process embed",
                         proj
@@ -696,6 +688,31 @@ impl MCPServer {
                 break;
             }
         });
+    }
+
+    /// Parse `LEANKG_PROJECT_DIRS` (comma-separated) into a deduped,
+    /// sorted list of project paths. Empty / whitespace-only entries
+    /// are skipped. Pure function — used by `schedule_multi_project_arm`
+    /// and unit-tested.
+    #[cfg(feature = "embeddings")]
+    fn parse_project_dirs(dirs: &str) -> Vec<String> {
+        let mut projects: Vec<String> = dirs
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        // De-dup so we don't arm the same primary twice.
+        projects.sort();
+        projects.dedup();
+        projects
+    }
+
+    /// Whether a project path equals the primary container mount
+    /// (`LEANKG_MCP_PROJECT`, default `/workspace`). Pure helper so the
+    /// primary-filter logic stays unit-testable without a tokio runtime.
+    #[cfg(feature = "embeddings")]
+    fn is_primary_project(project: &str, primary: &str) -> bool {
+        project == primary
     }
 
     #[cfg(feature = "embeddings")]
@@ -3092,5 +3109,204 @@ mod tests {
         unsafe {
             std::env::remove_var("LEANKG_VACUUM_INTERVAL_HOURS");
         }
+    }
+
+    // ---------- Embed auto-arm + multi-project helpers ----------
+    //
+    // Cover `MCPServer::auto_arm_cfg_from_env`, the partial-flip default,
+    // `parse_project_dirs`, and `is_primary_project`. All env-mutating
+    // tests serialize through `ENV_LOCK` to avoid races with the
+    // vacuum-interval tests above (process-wide env vars are not
+    // thread-safe across `cargo test` workers).
+
+    /// Helper: snapshot every `LEANKG_EMBED_BACKGROUND_*` env var so a
+    /// test can clean up without leaking into siblings. Returns the
+    /// snapshot so callers can restore the original values.
+    #[cfg(feature = "embeddings")]
+    fn snapshot_embed_bg_env() -> Vec<(&'static str, Option<String>)> {
+        const KEYS: &[&str] = &[
+            "LEANKG_EMBED_BACKGROUND_WORKERS",
+            "LEANKG_EMBED_BACKGROUND_BATCH",
+            "LEANKG_EMBED_BACKGROUND_FULL",
+            "LEANKG_EMBED_BACKGROUND_TYPES",
+            "LEANKG_EMBED_BACKGROUND_PARTIAL",
+        ];
+        KEYS.iter().map(|k| (*k, std::env::var(k).ok())).collect()
+    }
+
+    #[cfg(feature = "embeddings")]
+    fn restore_embed_bg_env(snap: Vec<(&'static str, Option<String>)>) {
+        for (k, v) in snap {
+            // SAFETY: tests serialize via ENV_LOCK; env mutation is safe
+            // on this crate's edition (2021).
+            unsafe {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn auto_arm_cfg_from_env_defaults_partial_true() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = snapshot_embed_bg_env();
+        for (k, _) in snap.iter() {
+            // SAFETY: see helper.
+            unsafe {
+                std::env::remove_var(k);
+            }
+        }
+        let cfg = MCPServer::auto_arm_cfg_from_env();
+        assert!(cfg.partial, "partial must default to true for auto-arm");
+        assert_eq!(cfg.workers, 1);
+        assert_eq!(cfg.batch_size, 32);
+        assert!(!cfg.full);
+        assert_eq!(cfg.types_filter, "");
+        assert_eq!(cfg.rss_fraction, 0.0);
+        restore_embed_bg_env(snap);
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn auto_arm_cfg_from_env_reads_workers_and_batch() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = snapshot_embed_bg_env();
+        // SAFETY: see helper.
+        unsafe {
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_WORKERS", "4");
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_BATCH", "64");
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_FULL", "true");
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_TYPES", "function,method");
+        }
+        let cfg = MCPServer::auto_arm_cfg_from_env();
+        assert!(cfg.partial, "partial stays true regardless of FULL knob");
+        assert_eq!(cfg.workers, 4);
+        assert_eq!(cfg.batch_size, 64);
+        assert!(cfg.full);
+        assert_eq!(cfg.types_filter, "function,method");
+        restore_embed_bg_env(snap);
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn auto_arm_cfg_from_env_clamps_invalid() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = snapshot_embed_bg_env();
+        // 999 > 32 (workers cap), 99999 > 2048 (batch cap) → fall back to defaults.
+        // SAFETY: see helper.
+        unsafe {
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_WORKERS", "999");
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_BATCH", "99999");
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_FULL", "not-a-bool");
+        }
+        let cfg = MCPServer::auto_arm_cfg_from_env();
+        assert_eq!(cfg.workers, 1, "out-of-range workers fall back to 1");
+        assert_eq!(cfg.batch_size, 32, "out-of-range batch falls back to 32");
+        assert!(!cfg.full, "unrecognized FULL value falls back to false");
+        assert!(cfg.partial);
+        restore_embed_bg_env(snap);
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn auto_arm_cfg_from_env_accepts_case_insensitive_true_false() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = snapshot_embed_bg_env();
+        // SAFETY: see helper.
+        unsafe {
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_FULL", "TRUE");
+        }
+        let cfg = MCPServer::auto_arm_cfg_from_env();
+        assert!(cfg.full, "TRUE (uppercase) must be parsed as true");
+        // SAFETY: see helper.
+        unsafe {
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_FULL", "False");
+        }
+        let cfg = MCPServer::auto_arm_cfg_from_env();
+        assert!(!cfg.full, "False (mixed case) must be parsed as false");
+        restore_embed_bg_env(snap);
+    }
+
+    /// Cover the `partial:` flip default in
+    /// `spawn_background_embed_in_process` by constructing the same
+    /// `BackgroundEmbedConfig` from the env-derived inputs and asserting
+    /// that with `LEANKG_EMBED_BACKGROUND_FULL=1` the produced
+    /// `partial=false` and with `LEANKG_EMBED_BACKGROUND_PARTIAL=1`
+    /// we can override back to `partial=true`. This pins the bug-fix
+    /// behavior without dragging the full method (which needs a graph).
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn partial_flip_default_and_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let snap = snapshot_embed_bg_env();
+        // Default: not full → partial=true (the bug-fix the PR introduces).
+        // SAFETY: see helper.
+        unsafe {
+            std::env::remove_var("LEANKG_EMBED_BACKGROUND_FULL");
+            std::env::remove_var("LEANKG_EMBED_BACKGROUND_PARTIAL");
+        }
+        let mut cfg = crate::embeddings::BackgroundEmbedConfig {
+            batch_size: 32,
+            workers: 1,
+            full: false,
+            types_filter: String::new(),
+            partial: !false, // mirrors spawn_background_embed_in_process flip
+            rss_fraction: 0.0,
+        };
+        assert!(cfg.partial);
+        // Override: FULL=1 flips partial=false, then PARTIAL=1 forces it back.
+        // SAFETY: see helper.
+        unsafe {
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_FULL", "1");
+        }
+        let full = true;
+        cfg = crate::embeddings::BackgroundEmbedConfig {
+            partial: !full,
+            ..cfg
+        };
+        assert!(!cfg.partial);
+        // SAFETY: see helper.
+        unsafe {
+            std::env::set_var("LEANKG_EMBED_BACKGROUND_PARTIAL", "1");
+        }
+        cfg = crate::embeddings::BackgroundEmbedConfig {
+            partial: true,
+            ..cfg
+        };
+        assert!(cfg.partial);
+        restore_embed_bg_env(snap);
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn parse_project_dirs_dedups_sorts_and_trims() {
+        // Comma-separated list with duplicates + whitespace + empty entries.
+        let dirs = " /workspace ,/workspace-other,/workspace,/workspace-other ,";
+        let parsed = MCPServer::parse_project_dirs(dirs);
+        assert_eq!(
+            parsed,
+            vec!["/workspace".to_string(), "/workspace-other".to_string()],
+            "duplicates collapse and the list is sorted + trimmed"
+        );
+        // Empty input → empty vec (multi-project helper returns early).
+        assert!(MCPServer::parse_project_dirs("").is_empty());
+        assert!(MCPServer::parse_project_dirs("   , ,").is_empty());
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn is_primary_project_matches_by_path() {
+        // Schedule helper only arms the project that equals
+        // `LEANKG_MCP_PROJECT` (default /workspace); side mounts are skipped.
+        assert!(MCPServer::is_primary_project("/workspace", "/workspace"));
+        assert!(MCPServer::is_primary_project("/workspace", "/workspace")); // default fallback
+        assert!(!MCPServer::is_primary_project(
+            "/workspace-other",
+            "/workspace"
+        ));
+        assert!(!MCPServer::is_primary_project("/workspace/", "/workspace"));
     }
 }

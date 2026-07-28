@@ -34,7 +34,7 @@ COPY vendor/ ./vendor/
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY benches ./benches
-COPY examples ./examples
+COPY examples/ ./examples/
 COPY ontology/ ./ontology/
 # Prefer freshly built ui-v2 over whatever was last committed under src/embed/.
 COPY --from=ui /ui/dist/ ./src/embed/
