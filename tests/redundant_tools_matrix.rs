@@ -25,7 +25,6 @@ enum Kind {
 
 struct ClassEntry {
     name: &'static str,
-    #[allow(dead_code)]
     kind: Kind,
     #[allow(dead_code)]
     note: &'static str,

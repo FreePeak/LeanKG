@@ -5499,7 +5499,6 @@ fn maybe_run_embed(_db_path: &std::path::Path) -> Result<(), Box<dyn std::error:
 }
 
 #[cfg(feature = "embeddings")]
-#[allow(clippy::too_many_arguments)]
 fn run_embed(
     init: bool,
     full: bool,
@@ -5751,7 +5750,7 @@ fn run_embed_cancel(lock_path: &std::path::Path) -> Result<(), Box<dyn std::erro
         return Ok(());
     }
     // SAFETY: best-effort signal; we don't own the PID namespace.
-    let ret = unsafe { libc_kill(pid, LIBC_SIGTERM) };
+    let ret = unsafe { libc_kill(pid, libc_SIGTERM) };
     if ret == 0 {
         println!("Sent SIGTERM to embed worker (PID {}).", pid);
     } else {
@@ -5769,7 +5768,7 @@ fn read_lock_pid(lock_path: &std::path::Path) -> Option<u64> {
 #[cfg(feature = "embeddings")]
 fn pid_alive(pid: u64) -> bool {
     // kill(pid, 0) is the canonical liveness check on POSIX.
-    let ret = unsafe { libc_kill(pid, LIBC_SIGTERM) };
+    let ret = unsafe { libc_kill(pid, libc_SIGTERM) };
     // SIGTERM (0) to our own pid is non-fatal; just check ESRCH.
     let _ = ret;
     // Re-check with signal 0 (no-op) to avoid self-killing.
@@ -5787,7 +5786,7 @@ unsafe fn libc_kill(pid: u64, sig: i32) -> i32 {
     kill(pid as i32, sig)
 }
 #[cfg(feature = "embeddings")]
-const LIBC_SIGTERM: i32 = 15;
+const libc_SIGTERM: i32 = 15;
 
 #[cfg(feature = "embeddings")]
 fn run_embed_worker(
@@ -6102,7 +6101,7 @@ fn run_smoke_test(project: &str) -> Result<(), Box<dyn std::error::Error>> {
             let nonempty_seeds = retrieval
                 .seeds
                 .iter()
-                .filter(|s| !s.blob_excerpt.trim().is_empty())
+                .filter(|s| s.blob_excerpt.trim().len() > 0)
                 .count();
             if nonempty_seeds < 3 {
                 failures.push(format!(

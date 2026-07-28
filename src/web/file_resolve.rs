@@ -203,7 +203,7 @@ mod tests {
         let got = resolve_readable_file(
             "claude-mem/plugin/ui/viewer-bundle.js",
             &primary,
-            std::slice::from_ref(&sibling),
+            &[sibling.clone()],
         )
         .unwrap();
         assert_eq!(got.canonicalize().unwrap(), file.canonicalize().unwrap());
