@@ -3,6 +3,11 @@ name: Update LeanKG on Release
 on:
   push:
     branches: [main]
+    # Indexes ./src only — skip version-only / docs / CI pushes.
+    # release:published rarely fires here (GITHUB_TOKEN-created releases
+    # do not re-trigger workflows); keep it for manually published releases.
+    paths:
+      - 'src/**'
   release:
     types: [published]
 
