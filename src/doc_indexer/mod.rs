@@ -10,6 +10,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+/// Maximum per-symbol `references` edges emitted per resolved file.
+/// Prevents edge-count blowup when a doc references a file with
+/// hundreds of functions (FR-SEM-08 + FR-SEM-09).
+const PER_SYMBOL_FANOUT_CAP: usize = 8;
+
 #[derive(Debug, Clone)]
 pub struct DocIndexResult {
     pub documents: Vec<CodeElement>,
@@ -187,6 +192,37 @@ impl DocIndexer {
                 None => target.clone(),
             };
 
+            // FR-SEM-08 per-symbol fanout: capture the set of
+            // function-bearing symbols inside the resolved file BEFORE
+            // resolved_target is moved into the file-granular edge.
+            // Bounded fanout (PER_SYMBOL_FANOUT_CAP) prevents blowup on
+            // docs that reference large files. Sorted by line_start so
+            // the earliest definitions (most-likely-relevant) win when
+            // the cap kicks in.
+            let per_symbol_targets: Vec<String> = match graph {
+                Some(g) => g
+                    .get_elements_by_file(&resolved_target)
+                    .ok()
+                    .map(|syms| {
+                        let mut fns: Vec<_> = syms
+                            .into_iter()
+                            .filter(|e| {
+                                matches!(
+                                    e.element_type.as_str(),
+                                    "function" | "method" | "constructor"
+                                )
+                            })
+                            .collect();
+                        fns.sort_by_key(|e| e.line_start);
+                        fns.into_iter()
+                            .take(PER_SYMBOL_FANOUT_CAP)
+                            .map(|e| e.qualified_name)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            };
+
             let snippet: String = context.chars().take(100).collect();
             let edge_meta = serde_json::json!({
                 "context": snippet,
@@ -212,6 +248,41 @@ impl DocIndexer {
                 metadata: edge_meta,
                 ..Default::default()
             });
+
+            // Per-symbol fanout for FR-SEM-08 (additive). The
+            // file-granular references + documented_by edges above are
+            // preserved so legacy callers (kg_context, get_traceability)
+            // are unaffected; the per-symbol edges below give the
+            // ontology-guided top-down traversal function targets to
+            // walk to. Metadata carries `granularity: "per-symbol"` so
+            // callers can distinguish.
+            for sym_qn in per_symbol_targets {
+                let sym_meta = serde_json::json!({
+                    "context": snippet,
+                    "confidence_label": "EXTRACTED",
+                    "granularity": "per-symbol",
+                    "via_doc": qualified_name,
+                    "via_edge": "references",
+                });
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: qualified_name.clone(),
+                    target_qualified: sym_qn.clone(),
+                    rel_type: "references".to_string(),
+                    confidence: 1.0,
+                    metadata: sym_meta.clone(),
+                    ..Default::default()
+                });
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: sym_qn,
+                    target_qualified: qualified_name.clone(),
+                    rel_type: "documented_by".to_string(),
+                    confidence: 1.0,
+                    metadata: sym_meta,
+                    ..Default::default()
+                });
+            }
         }
 
         if graph.is_some() && (resolved_count > 0 || skipped_count > 0) {
