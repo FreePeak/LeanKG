@@ -5840,11 +5840,9 @@ fn run_embed_worker(
     // 5 min. Smaller workspaces embed every type. Pass `--types all` to
     // override and embed everything regardless of size.
     let parsed_filter = embeddings::parse_type_filter(types_filter);
-    // Compute the element count ONCE — both the mega-graph heuristic and
-    // the initial status payload need it, so we don't pay two full
-    // `all_elements()` scans (which on a 400k-row workspace costs seconds
-    // to tens of seconds).
-    let total = graph.all_elements().map(|v| v.len()).unwrap_or(0);
+    // Cheap count — never `all_elements()` here (mega-graphs skip the
+    // elements_cache and that full scan alone burns seconds before work).
+    let total = graph.count_elements().unwrap_or(0);
     let opts = embeddings::BuildOptions {
         mode,
         batch_size,

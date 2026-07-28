@@ -17,21 +17,28 @@
 services:
   leankg-embed:
     profiles: ["embed"]
-    image: leankg-leankg:latest
+    # Must match override / rocksdb arm64 image. When this file is `-f`'d
+    # last, a hardcoded `leankg-leankg:latest` silently overrides arm64.
+    image: ${LEANKG_IMAGE:-freepeak/leankg:arm64}
+    pull_policy: ${LEANKG_PULL_POLICY:-never}
     entrypoint: ["leankg"]
     # LEANKG_MCP_PROJECT selects which mounted root to embed (override per run).
     # Side mounts (e.g. /workspace-other) come from docker-compose.override.yml
     # under services.leankg-embed.volumes — same binds as the MCP service.
+    # `--full`: paginated scan + type filter (avoids cold incremental
+    # per-QN find_element stall on mega-graphs). workers=4 fits typical
+    # 6–8g Docker VMs; 8×INT8 sessions OOM on ~4g.
     command:
       [
         "embed",
         "--wait",
+        "--full",
         "--project",
         "${LEANKG_MCP_PROJECT:-/workspace}",
         "--workers",
-        "8",
+        "4",
         "--batch-size",
-        "128",
+        "64",
         "--types",
         "function,method",
       ]
@@ -44,9 +51,8 @@ services:
       LEANKG_EMBED_MODEL: "bge-q"
       LEANKG_EMBED_MAX_SEQ: "128"
       LEANKG_EMBED_MAX_BLOB_CHARS: "500"
-      # Offline job: disable soft pause (0). 8×INT8 sessions sit ~5.5g RSS and
-      # never shrink; a tight MAX_MB stalls the whole run.
-      LEANKG_EMBED_MAX_MB: "0"
+      # Cap plan_embed_memory for multi-worker INT8 under ~6g mem_limit.
+      LEANKG_EMBED_MAX_MB: "5500"
       OMP_NUM_THREADS: "1"
       RUST_LOG: leankg=info
     volumes:
@@ -58,5 +64,5 @@ services:
     working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
     cpus: "6"
     mem_reservation: 3g
-    mem_limit: 10g
+    mem_limit: 6g
     restart: "no"
