@@ -1,0 +1,104 @@
+# CozoDB standalone server (RocksDB backend) for LeanKG enterprise mode.
+#
+# Builds the upstream `cozo-bin` binary with the `storage-rocksdb` feature
+# so LeanKG can offload all CozoDB state to a dedicated container.
+# Pairs with docker-compose.enterprise.yml.
+#
+# Run cozoserver alone:
+#   docker run -d --name cozoserver -p 9070:9070 \
+#     -v cozo-data:/data/cozo freepeak/cozoserver:latest
+#
+# Then point LeanKG at it:
+#   LEANKG_COZO_ENDPOINT=http://cozoserver:9070
+
+FROM rust:1-bookworm AS builder
+WORKDIR /build
+
+# Re-enable https for apt mirrors in the builder (corporate/proxy networks often
+# reject plain http). Slim base images inherit this fix.
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        clang \
+        libclang-dev \
+        cmake \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin to the same CozoDB version LeanKG depends on so the wire protocol and
+# feature flags stay in sync. Update both together.
+ARG COZO_VERSION=v0.7.6
+RUN git clone --depth 1 --branch "${COZO_VERSION}" --recurse-submodules \
+        https://github.com/cozodb/cozo.git /build/cozo
+
+WORKDIR /build/cozo
+
+# Build cozo-bin with RocksDB enabled. `compact` keeps the binary small.
+# `storage-rocksdb` is mandatory — without it the server boots with an
+# in-memory backend and all data vanishes on restart.
+# io-uring is intentionally OFF (Docker compatibility: TLS conflicts between
+# RocksDB's per-thread io_uring + jemalloc + glibc can segfault under
+# container page-size differences, especially on Apple Silicon).
+# cozo is a Cargo workspace; the `cozo-bin` binary lands at the workspace
+# root's target/ tree (not under cozo-bin/target/). The binary is named
+# `cozo-bin`; we rename it to `cozo` in the final image for consistency
+# with the upstream cozoserver invocation (`cozo server ...`).
+RUN cargo build --release -p cozo-bin \
+        -F compact \
+        -F storage-rocksdb \
+    && COZO_BIN="$(find /build/cozo/target/release -maxdepth 1 -name 'cozo-bin' -type f | head -n1)" \
+    && strip "$COZO_BIN" \
+    && cp "$COZO_BIN" /usr/local/bin/cozo
+
+FROM debian:bookworm-slim
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libstdc++6 \
+        libsqlite3-0 \
+        libc++1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/cozo /usr/local/bin/cozo
+
+# Default args: serve the RocksDB-backed instance on :9070, bind all
+# interfaces (so LeanKG container can reach it on the Docker bridge net).
+# The data directory lives in a named volume mounted at /data/cozo.
+ENV COZO_ENGINE=rocksdb \
+    COZO_PATH=/data/cozo \
+    COZO_BIND=127.0.0.1 \
+    RUST_LOG=info
+
+# ponytail: jemalloc is off here to avoid the cross-allocator SIGSEGV that
+# hits RocksDB inside Docker named volumes (see cozo fork v0.8.6-leapsight).
+# If you re-enable jemalloc, pin the base image and re-validate under your
+# specific kernel/page-size combination. Upgrade path: move to TiKV-backed
+# cozoserver (cozo-bin -F storage-tikv) when you outgrow single-node RocksDB.
+#
+# ponytail: cozo-bin v0.7.6 hardcodes `TcpListener::bind("127.0.0.1:3000")`
+# in cozo-bin/src/server.rs regardless of --bind/--port args. The startup
+# log prints the requested bind address but the listener is always 3000.
+# Pin EXPOSE/HEALTHCHECK to 3000 so the healthcheck matches reality.
+# Upgrade path: bump cozo-bin to v0.7.7+ (or the Leapsight fork) when the
+# bug is fixed; restore COZO_PORT=9070 + expose 9070 then.
+#
+# We bind to 127.0.0.1 (skip_auth=true) so the leankg container can reach
+# cozoserver via a shared network namespace (see docker-compose.enterprise.yml
+# `network_mode: "service:cozoserver"`) without managing an auth token.
+# Upgrade path: switch to bind=0.0.0.0 + token propagation when upstream
+# fixes the bind bug.
+
+VOLUME ["/data/cozo"]
+EXPOSE 3000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD curl -fsS "http://127.0.0.1:3000/" \
+        || exit 1
+
+ENTRYPOINT ["cozo", "server", "--engine", "rocksdb"]
+CMD ["--path", "/data/cozo", "--bind", "127.0.0.1", "--port", "9070"]

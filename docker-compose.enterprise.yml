@@ -1,0 +1,141 @@
+# LeanKG Enterprise — separate CozoDB/RocksDB tier.
+#
+# Two-service compose: cozoserver owns RocksDB persistence; leankg owns the
+# MCP/REST API and connects to cozoserver over HTTP. Use this for production
+# deployments where you want independent scaling, backup orchestration, or
+# HA on the storage tier.
+#
+# Migration from the single-container `docker-compose.rocksdb.yml`:
+#   1. Build the cozoserver image:    docker build -f Dockerfile.cozoserver -t freepeak/cozoserver:latest .
+#   2. Build the leankg image:         docker build -f Dockerfile.rocksdb -t freepeak/leankg:latest .
+#   3. Start both:                    docker compose -f docker-compose.enterprise.yml up -d
+#
+# Override host paths, image tags, and resource limits via `.dockerfile`
+# (gitignored). See `.dockerfile.example`.
+
+services:
+  cozoserver:
+    # Local-only image — build with `docker build -f Dockerfile.cozoserver`.
+    # Operators can swap to a published tag once it ships to a registry.
+    image: ${COZOSERVER_IMAGE:-freepeak/cozoserver:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.cozoserver
+    pull_policy: ${COZOSERVER_PULL_POLICY:-missing}
+    # cozoserver owns the network namespace and publishes leankg's public
+    # ports (MCP + REST UI) — required because leankg joins this namespace
+    # via `network_mode: service:cozoserver`, and port publishing isn't
+    # allowed on the joiner.
+    ports:
+      - "9699:9699"
+      - "8080:8080"
+    environment:
+      COZO_ENGINE: rocksdb
+      COZO_PATH: /data/cozo
+      # COZO_BIND is intentionally left unset (Dockerfile default = 127.0.0.1).
+      # Binding to loopback + sharing the net namespace via `network_mode:
+      # service:cozoserver` lets the leankg sidecar reach cozoserver on
+      # 127.0.0.1:3000 with skip_auth=true. If you change COZO_BIND to
+      # 0.0.0.0, drop network_mode and wire the auth token instead.
+      # ponytail: cozo-bin v0.7.6 hardcodes the listening socket at
+      # 127.0.0.1:3000 (see Dockerfile.cozoserver). Override COZO_PORT to
+      # 3000 here so the LEANKG_COZO_ENDPOINT and healthcheck agree with
+      # the actual bind. Remove COZO_PORT=3000 (and use 9070) when
+      # upstream fixes the bug.
+      COZO_PORT: "3000"
+      RUST_LOG: info
+    volumes:
+      - cozo-data:/data/cozo
+    # RocksDB loves RAM (block cache + memtable + bloom filters). 4g is the
+    # single-node enterprise floor; tune upward for mega-graphs (>1M nodes).
+    # cozoserver does NOT serve external traffic — keep it on the internal
+    # `enterprise` network only.
+    mem_limit: 4g
+    mem_reservation: 2g
+    cpus: "4"
+    pids_limit: 1024
+    restart: unless-stopped
+    networks:
+      - enterprise
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  leankg:
+    image: ${LEANKG_IMAGE:-freepeak/leankg:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.rocksdb
+    pull_policy: ${LEANKG_PULL_POLICY:-missing}
+    env_file:
+      - path: ./.dockerfile
+        required: false
+    depends_on:
+      cozoserver:
+        condition: service_healthy
+    # Share cozoserver's network namespace so leankg can reach cozoserver on
+    # 127.0.0.1:3000 without auth. Saves us from managing a token + sharing
+    # the auth file between containers. Drops the `enterprise` network from
+    # this service entirely (cozoserver owns the namespace).
+    network_mode: "service:cozoserver"
+    # No `ports:` here — they're declared on cozoserver (the namespace
+    # owner). Declaring ports on the joiner fails with "conflicting
+    # options: port publishing and the container type network mode".
+    environment:
+      # Point the MCP container at the cozoserver sidecar via loopback.
+      # v1 of this compose still requires the embedded SQLite path inside
+      # leankg — once the Rust HTTP client lands, this URL is the live
+      # backing store. See docs/enterprise-docker.md.
+      # ponytail: port 3000 due to cozo-bin v0.7.6 upstream bug (see
+      # Dockerfile.cozoserver). Restore to 9070 once upstream ships fix.
+      LEANKG_COZO_ENDPOINT: "http://127.0.0.1:3000"
+      MCP_HTTP_PORT: "9699"
+      LEANKG_AUTO_INDEX: "1"
+      LEANKG_EMBED_ON_BOOT: "0"
+      LEANKG_EMBED_BACKGROUND: "0"
+      LEANKG_EMBED_FAST: "1"
+      LEANKG_EMBED_MODEL: "bge-q"
+      LEANKG_EMBED_MAX_SEQ: "128"
+      LEANKG_EMBED_MAX_BLOB_CHARS: "500"
+      # Lower than the single-container default (512m vs 3072m) because
+      # cozoserver now owns the heavy graph state; leankg keeps only the
+      # local SQLite + ONNX cache.
+      LEANKG_EMBED_MAX_MB: "512"
+      LEANKG_EMBED_BACKGROUND_WORKERS: "1"
+      LEANKG_EMBED_BACKGROUND_BATCH: "32"
+      LEANKG_MMAP_SIZE: "67108864"
+      LEANKG_WATCHER_DEBOUNCE_MS: "2000"
+      LEANKG_WATCHER_BURST_LIMIT: "256"
+      RUST_LOG: "leankg=info"
+      LEANKG_SERVE_HTTP: "1"
+      LEANKG_SERVE_PORT: "8080"
+    volumes:
+      - ${HOST_PROJECT_PATH:-./}:${CONTAINER_PROJECT_PATH:-/workspace}
+      # Persist ONNX / tokenizer cache across restarts.
+      - leankg_models:/root/.cache/leankg
+    working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
+    # Smaller envelope than the single-container deploy because RocksDB is
+    # offloaded to cozoserver. Single-project LocalEngine KPI (2g) still
+    # applies.
+    mem_limit: 4g
+    mem_reservation: 2g
+    cpus: "4"
+    pids_limit: 4096
+    restart: unless-stopped
+
+# No top-level `networks:` — leankg shares cozoserver's namespace, and
+# cozoserver's default bridge is sufficient for the healthcheck loop. If you
+# need leankg on multiple networks (rare), add `networks:` here and revert
+# leankg to `network_mode: bridge`.
+networks:
+  enterprise:
+    driver: bridge
+    # Defined for the case where operators override leankg out of
+    # network_mode: service. Otherwise unused.
+
+volumes:
+  cozo-data:
+  leankg_models:

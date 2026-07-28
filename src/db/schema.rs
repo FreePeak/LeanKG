@@ -101,6 +101,13 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
         }
     };
 
+    // ponytail: enterprise two-container mode (LEANKG_COZO_ENDPOINT) is
+    // gated by entrypoint.sh health today; the Rust HTTP client that wires
+    // `init_db` to a remote cozoserver is a follow-up. Upgrade path: add a
+    // `CozoClient` enum (Embedded | Remote), branch here, route the
+    // ~23 callers of `run_script` through it. Compose already exposes the
+    // endpoint, so this is code-only.
+
     let mmap_size = get_env_mmap_size();
     tracing::info!(
         "Cozo storage = {:?} at {} (LEANKG_MMAP_SIZE={})",
