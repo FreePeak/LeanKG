@@ -1,0 +1,244 @@
+# Native iOS / protocol deep-dive questions (Alamofire)
+#
+# Focus: Swift protocols as extension points, URLSession/NSObject bridging,
+# concurrency, trust, and memory — the "native iOS" surface of Alamofire.
+# Use with: QUESTIONS=questions-ios-deep.yaml (or merge into a future run).
+
+repo: Alamofire
+repo_path: ./repos/alamofire
+language: Swift
+summary: Deep native-iOS protocol and runtime questions for agent graph benchmarks.
+
+questions:
+  - id: D01
+    category: Protocol
+    prompt: >
+      How do URLConvertible and URLRequestConvertible work together to build a
+      URLRequest? Explain protocol witness tables / default implementations and
+      how String, URL, and URLComponents adopt them.
+    key_files:
+      - Source/Core/URLConvertible+URLRequestConvertible.swift
+    key_concepts:
+      - URLConvertible
+      - URLRequestConvertible
+      - asURL()
+      - asURLRequest()
+      - protocol extension defaults
+
+  - id: D02
+    category: Protocol
+    prompt: >
+      How is RequestInterceptor composed from RequestAdapter and RequestRetrier?
+      Trace adapt → retry across Interceptor, Adapter, and Retrier types, including
+      how Session invokes them on the rootQueue.
+    key_files:
+      - Source/Features/RequestInterceptor.swift
+      - Source/Core/Session.swift
+    key_concepts:
+      - RequestAdapter
+      - RequestRetrier
+      - RequestInterceptor
+      - Interceptor class
+      - adapt / retry
+
+  - id: D03
+    category: Protocol
+    prompt: >
+      How does ServerTrustEvaluating model certificate pinning? Compare
+      DefaultTrustEvaluator, PublicKeysTrustEvaluator, RevocationTrustEvaluator,
+      and CompositeTrustEvaluator — which protocol methods must conformers implement?
+    key_files:
+      - Source/Features/ServerTrustEvaluation.swift
+    key_concepts:
+      - ServerTrustEvaluating
+      - evaluate(_:forHost:)
+      - CompositeTrustEvaluator
+      - public key pinning
+      - SecTrust
+
+  - id: D04
+    category: NativeIOS
+    prompt: >
+      SessionDelegate is an NSObject subclass that implements URLSessionDelegate
+      families. How does Alamofire bridge Foundation URLSession callbacks into
+      per-Request handlers? Explain request(for task:) lookup and thread affinity
+      to rootQueue.
+    key_files:
+      - Source/Core/SessionDelegate.swift
+      - Source/Core/RequestTaskMap.swift
+    key_concepts:
+      - NSObject
+      - URLSessionDelegate
+      - URLSessionTaskDelegate
+      - request(for:)
+      - rootQueue
+
+  - id: D05
+    category: Protocol
+    prompt: >
+      Explain the EventMonitor protocol surface: which lifecycle hooks exist for
+      request creation, resume, metrics, and completion? How does
+      ClosureEventMonitor differ from MultiplexEventMonitor?
+    key_files:
+      - Source/Features/EventMonitor.swift
+    key_concepts:
+      - EventMonitor
+      - ClosureEventMonitor
+      - MultiplexEventMonitor
+      - requestDidResume
+      - didGatherMetrics
+
+  - id: D06
+    category: Protocol
+    prompt: >
+      How do AuthenticationCredential and Authenticator cooperate with
+      AuthenticationInterceptor? Detail apply(_:to:), refresh(_:for:completion:),
+      and when a request is considered requiring refresh.
+    key_files:
+      - Source/Features/AuthenticationInterceptor.swift
+    key_concepts:
+      - AuthenticationCredential
+      - Authenticator
+      - requiresRefresh
+      - apply
+      - refresh
+
+  - id: D07
+    category: NativeIOS
+    prompt: >
+      How does Protected<T> achieve thread-safe mutable state without actors?
+      Describe the Lock protocol, UnfairLock / NSLock choices, and how read/write
+      closures serialize access used by Request and Session.
+    key_files:
+      - Source/Core/Protected.swift
+      - Source/Core/Request.swift
+    key_concepts:
+      - Protected
+      - Lock protocol
+      - os_unfair_lock
+      - read / write
+      - Sendable
+
+  - id: D08
+    category: Protocol
+    prompt: >
+      Walk the ResponseSerializer protocol hierarchy: DataResponseSerializerProtocol,
+      DownloadResponseSerializerProtocol, ResponseSerializer, DataPreprocessor, and
+      DataDecoder. How does DecodableResponseSerializer plug into this?
+    key_files:
+      - Source/Features/ResponseSerialization.swift
+    key_concepts:
+      - ResponseSerializer
+      - DataPreprocessor
+      - DataDecoder
+      - DecodableResponseSerializer
+      - SerializedObject associated type
+
+  - id: D09
+    category: NativeIOS
+    prompt: >
+      How does Alamofire's Concurrency module bridge callback-based Request APIs
+      to async/await? Explain continuation usage, cancellation, and how
+      serializingResponse interacts with the response serializers.
+    key_files:
+      - Source/Features/Concurrency.swift
+    key_concepts:
+      - withCheckedThrowingContinuation
+      - Task cancellation
+      - ValueTask
+      - serializingResponse
+      - async throwing
+
+  - id: D10
+    category: Protocol
+    prompt: >
+      How do RedirectHandler and CachedResponseHandler plug into URLSession
+      delegate callbacks? Contrast Redirector follow/doNotFollow/modify with
+      ResponseCacher behavior and where Session stores the handlers.
+    key_files:
+      - Source/Features/RedirectHandler.swift
+      - Source/Features/CachedResponseHandler.swift
+      - Source/Core/SessionDelegate.swift
+    key_concepts:
+      - RedirectHandler
+      - Redirector
+      - CachedResponseHandler
+      - ResponseCacher
+      - URLCache
+
+  - id: D11
+    category: NativeIOS
+    prompt: >
+      How does Request's State machine interact with URLSessionTask suspend/resume/
+      cancel? Map Alamofire Request.State to underlying task lifecycle and explain
+      canTransitionTo rules that prevent illegal transitions.
+    key_files:
+      - Source/Core/Request.swift
+    key_concepts:
+      - Request.State
+      - URLSessionTask
+      - canTransitionTo
+      - resume / suspend / cancel
+      - finished
+
+  - id: D12
+    category: Protocol
+    prompt: >
+      How does AlamofireExtended provide the `.af` namespace on Foundation types
+      without polluting global namespaces? Explain the protocol + phantom
+      AlamofireExtension pattern and which types adopt it.
+    key_files:
+      - Source/Features/AlamofireExtended.swift
+    key_concepts:
+      - AlamofireExtended
+      - AlamofireExtension
+      - .af namespace
+      - protocol extension
+      - Foundation bridging
+
+  - id: D13
+    category: NativeIOS
+    prompt: >
+      How does WebSocketRequest wrap URLSessionWebSocketTask? Cover connect,
+      send/receive, ping/pong, close codes, and any WebSocketMessageSerializer
+      protocol usage.
+    key_files:
+      - Source/Core/WebSocketRequest.swift
+    key_concepts:
+      - URLSessionWebSocketTask
+      - WebSocketRequest
+      - WebSocketMessageSerializer
+      - ping / pong
+      - close code
+
+  - id: D14
+    category: Protocol
+    prompt: >
+      Explain UploadableConvertible vs UploadConvertible and how UploadRequest
+      selects data / file / stream / multipart uploadables. How do these protocols
+      interact with URLRequestConvertible?
+    key_files:
+      - Source/Core/UploadRequest.swift
+      - Source/Features/MultipartFormData.swift
+    key_concepts:
+      - UploadableConvertible
+      - UploadConvertible
+      - UploadRequest.Uploadable
+      - multipart
+      - InputStream
+
+  - id: D15
+    category: NativeIOS
+    prompt: >
+      How does Session enqueue work onto rootQueue vs underlying URLSession
+      delegate callbacks? Discuss serial queue invariants, startRequestsImmediately,
+      RequestSetup lazy vs eager, and why breaking queue affinity causes races.
+    key_files:
+      - Source/Core/Session.swift
+      - Source/Extensions/DispatchQueue+Alamofire.swift
+    key_concepts:
+      - rootQueue
+      - serial DispatchQueue
+      - RequestSetup
+      - startRequestsImmediately
+      - queue affinity

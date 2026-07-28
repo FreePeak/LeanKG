@@ -1,0 +1,128 @@
+repo: Alamofire
+repo_path: ./repos/alamofire
+language: Swift
+summary: 10 curated architecture questions for LeanKG vs CodeGraph vs no-graph (parallel
+  harness).
+questions:
+- id: Q01
+  category: Core
+  prompt: How does Alamofire's Session class create and configure the underlying URLSession?
+    What are the key initialization parameters and how does Session manage the URLSession
+    delegate?
+  key_files:
+  - Source/Core/Session.swift
+  key_concepts:
+  - URLSession
+  - SessionDelegate
+  - rootQueue
+  - URLSessionConfiguration
+- id: Q02
+  category: Core
+  prompt: Explain how Alamofire's Request class implements its state machine. List
+    all possible Request states and describe the valid transitions between them.
+  key_files:
+  - Source/Core/Request.swift
+  key_concepts:
+  - Request.State enum
+  - initialized
+  - resumed
+  - cancelled
+  - finished
+  - canTransitionTo
+- id: Q05
+  category: Core
+  prompt: How does Alamofire's UploadRequest construct and send multipart form data?
+    Trace the flow from MultipartFormData encoding through the upload pipeline.
+  key_files:
+  - Source/Core/UploadRequest.swift
+  - Source/Features/MultipartFormData.swift
+  key_concepts:
+  - MultipartFormData
+  - multipart upload
+  - Content-Type
+- id: Q07
+  category: Features
+  prompt: How does Alamofire's ServerTrustManager evaluate server certificates? Explain
+    the composite evaluator pattern and how multiple trust evaluators are chained
+    together.
+  key_files:
+  - Source/Features/ServerTrustEvaluation.swift
+  key_concepts:
+  - ServerTrustManager
+  - ServerTrustEvaluating protocol
+  - CompositeTrustEvaluator
+  - public key pinning
+- id: Q08
+  category: Features
+  prompt: How does Alamofire's AuthenticationInterceptor refresh expired credentials?
+    Describe the credential storage, refresh flow, and retry logic.
+  key_files:
+  - Source/Features/AuthenticationInterceptor.swift
+  key_concepts:
+  - AuthenticationInterceptor
+  - AuthenticationCredential
+  - Authenticator protocol
+  - refresh window
+  - credential refresh
+- id: Q10
+  category: Features
+  prompt: How does Alamofire's RetryPolicy implement exponential backoff? Explain
+    the delay calculation, retry limit, and how it interacts with server Retry-After
+    headers.
+  key_files:
+  - Source/Features/RetryPolicy.swift
+  key_concepts:
+  - RetryPolicy
+  - exponential backoff
+  - retryDelay
+  - Retry-After header
+  - retry limit
+- id: Q11
+  category: Features
+  prompt: How does Alamofire's response serialization work? Trace the pipeline from
+    raw Data through decoding to a typed result using ResponseSerializer and its implementations.
+  key_files:
+  - Source/Features/ResponseSerialization.swift
+  key_concepts:
+  - ResponseSerializer protocol
+  - DataResponseSerializer
+  - DecodableResponseSerializer
+  - serialization queue
+- id: Q19
+  category: Core
+  prompt: How does Alamofire provide async/await wrappers for its request types? Explain
+    how the Concurrency extensions convert callback-based APIs to async throwing functions.
+  key_files:
+  - Source/Features/Concurrency.swift
+  key_concepts:
+  - async/await
+  - withCheckedThrowingContinuation
+  - Swift concurrency
+  - Task cancellation
+  - serializingResponse
+- id: Q24
+  category: Core
+  prompt: How does Alamofire's SessionDelegate forward NSURLSession delegate callbacks
+    to individual Request instances? Explain the delegate dispatch and request lookup
+    mechanism.
+  key_files:
+  - Source/Core/SessionDelegate.swift
+  key_concepts:
+  - SessionDelegate class
+  - URLSessionDelegate methods
+  - request(for:) lookup
+  - delegate forwarding
+  - subdelegates
+- id: Q26
+  category: Features
+  prompt: How does Alamofire's RequestInterceptor compose multiple adapt and retry
+    closures? Explain both the Adapter and Retrier protocols and how multiple interceptors
+    are chained.
+  key_files:
+  - Source/Features/RequestInterceptor.swift
+  key_concepts:
+  - RequestInterceptor protocol
+  - RequestAdapter protocol
+  - RequestRetrier protocol
+  - adapt method
+  - retry method

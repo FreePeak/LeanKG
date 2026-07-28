@@ -1,0 +1,361 @@
+# Alamofire 30-Question Benchmark — 3-arm (LeanKG / CodeGraph / None)
+#
+# Questions designed to exercise agent code understanding across Alamofire's
+# Core / Features / Extensions layers. Each question has ground truth key files
+# and key concepts that a correct answer should reference.
+
+repo: Alamofire
+repo_path: ./repos/alamofire
+language: Swift
+summary: 30 architecture questions covering request lifecycle, encoding, security, concurrency, and networking primitives.
+
+questions:
+  - id: Q01
+    category: Core
+    prompt: "How does Alamofire's Session class create and configure the underlying URLSession? What are the key initialization parameters and how does Session manage the URLSession delegate?"
+    key_files:
+      - Source/Core/Session.swift
+    key_concepts:
+      - URLSession
+      - SessionDelegate
+      - rootQueue
+      - URLSessionConfiguration
+
+  - id: Q02
+    category: Core
+    prompt: "Explain how Alamofire's Request class implements its state machine. List all possible Request states and describe the valid transitions between them."
+    key_files:
+      - Source/Core/Request.swift
+    key_concepts:
+      - Request.State enum
+      - initialized
+      - resumed
+      - cancelled
+      - finished
+      - canTransitionTo
+
+  - id: Q03
+    category: Core
+    prompt: "How does Alamofire's DataRequest handle redirects? Walk through the redirect pipeline from a server response through SessionDelegate to DataRequest's response handling."
+    key_files:
+      - Source/Core/DataRequest.swift
+      - Source/Core/SessionDelegate.swift
+      - Source/Features/RedirectHandler.swift
+    key_concepts:
+      - RedirectHandler
+      - urlSession(_:task:willPerformHTTPRedirection:)
+      - SessionDelegate
+
+  - id: Q04
+    category: Core
+    prompt: "How does Alamofire's DownloadRequest handle resume data for interrupted downloads? Explain the resume data flow and how the download destination is determined."
+    key_files:
+      - Source/Core/DownloadRequest.swift
+    key_concepts:
+      - resumeData
+      - download task
+      - destination closure
+
+  - id: Q05
+    category: Core
+    prompt: "How does Alamofire's UploadRequest construct and send multipart form data? Trace the flow from MultipartFormData encoding through the upload pipeline."
+    key_files:
+      - Source/Core/UploadRequest.swift
+      - Source/Features/MultipartFormData.swift
+    key_concepts:
+      - MultipartFormData
+      - multipart upload
+      - Content-Type
+
+  - id: Q06
+    category: Features
+    prompt: "How does Alamofire's ParameterEncoder encode parameters? Describe how URLEncodedFormParameterEncoder and JSONParameterEncoder differ and how they're selected based on HTTP method."
+    key_files:
+      - Source/Core/ParameterEncoder.swift
+      - Source/Core/ParameterEncoding.swift
+    key_concepts:
+      - URLEncodedFormParameterEncoder
+      - JSONParameterEncoder
+      - ParameterEncoder protocol
+
+  - id: Q07
+    category: Features
+    prompt: "How does Alamofire's ServerTrustManager evaluate server certificates? Explain the composite evaluator pattern and how multiple trust evaluators are chained together."
+    key_files:
+      - Source/Features/ServerTrustEvaluation.swift
+    key_concepts:
+      - ServerTrustManager
+      - ServerTrustEvaluating protocol
+      - CompositeTrustEvaluator
+      - public key pinning
+
+  - id: Q08
+    category: Features
+    prompt: "How does Alamofire's AuthenticationInterceptor refresh expired credentials? Describe the credential storage, refresh flow, and retry logic."
+    key_files:
+      - Source/Features/AuthenticationInterceptor.swift
+    key_concepts:
+      - AuthenticationInterceptor
+      - AuthenticationCredential
+      - Authenticator protocol
+      - refresh window
+      - credential refresh
+
+  - id: Q09
+    category: Features
+    prompt: "How does Alamofire's NetworkReachabilityManager monitor network connectivity? Explain which system APIs it uses and how reachability status changes are observed."
+    key_files:
+      - Source/Features/NetworkReachabilityManager.swift
+    key_concepts:
+      - NetworkReachabilityManager
+      - SCNetworkReachability
+      - reachability status
+      - notification
+
+  - id: Q10
+    category: Features
+    prompt: "How does Alamofire's RetryPolicy implement exponential backoff? Explain the delay calculation, retry limit, and how it interacts with server Retry-After headers."
+    key_files:
+      - Source/Features/RetryPolicy.swift
+    key_concepts:
+      - RetryPolicy
+      - exponential backoff
+      - retryDelay
+      - Retry-After header
+      - retry limit
+
+  - id: Q11
+    category: Features
+    prompt: "How does Alamofire's response serialization work? Trace the pipeline from raw Data through decoding to a typed result using ResponseSerializer and its implementations."
+    key_files:
+      - Source/Features/ResponseSerialization.swift
+    key_concepts:
+      - ResponseSerializer protocol
+      - DataResponseSerializer
+      - DecodableResponseSerializer
+      - serialization queue
+
+  - id: Q12
+    category: Features
+    prompt: "How does Alamofire's MultipartFormData class build a multipart body for upload? Explain the boundary delimiter, content disposition, and how file data is streamed."
+    key_files:
+      - Source/Features/MultipartFormData.swift
+    key_concepts:
+      - MultipartFormData class
+      - boundary
+      - Content-Disposition
+      - body stream
+      - append method
+
+  - id: Q13
+    category: Features
+    prompt: "How does Alamofire's CachedResponseHandler control the caching behavior of URLSession? Explain the interaction with URLCache and how custom caching policies are enforced."
+    key_files:
+      - Source/Features/CachedResponseHandler.swift
+    key_concepts:
+      - CachedResponseHandler protocol
+      - URLCache
+      - URLSession dataTask caching
+      - cache response policy
+
+  - id: Q14
+    category: Features
+    prompt: "How does Alamofire's RedirectHandler decide whether to follow a redirect? Describe the RedirectHandler protocol and the two built-in implementers."
+    key_files:
+      - Source/Features/RedirectHandler.swift
+    key_concepts:
+      - RedirectHandler protocol
+      - Redirector enum
+      - follow
+      - doNotFollow
+      - modify
+
+  - id: Q15
+    category: Features
+    prompt: "How does Alamofire's Validation system accept custom validation closures? Explain how validators are chained for status code, content type, and custom validation."
+    key_files:
+      - Source/Features/Validation.swift
+    key_concepts:
+      - validate method
+      - status code validation
+      - content type validation
+      - custom validation closure
+      - ResponseValidationFailureReason
+
+  - id: Q16
+    category: Core
+    prompt: "How does Alamofire's AFError enum organize different error categories? List the major error cases and explain how session task errors are distinguished from response and URL errors."
+    key_files:
+      - Source/Core/AFError.swift
+    key_concepts:
+      - AFError enum
+      - responseValidationFailed
+      - responseSerializationFailed
+      - sessionTaskFailed
+      - URLRequest validation
+      - AFError localizedDescription
+
+  - id: Q17
+    category: Core
+    prompt: "How does Alamofire's EventMonitor protocol report request lifecycle events? List the key event methods and explain how they're dispatched from SessionDelegate."
+    key_files:
+      - Source/Features/EventMonitor.swift
+      - Source/Core/SessionDelegate.swift
+    key_concepts:
+      - EventMonitor protocol
+      - request(_:didCreateInitialURLRequest:)
+      - request(_:didReceive:)
+      - requestDidResume
+      - EventMonitor dispatch
+
+  - id: Q18
+    category: Core
+    prompt: "How does Alamofire's RequestCompression compress outgoing request bodies? Explain which compression algorithms are supported and how they're applied."
+    key_files:
+      - Source/Features/RequestCompression.swift
+    key_concepts:
+      - RequestCompression
+      - compression algorithm
+      - Content-Encoding
+      - gzip/deflate/brotli
+
+  - id: Q19
+    category: Core
+    prompt: "How does Alamofire provide async/await wrappers for its request types? Explain how the Concurrency extensions convert callback-based APIs to async throwing functions."
+    key_files:
+      - Source/Features/Concurrency.swift
+    key_concepts:
+      - async/await
+      - withCheckedThrowingContinuation
+      - Swift concurrency
+      - Task cancellation
+      - serializingResponse
+
+  - id: Q20
+    category: Core
+    prompt: "How does Alamofire's WebSocketRequest manage the WebSocket lifecycle? Describe how connect, send, receive, ping/pong, and close are handled through URLSessionWebSocketTask."
+    key_files:
+      - Source/Core/WebSocketRequest.swift
+    key_concepts:
+      - WebSocketRequest
+      - URLSessionWebSocketTask
+      - send message
+      - receive message
+      - ping/pong
+      - close code
+
+  - id: Q21
+    category: Extensions
+    prompt: "How does URLRequest+Alamofire extend Foundation's URLRequest with convenience methods? List the key custom methods added and how they simplify request construction."
+    key_files:
+      - Source/Extensions/URLRequest+Alamofire.swift
+    key_concepts:
+      - URLRequest extension
+      - convenience initializers
+      - HTTPMethod
+      - URLConvertible
+
+  - id: Q22
+    category: Extensions
+    prompt: "How does Alamofire manage DispatchQueues for its internal operations? Explain the DispatchQueue+Alamofire extension and what named queues are used."
+    key_files:
+      - Source/Extensions/DispatchQueue+Alamofire.swift
+    key_concepts:
+      - DispatchQueue extension
+      - serial queue
+      - concurrent queue
+      - rootQueue
+      - session root queue
+
+  - id: Q23
+    category: Extensions
+    prompt: "How does Alamofire extend URLSessionConfiguration? Describe the default headers and configuration settings applied through URLSessionConfiguration+Alamofire."
+    key_files:
+      - Source/Extensions/URLSessionConfiguration+Alamofire.swift
+    key_concepts:
+      - URLSessionConfiguration extension
+      - default HTTP headers
+      - Alamofire default config
+
+  - id: Q24
+    category: Core
+    prompt: "How does Alamofire's SessionDelegate forward NSURLSession delegate callbacks to individual Request instances? Explain the delegate dispatch and request lookup mechanism."
+    key_files:
+      - Source/Core/SessionDelegate.swift
+    key_concepts:
+      - SessionDelegate class
+      - URLSessionDelegate methods
+      - request(for:) lookup
+      - delegate forwarding
+      - subdelegates
+
+  - id: Q25
+    category: Core
+    prompt: "How does Alamofire's Protected wrapper provide thread-safe access to mutable state? Explain the locking mechanism and how it's used across the codebase."
+    key_files:
+      - Source/Core/Protected.swift
+    key_concepts:
+      - Protected class
+      - lock-based
+      - os_unfair_lock
+      - read/write access
+      - thread-safe
+
+  - id: Q26
+    category: Features
+    prompt: "How does Alamofire's RequestInterceptor compose multiple adapt and retry closures? Explain both the Adapter and Retrier protocols and how multiple interceptors are chained."
+    key_files:
+      - Source/Features/RequestInterceptor.swift
+    key_concepts:
+      - RequestInterceptor protocol
+      - RequestAdapter protocol
+      - RequestRetrier protocol
+      - adapt method
+      - retry method
+
+  - id: Q27
+    category: Features
+    prompt: "How does Alamofire's AlamofireExtended protocol provide the .af namespace on Foundation types? Explain the protocol extension pattern and the types it extends."
+    key_files:
+      - Source/Features/AlamofireExtended.swift
+    key_concepts:
+      - AlamofireExtended protocol
+      - .af namespace
+      - extension pattern
+      - URLRequest.af
+      - Data.af
+
+  - id: Q28
+    category: Core
+    prompt: "How does Alamofire's HTTPHeaders type manage case-insensitive header lookup? Explain the underlying data structure and how headers are added, updated, and removed."
+    key_files:
+      - Source/Core/HTTPHeaders.swift
+    key_concepts:
+      - HTTPHeaders struct
+      - case-insensitive lookup
+      - HTTPHeader dictionary
+      - add/update/remove methods
+
+  - id: Q29
+    category: Features
+    prompt: "How does Alamofire integrate with Apple's Combine framework? Describe the DataResponsePublisher and how Combine publishers are created from DataRequest and DownloadRequest."
+    key_files:
+      - Source/Features/Combine.swift
+    key_concepts:
+      - Combine
+      - DataResponsePublisher
+      - DownloadResponsePublisher
+      - Publisher protocol
+      - "@available"
+
+  - id: Q30
+    category: Core
+    prompt: "How does Alamofire's Session queue and prioritize concurrent requests? Explain the maximum concurrency limit, the request queue, and how per-host limits are enforced."
+    key_files:
+      - Source/Core/Session.swift
+    key_concepts:
+      - request queue
+      - max concurrent
+      - request setup
+      - task creation
+      - rootQueue serialization
