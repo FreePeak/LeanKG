@@ -3,6 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+    # Release Please merges only bump version metadata; the release PR
+    # already ran CI. Skipping avoids a duplicate ~5m suite on every release.
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - 'manifest.json'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   pull_request:
     branches: [main]
 
@@ -83,4 +90,3 @@ jobs:
       - name: Install and build ui-v2
         working-directory: ui-v2
         run: npm ci && npm run build
-
