@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2FFreePeak%2FLeanKG.svg)](https://mcptoplist.com/server/glama%2FFreePeak%2FLeanKG)
+
 <p align="center">
   <img src="https://www.leankg.com/icon.svg" alt="LeanKG" width="96" height="96">
 </p>
