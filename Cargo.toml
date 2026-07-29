@@ -1,6 +1,6 @@
 [package]
 name = "leankg"
-version = "0.19.22"
+version = "0.20.0"
 edition = "2021"
 description = "Lightweight Knowledge Graph for AI-Assisted Development"
 license = "Apache-2.0"
@@ -43,6 +43,8 @@ once_cell = "1"
 schemars = "0.8"
 async-trait = "0.1"
 dirs = "5"
+# FR-LCACHE: L1 read cache in front of CozoDB for hot read paths.
+moka = { version = "0.12", features = ["future"] }
 argon2 = "0.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
@@ -110,6 +112,7 @@ tree-sitter-dart = "0.1"
 # contending for the CozoDB write Mutex serialized the Datalog :put
 # path and throughput collapsed to ~40 vectors/sec.
 crossbeam-channel = "0.5"
+moka = { version = "0.12", features = ["future"] }
 
 # Optional Redis HNSW vector side-store (LEANKG_EMBED_VECTOR_STORE=redis)
 redis = { version = "0.27", features = ["aio", "tokio-comp"] }

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use crate::db::schema::init_db;
+use crate::graph::l1_cache::CachingGraphEngine;
 use crate::graph::GraphEngine;
 use crate::mcp::auth::AuthManager;
 use crate::mcp::handler::ToolHandler;
@@ -16,13 +17,15 @@ use axum::{
     Router,
 };
 // use futures_util::StreamExt;  // Reserved for future streaming support
+use moka::future::Cache;
+use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -32,6 +35,77 @@ use std::time::{Duration, SystemTime};
 use tokio::signal;
 use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock};
 use tower_http::cors::{Any, CorsLayer};
+
+/// Tools that mutate the underlying DB or state. Everything else is treated
+/// as a read at the dispatch layer (it may still go to the DB internally,
+/// but its lock semantics differ).
+static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    [
+        "mcp_init",
+        "mcp_index",
+        "mcp_index_docs",
+        "add_knowledge",
+        "update_knowledge",
+        "delete_knowledge",
+        "add_annotation",
+        "link_element",
+        "add_documentation",
+        "promote_environment",
+        "embed_control",
+        "ontology_control",
+    ]
+    .into_iter()
+    .collect()
+});
+
+/// Build the per-server dispatch JSON response cache. Sized and TTL'd
+/// independently of the engine-level caches inside `CachingGraphEngine` so
+/// they can be tuned per deployment.
+fn build_dispatch_cache() -> Cache<String, serde_json::Value> {
+    let cap = std::env::var("LEANKG_L1_DISPATCH_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5_000u64);
+    let ttl_secs = std::env::var("LEANKG_L1_DISPATCH_TTL")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60);
+    Cache::builder()
+        .max_capacity(cap)
+        .time_to_live(Duration::from_secs(ttl_secs))
+        .build()
+}
+
+/// Compose a deterministic cache key from `(tool_name, args_json)`. We rely on
+/// serde_json's stable ordering for `serde_json::Map` (which is BTreeMap-backed
+/// in the public API) — agents can't induce key collisions because every
+/// `Map` field is escaped below.
+fn dispatch_cache_key(
+    tool_name: &str,
+    args: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let mut buf = String::with_capacity(tool_name.len() + 32);
+    buf.push_str(tool_name);
+    buf.push('|');
+    // BTreeMap iteration order is sorted by key — stable across calls.
+    for (k, v) in args.iter() {
+        buf.push_str(k);
+        buf.push('=');
+        // Compact JSON form keeps the key compact and stable.
+        match serde_json::to_string(v) {
+            Ok(s) => buf.push_str(&s),
+            Err(_) => buf.push('?'),
+        }
+        buf.push(';');
+    }
+    buf
+}
+
+/// Drop every L1 cache (engine + dispatch) for `server`. Free function so
+/// the borrow checker stays happy inside `execute_tool`'s `&self` flow.
+async fn invalidate_l1_caches(server: &MCPServer) {
+    server.invalidate_l1_caches_public().await;
+}
 
 /// Session information for coordination between multiple LeanKG instances
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,6 +121,16 @@ pub struct MCPServer {
     db_path: Arc<RwLock<PathBuf>>,
     graph_engine: Arc<parking_lot::Mutex<Option<GraphEngine>>>,
     graph_engine_cache: Arc<RwLock<HashMap<PathBuf, GraphEngine>>>,
+    /// Per-project `CachingGraphEngine` keyed by project DB path. Built lazily
+    /// on first read after a fresh `GraphEngine` is opened, and invalidated
+    /// whenever the underlying engine is dropped (mcp_init / mcp_index /
+    /// knowledge contribution tools).
+    caching_engine_cache: Arc<RwLock<HashMap<PathBuf, CachingGraphEngine>>>,
+    /// Dispatch-level JSON response cache for read tools. Keyed by
+    /// `(tool_name, args_json)`. Sized by `LEANKG_L1_DISPATCH_SIZE` /
+    /// `LEANKG_L1_DISPATCH_TTL` so it can be tuned independently of the
+    /// engine-level caches inside `CachingGraphEngine`.
+    dispatch_cache: Cache<String, serde_json::Value>,
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
     intent_parser: IntentParser,
@@ -58,12 +142,17 @@ pub struct MCPServer {
     bound_port: Arc<AtomicU32>,
     /// Serializes MCP write/index operations so Cozo SQLite is not written concurrently.
     write_lock: Arc<TokioMutex<()>>,
+    /// When true, the server rejects any tool that mutates state. Read tools
+    /// (search_code, get_context, kg_*, etc.) still work; write tools return
+    /// `"server is in read-only mode"` before being dispatched.
+    read_only: bool,
 }
 
 impl std::fmt::Debug for MCPServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MCPServer")
             .field("db_path", &self.db_path)
+            .field("read_only", &self.read_only)
             .finish()
     }
 }
@@ -75,6 +164,8 @@ impl Clone for MCPServer {
             db_path: self.db_path.clone(),
             graph_engine: self.graph_engine.clone(),
             graph_engine_cache: self.graph_engine_cache.clone(),
+            caching_engine_cache: self.caching_engine_cache.clone(),
+            dispatch_cache: self.dispatch_cache.clone(),
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
             intent_parser: IntentParser::new(),
@@ -82,6 +173,7 @@ impl Clone for MCPServer {
             shutdown_flag: self.shutdown_flag.clone(),
             bound_port: self.bound_port.clone(),
             write_lock: self.write_lock.clone(),
+            read_only: self.read_only,
         }
     }
 }
@@ -94,6 +186,8 @@ impl MCPServer {
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            dispatch_cache: build_dispatch_cache(),
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
@@ -101,6 +195,7 @@ impl MCPServer {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
+            read_only: false,
         }
     }
 
@@ -111,6 +206,8 @@ impl MCPServer {
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            dispatch_cache: build_dispatch_cache(),
             watch_path: Some(watch_path),
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
@@ -118,7 +215,20 @@ impl MCPServer {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
+            read_only: false,
         }
+    }
+
+    /// Toggle the read-only flag. Builder-style; returns `self` so callers
+    /// can chain `MCPServer::new(db_path).with_read_only(read_only)`.
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Returns true if this server is currently running in read-only mode.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Read leankg.yaml and resolve project root with fallback chain:
@@ -310,7 +420,12 @@ impl MCPServer {
         }
 
         tracing::debug!("Initializing database at: {}", project_db_path.display());
-        let db = init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?;
+        let db = if self.read_only {
+            crate::db::schema::init_db_readonly(&project_db_path)
+                .map_err(|e| format!("Database error: {}", e))?
+        } else {
+            init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?
+        };
         let ge = GraphEngine::with_persistence(db);
 
         {
@@ -1159,18 +1274,26 @@ impl MCPServer {
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.get_db_path();
             let watch_path = watch_path.clone();
-            tokio::spawn(async move {
-                let (tx, rx) = tokio::sync::mpsc::channel(100);
-                start_watcher(db_path, watch_path, rx).await;
-                let _ = tx; // silence unused warning
-            });
-            tracing::info!(
-                "Auto-indexing enabled for {}",
-                self.watch_path
-                    .as_ref()
-                    .unwrap_or(&std::path::PathBuf::from("?"))
-                    .display()
-            );
+            let shutdown = self.shutdown_flag.clone();
+            match self.get_graph_engine() {
+                Ok(ge) => {
+                    tokio::spawn(async move {
+                        let (tx, rx) = tokio::sync::mpsc::channel(100);
+                        start_watcher(ge, db_path, watch_path, shutdown, rx).await;
+                        let _ = tx; // silence unused warning
+                    });
+                    tracing::info!(
+                        "Auto-indexing enabled for {}",
+                        self.watch_path
+                            .as_ref()
+                            .unwrap_or(&std::path::PathBuf::from("?"))
+                            .display()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Watcher skipped: {}", e);
+                }
+            }
         }
 
         self.spawn_ontology_yaml_watcher_if_present();
@@ -1577,18 +1700,26 @@ impl MCPServer {
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.get_db_path();
             let watch_path = watch_path.clone();
-            tokio::spawn(async move {
-                let (tx, rx) = tokio::sync::mpsc::channel(100);
-                start_watcher(db_path, watch_path, rx).await;
-                let _ = tx; // silence unused warning
-            });
-            tracing::info!(
-                "Auto-indexing enabled for {}",
-                self.watch_path
-                    .as_ref()
-                    .unwrap_or(&std::path::PathBuf::from("?"))
-                    .display()
-            );
+            let shutdown = self.shutdown_flag.clone();
+            match self.get_graph_engine() {
+                Ok(ge) => {
+                    tokio::spawn(async move {
+                        let (tx, rx) = tokio::sync::mpsc::channel(100);
+                        start_watcher(ge, db_path, watch_path, shutdown, rx).await;
+                        let _ = tx; // silence unused warning
+                    });
+                    tracing::info!(
+                        "Auto-indexing enabled for {}",
+                        self.watch_path
+                            .as_ref()
+                            .unwrap_or(&std::path::PathBuf::from("?"))
+                            .display()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Watcher skipped: {}", e);
+                }
+            }
         }
 
         self.spawn_ontology_yaml_watcher_if_present();
@@ -1799,7 +1930,23 @@ impl MCPServer {
             }
         }
 
-        // 4. Remove PID file if exists
+        // 4. Drop cached GraphEngine handles so RocksDB LOCK can release.
+        // Give the watcher (~250ms poll) a moment to exit after shutdown_flag.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        {
+            let mut cache = self.graph_engine_cache.write();
+            let n = cache.len();
+            cache.clear();
+            if n > 0 {
+                tracing::info!("Cleared {} cached GraphEngine handle(s)", n);
+            }
+        }
+        {
+            let mut ge = self.graph_engine.lock();
+            *ge = None;
+        }
+
+        // 5. Remove PID file if exists
         let pid_file = self.get_db_path().join("leankg.pid");
         if pid_file.exists() {
             if let Ok(contents) = fs::read_to_string(&pid_file) {
@@ -1882,15 +2029,18 @@ impl MCPServer {
             .await
             .map_err(|e| format!("Failed to create db path: {}", e))?;
 
-        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = crate::graph::GraphEngine::new(db);
+        // Share the handle via the path cache — do not call init_db here
+        // (RocksDB one-writer-per-path; watcher/tools must reuse this handle).
+        let root_key = project_root.to_string_lossy().to_string();
+        let graph_engine = self
+            .get_graph_engine_for_path(Some(&root_key))
+            .map_err(|e| format!("Database error: {}", e))?;
         let mut parser_manager = crate::indexer::ParserManager::new();
         parser_manager
             .init_parsers()
             .map_err(|e| format!("Parser init error: {}", e))?;
 
-        let root_str = project_root.to_string_lossy().to_string();
-        let files = crate::indexer::find_files_sync(&root_str)
+        let files = crate::indexer::find_files_sync(&root_key)
             .map_err(|e| format!("Find files error: {}", e))?;
         let mut indexed = 0;
 
@@ -2182,8 +2332,9 @@ impl MCPServer {
             project_root.display()
         );
 
-        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = crate::graph::GraphEngine::new(db);
+        let graph_engine = self
+            .get_graph_engine_for_path(Some(&project_root.to_string_lossy().to_string()))
+            .map_err(|e| format!("Database error: {}", e))?;
         let mut parser_manager = crate::indexer::ParserManager::new();
         parser_manager
             .init_parsers()
@@ -2347,18 +2498,58 @@ impl MCPServer {
         None
     }
 
+    /// L1 read cache wrapping the project's `GraphEngine`. Built lazily on
+    /// first read after a fresh `GraphEngine` is opened, and dropped whenever
+    /// the underlying engine is dropped (mcp_init / mcp_index / knowledge
+    /// contribution tools).
+    pub fn get_caching_graph_engine(&self) -> Result<CachingGraphEngine, String> {
+        let engine = self.get_graph_engine()?;
+        let db_path = self.get_db_path();
+        {
+            let cache = self.caching_engine_cache.read();
+            if let Some(c) = cache.get(&db_path) {
+                return Ok(c.clone());
+            }
+        }
+        let wrapper = CachingGraphEngine::new(engine);
+        let mut cache = self.caching_engine_cache.write();
+        cache.insert(db_path, wrapper.clone());
+        Ok(wrapper)
+    }
+
+    /// Drop the L1 dispatch cache and every per-project `CachingGraphEngine`.
+    /// Called from the write path inside `execute_tool` after a successful
+    /// mutation. Public so tests can drive it directly.
+    pub(crate) async fn invalidate_l1_caches_public(&self) {
+        // Drain the cache under the lock and collect references; then drop the
+        // guard before awaiting each invalidate so the parking_lot write guard
+        // is not held across an `.await` (which would break the `Send` bound
+        // the rmcp handler requires).
+        let engines: Vec<CachingGraphEngine> = {
+            let mut cache = self.caching_engine_cache.write();
+            cache.drain().map(|(_, e)| e).collect()
+        };
+        for engine in &engines {
+            engine.invalidate().await;
+        }
+        let _ = self.dispatch_cache.invalidate_entries_if(|_, _| true);
+    }
+
     async fn execute_tool(
         &self,
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
-        let _write_guard = if Self::requires_write_lock(tool_name) || self.write_tracker.is_dirty()
-        {
-            Some(self.write_lock.lock().await)
-        } else {
-            None
-        };
-
+        // Read-only enforcement: short-circuit before acquiring any locks or
+        // touching the DB. The set of write tools here MUST match the set
+        // Subagent A uses to invalidate the L1 cache (`requires_write_lock`
+        // below) — duplicates are fine, missing tools are not.
+        if self.read_only && Self::is_write_tool(tool_name) {
+            return Err(format!(
+                "server is in read-only mode (tool '{}' is a write tool)",
+                tool_name
+            ));
+        }
         let project_root = self.find_project_root()?;
         tracing::info!(
             "execute_tool called. project_root={}, db_path={}",
@@ -2372,11 +2563,50 @@ impl MCPServer {
         }
 
         if tool_name == "embed_control" {
+            // embed_control spawns its own background thread; it does not
+            // touch the L1 cache directly. Mark it as write so we serialise
+            // on write_lock the same way the legacy path did.
+            let _write_guard = self.write_lock.lock().await;
             return self.handle_embed_control(&arguments);
         }
 
         if tool_name == "ontology_control" {
+            // Same as embed_control — write-ish, serialise.
+            let _write_guard = self.write_lock.lock().await;
             return self.handle_ontology_control(&arguments);
+        }
+
+        // Read path: serve from dispatch cache if possible before we even
+        // touch the write_lock. The cache is invalidated on writes below, so
+        // a hit is guaranteed to be either fresh or stale-and-self-correcting
+        // within the configured TTL.
+        if !Self::requires_write_lock(tool_name) && !self.write_tracker.is_dirty() {
+            let cache_key = dispatch_cache_key(tool_name, &arguments);
+            if let Some(cached) = self.dispatch_cache.get(&cache_key).await {
+                tracing::debug!("L1 dispatch cache HIT tool={}", tool_name);
+                return Ok(cached);
+            }
+        }
+
+        // The remainder of the function is the legacy body, with two
+        // refinements:
+        //   1. write_lock is acquired only when the tool actually mutates
+        //      the DB (or when the write tracker is dirty — which forces a
+        //      reindex before any read can run);
+        //   2. the L1 caches (engine-level + dispatch) are invalidated
+        //      after a successful write so the next read sees fresh data.
+        let needs_write = Self::requires_write_lock(tool_name) || self.write_tracker.is_dirty();
+        let _write_guard = if needs_write {
+            Some(self.write_lock.lock().await)
+        } else {
+            None
+        };
+
+        // Validate required parameters before dispatching to handler.
+        // (embed_control / ontology_control short-circuits above; here we
+        // still need this for the rest of the dispatch.)
+        if let Some(err) = self.validate_required_params(tool_name, &arguments) {
+            return Err(err);
         }
 
         if tool_name == "mcp_init" {
@@ -2470,6 +2700,7 @@ impl MCPServer {
         }
 
         let handler = ToolHandler::new(graph_engine, project_db_path);
+        let arguments_obj = arguments.clone();
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;
 
@@ -2516,25 +2747,41 @@ impl MCPServer {
             self.write_tracker.mark_dirty();
         }
 
+        // L1 cache invalidation on writes. After a successful mutation we
+        // (a) drop the dispatch cache for every tool (cheap; full reset),
+        // and (b) invalidate each cached `CachingGraphEngine` so its
+        // method-level caches cannot serve stale data.
+        if needs_write || Self::requires_write_lock(tool_name) {
+            invalidate_l1_caches(self).await;
+        } else if let Ok(ref v) = result {
+            // Populate dispatch cache for read tools on miss.
+            let cache_key = dispatch_cache_key(tool_name, &arguments_obj);
+            self.dispatch_cache.insert(cache_key, v.clone()).await;
+        }
+
         result
     }
 
     fn requires_write_lock(tool_name: &str) -> bool {
-        matches!(
-            tool_name,
-            "mcp_init"
-                | "mcp_index"
-                | "mcp_index_docs"
-                | "add_knowledge"
-                | "update_knowledge"
-                | "delete_knowledge"
-                | "add_annotation"
-                | "link_element"
-                | "add_documentation"
-                | "promote_environment"
-                | "embed_control"
-                | "ontology_control"
-        )
+        WRITE_TOOLS.contains(tool_name)
+    }
+
+    /// Returns true when the given tool mutates state. Mirrors the write set
+    /// Subagent A uses to invalidate the L1 cache (`requires_write_lock`).
+    /// When the server is in read-only mode, `execute_tool` returns an error
+    /// for any tool this returns true for.
+    pub fn is_write_tool(tool_name: &str) -> bool {
+        Self::requires_write_lock(tool_name)
+    }
+
+    /// Public wrapper for `execute_tool` so integration tests can drive the
+    /// read-only gate end-to-end. Internal callers use the private method.
+    pub async fn execute_tool_pub(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        self.execute_tool(tool_name, arguments).await
     }
 }
 

@@ -1,9 +1,10 @@
-use crate::db::schema::init_db;
 use crate::graph::GraphEngine;
 use crate::indexer::{reindex_file_sync, ParserManager};
 use crate::watcher::FileChange;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -137,7 +138,19 @@ fn should_ignore(path: &Path) -> bool {
     false
 }
 
-pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Receiver<FileChange>) {
+/// File watcher that reindexes on change using a shared [`GraphEngine`].
+///
+/// Must receive the same handle as the MCP server (`get_graph_engine()`), not
+/// open its own `init_db` — RocksDB allows only one writer per path per process.
+/// When `shutdown` is set, the loop exits so the clone can drop cleanly before
+/// process exit (releases the RocksDB LOCK for the next start).
+pub async fn start_watcher(
+    graph: GraphEngine,
+    db_path: PathBuf,
+    watch_path: PathBuf,
+    shutdown: Arc<AtomicBool>,
+    _rx: mpsc::Receiver<FileChange>,
+) {
     use crate::watcher::FileWatcher;
 
     let watcher = match FileWatcher::new(&watch_path) {
@@ -160,14 +173,6 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
     let async_watcher = watcher.into_async(tx);
     tokio::spawn(async_watcher.run());
 
-    let db = match init_db(&db_path) {
-        Ok(db) => db,
-        Err(e) => {
-            tracing::error!("Failed to init db for watcher: {}", e);
-            return;
-        }
-    };
-    let graph = GraphEngine::new(db);
     let mut parser = ParserManager::new();
     if let Err(e) = parser.init_parsers() {
         tracing::error!("Failed to init parsers for watcher: {}", e);
@@ -188,6 +193,14 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
     let mut files_since_check: usize = 0;
 
     loop {
+        if shutdown.load(Ordering::SeqCst) {
+            tracing::info!(
+                "Watcher shutting down for {} (dropping GraphEngine clone)",
+                watch_path.display()
+            );
+            break;
+        }
+
         tokio::select! {
             Some(change) = rx.recv() => {
                 if should_ignore(&change.path) {
@@ -216,6 +229,13 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
                     );
                 }
                 for (i, file_path) in files.into_iter().enumerate() {
+                    if shutdown.load(Ordering::SeqCst) {
+                        tracing::info!(
+                            "Watcher shutting down mid-flush for {}",
+                            watch_path.display()
+                        );
+                        return;
+                    }
                     let path_str = file_path.to_string_lossy();
                     match reindex_file_sync(&graph, &mut parser, &path_str) {
                         Ok(count) => {
@@ -241,11 +261,12 @@ pub async fn start_watcher(db_path: PathBuf, watch_path: PathBuf, _rx: mpsc::Rec
                     }
                 }
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(60)), if pending.is_empty() => {
-                tracing::debug!("Watcher still running for {}", watch_path.display());
+            _ = tokio::time::sleep(Duration::from_millis(250)), if pending.is_empty() => {
+                // Short poll so we notice shutdown promptly while idle.
             }
         }
     }
+    // `graph` drops here — shared Arc; last drop releases RocksDB LOCK.
 }
 
 /// Check database size and trigger a VACUUM if over the configured limit.

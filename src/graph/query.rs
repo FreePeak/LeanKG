@@ -112,6 +112,17 @@ impl GraphEngine {
         &self.db
     }
 
+    /// Open a read-only `GraphEngine` over the given database path.
+    ///
+    /// Wraps [`crate::db::schema::init_db_readonly`] so `MCPServer` in
+    /// read-only mode and external tooling can grab a query-only handle
+    /// without going through the writer-protect path. Writes still need to be
+    /// rejected at the tool layer — see `MCPServer::read_only`.
+    pub fn open_readonly(db_path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let db = crate::db::schema::init_db_readonly(db_path)?;
+        Ok(Self::new(db))
+    }
+
     /// Run SQLite `VACUUM` against the underlying CozoDB SQLite store to
     /// reclaim disk space after large deletes. No-op for RocksDB backends.
     /// The operation can be expensive (rewrites the entire DB file), so
