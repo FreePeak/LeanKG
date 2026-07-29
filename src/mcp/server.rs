@@ -142,12 +142,17 @@ pub struct MCPServer {
     bound_port: Arc<AtomicU32>,
     /// Serializes MCP write/index operations so Cozo SQLite is not written concurrently.
     write_lock: Arc<TokioMutex<()>>,
+    /// When true, the server rejects any tool that mutates state. Read tools
+    /// (search_code, get_context, kg_*, etc.) still work; write tools return
+    /// `"server is in read-only mode"` before being dispatched.
+    read_only: bool,
 }
 
 impl std::fmt::Debug for MCPServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MCPServer")
             .field("db_path", &self.db_path)
+            .field("read_only", &self.read_only)
             .finish()
     }
 }
@@ -168,6 +173,7 @@ impl Clone for MCPServer {
             shutdown_flag: self.shutdown_flag.clone(),
             bound_port: self.bound_port.clone(),
             write_lock: self.write_lock.clone(),
+            read_only: self.read_only,
         }
     }
 }
@@ -189,6 +195,7 @@ impl MCPServer {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
+            read_only: false,
         }
     }
 
@@ -208,7 +215,20 @@ impl MCPServer {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
+            read_only: false,
         }
+    }
+
+    /// Toggle the read-only flag. Builder-style; returns `self` so callers
+    /// can chain `MCPServer::new(db_path).with_read_only(read_only)`.
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Returns true if this server is currently running in read-only mode.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Read leankg.yaml and resolve project root with fallback chain:
@@ -400,7 +420,12 @@ impl MCPServer {
         }
 
         tracing::debug!("Initializing database at: {}", project_db_path.display());
-        let db = init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?;
+        let db = if self.read_only {
+            crate::db::schema::init_db_readonly(&project_db_path)
+                .map_err(|e| format!("Database error: {}", e))?
+        } else {
+            init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?
+        };
         let ge = GraphEngine::with_persistence(db);
 
         {
@@ -2515,6 +2540,16 @@ impl MCPServer {
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
+        // Read-only enforcement: short-circuit before acquiring any locks or
+        // touching the DB. The set of write tools here MUST match the set
+        // Subagent A uses to invalidate the L1 cache (`requires_write_lock`
+        // below) — duplicates are fine, missing tools are not.
+        if self.read_only && Self::is_write_tool(tool_name) {
+            return Err(format!(
+                "server is in read-only mode (tool '{}' is a write tool)",
+                tool_name
+            ));
+        }
         let project_root = self.find_project_root()?;
         tracing::info!(
             "execute_tool called. project_root={}, db_path={}",
@@ -2729,6 +2764,24 @@ impl MCPServer {
 
     fn requires_write_lock(tool_name: &str) -> bool {
         WRITE_TOOLS.contains(tool_name)
+    }
+
+    /// Returns true when the given tool mutates state. Mirrors the write set
+    /// Subagent A uses to invalidate the L1 cache (`requires_write_lock`).
+    /// When the server is in read-only mode, `execute_tool` returns an error
+    /// for any tool this returns true for.
+    pub fn is_write_tool(tool_name: &str) -> bool {
+        Self::requires_write_lock(tool_name)
+    }
+
+    /// Public wrapper for `execute_tool` so integration tests can drive the
+    /// read-only gate end-to-end. Internal callers use the private method.
+    pub async fn execute_tool_pub(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        self.execute_tool(tool_name, arguments).await
     }
 }
 

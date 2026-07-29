@@ -79,13 +79,6 @@ impl GraphEngine {
         }
     }
 
-    /// Create a read-only [`GraphEngine`] from an already-opened read-only DB.
-    /// Read-only instances don't acquire the RocksDB LOCK, allowing multiple
-    /// reader processes to coexist alongside a single writer.
-    pub fn open_readonly(db: CozoDb) -> Self {
-        Self::new(db)
-    }
-
     #[allow(dead_code)]
     pub fn with_cache(db: CozoDb, cache: QueryCache) -> Self {
         Self {
@@ -117,6 +110,17 @@ impl GraphEngine {
 
     pub fn db(&self) -> &CozoDb {
         &self.db
+    }
+
+    /// Open a read-only `GraphEngine` over the given database path.
+    ///
+    /// Wraps [`crate::db::schema::init_db_readonly`] so `MCPServer` in
+    /// read-only mode and external tooling can grab a query-only handle
+    /// without going through the writer-protect path. Writes still need to be
+    /// rejected at the tool layer — see `MCPServer::read_only`.
+    pub fn open_readonly(db_path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let db = crate::db::schema::init_db_readonly(db_path)?;
+        Ok(Self::new(db))
     }
 
     /// Run SQLite `VACUUM` against the underlying CozoDB SQLite store to

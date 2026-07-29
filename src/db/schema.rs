@@ -95,25 +95,96 @@ fn get_env_mmap_size() -> u64 {
         .unwrap_or(64 * 1024 * 1024)
 }
 
-/// Open a read-only database handle that does NOT acquire RocksDB's LOCK.
+/// Open a read-only database handle. For SQLite, this uses `mode=ro` URI and
+/// does not acquire the writer lock. For RocksDB, CozoDB 0.7.x does NOT expose
+/// `mode=readonly` via its options string — the empty-string open is still the
+/// "primary" handle and will try to acquire the LOCK. This is the Phase 1
+/// short-term workaround (plan §Phase 2); Phase 2 will use RocksDB secondary
+/// instances for true read-only replicas that don't take the LOCK at all.
 ///
-/// For RocksDB, this opens a handle without the LOCK — the first writer process
-/// already holds it, and opening without the lock is not supported by CozoDB
-/// 0.7.x (the empty options string opens normally). For SQLite, the `mode=ro`
-/// URI parameter enforces read-only.
+/// ponytail: when CozoDB gains `mode=readonly` (or we fork it), flip the
+/// RocksDB arm to `cozo::DbInstance::new("rocksdb", &path_str, "mode=readonly")`.
+/// Today the function is best-effort: SQLite gets true RO, RocksDB gets the
+/// same handle as `init_db` so callers must enforce write-tool rejection at
+/// the server layer (see `MCPServer::read_only`).
 ///
-/// This is Phase 1 short-term workaround; Phase 2 will use RocksDB secondary
-/// instances for true read-only replicas.
+/// The `OPENED_ROCKSDB_PATHS` debug guard above intentionally does NOT cover
+/// this path: read-only opens legitimately co-exist with the writer handle
+/// for query-only replicas.
 pub fn init_db_readonly(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     let storage = resolve_storage_config(db_path);
     let path_str = storage.path.to_string_lossy().to_string();
     Ok(match storage.engine {
+        // CozoDB does not accept `mode=readonly` for rocksdb in 0.7.6 — keep
+        // an empty options string. The server layer is responsible for
+        // rejecting write tools when `MCPServer::read_only` is true.
         StorageEngine::RocksDb => {
             std::fs::create_dir_all(&storage.path)?;
             cozo::DbInstance::new("rocksdb", &path_str, "")?
         }
-        _ => cozo::DbInstance::new("sqlite", &path_str, "mode=ro")?,
+        StorageEngine::Sqlite => cozo::DbInstance::new("sqlite", &path_str, "mode=ro")?,
     })
+}
+
+/// Recommended RocksDB tuning knobs. CozoDB 0.7.x does NOT expose RocksDB's
+/// `DBOptions` / `ColumnFamilyOptions` via its Rust API, so these values are
+/// captured only as diagnostic env-var reads today — CozoDB internally uses
+/// its own defaults. A fork of CozoDB that accepts `block_cache_size=`,
+/// `max_open_files=`, `bloom_filter_bits=` etc. via the options string is the
+/// real fix; for now we surface the knobs so operators can document intent
+/// and we can wire them in one place when the upstream patch lands.
+///
+/// ponytail: recommended production values below are baked from the RocksDB
+/// wiki for read-heavy workloads. Tuning is a single fork of CozoDB away.
+#[derive(Debug, Clone, Copy)]
+pub struct RocksDbTuning {
+    /// `-1` = unlimited file descriptors. Default 1024 in RocksDB is too low
+    /// for graphs with >100K SST files.
+    pub max_open_files: i32,
+    /// Block cache size in MB. Default 8 MB; production wants 2-8 GB.
+    pub block_cache_size_mb: usize,
+    /// Bits per key for bloom filters. 10 is a good read-heavy default.
+    pub bloom_filter_bits: usize,
+    /// Memtable write buffer size in MB. Default 64 MB; production wants 256.
+    pub write_buffer_size_mb: usize,
+}
+
+impl Default for RocksDbTuning {
+    fn default() -> Self {
+        Self {
+            max_open_files: -1,
+            block_cache_size_mb: 2048,
+            bloom_filter_bits: 10,
+            write_buffer_size_mb: 256,
+        }
+    }
+}
+
+impl RocksDbTuning {
+    /// Read tuning from `LEANKG_ROCKSDB_*` env vars, falling back to defaults.
+    /// Today these values are only logged — they cannot be applied until
+    /// CozoDB 0.7 exposes the knobs (see struct docs).
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            max_open_files: std::env::var("LEANKG_ROCKSDB_MAX_OPEN_FILES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.max_open_files),
+            block_cache_size_mb: std::env::var("LEANKG_ROCKSDB_BLOCK_CACHE_MB")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.block_cache_size_mb),
+            bloom_filter_bits: std::env::var("LEANKG_ROCKSDB_BLOOM_BITS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.bloom_filter_bits),
+            write_buffer_size_mb: std::env::var("LEANKG_ROCKSDB_WRITE_BUFFER_MB")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.write_buffer_size_mb),
+        }
+    }
 }
 
 pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
@@ -141,6 +212,18 @@ pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
         StorageEngine::Sqlite => cozo::DbInstance::new("sqlite", &path_str, "")?,
         StorageEngine::RocksDb => {
             std::fs::create_dir_all(&storage.path)?;
+            // ponytail: LEANKG_ROCKSDB_* tuning knobs are captured here for
+            // diagnostic logging — CozoDB 0.7 does not yet expose them via
+            // its options string. See `RocksDbTuning` docs.
+            let tuning = RocksDbTuning::from_env();
+            tracing::info!(
+                "RocksDB tuning intent (not yet applied): max_open_files={}, \
+                 block_cache_mb={}, bloom_bits={}, write_buffer_mb={}",
+                tuning.max_open_files,
+                tuning.block_cache_size_mb,
+                tuning.bloom_filter_bits,
+                tuning.write_buffer_size_mb
+            );
             cozo::DbInstance::new("rocksdb", &path_str, "")?
         }
     };
