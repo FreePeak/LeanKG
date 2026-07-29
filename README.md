@@ -1,20 +1,12 @@
-[![MCP Toplist](https://mcptoplist.com/badge/glama%2FFreePeak%2FLeanKG.svg)](https://mcptoplist.com/server/glama%2FFreePeak%2FLeanKG)
-
 <p align="center">
-  <img src="https://www.leankg.com/icon.svg" alt="LeanKG" width="96" height="96">
+  <img src="assets/icon.svg" alt="LeanKG" width="128" height="128">
 </p>
 
 <h1 align="center">LeanKG</h1>
 
 <p align="center">
-  <strong>Local-first code knowledge graph for AI coding agents</strong>
-</p>
-
-<p align="center">
-  Surgical context · fewer tool calls · blast-radius awareness · 100% local
-</p>
-
-<p align="center">
+  <strong>Local-first code knowledge graph for AI coding agents</strong><br>
+  Surgical context · fewer tool calls · blast-radius awareness · 100% local<br>
   Pre-index your repo. Serve precise subgraphs over MCP to Cursor, Claude Code, OpenCode, and more — no cloud, no external database.
 </p>
 
@@ -27,6 +19,7 @@
 </p>
 
 <p align="center">
+  <a href="https://mcptoplist.com/server/glama%2FFreePeak%2FLeanKG"><img src="https://mcptoplist.com/badge/glama%2FFreePeak%2FLeanKG.svg" alt="MCP Toplist"></a>
   <a href="https://github.com/FreePeak/LeanKG/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust&logoColor=white" alt="Rust 1.75+"></a>
   <a href="https://crates.io/crates/leankg"><img src="https://img.shields.io/crates/v/leankg.svg" alt="crates.io"></a>
@@ -49,6 +42,10 @@
   <img src="https://img.shields.io/badge/Codex-supported-blueviolet.svg" alt="Codex">
   <img src="https://img.shields.io/badge/Antigravity-supported-blueviolet.svg" alt="Antigravity">
   <img src="https://img.shields.io/badge/Kilo-supported-blueviolet.svg" alt="Kilo">
+</p>
+
+<p align="center">
+  <img src="assets/banner.svg" alt="LeanKG — Next Gen Knowledge Core: Semantic Pruning, Knowledge Enrichment, Dynamic Querying, Vector Embedding, Inference Synthesis, Ontology Alignment, Context-Aware Reasoning, Unified KG" width="100%">
 </p>
 
 ---
@@ -83,13 +80,13 @@
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
 ```
 
-| Target | What you get |
-|--------|----------------|
-| `cursor` | Binary + MCP + skill + AGENTS.md + session hook |
-| `claude` | Binary + MCP + plugin + skill + CLAUDE.md + hooks |
-| `opencode` | Binary + MCP + plugin + skill + AGENTS.md |
-| `gemini` / `kilo` / `antigravity` | Binary + MCP + skill + agent docs |
-| `docker` | Hub image + index + embed + MCP HTTP (**no Rust**) |
+| Target                            | What you get                                                              |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| `cursor`                          | Binary + MCP + skill + AGENTS.md + session hook                           |
+| `claude`                          | Binary + MCP + plugin + skill + CLAUDE.md + hooks                         |
+| `opencode`                        | Binary + MCP + plugin + skill + AGENTS.md                                 |
+| `gemini` / `kilo` / `antigravity` | Binary + MCP + skill + agent docs                                         |
+| `docker`                          | Hub image (`freepeak/leankg:latest`, `:0.19.21`) + MCP HTTP (**no Rust**) |
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
@@ -111,8 +108,20 @@ git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG && cargo build --r
 
 ```bash
 # Single-container (embedded RocksDB inside leankg) — small/medium teams.
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
+# Pull and run the latest stable image:
+docker run -d --name leankg -p 9699:9699 \
+  -v $(pwd):/workspace \
+  freepeak/leankg:latest
 curl http://localhost:9699/health
+
+# Or pin a version:
+docker run -d --name leankg -p 9699:9699 \
+  -v $(pwd):/workspace \
+  freepeak/leankg:0.19.21
+curl http://localhost:9699/health
+
+# Quick-start script (same as above, in one command):
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
 
 # Enterprise (RocksDB in its own `cozoserver` sidecar) — independent scaling,
 # backup orchestration, HA on the storage tier. See docs/enterprise-docker.md.
@@ -183,12 +192,12 @@ graph LR
     C -->|targeted context| A
 ```
 
-| Without LeanKG | With LeanKG |
-|----------------|-------------|
-| Grep → open many files → large context | Query the graph → minimal, relevant subgraph |
-| No blast-radius awareness | Impact radius with confidence + severity |
-| Keyword-only search | Keyword + semantic (HNSW) + ontology |
-| Stale mental model of the repo | Index + optional `--watch` incremental updates |
+| Without LeanKG                         | With LeanKG                                    |
+| -------------------------------------- | ---------------------------------------------- |
+| Grep → open many files → large context | Query the graph → minimal, relevant subgraph   |
+| No blast-radius awareness              | Impact radius with confidence + severity       |
+| Keyword-only search                    | Keyword + semantic (HNSW) + ontology           |
+| Stale mental model of the repo         | Index + optional `--watch` incremental updates |
 
 > **On cost:** LeanKG’s win on every codebase is **precision and speed** — fewer tool calls, faster answers. Token savings are real and **scale-dependent**: modest on small repos, material on large monorepos multiplied by team-wide agent usage.
 
@@ -202,23 +211,23 @@ For engineering managers choosing a team-wide stack: [LeanKG vs Graphify — Com
 
 Vector-engine A/B gate (100 tasks, synthetic agent workload vs grep/cat-style baseline) — see [`docs/benchmarks/vector_engine_gate_results.json`](docs/benchmarks/vector_engine_gate_results.json):
 
-| Metric | Result | Floor |
-|--------|--------|-------|
-| Token reduction | **−65.0%** | ≥ 60% |
-| Tool-call reduction | **−84.6%** | ≥ 80% |
-| Speedup | **2.50×** | ≥ 2× |
-| 1M SQ8 ANN P95 | **~0.055 ms** | &lt; 50 ms |
+| Metric              | Result        | Floor      |
+| ------------------- | ------------- | ---------- |
+| Token reduction     | **−65.0%**    | ≥ 60%      |
+| Tool-call reduction | **−84.6%**    | ≥ 80%      |
+| Speedup             | **2.50×**     | ≥ 2×       |
+| 1M SQ8 ANN P95      | **~0.055 ms** | &lt; 50 ms |
 
 Unified agent A/B (19 cases vs grep baseline): **~30% input token savings**, **~3× tokens/result efficiency**.
 
 Load test (~100K nodes):
 
-| Operation | Throughput |
-|-----------|------------|
-| Insert elements | ~57k / sec |
-| Insert relationships | ~67k / sec |
-| Retrieve elements | ~419k / sec |
-| Cache speedup (cold → warm) | 345–461× |
+| Operation                   | Throughput  |
+| --------------------------- | ----------- |
+| Insert elements             | ~57k / sec  |
+| Insert relationships        | ~67k / sec  |
+| Retrieve elements           | ~419k / sec |
+| Cache speedup (cold → warm) | 345–461×    |
 
 ```bash
 cargo build --release
@@ -298,8 +307,7 @@ Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs
   <em>Mega-graph skip gate with “Load graph anyway”.</em>
 </p>
 
-Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-screenshots-2026-07-20.md) · App notes: [ui-v2/README.md](ui-v2/README.md) · Live demo: **https://leankg.onrender.com** · Shell provenance: [GitNexus](https://github.com/abhigyanpatwari/GitNexus)
----
+## Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-screenshots-2026-07-20.md) · App notes: [ui-v2/README.md](ui-v2/README.md) · Live demo: **https://leankg.onrender.com** · Shell provenance: [GitNexus](https://github.com/abhigyanpatwari/GitNexus)
 
 ## How It Works
 
@@ -318,14 +326,14 @@ Repo ──► Indexer ──► Knowledge Graph ──► MCP Tools ──► A
 
 ## MCP & Agents
 
-| Agent | Auto-setup | Notes |
-|-------|------------|--------|
-| Cursor | Yes | Per-project install; always-on graph-first rule + session hook; skill `using-leankg` |
-| Claude Code | Yes | Plugin + full lifecycle hooks (PreToolUse nudge) |
-| OpenCode | Yes | Plugin + skill |
-| Gemini CLI | Yes | MCP + skill / agent docs |
-| Codex / Antigravity / Kilo | Yes | MCP + skill / agent docs |
-| Docker MCP HTTP | Yes | Shared RocksDB; multi-repo mounts |
+| Agent                      | Auto-setup | Notes                                                                                |
+| -------------------------- | ---------- | ------------------------------------------------------------------------------------ |
+| Cursor                     | Yes        | Per-project install; always-on graph-first rule + session hook; skill `using-leankg` |
+| Claude Code                | Yes        | Plugin + full lifecycle hooks (PreToolUse nudge)                                     |
+| OpenCode                   | Yes        | Plugin + skill                                                                       |
+| Gemini CLI                 | Yes        | MCP + skill / agent docs                                                             |
+| Codex / Antigravity / Kilo | Yes        | MCP + skill / agent docs                                                             |
+| Docker MCP HTTP            | Yes        | Shared RocksDB; multi-repo mounts                                                    |
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
@@ -339,13 +347,13 @@ When `:9699` health is OK, for fuzzy / NL / “where is X?” questions **discov
 
 `get_overview_context` → `mcp_status` → `concept_search` → **`semantic_search`** → `search_code` / `find_function` → then connection verbs → `get_context` / impact / deps.
 
-| Question type | First tools |
-|---------------|-------------|
+| Question type               | First tools                                              |
+| --------------------------- | -------------------------------------------------------- |
 | Fuzzy / meaning / domain NL | `concept_search` → **`semantic_search`** → `search_code` |
-| Exact symbol / file name | `find_function` / `search_code` / `query_file` |
-| How A↔B? (known endpoints) | `shortest_path` |
-| What is this known symbol? | `explain_node` |
-| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
+| Exact symbol / file name    | `find_function` / `search_code` / `query_file`           |
+| How A↔B? (known endpoints)  | `shortest_path`                                          |
+| What is this known symbol?  | `explain_node`                                           |
+| Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits)          |
 
 Docker MCP: pass container `project=` (`/workspace`); override with `LEANKG_MCP_PROJECT`.
 
@@ -385,12 +393,12 @@ Typical agent loop:
 
 Ontology also refreshes after index, and Docker boot re-syncs when `.leankg/ontology_synced` is older than **either** YAML file. Prefer `kg_trace_workflow` after edits; use `ontology_control(action=sync|status)` when you need an explicit refresh.
 
-| Knob | Default | Purpose |
-|------|---------|---------|
-| `LEANKG_ONTOLOGY_DIR` | `<project>/ontology` | Override ontology YAML directory |
-| `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS` | `1500` (min 1000) | Debounce for in-process YAML watch |
-| `LEANKG_ONTOLOGY_SYNC_ON_BOOT` | `timeout` | Docker: `skip` / `force` / `timeout` |
-| MCP `ontology_control` | — | `action=sync\|status` (Admin) |
+| Knob                                | Default              | Purpose                              |
+| ----------------------------------- | -------------------- | ------------------------------------ |
+| `LEANKG_ONTOLOGY_DIR`               | `<project>/ontology` | Override ontology YAML directory     |
+| `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS` | `1500` (min 1000)    | Debounce for in-process YAML watch   |
+| `LEANKG_ONTOLOGY_SYNC_ON_BOOT`      | `timeout`            | Docker: `skip` / `force` / `timeout` |
+| MCP `ontology_control`              | —                    | `action=sync\|status` (Admin)        |
 
 Details: [docs/mcp-tools.md](docs/mcp-tools.md) · Smoke: [docs/reports/ontology-proc-auto-smoke-2026-07-21.md](docs/reports/ontology-proc-auto-smoke-2026-07-21.md)
 
@@ -402,14 +410,14 @@ Setup details: [docs/agentic-instructions.md](docs/agentic-instructions.md) · S
 
 Structural extraction and cross-file edges into one graph (no per-language product setup):
 
-| Family | Languages / formats |
-|--------|---------------------|
-| Systems | Rust, Go, C / C++* |
-| JVM | Java, Kotlin |
-| Web | TypeScript, JavaScript |
-| Scripting | Python, Ruby*, PHP* |
-| Mobile | Dart, Android XML |
-| Infra | Terraform, CI YAML |
+| Family    | Languages / formats    |
+| --------- | ---------------------- |
+| Systems   | Rust, Go, C / C++\*    |
+| JVM       | Java, Kotlin           |
+| Web       | TypeScript, JavaScript |
+| Scripting | Python, Ruby*, PHP*    |
+| Mobile    | Dart, Android XML      |
+| Infra     | Terraform, CI YAML     |
 
 \*Depth varies by extractor maturity — see the PRD / roadmap for parity status.
 
@@ -441,30 +449,30 @@ Full CLI: [docs/cli-reference.md](docs/cli-reference.md)
 
 ## Documentation
 
-| Doc | Description |
-|-----|-------------|
-| [docs/cli-reference.md](docs/cli-reference.md) | All CLI commands |
-| [docs/mcp-tools.md](docs/mcp-tools.md) | MCP tool reference |
-| [docs/agentic-instructions.md](docs/agentic-instructions.md) | AI tool setup & auto-trigger |
-| [docs/architecture.md](docs/architecture.md) | System design & data model |
-| [docs/web-ui.md](docs/web-ui.md) | Web UI |
-| [docs/benchmark.md](docs/benchmark.md) | Benchmark methodology |
-| [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings / HNSW internals |
-| [INSTRUCTION.md](INSTRUCTION.md) | Memory tuning & ops playbook |
-| [docs/roadmap.md](docs/roadmap.md) | Roadmap |
-| [AGENTS.md](AGENTS.md) | Agent / Docker deployment notes |
-| [docs/enterprise-docker.md](docs/enterprise-docker.md) | Two-container cozoserver + leankg enterprise stack (deploy, sizing, backup, upgrade paths) |
+| Doc                                                          | Description                                                                                |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| [docs/cli-reference.md](docs/cli-reference.md)               | All CLI commands                                                                           |
+| [docs/mcp-tools.md](docs/mcp-tools.md)                       | MCP tool reference                                                                         |
+| [docs/agentic-instructions.md](docs/agentic-instructions.md) | AI tool setup & auto-trigger                                                               |
+| [docs/architecture.md](docs/architecture.md)                 | System design & data model                                                                 |
+| [docs/web-ui.md](docs/web-ui.md)                             | Web UI                                                                                     |
+| [docs/benchmark.md](docs/benchmark.md)                       | Benchmark methodology                                                                      |
+| [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) | Embeddings / HNSW internals                                                                |
+| [INSTRUCTION.md](INSTRUCTION.md)                             | Memory tuning & ops playbook                                                               |
+| [docs/roadmap.md](docs/roadmap.md)                           | Roadmap                                                                                    |
+| [AGENTS.md](AGENTS.md)                                       | Agent / Docker deployment notes                                                            |
+| [docs/enterprise-docker.md](docs/enterprise-docker.md)       | Two-container cozoserver + leankg enterprise stack (deploy, sizing, backup, upgrade paths) |
 
 ---
 
 ## Troubleshooting
 
-| Issue | Fix |
-|-------|-----|
-| High RAM on macOS | `export LEANKG_MMAP_SIZE=134217728` and `LEANKG_CACHE_MAX_TOKENS=100000` — see [INSTRUCTION.md](INSTRUCTION.md) |
-| `database is locked` | `leankg proc kill` (stop web/MCP before re-index) |
-| Embeddings / cold embed | [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) |
-| MCP “not initialized” in Docker | Pass **container** `project=` paths (e.g. `/workspace`), not the host Mac path — see [AGENTS.md](AGENTS.md) |
+| Issue                           | Fix                                                                                                             |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| High RAM on macOS               | `export LEANKG_MMAP_SIZE=134217728` and `LEANKG_CACHE_MAX_TOKENS=100000` — see [INSTRUCTION.md](INSTRUCTION.md) |
+| `database is locked`            | `leankg proc kill` (stop web/MCP before re-index)                                                               |
+| Embeddings / cold embed         | [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md)                                                    |
+| MCP “not initialized” in Docker | Pass **container** `project=` paths (e.g. `/workspace`), not the host Mac path — see [AGENTS.md](AGENTS.md)     |
 
 ---
 
@@ -490,15 +498,3 @@ Issues and PRs are welcome. For larger changes, open an issue first so we can al
 ## License
 
 [Apache License 2.0](LICENSE)
-
----
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=FreePeak%2FLeanKG&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FreePeak/LeanKG&type=date&theme=dark&legend=top-left" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FreePeak/LeanKG&type=date&legend=top-left" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FreePeak/LeanKG&type=date&legend=top-left" />
-  </picture>
-</a>
