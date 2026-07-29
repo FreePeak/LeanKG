@@ -835,7 +835,7 @@ pub fn index_files_parallel_with_typed_resolve(
         let total_elements = all_elements.len();
         const ELEM_BATCH_SIZE: usize = 5000;
         for (i, chunk) in all_elements.chunks(ELEM_BATCH_SIZE).enumerate() {
-            graph.insert_elements(chunk)?;
+            graph.insert_elements_with(chunk, true)?;
             if verbose {
                 let progress = ((i + 1) * ELEM_BATCH_SIZE).min(total_elements);
                 eprint!("\r  Inserted {}/{} elements", progress, total_elements);
@@ -877,7 +877,7 @@ pub fn index_files_parallel_with_typed_resolve(
         let total_rels = all_relationships.len();
         const REL_BATCH_SIZE: usize = 5000;
         for (i, chunk) in all_relationships.chunks(REL_BATCH_SIZE).enumerate() {
-            graph.insert_relationships(chunk)?;
+            graph.insert_relationships_with(chunk, true)?;
             if verbose {
                 let progress = ((i + 1) * REL_BATCH_SIZE).min(total_rels);
                 eprint!("\r  Inserted {}/{} relationships", progress, total_rels);
@@ -919,8 +919,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -932,8 +932,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -946,8 +946,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -957,8 +957,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -978,8 +978,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -1103,8 +1103,8 @@ pub fn index_file_sync(
         resolve_go_imports(&mut relationships, file_path, language);
     }
 
-    let _ = graph.insert_elements(&elements);
-    let _ = graph.insert_relationships(&relationships);
+    let _ = graph.insert_elements_with(&elements, true);
+    let _ = graph.insert_relationships_with(&relationships, true);
 
     if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {
         tracing::warn!(
@@ -1121,8 +1121,8 @@ pub fn reindex_file_sync(
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    graph.remove_elements_by_file(file_path)?;
-    graph.remove_relationships_by_source(file_path)?;
+    graph.remove_elements_by_file_bulk(file_path)?;
+    graph.remove_relationships_by_source_bulk(file_path)?;
 
     index_file_sync(graph, parser_manager, file_path)
 }
@@ -1282,6 +1282,12 @@ pub async fn incremental_index_sync(
         }
     }
 
+    // Single bulk cache clear at the end of the batch. Per-file invalidation
+    // was the bottleneck: each insert/remove spawned an async task that hit
+    // the persistent cache (disk). With 3K+ files this added seconds per
+    // file and pushed total runtime to hours.
+    graph.clear_cache().await;
+
     Ok(IncrementalIndexResult {
         changed_files,
         dependent_files,
@@ -1411,7 +1417,7 @@ where
     }
 
     if !all_relationships.is_empty() {
-        if let Err(e) = graph.insert_relationships(&all_relationships) {
+        if let Err(e) = graph.insert_relationships_with(&all_relationships, true) {
             tracing::warn!("Failed to batch insert relationships: {}", e);
         }
     }
