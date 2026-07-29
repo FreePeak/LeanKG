@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.21](https://github.com/FreePeak/LeanKG/compare/v0.19.20...v0.19.21) (2026-07-29)
+
+
+### Bug Fixes
+
+* **embed:** emit per-symbol references edges for FR-SEM-08 traversal ([#146](https://github.com/FreePeak/LeanKG/issues/146)) ([d949401](https://github.com/FreePeak/LeanKG/commit/d949401b0f2d00d6c5aa3c6ec5878014073f3a03))
+* **mcp:** keep HTTP MCP responsive during background embed ([#141](https://github.com/FreePeak/LeanKG/issues/141)) ([a1d1ea5](https://github.com/FreePeak/LeanKG/commit/a1d1ea5099a1ad753d717a47cedbb317ac5ea61c))
+* **retrieval:** address [#127](https://github.com/FreePeak/LeanKG/issues/127) review findings on ontology traversal ([#145](https://github.com/FreePeak/LeanKG/issues/145)) ([2c81ce8](https://github.com/FreePeak/LeanKG/commit/2c81ce823f8e23c26af96af39092517b4de24e84))
+
 ## [0.19.20](https://github.com/FreePeak/LeanKG/compare/v0.19.19...v0.19.20) (2026-07-28)
 
 
