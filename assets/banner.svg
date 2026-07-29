@@ -1,0 +1,327 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 720" width="1180" height="720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0a0e27"/>
+      <stop offset="100%" stop-color="#050816"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="cyanGlow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a5f3fc"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fcd34d"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="pink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f9a8d4"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1180" height="720" fill="url(#bg)"/>
+
+  <!-- Subtle grid -->
+  <g stroke="#1e293b" stroke-width="0.5" opacity="0.3">
+    <line x1="295" y1="20" x2="295" y2="540"/>
+    <line x1="590" y1="20" x2="590" y2="540"/>
+    <line x1="885" y1="20" x2="885" y2="540"/>
+    <line x1="20" y1="280" x2="1160" y2="280"/>
+  </g>
+
+  <!-- ============ 1. IMPACT RADIUS (blast radius before you change code) ============ -->
+  <g transform="translate(150, 130)">
+    <g stroke="#f59e0b" stroke-width="1.5" fill="none">
+      <line x1="-40" y1="-50" x2="0" y2="-20"/>
+      <line x1="0" y1="-20" x2="40" y2="-50"/>
+      <line x1="0" y1="-20" x2="-40" y2="20"/>
+      <line x1="0" y1="-20" x2="40" y2="20"/>
+      <line x1="-40" y1="20" x2="-20" y2="60"/>
+      <line x1="40" y1="20" x2="20" y2="60"/>
+    </g>
+    <circle cx="-40" cy="-50" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+    <circle cx="40" cy="-50" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+    <circle cx="0" cy="-20" r="9" fill="url(#orange)"/>
+    <circle cx="-40" cy="20" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+    <circle cx="40" cy="20" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+    <circle cx="-20" cy="60" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+    <circle cx="20" cy="60" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+    <!-- concentric blast radius rings around central node -->
+    <circle cx="0" cy="-20" r="18" fill="none" stroke="#ec4899" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>
+    <circle cx="0" cy="-20" r="32" fill="none" stroke="#ec4899" stroke-width="0.6" stroke-dasharray="2 3" opacity="0.4"/>
+    <!-- severity warning -->
+    <g transform="translate(55, -55)">
+      <path d="M 0,-10 L 10,8 L -10,8 Z" fill="none" stroke="#ec4899" stroke-width="1.8"/>
+      <text y="6" text-anchor="middle" fill="#ec4899" font-family="Arial,sans-serif" font-size="11" font-weight="900">!</text>
+    </g>
+  </g>
+  <text x="150" y="290" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">IMPACT RADIUS</text>
+
+  <!-- ============ 2. MCP-NATIVE (85+ tools) ============ -->
+  <g transform="translate(445, 130)">
+    <!-- central MCP server box -->
+    <rect x="-32" y="-22" width="64" height="44" rx="6" fill="#0a0e27" stroke="#22d3ee" stroke-width="2"/>
+    <text y="3" text-anchor="middle" fill="#22d3ee" font-family="Arial,sans-serif" font-size="11" font-weight="900">MCP</text>
+    <text y="15" text-anchor="middle" fill="#67e8f9" font-family="Arial,sans-serif" font-size="8" font-weight="700">85+ tools</text>
+
+    <!-- orbiting tool chips -->
+    <g>
+      <circle cx="-55" cy="-50" r="11" fill="#f59e0b" stroke="#0a0e27" stroke-width="1.5"/>
+      <text y="-47" text-anchor="middle" fill="#0a0e27" font-family="monospace" font-size="8" font-weight="900">?</text>
+
+      <circle cx="55" cy="-50" r="11" fill="#22d3ee" stroke="#0a0e27" stroke-width="1.5"/>
+      <text y="-47" text-anchor="middle" fill="#0a0e27" font-family="monospace" font-size="8" font-weight="900">?</text>
+
+      <circle cx="65" cy="0" r="11" fill="#ec4899" stroke="#0a0e27" stroke-width="1.5"/>
+      <text y="3" text-anchor="middle" fill="#0a0e27" font-family="monospace" font-size="8" font-weight="900">?</text>
+
+      <circle cx="-65" cy="0" r="11" fill="#a78bfa" stroke="#0a0e27" stroke-width="1.5"/>
+      <text y="3" text-anchor="middle" fill="#0a0e27" font-family="monospace" font-size="8" font-weight="900">?</text>
+
+      <circle cx="-50" cy="50" r="11" fill="#22d3ee" stroke="#0a0e27" stroke-width="1.5"/>
+      <text y="53" text-anchor="middle" fill="#0a0e27" font-family="monospace" font-size="8" font-weight="900">?</text>
+
+      <circle cx="55" cy="50" r="11" fill="#fcd34d" stroke="#0a0e27" stroke-width="1.5"/>
+      <text y="53" text-anchor="middle" fill="#0a0e27" font-family="monospace" font-size="8" font-weight="900">?</text>
+    </g>
+
+    <!-- connector lines -->
+    <g stroke="#22d3ee" stroke-width="1" opacity="0.5">
+      <line x1="-32" y1="-15" x2="-47" y2="-42"/>
+      <line x1="32" y1="-15" x2="47" y2="-42"/>
+      <line x1="32" y1="0" x2="54" y2="0"/>
+      <line x1="-32" y1="0" x2="-54" y2="0"/>
+      <line x1="-22" y1="22" x2="-42" y2="42"/>
+      <line x1="22" y1="22" x2="47" y2="42"/>
+    </g>
+  </g>
+  <text x="445" y="290" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">MCP-NATIVE</text>
+
+  <!-- ============ 3. SEMANTIC SEARCH (HNSW embeddings) ============ -->
+  <g transform="translate(740, 130)">
+    <!-- vector nodes scattered -->
+    <g fill="url(#cyan)" stroke="#fff" stroke-width="0.8">
+      <circle cx="-55" cy="-30" r="4"/>
+      <circle cx="-35" cy="-50" r="4"/>
+      <circle cx="-15" cy="-35" r="4"/>
+      <circle cx="10" cy="-55" r="4"/>
+      <circle cx="40" cy="-40" r="4"/>
+      <circle cx="55" cy="-15" r="4"/>
+      <circle cx="45" cy="20" r="4"/>
+      <circle cx="20" cy="45" r="4"/>
+      <circle cx="-15" cy="50" r="4"/>
+      <circle cx="-50" cy="35" r="4"/>
+      <circle cx="-60" cy="0" r="4"/>
+      <circle cx="-25" cy="10" r="4"/>
+      <circle cx="5" cy="-15" r="4"/>
+      <circle cx="30" cy="-5" r="4"/>
+    </g>
+    <!-- nearest-neighbor orbit rings around query point -->
+    <circle cx="10" cy="20" r="35" fill="none" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="2 2" opacity="0.6"/>
+    <circle cx="10" cy="20" r="50" fill="none" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+    <!-- query point -->
+    <circle cx="10" cy="20" r="6" fill="url(#orange)" stroke="#fff" stroke-width="1.5"/>
+    <!-- nearest hits (highlighted) -->
+    <circle cx="-15" cy="50" r="5" fill="none" stroke="#ec4899" stroke-width="2"/>
+    <circle cx="-25" cy="10" r="5" fill="none" stroke="#ec4899" stroke-width="2"/>
+    <circle cx="5" cy="-15" r="5" fill="none" stroke="#ec4899" stroke-width="2"/>
+  </g>
+  <text x="740" y="290" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">SEMANTIC SEARCH</text>
+
+  <!-- ============ 4. LOCAL-FIRST (no cloud) ============ -->
+  <g transform="translate(1030, 130)">
+    <!-- shield outline -->
+    <path d="M 0,-55 L 45,-35 L 45,15 Q 45,45 0,60 Q -45,45 -45,15 L -45,-35 Z"
+          fill="#0a0e27" stroke="#22d3ee" stroke-width="2.5" stroke-linejoin="round"/>
+    <!-- device (laptop) inside shield -->
+    <g transform="translate(0, 5)">
+      <rect x="-22" y="-15" width="44" height="28" rx="2" fill="#0a0e27" stroke="#67e8f9" stroke-width="1.5"/>
+      <rect x="-20" y="-13" width="40" height="24" fill="#22d3ee" opacity="0.2"/>
+      <path d="M -27,15 L 27,15 L 24,19 L -24,19 Z" fill="#67e8f9" stroke="#0a0e27" stroke-width="1"/>
+    </g>
+    <!-- checkmark badge -->
+    <circle cx="32" cy="-30" r="10" fill="#22d3ee" stroke="#0a0e27" stroke-width="2"/>
+    <path d="M 27,-30 L 31,-26 L 38,-34" stroke="#0a0e27" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- NO cloud arrow -->
+    <g transform="translate(-58, -20)" stroke="#ec4899" stroke-width="2" fill="none">
+      <path d="M -8,0 Q -8,-10 0,-10 Q 8,-10 8,0 Q 8,8 0,8 Q -8,8 -8,0 Z" stroke-linejoin="round"/>
+      <line x1="-12" y1="12" x2="12" y2="-12" stroke-width="2.5"/>
+    </g>
+  </g>
+  <text x="1030" y="290" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">LOCAL-FIRST</text>
+
+  <!-- ============ 5. ONTOLOGY SYNC (procedural auto-update) ============ -->
+  <g transform="translate(150, 410)">
+    <!-- sunburst rays -->
+    <g stroke="#22d3ee" stroke-width="0.5" opacity="0.4">
+      <line x1="0" y1="0" x2="-60" y2="-60"/>
+      <line x1="0" y1="0" x2="60" y2="-60"/>
+      <line x1="0" y1="0" x2="80" y2="0"/>
+      <line x1="0" y1="0" x2="60" y2="60"/>
+      <line x1="0" y1="0" x2="-60" y2="60"/>
+      <line x1="0" y1="0" x2="-80" y2="0"/>
+      <line x1="0" y1="0" x2="0" y2="-75"/>
+      <line x1="0" y1="0" x2="0" y2="75"/>
+    </g>
+    <!-- rotating refresh ring -->
+    <g stroke="#f59e0b" stroke-width="2.5" fill="none" stroke-linecap="round">
+      <path d="M -40,0 A 40,40 0 1 1 28,28" />
+      <path d="M 28,28 L 38,20 L 38,38 Z" fill="#f59e0b" stroke="none"/>
+    </g>
+    <!-- outer nodes -->
+    <g>
+      <circle cx="-60" cy="-60" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+      <circle cx="60" cy="-60" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+      <circle cx="80" cy="0" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+      <circle cx="60" cy="60" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+      <circle cx="-60" cy="60" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+      <circle cx="-80" cy="0" r="7" fill="url(#cyan)" stroke="#fff" stroke-width="1"/>
+    </g>
+    <!-- center hub with workflow steps icon -->
+    <circle r="22" fill="#0a0e27" stroke="#22d3ee" stroke-width="2"/>
+    <g stroke="#67e8f9" stroke-width="1.8" fill="none" stroke-linecap="round">
+      <path d="M -8,-7 L 8,-7"/>
+      <path d="M -8,0 L 5,0"/>
+      <path d="M -8,7 L 8,7"/>
+    </g>
+    <g fill="#22d3ee">
+      <circle cx="-10" cy="-7" r="1.5"/>
+      <circle cx="-10" cy="0" r="1.5"/>
+      <circle cx="-10" cy="7" r="1.5"/>
+    </g>
+  </g>
+  <text x="150" y="555" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">ONTOLOGY SYNC</text>
+
+  <!-- ============ 6. COMMUNITY DETECTION (Leiden clusters) ============ -->
+  <g transform="translate(445, 410)">
+    <!-- 3 cluster zones with soft fills -->
+    <g opacity="0.3">
+      <circle cx="-45" cy="-20" r="35" fill="#f59e0b"/>
+      <circle cx="40" cy="-25" r="32" fill="#ec4899"/>
+      <circle cx="0" cy="35" r="40" fill="#22d3ee"/>
+    </g>
+    <!-- inter-cluster edges -->
+    <g stroke="#94a3b8" stroke-width="1" fill="none" opacity="0.6">
+      <line x1="-30" y1="-15" x2="20" y2="-15"/>
+      <line x1="-25" y1="5" x2="-5" y2="20"/>
+      <line x1="20" y1="0" x2="10" y2="20"/>
+    </g>
+    <!-- intra-cluster edges -->
+    <g stroke="#fff" stroke-width="1" fill="none" opacity="0.7">
+      <line x1="-55" y1="-30" x2="-40" y2="-10"/>
+      <line x1="-40" y1="-10" x2="-30" y2="-35"/>
+      <line x1="-55" y1="-30" x2="-60" y2="-5"/>
+      <line x1="30" y1="-35" x2="50" y2="-15"/>
+      <line x1="50" y1="-15" x2="45" y2="-40"/>
+      <line x1="30" y1="-35" x2="25" y2="-15"/>
+      <line x1="-15" y1="30" x2="5" y2="50"/>
+      <line x1="5" y1="50" x2="25" y2="35"/>
+      <line x1="-15" y1="30" x2="-5" y2="20"/>
+      <line x1="25" y1="35" x2="10" y2="45"/>
+    </g>
+    <!-- cluster nodes -->
+    <g fill="#0a0e27" stroke-width="1.8">
+      <circle cx="-55" cy="-30" r="4" stroke="#fcd34d"/>
+      <circle cx="-40" cy="-10" r="4" stroke="#fcd34d"/>
+      <circle cx="-30" cy="-35" r="4" stroke="#fcd34d"/>
+      <circle cx="-60" cy="-5" r="4" stroke="#fcd34d"/>
+      <circle cx="30" cy="-35" r="4" stroke="#f9a8d4"/>
+      <circle cx="50" cy="-15" r="4" stroke="#f9a8d4"/>
+      <circle cx="45" cy="-40" r="4" stroke="#f9a8d4"/>
+      <circle cx="25" cy="-15" r="4" stroke="#f9a8d4"/>
+      <circle cx="-15" cy="30" r="4" stroke="#67e8f9"/>
+      <circle cx="5" cy="50" r="4" stroke="#67e8f9"/>
+      <circle cx="25" cy="35" r="4" stroke="#67e8f9"/>
+      <circle cx="-5" cy="20" r="4" stroke="#67e8f9"/>
+      <circle cx="10" cy="45" r="4" stroke="#67e8f9"/>
+    </g>
+  </g>
+  <text x="445" y="555" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">COMMUNITY DETECTION</text>
+
+  <!-- ============ 7. TOKEN-AWARE (TOON payloads, ~40% smaller) ============ -->
+  <g transform="translate(740, 410)">
+    <!-- brain with text/compression icon -->
+    <g fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linejoin="round">
+      <path d="M -40,-15 Q -55,-25 -50,-45 Q -55,-55 -40,-58 Q -25,-65 -10,-58 Q 0,-65 10,-58 Q 25,-65 40,-58 Q 55,-55 50,-45 Q 55,-25 40,-15 Q 50,0 40,15 Q 50,30 30,40 Q 15,50 0,40 Q -15,50 -30,40 Q -50,30 -40,15 Q -50,0 -40,-15 Z"/>
+    </g>
+    <!-- compression arrows squeezing inside -->
+    <g stroke="#f59e0b" stroke-width="1.5" fill="#f59e0b" stroke-linecap="round">
+      <path d="M -25,-55 L -10,-45 M -10,-45 L -10,-50 M -10,-45 L -15,-45"/>
+      <path d="M 25,-55 L 10,-45 M 10,-45 L 10,-50 M 10,-45 L 15,-45"/>
+    </g>
+    <!-- "TOON" badge -->
+    <rect x="-22" y="-5" width="44" height="18" rx="4" fill="#22d3ee"/>
+    <text y="8" text-anchor="middle" fill="#0a0e27" font-family="Arial,sans-serif" font-size="11" font-weight="900">TOON</text>
+    <!-- percentage indicator -->
+    <g transform="translate(50, 30)">
+      <circle r="14" fill="#0a0e27" stroke="#22d3ee" stroke-width="1.5"/>
+      <text y="2" text-anchor="middle" fill="#67e8f9" font-family="Arial,sans-serif" font-size="7" font-weight="900">-40%</text>
+    </g>
+    <!-- brain folds -->
+    <g fill="none" stroke="#22d3ee" stroke-width="1" opacity="0.7">
+      <path d="M -20,-25 Q -5,-20 -10,-5"/>
+      <path d="M 20,-25 Q 5,-20 10,-5"/>
+    </g>
+  </g>
+  <text x="740" y="555" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">TOKEN-AWARE</text>
+
+  <!-- ============ 8. GRAPH EXPORT (Mermaid, DOT, SVG, etc.) ============ -->
+  <g transform="translate(1030, 410)">
+    <!-- outer dashed ring -->
+    <circle r="65" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>
+    <!-- 3 orbital rings -->
+    <g fill="none" stroke="#22d3ee" stroke-width="1.2">
+      <ellipse rx="60" ry="20"/>
+      <ellipse rx="60" ry="20" transform="rotate(60)"/>
+      <ellipse rx="60" ry="20" transform="rotate(-60)"/>
+    </g>
+    <!-- file format icons on orbit -->
+    <g font-family="Arial,sans-serif" font-size="8" font-weight="900" text-anchor="middle">
+      <g transform="translate(60, 0)">
+        <circle r="9" fill="#0a0e27" stroke="#f59e0b" stroke-width="1.5"/>
+        <text y="3" fill="#fcd34d">MM</text>
+      </g>
+      <g transform="translate(-30, -17)">
+        <circle r="9" fill="#0a0e27" stroke="#22d3ee" stroke-width="1.5"/>
+        <text y="3" fill="#67e8f9">DOT</text>
+      </g>
+      <g transform="translate(-30, 17)">
+        <circle r="9" fill="#0a0e27" stroke="#ec4899" stroke-width="1.5"/>
+        <text y="3" fill="#f9a8d4">SVG</text>
+      </g>
+      <g transform="translate(30, -17)">
+        <circle r="9" fill="#0a0e27" stroke="#22d3ee" stroke-width="1.5"/>
+        <text y="3" fill="#67e8f9">JSON</text>
+      </g>
+      <g transform="translate(30, 17)">
+        <circle r="9" fill="#0a0e27" stroke="#f59e0b" stroke-width="1.5"/>
+        <text y="3" fill="#fcd34d">GML</text>
+      </g>
+      <g transform="translate(-60, 0)">
+        <circle r="9" fill="#0a0e27" stroke="#ec4899" stroke-width="1.5"/>
+        <text y="3" fill="#f9a8d4">N4J</text>
+      </g>
+    </g>
+    <!-- center hub -->
+    <circle r="20" fill="#0a0e27" stroke="#22d3ee" stroke-width="2"/>
+    <text y="3" text-anchor="middle" fill="#67e8f9" font-family="Arial,sans-serif" font-size="10" font-weight="900">EXPORT</text>
+  </g>
+  <text x="1030" y="555" text-anchor="middle" fill="#fff" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="1">GRAPH EXPORT</text>
+
+  <!-- ============ BOTTOM TITLE BAR ============ -->
+  <text x="355" y="640" font-family="Arial,sans-serif" font-size="48" font-weight="300" fill="#fff">Lean</text>
+  <text x="468" y="640" font-family="Arial,sans-serif" font-size="48" font-weight="900" fill="#22d3ee">KG</text>
+  <text x="568" y="640" font-family="Arial,sans-serif" font-size="22" font-weight="700" fill="#fff" letter-spacing="2">LOCAL-FIRST CODE KNOWLEDGE GRAPH</text>
+  <text x="590" y="672" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="400" fill="#94a3b8" letter-spacing="3">100% LOCAL &#183; AGENT-READY</text>
+  <text x="590" y="696" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" font-weight="400" fill="#64748b" letter-spacing="2">Pre-index your repo &#183; serve precise subgraphs &#183; surgical context for AI agents</text>
+
+  <!-- accent sparkle bottom right -->
+  <g transform="translate(1120, 640)">
+    <path d="M 0,-10 L 2,-2 L 10,0 L 2,2 L 0,10 L -2,2 L -10,0 L -2,-2 Z" fill="#67e8f9" opacity="0.6"/>
+  </g>
+</svg>
