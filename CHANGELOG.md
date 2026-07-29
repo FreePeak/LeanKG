@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.23](https://github.com/FreePeak/LeanKG/compare/v0.19.22...v0.19.23) (2026-07-29)
+
+
+### Features
+
+* **rocksdb:** read-only mode + tuning knobs for query-only replicas ([2db262b](https://github.com/FreePeak/LeanKG/commit/2db262b9283345682af8d1ac7e88828259f83f35))
+
+
+### Bug Fixes
+
+* **rocksdb:** single-writer-per-path discipline for MCP HTTP startup ([7805b7d](https://github.com/FreePeak/LeanKG/commit/7805b7d20b51e447708f123ceab40f730f6553d7))
+
+
+### Performance
+
+* **mcp:** L1 read-through cache (moka) for hot MCP tool paths ([7e7a147](https://github.com/FreePeak/LeanKG/commit/7e7a14720fefb381660162bf1ad9d02090e7272e))
+
 ## [0.19.22](https://github.com/FreePeak/LeanKG/compare/v0.19.21...v0.19.22) (2026-07-29)
 
 
