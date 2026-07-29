@@ -4,6 +4,11 @@
 //! all four levers are set together. The old default (FP32 + N workers ×
 //! `intra_threads=1`) left ~3–5× on the table via memory-bandwidth contention.
 
+// PR #127 churn revert: keep the pre-#127 `.max().min()` form instead of
+// `.clamp(128, 256)`. Silences the newer clippy lint that PR #127 worked
+// around.
+#![allow(clippy::manual_clamp)]
+
 use super::models::{cache_dir, EmbedModelKind, MAX_SEQ_LEN};
 
 /// Soft toggle. Default **on** — operators can set `LEANKG_EMBED_FAST=0` for
@@ -169,7 +174,7 @@ pub fn resolve_embed_runtime(requested_workers: usize, requested_batch: usize) -
             if b <= 32 {
                 b
             } else {
-                b.clamp(128, 256)
+                b.max(128).min(256)
             }
         } else {
             b

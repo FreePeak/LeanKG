@@ -169,6 +169,7 @@ Behavior notes:
 - If the embedding index is older than the last `index` run, `diagnostics.embeddings_stale = true` (still serves, just warns).
 - Worktree scratch copies (`.worktrees/`, `.claude/worktrees/`, `.opencode/worktrees/`) are filtered out by default to avoid duplicate-noise results.
 - The top-down traversal reuses the already-embedded query vector (no second embed call per request). For `domain_entity` / `workflow` / `workflow_step` upper seeds whose code links live in `metadata.code_refs` rather than DB edges, it falls back to keyed path-prefix resolution (same path as `concept_search`) — no full-table scan.
+- Known limits: `traversal.traversed_function_count` is `0` against indexes where doc↔code edges are file-granular or where `domain_entity` / `workflow` / `workflow_step` nodes carry no `metadata.code_refs`. To activate FR-SEM-08, run `mcp_index_docs` (populates `metadata.code_refs`) or rebuild the index with per-symbol doc↔code edges. Baseline reproduction: `docs/reports/semantic-traversal-vs-main-2026-07-27.md`.
 
 ## Auto-Indexing
 

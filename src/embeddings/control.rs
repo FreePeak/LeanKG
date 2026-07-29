@@ -2,6 +2,10 @@
 //!
 //! FR-EMBED-RESUME-07 / FR-EMBED-TOGGLE-01 / FR-EMBED-PARTIAL-01.
 
+// PR #127 churn revert: keep the pre-#127 `.min().max()` form instead of
+// `.clamp(1, 15)`. Silences the newer clippy lint that PR #127 worked around.
+#![allow(clippy::manual_clamp)]
+
 use crate::db::CozoDb;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -260,7 +264,7 @@ pub fn wait_until_idle_or_cancel(idle_secs: u64) -> bool {
 /// Yield while MCP is busy (activity advanced); return false if cancelled.
 pub fn yield_while_mcp_busy() -> bool {
     set_phase(PHASE_PAUSED);
-    let idle_need = embed_idle_after_secs().clamp(1, 15);
+    let idle_need = embed_idle_after_secs().min(15).max(1);
     loop {
         if is_cancel_requested() {
             return false;

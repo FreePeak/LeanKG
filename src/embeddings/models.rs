@@ -8,6 +8,12 @@
 //! other fastembed users.
 //!
 //! The `DirectEmbedder` type below is the alternative path that bypasses
+
+// PR #127 churn revert: keep the pre-#127 `for _ in 0..n` loops instead
+// of `repeat_n`. Silences the newer clippy lint that PR #127 worked
+// around.
+#![allow(clippy::same_item_push)]
+
 //! fastembed for inference — see its doc comment for why.
 
 use fastembed::{
@@ -404,11 +410,15 @@ impl DirectEmbedder {
             for &m in mask.iter().take(take) {
                 mask_flat.push(m as i64);
             }
-            mask_flat.extend(std::iter::repeat_n(0i64, encoding_length - take));
+            for _ in 0..(encoding_length - take) {
+                mask_flat.push(0);
+            }
             for &t in types.iter().take(take) {
                 type_ids_flat.push(t as i64);
             }
-            type_ids_flat.extend(std::iter::repeat_n(0i64, encoding_length - take));
+            for _ in 0..(encoding_length - take) {
+                type_ids_flat.push(0);
+            }
         }
         let ids_array = ndarray::Array2::from_shape_vec((batch_size, encoding_length), ids_flat)?;
         let mask_array = ndarray::Array2::from_shape_vec((batch_size, encoding_length), mask_flat)?;

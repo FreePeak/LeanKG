@@ -251,7 +251,7 @@ struct EmulatorHandle {
 fn resolve_or_start_emulator() -> Option<EmulatorHandle> {
     if let Ok(existing) = std::env::var("STORAGE_EMULATOR_HOST") {
         let trimmed = existing.trim_end_matches('/').to_string();
-        let _parsed =
+        let parsed =
             parse_emulator_addr(&trimmed).expect("STORAGE_EMULATOR_HOST must be http://host:port");
         eprintln!(
             "[e2e] using pre-configured STORAGE_EMULATOR_HOST={}",
@@ -287,7 +287,6 @@ fn resolve_or_start_emulator() -> Option<EmulatorHandle> {
 }
 
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // ENV_LOCK serializes process env across await
 async fn gcs_source_syncs_objects_from_fake_emulator() {
     if is_explicit_skip() {
         eprintln!("LEANKG_GCS_E2E=0 set; skipping");
@@ -358,7 +357,6 @@ async fn gcs_source_syncs_objects_from_fake_emulator() {
 }
 
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // ENV_LOCK serializes process env across await
 async fn gcs_source_with_prefix_filters_objects() {
     if is_explicit_skip() {
         return;

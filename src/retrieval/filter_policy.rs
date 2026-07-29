@@ -8,6 +8,12 @@
 //! 1. **ALWAYS_INCLUDE** — kept unconditionally (high-signal types).
 //! 2. **QUERY_GATED_DROPS** — dropped unless the query mentions a trigger
 //!    word that signals intent for that type.
+
+// PR #127 churn revert: keep the pre-#127 `iter().copied().collect()`
+// form instead of `.to_vec()`. Silences the newer clippy lint that
+// PR #127 worked around.
+#![allow(clippy::iter_cloned_collect)]
+
 //! 3. **ALWAYS_DROP** — never useful as seeds (pure metadata or indexer
 //!    noise).
 //! 4. **ALWAYS_DROP_PATH_MARKERS** — file paths that are never useful seeds
@@ -81,7 +87,7 @@ impl FilterPolicy {
         Self {
             include: ALWAYS_INCLUDE_TYPES.iter().copied().collect(),
             drop: ALWAYS_DROP_TYPES.iter().copied().collect(),
-            gated: QUERY_GATED_DROPS.to_vec(),
+            gated: QUERY_GATED_DROPS.iter().copied().collect(),
         }
     }
 
