@@ -4,7 +4,7 @@ Date: 2026-07-17 (UTC+7); verification addendum 2026-07-18
 Operator: Docker MCP HTTP path (`leankg-leankg-1`, port 9699)
 Mode: Offline cold embed (`embed --wait` via `docker run`, single-writer RocksDB) + live MCP semantic probes
 
-> **Path hygiene:** Host bind examples use placeholders only. Never commit personal monorepo host paths (`/Users/…/work/be`, `/workspace-be`, etc.).
+> **Path hygiene:** Host bind examples use placeholders only. Never commit personal monorepo host paths (e.g. `<HOST_PERSONAL_BE>`, `<HOST_WORKSPACE_BE>`).
 
 ## Scope
 
