@@ -64,7 +64,10 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
 
 COPY --from=builder /usr/local/bin/leankg /usr/local/bin/leankg
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh \
+# Mirror the scripts/ tree next to entrypoint.sh so `entrypoint.sh` can locate
+# the health gate via `BASH_SOURCE` (see cozo_health_gate.sh sourcing above).
+COPY scripts /usr/local/bin/scripts
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/scripts/cozo_health_gate.sh \
     && mkdir -p /data/leankg-rocksdb /workspace
 
 # Defaults so `docker run -v HOST_DIR:/workspace ... freepeak/leankg` works
@@ -88,6 +91,10 @@ ENV LEANKG_DB_ENGINE=rocksdb \
     LEANKG_MMAP_SIZE=67108864 \
     LEANKG_WATCHER_DEBOUNCE_MS=2000 \
     LEANKG_WATCHER_BURST_LIMIT=256 \
+    # Enterprise mode: point at a cozoserver sidecar (e.g. http://cozoserver:9070).
+    # Unset = embedded mode (LEANKG_DB_ENGINE controls SQLite vs RocksDB).
+    # See docker-compose.enterprise.yml and docs/enterprise-docker.md.
+    LEANKG_COZO_ENDPOINT= \
     RUST_LOG=leankg=info
 
 VOLUME ["/data/leankg-rocksdb"]

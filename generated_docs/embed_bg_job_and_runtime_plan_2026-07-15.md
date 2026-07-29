@@ -17,7 +17,7 @@
 | P2 — in-process `LEANKG_EMBED_BACKGROUND=1` | **Done** | New `embeddings::spawn_background_embed` (shared `Arc<CozoDb>`). Wired into `serve_http`. |
 | P2 — `--status` / `--cancel` CLI subcommands | **Done** | `leankg embed --status`, `--cancel` read/write `embed_status.json` + `embed.lock`. |
 | Cold <5 min functions-only on 10c M2 Pro | **Not hit** | After 2nd iteration (`import_relations` + `DirectEmbedder`): ~170 vec/sec sustained → ETA ~36 min cold for 371k. See [Hard ceiling on BGE-small](#hard-ceiling-on-bge-small). |
-| Cold <10 min on `/Users/linh/doan/work/be` (full) | **Not hit** | ~170 vec/sec sustained. Structural change (sharded DB or direct cozorocks write with WAL disabled) needed for sub-10 min cold. |
+| Cold <10 min on `<HOST_PERSONAL_BE>` (full) | **Not hit** | ~170 vec/sec sustained. Structural change (sharded DB or direct cozorocks write with WAL disabled) needed for sub-10 min cold. |
 
 **Bottom line:** the architectural goal (decouple MCP from embed) is achieved. The cold-runtime goal (<10 min on mega-graphs) is blocked by CozoDB writer throughput and needs a cozo internal fix or RocksDB WAL bypass to break through.
 
@@ -194,7 +194,7 @@ After the first iteration landed (CozoDB import_relations + DirectEmbedder), thr
 
 
 
-Test host: M2 Pro 10-core, 16 GiB, macOS Darwin 25.5.0. Subject: `/Users/linh.doan/work/be` (nested monorepo, 630,620 code elements → 371,094 function/method nodes after `--types function,method`).
+Test host: M2 Pro 10-core, 16 GiB, macOS Darwin 25.5.0. Subject: `<HOST_PERSONAL_BE>` (nested monorepo, 630,620 code elements → 371,094 function/method nodes after `--types function,method`).
 
 ### CLI test (--release binary, foreground `--wait`)
 

@@ -1,6 +1,15 @@
 #!/bin/bash
 set -e
 
+# Source the health-gate helper so unit tests can exercise it in isolation.
+# Path is resolved relative to this script's location (works under `docker run`
+# where $0 is `/usr/local/bin/entrypoint.sh` and scripts/ sits next to it).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/scripts/cozo_health_gate.sh" ]; then
+    # shellcheck source=scripts/cozo_health_gate.sh
+    . "${SCRIPT_DIR}/scripts/cozo_health_gate.sh"
+fi
+
 ROCKSDB_ROOT="${LEANKG_ROCKSDB_ROOT:-$HOME/.leankg-rocksdb}"
 PROJECTS_DIR="$ROCKSDB_ROOT/projects"
 MCP_PORT="${MCP_HTTP_PORT:-9699}"
@@ -11,6 +20,12 @@ echo "RocksDB root: $ROCKSDB_ROOT"
 # Determine which project to serve via MCP
 # LEANKG_MCP_PROJECT takes precedence; fall back to /workspace
 MCP_PROJECT="${LEANKG_MCP_PROJECT:-/workspace}"
+
+# Enterprise mode: when a remote cozoserver is configured, wait for it to
+# accept /text-query before continuing. Compose already gates startup on
+# the cozoserver healthcheck, but operators may run `docker run` ad-hoc
+# without `depends_on`, in which case this loop prevents a hard failure.
+cozo_health_gate
 
 # Plan §"Part B Option 3" defaults: never block MCP on embed. Operators
 # can opt-in to in-process background embed by setting

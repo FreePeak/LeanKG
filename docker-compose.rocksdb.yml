@@ -1,7 +1,14 @@
+# Single-container mode (embedded RocksDB inside the leankg image).
+# Use this for small / single-host deployments.
+#
+# For enterprise / multi-host / HA deployments where you want RocksDB in its
+# own container, switch to `docker-compose.enterprise.yml` which pairs this
+# `leankg` image with a separate `cozoserver` sidecar. See docs/enterprise-docker.md.
+#
+# Pull from Docker Hub by default — no local rebuild.
+# To publish a new image: docker compose -f docker-compose.build.yml build
 services:
   leankg:
-    # Pull from Docker Hub by default — no local rebuild.
-    # To publish a new image: docker compose -f docker-compose.build.yml build
     image: ${LEANKG_IMAGE:-freepeak/leankg:latest}
     pull_policy: ${LEANKG_PULL_POLICY:-missing}
     env_file:
