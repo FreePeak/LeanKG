@@ -636,6 +636,7 @@ impl MCPServer {
             types_filter: types,
             partial: true,
             rss_fraction: 0.0,
+            project_path: None,
         }
     }
 
@@ -717,13 +718,38 @@ impl MCPServer {
 
     #[cfg(feature = "embeddings")]
     fn spawn_background_embed_with_config(&self, cfg: crate::embeddings::BackgroundEmbedConfig) {
-        let graph = match self.get_graph_engine() {
-            Ok(g) => g,
-            Err(e) => {
-                tracing::warn!("embed_control spawn skipped; graph not ready ({})", e);
-                crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_FAILED);
-                crate::embeddings::disarm_embed();
-                return;
+        // Resolve project-aware graph + .leankg dir before opening.
+        let (graph, leankg_dir, project_label) = if let Some(ref proj) = cfg.project_path {
+            match self.get_graph_engine_for_path(Some(proj)) {
+                Ok(g) => {
+                    let dir = Self::resolve_project_db_path(proj)
+                        .unwrap_or_else(|| self.get_db_path());
+                    (g, dir, proj.clone())
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "embed_control spawn skipped; cannot open graph for {} ({})",
+                        proj,
+                        e
+                    );
+                    crate::embeddings::control::set_phase(
+                        crate::embeddings::control::PHASE_FAILED,
+                    );
+                    crate::embeddings::disarm_embed();
+                    return;
+                }
+            }
+        } else {
+            match self.get_graph_engine() {
+                Ok(g) => (g, self.get_db_path(), "<primary>".to_string()),
+                Err(e) => {
+                    tracing::warn!("embed_control spawn skipped; graph not ready ({})", e);
+                    crate::embeddings::control::set_phase(
+                        crate::embeddings::control::PHASE_FAILED,
+                    );
+                    crate::embeddings::disarm_embed();
+                    return;
+                }
             }
         };
         // Mega + full requires force (cfg.full already gated by tool).
@@ -732,14 +758,20 @@ impl MCPServer {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         if cfg.full && !force_mega && crate::ontology::safe_discover::is_mega_graph(&graph) {
-            tracing::warn!("embed_control: full rebuild refused on mega-graph without MEGA=1");
+            tracing::warn!(
+                "embed_control: full rebuild refused on mega-graph (project={}) without MEGA=1",
+                project_label
+            );
             crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_FAILED);
             crate::embeddings::disarm_embed();
             return;
         }
-        let leankg_dir = self.get_db_path();
         match crate::embeddings::spawn_background_embed(graph, leankg_dir, cfg) {
-            Ok(Some(h)) => tracing::info!("embed_control spawned in-process embed pid={}", h.pid),
+            Ok(Some(h)) => tracing::info!(
+                "embed_control spawned in-process embed pid={} project={}",
+                h.pid,
+                project_label
+            ),
             Ok(None) => tracing::info!("embed_control: embed already running"),
             Err(e) => {
                 tracing::error!("embed_control spawn failed: {}", e);
@@ -826,9 +858,13 @@ impl MCPServer {
                     .get("force_full")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                if let Ok(graph) = self.get_graph_engine() {
-                    if full && crate::ontology::safe_discover::is_mega_graph(&graph) && !force_full
-                    {
+                let graph_for_check = if let Some(ref p) = project_path {
+                    self.get_graph_engine_for_path(Some(p))
+                } else {
+                    self.get_graph_engine()
+                };
+                if let Ok(ref g) = graph_for_check {
+                    if full && crate::ontology::safe_discover::is_mega_graph(g) && !force_full {
                         full = false;
                         tracing::warn!(
                             "embed_control on: cleared full on mega-graph (pass force_full=true to override)"
@@ -861,6 +897,7 @@ impl MCPServer {
                     types_filter,
                     partial: mode != "continuous",
                     rss_fraction,
+                    project_path: project_path.clone(),
                 };
                 crate::embeddings::control::clear_cancel();
                 crate::embeddings::arm_embed(cfg);
@@ -1058,6 +1095,7 @@ impl MCPServer {
             // rebuild only opts into the heavy parallel path via --full.
             partial: !full,
             rss_fraction: 0.0,
+            project_path: None,
         };
         // Optional LEANKG_EMBED_BACKGROUND_PARTIAL override (advanced).
         let cfg = if let Ok(p) = std::env::var("LEANKG_EMBED_BACKGROUND_PARTIAL") {
@@ -3255,6 +3293,7 @@ mod tests {
             types_filter: String::new(),
             partial: !false, // mirrors spawn_background_embed_in_process flip
             rss_fraction: 0.0,
+            project_path: None,
         };
         assert!(cfg.partial);
         // Override: FULL=1 flips partial=false, then PARTIAL=1 forces it back.
