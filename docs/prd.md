@@ -29,6 +29,50 @@
 
 ## Changelog
 
+### v3.8.1-enterprise-docker - Separate RocksDB into cozoserver sidecar (2026-07-28)
+
+> **Trigger:** Single-container `freepeak/leankg` couples the MCP/REST API
+> process to the embedded RocksDB engine. Operators want independent scaling,
+> backup orchestration, and HA on the storage tier without doubling the API
+> fleet. The CozoDB project ships a standalone `cozoserver` (HTTP, RocksDB
+> backend) that exposes the same wire protocol LeanKG already uses.
+
+**Product actions this revision:**
+
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-ENT-DOCKER-01 / FR-ENT-DOCKER-01 / REL-071 | Must Have | **P2** | New `Dockerfile.cozoserver` builds `freepeak/cozoserver:latest` from upstream `cozo-bin -F storage-rocksdb`; healthcheck probes :3000 |
+| US-ENT-DOCKER-02 / FR-ENT-DOCKER-02 / REL-072 | Must Have | **P2** | New `docker-compose.enterprise.yml` wires `cozoserver` (RocksDB) + `leankg` (MCP/REST) via shared net namespace; `depends_on: service_healthy` |
+| US-ENT-DOCKER-03 / FR-ENT-DOCKER-03 / REL-073 | Must Have | **P2** | `scripts/cozo_health_gate.sh` extracted from `entrypoint.sh`; unit-tested in `tests/enterprise_docker/` (skip / success / timeout / custom interval paths) |
+| US-ENT-DOCKER-04 / FR-ENT-DOCKER-04 | Should Have | **P2** | Live integration test (`test_live.sh`) builds the image, runs CRUD via HTTP, restarts container, verifies RocksDB persistence, verifies netns-joiner can reach the sidecar |
+| US-ENT-DOCKER-05 | Should Have | **P2** | Future: Rust HTTP client in `src/db/` consumes `LEANKG_COZO_ENDPOINT`; infra lands first so compose + ops have something to point at |
+
+**Out of scope (this revision):**
+- Rust HTTP client (`src/db/remote.rs`) — deferred; `init_db` keeps the
+  embedded path until the HTTP client lands. `entrypoint.sh` already
+  health-gates on `LEANKG_COZO_ENDPOINT`.
+- TiKV-backed cozoserver — `cozo-bin -F storage-tikv` ships later.
+- Auth token plumbing for cross-host binds — shared net namespace avoids
+  it for v1.
+
+**Known constraint (documented, not blocked):** cozo-bin v0.7.6 hardcodes
+`TcpListener::bind("127.0.0.1:3000")` in `cozo-bin/src/server.rs`
+regardless of `--bind` / `--port`. `Dockerfile.cozoserver` and the compose
+file pin everything to 3000 with a `ponytail:` comment naming the upgrade
+path (bump to v0.7.7+ or the Leapsight fork).
+
+**New files:** `Dockerfile.cozoserver`, `docker-compose.enterprise.yml`,
+`scripts/cozo_health_gate.sh`, `docs/enterprise-docker.md`,
+`tests/enterprise_docker/{test_compose_files.sh,test_health_gate.sh,test_live.sh,run_all.sh}`.
+
+**Modified files:** `Dockerfile.rocksdb` (+`LEANKG_COZO_ENDPOINT` env, +copy
+of `scripts/`), `docker-compose.rocksdb.yml` (header note pointing at
+enterprise compose), `entrypoint.sh` (sources `scripts/cozo_health_gate.sh`),
+`src/db/schema.rs` (`ponytail:` comment marking the HTTP-client follow-up).
+
+**New content:** §3.27 US-ENT-DOCKER; §5.31 FR-ENT-DOCKER; `docs/enterprise-docker.md`
+deploy + sizing + backup guide.
+
 ### v3.8.0-prd-in-kg - PRD-in-KG pipeline with feature-flow mapping (2026-07-24)
 
 > **Trigger:** No first-class PRD entities in the KG; FR-*/US-* are just string IDs in `business_logic`. PO/dev teams need full traceability: FR → workflow → steps → code files, plus a coverage matrix.
@@ -2178,6 +2222,38 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | US-REFRESH-01 | Must Have (**P2**) | As ops, I run `leankg refresh` to index code + docs + embed in one shot |
 | US-REFRESH-02 | Must Have (**P2**) | As ops, I run `leankg index-docs <path>` as a CLI command (not only MCP) |
 | US-REFRESH-03 | Must Have (**P2**) | As an agent, `semantic_search(..., kind=docs)` returns `document`/`doc_section` hits without code noise |
+
+### 3.27 Enterprise Docker separation (US-ENT-DOCKER) — v3.8.1 **P2**
+
+> **Why now:** Operators want independent scaling, backup orchestration, and HA on the storage tier without doubling the API fleet. CozoDB ships a standalone `cozoserver` (HTTP, RocksDB backend) with the same wire protocol LeanKG already uses, so the separation costs zero impedance.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-ENT-DOCKER-01 | Must Have (**P2**) | As ops, I build a `cozoserver` image from `Dockerfile.cozoserver` and run RocksDB-backed CozoDB on a separate container; healthcheck confirms `/` returns HTTP 200 |
+| US-ENT-DOCKER-02 | Must Have (**P2**) | As ops, I bring up `docker-compose.enterprise.yml` and get a healthy `cozoserver` + `leankg` stack; `leankg` waits for `cozoserver` health before starting MCP |
+| US-ENT-DOCKER-03 | Must Have (**P2**) | As a developer, I can extract `scripts/cozo_health_gate.sh` from `entrypoint.sh` and unit-test it in isolation (skip / success / timeout / custom interval) |
+| US-ENT-DOCKER-04 | Must Have (**P2**) | As ops, I have a live integration script (`tests/enterprise_docker/test_live.sh`) that builds the image, exercises CRUD via `/text-query`, restarts the container, and verifies RocksDB data survives |
+| US-ENT-DOCKER-05 | Should Have (**P2**) | As a future developer, I add a Rust HTTP client (`src/db/remote.rs`) that consumes `LEANKG_COZO_ENDPOINT` so the two containers actually exchange data without a fork |
+
+
+### 5.31 Enterprise Docker separation (FR-ENT-DOCKER) — v3.8.1 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-ENT-DOCKER-01 | Must Have | `Dockerfile.cozoserver` builds `freepeak/cozoserver:latest` from `cozo-bin -F storage-rocksdb`; runtime image based on `debian:bookworm-slim` with `libsqlite3-0` + `libc++1` for the dynamic deps |
+| FR-ENT-DOCKER-02 | Must Have | `Dockerfile.cozoserver` pins listener + healthcheck to `127.0.0.1:3000` (cozo-bin v0.7.6 hardcoded bind); upgrade path documented in `ponytail:` comment |
+| FR-ENT-DOCKER-03 | Must Have | `docker-compose.enterprise.yml` wires `cozoserver` (RocksDB) + `leankg` (MCP/REST) via `network_mode: service:cozoserver` so the joiner reaches cozoserver on `127.0.0.1:3000` without auth; cozoserver owns the public port publishing (9699/8080) |
+| FR-ENT-DOCKER-04 | Must Have | `depends_on: cozoserver: condition: service_healthy` ensures leankg never starts before cozoserver passes healthcheck |
+| FR-ENT-DOCKER-05 | Must Have | `scripts/cozo_health_gate.sh` is extracted from `entrypoint.sh`, sourced at boot, and unit-tested (5 assertions: skip / 200 / timeout / custom interval / budget respected) |
+| FR-ENT-DOCKER-06 | Must Have | `LEANKG_COZO_ENDPOINT` env var is read by the gate; when unset, the gate returns immediately with rc=0 (backward-compat for single-container mode) |
+| FR-ENT-DOCKER-07 | Must Have | Live integration test (`test_live.sh`) proves: image builds, container runs, HTTP 200 from `/`, `:create` + `:put` + read round-trip succeeds, data survives container restart, sidecar netns pattern works |
+| FR-ENT-DOCKER-08 | Must Have | Compose-file validator (`test_compose_files.sh`) parses both `docker-compose.enterprise.yml` and `docker-compose.rocksdb.yml` and asserts 16 invariants (services present, env wired, ports ownership, network mode, backward-compat) |
+| FR-ENT-DOCKER-09 | Should Have | `Dockerfile.rocksdb` exposes `LEANKG_COZO_ENDPOINT=` (empty default) so enterprise deployments can set it via `.dockerfile` or compose env without rebuilding the image |
+| FR-ENT-DOCKER-10 | Should Have | `docker-compose.rocksdb.yml` (single-container) gains a header comment pointing at `docker-compose.enterprise.yml` and `docs/enterprise-docker.md` |
+| REL-071 | Must Have | Live evidence: `freepeak/cozoserver:latest` image exists; `docker compose -f docker-compose.enterprise.yml up -d cozoserver` reports healthy |
+| REL-072 | Must Have | Live evidence: HTTP `POST /text-query` returns `{"ok": true, "rows": [...]}` for `:create`, `:put`, and `*persist_test[name, value]` |
+| REL-073 | Must Have | Live evidence: after `docker rm -f cozoserver && docker run ... -v leankg-live-cozo-data:/data/cozo`, the same query still returns the same rows (RocksDB persistence) |
+| REL-074 | Must Have | Unit + compose + live test runner (`tests/enterprise_docker/run_all.sh`) reports `Test files: PASS=N FAIL=0` |
 
 
 ### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
