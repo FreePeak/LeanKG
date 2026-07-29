@@ -1369,6 +1369,10 @@ pub struct BackgroundEmbedConfig {
     pub partial: bool,
     /// Soft RSS fraction of container budget (0.0 = use env default).
     pub rss_fraction: f64,
+    /// Optional non-primary project path; when set, the idle scheduler
+    /// opens the project's own GraphEngine + `.leankg` dir instead of the
+    /// primary MCP project. `None` = primary (existing behavior).
+    pub project_path: Option<String>,
 }
 
 impl Default for BackgroundEmbedConfig {
@@ -1381,6 +1385,7 @@ impl Default for BackgroundEmbedConfig {
             types_filter: String::new(),
             partial: true,
             rss_fraction: 0.0,
+            project_path: None,
         }
     }
 }
@@ -1431,6 +1436,7 @@ pub fn spawn_background_embed(
         types_filter: cfg.types_filter,
         partial: cfg.partial,
         rss_fraction: cfg.rss_fraction,
+        project_path: cfg.project_path,
     };
     if mem.max_rss_mb > 0 {
         tracing::info!(
