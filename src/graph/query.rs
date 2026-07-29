@@ -79,6 +79,13 @@ impl GraphEngine {
         }
     }
 
+    /// Create a read-only [`GraphEngine`] from an already-opened read-only DB.
+    /// Read-only instances don't acquire the RocksDB LOCK, allowing multiple
+    /// reader processes to coexist alongside a single writer.
+    pub fn open_readonly(db: CozoDb) -> Self {
+        Self::new(db)
+    }
+
     #[allow(dead_code)]
     pub fn with_cache(db: CozoDb, cache: QueryCache) -> Self {
         Self {

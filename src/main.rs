@@ -642,7 +642,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Press Ctrl+C to stop.\n");
 
             let (tx, rx) = tokio::sync::mpsc::channel(100);
-            mcp::watcher::start_watcher(db_path, project_path, rx).await;
+            let db = db::schema::init_db(&db_path)?;
+            let graph = graph::GraphEngine::new(db);
+            let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let shutdown_flag = shutdown.clone();
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            mcp::watcher::start_watcher(graph, db_path, project_path, shutdown, rx).await;
             drop(tx);
         }
         cli::CLICommand::Quality { min_lines, lang } => {

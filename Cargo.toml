@@ -110,6 +110,7 @@ tree-sitter-dart = "0.1"
 # contending for the CozoDB write Mutex serialized the Datalog :put
 # path and throughput collapsed to ~40 vectors/sec.
 crossbeam-channel = "0.5"
+moka = { version = "0.12", features = ["future"] }
 
 # Optional Redis HNSW vector side-store (LEANKG_EMBED_VECTOR_STORE=redis)
 redis = { version = "0.27", features = ["aio", "tokio-comp"] }

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use crate::db::schema::init_db;
+use crate::graph::l1_cache::CachingGraphEngine;
 use crate::graph::GraphEngine;
 use crate::mcp::auth::AuthManager;
 use crate::mcp::handler::ToolHandler;
@@ -332,6 +333,11 @@ impl MCPServer {
         // RocksDB handle to the same path and the second handle fails with
         // "lock hold by current process".
         self.get_graph_engine_for_path(None)
+    }
+
+    fn get_caching_graph_engine(&self) -> Result<CachingGraphEngine, String> {
+        let ge = self.get_graph_engine()?;
+        Ok(CachingGraphEngine::new(ge))
     }
 
     /// Run kg_self_test and log the result. Designed to be called once at
@@ -1159,18 +1165,26 @@ impl MCPServer {
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.get_db_path();
             let watch_path = watch_path.clone();
-            tokio::spawn(async move {
-                let (tx, rx) = tokio::sync::mpsc::channel(100);
-                start_watcher(db_path, watch_path, rx).await;
-                let _ = tx; // silence unused warning
-            });
-            tracing::info!(
-                "Auto-indexing enabled for {}",
-                self.watch_path
-                    .as_ref()
-                    .unwrap_or(&std::path::PathBuf::from("?"))
-                    .display()
-            );
+            let shutdown = self.shutdown_flag.clone();
+            match self.get_graph_engine() {
+                Ok(ge) => {
+                    tokio::spawn(async move {
+                        let (tx, rx) = tokio::sync::mpsc::channel(100);
+                        start_watcher(ge, db_path, watch_path, shutdown, rx).await;
+                        let _ = tx; // silence unused warning
+                    });
+                    tracing::info!(
+                        "Auto-indexing enabled for {}",
+                        self.watch_path
+                            .as_ref()
+                            .unwrap_or(&std::path::PathBuf::from("?"))
+                            .display()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Watcher skipped: {}", e);
+                }
+            }
         }
 
         self.spawn_ontology_yaml_watcher_if_present();
@@ -1577,18 +1591,26 @@ impl MCPServer {
         if let Some(ref watch_path) = self.watch_path {
             let db_path = self.get_db_path();
             let watch_path = watch_path.clone();
-            tokio::spawn(async move {
-                let (tx, rx) = tokio::sync::mpsc::channel(100);
-                start_watcher(db_path, watch_path, rx).await;
-                let _ = tx; // silence unused warning
-            });
-            tracing::info!(
-                "Auto-indexing enabled for {}",
-                self.watch_path
-                    .as_ref()
-                    .unwrap_or(&std::path::PathBuf::from("?"))
-                    .display()
-            );
+            let shutdown = self.shutdown_flag.clone();
+            match self.get_graph_engine() {
+                Ok(ge) => {
+                    tokio::spawn(async move {
+                        let (tx, rx) = tokio::sync::mpsc::channel(100);
+                        start_watcher(ge, db_path, watch_path, shutdown, rx).await;
+                        let _ = tx; // silence unused warning
+                    });
+                    tracing::info!(
+                        "Auto-indexing enabled for {}",
+                        self.watch_path
+                            .as_ref()
+                            .unwrap_or(&std::path::PathBuf::from("?"))
+                            .display()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Watcher skipped: {}", e);
+                }
+            }
         }
 
         self.spawn_ontology_yaml_watcher_if_present();
@@ -1799,7 +1821,23 @@ impl MCPServer {
             }
         }
 
-        // 4. Remove PID file if exists
+        // 4. Drop cached GraphEngine handles so RocksDB LOCK can release.
+        // Give the watcher (~250ms poll) a moment to exit after shutdown_flag.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        {
+            let mut cache = self.graph_engine_cache.write();
+            let n = cache.len();
+            cache.clear();
+            if n > 0 {
+                tracing::info!("Cleared {} cached GraphEngine handle(s)", n);
+            }
+        }
+        {
+            let mut ge = self.graph_engine.lock();
+            *ge = None;
+        }
+
+        // 5. Remove PID file if exists
         let pid_file = self.get_db_path().join("leankg.pid");
         if pid_file.exists() {
             if let Ok(contents) = fs::read_to_string(&pid_file) {
@@ -1882,15 +1920,18 @@ impl MCPServer {
             .await
             .map_err(|e| format!("Failed to create db path: {}", e))?;
 
-        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = crate::graph::GraphEngine::new(db);
+        // Share the handle via the path cache — do not call init_db here
+        // (RocksDB one-writer-per-path; watcher/tools must reuse this handle).
+        let root_key = project_root.to_string_lossy().to_string();
+        let graph_engine = self
+            .get_graph_engine_for_path(Some(&root_key))
+            .map_err(|e| format!("Database error: {}", e))?;
         let mut parser_manager = crate::indexer::ParserManager::new();
         parser_manager
             .init_parsers()
             .map_err(|e| format!("Parser init error: {}", e))?;
 
-        let root_str = project_root.to_string_lossy().to_string();
-        let files = crate::indexer::find_files_sync(&root_str)
+        let files = crate::indexer::find_files_sync(&root_key)
             .map_err(|e| format!("Find files error: {}", e))?;
         let mut indexed = 0;
 
@@ -2182,8 +2223,9 @@ impl MCPServer {
             project_root.display()
         );
 
-        let db = init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = crate::graph::GraphEngine::new(db);
+        let graph_engine = self
+            .get_graph_engine_for_path(Some(&project_root.to_string_lossy().to_string()))
+            .map_err(|e| format!("Database error: {}", e))?;
         let mut parser_manager = crate::indexer::ParserManager::new();
         parser_manager
             .init_parsers()

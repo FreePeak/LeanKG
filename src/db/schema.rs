@@ -1,8 +1,17 @@
 use cozo::{DataValue, NamedRows, ScriptMutability};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+#[cfg(debug_assertions)]
+use std::path::PathBuf;
 
 pub type CozoDb = cozo::DbInstance;
+
+/// Debug-only set of RocksDB paths already opened in this process.
+/// RocksDB allows one handle per process per directory — a second `init_db`
+/// on the same path is a bug (use `get_graph_engine_for_path` to share).
+#[cfg(debug_assertions)]
+static OPENED_ROCKSDB_PATHS: std::sync::Mutex<Option<std::collections::HashSet<PathBuf>>> =
+    std::sync::Mutex::new(None);
 
 /// Thin wrapper around `DbInstance::run_script` that absorbs the CozoDB 0.7.x
 /// API changes (third `ScriptMutability` argument, `BTreeMap<String, DataValue>`
@@ -86,8 +95,43 @@ fn get_env_mmap_size() -> u64 {
         .unwrap_or(64 * 1024 * 1024)
 }
 
+/// Open a read-only database handle that does NOT acquire RocksDB's LOCK.
+///
+/// For RocksDB, this opens a handle without the LOCK — the first writer process
+/// already holds it, and opening without the lock is not supported by CozoDB
+/// 0.7.x (the empty options string opens normally). For SQLite, the `mode=ro`
+/// URI parameter enforces read-only.
+///
+/// This is Phase 1 short-term workaround; Phase 2 will use RocksDB secondary
+/// instances for true read-only replicas.
+pub fn init_db_readonly(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
+    let storage = resolve_storage_config(db_path);
+    let path_str = storage.path.to_string_lossy().to_string();
+    Ok(match storage.engine {
+        StorageEngine::RocksDb => {
+            std::fs::create_dir_all(&storage.path)?;
+            cozo::DbInstance::new("rocksdb", &path_str, "")?
+        }
+        _ => cozo::DbInstance::new("sqlite", &path_str, "mode=ro")?,
+    })
+}
+
 pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     let storage = resolve_storage_config(db_path);
+
+    // Guard: detect duplicate RocksDB opens in debug builds (tests / cargo run).
+    #[cfg(debug_assertions)]
+    if storage.engine == StorageEngine::RocksDb {
+        let mut opened = OPENED_ROCKSDB_PATHS.lock().unwrap();
+        let opened = opened.get_or_insert_with(std::collections::HashSet::new);
+        let key = storage.path.clone();
+        assert!(
+            opened.insert(key.clone()),
+            "BUG: RocksDB handle opened twice for {:?}. Use get_graph_engine_for_path() to share handles.",
+            key
+        );
+    }
+
     if let Some(parent) = storage.path.parent() {
         std::fs::create_dir_all(parent)?;
     }
