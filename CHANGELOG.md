@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.22](https://github.com/FreePeak/LeanKG/compare/v0.19.21...v0.19.22) (2026-07-29)
+
+
+### Features
+
+* **enterprise-docker:** separate rocksdb into cozoserver sidecar ([#143](https://github.com/FreePeak/LeanKG/issues/143)) ([8971c2f](https://github.com/FreePeak/LeanKG/commit/8971c2f5987ff4b199c9d19972a5b5508c654c98))
+
+
+### Bug Fixes
+
+* **mcp:** route embed_control 'on' to specific project ([#147](https://github.com/FreePeak/LeanKG/issues/147)) ([3f8c0d4](https://github.com/FreePeak/LeanKG/commit/3f8c0d4c172b9c277927568d326d1e8f908429f1))
+
 ## [0.19.21](https://github.com/FreePeak/LeanKG/compare/v0.19.20...v0.19.21) (2026-07-29)
 
 
