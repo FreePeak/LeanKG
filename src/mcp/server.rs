@@ -722,8 +722,8 @@ impl MCPServer {
         let (graph, leankg_dir, project_label) = if let Some(ref proj) = cfg.project_path {
             match self.get_graph_engine_for_path(Some(proj)) {
                 Ok(g) => {
-                    let dir = Self::resolve_project_db_path(proj)
-                        .unwrap_or_else(|| self.get_db_path());
+                    let dir =
+                        Self::resolve_project_db_path(proj).unwrap_or_else(|| self.get_db_path());
                     (g, dir, proj.clone())
                 }
                 Err(e) => {
@@ -732,9 +732,7 @@ impl MCPServer {
                         proj,
                         e
                     );
-                    crate::embeddings::control::set_phase(
-                        crate::embeddings::control::PHASE_FAILED,
-                    );
+                    crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_FAILED);
                     crate::embeddings::disarm_embed();
                     return;
                 }
@@ -744,9 +742,7 @@ impl MCPServer {
                 Ok(g) => (g, self.get_db_path(), "<primary>".to_string()),
                 Err(e) => {
                     tracing::warn!("embed_control spawn skipped; graph not ready ({})", e);
-                    crate::embeddings::control::set_phase(
-                        crate::embeddings::control::PHASE_FAILED,
-                    );
+                    crate::embeddings::control::set_phase(crate::embeddings::control::PHASE_FAILED);
                     crate::embeddings::disarm_embed();
                     return;
                 }
