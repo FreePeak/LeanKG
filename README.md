@@ -50,28 +50,7 @@
 
 ---
 
-## Contents
-
-- [Get Started](#get-started)
-- [Why LeanKG?](#why-leankg)
-- [Measured Results](#measured-results)
-- [Key Features](#key-features)
-- [Screenshots](#screenshots)
-- [How It Works](#how-it-works)
-- [MCP & Agents](#mcp--agents)
-- [Language Support](#language-support)
-- [CLI Quick Reference](#cli-quick-reference)
-- [Documentation](#documentation)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
-- [Star History](#star-history)
-
----
-
-## Get Started
-
-### 1. Install the CLI
+## Installation
 
 **One command** — binary, MCP wiring, and agent docs for your tool of choice:
 
@@ -136,7 +115,31 @@ Point your MCP client at `http://localhost:9699/mcp`. Multi-project RocksDB moun
 
 </details>
 
-### 2. Wire up your agent(s)
+---
+
+## Contents
+
+- [Installation](#installation)
+- [Get Started](#get-started)
+- [Why LeanKG?](#why-leankg)
+- [Measured Results](#measured-results)
+- [Key Features](#key-features)
+- [Screenshots](#screenshots)
+- [How It Works](#how-it-works)
+- [MCP & Agents](#mcp--agents)
+- [Language Support](#language-support)
+- [CLI Quick Reference](#cli-quick-reference)
+- [Documentation](#documentation)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+- [Star History](#star-history)
+
+---
+
+## Get Started
+
+### 1. Wire up your agent(s)
 
 Installing the binary alone does **not** connect your agent. Run setup (or use an install target above) so MCP is registered:
 
@@ -146,7 +149,7 @@ leankg setup
 
 This configures Cursor, Claude Code, OpenCode, Gemini, and other supported clients with LeanKG’s MCP server, skills, and hooks where available.
 
-### 3. Index each project
+### 2. Index each project
 
 ```bash
 cd your-project
@@ -161,7 +164,7 @@ Optional: enable watch mode so the graph stays fresh while you and your agent ed
 leankg mcp-stdio --watch
 ```
 
-### 4. Ask better questions
+### 3. Ask better questions
 
 ```bash
 leankg impact src/main.rs --depth 3
