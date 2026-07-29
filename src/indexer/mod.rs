@@ -1188,6 +1188,48 @@ pub struct IncrementalIndexResult {
     pub elements_indexed: usize,
 }
 
+/// Mark every code_element whose file_path is in `files` as stale in
+/// `embedding_state`. This is the bridge between the indexer and the
+/// embed scheduler — without it, the auto-index path inserts elements
+/// but never flags them stale, so the HNSW stays empty.
+///
+/// Looks up qualified_names per file (one indexed query each), then
+/// issues a single `mark_stale_for_qualified_names` CozoDB call.
+/// One bulk call at end of batch avoids per-file DB round-trips.
+#[cfg(feature = "embeddings")]
+pub fn mark_files_stale(
+    graph: &GraphEngine,
+    files: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let mark_start = std::time::Instant::now();
+    let mut all_qns: Vec<String> = Vec::with_capacity(files.len() * 32);
+    for fp in files {
+        match graph.get_elements_by_file(fp) {
+            Ok(els) => {
+                for el in els {
+                    all_qns.push(el.qualified_name.clone());
+                }
+            }
+            Err(e) => tracing::warn!(
+                "mark_files_stale: get_elements_by_file({}) failed: {}",
+                fp,
+                e
+            ),
+        }
+    }
+    crate::embeddings::state::mark_stale_for_qualified_names(graph.db(), &all_qns)?;
+    tracing::info!(
+        "embedding_state stale-mark: {} qualified_names from {} files took {}ms",
+        all_qns.len(),
+        files.len(),
+        mark_start.elapsed().as_millis()
+    );
+    Ok(())
+}
+
 pub async fn incremental_index_sync(
     graph: &GraphEngine,
     parser_manager: &mut ParserManager,
@@ -1406,6 +1448,28 @@ pub async fn incremental_index_sync(
     // the persistent cache (disk). With 3K+ files this added seconds per
     // file and pushed total runtime to hours.
     graph.clear_cache().await;
+
+    // Mark every inserted (qualified_name, file_path) stale in embedding_state
+    // so the embed scheduler picks them up. Without this, the auto-index path
+    // inserts code elements but never flags them stale, leaving the HNSW
+    // permanently empty across restarts (stale_rows=98 work=0).
+    //
+    // One bulk call at end of batch: O(touched_files) file-by-file queries,
+    // each an indexed lookup by file_path (the fix in commit 8132a5b added
+    // that index for code_elements).
+    #[cfg(feature = "embeddings")]
+    {
+        let touched_files: Vec<&String> = needs_remove_files
+            .iter()
+            .chain(new_files_to_process.iter())
+            .collect();
+        if let Err(e) = mark_files_stale(
+            graph,
+            &touched_files.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        ) {
+            tracing::warn!("mark_files_stale failed: {}", e);
+        }
+    }
 
     // Inventory refresh: scans every code_elements + relationships row, so
     // do it ONCE at the end of the batch rather than per file.
