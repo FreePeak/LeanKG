@@ -1106,12 +1106,9 @@ pub fn index_file_sync(
     let _ = graph.insert_elements_with(&elements, true);
     let _ = graph.insert_relationships_with(&relationships, true);
 
-    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {
-        tracing::warn!(
-            "index_inventory refresh after index_file_sync failed: {}",
-            e
-        );
-    }
+    // Inventory refresh is deferred to end-of-batch in incremental_index_sync
+    // (refresh_index_inventory scans every code_elements + relationships row
+    // and was the dominant cost per file on a 3M-row graph).
 
     Ok(elements.len())
 }
@@ -1121,10 +1118,55 @@ pub fn reindex_file_sync(
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    graph.remove_elements_by_file_bulk(file_path)?;
-    graph.remove_relationships_by_source_bulk(file_path)?;
+    reindex_file_sync_inner(graph, parser_manager, file_path, true)
+}
 
-    index_file_sync(graph, parser_manager, file_path)
+pub fn reindex_new_file_sync(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    reindex_file_sync_inner(graph, parser_manager, file_path, false)
+}
+
+fn reindex_file_sync_inner(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+    needs_remove: bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let t0 = std::time::Instant::now();
+    if needs_remove {
+        graph.remove_elements_by_file_bulk(file_path)?;
+        let t1 = std::time::Instant::now();
+        graph.remove_relationships_by_source_bulk(file_path)?;
+        let t2 = std::time::Instant::now();
+        let n = index_file_sync(graph, parser_manager, file_path)?;
+        let t3 = std::time::Instant::now();
+        if (t3 - t0).as_millis() > 200 {
+            tracing::warn!(
+                "reindex_breakdown remove_el={}ms remove_rel={}ms index={}ms total={}ms path={}",
+                (t1 - t0).as_millis(),
+                (t2 - t1).as_millis(),
+                (t3 - t2).as_millis(),
+                (t3 - t0).as_millis(),
+                file_path
+            );
+        }
+        Ok(n)
+    } else {
+        let n = index_file_sync(graph, parser_manager, file_path)?;
+        let t1 = std::time::Instant::now();
+        if (t1 - t0).as_millis() > 200 {
+            tracing::warn!(
+                "reindex_breakdown NEW_FILE skip_remove index={}ms total={}ms path={}",
+                (t1 - t0).as_millis(),
+                (t1 - t0).as_millis(),
+                file_path
+            );
+        }
+        Ok(n)
+    }
 }
 
 pub struct IncrementalIndexResult {
@@ -1167,16 +1209,9 @@ pub async fn incremental_index_sync(
         })
         .collect();
 
-    let mut all_changed: Vec<String> = Vec::new();
-    all_changed.extend(changed.modified);
-    all_changed.extend(changed.added);
-    all_changed.extend(changed.deleted);
-
-    let untracked = crate::indexer::git_workspace::workspace_untracked_files(root)?;
-    let indexable_untracked = filter_indexable_files(&untracked);
-    all_changed.extend(indexable_untracked);
-
-    let changed_files: Vec<String> = all_changed
+    // Modified files: have prior rows in the DB, need remove + reindex.
+    let modified_files: Vec<String> = changed
+        .modified
         .iter()
         .map(|f| {
             if std::path::Path::new(f).is_absolute() {
@@ -1186,6 +1221,34 @@ pub async fn incremental_index_sync(
             }
         })
         .collect();
+
+    // New files: never been indexed, skip the rm scan over 3M+ rows.
+    let untracked = crate::indexer::git_workspace::workspace_untracked_files(root)?;
+    let indexable_untracked = filter_indexable_files(&untracked);
+    let mut new_files: Vec<String> = Vec::new();
+    new_files.extend(changed.added.iter().map(|f| {
+        if std::path::Path::new(f).is_absolute() {
+            f.clone()
+        } else {
+            format!("{}/{}", workspace_root, f)
+        }
+    }));
+    new_files.extend(indexable_untracked.iter().map(|f| {
+        if std::path::Path::new(f).is_absolute() {
+            f.clone()
+        } else {
+            format!("{}/{}", workspace_root, f)
+        }
+    }));
+
+    let changed_files: Vec<String> = {
+        let mut v =
+            Vec::with_capacity(modified_files.len() + new_files.len() + deleted_files.len());
+        v.extend(modified_files.iter().cloned());
+        v.extend(new_files.iter().cloned());
+        v.extend(deleted_files.iter().cloned());
+        v
+    };
 
     for deleted_file in &deleted_files {
         graph.remove_elements_by_file(deleted_file)?;
@@ -1228,18 +1291,28 @@ pub async fn incremental_index_sync(
         dependent_files.dedup();
     }
 
-    let mut all_files_to_process: Vec<String> = Vec::new();
+    let mut needs_remove_files: Vec<String> = Vec::new();
+    let mut new_files_to_process: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    for f in &changed_files {
+    // Modified files: rm-then-insert path (file is already in DB).
+    for f in &modified_files {
         if !seen.contains(f) {
-            all_files_to_process.push(f.clone());
+            needs_remove_files.push(f.clone());
             seen.insert(f.clone());
         }
     }
+    // Dependent files: depend on a modified file, may have stale data. Same path.
     for f in &dependent_files {
         if !seen.contains(f) {
-            all_files_to_process.push(f.clone());
+            needs_remove_files.push(f.clone());
+            seen.insert(f.clone());
+        }
+    }
+    // New files: skip the rm scan over 3M+ rows.
+    for f in &new_files {
+        if !seen.contains(f) {
+            new_files_to_process.push(f.clone());
             seen.insert(f.clone());
         }
     }
@@ -1249,10 +1322,21 @@ pub async fn incremental_index_sync(
     let index_start = std::time::Instant::now();
     let mut last_progress_log = std::time::Instant::now();
 
-    let total_to_process = all_files_to_process.len();
-    for (i, file_path) in all_files_to_process.iter().enumerate() {
+    let total_to_process = needs_remove_files.len() + new_files_to_process.len();
+    let mut i = 0usize;
+    for file_path in needs_remove_files.iter().chain(new_files_to_process.iter()) {
+        i += 1;
+        let file_start = std::time::Instant::now();
+        // Decide which path: modified/dependent get rm-then-insert, new gets
+        // insert-only (saves a 1-2s scan over 3M+ rows per file on cold start).
+        let in_new = new_files_to_process.iter().any(|n| n == file_path);
         if std::path::Path::new(file_path).exists() {
-            match reindex_file_sync(graph, parser_manager, file_path) {
+            let result = if in_new {
+                reindex_new_file_sync(graph, parser_manager, file_path)
+            } else {
+                reindex_file_sync(graph, parser_manager, file_path)
+            };
+            match result {
                 Ok(count) => {
                     if count > 0 {
                         total_elements += count;
@@ -1263,6 +1347,12 @@ pub async fn incremental_index_sync(
                     tracing::warn!("Failed to reindex {}: {}", file_path, e);
                 }
             }
+        }
+        let file_ms = file_start.elapsed().as_millis();
+        // Per-file slow log: >500ms per file on a 3K-file batch indicates a
+        // bottleneck (CozoDB write, fs read, parser) worth investigating.
+        if file_ms > 500 {
+            tracing::warn!("slow reindex {}ms for {}", file_ms, file_path);
         }
         // Progress every 10s so operators can see throughput + ETA on large
         // catch-up batches (e.g. 3K+ changed files after a long offline gap).
@@ -1287,6 +1377,15 @@ pub async fn incremental_index_sync(
     // the persistent cache (disk). With 3K+ files this added seconds per
     // file and pushed total runtime to hours.
     graph.clear_cache().await;
+
+    // Inventory refresh: scans every code_elements + relationships row, so
+    // do it ONCE at the end of the batch rather than per file.
+    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {
+        tracing::warn!(
+            "index_inventory refresh at end of incremental_index_sync failed: {}",
+            e
+        );
+    }
 
     Ok(IncrementalIndexResult {
         changed_files,
