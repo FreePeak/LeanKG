@@ -1205,21 +1205,27 @@ pub fn mark_files_stale(
         return Ok(());
     }
     let mark_start = std::time::Instant::now();
-    let mut all_qns: Vec<String> = Vec::with_capacity(files.len() * 32);
-    for fp in files {
-        match graph.get_elements_by_file(fp) {
-            Ok(els) => {
-                for el in els {
-                    all_qns.push(el.qualified_name.clone());
-                }
-            }
-            Err(e) => tracing::warn!(
-                "mark_files_stale: get_elements_by_file({}) failed: {}",
-                fp,
-                e
-            ),
-        }
-    }
+    // Single bulk query: collect every qualified_name whose file_path
+    // is in `files`. Uses the file_path index from commit 8132a5b so the
+    // join is O(matching) instead of O(3M). Per-file loops were 3834
+    // sequential CozoDB round-trips on a 3K-file cold start (hours).
+    let query = r#"?[qualified_name] := *code_elements[qualified_name, _, _, file_path, _, _, _, _, _, _, _, _, _], file_path in $fps"#.to_string();
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "fps".to_string(),
+        serde_json::Value::Array(
+            files
+                .iter()
+                .map(|f| serde_json::Value::String(f.to_string()))
+                .collect(),
+        ),
+    );
+    let result = crate::db::schema::run_script(graph.db(), &query, params)?;
+    let all_qns: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+        .collect();
     crate::embeddings::state::mark_stale_for_qualified_names(graph.db(), &all_qns)?;
     tracing::info!(
         "embedding_state stale-mark: {} qualified_names from {} files took {}ms",

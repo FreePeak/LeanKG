@@ -137,7 +137,7 @@ impl GraphEngine {
         Ok(())
     }
 
-    fn code_elements_tail(&self) -> &'static str {
+    pub fn code_elements_tail(&self) -> &'static str {
         let arity_13_probe = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0"#;
         if crate::db::schema::run_script(
             &self.db,
