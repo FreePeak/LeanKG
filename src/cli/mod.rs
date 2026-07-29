@@ -118,6 +118,10 @@ pub enum CLICommand {
         /// Enable auto-indexing with file watcher
         #[arg(long)]
         watch: bool,
+        /// Open the database in read-only mode (reject all write tools).
+        /// Useful for query-only replicas that should never mutate state.
+        #[arg(long, default_value_t = false)]
+        read_only: bool,
     },
     /// Start MCP server with HTTP transport (for remote clients)
     McpHttp {
@@ -136,6 +140,10 @@ pub enum CLICommand {
         /// Project root directory (default: auto-detect from cwd)
         #[arg(long)]
         project: Option<String>,
+        /// Open the database in read-only mode (reject all write tools).
+        /// Useful for query-only replicas that should never mutate state.
+        #[arg(long, default_value_t = false)]
+        read_only: bool,
     },
     /// Calculate impact radius
     Impact {

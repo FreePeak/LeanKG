@@ -50,7 +50,13 @@ pub struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    if !matches!(args.command, cli::CLICommand::McpStdio { watch: _ }) {
+    if !matches!(
+        args.command,
+        cli::CLICommand::McpStdio {
+            watch: _,
+            read_only: _
+        }
+    ) {
         tracing_subscriber::fmt::init();
     }
 
@@ -206,11 +212,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             web::start_server(port, db_path, None).await?;
         }
-        cli::CLICommand::McpStdio { watch } => {
+        cli::CLICommand::McpStdio { watch, read_only } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
 
             tokio::fs::create_dir_all(&db_path).await.ok();
+
+            if read_only {
+                tracing::info!(
+                    "Starting MCP stdio server in read-only mode (write tools will be rejected)"
+                );
+            }
 
             if watch {
                 let lockfile = db_path.join("leankg.pid");
@@ -226,7 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Another LeanKG watcher (PID {}) is already running for this project. Disabling --watch for this instance.",
                                 old_pid
                             );
-                            let mcp_server = mcp::MCPServer::new(db_path);
+                            let mcp_server = mcp::MCPServer::new(db_path).with_read_only(read_only);
                             if let Err(e) = mcp_server.serve_stdio().await {
                                 eprintln!("MCP stdio server error: {}", e);
                             }
@@ -239,8 +251,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let mcp_server = if watch {
                 mcp::MCPServer::new_with_watch(db_path, project_path.clone())
+                    .with_read_only(read_only)
             } else {
-                mcp::MCPServer::new(db_path)
+                mcp::MCPServer::new(db_path).with_read_only(read_only)
             };
             if let Err(e) = mcp_server.serve_stdio().await {
                 eprintln!("MCP stdio server error: {}", e);
@@ -252,6 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             watch,
             reuse,
             project,
+            read_only,
         } => {
             let project_path = if let Some(ref p) = project {
                 std::path::PathBuf::from(p)
@@ -271,8 +285,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let mcp_server = if watch {
                 mcp::MCPServer::new_with_watch(db_path.clone(), project_path.clone())
+                    .with_read_only(read_only)
             } else {
-                mcp::MCPServer::new(db_path.clone())
+                mcp::MCPServer::new(db_path.clone()).with_read_only(read_only)
             };
 
             println!("╔═══════════════════════════════════════════════════════════════╗");
@@ -287,6 +302,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if reuse {
                 println!("🔄 Reuse mode: will connect to existing server if available");
+            }
+            if read_only {
+                println!("[READ-ONLY] write tools will be rejected");
             }
             println!();
 
