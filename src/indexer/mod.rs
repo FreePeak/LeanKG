@@ -1246,8 +1246,11 @@ pub async fn incremental_index_sync(
 
     let mut total_elements = 0;
     let mut files_processed = 0;
+    let index_start = std::time::Instant::now();
+    let mut last_progress_log = std::time::Instant::now();
 
-    for file_path in &all_files_to_process {
+    let total_to_process = all_files_to_process.len();
+    for (i, file_path) in all_files_to_process.iter().enumerate() {
         if std::path::Path::new(file_path).exists() {
             match reindex_file_sync(graph, parser_manager, file_path) {
                 Ok(count) => {
@@ -1260,6 +1263,22 @@ pub async fn incremental_index_sync(
                     tracing::warn!("Failed to reindex {}: {}", file_path, e);
                 }
             }
+        }
+        // Progress every 10s so operators can see throughput + ETA on large
+        // catch-up batches (e.g. 3K+ changed files after a long offline gap).
+        if last_progress_log.elapsed() >= std::time::Duration::from_secs(10) {
+            let elapsed = index_start.elapsed().as_secs_f64();
+            let per_file = if i > 0 { elapsed / i as f64 } else { 0.0 };
+            let eta_s = per_file * (total_to_process - i) as f64;
+            tracing::info!(
+                "incremental_index: {}/{} files, {} elements, {:.2}s elapsed, ETA {:.0}s",
+                i + 1,
+                total_to_process,
+                total_elements,
+                elapsed,
+                eta_s,
+            );
+            last_progress_log = std::time::Instant::now();
         }
     }
 
