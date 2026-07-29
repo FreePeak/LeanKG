@@ -43,6 +43,8 @@ once_cell = "1"
 schemars = "0.8"
 async-trait = "0.1"
 dirs = "5"
+# FR-LCACHE: L1 read cache in front of CozoDB for hot read paths.
+moka = { version = "0.12", features = ["future"] }
 argon2 = "0.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }

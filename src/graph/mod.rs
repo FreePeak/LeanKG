@@ -23,7 +23,7 @@ pub use inventory::{
     refresh_index_inventory, IndexInventory, INVENTORY_KEY_LATEST,
 };
 #[allow(unused_imports)]
-pub use l1_cache::CachingGraphEngine;
+pub use l1_cache::*;
 #[allow(unused_imports)]
 pub use layout::*;
 #[allow(unused_imports)]
