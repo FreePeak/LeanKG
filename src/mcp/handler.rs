@@ -4511,7 +4511,14 @@ impl ToolHandler {
                         if cached.is_empty() {
                             emb::Embedder::new()
                                 .and_then(|em| em.embed(&[query.to_string()]).map(|v| v[0].clone()))
-                                .unwrap_or_default()
+                                .unwrap_or_else(|e| {
+                                    tracing::warn!(
+                                        target: "leankg::mcp",
+                                        error = %e,
+                                        "kg_semantic_context embedder init/embed failed; returning empty query vec"
+                                    );
+                                    Vec::new()
+                                })
                         } else {
                             cached.to_vec()
                         }
@@ -4864,6 +4871,13 @@ fn run_hnsw_semantic_search(
     let mut traversed_count = 0usize;
     let mut traversed_after_dedup = 0usize;
     let mut scored_functions: Vec<crate::retrieval::DiscoveredFunction> = Vec::new();
+    // Qualified names of the upper seeds whose BFS actually reached at
+    // least one function. Used by the response below to emit a
+    // "productive" list instead of every upper seed, so agents can
+    // distinguish "we found upper seeds" from "those seeds actually
+    // reached code".
+    let mut productive_upper_qns: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     if !upper_seeds_raw.is_empty() {
         let upper_seeds: Vec<UpperSeed> = upper_seeds_raw
             .iter()
@@ -4884,6 +4898,12 @@ fn run_hnsw_semantic_search(
                 );
                 Vec::new()
             });
+        // Record which upper seeds actually produced at least one
+        // discovered function. Used below to filter `upper_matches`
+        // down to a productive list.
+        for df in &discovered {
+            productive_upper_qns.insert(df.via_upper.clone());
+        }
         traversed_count = discovered.len();
         if !discovered.is_empty() {
             // Reuse the query embedding the pipeline already computed so
@@ -4897,7 +4917,14 @@ fn run_hnsw_semantic_search(
                     use crate::embeddings::Embedder;
                     Embedder::new()
                         .and_then(|em| em.embed(&[query.to_string()]).map(|v| v[0].clone()))
-                        .unwrap_or_default()
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(
+                                target: "leankg::mcp",
+                                error = %e,
+                                "semantic_search embedder init/embed failed (cache empty); returning empty query vec"
+                            );
+                            Vec::new()
+                        })
                 }
             };
             if !query_vec.is_empty() {
@@ -4995,11 +5022,16 @@ fn run_hnsw_semantic_search(
     let page: Vec<Value> = results_all.into_iter().skip(offset).take(limit).collect();
     let has_more = offset + page.len() < total_estimate;
 
-    // Upper-type seeds that drove the traversal — diagnostic context so
-    // agents can see *which* class / doc / workflow the functions came
-    // from, without polluting the function-focused `results`.
-    let upper_matches: Vec<Value> = upper_seeds_raw
+    // Upper-type seeds that **actually reached at least one function**
+    // during the BFS — diagnostic context so agents can see *which*
+    // class / doc / workflow produced the traversed results, without
+    // polluting the function-focused `results`. Renamed from
+    // `upper_matches` to `productive_upper_seeds` so the field name
+    // signals the filter; a separate `productive_upper_seed_count` in
+    // the diagnostics tells you the trim size at a glance.
+    let productive_upper_seeds: Vec<Value> = upper_seeds_raw
         .iter()
+        .filter(|s| productive_upper_qns.contains(&s.qualified_name))
         .map(|s| {
             json!({
                 "qualified_name": s.qualified_name,
@@ -5009,6 +5041,7 @@ fn run_hnsw_semantic_search(
             })
         })
         .collect();
+    let productive_upper_seed_count = productive_upper_seeds.len();
 
     Ok(json!({
         "query": query,
@@ -5017,7 +5050,7 @@ fn run_hnsw_semantic_search(
         "offset": offset,
         "method": "hnsw+ontology-traverse",
         "results": page,
-        "upper_matches": upper_matches,
+        "productive_upper_seeds": productive_upper_seeds,
         "total_estimate": total_estimate,
         "has_more": has_more,
         "ann_candidate_count": retrieval.ann_candidate_count,
@@ -5028,6 +5061,7 @@ fn run_hnsw_semantic_search(
         ),
         "traversal": {
             "upper_seed_count": upper_seeds_raw.len(),
+            "productive_upper_seed_count": productive_upper_seed_count,
             "direct_function_count": direct_functions.len(),
             "traversed_function_count": traversed_count,
             "traversed_after_dedup": traversed_after_dedup,
@@ -5036,9 +5070,9 @@ fn run_hnsw_semantic_search(
     }))
 }
 
-/// Min/max of a non-empty f32 slice; `(0.0, 0.0)` when empty (which makes
-/// [`normalize`] return 1.0 for every element — the safe "all tie at the
-/// top" behaviour for a single-element pool).
+/// Min/max of a non-empty f32 slice; `(0.0, 0.0)` when empty (the
+/// all-zero-pool degenerate case — see [`normalize`] for the matching
+/// "do not fabricate a win" behavior).
 #[cfg(feature = "embeddings")]
 fn min_max(xs: &[f32]) -> (f32, f32) {
     if xs.is_empty() {
@@ -5057,13 +5091,16 @@ fn min_max(xs: &[f32]) -> (f32, f32) {
     (lo, hi)
 }
 
-/// Min-max normalize `x` into [0,1]. When the pool is degenerate
-/// (`max == min`), every element maps to 1.0 so it competes at the top
-/// of the merged ranking rather than being buried.
+/// Min-max normalize `x` into [0,1]. Distinguishes three degenerate cases
+/// so a real traversed pool is not buried by an all-zero direct pool from
+/// the reranker-fallback path:
+/// - empty or all-zero (min == max == 0.0) -> 0.0 (do not fabricate a win)
+/// - single non-zero (min == max  > 0.0)   -> 1.0 (single hit, top of pool)
+/// - distinct min < max                     -> standard linear remap.
 #[cfg(feature = "embeddings")]
 fn normalize(x: f32, min: f32, max: f32) -> f32 {
     if max <= min {
-        return 1.0;
+        return if min == 0.0 && max == 0.0 { 0.0 } else { 1.0 };
     }
     let n = (x - min) / (max - min);
     n.clamp(0.0, 1.0)
@@ -5114,5 +5151,51 @@ mod tests {
         }];
         let doc = generate_documentation("src/main.rs", &elements);
         assert!(doc.contains("src/main.rs"));
+    }
+
+    #[test]
+    #[cfg(feature = "embeddings")]
+    fn normalize_distinguishes_three_degenerate_cases() {
+        // A1 fix: previously, any `max <= min` returned 1.0, which
+        // buried real traversed-pool matches when the direct pool came
+        // from the reranker-fallback all-zero path. Now:
+        //   - empty or all-zero -> 0.0  (do not fabricate a win)
+        //   - single non-zero   -> 1.0  (one hit, top of pool)
+        //   - distinct min < max -> normal linear remap.
+
+        assert_eq!(
+            normalize(0.0, 0.0, 0.0),
+            0.0,
+            "all-zero pool must not fabricate a 1.0 win"
+        );
+        assert_eq!(
+            normalize(0.5, 0.0, 0.0),
+            0.0,
+            "all-zero pool is degenerate-zero, not 1.0"
+        );
+        assert_eq!(
+            normalize(-3.2, 0.0, 0.0),
+            0.0,
+            "all-zero pool stays 0.0 for any raw score"
+        );
+
+        assert_eq!(
+            normalize(0.5, 0.3, 0.3),
+            1.0,
+            "single non-zero value pool ties at 1.0"
+        );
+
+        assert!(
+            (normalize(0.5, 0.0, 1.0) - 0.5).abs() < 1e-6,
+            "linear remap at the midpoint"
+        );
+        assert!(
+            (normalize(0.0, 0.0, 1.0) - 0.0).abs() < 1e-6,
+            "linear remap at the bottom"
+        );
+        assert!(
+            (normalize(1.0, 0.0, 1.0) - 1.0).abs() < 1e-6,
+            "linear remap at the top"
+        );
     }
 }

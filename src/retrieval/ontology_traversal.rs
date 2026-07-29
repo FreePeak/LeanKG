@@ -537,9 +537,10 @@ fn resolve_code_refs_fallback(
     Ok(())
 }
 
-/// Insert a discovered function, deduplicating by QN. If the function
-/// was already discovered via a shorter-or-equal hop, the existing entry
-/// wins; otherwise we overwrite with the shorter path.
+/// Insert a discovered function, deduplicating by QN. When the function
+/// was already discovered via a strictly shorter hop, the existing entry
+/// is overwritten with the shorter-path provenance. Same-hop duplicates
+/// keep the first-seen upper seed's provenance (deterministic for callers).
 #[allow(clippy::too_many_arguments)]
 fn record_function(
     discovered: &mut Vec<DiscoveredFunction>,
@@ -586,9 +587,12 @@ fn record_function(
     *total += 1;
 }
 
-/// Cosine similarity between two (assumed unit-norm) embedding vectors.
-/// The BGE embedder L2-normalizes its outputs, so cosine = dot product.
+/// Cosine similarity between two (assumed unit-norm, equal-length)
+/// embedding vectors. The BGE embedder L2-normalizes its outputs, so
+/// cosine = dot product. Length equality is asserted in debug builds;
+/// unit-norm is assumed (no normalization is performed).
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len(), "cosine: length mismatch");
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
@@ -954,5 +958,82 @@ mod tests {
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].hop, 1);
         assert_eq!(discovered[0].via_upper, "C");
+    }
+
+    #[test]
+    fn record_function_same_hop_keeps_first_seen() {
+        // When two upper seeds reach the same function at the SAME hop,
+        // the first-seen upper seed's provenance wins (deterministic for
+        // callers). This is the contract tightened in the A5 fix.
+        let mut discovered: Vec<DiscoveredFunction> = Vec::new();
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        let mut total = 0usize;
+        let make_el = |qn: &str| CodeElement {
+            qualified_name: qn.to_string(),
+            element_type: "function".to_string(),
+            file_path: "src/x.rs".to_string(),
+            env: "local".to_string(),
+            ..Default::default()
+        };
+
+        // First: via class Foo at hop 1.
+        record_function(
+            &mut discovered,
+            &mut seen,
+            &mut total,
+            &make_el("src/x.rs::foo"),
+            "src/x.rs::Foo",
+            "class",
+            "Foo",
+            "contains",
+            1,
+        );
+
+        // Same function at the same hop 1, but via a different upper
+        // (workflow WorkflowA). Must keep Foo, not overwrite.
+        record_function(
+            &mut discovered,
+            &mut seen,
+            &mut total,
+            &make_el("src/x.rs::foo"),
+            "ontology://w",
+            "workflow",
+            "WorkflowA",
+            "has_step",
+            1,
+        );
+
+        assert_eq!(discovered.len(), 1, "dedup at same hop is a no-op");
+        assert_eq!(total, 1, "total must not double-count");
+        assert_eq!(discovered[0].via_upper, "src/x.rs::Foo");
+        assert_eq!(discovered[0].via_upper_type, "class");
+        assert_eq!(discovered[0].via_upper_name, "Foo");
+        assert_eq!(discovered[0].hop, 1);
+    }
+
+    #[test]
+    fn cosine_equal_lengths_returns_standard_dot_product() {
+        // Sanity test for the A6 fix: vectors of equal length produce
+        // the documented unit-norm cosine. The length-mismatch branch
+        // uses `debug_assert_eq!` and is verified separately by the
+        // `cosine_length_mismatch_panics_in_debug` test below (which
+        // is compiled only in debug mode, where `cargo test` defaults
+        // run; in `cargo test --release` the assertion is a no-op).
+        let a = vec![0.6, 0.8, 0.0];
+        let b = vec![0.6, 0.8, 0.0];
+        let c = cosine(&a, &b);
+        assert!((c - 1.0).abs() < 1e-5, "identical unit vectors: {c}");
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "cosine: length mismatch")]
+    fn cosine_length_mismatch_panics_in_debug() {
+        // A6 fix: `debug_assert_eq!(a.len(), b.len())` fires on
+        // mismatched lengths. Only runs under `cargo test` (debug),
+        // since `cargo test --release` strips debug_assertions.
+        let a = vec![0.6, 0.8];
+        let b = vec![0.6, 0.8, 0.0];
+        let _ = cosine(&a, &b);
     }
 }
