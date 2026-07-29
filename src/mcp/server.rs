@@ -387,13 +387,6 @@ impl MCPServer {
                 .unwrap_or_else(|| self.get_db_path())
         };
 
-        {
-            let cache = self.graph_engine_cache.lock();
-            if let Some(ge) = cache.get(&project_db_path) {
-                return Ok(ge.clone());
-            }
-        }
-
         let project_db_path = match project_db_path.canonicalize() {
             Ok(p) => p,
             Err(_) if project_db_path.is_absolute() => project_db_path,
@@ -419,6 +412,14 @@ impl MCPServer {
             );
         }
 
+        // Single critical section: cache check + init_db + cache insert.
+        // The Mutex must be held across init_db so concurrent callers serialize
+        // the RocksDB open (one-writer-per-path) instead of racing.
+        let mut cache = self.graph_engine_cache.lock();
+        if let Some(ge) = cache.get(&project_db_path) {
+            return Ok(ge.clone());
+        }
+
         tracing::debug!("Initializing database at: {}", project_db_path.display());
         let db = if self.read_only {
             crate::db::schema::init_db_readonly(&project_db_path)
@@ -427,12 +428,7 @@ impl MCPServer {
             init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?
         };
         let ge = GraphEngine::with_persistence(db);
-
-        {
-            let mut cache = self.graph_engine_cache.lock();
-            cache.insert(project_db_path.clone(), ge.clone());
-        }
-
+        cache.insert(project_db_path.clone(), ge.clone());
         Ok(ge)
     }
 

@@ -1129,6 +1129,18 @@ pub fn reindex_new_file_sync(
     reindex_file_sync_inner(graph, parser_manager, file_path, false)
 }
 
+/// Reindex a file WITHOUT touching the DB for remove. Use this for bulk batches
+/// where removes are batched at end via remove_elements_by_files_bulk and
+/// remove_relationships_by_files_bulk — the per-file rm scan over 3M rows
+/// was 2.6s/file on the 3833-file cold start, dominating total runtime.
+pub fn reindex_skip_remove_sync(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    index_file_sync(graph, parser_manager, file_path)
+}
+
 fn reindex_file_sync_inner(
     graph: &GraphEngine,
     parser_manager: &mut ParserManager,
@@ -1327,14 +1339,16 @@ pub async fn incremental_index_sync(
     for file_path in needs_remove_files.iter().chain(new_files_to_process.iter()) {
         i += 1;
         let file_start = std::time::Instant::now();
-        // Decide which path: modified/dependent get rm-then-insert, new gets
-        // insert-only (saves a 1-2s scan over 3M+ rows per file on cold start).
+        // Bulk path: insert-only (no per-file rm). Single batched rm runs
+        // after the loop with `file_path in $list`. This trades one full
+        // scan over code_elements/relationships for N per-file scans
+        // (~3M-row scan was 2.6s/file on cold start).
         let in_new = new_files_to_process.iter().any(|n| n == file_path);
         if std::path::Path::new(file_path).exists() {
             let result = if in_new {
                 reindex_new_file_sync(graph, parser_manager, file_path)
             } else {
-                reindex_file_sync(graph, parser_manager, file_path)
+                reindex_skip_remove_sync(graph, parser_manager, file_path)
             };
             match result {
                 Ok(count) => {
@@ -1371,6 +1385,21 @@ pub async fn incremental_index_sync(
             last_progress_log = std::time::Instant::now();
         }
     }
+
+    // Single bulk rm at the end of the batch: one CozoDB query that scans
+    // code_elements + relationships ONCE instead of once per file.
+    let rm_start = std::time::Instant::now();
+    if let Err(e) = graph.remove_elements_by_files_bulk(&needs_remove_files) {
+        tracing::warn!("bulk remove_elements failed: {}", e);
+    }
+    if let Err(e) = graph.remove_relationships_by_files_bulk(&needs_remove_files) {
+        tracing::warn!("bulk remove_relationships failed: {}", e);
+    }
+    tracing::info!(
+        "bulk rm for {} files took {}ms",
+        needs_remove_files.len(),
+        rm_start.elapsed().as_millis()
+    );
 
     // Single bulk cache clear at the end of the batch. Per-file invalidation
     // was the bottleneck: each insert/remove spawned an async task that hit
