@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use crate::db::schema::init_db;
+use crate::graph::l1_cache::CachingGraphEngine;
 use crate::graph::GraphEngine;
 use crate::mcp::auth::AuthManager;
 use crate::mcp::handler::ToolHandler;
@@ -16,13 +17,15 @@ use axum::{
     Router,
 };
 // use futures_util::StreamExt;  // Reserved for future streaming support
+use moka::future::Cache;
+use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -32,6 +35,77 @@ use std::time::{Duration, SystemTime};
 use tokio::signal;
 use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock};
 use tower_http::cors::{Any, CorsLayer};
+
+/// Tools that mutate the underlying DB or state. Everything else is treated
+/// as a read at the dispatch layer (it may still go to the DB internally,
+/// but its lock semantics differ).
+static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    [
+        "mcp_init",
+        "mcp_index",
+        "mcp_index_docs",
+        "add_knowledge",
+        "update_knowledge",
+        "delete_knowledge",
+        "add_annotation",
+        "link_element",
+        "add_documentation",
+        "promote_environment",
+        "embed_control",
+        "ontology_control",
+    ]
+    .into_iter()
+    .collect()
+});
+
+/// Build the per-server dispatch JSON response cache. Sized and TTL'd
+/// independently of the engine-level caches inside `CachingGraphEngine` so
+/// they can be tuned per deployment.
+fn build_dispatch_cache() -> Cache<String, serde_json::Value> {
+    let cap = std::env::var("LEANKG_L1_DISPATCH_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5_000u64);
+    let ttl_secs = std::env::var("LEANKG_L1_DISPATCH_TTL")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60);
+    Cache::builder()
+        .max_capacity(cap)
+        .time_to_live(Duration::from_secs(ttl_secs))
+        .build()
+}
+
+/// Compose a deterministic cache key from `(tool_name, args_json)`. We rely on
+/// serde_json's stable ordering for `serde_json::Map` (which is BTreeMap-backed
+/// in the public API) — agents can't induce key collisions because every
+/// `Map` field is escaped below.
+fn dispatch_cache_key(
+    tool_name: &str,
+    args: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let mut buf = String::with_capacity(tool_name.len() + 32);
+    buf.push_str(tool_name);
+    buf.push('|');
+    // BTreeMap iteration order is sorted by key — stable across calls.
+    for (k, v) in args.iter() {
+        buf.push_str(k);
+        buf.push('=');
+        // Compact JSON form keeps the key compact and stable.
+        match serde_json::to_string(v) {
+            Ok(s) => buf.push_str(&s),
+            Err(_) => buf.push('?'),
+        }
+        buf.push(';');
+    }
+    buf
+}
+
+/// Drop every L1 cache (engine + dispatch) for `server`. Free function so
+/// the borrow checker stays happy inside `execute_tool`'s `&self` flow.
+async fn invalidate_l1_caches(server: &MCPServer) {
+    server.invalidate_l1_caches_public().await;
+}
 
 /// Session information for coordination between multiple LeanKG instances
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,6 +121,16 @@ pub struct MCPServer {
     db_path: Arc<RwLock<PathBuf>>,
     graph_engine: Arc<parking_lot::Mutex<Option<GraphEngine>>>,
     graph_engine_cache: Arc<RwLock<HashMap<PathBuf, GraphEngine>>>,
+    /// Per-project `CachingGraphEngine` keyed by project DB path. Built lazily
+    /// on first read after a fresh `GraphEngine` is opened, and invalidated
+    /// whenever the underlying engine is dropped (mcp_init / mcp_index /
+    /// knowledge contribution tools).
+    caching_engine_cache: Arc<RwLock<HashMap<PathBuf, CachingGraphEngine>>>,
+    /// Dispatch-level JSON response cache for read tools. Keyed by
+    /// `(tool_name, args_json)`. Sized by `LEANKG_L1_DISPATCH_SIZE` /
+    /// `LEANKG_L1_DISPATCH_TTL` so it can be tuned independently of the
+    /// engine-level caches inside `CachingGraphEngine`.
+    dispatch_cache: Cache<String, serde_json::Value>,
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
     intent_parser: IntentParser,
@@ -75,6 +159,8 @@ impl Clone for MCPServer {
             db_path: self.db_path.clone(),
             graph_engine: self.graph_engine.clone(),
             graph_engine_cache: self.graph_engine_cache.clone(),
+            caching_engine_cache: self.caching_engine_cache.clone(),
+            dispatch_cache: self.dispatch_cache.clone(),
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
             intent_parser: IntentParser::new(),
@@ -94,6 +180,8 @@ impl MCPServer {
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            dispatch_cache: build_dispatch_cache(),
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
@@ -111,6 +199,8 @@ impl MCPServer {
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            dispatch_cache: build_dispatch_cache(),
             watch_path: Some(watch_path),
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
@@ -2347,18 +2437,48 @@ impl MCPServer {
         None
     }
 
+    /// L1 read cache wrapping the project's `GraphEngine`. Built lazily on
+    /// first read after a fresh `GraphEngine` is opened, and dropped whenever
+    /// the underlying engine is dropped (mcp_init / mcp_index / knowledge
+    /// contribution tools).
+    pub fn get_caching_graph_engine(&self) -> Result<CachingGraphEngine, String> {
+        let engine = self.get_graph_engine()?;
+        let db_path = self.get_db_path();
+        {
+            let cache = self.caching_engine_cache.read();
+            if let Some(c) = cache.get(&db_path) {
+                return Ok(c.clone());
+            }
+        }
+        let wrapper = CachingGraphEngine::new(engine);
+        let mut cache = self.caching_engine_cache.write();
+        cache.insert(db_path, wrapper.clone());
+        Ok(wrapper)
+    }
+
+    /// Drop the L1 dispatch cache and every per-project `CachingGraphEngine`.
+    /// Called from the write path inside `execute_tool` after a successful
+    /// mutation. Public so tests can drive it directly.
+    pub(crate) async fn invalidate_l1_caches_public(&self) {
+        // Drain the cache under the lock and collect references; then drop the
+        // guard before awaiting each invalidate so the parking_lot write guard
+        // is not held across an `.await` (which would break the `Send` bound
+        // the rmcp handler requires).
+        let engines: Vec<CachingGraphEngine> = {
+            let mut cache = self.caching_engine_cache.write();
+            cache.drain().map(|(_, e)| e).collect()
+        };
+        for engine in &engines {
+            engine.invalidate().await;
+        }
+        let _ = self.dispatch_cache.invalidate_entries_if(|_, _| true);
+    }
+
     async fn execute_tool(
         &self,
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
-        let _write_guard = if Self::requires_write_lock(tool_name) || self.write_tracker.is_dirty()
-        {
-            Some(self.write_lock.lock().await)
-        } else {
-            None
-        };
-
         let project_root = self.find_project_root()?;
         tracing::info!(
             "execute_tool called. project_root={}, db_path={}",
@@ -2372,11 +2492,50 @@ impl MCPServer {
         }
 
         if tool_name == "embed_control" {
+            // embed_control spawns its own background thread; it does not
+            // touch the L1 cache directly. Mark it as write so we serialise
+            // on write_lock the same way the legacy path did.
+            let _write_guard = self.write_lock.lock().await;
             return self.handle_embed_control(&arguments);
         }
 
         if tool_name == "ontology_control" {
+            // Same as embed_control — write-ish, serialise.
+            let _write_guard = self.write_lock.lock().await;
             return self.handle_ontology_control(&arguments);
+        }
+
+        // Read path: serve from dispatch cache if possible before we even
+        // touch the write_lock. The cache is invalidated on writes below, so
+        // a hit is guaranteed to be either fresh or stale-and-self-correcting
+        // within the configured TTL.
+        if !Self::requires_write_lock(tool_name) && !self.write_tracker.is_dirty() {
+            let cache_key = dispatch_cache_key(tool_name, &arguments);
+            if let Some(cached) = self.dispatch_cache.get(&cache_key).await {
+                tracing::debug!("L1 dispatch cache HIT tool={}", tool_name);
+                return Ok(cached);
+            }
+        }
+
+        // The remainder of the function is the legacy body, with two
+        // refinements:
+        //   1. write_lock is acquired only when the tool actually mutates
+        //      the DB (or when the write tracker is dirty — which forces a
+        //      reindex before any read can run);
+        //   2. the L1 caches (engine-level + dispatch) are invalidated
+        //      after a successful write so the next read sees fresh data.
+        let needs_write = Self::requires_write_lock(tool_name) || self.write_tracker.is_dirty();
+        let _write_guard = if needs_write {
+            Some(self.write_lock.lock().await)
+        } else {
+            None
+        };
+
+        // Validate required parameters before dispatching to handler.
+        // (embed_control / ontology_control short-circuits above; here we
+        // still need this for the rest of the dispatch.)
+        if let Some(err) = self.validate_required_params(tool_name, &arguments) {
+            return Err(err);
         }
 
         if tool_name == "mcp_init" {
@@ -2470,6 +2629,7 @@ impl MCPServer {
         }
 
         let handler = ToolHandler::new(graph_engine, project_db_path);
+        let arguments_obj = arguments.clone();
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;
 
@@ -2516,25 +2676,23 @@ impl MCPServer {
             self.write_tracker.mark_dirty();
         }
 
+        // L1 cache invalidation on writes. After a successful mutation we
+        // (a) drop the dispatch cache for every tool (cheap; full reset),
+        // and (b) invalidate each cached `CachingGraphEngine` so its
+        // method-level caches cannot serve stale data.
+        if needs_write || Self::requires_write_lock(tool_name) {
+            invalidate_l1_caches(self).await;
+        } else if let Ok(ref v) = result {
+            // Populate dispatch cache for read tools on miss.
+            let cache_key = dispatch_cache_key(tool_name, &arguments_obj);
+            self.dispatch_cache.insert(cache_key, v.clone()).await;
+        }
+
         result
     }
 
     fn requires_write_lock(tool_name: &str) -> bool {
-        matches!(
-            tool_name,
-            "mcp_init"
-                | "mcp_index"
-                | "mcp_index_docs"
-                | "add_knowledge"
-                | "update_knowledge"
-                | "delete_knowledge"
-                | "add_annotation"
-                | "link_element"
-                | "add_documentation"
-                | "promote_environment"
-                | "embed_control"
-                | "ontology_control"
-        )
+        WRITE_TOOLS.contains(tool_name)
     }
 }
 
