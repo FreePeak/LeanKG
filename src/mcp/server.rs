@@ -10,7 +10,7 @@ use crate::mcp::watcher::start_watcher;
 use crate::orchestrator::intent::IntentParser;
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Query, State},
     http::{header, HeaderMap, Method, StatusCode},
     response::Response,
     routing::get,
@@ -3251,10 +3251,92 @@ async fn process_jsonrpc_request(
     }
 }
 
+/// Build the SSE endpoint URL advertised to the client during the SSE
+/// discovery handshake. Preserves the `?project=` query string from the
+/// incoming GET request so that Cursor's streamable-HTTP MCP transport
+/// POSTs subsequent JSON-RPC calls to the correct project instead of
+/// falling back to the CLI default project.
+///
+/// `project = None` and `project = Some("")` both produce the bare path,
+/// matching the original (buggy) behavior for clients that did not pass
+/// the query string.
+pub(crate) fn discovery_endpoint_url(project: Option<&str>) -> String {
+    match project.filter(|p| !p.is_empty()) {
+        Some(p) => format!("/mcp?project={}", percent_encode_path(p)),
+        None => "/mcp".to_string(),
+    }
+}
+
+/// Percent-encode a path/query value using RFC 3986 unreserved set
+/// (`A-Z a-z 0-9 - . _ ~`). UTF-8 is preserved byte-by-byte so the result
+/// is safe to round-trip through `percent_decode_path` for any string.
+fn percent_encode_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push('%');
+                out.push_str(&format!("{:02X}", b));
+            }
+        }
+    }
+    out
+}
+
+/// Percent-decode a previously-encoded path/query value. Operates on bytes
+/// to preserve UTF-8 sequences; invalid UTF-8 falls back to lossy decoding
+/// so callers always receive a valid `String`.
+fn percent_decode_path(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Build the SSE endpoint-discovery response. Pure helper so the wire
+/// format is unit-testable without standing up a full Router / State.
+fn build_sse_endpoint_response(project_query: Option<&str>) -> Response {
+    let sse_data = format!(
+        "event: endpoint\ndata: {}\n\n",
+        discovery_endpoint_url(project_query)
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .body(Body::from(sse_data))
+        .unwrap()
+}
+
 /// Handle GET /mcp/stream - SSE endpoint for server-initiated messages
 async fn handle_sse_stream(
     State(server): State<Arc<HttpMcpServer>>,
     headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
 ) -> Response {
     // Extract Authorization header
     let auth_value = headers
@@ -3272,18 +3354,12 @@ async fn handle_sse_stream(
         }
     };
 
-    // For now, return an SSE stream that sends an endpoint message
-    // In a full implementation, this would maintain a persistent connection
-    // for server-initiated notifications
-    let sse_data = "event: endpoint\ndata: /mcp\n\n";
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .body(Body::from(sse_data))
-        .unwrap()
+    // Preserve the `?project=` query string from the incoming GET so that
+    // Cursor's streamable-HTTP MCP transport routes subsequent JSON-RPC
+    // calls to the correct project instead of falling back to the CLI
+    // default. See docs/analysis/fix-mcp-sse-discovery-preserve-project-2026-07-30.md
+    let project_query = query.get("project").map(String::as_str);
+    build_sse_endpoint_response(project_query)
 }
 
 /// Health check endpoint
@@ -3586,5 +3662,86 @@ mod tests {
             "/workspace"
         ));
         assert!(!MCPServer::is_primary_project("/workspace/", "/workspace"));
+    }
+
+    // --- SSE endpoint discovery: preserve ?project= query ----------------
+    // Bug: src/mcp/server.rs hardcodes the SSE "endpoint" event to
+    // `data: /mcp` regardless of the incoming ?project= query string, which
+    // causes Cursor's streamable-HTTP MCP transport to drop the project
+    // override and fall back to LEANKG_MCP_PROJECT (= /workspace).
+    // See docs/analysis/fix-mcp-sse-discovery-preserve-project-2026-07-30.md
+
+    #[test]
+    fn returns_just_mcp_when_project_is_none() {
+        assert_eq!(discovery_endpoint_url(None), "/mcp");
+    }
+
+    #[test]
+    fn returns_mcp_with_query_when_project_is_set() {
+        // The encoder escapes `/` per RFC 3986 so the receiver can never
+        // confuse the value with a path delimiter.
+        assert_eq!(
+            discovery_endpoint_url(Some("/workspace-be")),
+            "/mcp?project=%2Fworkspace-be"
+        );
+    }
+
+    #[test]
+    fn treats_empty_project_as_none() {
+        assert_eq!(discovery_endpoint_url(Some("")), "/mcp");
+    }
+
+    #[test]
+    fn encodes_spaces_and_special_chars() {
+        // '/' is reserved-as-safe and MUST be percent-encoded per RFC 3986,
+        // otherwise the receiving parser would see two `project=` segments.
+        // ' ' and '?' are reserved and MUST be percent-encoded.
+        assert_eq!(
+            discovery_endpoint_url(Some("/workspace foo?bar")),
+            "/mcp?project=%2Fworkspace%20foo%3Fbar"
+        );
+    }
+
+    #[test]
+    fn handles_unicode_path() {
+        // Non-ASCII bytes must round-trip through encode → server's existing
+        // query-string parser without data loss.
+        let original = "/workspace/дөлөө";
+        let url = discovery_endpoint_url(Some(original));
+        assert!(
+            url.starts_with("/mcp?project="),
+            "endpoint must keep /mcp?project= prefix, got {url}"
+        );
+        let encoded = url.trim_start_matches("/mcp?project=");
+        let decoded = percent_decode_path(encoded);
+        assert_eq!(decoded, original, "round-trip must preserve UTF-8");
+    }
+
+    #[tokio::test]
+    async fn sse_response_preserves_project_in_data_event() {
+        use axum::body::to_bytes;
+        let resp = build_sse_endpoint_response(Some("/workspace-be"));
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            &body[..],
+            b"event: endpoint\ndata: /mcp?project=%2Fworkspace-be\n\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn sse_response_omits_query_when_project_is_none() {
+        use axum::body::to_bytes;
+        let resp = build_sse_endpoint_response(None);
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], b"event: endpoint\ndata: /mcp\n\n");
+    }
+
+    #[tokio::test]
+    async fn sse_response_uses_text_event_stream_content_type() {
+        // Cursor's streamable-HTTP transport rejects discovery responses
+        // that don't carry the SSE content type.
+        let resp = build_sse_endpoint_response(Some("/workspace-be"));
+        let ct = resp.headers().get(header::CONTENT_TYPE).unwrap();
+        assert_eq!(ct, "text/event-stream");
     }
 }
