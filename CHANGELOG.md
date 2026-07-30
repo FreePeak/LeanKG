@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.25](https://github.com/FreePeak/LeanKG/compare/v0.19.24...v0.19.25) (2026-07-30)
+
+
+### Bug Fixes
+
+* **mcp:** preserve ?project= in SSE endpoint discovery ([#153](https://github.com/FreePeak/LeanKG/issues/153)) ([30a4e4b](https://github.com/FreePeak/LeanKG/commit/30a4e4b4d5938924bc4fffedbbd1bd3faa49a688))
+
 ## [0.19.24](https://github.com/FreePeak/LeanKG/compare/v0.19.23...v0.19.24) (2026-07-30)
 
 
