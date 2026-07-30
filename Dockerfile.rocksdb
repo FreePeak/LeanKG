@@ -17,7 +17,7 @@
 FROM node:20-bookworm AS ui
 WORKDIR /ui
 COPY ui-v2/package.json ui-v2/package-lock.json ./
-RUN npm ci
+RUN npm ci --omit= --include=dev
 COPY ui-v2/ ./
 RUN npm run build
 
