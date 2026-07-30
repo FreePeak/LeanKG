@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.24](https://github.com/FreePeak/LeanKG/compare/v0.19.23...v0.19.24) (2026-07-30)
+
+
+### Performance
+
+* **indexer + embed:** 5-min auto-index SLA + mark_stale bridge + 4x embed throughput ([#151](https://github.com/FreePeak/LeanKG/issues/151)) ([2f6c38e](https://github.com/FreePeak/LeanKG/commit/2f6c38e60ccadb636f3ced4fb351f631adfda723))
+
 ## [0.19.23](https://github.com/FreePeak/LeanKG/compare/v0.19.22...v0.19.23) (2026-07-29)
 
 
