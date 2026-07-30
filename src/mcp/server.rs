@@ -120,7 +120,7 @@ pub struct MCPServer {
     auth_manager: Arc<TokioRwLock<AuthManager>>,
     db_path: Arc<RwLock<PathBuf>>,
     graph_engine: Arc<parking_lot::Mutex<Option<GraphEngine>>>,
-    graph_engine_cache: Arc<RwLock<HashMap<PathBuf, GraphEngine>>>,
+    graph_engine_cache: Arc<parking_lot::Mutex<HashMap<PathBuf, GraphEngine>>>,
     /// Per-project `CachingGraphEngine` keyed by project DB path. Built lazily
     /// on first read after a fresh `GraphEngine` is opened, and invalidated
     /// whenever the underlying engine is dropped (mcp_init / mcp_index /
@@ -185,7 +185,7 @@ impl MCPServer {
             auth_manager: Arc::new(TokioRwLock::new(AuthManager::with_default_token())),
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
-            graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            graph_engine_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             dispatch_cache: build_dispatch_cache(),
             watch_path: None,
@@ -205,7 +205,7 @@ impl MCPServer {
             auth_manager: Arc::new(TokioRwLock::new(AuthManager::with_default_token())),
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
-            graph_engine_cache: Arc::new(RwLock::new(HashMap::new())),
+            graph_engine_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             dispatch_cache: build_dispatch_cache(),
             watch_path: Some(watch_path),
@@ -387,13 +387,6 @@ impl MCPServer {
                 .unwrap_or_else(|| self.get_db_path())
         };
 
-        {
-            let cache = self.graph_engine_cache.read();
-            if let Some(ge) = cache.get(&project_db_path) {
-                return Ok(ge.clone());
-            }
-        }
-
         let project_db_path = match project_db_path.canonicalize() {
             Ok(p) => p,
             Err(_) if project_db_path.is_absolute() => project_db_path,
@@ -419,6 +412,14 @@ impl MCPServer {
             );
         }
 
+        // Single critical section: cache check + init_db + cache insert.
+        // The Mutex must be held across init_db so concurrent callers serialize
+        // the RocksDB open (one-writer-per-path) instead of racing.
+        let mut cache = self.graph_engine_cache.lock();
+        if let Some(ge) = cache.get(&project_db_path) {
+            return Ok(ge.clone());
+        }
+
         tracing::debug!("Initializing database at: {}", project_db_path.display());
         let db = if self.read_only {
             crate::db::schema::init_db_readonly(&project_db_path)
@@ -427,12 +428,7 @@ impl MCPServer {
             init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?
         };
         let ge = GraphEngine::with_persistence(db);
-
-        {
-            let mut cache = self.graph_engine_cache.write();
-            cache.insert(project_db_path.clone(), ge.clone());
-        }
-
+        cache.insert(project_db_path.clone(), ge.clone());
         Ok(ge)
     }
 
@@ -1056,7 +1052,7 @@ impl MCPServer {
         if crate::ontology::spawn_ontology_yaml_watcher(project_root, graph, move |_stats| {
             let mut guard = me.graph_engine.lock();
             *guard = None;
-            let mut cache = me.graph_engine_cache.write();
+            let mut cache = me.graph_engine_cache.lock();
             cache.clear();
         })
         .is_some()
@@ -1087,7 +1083,7 @@ impl MCPServer {
                 );
                 let mut guard = self.graph_engine.lock();
                 *guard = None;
-                let mut cache = self.graph_engine_cache.write();
+                let mut cache = self.graph_engine_cache.lock();
                 cache.clear();
             }
             Err(e) => {
@@ -1130,7 +1126,7 @@ impl MCPServer {
                     *guard = None;
                 }
                 {
-                    let mut cache = self.graph_engine_cache.write();
+                    let mut cache = self.graph_engine_cache.lock();
                     cache.clear();
                 }
                 Ok(serde_json::json!({
@@ -1934,7 +1930,7 @@ impl MCPServer {
         // Give the watcher (~250ms poll) a moment to exit after shutdown_flag.
         tokio::time::sleep(Duration::from_millis(300)).await;
         {
-            let mut cache = self.graph_engine_cache.write();
+            let mut cache = self.graph_engine_cache.lock();
             let n = cache.len();
             cache.clear();
             if n > 0 {
@@ -2729,7 +2725,7 @@ impl MCPServer {
         ) {
             let mut guard = self.graph_engine.lock();
             *guard = None;
-            let mut cache = self.graph_engine_cache.write();
+            let mut cache = self.graph_engine_cache.lock();
             cache.clear();
         }
 

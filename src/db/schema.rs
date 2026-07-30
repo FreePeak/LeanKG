@@ -410,8 +410,11 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
             tracing::debug!("target_qualified index may already exist: {:?}", e);
         }
 
-        // NOTE: source_qualified_index is created for each DB to avoid migration issues
-        // See get_relationships_for_elements_optimized in query.rs
+        let create_source_index =
+            r#"::index create relationships:source_qualified_index { source_qualified }"#;
+        if let Err(e) = run_script(db, create_source_index, Default::default()) {
+            tracing::debug!("source_qualified index may already exist: {:?}", e);
+        }
 
         validate_relationships_schema(db)?;
     }

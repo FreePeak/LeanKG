@@ -175,6 +175,13 @@ pub fn count_embedding_vectors(db: &CozoDb) -> Result<usize, Box<dyn std::error:
 
 /// Soft embed budget: fraction of cgroup mem limit, clamped by `LEANKG_EMBED_MAX_MB`.
 pub fn resolve_partial_embed_budget_mb(rss_fraction: f64) -> u64 {
+    // Honor the explicit "no cap" sentinel: LEANKG_EMBED_MAX_MB=0 means
+    // "use whatever fits". Without this, the cgroup-based budget overrides
+    // the intent and the embed stalls on every batch.
+    let hard = super::build::embed_max_rss_mb();
+    if hard == 0 {
+        return u64::MAX;
+    }
     let fraction = if rss_fraction > 0.0 && rss_fraction <= 1.0 {
         rss_fraction
     } else {
@@ -186,7 +193,6 @@ pub fn resolve_partial_embed_budget_mb(rss_fraction: f64) -> u64 {
     } else {
         0
     };
-    let hard = super::build::embed_max_rss_mb();
     let mut budget = if from_fraction > 0 {
         from_fraction
     } else if hard > 0 {

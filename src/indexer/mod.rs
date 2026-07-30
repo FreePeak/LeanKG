@@ -835,7 +835,7 @@ pub fn index_files_parallel_with_typed_resolve(
         let total_elements = all_elements.len();
         const ELEM_BATCH_SIZE: usize = 5000;
         for (i, chunk) in all_elements.chunks(ELEM_BATCH_SIZE).enumerate() {
-            graph.insert_elements(chunk)?;
+            graph.insert_elements_with(chunk, true)?;
             if verbose {
                 let progress = ((i + 1) * ELEM_BATCH_SIZE).min(total_elements);
                 eprint!("\r  Inserted {}/{} elements", progress, total_elements);
@@ -877,7 +877,7 @@ pub fn index_files_parallel_with_typed_resolve(
         let total_rels = all_relationships.len();
         const REL_BATCH_SIZE: usize = 5000;
         for (i, chunk) in all_relationships.chunks(REL_BATCH_SIZE).enumerate() {
-            graph.insert_relationships(chunk)?;
+            graph.insert_relationships_with(chunk, true)?;
             if verbose {
                 let progress = ((i + 1) * REL_BATCH_SIZE).min(total_rels);
                 eprint!("\r  Inserted {}/{} relationships", progress, total_rels);
@@ -919,8 +919,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -932,8 +932,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -946,8 +946,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -957,8 +957,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -978,8 +978,8 @@ pub fn index_file_sync(
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
-        let _ = graph.insert_elements(&elements);
-        let _ = graph.insert_relationships(&relationships);
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
 
@@ -1103,15 +1103,12 @@ pub fn index_file_sync(
         resolve_go_imports(&mut relationships, file_path, language);
     }
 
-    let _ = graph.insert_elements(&elements);
-    let _ = graph.insert_relationships(&relationships);
+    let _ = graph.insert_elements_with(&elements, true);
+    let _ = graph.insert_relationships_with(&relationships, true);
 
-    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {
-        tracing::warn!(
-            "index_inventory refresh after index_file_sync failed: {}",
-            e
-        );
-    }
+    // Inventory refresh is deferred to end-of-batch in incremental_index_sync
+    // (refresh_index_inventory scans every code_elements + relationships row
+    // and was the dominant cost per file on a 3M-row graph).
 
     Ok(elements.len())
 }
@@ -1121,10 +1118,67 @@ pub fn reindex_file_sync(
     parser_manager: &mut ParserManager,
     file_path: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    graph.remove_elements_by_file(file_path)?;
-    graph.remove_relationships_by_source(file_path)?;
+    reindex_file_sync_inner(graph, parser_manager, file_path, true)
+}
 
+pub fn reindex_new_file_sync(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    reindex_file_sync_inner(graph, parser_manager, file_path, false)
+}
+
+/// Reindex a file WITHOUT touching the DB for remove. Use this for bulk batches
+/// where removes are batched at end via remove_elements_by_files_bulk and
+/// remove_relationships_by_files_bulk — the per-file rm scan over 3M rows
+/// was 2.6s/file on the 3833-file cold start, dominating total runtime.
+pub fn reindex_skip_remove_sync(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
     index_file_sync(graph, parser_manager, file_path)
+}
+
+fn reindex_file_sync_inner(
+    graph: &GraphEngine,
+    parser_manager: &mut ParserManager,
+    file_path: &str,
+    needs_remove: bool,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let t0 = std::time::Instant::now();
+    if needs_remove {
+        graph.remove_elements_by_file_bulk(file_path)?;
+        let t1 = std::time::Instant::now();
+        graph.remove_relationships_by_source_bulk(file_path)?;
+        let t2 = std::time::Instant::now();
+        let n = index_file_sync(graph, parser_manager, file_path)?;
+        let t3 = std::time::Instant::now();
+        if (t3 - t0).as_millis() > 200 {
+            tracing::warn!(
+                "reindex_breakdown remove_el={}ms remove_rel={}ms index={}ms total={}ms path={}",
+                (t1 - t0).as_millis(),
+                (t2 - t1).as_millis(),
+                (t3 - t2).as_millis(),
+                (t3 - t0).as_millis(),
+                file_path
+            );
+        }
+        Ok(n)
+    } else {
+        let n = index_file_sync(graph, parser_manager, file_path)?;
+        let t1 = std::time::Instant::now();
+        if (t1 - t0).as_millis() > 200 {
+            tracing::warn!(
+                "reindex_breakdown NEW_FILE skip_remove index={}ms total={}ms path={}",
+                (t1 - t0).as_millis(),
+                (t1 - t0).as_millis(),
+                file_path
+            );
+        }
+        Ok(n)
+    }
 }
 
 pub struct IncrementalIndexResult {
@@ -1132,6 +1186,54 @@ pub struct IncrementalIndexResult {
     pub dependent_files: Vec<String>,
     pub total_files_processed: usize,
     pub elements_indexed: usize,
+}
+
+/// Mark every code_element whose file_path is in `files` as stale in
+/// `embedding_state`. This is the bridge between the indexer and the
+/// embed scheduler — without it, the auto-index path inserts elements
+/// but never flags them stale, so the HNSW stays empty.
+///
+/// Looks up qualified_names per file (one indexed query each), then
+/// issues a single `mark_stale_for_qualified_names` CozoDB call.
+/// One bulk call at end of batch avoids per-file DB round-trips.
+#[cfg(feature = "embeddings")]
+pub fn mark_files_stale(
+    graph: &GraphEngine,
+    files: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let mark_start = std::time::Instant::now();
+    // Single bulk query: collect every qualified_name whose file_path
+    // is in `files`. Uses the file_path index from commit 8132a5b so the
+    // join is O(matching) instead of O(3M). Per-file loops were 3834
+    // sequential CozoDB round-trips on a 3K-file cold start (hours).
+    let query = r#"?[qualified_name] := *code_elements[qualified_name, _, _, file_path, _, _, _, _, _, _, _, _, _], file_path in $fps"#.to_string();
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "fps".to_string(),
+        serde_json::Value::Array(
+            files
+                .iter()
+                .map(|f| serde_json::Value::String(f.to_string()))
+                .collect(),
+        ),
+    );
+    let result = crate::db::schema::run_script(graph.db(), &query, params)?;
+    let all_qns: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+        .collect();
+    crate::embeddings::state::mark_stale_for_qualified_names(graph.db(), &all_qns)?;
+    tracing::info!(
+        "embedding_state stale-mark: {} qualified_names from {} files took {}ms",
+        all_qns.len(),
+        files.len(),
+        mark_start.elapsed().as_millis()
+    );
+    Ok(())
 }
 
 pub async fn incremental_index_sync(
@@ -1167,16 +1269,9 @@ pub async fn incremental_index_sync(
         })
         .collect();
 
-    let mut all_changed: Vec<String> = Vec::new();
-    all_changed.extend(changed.modified);
-    all_changed.extend(changed.added);
-    all_changed.extend(changed.deleted);
-
-    let untracked = crate::indexer::git_workspace::workspace_untracked_files(root)?;
-    let indexable_untracked = filter_indexable_files(&untracked);
-    all_changed.extend(indexable_untracked);
-
-    let changed_files: Vec<String> = all_changed
+    // Modified files: have prior rows in the DB, need remove + reindex.
+    let modified_files: Vec<String> = changed
+        .modified
         .iter()
         .map(|f| {
             if std::path::Path::new(f).is_absolute() {
@@ -1186,6 +1281,34 @@ pub async fn incremental_index_sync(
             }
         })
         .collect();
+
+    // New files: never been indexed, skip the rm scan over 3M+ rows.
+    let untracked = crate::indexer::git_workspace::workspace_untracked_files(root)?;
+    let indexable_untracked = filter_indexable_files(&untracked);
+    let mut new_files: Vec<String> = Vec::new();
+    new_files.extend(changed.added.iter().map(|f| {
+        if std::path::Path::new(f).is_absolute() {
+            f.clone()
+        } else {
+            format!("{}/{}", workspace_root, f)
+        }
+    }));
+    new_files.extend(indexable_untracked.iter().map(|f| {
+        if std::path::Path::new(f).is_absolute() {
+            f.clone()
+        } else {
+            format!("{}/{}", workspace_root, f)
+        }
+    }));
+
+    let changed_files: Vec<String> = {
+        let mut v =
+            Vec::with_capacity(modified_files.len() + new_files.len() + deleted_files.len());
+        v.extend(modified_files.iter().cloned());
+        v.extend(new_files.iter().cloned());
+        v.extend(deleted_files.iter().cloned());
+        v
+    };
 
     for deleted_file in &deleted_files {
         graph.remove_elements_by_file(deleted_file)?;
@@ -1228,28 +1351,54 @@ pub async fn incremental_index_sync(
         dependent_files.dedup();
     }
 
-    let mut all_files_to_process: Vec<String> = Vec::new();
+    let mut needs_remove_files: Vec<String> = Vec::new();
+    let mut new_files_to_process: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    for f in &changed_files {
+    // Modified files: rm-then-insert path (file is already in DB).
+    for f in &modified_files {
         if !seen.contains(f) {
-            all_files_to_process.push(f.clone());
+            needs_remove_files.push(f.clone());
             seen.insert(f.clone());
         }
     }
+    // Dependent files: depend on a modified file, may have stale data. Same path.
     for f in &dependent_files {
         if !seen.contains(f) {
-            all_files_to_process.push(f.clone());
+            needs_remove_files.push(f.clone());
+            seen.insert(f.clone());
+        }
+    }
+    // New files: skip the rm scan over 3M+ rows.
+    for f in &new_files {
+        if !seen.contains(f) {
+            new_files_to_process.push(f.clone());
             seen.insert(f.clone());
         }
     }
 
     let mut total_elements = 0;
     let mut files_processed = 0;
+    let index_start = std::time::Instant::now();
+    let mut last_progress_log = std::time::Instant::now();
 
-    for file_path in &all_files_to_process {
+    let total_to_process = needs_remove_files.len() + new_files_to_process.len();
+    let mut i = 0usize;
+    for file_path in needs_remove_files.iter().chain(new_files_to_process.iter()) {
+        i += 1;
+        let file_start = std::time::Instant::now();
+        // Bulk path: insert-only (no per-file rm). Single batched rm runs
+        // after the loop with `file_path in $list`. This trades one full
+        // scan over code_elements/relationships for N per-file scans
+        // (~3M-row scan was 2.6s/file on cold start).
+        let in_new = new_files_to_process.iter().any(|n| n == file_path);
         if std::path::Path::new(file_path).exists() {
-            match reindex_file_sync(graph, parser_manager, file_path) {
+            let result = if in_new {
+                reindex_new_file_sync(graph, parser_manager, file_path)
+            } else {
+                reindex_skip_remove_sync(graph, parser_manager, file_path)
+            };
+            match result {
                 Ok(count) => {
                     if count > 0 {
                         total_elements += count;
@@ -1261,6 +1410,80 @@ pub async fn incremental_index_sync(
                 }
             }
         }
+        let file_ms = file_start.elapsed().as_millis();
+        // Per-file slow log: >500ms per file on a 3K-file batch indicates a
+        // bottleneck (CozoDB write, fs read, parser) worth investigating.
+        if file_ms > 500 {
+            tracing::warn!("slow reindex {}ms for {}", file_ms, file_path);
+        }
+        // Progress every 10s so operators can see throughput + ETA on large
+        // catch-up batches (e.g. 3K+ changed files after a long offline gap).
+        if last_progress_log.elapsed() >= std::time::Duration::from_secs(10) {
+            let elapsed = index_start.elapsed().as_secs_f64();
+            let per_file = if i > 0 { elapsed / i as f64 } else { 0.0 };
+            let eta_s = per_file * (total_to_process - i) as f64;
+            tracing::info!(
+                "incremental_index: {}/{} files, {} elements, {:.2}s elapsed, ETA {:.0}s",
+                i + 1,
+                total_to_process,
+                total_elements,
+                elapsed,
+                eta_s,
+            );
+            last_progress_log = std::time::Instant::now();
+        }
+    }
+
+    // Single bulk rm at the end of the batch: one CozoDB query that scans
+    // code_elements + relationships ONCE instead of once per file.
+    let rm_start = std::time::Instant::now();
+    if let Err(e) = graph.remove_elements_by_files_bulk(&needs_remove_files) {
+        tracing::warn!("bulk remove_elements failed: {}", e);
+    }
+    if let Err(e) = graph.remove_relationships_by_files_bulk(&needs_remove_files) {
+        tracing::warn!("bulk remove_relationships failed: {}", e);
+    }
+    tracing::info!(
+        "bulk rm for {} files took {}ms",
+        needs_remove_files.len(),
+        rm_start.elapsed().as_millis()
+    );
+
+    // Single bulk cache clear at the end of the batch. Per-file invalidation
+    // was the bottleneck: each insert/remove spawned an async task that hit
+    // the persistent cache (disk). With 3K+ files this added seconds per
+    // file and pushed total runtime to hours.
+    graph.clear_cache().await;
+
+    // Mark every inserted (qualified_name, file_path) stale in embedding_state
+    // so the embed scheduler picks them up. Without this, the auto-index path
+    // inserts code elements but never flags them stale, leaving the HNSW
+    // permanently empty across restarts (stale_rows=98 work=0).
+    //
+    // One bulk call at end of batch: O(touched_files) file-by-file queries,
+    // each an indexed lookup by file_path (the fix in commit 8132a5b added
+    // that index for code_elements).
+    #[cfg(feature = "embeddings")]
+    {
+        let touched_files: Vec<&String> = needs_remove_files
+            .iter()
+            .chain(new_files_to_process.iter())
+            .collect();
+        if let Err(e) = mark_files_stale(
+            graph,
+            &touched_files.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        ) {
+            tracing::warn!("mark_files_stale failed: {}", e);
+        }
+    }
+
+    // Inventory refresh: scans every code_elements + relationships row, so
+    // do it ONCE at the end of the batch rather than per file.
+    if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {
+        tracing::warn!(
+            "index_inventory refresh at end of incremental_index_sync failed: {}",
+            e
+        );
     }
 
     Ok(IncrementalIndexResult {
@@ -1392,7 +1615,7 @@ where
     }
 
     if !all_relationships.is_empty() {
-        if let Err(e) = graph.insert_relationships(&all_relationships) {
+        if let Err(e) = graph.insert_relationships_with(&all_relationships, true) {
             tracing::warn!("Failed to batch insert relationships: {}", e);
         }
     }
