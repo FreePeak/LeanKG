@@ -67,11 +67,12 @@ assert_contains "leankg publishes serve :8080" 'published: "8080"' "$ENTERPRISE"
 # on the Docker VM's real loopback, reachable via host.docker.internal).
 assert_contains "cozoserver network_mode host" \
     "network_mode: host" "$ENTERPRISE"
-# Side mounts present with neutral defaults (/workspace/other, /workspace/other2).
-# Local operators override these to real nicknames (e.g. /workspace/be) in
-# the gitignored .dockerfile, keeping tracked files free of service nicknames.
-assert_contains "side mount /workspace/other present" "/workspace/other" "$ENTERPRISE"
-assert_contains "side mount /workspace/other2 present" "/workspace/other2" "$ENTERPRISE"
+# Regression guard: /workspace/other2 was removed because it silently mounted
+# the primary host dir again when HOST_PROJECT_SECOND_SIDE_PATH was unset.
+# The first side mount target defaults to /workspace/other but local operators
+# override CONTAINER_PROJECT_SIDE_PATH in .dockerfile, so we don't assert a
+# specific resolved target here.
+assert_not_contains "no /workspace/other2 mount" "/workspace/other2" "$ENTERPRISE"
 assert_contains "cozo-data named volume" "cozo-data:" "$ENTERPRISE"
 assert_contains "leankg_models named volume" "leankg_models:" "$ENTERPRISE"
 

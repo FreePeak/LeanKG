@@ -5043,7 +5043,18 @@ fn run_hnsw_semantic_search(
         .collect();
     let productive_upper_seed_count = productive_upper_seeds.len();
 
-    Ok(json!({
+    // P0: an empty page is ambiguous. Only pay for the vector count once we
+    // already know there is nothing to return.
+    let vectors_missing_note =
+        if should_check_vectors_missing(retrieval.ann_candidate_count, page.is_empty()) {
+            vectors_missing_hint(
+                crate::embeddings::control::count_embedding_vectors(engine.db()).unwrap_or(0),
+            )
+        } else {
+            None
+        };
+
+    let mut out = json!({
         "query": query,
         "env": env,
         "limit": limit,
@@ -5067,7 +5078,12 @@ fn run_hnsw_semantic_search(
             "traversed_after_dedup": traversed_after_dedup,
             "other_dropped": other_dropped,
         },
-    }))
+    });
+    if let Some(hint) = vectors_missing_note {
+        out["vectors_missing"] = Value::Bool(true);
+        out["hint"] = Value::String(hint.to_string());
+    }
+    Ok(out)
 }
 
 /// Min/max of a non-empty f32 slice; `(0.0, 0.0)` when empty (the
@@ -5106,9 +5122,57 @@ fn normalize(x: f32, min: f32, max: f32) -> f32 {
     n.clamp(0.0, 1.0)
 }
 
+/// An empty ANN result can mean "nothing matched" or "this project has no
+/// vectors at all". Only the second is actionable, and it is only worth a DB
+/// count once the result set is already empty — the happy path stays free.
+#[cfg(feature = "embeddings")]
+pub(crate) fn should_check_vectors_missing(
+    ann_candidate_count: usize,
+    results_empty: bool,
+) -> bool {
+    ann_candidate_count == 0 && results_empty
+}
+
+/// Caller-facing explanation for an empty `semantic_search`. Without this a
+/// `status: ok` + `results: []` payload is indistinguishable from a broken
+/// vector index, and agents abandon the graph instead of falling through to
+/// the name-based tools that still work.
+#[cfg(feature = "embeddings")]
+pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<&'static str> {
+    if total_vectors == 0 {
+        Some(
+            "no embedding vectors for this project, so semantic_search cannot match anything; \
+             use search_code or find_function instead, and run \
+             embed_control action=on force_full=true to build the vectors",
+        )
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "embeddings")]
+    fn empty_semantic_hit_triggers_a_vector_check() {
+        // Only worth a DB count when the result set is already empty — the
+        // happy path must not pay for the diagnostic.
+        assert!(should_check_vectors_missing(0, true));
+        assert!(!should_check_vectors_missing(50, true)); // reranked away
+        assert!(!should_check_vectors_missing(0, false));
+    }
+
+    #[test]
+    #[cfg(feature = "embeddings")]
+    fn vectors_missing_hint_only_when_table_is_empty() {
+        // P0: `status: ok` + `results: []` is indistinguishable from a broken
+        // vector index. Callers need to know a name-based tool would work.
+        let hint = vectors_missing_hint(0).expect("empty vector table must hint");
+        assert!(hint.contains("search_code"));
+        assert!(vectors_missing_hint(1).is_none());
+    }
 
     #[test]
     fn test_generate_review_prompt_empty() {
