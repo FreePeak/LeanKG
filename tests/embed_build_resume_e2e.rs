@@ -8,7 +8,7 @@
 #![cfg(feature = "embeddings")]
 
 use leankg::db::models::CodeElement;
-use leankg::db::schema::init_db;
+use leankg::db::schema::{init_db, run_script};
 use leankg::embeddings::state::{upsert_fresh, FreshRow};
 use leankg::embeddings::text_blob::{build_blob, content_hash_for};
 use leankg::embeddings::{build_index, BuildMode, BuildOptions};
@@ -25,6 +25,19 @@ where
     let db = init_db(db_path.as_path()).expect("init_db");
     let graph = GraphEngine::new(db);
     callback(&graph, &tmp);
+}
+
+/// Real code only ever marks a row fresh *after* writing its vector, so a
+/// fixture with fresh state and no vectors is a state the system cannot
+/// legitimately reach. Seed both to keep the no-op tests honest.
+fn insert_fake_vectors(graph: &GraphEngine, qualified_names: &[String]) {
+    let vector = format!("[{}]", ["0.1"; 384].join(","));
+    for qn in qualified_names {
+        let script = format!(
+            r#"?[qualified_name, vector] <- [["{qn}", {vector}]] :put embedding_vectors {{qualified_name => vector}}"#
+        );
+        run_script(graph.db(), &script, Default::default()).expect("seed embedding_vectors");
+    }
 }
 
 fn make_function(name: &str, file: &str) -> CodeElement {
@@ -66,6 +79,8 @@ fn incremental_build_skips_when_all_rows_fresh() {
             });
         }
         upsert_fresh(graph.db(), &fresh_rows).expect("upsert_fresh");
+        let qns: Vec<String> = elements.iter().map(|e| e.qualified_name.clone()).collect();
+        insert_fake_vectors(graph, &qns);
 
         let index_path = tmp.path().join("dummy.usearch");
         let opts = BuildOptions {
@@ -83,6 +98,53 @@ fn incremental_build_skips_when_all_rows_fresh() {
         );
         assert_eq!(report.considered_count, 3);
         assert_eq!(report.orphaned_count, 0);
+    });
+}
+
+/// P0: `embedding_state` marks every row fresh but `embedding_vectors` is
+/// empty — vectors that the state table describes no longer exist. Incremental
+/// lists stale + orphans only, so without an escape hatch the dirty set is
+/// empty forever and the project can never be embedded again.
+#[test]
+fn incremental_build_rebuilds_when_state_is_fresh_but_vectors_are_gone() {
+    with_test_graph(|graph, tmp| {
+        let elements = vec![
+            make_function("alpha", "src/a.rs"),
+            make_function("beta", "src/b.rs"),
+            make_function("gamma", "src/c.rs"),
+        ];
+        graph.insert_elements(&elements).expect("insert_elements");
+
+        let mut fresh_rows = Vec::with_capacity(elements.len());
+        for el in &elements {
+            let blob = build_blob(el).expect("embeddable function must produce blob");
+            fresh_rows.push(FreshRow {
+                qualified_name: el.qualified_name.clone(),
+                usearch_key: 0,
+                content_hash: content_hash_for(&blob),
+            });
+        }
+        upsert_fresh(graph.db(), &fresh_rows).expect("upsert_fresh");
+        // Deliberately no vectors — this is the /workspace-be state.
+
+        let index_path = tmp.path().join("dummy.usearch");
+        let opts = BuildOptions {
+            mode: BuildMode::Incremental,
+            type_filter: Some(incremental_function_filter()),
+            ..Default::default()
+        };
+
+        let report = build_index(graph, &index_path, &opts).expect("build_index must self-heal");
+
+        assert_eq!(
+            report.embedded_count, 3,
+            "fresh rows with no vectors must be re-embedded, not skipped forever"
+        );
+        assert!(
+            report.index_size >= 3,
+            "vectors must exist after the self-heal, got index_size={}",
+            report.index_size
+        );
     });
 }
 

@@ -324,9 +324,32 @@ pub struct BuildReport {
     pub index_path: PathBuf,
 }
 
+/// `embedding_state` claims rows are fresh while `embedding_vectors` is empty
+/// — the state table is describing vectors that no longer exist (e.g. rows
+/// carried across a storage-backend switch the vectors did not survive).
+///
+/// This matters because `BuildMode::Incremental` lists stale + orphans only
+/// (FR-EMBED-RESUME-07) and never re-scans fresh rows. Without this guard the
+/// dirty set is empty, the rebuild is skipped, and every later resume repeats
+/// the same decision — the project can never be embedded again.
+pub(crate) fn vector_state_inconsistent(vectors_existing: usize, fresh_state_rows: u64) -> bool {
+    vectors_existing == 0 && fresh_state_rows > 0
+}
+
 /// FR-EMBED-RESUME-02: when nothing needs embedding and there are no
 /// orphans to reap, skip HNSW drop+rebuild (day-2 no-op must stay cheap).
-pub(crate) fn should_skip_hnsw_rebuild(to_embed_empty: bool, orphan_empty: bool) -> bool {
+///
+/// Never skip when the state table is lying about existing vectors — that is
+/// the one "nothing to do" that is actually "everything to do".
+pub(crate) fn should_skip_hnsw_rebuild(
+    to_embed_empty: bool,
+    orphan_empty: bool,
+    vectors_existing: usize,
+    fresh_state_rows: u64,
+) -> bool {
+    if vector_state_inconsistent(vectors_existing, fresh_state_rows) {
+        return false;
+    }
     to_embed_empty && orphan_empty
 }
 
@@ -589,6 +612,25 @@ pub fn run(
         );
     }
 
+    // P0 self-heal: the state table describes vectors that no longer exist, so
+    // the Incremental dirty set (stale + orphans) is empty and would stay empty
+    // forever. Escalate to a Full walk — with zero vectors that is also exactly
+    // the right amount of work.
+    let fresh_state_rows = preflight.as_ref().map(|p| p.fresh).unwrap_or(0);
+    if matches!(opts.mode, BuildMode::Incremental)
+        && vector_state_inconsistent(
+            preflight.as_ref().map(|p| p.vectors_existing).unwrap_or(0) as usize,
+            fresh_state_rows,
+        )
+    {
+        tracing::warn!(
+            "embedding_state reports {} fresh rows but 0 vectors exist; \
+             escalating Incremental -> Full to break the resume deadlock",
+            fresh_state_rows
+        );
+        opts.mode = BuildMode::Full;
+    }
+
     // 1. Build dirty work list.
     // Incremental: list_stale/list_orphans only (FR-EMBED-RESUME-07) — never
     // re-scan all fresh rows. Full: paginated / all_elements walk.
@@ -632,7 +674,12 @@ pub fn run(
 
     // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone
     // (and do not load the ONNX model).
-    if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
+    if should_skip_hnsw_rebuild(
+        to_embed.is_empty(),
+        orphan_rows.is_empty(),
+        vectors_existing,
+        fresh_state_rows,
+    ) {
         return nothing_to_embed_report(graph, db, considered.max(skipped_fresh), skipped_fresh);
     }
 
@@ -798,13 +845,33 @@ pub fn build_index_parallel(
 
     let db = graph.db();
 
+    // P0 self-heal (mirrors `run`): `embedding_state` rows that describe
+    // vectors which no longer exist leave the Incremental dirty set
+    // permanently empty. This is the path Docker uses (workers > 1), so the
+    // deadlock reproduces here too.
+    let mut opts = opts.clone();
+    let fresh_state_rows = crate::embeddings::control::embed_resume_preflight(db)
+        .ok()
+        .map(|p| p.fresh)
+        .unwrap_or(0);
+    if matches!(opts.mode, BuildMode::Incremental)
+        && vector_state_inconsistent(count_vectors(db).unwrap_or(0), fresh_state_rows)
+    {
+        tracing::warn!(
+            "embedding_state reports {} fresh rows but 0 vectors exist; \
+             escalating Incremental -> Full to break the resume deadlock",
+            fresh_state_rows
+        );
+        opts.mode = BuildMode::Full;
+    }
+
     // 1. Dirty work list — Incremental uses state table only (no mega walk).
     let (work, orphan_rows, skipped_fresh_hint) = match opts.mode {
         BuildMode::Incremental => {
-            collect_incremental_dirty_work(graph, opts).map_err(|e| e.to_string())?
+            collect_incremental_dirty_work(graph, &opts).map_err(|e| e.to_string())?
         }
         BuildMode::Full => {
-            let w = collect_work_items(graph, opts).map_err(|e| e.to_string())?;
+            let w = collect_work_items(graph, &opts).map_err(|e| e.to_string())?;
             let existing_state: std::collections::HashMap<String, EmbeddingStateRow> =
                 state::list_all(db)
                     .map_err(|e| e.to_string())?
@@ -835,7 +902,12 @@ pub fn build_index_parallel(
     );
 
     // FR-EMBED-RESUME-02: zero-dirty + no orphans → leave HNSW alone.
-    if should_skip_hnsw_rebuild(to_embed.is_empty(), orphan_rows.is_empty()) {
+    if should_skip_hnsw_rebuild(
+        to_embed.is_empty(),
+        orphan_rows.is_empty(),
+        vectors_existing,
+        fresh_state_rows,
+    ) {
         return nothing_to_embed_report(graph, db, considered.max(skipped_fresh), skipped_fresh)
             .map_err(|e| e.to_string());
     }
@@ -1853,10 +1925,40 @@ mod tests {
 
     #[test]
     fn should_skip_hnsw_rebuild_only_when_empty_and_no_orphans() {
-        assert!(should_skip_hnsw_rebuild(true, true));
-        assert!(!should_skip_hnsw_rebuild(false, true));
-        assert!(!should_skip_hnsw_rebuild(true, false));
-        assert!(!should_skip_hnsw_rebuild(false, false));
+        // Healthy graph: vectors present and matching the fresh state rows.
+        assert!(should_skip_hnsw_rebuild(true, true, 100, 100));
+        assert!(!should_skip_hnsw_rebuild(false, true, 100, 100));
+        assert!(!should_skip_hnsw_rebuild(true, false, 100, 100));
+        assert!(!should_skip_hnsw_rebuild(false, false, 100, 100));
+    }
+
+    #[test]
+    fn vector_state_inconsistent_when_state_fresh_but_vectors_gone() {
+        // P0 /workspace-be: 628,259 rows marked fresh in `embedding_state`
+        // while `embedding_vectors` is empty (state survived a storage
+        // backend switch that the vectors did not).
+        assert!(vector_state_inconsistent(0, 628_259));
+    }
+
+    #[test]
+    fn vector_state_consistent_in_normal_cases() {
+        assert!(!vector_state_inconsistent(23_645, 23_645)); // healthy
+        assert!(!vector_state_inconsistent(0, 0)); // never embedded
+        assert!(!vector_state_inconsistent(100, 0)); // vectors, nothing fresh
+    }
+
+    #[test]
+    fn must_not_skip_rebuild_when_vectors_missing_but_state_fresh() {
+        // The deadlock: no stale rows, no orphans, yet zero vectors. Skipping
+        // here is a fixed point — every later resume repeats the decision.
+        assert!(!should_skip_hnsw_rebuild(true, true, 0, 628_259));
+    }
+
+    #[test]
+    fn still_skips_rebuild_on_a_genuine_day2_noop() {
+        // Regression guard for FR-EMBED-RESUME-02: the healthy no-op must
+        // stay cheap and must not load ONNX.
+        assert!(should_skip_hnsw_rebuild(true, true, 628_259, 628_259));
     }
 
     #[test]

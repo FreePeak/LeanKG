@@ -922,6 +922,14 @@ impl MCPServer {
                             "stale": pre.stale,
                             "has_embed_data": pre.has_embed_data,
                         });
+                        // P0: flag a completed embed_status.json that the live
+                        // vector store contradicts, instead of echoing it.
+                        if crate::embeddings::control::file_status_is_stale(
+                            status.get("file_status"),
+                            pre.vectors_existing,
+                        ) {
+                            status["file_status_stale"] = serde_json::Value::Bool(true);
+                        }
                     }
                     if let Ok(Some(inv)) =
                         crate::graph::inventory::load_latest_inventory(graph.db())

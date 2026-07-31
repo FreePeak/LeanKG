@@ -283,6 +283,21 @@ pub fn yield_while_mcp_busy() -> bool {
     }
 }
 
+/// `embed_status.json` can outlive the vectors it describes — a completed run
+/// against a previous storage backend leaves a file claiming success while the
+/// live store holds nothing. Republishing it verbatim next to
+/// `vectors_existing: 0` hides the contradiction from operators.
+pub fn file_status_is_stale(file_status: Option<&Value>, live_vectors: u64) -> bool {
+    if live_vectors > 0 {
+        return false;
+    }
+    file_status
+        .and_then(|v| v.get("status"))
+        .and_then(|s| s.as_str())
+        .map(|s| s == "completed")
+        .unwrap_or(false)
+}
+
 pub fn embed_job_status(leankg_dir: &Path) -> Value {
     let status_path = leankg_dir.join("embed_status.json");
     let lock_path = leankg_dir.join("embed.lock");
@@ -334,6 +349,28 @@ fn detect_cgroup_memory_limit_mb() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_status_stale_when_completed_but_no_live_vectors() {
+        // P0: embed_status.json is a Cozo-era artifact claiming success while
+        // the live RocksDB store holds zero vectors. Republishing it verbatim
+        // tells operators the embed is done when it never ran here.
+        let fs = json!({"status": "completed", "embedded": 628_259});
+        assert!(file_status_is_stale(Some(&fs), 0));
+    }
+
+    #[test]
+    fn file_status_not_stale_when_vectors_present() {
+        let fs = json!({"status": "completed", "embedded": 628_259});
+        assert!(!file_status_is_stale(Some(&fs), 628_259));
+    }
+
+    #[test]
+    fn file_status_not_stale_when_absent_or_still_running() {
+        assert!(!file_status_is_stale(None, 0));
+        let running = json!({"status": "running", "embedded": 10});
+        assert!(!file_status_is_stale(Some(&running), 0));
+    }
 
     #[test]
     fn incremental_hnsw_puts_for_small_dirty() {

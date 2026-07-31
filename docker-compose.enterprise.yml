@@ -69,13 +69,12 @@ services:
     volumes:
       # Primary project: the MCP server's working directory + default project.
       - ${HOST_PROJECT_PATH:-./}:${CONTAINER_PROJECT_PATH:-/workspace}
-      # Side mounts: extra repos the MCP server auto-indexes on boot.
-      # Container paths use neutral defaults (/workspace/other, /workspace/other2).
-      # Override both the host-path and container-path vars in .dockerfile
-      # (gitignored) to point at your environments. entrypoint.sh's /workspace*
-      # glob auto-discovers whatever's mounted here.
+      # Side mount: one extra repo the MCP server auto-indexes on boot.
+      # Container path defaults to /workspace/other — override
+      # CONTAINER_PROJECT_SIDE_PATH in .dockerfile (gitignored) to point at
+      # your environment's nickname (e.g. /workspace-be). entrypoint.sh's
+      # /workspace* glob auto-discovers whatever's mounted here.
       - ${HOST_PROJECT_SIDE_PATH:-${HOST_PROJECT_PATH:-./}}:${CONTAINER_PROJECT_SIDE_PATH:-/workspace/other}
-      - ${HOST_PROJECT_SECOND_SIDE_PATH:-${HOST_PROJECT_PATH:-./}}:${CONTAINER_PROJECT_SECOND_SIDE_PATH:-/workspace/other2}
       # Persist ONNX / tokenizer cache across restarts.
       - leankg_models:/root/.cache/leankg
     working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
