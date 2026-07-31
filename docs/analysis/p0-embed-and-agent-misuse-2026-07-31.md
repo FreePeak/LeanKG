@@ -129,11 +129,43 @@ The fix initially landed only in `run()` (the serial path). `build_index_paralle
 | 5 | Self-heal writes real vectors (`index_size >= 3` after rebuild) | pass |
 | 6 | `cargo fmt --check`; `cargo clippy --features embeddings` | clean (one pre-existing `kind` warning) |
 | 7 | Pre-commit hook on the amended commit | pass |
+<<<<<<< HEAD
 | 8 | `embed_control status` shows `file_status_stale: true` on `/workspace-be` | **not yet** — needs container rebuild |
 | 9 | `embed_control action=on force_full=true` moves `to_embed` off 0 | **not yet** |
 | 10 | The reproduction query returns non-empty `results` | **not yet** |
 
 Items 8–10 require: rebuild binary, rebuild Docker image, restart `leankg-leankg-1`, then re-run. **Not in the commit; tracked as next steps.**
+=======
+| 8 | Linux binary built via `rust:1-bookworm` builder, 105 MB ELF aarch64, deployed via `docker cp` | pass |
+| 9 | Container `/workspace-be` (with workspace mount) + `LEANKG_MCP_PROJECT=/workspace-be`; `/health` returns 200 | pass |
+| 10 | `embed_control status` shows `file_status_stale: true` on `/workspace-be` (file_status.completed but live vectors=0) | pass |
+| 11 | `semantic_search` on the empty-vector project emits `vectors_missing: true` + a hint pointing at `search_code`/`find_function` and the rebuild command | pass |
+| 12 | `search_code("CheckUserPermission")` returns 4 hits (was 0 before the rebuild) | pass |
+| 13 | `find_function("CheckUserPermission")` returns 10 hits including the proto definition | pass |
+| 14 | `embed_control action=on mode=incremental` runs; **51,239 vectors written** to `embedding_vectors` (was 0 before — the deadlock is broken) | pass |
+| 15 | `semantic_search` returns non-empty results (HNSW-recreated path) | **pass** |
+
+#### Item 15 result
+
+`semantic_search("CheckUserPermission merchant login forgot password skip list", limit=10)` on the live container now returns:
+
+```
+status: ok
+ann_candidate_count: 50
+has_more: true
+total_estimate: 50
+method: hnsw+ontology-traverse
+results: element[10]{ann_distance, composite_score, element_type, env, file_path,
+                    hop, qualified_name, rank_score, rerank_score, source,
+                    via_edge, via_upper}
+```
+
+Before the fix this exact query returned `status: ok, results: []` in 13s. After the fix, 10 results in 50s with 50 ANN candidates and `has_more: true`.
+
+**How HNSW was completed without waiting for the full 373k-item embed:** the 373k embed stalled at 197,408 / 373,593 after 1.5h due to RSS throttling. With 51,239 vectors in the table (the embed wrote them but the bulk-insert loop never finished, so HNSW was never recreated), the deadlock was verifiably broken but `semantic_search` errored with `Index vec_idx not found`. After stopping the running `leankg-leankg-1` to release the DB lock, a one-shot `leankg status` invocation recreated the HNSW on the existing 51,239 vectors (`created HNSW index embedding_vectors:vec_idx` in the log). Restarting the MCP server, `semantic_search` returns 10 hits.
+
+This is the deadlock reproduction query from the original P0 transcript. **End-to-end verified.**
+>>>>>>> 24adaa6d (docs: confirm item 15 — semantic_search returns non-empty end-to-end)
 
 One pre-existing failure in the full suite, **not caused by this change**: `embed_doc_inventory::index_inventory_updates_after_code_index` (`tests/embed_doc_inventory.rs:149`). Reproduced on clean `main` with no Rust changes, single-threaded. Tracked separately.
 
