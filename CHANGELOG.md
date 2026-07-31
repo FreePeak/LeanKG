@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.26](https://github.com/FreePeak/LeanKG/compare/v0.19.25...v0.19.26) (2026-07-31)
+
+
+### Bug Fixes
+
+* **embed:** break resume deadlock when state outlives vectors (P0) ([#155](https://github.com/FreePeak/LeanKG/issues/155)) ([919ea24](https://github.com/FreePeak/LeanKG/commit/919ea2418053d119f81b8a29c4f0b500c74f246e))
+
 ## [0.19.25](https://github.com/FreePeak/LeanKG/compare/v0.19.24...v0.19.25) (2026-07-30)
 
 
