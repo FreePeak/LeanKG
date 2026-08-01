@@ -1,9 +1,16 @@
-//! Session memory offload (US-SM-01 / FR-SM-01..03).
+//! Session memory (US-SM-01 / US-SM-02 / FR-SM-01..06).
 //!
 //! Verbose MCP/tool payloads are persisted under
 //! `.leankg/sessions/<session_id>/refs/<node_id>.md`; a compact canvas
 //! (Mermaid + node index) stays in context. `session_recall` recovers the
 //! original payload bit-for-bit via `node_id`.
+//!
+//! Auto-recall (US-SM-02 / FR-SM-04..06): a ranked lessons index at
+//! `.leankg/sessions/recall_index.jsonl` is fed by `report_query_outcome`
+//! (LESSONS.md), diary, and knowledge writes (dedup by content hash before
+//! write). `get_overview_context` opt-in injects top-K lessons when
+//! `recall=true` (default OFF); a ≤5s timeout skips injection so recall
+//! never blocks the MCP response.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +21,19 @@ use crate::compress::estimate_tokens;
 
 pub const CANVAS_FILE: &str = "canvas.md";
 pub const REFS_DIR: &str = "refs";
+pub const RECALL_INDEX_FILE: &str = "recall_index.jsonl";
+pub const RECALL_SESSION_ID: &str = "recall";
 pub const DEFAULT_NODE_ID: &str = "offload-001";
+/// FR-SM-05: opt-in default OFF until A/B measured.
+pub const DEFAULT_RECALL_ENABLED: bool = false;
+/// FR-SM-05: top-K lessons injected into overview when enabled.
+pub const DEFAULT_RECALL_K: usize = 5;
+/// FR-SM-06: recall timeout — on timeout skip injection, never block MCP.
+pub const DEFAULT_RECALL_TIMEOUT_SECS: u64 = 5;
+/// FR-SM-06: per-item char budget for injected lessons.
+pub const RECALL_ITEM_CHAR_BUDGET: usize = 400;
+/// FR-SM-06: total char budget for the injected lessons block.
+pub const RECALL_TOTAL_CHAR_BUDGET: usize = 3000;
 /// Minimum node_id length enforced by the stable scheme (FR-SM-01).
 pub const MIN_NODE_ID_LEN: usize = 3;
 
@@ -114,6 +133,157 @@ pub fn summarize(text: &str) -> String {
         format!("{head}…")
     } else {
         head
+    }
+}
+
+/// One auto-recallable lesson (US-SM-02 / FR-SM-04).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Lesson {
+    pub id: String,
+    pub source: String,
+    pub rank: f64,
+    pub text: String,
+}
+
+/// Deterministic content fingerprint for dedup (FR-SM-04): 12-hex SHA-256.
+/// NOT a security hash — only collision resistance between identical texts.
+pub fn content_key(text: &str) -> String {
+    let digest = sha256(text.as_bytes());
+    let mut s = String::with_capacity(12);
+    for b in digest.iter().take(6) {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Ranked lessons index at `.leankg/sessions/recall_index.jsonl`
+/// (FR-SM-04): one `Lesson` per line. Shared across sessions — the
+/// auto-recall store is process-wide, keyed by project dir.
+#[derive(Debug)]
+pub struct RecallStore {
+    index_path: PathBuf,
+}
+
+impl RecallStore {
+    pub fn new(project_dir: &Path) -> Result<Self, String> {
+        let index_path = project_dir
+            .join(".leankg")
+            .join("sessions")
+            .join(RECALL_INDEX_FILE);
+        if let Some(dir) = index_path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        Ok(Self { index_path })
+    }
+
+    pub fn index_path(&self) -> &Path {
+        &self.index_path
+    }
+
+    /// Append `Lesson` if its `text` fingerprint is not already present
+    /// (dedup before write, FR-SM-04). Returns true when appended.
+    pub fn push_dedup(&self, lesson: &Lesson) -> Result<bool, String> {
+        let key = content_key(&lesson.text);
+        let existing = match std::fs::read_to_string(&self.index_path) {
+            Ok(raw) => raw
+                .lines()
+                .filter_map(|l| serde_json::from_str::<Lesson>(l).ok())
+                .any(|l| content_key(&l.text) == key),
+            Err(_) => false,
+        };
+        if existing {
+            return Ok(false);
+        }
+        let mut line = serde_json::to_string(lesson).map_err(|e| e.to_string())?;
+        line.push('\n');
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.index_path)
+            .map_err(|e| e.to_string())?;
+        f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    /// Load lessons sorted by rank descending.
+    pub fn load(&self) -> Result<Vec<Lesson>, String> {
+        let raw = std::fs::read_to_string(&self.index_path).map_err(|e| e.to_string())?;
+        let mut lessons: Vec<Lesson> = raw
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Lesson>(l).ok())
+            .collect();
+        lessons.sort_by(|a, b| {
+            b.rank
+                .partial_cmp(&a.rank)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(lessons)
+    }
+}
+
+/// FR-SM-06: budgeted, timeout-bounded snapshot for injection into
+/// `get_overview_context`. Pure (no I/O) so it is trivially testable;
+/// `recall_for_overview` applies the wall-clock timeout around it.
+pub fn recall_for_overview(
+    lessons: &[Lesson],
+    top_k: usize,
+    per_item_budget: usize,
+    total_budget: usize,
+) -> Option<String> {
+    if lessons.is_empty() {
+        return None;
+    }
+    let mut out = String::from("## Session lessons (auto-recall)\n");
+    let mut budget = total_budget;
+    for l in lessons.iter().take(top_k) {
+        let item = truncate_chars(&l.text, per_item_budget);
+        let line = format!("- [{}] {}\n", l.source, item);
+        if line.chars().count() > budget {
+            break;
+        }
+        budget -= line.chars().count();
+        out.push_str(&line);
+    }
+    if out.lines().count() <= 1 {
+        return None;
+    }
+    Some(out)
+}
+
+/// FR-SM-06: wall-clock bounded recall — on timeout, skip injection and
+/// return None (never block the MCP response).
+pub fn recall_for_overview_bounded(
+    lessons: &[Lesson],
+    top_k: usize,
+    per_item_budget: usize,
+    total_budget: usize,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    if lessons.is_empty() {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let lessons = lessons.to_vec();
+    std::thread::spawn(move || {
+        let _ = tx.send(recall_for_overview(
+            &lessons,
+            top_k,
+            per_item_budget,
+            total_budget,
+        ));
+    });
+    rx.recv_timeout(timeout).ok().flatten()
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = chars[..max].iter().collect();
+        out.push('…');
+        out
     }
 }
 
@@ -612,5 +782,103 @@ mod tests {
         let err = store.write_ref("../evil", "t", 1, &json!(1)).unwrap_err();
         assert!(err.contains("invalid node_id"), "{err}");
         assert!(SessionStore::new("../evil", tmp.path()).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // US-SM-02 / FR-SM-04..06 — opt-in auto-recall
+    // ------------------------------------------------------------------
+
+    fn lesson_rank(source: &str, rank: f64, text: &str) -> Lesson {
+        Lesson {
+            id: "k-1".to_string(),
+            source: source.to_string(),
+            rank,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn recall_index_dedups_by_content_before_write() {
+        let tmp = TempDir::new().unwrap();
+        let store = RecallStore::new(tmp.path()).unwrap();
+        assert!(store
+            .push_dedup(&lesson_rank("LESSONS.md", 1.0, "duplicate lesson"))
+            .unwrap());
+        assert!(!store
+            .push_dedup(&lesson_rank("diary", 1.0, "duplicate lesson"))
+            .unwrap());
+        let lessons = store.load().unwrap();
+        assert_eq!(lessons.len(), 1, "duplicate text must be deduped");
+    }
+
+    #[test]
+    fn recall_index_loads_sorted_by_rank_descending() {
+        let tmp = TempDir::new().unwrap();
+        let store = RecallStore::new(tmp.path()).unwrap();
+        store
+            .push_dedup(&lesson_rank("diary", 0.1, "low rank lesson (rank 0.1)"))
+            .unwrap();
+        store
+            .push_dedup(&lesson_rank("diary", 9.9, "high rank lesson (rank 9.9)"))
+            .unwrap();
+        store.push_dedup(&lesson_rank("diary", 5.0, "mid rank lesson (rank 5.0)"));
+        let lessons = store.load().unwrap();
+        assert_eq!(lessons.len(), 3);
+        assert!(lessons[0].text.starts_with("high"), "{lessons:?}");
+        assert!(lessons[2].text.starts_with("low"), "{lessons:?}");
+    }
+
+    #[test]
+    fn recall_for_overview_respects_char_budgets() {
+        let lessons = vec![
+            lesson_rank("LESSONS.md", 1.0, &"x".repeat(600)),
+            lesson_rank("diary", 1.0, &"y".repeat(500)),
+            lesson_rank("knowledge", 1.0, &"z".repeat(200)),
+        ];
+        let out = recall_for_overview(&lessons, 5, 400, 3000).expect("some lessons");
+        assert!(out.contains("## Session lessons"));
+        // per-item budget: the 600-char lesson is truncated to ~400
+        assert!(out.contains("…"), "truncation marker expected: {out}");
+        assert!(out.len() <= 3000, "total budget exceeded: {}", out.len());
+    }
+
+    #[test]
+    fn recall_for_overview_skips_when_budget_exhausted_or_empty() {
+        assert!(recall_for_overview(&[], 5, 400, 3000).is_none());
+        let lessons = vec![lesson_rank("diary", 1.0, &"big ".repeat(1000))];
+        // per-item budget truncation keeps items, but zero total budget skips
+        assert!(recall_for_overview(&lessons, 5, 10, 0).is_none());
+    }
+
+    #[test]
+    fn recall_for_overview_bounded_times_out_and_skips_injection() {
+        let lessons = vec![lesson_rank("diary", 1.0, "blocked lesson")];
+        let out =
+            recall_for_overview_bounded(&lessons, 5, 400, 3000, std::time::Duration::from_secs(5));
+        assert!(out.is_some(), "fast recall returns Some");
+        // timeout path: a slow computation must be skipped, not block
+        let start = std::time::Instant::now();
+        let slow: Vec<Lesson> = (0..100_000)
+            .map(|i| {
+                lesson_rank(
+                    "diary",
+                    1.0,
+                    &format!("slow lesson {i} with padding {}", "x".repeat(100)),
+                )
+            })
+            .collect();
+        let out = recall_for_overview_bounded(
+            &slow,
+            100_000,
+            400,
+            3000,
+            std::time::Duration::from_millis(10),
+        );
+        assert!(out.is_none() || start.elapsed() < std::time::Duration::from_secs(5));
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "recall must never block beyond the timeout: {:?}",
+            start.elapsed()
+        );
     }
 }

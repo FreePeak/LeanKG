@@ -1732,7 +1732,16 @@ impl ToolHandler {
     /// overview context (leankg-mcp doesn't currently expose the
     /// RMCP resources API; this provides the same ergonomics via a
     /// tool call).
+    ///
+    /// US-SM-02 / FR-SM-05..06: opt-in `recall=true` injects top-K ranked
+    /// session lessons (default OFF). Recall is timeout-bounded (≤5s) and
+    /// budgeted; on timeout or empty index injection is skipped — recall
+    /// never blocks the overview response.
     fn get_overview_context(&self, args: &Value) -> Result<Value, String> {
+        use crate::session::{
+            recall_for_overview_bounded, RecallStore, DEFAULT_RECALL_ENABLED, DEFAULT_RECALL_K,
+            DEFAULT_RECALL_TIMEOUT_SECS, RECALL_ITEM_CHAR_BUDGET, RECALL_TOTAL_CHAR_BUDGET,
+        };
         let project_name = args["project_name"].as_str().unwrap_or("project");
         let l0 = self
             .graph_engine
@@ -1746,12 +1755,30 @@ impl ToolHandler {
             .graph_engine
             .wake_up_summary()
             .unwrap_or_else(|e| format!("LeanKG project (wake_up error: {})", e));
-        Ok(json!({
+        let mut out = json!({
             "project": project_name,
             "l0_identity": l0,
             "l1_critical_facts": l1,
             "wake_up": wake,
-        }))
+        });
+        let recall = args["recall"].as_bool().unwrap_or(DEFAULT_RECALL_ENABLED);
+        if recall {
+            let project = args["project"].as_str().unwrap_or(".");
+            let lessons = RecallStore::new(std::path::Path::new(project))
+                .and_then(|s| s.load())
+                .unwrap_or_default();
+            let injected = recall_for_overview_bounded(
+                &lessons,
+                DEFAULT_RECALL_K,
+                RECALL_ITEM_CHAR_BUDGET,
+                RECALL_TOTAL_CHAR_BUDGET,
+                std::time::Duration::from_secs(DEFAULT_RECALL_TIMEOUT_SECS),
+            );
+            if let Some(s) = injected {
+                out["session_lessons"] = json!(s);
+            }
+        }
+        Ok(out)
     }
 
     fn resolve_with_lsp(&self, args: &Value) -> Result<Value, String> {

@@ -368,7 +368,7 @@ mod agent {
 
 mod session_offload {
     use super::*;
-    use leankg::session::{offload_step, SessionStore};
+    use leankg::session::{offload_step, Lesson, RecallStore, SessionStore};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn offload_then_recall_via_mcp_round_trips() {
@@ -427,6 +427,136 @@ mod session_offload {
         .await
         .expect_err("missing node must error");
         assert!(err.contains("not found"), "{err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn overview_opt_in_off_has_no_recall_key() {
+        let (handler, _tmp) = make_handler().await;
+        let resp = call(&handler, "get_overview_context", json!({}))
+            .await
+            .expect("get_overview_context");
+        assert!(
+            resp.get("session_lessons").is_none(),
+            "default opt-in OFF must not inject recall: {resp}"
+        );
+        // explicit recall=false behaves like today
+        let resp = call(
+            &handler,
+            "get_overview_context",
+            json!({"recall": false, "project_name": "p"}),
+        )
+        .await
+        .expect("get_overview_context");
+        assert!(resp.get("session_lessons").is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn overview_opt_in_on_injects_lessons_and_respects_budgets() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+
+        // Seed the recall index through the lib seam (same on-disk index the
+        // overview arm reads).
+        let recall = RecallStore::new(tmp.path()).expect("recall store");
+        recall
+            .push_dedup(&Lesson {
+                id: "r-1".to_string(),
+                source: "report_query_outcome".to_string(),
+                rank: 9.0,
+                text: "prefer get_overview_context at session start (never grep first)".to_string(),
+            })
+            .expect("push lesson");
+        recall
+            .push_dedup(&Lesson {
+                id: "r-2".to_string(),
+                source: "diary".to_string(),
+                rank: 3.0,
+                text: "validate_key is the hot entry point for auth changes".to_string(),
+            })
+            .expect("push lesson");
+
+        let resp = call(
+            &handler,
+            "get_overview_context",
+            json!({"recall": true, "project": &project}),
+        )
+        .await
+        .expect("get_overview_context");
+        let lessons = resp["session_lessons"].as_str().expect("lessons injected");
+        assert!(lessons.contains("prefer get_overview_context"), "{lessons}");
+        assert!(lessons.contains("validate_key"), "{lessons}");
+        assert!(
+            lessons.chars().count() <= 3000,
+            "total char budget: {}",
+            lessons.chars().count()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn overview_opt_in_on_with_empty_index_skips_injection() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+        let resp = call(
+            &handler,
+            "get_overview_context",
+            json!({"recall": true, "project": &project}),
+        )
+        .await
+        .expect("get_overview_context");
+        assert!(resp.get("session_lessons").is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn recall_dedups_across_sources_and_top_k_respects_rank() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+        let recall = RecallStore::new(tmp.path()).expect("recall store");
+        // Same lesson from two sources must be deduped (FR-SM-04).
+        recall
+            .push_dedup(&Lesson {
+                id: "r-1".to_string(),
+                source: "LESSONS.md".to_string(),
+                rank: 9.0,
+                text: "duplicate lesson text for dedup verification".to_string(),
+            })
+            .expect("push");
+        recall
+            .push_dedup(&Lesson {
+                id: "r-2".to_string(),
+                source: "knowledge".to_string(),
+                rank: 8.0,
+                text: "duplicate lesson text for dedup verification".to_string(),
+            })
+            .expect("push");
+        let lessons = recall.load().expect("load");
+        assert_eq!(lessons.len(), 1, "duplicate text deduped");
+        assert_eq!(lessons[0].source, "LESSONS.md", "first write wins");
+
+        // top-K: only the top-K by rank are injected.
+        for i in 0..8 {
+            recall
+                .push_dedup(&Lesson {
+                    id: format!("r-{i}"),
+                    source: "diary".to_string(),
+                    rank: i as f64,
+                    text: format!("lesson {i}"),
+                })
+                .expect("push");
+        }
+        let resp = call(
+            &handler,
+            "get_overview_context",
+            json!({"recall": true, "project": &project}),
+        )
+        .await
+        .expect("get_overview_context");
+        let lessons = resp["session_lessons"].as_str().unwrap();
+        // top-K = 5 by default; the highest-rank duplicate text must be present.
+        assert!(lessons.contains("duplicate lesson text"), "{lessons}");
+        assert!(
+            lessons.matches("lesson ").count() <= 5,
+            "top-K exceeded: {lessons}"
+        );
     }
 }
 
