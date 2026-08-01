@@ -419,7 +419,7 @@ Structural extraction and cross-file edges into one graph (no per-language produ
 | JVM       | Java, Kotlin           |
 | Web       | TypeScript, JavaScript |
 | Scripting | Python, Ruby*, PHP*    |
-| Mobile    | Dart, Android XML      |
+| Mobile    | Dart, Swift*, Objective-C*, Android XML |
 | Infra     | Terraform, CI YAML     |
 
 \*Depth varies by extractor maturity — see the PRD / roadmap for parity status.
