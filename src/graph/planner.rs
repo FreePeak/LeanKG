@@ -2,6 +2,11 @@
 // Goal string -> DAG of MCP tool steps with a join over the shared graph.
 // Pure, deterministic, rule-based (keyword match over the MCP tool catalog).
 // No LLM calls. The harness (Cursor/Claude) executes the emitted DAG.
+//
+// US-GE-06 / FR-GE-06: selective LLM pass-2 — the planner accepts optional
+// LLM-provided tool candidate rankings (`ToolHint`) and merges them into the
+// rule plan deterministically. The harness supplies the hints; LeanKG never
+// calls an LLM and YAML remains the source of truth.
 
 use crate::mcp::tools::ToolDefinition;
 use serde::Serialize;
@@ -155,6 +160,15 @@ const RULES: &[Rule] = &[
     },
 ];
 
+/// One LLM-supplied tool candidate (US-GE-06 / FR-GE-06). Rank 1 = most
+/// preferred; hints are merged deterministically — never called from Rust.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolHint {
+    pub tool: String,
+    /// 1 = strongest preference; ties break by tool name.
+    pub rank: usize,
+}
+
 /// Tools that always appear at the head of a plan (before intent-specific nodes).
 const PREFIX_TOOLS: &[&str] = &["get_overview_context"];
 
@@ -174,6 +188,21 @@ pub fn plan_dag(
     goal: &str,
     available: &[ToolDefinition],
     project: Option<&str>,
+) -> Option<PlanDag> {
+    plan_dag_with_hints(goal, available, project, &[])
+}
+
+/// US-GE-06 / FR-GE-06: plan with optional LLM-supplied tool hints.
+/// Hints are merged deterministically: known tools only (unavailable or
+/// prefix tools are dropped); no duplicates (a hinted tool already in the
+/// rule plan appears once); hinted tools lead the intent stage ordered by
+/// rank then tool name; empty hints equal plain [`plan_dag`] (bit-for-bit
+/// identical output). Pure — no LLM calls, no I/O.
+pub fn plan_dag_with_hints(
+    goal: &str,
+    available: &[ToolDefinition],
+    project: Option<&str>,
+    hints: &[ToolHint],
 ) -> Option<PlanDag> {
     let goal = goal.trim();
     if goal.is_empty() {
@@ -200,6 +229,46 @@ pub fn plan_dag(
         .filter(|t| names.contains(t) && !PREFIX_TOOLS.contains(t))
         .collect();
 
+    // FR-GE-06: merge LLM hints — known, non-prefix tools only; hinted tools
+    // lead the intent stage in (rank, tool-name) order; rule-plan tools that
+    // are NOT hinted follow in rule order. Dedup keeps one node per tool.
+    let mut hinted: Vec<String> = Vec::new();
+    if !hints.is_empty() {
+        let mut sorted_hints: Vec<ToolHint> = hints.to_vec();
+        sorted_hints.sort_by(|a, b| a.rank.cmp(&b.rank).then_with(|| a.tool.cmp(&b.tool)));
+        for h in sorted_hints {
+            if names.contains(&h.tool.as_str())
+                && !PREFIX_TOOLS.contains(&h.tool.as_str())
+                && !picks.contains(&h.tool.as_str())
+                && !hinted.iter().any(|t| t == &h.tool)
+            {
+                hinted.push(h.tool.clone());
+            }
+        }
+        let rest: Vec<&str> = picks
+            .iter()
+            .copied()
+            .filter(|t| !hinted.iter().any(|h| h == t))
+            .collect();
+        let mut merged: Vec<String> = Vec::with_capacity(hinted.len() + rest.len());
+        merged.extend(hinted.iter().cloned());
+        merged.extend(rest.iter().map(|t| t.to_string()));
+        let picks_ref: Vec<&str> = merged.iter().map(|s| s.as_str()).collect();
+        return build_dag(goal, project, matched, &picks_ref, names.as_slice());
+    }
+
+    build_dag(goal, project, matched, &picks, names.as_slice())
+}
+
+/// Shared DAG builder: prefix stage, intent stage, single join, data-flow
+/// edges into the join. `picks` is the final (already filtered) tool list.
+fn build_dag(
+    goal: &str,
+    project: Option<&str>,
+    matched: Option<&Rule>,
+    picks: &[&str],
+    names: &[&str],
+) -> Option<PlanDag> {
     let mut nodes: Vec<PlanNode> = Vec::new();
     let mut edges: Vec<PlanEdge> = Vec::new();
     let mut stage = 1u32;
