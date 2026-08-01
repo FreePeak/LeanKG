@@ -10,6 +10,7 @@ pub mod layout;
 pub mod layout3d;
 pub mod nl_query;
 pub mod persistent_cache;
+pub mod planner;
 pub mod query;
 pub mod traversal;
 
@@ -36,6 +37,8 @@ pub use layout3d::*;
 pub use nl_query::{QueryGraphEdge, QueryGraphNode, QueryGraphResult};
 #[allow(unused_imports)]
 pub use persistent_cache::*;
+#[allow(unused_imports)]
+pub use planner::*;
 #[allow(unused_imports)]
 pub use query::*;
 #[allow(unused_imports)]
