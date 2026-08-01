@@ -1231,6 +1231,9 @@ fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Er
     }
 
     // FR-LSP-B / REL-039: prefab lsp block + typed_resolve (Go/TS + detected Swift/ObjC)
+    // FR-B06: Python + Rust join the detected list — the in-process hybrid
+    // resolver now handles `py` / `rs` extensions, so `init --with-lsp` on a
+    // Python/Rust project writes a working `typed_resolve` by default.
     if with_lsp {
         config.lsp = Some(crate::lsp::config::LspConfig::prefab_defaults());
         let mut tr = vec!["go".to_string(), "ts".to_string()];
@@ -1241,6 +1244,12 @@ fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Er
             }
             if (l == "objc" || l == "objective-c") && !tr.iter().any(|x| x == "objc") {
                 tr.push("objc".to_string());
+            }
+            if l == "python" && !tr.iter().any(|x| x == "python") {
+                tr.push("python".to_string());
+            }
+            if l == "rust" && !tr.iter().any(|x| x == "rust") {
+                tr.push("rust".to_string());
             }
         }
         config.indexer.typed_resolve = tr.join(",");

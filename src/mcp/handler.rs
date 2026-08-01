@@ -1073,9 +1073,14 @@ impl ToolHandler {
     }
 
     fn query_file(&self, args: &Value) -> Result<Value, String> {
-        let pattern = args["pattern"]
+        let pattern_raw = args["pattern"]
             .as_str()
             .ok_or("Missing 'pattern' parameter")?;
+        // US-MP-08 / FR-MP-25: folder-scoped search. Directory qualified
+        // names use a trailing slash (`src/indexer/`) while the indexer
+        // stores directory nodes without one — normalize so both forms hit
+        // the directory node and its subtree.
+        let pattern = pattern_raw.trim_end_matches('/');
 
         let element_type_filter = args["element_type"].as_str().map(String::from);
         let limit = crate::ontology::safe_discover::clamp_limit(
@@ -1816,17 +1821,22 @@ impl ToolHandler {
     /// session lessons (default OFF). Recall is timeout-bounded (≤5s) and
     /// budgeted; on timeout or empty index injection is skipped — recall
     /// never blocks the overview response.
+    ///
+    /// US-MP-02: L0/L1 keep their MemPalace token budgets (~50 / ~120 tok).
+    /// Each layer is truncated to budget and `layer_budgets` reports the
+    /// accounting (L2 = `get_cluster_context`, L3 = `search_code` /
+    /// `find_function` — documented mapping, no resurrected tools).
     fn get_overview_context(&self, args: &Value) -> Result<Value, String> {
         use crate::session::{
             recall_for_overview_bounded, RecallStore, DEFAULT_RECALL_ENABLED, DEFAULT_RECALL_K,
             DEFAULT_RECALL_TIMEOUT_SECS, RECALL_ITEM_CHAR_BUDGET, RECALL_TOTAL_CHAR_BUDGET,
         };
         let project_name = args["project_name"].as_str().unwrap_or("project");
-        let l0 = self
+        let l0_raw = self
             .graph_engine
             .identity_context(project_name)
             .unwrap_or_default();
-        let l1 = self
+        let l1_raw = self
             .graph_engine
             .critical_facts_context()
             .unwrap_or_default();
@@ -1834,11 +1844,34 @@ impl ToolHandler {
             .graph_engine
             .wake_up_summary()
             .unwrap_or_else(|e| format!("LeanKG project (wake_up error: {})", e));
+        // US-MP-02: per-layer token budgets (chars ≈ tokens × 4).
+        let (l0, l0_truncated) = truncate_chars(&l0_raw, L0_TOKEN_BUDGET * 4);
+        let (l1, l1_truncated) = truncate_chars(&l1_raw, L1_TOKEN_BUDGET * 4);
         let mut out = json!({
             "project": project_name,
             "l0_identity": l0,
             "l1_critical_facts": l1,
             "wake_up": wake,
+            "layer_budgets": {
+                "L0_identity": {
+                    "max_tokens": L0_TOKEN_BUDGET,
+                    "actual_tokens": l0_raw.len() / 4,
+                    "truncated": l0_truncated,
+                },
+                "L1_critical_facts": {
+                    "max_tokens": L1_TOKEN_BUDGET,
+                    "actual_tokens": l1_raw.len() / 4,
+                    "truncated": l1_truncated,
+                },
+                "L2_cluster_context": {
+                    "tool": "get_cluster_context",
+                    "on_demand": true,
+                },
+                "L3_deep_search": {
+                    "tools": ["search_code", "find_function"],
+                    "on_demand": true,
+                },
+            },
         });
         let recall = args["recall"].as_bool().unwrap_or(DEFAULT_RECALL_ENABLED);
         if recall {
@@ -4660,6 +4693,24 @@ impl ToolHandler {
             "min_lines": min_lines,
         }))
     }
+}
+
+/// US-MP-02: MemPalace L0 identity budget (~50 tokens).
+pub const L0_TOKEN_BUDGET: usize = 50;
+/// US-MP-02: MemPalace L1 critical-facts budget (~120 tokens).
+pub const L1_TOKEN_BUDGET: usize = 120;
+
+/// US-MP-02: truncate a layer string to `max_chars` (≈ tokens × 4).
+/// Returns (clipped, truncated). Clips on a char boundary so UTF-8 is safe.
+fn truncate_chars(s: &str, max_chars: usize) -> (String, bool) {
+    if s.len() <= max_chars {
+        return (s.to_string(), false);
+    }
+    let mut end = max_chars;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (format!("{}...", &s[..end]), true)
 }
 
 fn uuid_simple() -> String {
