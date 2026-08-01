@@ -51,6 +51,7 @@ Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without).
 | `get_context` | Get AI context for file (minimal, token-optimized) |
 | `get_tested_by` | Get test coverage for a function/file |
 | `find_large_functions` | Find oversized functions by line count |
+| `session_recall` | US-SM-01: recover an offloaded MCP/tool payload bit-for-bit by `node_id` (`.leankg/sessions/<id>/refs/<node_id>.md`) |
 
 ## Documentation Tools
 
