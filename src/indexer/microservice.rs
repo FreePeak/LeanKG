@@ -17,9 +17,13 @@ impl MicroserviceExtractor {
             // Matches: dns:///service-name.default.svc.cluster.local.:10000
             grpc_pattern: Regex::new(r"dns:///([a-z0-9-]+)\.default\.svc\.cluster\.local\.:\d+")
                 .unwrap(),
-            // Matches: http://service-name.default.svc.cluster.local./
-            _http_pattern: Regex::new(r"https?://([a-z0-9-]+)\.default\.svc\.cluster\.local\.")
-                .unwrap(),
+            // Matches http(s)://service-name[:port][/path] — k8s DNS
+            // (…default.svc.cluster.local), docker-compose service names,
+            // or plain host:port.
+            _http_pattern: Regex::new(
+                r"https?://([a-z0-9_-]+)(?:\.default\.svc\.cluster\.local\.?)?(?::\d+)?(?:/|$)",
+            )
+            .unwrap(),
             client_dirs: vec!["internal/external".to_string()],
         }
     }
@@ -34,7 +38,10 @@ impl MicroserviceExtractor {
                 Regex::new(r"dns:///[a-z0-9-]+\.default\.svc\.cluster\.local\.\:\d+").unwrap()
             }),
             _http_pattern: Regex::new(&http_pattern).unwrap_or_else(|_| {
-                Regex::new(r"https?://[a-z0-9-]+\.default\.svc\.cluster\.local\.").unwrap()
+                Regex::new(
+                    r"https?://([a-z0-9_-]+)(?:\.default\.svc\.cluster\.local\.?)?(?::\d+)?(?:/|$)",
+                )
+                .unwrap()
             }),
             client_dirs,
         }
@@ -107,7 +114,13 @@ impl MicroserviceExtractor {
         relationships
     }
 
-    /// Extract gRPC calls from file content
+    /// Extract gRPC/HTTP/Docker service calls from file content.
+    ///
+    /// FR-B13: beyond `grpc.NewClient("dns:///…")`, also detects
+    /// `http.NewRequest` / `client.Get("http://service:port/…")` /
+    /// `fmt.Sprintf("http://service:8080/…")` style calls so
+    /// `service_calls` edges are produced for docker-compose and plain
+    /// http(s) service addresses, not just k8s DNS.
     fn extract_grpc_calls(
         &self,
         content: &str,
@@ -118,17 +131,86 @@ impl MicroserviceExtractor {
 
         // Pattern: grpc.NewClient("dns:///service-name.default.svc.cluster.local.:10000", ...)
         let grpc_client_re = Regex::new(r#"(?m)grpc\.NewClient\s*\(\s*"([^"]+)"[,\s]"#).unwrap();
+        // Pattern: http(s) client calls with an inline URL string argument.
+        // Covers `http.Get("url")`, `client.Get("url")`, and
+        // `http.NewRequest("GET", "url", body)` (URL as 2nd arg).
+        let http_call_re = Regex::new(
+            r#"(?m)(?:http\.(?:Get|Post|Do)|client\.(?:Get|Post|Do|Request))\s*\(\s*"([^"]+)""#,
+        )
+        .unwrap();
+        let http_new_request_re =
+            Regex::new(r#"(?m)http\.NewRequest\s*\(\s*"[^"]+"\s*,\s*"([^"]+)""#).unwrap();
+        // Pattern: bare docker-compose service refs `service-name:port`
+        // inside quotes (no dots — those are URLs or DNS names, handled
+        // above). Requires an explicit :port so plain quoted words are
+        // not treated as services.
+        let docker_addr_re = Regex::new(r#"["']([a-z][a-z0-9_-]+):(\d+)["']"#).unwrap();
+
+        let add =
+            |address: &str, protocol: &str, cap_start: usize, rels: &mut Vec<Relationship>| {
+                if let Some(service_name) = self.extract_service_name(address, protocol) {
+                    let line_number = content[..cap_start].lines().count() as u32;
+                    rels.push(self.create_relationship(
+                        service_name,
+                        protocol.to_string(),
+                        address.to_string(),
+                        "unknown".to_string(),
+                        file_path.to_string(),
+                        line_number,
+                        project_service,
+                    ));
+                }
+            };
 
         for cap in grpc_client_re.captures_iter(content) {
             let address = &cap[1];
-            if let Some(service_name) = self.extract_service_name(address, "grpc") {
+            add(
+                address,
+                "grpc",
+                cap.get(0).map(|m| m.end()).unwrap_or(0),
+                &mut relationships,
+            );
+        }
+
+        for cap in http_call_re
+            .captures_iter(content)
+            .chain(http_new_request_re.captures_iter(content))
+        {
+            let address = &cap[1];
+            if address.starts_with("http://") || address.starts_with("https://") {
+                let protocol = if address.starts_with("https://") {
+                    "https"
+                } else {
+                    "http"
+                };
+                add(
+                    address,
+                    protocol,
+                    cap.get(0).map(|m| m.end()).unwrap_or(0),
+                    &mut relationships,
+                );
+            }
+        }
+
+        // Bare docker-compose service refs `service-name:port` inside quotes
+        // (no dots — URLs/DNS handled above).
+        for cap in docker_addr_re.captures_iter(content) {
+            let name = &cap[1];
+            let port = &cap[2];
+            if name.contains('.') {
+                continue;
+            }
+            let address = format!("{}:{}", name, port);
+            if let Some(service_name) = self.extract_service_name(&address, "docker") {
+                if service_name == *project_service.as_deref().unwrap_or("") {
+                    continue;
+                }
                 let line_number = content[..cap.get(0).map(|m| m.end()).unwrap_or(0)]
                     .lines()
                     .count() as u32;
-
                 relationships.push(self.create_relationship(
                     service_name,
-                    "grpc".to_string(),
+                    "docker".to_string(),
                     address.to_string(),
                     "unknown".to_string(),
                     file_path.to_string(),
@@ -141,17 +223,46 @@ impl MicroserviceExtractor {
         relationships
     }
 
-    /// Extract service name from DNS address
+    /// Extract service name from a service address.
+    ///
+    /// FR-B13: beyond the k8s DNS regex, also handle:
+    /// - `http(s)://service-name[.domain][:port][/path]` (incl. docker-compose
+    ///   service names like `http://api-gateway:8080/`),
+    /// - bare docker-compose service names (`api-gateway:8080`, `db:5432`).
     fn extract_service_name(&self, address: &str, protocol: &str) -> Option<String> {
-        if protocol == "grpc" {
-            // dns:///service-name.default.svc.cluster.local.:10000
-            if let Some(caps) = self.grpc_pattern.captures(address) {
-                return Some(
-                    caps.get(1)
-                        .map(|m| m.as_str().to_string())
-                        .unwrap_or_default(),
-                );
+        match protocol {
+            "grpc" => {
+                // dns:///service-name.default.svc.cluster.local.:10000
+                if let Some(caps) = self.grpc_pattern.captures(address) {
+                    return Some(
+                        caps.get(1)
+                            .map(|m| m.as_str().to_string())
+                            .unwrap_or_default(),
+                    );
+                }
             }
+            "http" | "https" => {
+                // http://service-name[.namespace][:port][/path]
+                if let Some(caps) = self._http_pattern.captures(address) {
+                    return Some(
+                        caps.get(1)
+                            .map(|m| m.as_str().to_string())
+                            .unwrap_or_default(),
+                    );
+                }
+            }
+            "docker" => {
+                // docker-compose service names: `service-name:8080` or plain `service-name`
+                let docker_re = Regex::new(r"^([a-z][a-z0-9_-]*)(?::\d+)?(?:/.*)?$").unwrap();
+                if let Some(caps) = docker_re.captures(address) {
+                    return Some(
+                        caps.get(1)
+                            .map(|m| m.as_str().to_string())
+                            .unwrap_or_default(),
+                    );
+                }
+            }
+            _ => {}
         }
         None
     }
@@ -229,23 +340,16 @@ impl MicroserviceExtractor {
         if let Some(obj) = yaml.as_mapping() {
             for (key, val) in obj {
                 let key_str = key.as_str().unwrap_or("");
-                if key_str.ends_with("_address")
-                    && val
-                        .as_str()
-                        .map(|s| s.starts_with("dns:///"))
-                        .unwrap_or(false)
-                {
-                    let address = val.as_str().unwrap_or("");
-                    if let Some(service_name) = self.extract_service_name(address, "grpc") {
-                        relationships.push(self.create_relationship(
-                            service_name,
-                            "grpc".to_string(),
-                            address.to_string(),
-                            key_str.to_string(),
-                            file_path.to_string(),
-                            0,
+                if key_str.ends_with("_address") {
+                    if let Some(address) = val.as_str() {
+                        if let Some(rel) = self.yaml_address_relationship(
+                            address,
+                            key_str,
+                            file_path,
                             project_service,
-                        ));
+                        ) {
+                            relationships.push(rel);
+                        }
                     }
                 }
                 // Recurse into nested mappings
@@ -260,6 +364,61 @@ impl MicroserviceExtractor {
         relationships
     }
 
+    /// Build a service_calls relationship from a YAML `*_address` string,
+    /// handling dns:///, http(s)://, and bare docker `name:port` forms.
+    fn yaml_address_relationship(
+        &self,
+        address: &str,
+        key_str: &str,
+        file_path: &str,
+        project_service: &Option<String>,
+    ) -> Option<Relationship> {
+        if address.starts_with("dns:///") {
+            if let Some(service_name) = self.extract_service_name(address, "grpc") {
+                return Some(self.create_relationship(
+                    service_name,
+                    "grpc".to_string(),
+                    address.to_string(),
+                    key_str.to_string(),
+                    file_path.to_string(),
+                    0,
+                    project_service,
+                ));
+            }
+        } else if address.starts_with("http://") || address.starts_with("https://") {
+            let protocol = if address.starts_with("https://") {
+                "https"
+            } else {
+                "http"
+            };
+            if let Some(service_name) = self.extract_service_name(address, protocol) {
+                return Some(self.create_relationship(
+                    service_name,
+                    protocol.to_string(),
+                    address.to_string(),
+                    key_str.to_string(),
+                    file_path.to_string(),
+                    0,
+                    project_service,
+                ));
+            }
+        } else if !address.contains('.') && !address.contains('/') {
+            // docker-compose style: `service-name:8080` (bare name w/o dots).
+            if let Some(service_name) = self.extract_service_name(address, "docker") {
+                return Some(self.create_relationship(
+                    service_name,
+                    "docker".to_string(),
+                    address.to_string(),
+                    key_str.to_string(),
+                    file_path.to_string(),
+                    0,
+                    project_service,
+                ));
+            }
+        }
+        None
+    }
+
     fn extract_from_yaml_internal(
         &self,
         yaml: &serde_yaml::Mapping,
@@ -270,23 +429,13 @@ impl MicroserviceExtractor {
 
         for (key, val) in yaml {
             let key_str = key.as_str().unwrap_or("");
-            if key_str.ends_with("_address")
-                && val
-                    .as_str()
-                    .map(|s| s.starts_with("dns:///"))
-                    .unwrap_or(false)
-            {
-                let address = val.as_str().unwrap_or("");
-                if let Some(service_name) = self.extract_service_name(address, "grpc") {
-                    relationships.push(self.create_relationship(
-                        service_name,
-                        "grpc".to_string(),
-                        address.to_string(),
-                        key_str.to_string(),
-                        file_path.to_string(),
-                        0,
-                        project_service,
-                    ));
+            if key_str.ends_with("_address") {
+                if let Some(address) = val.as_str() {
+                    if let Some(rel) =
+                        self.yaml_address_relationship(address, key_str, file_path, project_service)
+                    {
+                        relationships.push(rel);
+                    }
                 }
             }
             if let Some(nested) = val.as_mapping() {
@@ -405,5 +554,84 @@ grpc.NewClient("dns:///service-a.default.svc.cluster.local.:10000",
         let path = "/workspace/my-service/internal/external/client.go";
         let service = extractor.infer_source_service(path);
         assert_eq!(service, "my-service");
+    }
+
+    // FR-B13: service_calls beyond k8s DNS regex.
+
+    #[test]
+    fn test_http_address_matches_docker_service_name() {
+        let extractor = MicroserviceExtractor::new();
+        // docker-compose service address without .svc.cluster.local suffix
+        let address = "http://api-gateway:8080/v1/users";
+        let service = extractor.extract_service_name(address, "http");
+        assert_eq!(service, Some("api-gateway".to_string()));
+    }
+
+    #[test]
+    fn test_http_address_matches_k8s_dns() {
+        let extractor = MicroserviceExtractor::new();
+        let address = "http://user-service.default.svc.cluster.local/health";
+        let service = extractor.extract_service_name(address, "http");
+        assert_eq!(service, Some("user-service".to_string()));
+    }
+
+    #[test]
+    fn test_https_address_matches() {
+        let extractor = MicroserviceExtractor::new();
+        let address = "https://billing-api:8443";
+        let service = extractor.extract_service_name(address, "https");
+        assert_eq!(service, Some("billing-api".to_string()));
+    }
+
+    #[test]
+    fn test_docker_service_name_with_port() {
+        let extractor = MicroserviceExtractor::new();
+        let service = extractor.extract_service_name("redis-cache:6379", "docker");
+        assert_eq!(service, Some("redis-cache".to_string()));
+    }
+
+    #[test]
+    fn test_grpc_client_http_address_emits_service_call() {
+        let extractor = MicroserviceExtractor::new();
+        let content = r#"
+http.NewRequest("GET", "http://order-service:8080/orders", nil)
+client.Get("https://payment-api:8443/pay")
+"#;
+        let rels = extractor.extract_grpc_calls(content, "client.go", &None);
+        let protocols: Vec<&str> = rels
+            .iter()
+            .map(|r| r.metadata["protocol"].as_str().unwrap())
+            .collect();
+        assert!(protocols.contains(&"http"));
+        assert!(protocols.contains(&"https"));
+        let targets: Vec<&str> = rels.iter().map(|r| r.target_qualified.as_str()).collect();
+        assert!(targets.contains(&"order-service"));
+        assert!(targets.contains(&"payment-api"));
+    }
+
+    #[test]
+    fn test_docker_bare_addr_in_yaml() {
+        let extractor = MicroserviceExtractor::new();
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+redis_address: "redis-cache:6379"
+grpc_address: "dns:///cart-service.default.svc.cluster.local.:9000"
+http_address: "http://web-front:3000"
+"#,
+        )
+        .unwrap();
+        let rels = extractor.extract_from_yaml(&yaml, "config.yaml", &None);
+        assert_eq!(rels.len(), 3);
+        let protocols: Vec<&str> = rels
+            .iter()
+            .map(|r| r.metadata["protocol"].as_str().unwrap())
+            .collect();
+        assert!(protocols.contains(&"docker"));
+        assert!(protocols.contains(&"grpc"));
+        assert!(protocols.contains(&"http"));
+        let targets: Vec<&str> = rels.iter().map(|r| r.target_qualified.as_str()).collect();
+        assert!(targets.contains(&"redis-cache"));
+        assert!(targets.contains(&"cart-service"));
+        assert!(targets.contains(&"web-front"));
     }
 }

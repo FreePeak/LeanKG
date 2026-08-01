@@ -166,6 +166,13 @@ impl DocIndexer {
         let code_refs = self.extract_code_references(&content);
         let mut relationships = heading_rels;
 
+        // FR-GF-16: ADR/RFC citations → rationale nodes + cited_by/references edges.
+        let (rationale_elements, rationale_rels) =
+            extract_rationale_citations(&content, &qualified_name);
+        let mut sections = sections;
+        sections.extend(rationale_elements);
+        relationships.extend(rationale_rels);
+
         let mut resolved_count = 0u32;
         let mut skipped_count = 0u32;
 
@@ -619,6 +626,171 @@ impl DocTreeNode {
     }
 }
 
+/// FR-GF-16: extract ADR/RFC citation markers from markdown content.
+///
+/// Recognized citation shapes (outside fenced code blocks):
+/// - ADR headings / inline refs: `## ADR-004`, `ADR-004:`, `[ADR-004](…adr-0004.md)`,
+///   `AD-0001`, `doc/adr/0001-…`
+/// - RFC citations: `RFC 8252`, `RFC8252`, `RFC 8252:`
+///
+/// Each citation becomes a `rationale` CodeElement (element_type
+/// `rationale_adr` / `rationale_rfc`) carrying the citation id + title in
+/// metadata, plus:
+/// - a `contains`-style `cited_by` edge from the citing document to the
+///   rationale node (source = document, target = rationale),
+/// - a `references` edge from the rationale node to the citation's own doc
+///   file when the ADR text contains a resolvable `docs/adr/…` link target.
+///
+/// Returns (rationale_elements, relationships).
+pub fn extract_rationale_citations(
+    content: &str,
+    doc_qualified: &str,
+) -> (Vec<CodeElement>, Vec<Relationship>) {
+    use regex::Regex;
+    let mut elements: Vec<CodeElement> = Vec::new();
+    let mut relationships: Vec<Relationship> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let adr_re = Regex::new(r"(?i)\b(?:ADR|AD)[-_: ]?(\d{3,4})\b").unwrap();
+    let rfc_re = Regex::new(r"(?i)\bRFC[-: ]?(\d{2,5})\b").unwrap();
+    // docs/adr/0001-title.md or docs/decisions/0001-title.md
+    let adr_link_re =
+        Regex::new(r"(?i)(?:docs/)?(?:adr|decisions?)/?(\d{3,4})[-_][\w-]+\.md").unwrap();
+
+    let mut in_code_block = false;
+    for (line_idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block || trimmed.is_empty() {
+            continue;
+        }
+
+        // ADR citation
+        if let Some(cap) = adr_re.captures(trimmed) {
+            let id = cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let marker = if trimmed.to_uppercase().contains("ADR") {
+                "ADR"
+            } else {
+                "AD"
+            };
+            let key = format!("{}:{}", marker, id);
+            if seen.insert(key.clone()) {
+                // Title: try "ADR-004: Title" or "ADR-004 Title"
+                let title = trimmed
+                    .split_once(':')
+                    .map(|(_, t)| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| {
+                        trimmed
+                            .split_whitespace()
+                            .skip(1)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    });
+                let qn = format!("{}::{}@{}", doc_qualified, key, line_idx);
+                elements.push(CodeElement {
+                    qualified_name: qn.clone(),
+                    element_type: "rationale_adr".to_string(),
+                    name: format!("{} {}", key, title.chars().take(60).collect::<String>()),
+                    file_path: doc_qualified.to_string(),
+                    line_start: (line_idx + 1) as u32,
+                    line_end: (line_idx + 1) as u32,
+                    language: "markdown".to_string(),
+                    parent_qualified: Some(doc_qualified.to_string()),
+                    metadata: serde_json::json!({
+                        "marker": marker,
+                        "kind": "rationale_adr",
+                        "citation_id": format!("{}-{}", marker, id),
+                        "summary": title.chars().take(200).collect::<String>(),
+                    }),
+                    ..Default::default()
+                });
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: doc_qualified.to_string(),
+                    target_qualified: qn.clone(),
+                    rel_type: "cited_by".to_string(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({"marker": marker, "citation_id": format!("{}-{}", marker, id)}),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // RFC citation
+        if let Some(cap) = rfc_re.captures(trimmed) {
+            let id = cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let key = format!("RFC:{}", id);
+            if seen.insert(key.clone()) {
+                let title = trimmed
+                    .split_once(':')
+                    .map(|(_, t)| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_default();
+                let qn = format!("{}::{}@{}", doc_qualified, key, line_idx);
+                elements.push(CodeElement {
+                    qualified_name: qn.clone(),
+                    element_type: "rationale_rfc".to_string(),
+                    name: format!("RFC {}", id),
+                    file_path: doc_qualified.to_string(),
+                    line_start: (line_idx + 1) as u32,
+                    line_end: (line_idx + 1) as u32,
+                    language: "markdown".to_string(),
+                    parent_qualified: Some(doc_qualified.to_string()),
+                    metadata: serde_json::json!({
+                        "marker": "RFC",
+                        "kind": "rationale_rfc",
+                        "citation_id": format!("RFC-{}", id),
+                        "summary": title.chars().take(200).collect::<String>(),
+                    }),
+                    ..Default::default()
+                });
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: doc_qualified.to_string(),
+                    target_qualified: qn.clone(),
+                    rel_type: "cited_by".to_string(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({"marker": "RFC", "citation_id": format!("RFC-{}", id)}),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // ADR link in the text → references edge to that ADR doc file
+        if let Some(cap) = adr_link_re.captures(trimmed) {
+            let id = cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let target = format!("docs/adr/{}-{}.md", id, "adr");
+            if !seen.contains(&format!("link:{}", id)) {
+                seen.insert(format!("link:{}", id));
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: doc_qualified.to_string(),
+                    target_qualified: target,
+                    rel_type: "references".to_string(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({"confidence_label": "EXTRACTED", "citation": format!("ADR-{}", id)}),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    (elements, relationships)
+}
+
 pub fn index_docs_directory(
     docs_path: &Path,
     graph: &GraphEngine,
@@ -663,4 +835,54 @@ pub fn index_docs_directory(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_adr_citation_heading() {
+        let content = "## ADR-004: Use CozoDB for storage\n\nWe choose CozoDB because...\n";
+        let (elems, rels) = extract_rationale_citations(content, "docs/architecture.md");
+        assert_eq!(elems.len(), 1);
+        assert_eq!(elems[0].element_type, "rationale_adr");
+        assert_eq!(elems[0].metadata.get("citation_id").unwrap(), "ADR-004");
+        assert!(elems[0]
+            .metadata
+            .get("summary")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("Use CozoDB"));
+        assert!(rels.iter().any(|r| r.rel_type == "cited_by"));
+    }
+
+    #[test]
+    fn test_extract_rfc_citation_inline() {
+        let content = "Auth uses RFC 8252 (OAuth 2.0 for Native Apps).\n";
+        let (elems, rels) = extract_rationale_citations(content, "docs/auth.md");
+        assert_eq!(elems.len(), 1);
+        assert_eq!(elems[0].element_type, "rationale_rfc");
+        assert_eq!(elems[0].metadata.get("citation_id").unwrap(), "RFC-8252");
+        assert!(rels.iter().any(|r| r.rel_type == "cited_by"));
+    }
+
+    #[test]
+    fn test_extract_skips_code_blocks() {
+        let content = "## Context\n\n```markdown\nADR-007: old\n```\n\nADR-009: real\n";
+        let (elems, _) = extract_rationale_citations(content, "docs/design.md");
+        let ids: Vec<_> = elems
+            .iter()
+            .filter_map(|e| e.metadata.get("citation_id").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(ids, vec!["ADR-009"]);
+    }
+
+    #[test]
+    fn test_extract_adr_link_references() {
+        let content = "See [ADR-003](docs/adr/0003-use-redis.md) for the decision.\n";
+        let (_, rels) = extract_rationale_citations(content, "docs/design.md");
+        assert!(rels.iter().any(|r| r.rel_type == "references"));
+    }
 }

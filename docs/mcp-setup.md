@@ -62,6 +62,16 @@ Add to `~/.config/claude/settings.json`:
 }
 ```
 
+### Codex CLI
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.leankg]
+command = "leankg"
+args = ["mcp-stdio", "--watch"]
+```
+
 ### Gemini CLI
 
 Add to `~/.config/gemini-cli/mcp.json`:
