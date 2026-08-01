@@ -369,6 +369,17 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "sessions_gc".to_string(),
+                description: "US-SM-07 / FR-SM-12: Reclaim old/low-heat session refs and agent-memory artifacts. Pinned (.md.pin) and high-heat exempt; min retention 3 days. Returns GcReport (removed/exempt counts).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "retention_days": {"type": "integer", "default": 14, "description": "TTL in days (min 3) for old refs / low-heat memories"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "search_memory_rrf".to_string(),
                 description: "US-SM-04 / FR-SM-09: Hybrid recall search over session recall index + LESSONS journal merged with Reciprocal Rank Fusion (k=60). Returns ranked hits with provenance (kind, node_id, source session, element refs). Score threshold + result budget applied.".to_string(),
                 input_schema: json!({
