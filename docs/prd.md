@@ -17,9 +17,9 @@
 > | Focus | Status | What |
 > |------:|--------|------|
 > | **P0** | **CLOSED** | Procedural ontology auto-update — `US-ONT-PROC-01` / `REL-059` ([smoke](reports/ontology-proc-auto-smoke-2026-07-21.md)) |
-> | **P1** | **CURRENT** | Wave **4** single-repo expand — `US-MG-02` / `FR-MG-03`. Waves 0a–3 **DONE** (Wave 3: [NL Query FAB](reports/ui-v2-nl-query-fab-2026-08-01.md)). Ops: OnRender embeddings exit 101 — [RCA](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md) |
+> | **P1** | **DONE** | Wave **4** single-repo expand — `US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md). Waves 0a–3 **DONE** (Wave 3: [NL Query FAB](reports/ui-v2-nl-query-fab-2026-08-01.md)). Ops: OnRender embeddings exit 101 — [RCA](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md) |
 > | **P1** | **DONE** | Wave **1b** MCP hard-delete — `load_layer` + `get_doc_structure` (`US-SURF-08..11` / `REL-076`) — [evidence](reports/rel-076-mcp-surf-1b-2026-08-01.md). Cumulative hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure` |
-> | **P2** | Next (do **not** preempt P1) | Ordered: (1) Session MCP offload `US-SM-01` → (2) Auto-recall `US-SM-02` / closes `US-GE-05` → (3) Provenance+RRF `US-SM-03/04` → (4) Doc↔code join polish `US-DOCJOIN-*` → (5) Graph-eng `US-GE-02..04` → (6) Heat index / promote traces `US-SM-05/06` |
+> | **P2** | **CURRENT** | Ordered: (1) Session MCP offload `US-SM-01` → (2) Auto-recall `US-SM-02` / closes `US-GE-05` → (3) Provenance+RRF `US-SM-03/04` → (4) Doc↔code join polish `US-DOCJOIN-*` → (5) Graph-eng `US-GE-02..04` → (6) Heat index / promote traces `US-SM-05/06` |
 > | **P3** | Backlog | `US-SM-07` retention/GC; `US-GE-06` LLM pass-2; Track E 3D |
 >
 > **Prior P0 mega-graph serve CLOSED** — `US-MG-TOOL-01` / `REL-055` / `FR-SEM-07` / `REL-054` DONE.
@@ -717,7 +717,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI) — **DONE**
 7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb) — **DONE**
 8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company) — **DONE**
-9. **US-MG-02** — Single-repo expand (Wave 4) — **CURRENT** / PARTIAL
+9. **US-MG-02** — Single-repo expand (Wave 4) — **DONE** ([evidence](reports/wave4-single-repo-expand-2026-08-01.md))
 
 **P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact. **DONE**.
 
