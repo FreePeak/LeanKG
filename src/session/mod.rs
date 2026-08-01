@@ -145,6 +145,116 @@ pub fn summarize(text: &str) -> String {
     }
 }
 
+/// Typed agent-memory kind (FR-SM-08 / US-SM-03): maps from TencentDB
+/// persona / episodic / instruction to LeanKG durable memory kinds.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryKind {
+    /// `prefer …` — Tencent persona (soft preference, low-stakes choice).
+    Preference,
+    /// `decision: …` / `we decided …` — Tencent episodic (outcome-bound).
+    Decision,
+    /// `standing_rule: …` / `always …` — Tencent instruction (rule).
+    StandingRule,
+}
+
+impl MemoryKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryKind::Preference => "preference",
+            MemoryKind::Decision => "decision",
+            MemoryKind::StandingRule => "standing_rule",
+        }
+    }
+}
+
+/// Deterministic kind classifier (FR-SM-08). Label prefixes win, then
+/// decision / standing-rule signals, then `prefer`. Defaults to
+/// `Preference` — the most common durable-memory kind.
+pub fn classify_memory_kind(text: &str) -> MemoryKind {
+    let t = text.trim();
+    let lower = t.to_ascii_lowercase();
+    for (label, kind) in [
+        ("decision:", MemoryKind::Decision),
+        ("standing_rule:", MemoryKind::StandingRule),
+        ("rule:", MemoryKind::StandingRule),
+        ("always ", MemoryKind::StandingRule),
+        ("never ", MemoryKind::StandingRule),
+        ("prefer ", MemoryKind::Preference),
+        ("preference:", MemoryKind::Preference),
+        ("i prefer", MemoryKind::Preference),
+        ("we prefer", MemoryKind::Preference),
+    ] {
+        if lower.starts_with(label) {
+            return kind;
+        }
+    }
+    if [
+        "we decided",
+        "decision",
+        "we will",
+        "we should",
+        "we are going to",
+        "let's use",
+    ]
+    .iter()
+    .any(|k| lower.contains(k))
+    {
+        return MemoryKind::Decision;
+    }
+    MemoryKind::Preference
+}
+
+/// Provenance for one durable agent-memory write (FR-SM-07 / US-SM-03):
+/// which session, which offloaded node, which kind, which code elements,
+/// when, and via which tool call — so summaries stay expandable to
+/// evidence.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MemoryProvenance {
+    /// Session id that produced the memory (e.g. `sess-9f31`).
+    pub source_session_id: String,
+    /// Offload `node_id` of the underlying payload, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    /// Typed agent-memory kind.
+    pub kind: MemoryKind,
+    /// Code element qualified names this memory references.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub element_refs: Vec<String>,
+    /// Unix seconds when the memory was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
+    /// Tool call that produced the memory (e.g. `report_query_outcome`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<String>,
+}
+
+impl MemoryProvenance {
+    pub fn new(
+        source_session_id: &str,
+        node_id: &str,
+        kind: MemoryKind,
+        element_refs: Vec<String>,
+    ) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        Self {
+            source_session_id: source_session_id.to_string(),
+            node_id: if node_id.is_empty() {
+                None
+            } else {
+                Some(node_id.to_string())
+            },
+            kind,
+            element_refs,
+            timestamp: Some(now),
+            tool_call: None,
+        }
+    }
+}
+
 /// One auto-recallable lesson (US-SM-02 / FR-SM-04).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Lesson {
@@ -152,6 +262,44 @@ pub struct Lesson {
     pub source: String,
     pub rank: f64,
     pub text: String,
+    /// FR-SM-07: provenance of the durable write, backfilled when absent.
+    #[serde(default)]
+    pub provenance: Option<MemoryProvenance>,
+}
+
+impl Lesson {
+    /// Typed kind of this lesson (FR-SM-08). Prefers the recorded kind;
+    /// falls back to the deterministic text classifier.
+    pub fn kind(&self) -> MemoryKind {
+        match &self.provenance {
+            Some(p) => p.kind,
+            None => classify_memory_kind(&self.text),
+        }
+    }
+}
+
+/// Build a `Lesson` with provenance (FR-SM-07). When the caller's kind is
+/// `Preference` and the text carries a stronger signal, the deterministic
+/// classifier wins — so `session_memory_write(kind=preference)` on a
+/// `decision:` text still records a decision.
+pub fn lesson_with_provenance(
+    id: &str,
+    source: &str,
+    rank: f64,
+    text: &str,
+    provenance: MemoryProvenance,
+) -> Lesson {
+    let mut prov = provenance;
+    if prov.kind == MemoryKind::Preference {
+        prov.kind = classify_memory_kind(text);
+    }
+    Lesson {
+        id: id.to_string(),
+        source: source.to_string(),
+        rank,
+        text: text.to_string(),
+        provenance: Some(prov),
+    }
 }
 
 /// Deterministic content fingerprint for dedup (FR-SM-04): 12-hex SHA-256.
@@ -191,6 +339,7 @@ impl RecallStore {
 
     /// Append `Lesson` if its `text` fingerprint is not already present
     /// (dedup before write, FR-SM-04). Returns true when appended.
+    /// FR-SM-07: lessons without provenance are backfilled before write.
     pub fn push_dedup(&self, lesson: &Lesson) -> Result<bool, String> {
         let key = content_key(&lesson.text);
         let existing = match std::fs::read_to_string(&self.index_path) {
@@ -203,7 +352,8 @@ impl RecallStore {
         if existing {
             return Ok(false);
         }
-        let mut line = serde_json::to_string(lesson).map_err(|e| e.to_string())?;
+        let lesson = backfill_provenance(lesson);
+        let mut line = serde_json::to_string(&lesson).map_err(|e| e.to_string())?;
         line.push('\n');
         use std::io::Write;
         let mut f = std::fs::OpenOptions::new()
@@ -215,12 +365,14 @@ impl RecallStore {
         Ok(true)
     }
 
-    /// Load lessons sorted by rank descending.
+    /// Load lessons sorted by rank descending. FR-SM-07: legacy rows
+    /// (pre-PR-22, no provenance key) get backfilled provenance on load.
     pub fn load(&self) -> Result<Vec<Lesson>, String> {
         let raw = std::fs::read_to_string(&self.index_path).map_err(|e| e.to_string())?;
         let mut lessons: Vec<Lesson> = raw
             .lines()
             .filter_map(|l| serde_json::from_str::<Lesson>(l).ok())
+            .map(|l| backfill_provenance(&l))
             .collect();
         lessons.sort_by(|a, b| {
             b.rank
@@ -229,6 +381,32 @@ impl RecallStore {
         });
         Ok(lessons)
     }
+}
+
+/// FR-SM-07: attach provenance to a lesson that has none — derived from
+/// its text kind, with a timestamp — so every durable row carries
+/// provenance.
+fn backfill_provenance(lesson: &Lesson) -> Lesson {
+    if lesson.provenance.is_some() {
+        return lesson.clone();
+    }
+    let mut lesson = lesson.clone();
+    lesson.provenance = Some(MemoryProvenance {
+        source_session_id: RECALL_SESSION_ID.to_string(),
+        node_id: None,
+        kind: classify_memory_kind(&lesson.text),
+        element_refs: Vec::new(),
+        timestamp: Some(now_unix()),
+        tool_call: Some(lesson.source.clone()),
+    });
+    lesson
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// FR-SM-06: budgeted, timeout-bounded snapshot for injection into
@@ -957,6 +1135,21 @@ fn now_unix_secs() -> u64 {
 /// One offload operation: write ref, update canvas, return compact context.
 /// Stateless across calls — node_id derives from the canvas on disk, so the
 /// MCP handler needs no per-session in-memory state.
+/// FR-SM-07/08 seam for the MCP handler: write a durable agent memory with
+/// provenance into the recall index. Returns the stored lesson.
+pub fn write_memory_with_provenance(
+    store: &RecallStore,
+    id: &str,
+    source: &str,
+    rank: f64,
+    text: &str,
+    provenance: &MemoryProvenance,
+) -> Result<Lesson, String> {
+    let lesson = lesson_with_provenance(id, source, rank, text, provenance.clone());
+    store.push_dedup(&lesson)?;
+    Ok(lesson)
+}
+
 pub fn offload_step(
     store: &SessionStore,
     tool: &str,
@@ -1169,7 +1362,41 @@ mod tests {
             source: source.to_string(),
             rank,
             text: text.to_string(),
+            provenance: None,
         }
+    }
+
+    #[test]
+    fn write_memory_with_provenance_persists_typed_kind_and_refs() {
+        let tmp = TempDir::new().unwrap();
+        let store = RecallStore::new(tmp.path()).unwrap();
+        let lesson = write_memory_with_provenance(
+            &store,
+            "sm-1",
+            "session_memory_write",
+            7.0,
+            "decision: ship the layout API this week",
+            &MemoryProvenance::new(
+                "sess-abc",
+                "offload-003",
+                MemoryKind::Decision,
+                vec!["src/web/handlers.rs::expand_service".to_string()],
+            ),
+        )
+        .expect("write");
+        assert_eq!(lesson.kind(), MemoryKind::Decision);
+        let p = lesson.provenance.as_ref().unwrap();
+        assert_eq!(p.source_session_id, "sess-abc");
+        assert_eq!(p.node_id.as_deref(), Some("offload-003"));
+        assert_eq!(
+            p.element_refs,
+            vec!["src/web/handlers.rs::expand_service".to_string()]
+        );
+        // Round trip through the on-disk index.
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "sm-1");
+        assert_eq!(loaded[0].kind(), MemoryKind::Decision);
     }
 
     #[test]

@@ -267,6 +267,8 @@ impl ToolHandler {
             "agent_diary_write" => self.agent_diary_write(arguments),
             "agent_diary_read" => self.agent_diary_read(arguments),
             "session_recall" => self.session_recall(arguments),
+            "session_memory_write" => self.session_memory_write(arguments),
+            "search_memory_rrf" => self.search_memory_rrf(arguments),
             "report_query_outcome" => self.report_query_outcome(arguments),
             "get_team_map" => self.get_team_map(arguments),
             "get_overview_context" => self.get_overview_context(arguments),
@@ -1692,6 +1694,83 @@ impl ToolHandler {
             "ref_file": store.ref_path(node_id).display().to_string(),
             "bytes": raw.len(),
         }))
+    }
+
+    /// US-SM-03 / FR-SM-07..08: durable agent-memory write with provenance
+    /// (source session, node_id, typed kind, element refs) into the recall
+    /// index. Thin dispatch — logic lives in `crate::session`.
+    fn session_memory_write(&self, args: &Value) -> Result<Value, String> {
+        use crate::session::{
+            write_memory_with_provenance, MemoryKind, MemoryProvenance, RecallStore,
+        };
+        let text = args["text"].as_str().ok_or("Missing 'text'")?;
+        let source = args["source"].as_str().unwrap_or("session_memory_write");
+        let session_id = args["session_id"]
+            .as_str()
+            .unwrap_or(crate::session::RECALL_SESSION_ID);
+        let node_id = args["node_id"].as_str().unwrap_or("");
+        let rank = args["rank"].as_f64().unwrap_or(5.0);
+        let id = args["id"].as_str().unwrap_or("sm");
+        let project = args["project"].as_str().unwrap_or(".");
+        let element_refs: Vec<String> = args["element_refs"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let kind = match args["kind"].as_str().unwrap_or("") {
+            "decision" => MemoryKind::Decision,
+            "standing_rule" => MemoryKind::StandingRule,
+            _ => MemoryKind::Preference,
+        };
+
+        let store = RecallStore::new(std::path::Path::new(project))?;
+        let lesson = write_memory_with_provenance(
+            &store,
+            id,
+            source,
+            rank,
+            text,
+            &MemoryProvenance::new(session_id, node_id, kind, element_refs),
+        )?;
+        let p = lesson.provenance.as_ref().expect("provenance");
+        Ok(json!({
+            "id": lesson.id,
+            "kind": p.kind.as_str(),
+            "source": lesson.source,
+            "node_id": p.node_id,
+            "source_session_id": p.source_session_id,
+            "written": true
+        }))
+    }
+
+    /// US-SM-04 / FR-SM-09: hybrid recall over session index + LESSONS
+    /// merged with RRF k=60. Thin dispatch — logic lives in
+    /// `crate::search`.
+    fn search_memory_rrf(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().unwrap_or("");
+        let limit = args["limit"].as_u64().unwrap_or(10).min(50) as usize;
+        let project = args["project"].as_str().unwrap_or(".");
+        let hits = crate::search::search_memory_rrf(std::path::Path::new(project), query, limit)?;
+        let results: Vec<Value> = hits
+            .iter()
+            .map(|h| {
+                json!({
+                    "id": h.id,
+                    "score": h.score,
+                    "rank": h.rank,
+                    "sources": h.sources,
+                    "title": h.title,
+                    "kind": h.kind,
+                    "node_id": h.node_id,
+                    "source_session_id": h.source_session_id,
+                    "element_refs": h.element_refs,
+                })
+            })
+            .collect();
+        Ok(json!({ "results": results, "count": results.len() }))
     }
 
     fn report_query_outcome(&self, args: &Value) -> Result<Value, String> {

@@ -27,6 +27,7 @@ pub mod report;
 #[cfg(feature = "embeddings")]
 pub mod retrieval;
 pub mod runtime;
+pub mod search;
 pub mod session;
 pub mod sources;
 pub mod vector_engine;
