@@ -1,4 +1,5 @@
 use crate::db::models::CodeElement;
+use crate::graph::query::folder_gn;
 use crate::graph::GraphEngine;
 use std::collections::{HashSet, VecDeque};
 
@@ -9,6 +10,62 @@ pub struct ImpactAnalyzer<'a> {
 impl<'a> ImpactAnalyzer<'a> {
     pub fn new(graph: &'a GraphEngine) -> Self {
         Self { graph }
+    }
+
+    /// Expand a directory qualified_name (trailing slash, e.g. `src/indexer/`)
+    /// into its direct children at index time: the directory node itself,
+    /// plus every `directory` / `File` child one level below (US-MP-08 /
+    /// FR-MP-24 — "get_impact_radius accepts directory qualified names").
+    /// The BFS treats each child as a seed; edges discovered at depth 1
+    /// carry depth 1 severity because the requested scope is the folder.
+    ///
+    /// The indexer stores directory nodes without a trailing slash
+    /// (`src/indexer`), so the canonical `folder_gn::strip` convention is
+    /// applied before relationship lookups. `contains` edges connect a
+    /// folder to its File children; `subdirectories` returns one-level-deep
+    /// directory children. Function/class elements inside the folder are
+    /// also seeded (their CALLS edges carry the folder's real dependencies).
+    fn expand_directory_seeds(
+        &self,
+        folder_qn: &str,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let folder_path = folder_gn::strip(folder_qn);
+        let mut seeds: Vec<String> = vec![folder_path.to_string()];
+        let mut files_in_scope: Vec<String> = Vec::new();
+
+        // File children of the folder itself (contains edges).
+        for rel in self.graph.get_relationships(folder_path)? {
+            if rel.rel_type == "contains" {
+                seeds.push(rel.target_qualified.clone());
+                files_in_scope.push(rel.target_qualified.clone());
+            }
+        }
+
+        // One level of directory children; expand each to its File children.
+        for child in self.graph.subdirectories(folder_qn)? {
+            let child_path = folder_gn::strip(&child.qualified_name);
+            seeds.push(child_path.to_string());
+            for rel in self.graph.get_relationships(child_path)? {
+                if rel.rel_type == "contains" {
+                    seeds.push(rel.target_qualified.clone());
+                    files_in_scope.push(rel.target_qualified.clone());
+                }
+            }
+        }
+
+        // Seed function/class elements whose file lives under the folder so
+        // their CALLS edges drive impact without an explicit file seed.
+        for file in files_in_scope {
+            for element in self.graph.get_elements_by_file(&file)? {
+                if matches!(
+                    element.element_type.as_str(),
+                    "function" | "class" | "method"
+                ) {
+                    seeds.push(element.qualified_name.clone());
+                }
+            }
+        }
+        Ok(seeds)
     }
 
     pub fn calculate_impact_radius(
@@ -48,8 +105,21 @@ impl<'a> ImpactAnalyzer<'a> {
         let mut seen_qualified: HashSet<String> = HashSet::new();
         let mut guard = crate::budget::BudgetGuard::for_tool("calculate_impact_radius");
 
-        queue.push_back((start_file.to_string(), 0));
-        visited.insert(start_file.to_string());
+        // US-MP-08 / FR-MP-24: a directory qualified_name (`src/indexer/`)
+        // seeds the BFS with the folder node plus its direct children, so
+        // impact analysis at directory level works like a file-level scan.
+        // Depth semantics stay natural: folder=0, child file=1, callee=2.
+        let start_is_directory = folder_gn::is_directory(start_file);
+        let seeds: Vec<String> = if start_is_directory {
+            self.expand_directory_seeds(start_file)?
+        } else {
+            vec![start_file.to_string()]
+        };
+
+        for seed in seeds {
+            queue.push_back((seed.clone(), 0));
+            visited.insert(seed);
+        }
 
         let mut truncated = false;
         while let Some((current, current_depth)) = queue.pop_front() {
@@ -461,6 +531,145 @@ where
 #[cfg(test)]
 mod traverse_tests {
     use super::*;
+    use crate::db::schema::init_db;
+    use tempfile::TempDir;
+
+    fn make_graph() -> (GraphEngine, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db = init_db(&tmp.path().join("impact.db")).unwrap();
+        (GraphEngine::new(db), tmp)
+    }
+
+    fn elem(qn: &str, etype: &str, file: &str) -> CodeElement {
+        CodeElement {
+            qualified_name: qn.into(),
+            element_type: etype.into(),
+            name: qn.rsplit("::").next().unwrap_or(qn).to_string(),
+            file_path: file.into(),
+            line_start: 1,
+            line_end: 10,
+            language: "rust".into(),
+            ..Default::default()
+        }
+    }
+
+    fn rel(src: &str, tgt: &str, rtype: &str) -> crate::db::models::Relationship {
+        crate::db::models::Relationship {
+            source_qualified: src.into(),
+            target_qualified: tgt.into(),
+            rel_type: rtype.into(),
+            confidence: 0.95,
+            metadata: serde_json::json!({"resolution_method": "name"}),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn impact_radius_accepts_directory_qualified_name() {
+        // US-MP-08 / FR-MP-24: get_impact_radius("src/indexer/") reaches
+        // file-level edges inside the folder without a file-path seed.
+        let (graph, _tmp) = make_graph();
+        graph
+            .insert_element(&elem("src", "directory", "src"))
+            .unwrap();
+        graph
+            .insert_element(&elem("src/indexer", "directory", "src/indexer"))
+            .unwrap();
+        graph
+            .insert_element(&elem("src/indexer/mod.rs", "File", "src/indexer/mod.rs"))
+            .unwrap();
+        graph
+            .insert_element(&elem("src/graph", "directory", "src/graph"))
+            .unwrap();
+        graph
+            .insert_element(&elem("src/graph/query.rs", "File", "src/graph/query.rs"))
+            .unwrap();
+        graph
+            .insert_element(&elem(
+                "src/indexer/mod.rs::extract",
+                "function",
+                "src/indexer/mod.rs",
+            ))
+            .unwrap();
+        graph
+            .insert_element(&elem(
+                "src/graph/query.rs::run",
+                "function",
+                "src/graph/query.rs",
+            ))
+            .unwrap();
+        // indexer/mod.rs::extract -> graph/query.rs::run (calls edge)
+        graph
+            .insert_relationship(&rel(
+                "src/indexer/mod.rs::extract",
+                "src/graph/query.rs::run",
+                "calls",
+            ))
+            .unwrap();
+        // src/indexer -> src/indexer/mod.rs contains
+        graph
+            .insert_relationship(&rel("src/indexer", "src/indexer/mod.rs", "contains"))
+            .unwrap();
+
+        let analyzer = ImpactAnalyzer::new(&graph);
+        let result = analyzer
+            .calculate_impact_radius("src/indexer/", 2)
+            .expect("directory impact radius");
+        let qns: HashSet<String> = result
+            .affected_elements
+            .iter()
+            .map(|e| e.qualified_name.clone())
+            .collect();
+        assert!(
+            qns.contains("src/indexer/mod.rs::extract"),
+            "directory impact must include functions under the folder: {qns:?}"
+        );
+        assert!(
+            qns.contains("src/graph/query.rs::run"),
+            "directory impact must cross folder boundaries via edges: {qns:?}"
+        );
+        // Folder-scoped hits report natural BFS depths (folder=0 seed, child
+        // file=1, callee=2) so severity labels stay meaningful.
+        let run_hit = result
+            .affected_with_confidence
+            .iter()
+            .find(|a| a.element.qualified_name == "src/graph/query.rs::run")
+            .expect("cross-folder callee hit");
+        // extract and run are both folder-internal seeds; the cross-folder
+        // calls edge lands at depth 1 (folder scope = 0).
+        assert_eq!(run_hit.depth, 1);
+        let file_hit = result
+            .affected_with_confidence
+            .iter()
+            .find(|a| a.element.qualified_name == "src/indexer/mod.rs")
+            .expect("folder child file hit");
+        assert_eq!(file_hit.depth, 1);
+    }
+
+    #[test]
+    fn impact_radius_non_directory_preserves_depth_semantics() {
+        let (graph, _tmp) = make_graph();
+        graph
+            .insert_element(&elem("src/a.rs::f", "function", "src/a.rs"))
+            .unwrap();
+        graph
+            .insert_element(&elem("src/b.rs::g", "function", "src/b.rs"))
+            .unwrap();
+        graph
+            .insert_relationship(&rel("src/a.rs::f", "src/b.rs::g", "calls"))
+            .unwrap();
+        let analyzer = ImpactAnalyzer::new(&graph);
+        let result = analyzer
+            .calculate_impact_radius("src/a.rs::f", 1)
+            .expect("file impact");
+        let hit = result
+            .affected_with_confidence
+            .iter()
+            .find(|a| a.element.qualified_name == "src/b.rs::g")
+            .expect("callee hit");
+        assert_eq!(hit.depth, 1);
+        assert_eq!(hit.severity, "WILL BREAK");
+    }
 
     #[test]
     fn impact_scan_options_default_caps_at_10k() {
