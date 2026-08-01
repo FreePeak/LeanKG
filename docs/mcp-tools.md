@@ -89,11 +89,17 @@ Against a running HTTP MCP (`localhost:9699`):
 
 ```bash
 python3 scripts/mcp-smoke-tools.py
+# ontology + routing gates only (CI-friendly, no full registry walk):
+python3 scripts/mcp-smoke-tools.py --check-only-ontology
 # mega-graph heavy tools (needs higher mem_limit):
 LEANKG_SMOKE_INCLUDE_HEAVY=1 python3 scripts/mcp-smoke-tools.py
 ```
 
-The script discovers tools from `tools/list`, skips mutators vs mega-graph-heavy with distinct labels, and always exercises `query_graph`.
+The script discovers tools from `tools/list`, skips mutators vs mega-graph-heavy with distinct labels, and always exercises `query_graph`. Since the CBM Phase-1 smoke closeout it also runs **hard gates**:
+
+- **FR-A03 ontology gates** — `kg_self_test` (all_ok), `kg_ontology_status`, `kg_trace_workflow` (real workflow id, `LEANKG_SMOKE_WORKFLOW`), `ontology_control(action=status)`.
+- **FR-A06 routing gates** — `find_route` / `get_screen_args` / `get_nav_callers` must answer or refuse via the predictable mega-graph guard; a hard tool error fails the gate.
+- **FR-B50 raw-query recipes** — ≥ 10 validated `run_raw_query` Datalog recipes; see [guides/run-raw-query-recipes.md](guides/run-raw-query-recipes.md).
 
 ## Call-edge Resolution Method
 
