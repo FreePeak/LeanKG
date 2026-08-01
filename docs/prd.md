@@ -742,7 +742,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | **Impact radius lacks confidence grades** | `get_impact_radius` returns all edges at equal weight; LLM cannot distinguish "WILL BREAK" from "MIGHT BE AFFECTED" |
 | **No pre-commit risk signal** | No tool exists to assess change risk before commit |
 | **Flat search results** | `search_code` returns symbol matches with no grouping by functional area |
-| **No shortest-path / explain verbs** | *(closing)* MCP `shortest_path` / `explain_node` exist; product narrative + UI NL still incomplete — see US-GF-14 / US-UI2-06 |
+| **No shortest-path / explain verbs** | *(closing)* MCP `shortest_path` / `explain_node` exist; ui-v2 Query FAB NL mode **DONE** (Wave 3 / FR-UI2-08) — see [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md) |
 | **Opaque edge provenance** | Agents cannot tell EXTRACTED vs INFERRED vs AMBIGUOUS at a glance (US-GF-04 / FR-GF-07..09 — **P1**) |
 | **No architecture brief artifact** | Missing auto god-node + surprising-connection report (`GRAPH_REPORT.md`) after index (US-GF-06 / FR-GF-13 — **P1**) |
 | **Agents still grep first** | Without always-on install/hooks, token savings never materialize at company scale (US-GF-17 — **P1**) |

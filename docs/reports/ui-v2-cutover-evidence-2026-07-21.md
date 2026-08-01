@@ -60,5 +60,5 @@ cargo build --release
 
 ## Known follow-ups (not blocking cutover)
 
-- Query FAB NL mode → `query_graph` (`US-UI2-06` / `FR-UI2-08`) — Wave 3
+- ~~Query FAB NL mode → `query_graph` (`US-UI2-06` / `FR-UI2-08`) — Wave 3~~ **DONE** — evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](ui-v2-nl-query-fab-2026-08-01.md)
 - Cluster legend + ops panels (`FR-UI2-10` / `FR-UI2-11`) — P2
