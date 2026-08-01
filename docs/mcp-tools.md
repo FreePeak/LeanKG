@@ -40,7 +40,7 @@ Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without).
 |------|-------------|
 | `get_dependencies` | Get file dependencies (direct imports) |
 | `get_dependents` | Get files depending on target |
-| `get_impact_radius` | Get all files affected by change within N hops |
+| `get_impact_radius` | Get all files affected by change within N hops. Keep `depth<=2`; result set capped at 10000 (override `LEANKG_IMPACT_MAX_AFFECTED`). See [`docs/reports/platform-c-impact-scale-profile-2026-08-02.md`](reports/platform-c-impact-scale-profile-2026-08-02.md) for measured latency (FR-C04). |
 | `get_review_context` | Generate focused subgraph + structured review prompt |
 
 ## Context Tools
