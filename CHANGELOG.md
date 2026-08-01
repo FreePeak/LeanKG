@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.28](https://github.com/FreePeak/LeanKG/compare/v0.19.27...v0.19.28) (2026-08-01)
+
+
+### Features
+
+* **ui-v2:** Wave 3 NL Query FAB + fix OnRender embeddings exit 101 ([#160](https://github.com/FreePeak/LeanKG/issues/160)) ([a9a718a](https://github.com/FreePeak/LeanKG/commit/a9a718a37221f88c787412686d4fe9981212a510))
+
 ## [0.19.27](https://github.com/FreePeak/LeanKG/compare/v0.19.26...v0.19.27) (2026-08-01)
 
 
