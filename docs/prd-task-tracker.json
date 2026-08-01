@@ -2,21 +2,21 @@
   "generated": "2026-08-01",
   "source": "docs/prd.md",
   "counts": {
-    "DONE": 410,
-    "NOT_DONE": 55,
-    "PENDING": 29,
+    "DONE": 412,
+    "NOT_DONE": 54,
+    "PENDING": 28,
     "PARTIAL": 12,
     "OPEN": 1,
     "WONT_DO": 3,
     "by_status": {
-      "NOT_DONE": 55,
+      "NOT_DONE": 54,
       "PARTIAL": 12,
-      "DONE": 410,
-      "PENDING": 29,
+      "DONE": 412,
+      "PENDING": 28,
       "OPEN": 1,
       "WONT_DO": 3
     },
-    "open_work": 97
+    "open_work": 95
   },
   "tasks": [
     {
@@ -206,8 +206,8 @@
       "kind": "FR",
       "title": "Query FAB dual-mode: NL \u2192 query_graph; Advanced \u2192 raw Cozo POST /api/query",
       "priority": "Must Have",
-      "status": "NOT_DONE",
-      "notes": "v3.7.8 P1 \u2014 US-UI2-06",
+      "status": "DONE",
+      "notes": "v3.7.8 P1 \u2014 US-UI2-06 | DONE 2026-08-01 Wave 3 NL Query FAB",
       "section": "5.19 UI v2 Graph Explorer",
       "prd_line": null,
       "focus": "P1",
@@ -895,8 +895,8 @@
       "kind": "User Story",
       "title": "Query FAB NL mode calls query_graph (raw Cozo remains advanced)",
       "priority": "Must Have",
-      "status": "PENDING",
-      "notes": "v3.7.8 P1 \u2014 Graphify query verb in UI",
+      "status": "DONE",
+      "notes": "v3.7.8 P1 \u2014 Graphify query verb in UI | DONE 2026-08-01 Wave 3 NL Query FAB",
       "section": "3.17 UI v2 \u2014 GitNexus Shell Adapted (US-UI2)",
       "prd_line": null,
       "focus": "P1",

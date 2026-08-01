@@ -13,7 +13,7 @@
 >
 > **P0 CLOSED (v3.7.9):** **Procedural ontology auto-update while using** — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059` **DONE**. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). YAML watch + boot marker (concepts **and** workflows) + post-index sync + MCP `ontology_control`.
 >
-> **CURRENT next (P1 — company adoption waves):** Waves **0a–2c** **DONE** (ROI, ui-v2 cutover, MCP surface, three-verb, hooks, honest edges, auto GRAPH_REPORT, HTML export). **Next: Wave 3** NL Query FAB (`US-UI2-06` / `FR-UI2-08`) → Wave 4 single-repo expand (`US-MG-02` / `FR-MG-03`). Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
+> **CURRENT next (P1 — company adoption waves):** Waves **0a–3** **DONE** (through NL Query FAB). **Next: Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`). Evidence: [`docs/reports/ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md).
 >
 > **P2 follow-ons (do not preempt P1):** Doc↔code join quality §3.19 / §5.22 (`US-DOCJOIN-*` / `REL-063`); Graph-engineering curriculum gaps §1.2 / §3.20 / §5.23 (`US-GE-*` / `REL-064`). Evidence: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
 >
@@ -660,9 +660,9 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 4. **US-GF-04** — Honest edges in MCP + ui-v2 (trust = adoption) — **DONE**
 5. **US-GF-06** — Auto `GRAPH_REPORT.md` (onboarding without 85-tool wall) — **DONE**
 6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI) — **DONE**
-7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb) — **CURRENT (Wave 3)**
+7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb) — **DONE**
 8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company) — **DONE**
-9. **US-MG-02** — Single-repo expand (Wave 4) — PARTIAL / next after Wave 3
+9. **US-MG-02** — Single-repo expand (Wave 4) — **CURRENT** / PARTIAL
 
 **P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact. **DONE**.
 

@@ -70,10 +70,9 @@ mod tests {
 
     #[test]
     fn fr_ui2_08_request_deserializes_optional_budgets() {
-        let req: QueryGraphRequest = serde_json::from_str(
-            r#"{"question":"auth","token_budget":2000,"max_depth":2}"#,
-        )
-        .unwrap();
+        let req: QueryGraphRequest =
+            serde_json::from_str(r#"{"question":"auth","token_budget":2000,"max_depth":2}"#)
+                .unwrap();
         assert_eq!(req.token_budget, Some(2000));
         assert_eq!(req.max_depth, Some(2));
     }

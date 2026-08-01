@@ -1,12 +1,12 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 — Tracker sync: Wave **2b** auto GRAPH_REPORT + Wave **2c** HTML export marked **DONE** (code shipped #122 / #124; evidence for 2b). **P1 CURRENT = Wave 3** NL Query FAB (`US-UI2-06` / `FR-UI2-08`). Prior: 2026-07-27 — `FR-SEM-08` DONE; Wave 0a–2a DONE; P2 DOCJOIN Must Have DONE (`FR-DOCJOIN-06` open).
+**Last synced:** 2026-08-01 — Wave **3** NL Query FAB (`US-UI2-06` / `FR-UI2-08`) **DONE**. Evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md). **P1 CURRENT = Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`). Prior: waves 0a–2c DONE; tracker sync for GRAPH_REPORT + HTML export.
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
 
 > **Agent rule:** Work **P0 first**, then P1 waves → P2 → P3.  
 > **P0:** Procedural ontology auto-update — **DONE**.  
-> **P1 CURRENT:** Company adoption waves — **Wave 3 = NL Query FAB** (next). Waves 0a–2c **DONE**.  
+> **P1 CURRENT:** Company adoption waves — **Wave 4 = single-repo expand** (next). Waves 0a–3 **DONE**.  
 > **P2 follow-ons:** Doc↔code join (§3.19 / §5.22); graph-engineering curriculum gaps (§1.2 / §3.20 / §5.23) — do **not** interrupt P1 waves.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
@@ -39,18 +39,18 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **510** |
-| NOT_DONE | 59 |
-| PENDING | 29 |
+| NOT_DONE | 58 |
+| PENDING | 28 |
 | PARTIAL | 9 |
 | OPEN | 1 |
-| DONE | 408 |
+| DONE | 410 |
 | WONT_DO | 3 |
-| Open work | **98** |
+| Open work | **96** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
-| P1 | 4 |
+| P1 | 2 |
 | P2 | 83 |
 | P3 | 11 |
 
@@ -90,8 +90,8 @@ Evidence: [`ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-
 | **2a** | Honest edges | `US-GF-04` / `FR-GF-07..09` / `REL-043` | **DONE** — write-path stamp + MCP + ui-v2 |
 | **2b** | Auto GRAPH_REPORT | `US-GF-06` / `FR-GF-13` | **DONE** |
 | **2c** | HTML export | `US-GF-13` / `FR-GF-21` | **DONE** — CLI/MCP `export html` (#124) |
-| **3** | NL Query FAB | `US-UI2-06` / `FR-UI2-08` | **CURRENT** — humans use same cheap verb |
-| **4** | Single-repo expand | `US-MG-02` / `FR-MG-03` | UI correctness |
+| **3** | NL Query FAB | `US-UI2-06` / `FR-UI2-08` | **DONE** — NL → `/api/query-graph`; Advanced → raw Cozo |
+| **4** | Single-repo expand | `US-MG-02` / `FR-MG-03` | **CURRENT** — UI correctness |
 
 Evidence: [`honest-edges-smoke-2026-07-22.md`](reports/honest-edges-smoke-2026-07-22.md)
 
@@ -300,7 +300,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `REL-043` | Release | **DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `FR-GF-13` | FR | **DONE** | Must Have | Auto-generate '.leankg/GRAPH_REPORT.md' on every index (CLI 'leankg report' / MCP 'get_gra… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-21` | FR | **DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-UI2-08` | FR | **NOT_DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
+| **P1** | `FR-UI2-08` | FR | **DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
 | **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
@@ -396,7 +396,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-GF-14` | User Story | **DONE** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-17` | User Story | **DONE** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-13` | User Story | **DONE** | Must Have | Shareable single-file HTML graph export (leankg export html, bounded subgraph/community) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P1** | `US-UI2-06` | User Story | **PENDING** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P1** | `US-UI2-06` | User Story | **DONE** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-CBM-A1` | User Story | **PENDING** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-CBM-A4` | User Story | **PENDING** | Should Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
@@ -459,7 +459,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `REL-043` | Release | **DONE** | Must Have | US-GF-04 provenance labels on all relationship types | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `FR-GF-13` | FR | **DONE** | Must Have | Auto-generate '.leankg/GRAPH_REPORT.md' on every index (CLI 'leankg report' / MCP 'get_gra… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-21` | FR | **DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
-| **P1** | `FR-UI2-08` | FR | **NOT_DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
+| **P1** | `FR-UI2-08` | FR | **DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
 | **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
@@ -555,7 +555,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-GF-14` | User Story | **DONE** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-17` | User Story | **DONE** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-13` | User Story | **DONE** | Must Have | Shareable single-file HTML graph export (leankg export html, bounded subgraph/community) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P1** | `US-UI2-06` | User Story | **PENDING** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P1** | `US-UI2-06` | User Story | **DONE** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-CBM-A1` | User Story | **PENDING** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-CBM-A4` | User Story | **PENDING** | Should Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
