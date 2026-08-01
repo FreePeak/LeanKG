@@ -190,6 +190,21 @@ pub enum CLICommand {
         #[arg(long)]
         out: Option<String>,
     },
+    /// US-MP-03 / FR-MP-09..13: Mine conversation exports (Claude / ChatGPT
+    /// / Slack) into decisions, preferences, milestones, and problems, then
+    /// persist them into the project graph as typed elements with
+    /// `decided_about` edges.
+    MineConversations {
+        /// Export format: claude | chatgpt | slack
+        #[arg(long, value_parser = ["claude", "chatgpt", "slack"])]
+        format: String,
+        /// Project root whose `.leankg` graph receives the mined nodes
+        #[arg(long, default_value = ".")]
+        project: String,
+        /// Input file or directory of export JSON files
+        #[arg(long)]
+        input: String,
+    },
     /// US-MP-05: Check graph for broken / stale links
     CheckConsistency {
         /// Filter by severity: BROKEN | STALE | CURRENT

@@ -6,6 +6,7 @@ pub mod budget;
 pub mod cli;
 pub mod compress;
 pub mod config;
+pub mod conversation_indexer;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;
