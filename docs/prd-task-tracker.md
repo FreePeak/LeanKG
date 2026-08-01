@@ -1,6 +1,8 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 (PR-00 reconcile + Wave 4 single-repo expand DONE) — Priority order: **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md)). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
+**Last synced:** 2026-08-01 (PR-00 reconcile + Wave 4 DONE + PR-03 remote-source closeouts) — **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01` closed with evidence: docs/reports/rel-src-*-2026-08-01.md). Priority order: **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md)). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
+**Last synced:** 2026-08-01 (PR-00 reconcile + PR-03 remote-source closeouts) — **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01` closed with evidence: docs/reports/rel-src-*-2026-08-01.md). Priority order: **P1 CURRENT = Wave 4** (`US-MG-02` / `FR-MG-03`). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
+>>>>>>> 23623f79 (docs: refresh kind=docs live smoke + tracker DONE (REL-REFRESH-01))
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §5.18 / §5.22–5.23 / §5.32  
 **All-open fan-out campaign (worktrees + TDD + PRs):** [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)
@@ -232,13 +234,13 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 3 | `FR-SRC-GIT-03` | **DONE** | Fix incremental remote double-sync |
 | 4 | `FR-SRC-GCS-01` | **DONE** | gs:// index into graph via OAuth bearer token |
 | 5 | `FR-SRC-GCS-02` | **DONE** | Honest CLI help for GCS auth |
-| 6 | `REL-SRC-01` | **NOT_DONE** | E2e: index --source gs:// populates graph (fake-gcs) |
+| 6 | `REL-SRC-01` | **DONE** | E2e: index --source gs:// populates graph (fake-gcs) — cli_index_gcs_source_populates_graph + report `docs/reports/rel-src-gcs-e2e-2026-08-01.md` |
 | 7 | `FR-SRC-WATCH-01` | **DONE** | Source trait: remote_fingerprint + materialize_ephemeral |
 | 8 | `FR-SRC-WATCH-02` | **DONE** | Git watch via ls-remote + archive download |
 | 9 | `FR-SRC-WATCH-03` | **DONE** | GCS watch via etag listing + delta download |
 | 10 | `FR-SRC-WATCH-04` | **DONE** | leankg watch --source URI --interval N |
 | 11 | `FR-SRC-WATCH-05` | **DONE** | Watch state persisted in .leankg/source_watch_state.json |
-| 12 | `REL-SRC-WATCH-01` | **NOT_DONE** | E2e: fake-gcs change → watch re-indexes |
+| 12 | `REL-SRC-WATCH-01` | **DONE** | E2e: fake-gcs change → watch re-indexes — cli_watch_gcs_source_reindexes_on_change + report `docs/reports/rel-src-watch-e2e-2026-08-01.md` |
 | 13 | `US-SRC-01` | **DONE** | Index internal GitLab repos with GITLAB_TOKEN |
 | 14 | `US-SRC-02` | **DONE** | Index GCS buckets into graph |
 | 15 | `US-SRC-WATCH-01` | **DONE** | leankg watch --source git+https:// for polling |
@@ -246,7 +248,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 17 | `US-REFRESH-01` | **DONE** | leankg refresh one-shot index+embed |
 | 18 | `US-REFRESH-02` | **DONE** | leankg index-docs CLI command |
 | 19 | `US-REFRESH-03` | **DONE** | semantic_search kind=docs filter |
-| 20 | `REL-REFRESH-01` | **NOT_DONE** | Live smoke: refresh → kind=docs returns doc hits |
+| 20 | `REL-REFRESH-01` | **DONE** | Live smoke: refresh → kind=docs returns doc hits — report `docs/reports/rel-refresh-docs-smoke-2026-08-01.md` + HNSW-import / doc_section-traversal fixes |
 
 ## Graph Engineering backlog (P2 — after P1 waves)
 
@@ -391,7 +393,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-04` | FR | **DONE** | Should Have | leankg watch --source URI --interval N | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-05` | FR | **DONE** | Should Have | Watch state persisted in .leankg/source_watch_state.json | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
-| **P2** | `REL-SRC-WATCH-01` | Release | **NOT_DONE** | Should Have | E2e: fake-gcs change → watch re-indexes | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `REL-SRC-WATCH-01` | Release | **DONE** | Should Have | E2e: fake-gcs change → watch re-indexes | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-DOCEMBED-04` | FR | **DONE** | Should Have | semantic_search kind=docs filter for doc-only hits | 5.30 Doc semantic refresh (FR-REFRESH) |
 | **P2** | `FR-REFRESH-01` | FR | **DONE** | Should Have | leankg refresh: index code → index docs → embed | 5.30 Doc semantic refresh (FR-REFRESH) |
 | **P2** | `FR-REFRESH-02` | FR | **DONE** | Should Have | leankg index-docs CLI command | 5.30 Doc semantic refresh (FR-REFRESH) |
@@ -570,7 +572,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-04` | FR | **DONE** | Should Have | leankg watch --source URI --interval N | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-05` | FR | **DONE** | Should Have | Watch state persisted in .leankg/source_watch_state.json | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
-| **P2** | `REL-SRC-WATCH-01` | Release | **NOT_DONE** | Should Have | E2e: fake-gcs change → watch re-indexes | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
+| **P2** | `REL-SRC-WATCH-01` | Release | **DONE** | Should Have | E2e: fake-gcs change → watch re-indexes | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-DOCEMBED-04` | FR | **DONE** | Should Have | semantic_search kind=docs filter for doc-only hits | 5.30 Doc semantic refresh (FR-REFRESH) |
 | **P2** | `FR-REFRESH-01` | FR | **DONE** | Should Have | leankg refresh: index code → index docs → embed | 5.30 Doc semantic refresh (FR-REFRESH) |
 | **P2** | `FR-REFRESH-02` | FR | **DONE** | Should Have | leankg index-docs CLI command | 5.30 Doc semantic refresh (FR-REFRESH) |
