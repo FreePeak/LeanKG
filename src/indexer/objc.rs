@@ -13,16 +13,15 @@
 //!
 //! Limitations:
 //!   - C functions, blocks, typedef, #define macros are not extracted
-//!   - Method argument types / selector fragments are not parsed
-//!   - Protocol conformance (<Proto1,Proto2>) is not extracted as edges
 //!   - String-literal / comment false positives possible (regex limitation)
 //!   - .h files may be double-counted when included from .m files (v0)
 use crate::db::models::{CodeElement, Relationship};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-static INTERFACE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^\s*@interface\s+(\w+)(?:\s*:\s*(\w+))?\b").unwrap());
+static INTERFACE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?m)^\s*@interface\s+(\w+)(?:\s*:\s*(\w+))?(?:\s*<([^>]+)>)?").unwrap()
+});
 static CATEGORY_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^\s*@interface\s+(\w+)\s*\((\w*)\)").unwrap());
 static IMPLEMENTATION_RE: Lazy<Regex> =
@@ -31,9 +30,12 @@ static PROTOCOL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^\s*@protocol\s+
 static PROPERTY_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^\s*@property\s*\([^)]*\)\s*.*?(\w+)\s*;").unwrap());
 static METHOD_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^\s*[-+]\s*\([^)]*\)\s*(\w+)").unwrap());
+    Lazy::new(|| Regex::new(r"(?m)^\s*[-+]\s*\([^)]*\)\s*(.+)").unwrap());
 static IMPORT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?m)^\s*(?:#import\s+["<]([^">]+)[">]|@import\s+(\w+))"#).unwrap());
+static SELECTOR_PART_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(\w+)\s*:").unwrap());
+static BARE_METHOD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(\w+)\b").unwrap());
 
 pub struct ObjCExtractor<'a> {
     source: &'a str,
@@ -99,11 +101,39 @@ impl<'a> ObjCExtractor<'a> {
                 continue;
             }
 
-            // @interface ClassName [: SuperClass]
+            // @interface ClassName [: SuperClass] [<Proto, ...>]
             if let Some(cap) = INTERFACE_RE.captures(line) {
                 let name = &cap[1];
-                self.push_decl(&mut elements, &mut relationships, "class", name, line_num);
-                current_parent = Some(format!("{}::{}", self.file_path, name));
+                let qn = self.push_decl(&mut elements, &mut relationships, "class", name, line_num);
+                if let Some(super_cap) = cap.get(2) {
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: qn.clone(),
+                        target_qualified: super_cap.as_str().to_string(),
+                        rel_type: "extends".to_string(),
+                        confidence: 0.9,
+                        metadata: serde_json::json!({"resolution_method": "name"}),
+                        ..Default::default()
+                    });
+                }
+                if let Some(protos) = cap.get(3) {
+                    for proto in protos.as_str().split(',') {
+                        let proto = proto.trim();
+                        if proto.is_empty() {
+                            continue;
+                        }
+                        relationships.push(Relationship {
+                            id: None,
+                            source_qualified: qn.clone(),
+                            target_qualified: proto.to_string(),
+                            rel_type: "implements".to_string(),
+                            confidence: 0.9,
+                            metadata: serde_json::json!({"resolution_method": "name"}),
+                            ..Default::default()
+                        });
+                    }
+                }
+                current_parent = Some(qn);
                 continue;
             }
 
@@ -168,9 +198,11 @@ impl<'a> ObjCExtractor<'a> {
                 continue;
             }
 
-            // Methods: - (type)name or + (type)name
+            // Methods: - (type)name or + (type)name: / multi-arg selectors
             if let Some(cap) = METHOD_RE.captures(line) {
-                let name = &cap[1];
+                let Some(name) = parse_objc_selector(cap[1].trim()) else {
+                    continue;
+                };
                 let qn = format!(
                     "{}::{}",
                     current_parent.as_deref().unwrap_or(self.file_path),
@@ -179,7 +211,7 @@ impl<'a> ObjCExtractor<'a> {
                 elements.push(CodeElement {
                     qualified_name: qn.clone(),
                     element_type: "method".to_string(),
-                    name: name.to_string(),
+                    name,
                     file_path: self.file_path.to_string(),
                     line_start: line_num,
                     line_end: line_num,
@@ -232,7 +264,7 @@ impl<'a> ObjCExtractor<'a> {
         element_type: &str,
         name: &str,
         line: u32,
-    ) {
+    ) -> String {
         let qn = format!("{}::{}", self.file_path, name);
         elements.push(CodeElement {
             qualified_name: qn.clone(),
@@ -247,13 +279,35 @@ impl<'a> ObjCExtractor<'a> {
         relationships.push(Relationship {
             id: None,
             source_qualified: self.file_path.to_string(),
-            target_qualified: qn,
+            target_qualified: qn.clone(),
             rel_type: "contains".to_string(),
             confidence: 1.0,
             metadata: serde_json::json!({"resolution_method": "name"}),
             ..Default::default()
         });
+        qn
     }
+}
+
+/// Build an ObjC selector from the text after the return-type parentheses.
+/// Examples: `sayHello` → `sayHello`; `setName:(NSString *)name age:(NSInteger)age` → `setName:age:`
+fn parse_objc_selector(after_rettype: &str) -> Option<String> {
+    let trimmed = after_rettype
+        .trim_end_matches(|c: char| c == ';' || c == '{' || c.is_whitespace())
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parts: Vec<_> = SELECTOR_PART_RE
+        .captures_iter(trimmed)
+        .map(|c| format!("{}:", &c[1]))
+        .collect();
+    if !parts.is_empty() {
+        return Some(parts.join(""));
+    }
+    BARE_METHOD_RE
+        .captures(trimmed)
+        .map(|c| c[1].to_string())
 }
 
 #[cfg(test)]
@@ -361,6 +415,60 @@ mod tests {
             .any(|e| e.element_type == "property" && e.name == "count"));
         assert!(elems
             .iter()
-            .any(|e| e.element_type == "method" && e.name == "compute"));
+            .any(|e| e.element_type == "method" && e.name == "compute:"));
+    }
+
+    #[test]
+    fn extracts_objc_extends_implements_and_selectors() {
+        let src = r#"
+@interface Greeter : NSObject <Greetable, Logging>
+- (void)setName:(NSString *)name age:(NSInteger)age;
+- (void)sayHello;
+@end
+"#;
+        let (elems, rels) = ObjCExtractor::new(src.as_bytes(), "Greeter.h").extract();
+
+        assert!(
+            elems
+                .iter()
+                .any(|e| e.element_type == "method" && e.name == "setName:age:"),
+            "expected multi-arg selector setName:age:, got {:?}",
+            elems
+                .iter()
+                .filter(|e| e.element_type == "method")
+                .map(|e| &e.name)
+                .collect::<Vec<_>>()
+        );
+        assert!(elems
+            .iter()
+            .any(|e| e.element_type == "method" && e.name == "sayHello"));
+
+        assert!(
+            rels.iter().any(|r| {
+                r.rel_type == "extends"
+                    && r.source_qualified.ends_with("::Greeter")
+                    && r.target_qualified == "NSObject"
+            }),
+            "Greeter should extend NSObject, got {:?}",
+            rels.iter()
+                .filter(|r| r.rel_type == "extends")
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            rels.iter().any(|r| {
+                r.rel_type == "implements"
+                    && r.source_qualified.ends_with("::Greeter")
+                    && r.target_qualified == "Greetable"
+            }),
+            "Greeter should implement Greetable"
+        );
+        assert!(
+            rels.iter().any(|r| {
+                r.rel_type == "implements"
+                    && r.source_qualified.ends_with("::Greeter")
+                    && r.target_qualified == "Logging"
+            }),
+            "Greeter should implement Logging"
+        );
     }
 }
