@@ -1,8 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 (PR-00 reconcile + Wave 4 DONE + PR-03 remote-source closeouts) — **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01` closed with evidence: docs/reports/rel-src-*-2026-08-01.md). Priority order: **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md)). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
-**Last synced:** 2026-08-01 (PR-00 reconcile + PR-03 remote-source closeouts) — **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01` closed with evidence: docs/reports/rel-src-*-2026-08-01.md). Priority order: **P1 CURRENT = Wave 4** (`US-MG-02` / `FR-MG-03`). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
->>>>>>> 23623f79 (docs: refresh kind=docs live smoke + tracker DONE (REL-REFRESH-01))
+**Last synced:** 2026-08-02 (PR-13 SEM token budgets — FR-SEM-01..03 / US-SEM-01..03 DONE). **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01`). **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §5.18 / §5.22–5.23 / §5.32  
 **All-open fan-out campaign (worktrees + TDD + PRs):** [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)
@@ -43,19 +41,19 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **539** |
-| NOT_DONE | 64 |
-| PENDING | 31 |
+| NOT_DONE | 58 |
+| PENDING | 25 |
 | PARTIAL | 9 |
 | OPEN | 1 |
-| DONE | 431 |
+| DONE | 443 |
 | WONT_DO | 3 |
-| Open work | **105** |
+| Open work | **93** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
 | P1 | 2 |
-| P2 | ~98 |
+| P2 | ~92 |
 | P3 | ~13 |
 
 | Kind | Count |
@@ -444,9 +442,9 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-01` | FR | **DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-UI2-10` | FR | **DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
 | **P2** | `FR-UI2-11` | FR | **DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
 | **P2** | `REL-032` | Release | **DONE** | Should Have | Vue / Svelte / SQL DDL wired into index walk (`find_files_sync` + bulk + incremental); Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
@@ -480,9 +478,9 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `US-GF-15` | User Story | **PENDING** | Should Have | Expand assistant install matrix (Cursor/Claude/Codex/…) toward Graphify-style one-command … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P2** | `US-GF-16` | User Story | **PENDING** | Should Have | Productize reflect / query-outcome loop as default skill guidance | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decis… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-01` | User Story | **DONE** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **DONE** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **DONE** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-UI2-08` | User Story | **DONE** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-UI2-09` | User Story | **DONE** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
@@ -630,9 +628,9 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
 | **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-01` | FR | **DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-UI2-10` | FR | **DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
 | **P2** | `FR-UI2-11` | FR | **DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
 | **P2** | `REL-032` | Release | **DONE** | Should Have | Vue / Svelte / SQL DDL wired into index walk (`find_files_sync` + bulk + incremental); Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
@@ -659,9 +657,9 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `US-GF-15` | User Story | **PENDING** | Should Have | Expand assistant install matrix (Cursor/Claude/Codex/…) toward Graphify-style one-command … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P2** | `US-GF-16` | User Story | **PENDING** | Should Have | Productize reflect / query-outcome loop as default skill guidance | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decis… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-01` | User Story | **DONE** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **DONE** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **DONE** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-UI2-08` | User Story | **DONE** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-UI2-09` | User Story | **DONE** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |

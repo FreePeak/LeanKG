@@ -22,6 +22,7 @@ Commands:
   opencode      Install and configure LeanKG for OpenCode AI
   cursor        Install and configure LeanKG for Cursor AI
   claude        Install and configure LeanKG for Claude Code/Desktop
+  codex         Install and configure LeanKG for Codex CLI
   gemini        Install and configure LeanKG for Gemini CLI
   kilo          Install and configure LeanKG for Kilo Code
   antigravity   Install and configure LeanKG for Anti Gravity
@@ -1370,10 +1371,52 @@ EOF
     echo "Configured LeanKG for Kilo at $config_file"
 }
 
+configure_codex() {
+    # Codex CLI reads ~/.codex/config.toml with an [mcp_servers.*] section.
+    local config_dir="$HOME/.codex"
+    local config_file="$config_dir/config.toml"
+    local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
+    local needs_update=false
+
+    mkdir -p "$config_dir"
+
+    if [ -f "$config_file" ]; then
+        if grep -q '\[mcp_servers.leankg\]' "$config_file" 2>/dev/null; then
+            local current_path
+            current_path=$(grep -A3 '\[mcp_servers.leankg\]' "$config_file" | grep 'command' | sed -nE 's/.*command[[:space:]]*=[[:space:]]*"?([^"]*)"?.*/\1/p' | head -1)
+            if [ -n "$current_path" ] && [ "$current_path" != "$leankg_path" ]; then
+                echo "Updating LeanKG binary path in Codex config: $current_path -> $leankg_path"
+                needs_update=true
+            else
+                echo "LeanKG already properly configured in Codex"
+                return
+            fi
+        else
+            needs_update=true
+        fi
+    else
+        needs_update=true
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    if [ -f "$config_file" ]; then
+        grep -v '\[mcp_servers.leankg\]' "$config_file" > "$tmp_file" 2>/dev/null || true
+    fi
+    cat >> "$tmp_file" <<EOF
+
+[mcp_servers.leankg]
+command = "$leankg_path"
+args = ["mcp-stdio", "--watch"]
+EOF
+    mv "$tmp_file" "$config_file"
+    echo "Configured LeanKG for Codex at $config_file"
+}
+
 configure_gemini() {
     local leankg_path="${INSTALL_DIR}/${BINARY_NAME}"
     local needs_update=false
-    
+
     if command -v gemini >/dev/null 2>&1; then
         echo "Configuring LeanKG for Gemini CLI using 'gemini mcp add'..."
         gemini mcp add leankg "$leankg_path" mcp-stdio --watch --scope user || true
@@ -1740,7 +1783,7 @@ main() {
             curl -fsSL "$GITHUB_RAW/scripts/docker-up.sh" | bash
             exit 0
             ;;
-        opencode|cursor|claude|gemini|kilo|antigravity)
+        opencode|cursor|claude|codex|gemini|kilo|antigravity)
             install_binary "$platform" "full"
             ;;
         *)
@@ -1769,6 +1812,11 @@ main() {
                 configure_claude
                 setup_claude_hooks
                 install_claude_instructions
+                ;;
+            codex)
+                configure_codex
+                install_leankg_skill "$HOME/.codex/skills" "codex"
+                install_agents_instructions "$HOME/.codex/AGENTS.md"
                 ;;
             gemini)
                 configure_gemini
