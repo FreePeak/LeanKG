@@ -1,14 +1,14 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 (PR-00 reconcile: Wave 0 stale rows closed, JSON re-synced) — Priority order: **P1 CURRENT = Wave 4** (`US-MG-02` / `FR-MG-03`). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
+**Last synced:** 2026-08-01 (PR-00 reconcile + Wave 4 single-repo expand DONE) — Priority order: **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md)). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §5.18 / §5.22–5.23 / §5.32  
 **All-open fan-out campaign (worktrees + TDD + PRs):** [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)
 
 > **Agent rule:** Work **P0 first**, then P1 waves → P2 → P3.  
 > **P0:** Procedural ontology auto-update — **DONE**.  
-> **P1 CURRENT:** Wave **4** single-repo expand. Waves 0a–3 + Wave 1b MCP hard-delete — **DONE**.  
-> **P2 (priority order):** `US-SM-01` offload → `US-SM-02` auto-recall → `US-SM-03/04` → DOCJOIN → GE planner/entity/cluster → `US-SM-05/06`. Do **not** interrupt P1.  
+> **P1:** Waves 0a–4 + Wave 1b MCP hard-delete — **ALL DONE**.  
+> **P2 CURRENT (priority order):** `US-SM-01` offload → `US-SM-02` auto-recall → `US-SM-03/04` → DOCJOIN → GE planner/entity/cluster → `US-SM-05/06`.  
 > **P3:** `US-SM-07` GC; `US-GE-06` LLM pass-2.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
@@ -41,13 +41,13 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **539** |
-| NOT_DONE | 65 |
+| NOT_DONE | 64 |
 | PENDING | 31 |
-| PARTIAL | 10 |
+| PARTIAL | 9 |
 | OPEN | 1 |
-| DONE | 429 |
+| DONE | 431 |
 | WONT_DO | 3 |
-| Open work | **107** |
+| Open work | **105** |
 
 | Open by Focus | Count |
 |---------------|------:|
@@ -93,7 +93,7 @@ Evidence: [`ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-
 | **2b** | Auto GRAPH_REPORT | `US-GF-06` / `FR-GF-13` | **DONE** |
 | **2c** | HTML export | `US-GF-13` / `FR-GF-21` | **DONE** — CLI/MCP `export html` (#124) |
 | **3** | NL Query FAB | `US-UI2-06` / `FR-UI2-08` | **DONE** — NL → `/api/query-graph`; Advanced → raw Cozo |
-| **4** | Single-repo expand | `US-MG-02` / `FR-MG-03` | **CURRENT** — UI correctness |
+| **4** | Single-repo expand | `US-MG-02` / `FR-MG-03` | **DONE** — [live report](reports/wave4-single-repo-expand-2026-08-01.md) |
 
 Evidence: [`honest-edges-smoke-2026-07-22.md`](reports/honest-edges-smoke-2026-07-22.md)
 
@@ -350,7 +350,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `FR-GF-13` | FR | **DONE** | Must Have | Auto-generate '.leankg/GRAPH_REPORT.md' on every index (CLI 'leankg report' / MCP 'get_gra… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-21` | FR | **DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
-| **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
+| **P1** | `FR-MG-03` | FR | **DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
 | **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
@@ -491,7 +491,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-COST-01` | User Story | **DONE** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `US-GF-04` | User Story | **DONE** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-GF-06` | User Story | **DONE** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
+| **P1** | `US-MG-02` | User Story | **DONE** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-LANG-02` | User Story | **DONE** | Should Have | Swift indexing (tree-sitter calls + heritage + typed resolve) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
@@ -529,7 +529,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `FR-GF-13` | FR | **DONE** | Must Have | Auto-generate '.leankg/GRAPH_REPORT.md' on every index (CLI 'leankg report' / MCP 'get_gra… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-21` | FR | **DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
-| **P1** | `FR-MG-03` | FR | **NOT_DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
+| **P1** | `FR-MG-03` | FR | **DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
 | **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
@@ -670,7 +670,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-COST-01` | User Story | **DONE** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `US-GF-04` | User Story | **DONE** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-GF-06` | User Story | **DONE** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
+| **P1** | `US-MG-02` | User Story | **DONE** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-LANG-02` | User Story | **DONE** | Should Have | Swift indexing (tree-sitter calls + heritage + typed resolve) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
