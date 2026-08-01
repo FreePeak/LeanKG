@@ -1230,15 +1230,19 @@ fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Er
         config.project.languages = detected_langs;
     }
 
-    // FR-LSP-B / REL-039: prefab lsp block + typed_resolve (Go/TS + detected Swift/ObjC)
-    // FR-B06: Python + Rust join the detected list — the in-process hybrid
-    // resolver now handles `py` / `rs` extensions, so `init --with-lsp` on a
-    // Python/Rust project writes a working `typed_resolve` by default.
+    // FR-LSP-B / REL-039: prefab lsp block + typed_resolve
+    // (Go/TS default + detected Python/Rust/Swift/ObjC — FR-B06).
     if with_lsp {
         config.lsp = Some(crate::lsp::config::LspConfig::prefab_defaults());
         let mut tr = vec!["go".to_string(), "ts".to_string()];
         for lang in &config.project.languages {
             let l = lang.to_lowercase();
+            if l == "python" && !tr.iter().any(|x| x == "py") {
+                tr.push("py".to_string());
+            }
+            if l == "rust" && !tr.iter().any(|x| x == "rs") {
+                tr.push("rs".to_string());
+            }
             if l == "swift" && !tr.iter().any(|x| x == "swift") {
                 tr.push("swift".to_string());
             }

@@ -509,7 +509,8 @@ impl<'a> EntityExtractor<'a> {
                     });
                 }
             }
-            "call_expression" | "method_invocation" => {
+            // Python tree-sitter uses a bare `call` node (function field).
+            "call_expression" | "method_invocation" | "call" => {
                 self.extract_call(node, parent, elements, relationships);
             }
             "decorator"
@@ -1404,6 +1405,60 @@ impl<'a> EntityExtractor<'a> {
         _elements: &mut Vec<CodeElement>,
         relationships: &mut Vec<Relationship>,
     ) {
+        // Python: `call` node — callee lives in the `function` field.
+        if node.kind() == "call" {
+            if let Some(fn_node) = node.child_by_field_name("function") {
+                let node_text = |n: tree_sitter::Node| -> Option<String> {
+                    std::str::from_utf8(self.source.get(n.byte_range())?)
+                        .ok()
+                        .map(String::from)
+                };
+                let (name, receiver) = match fn_node.kind() {
+                    "attribute" => {
+                        let mut inner = fn_node.walk();
+                        let mut method = None;
+                        let mut recv = None;
+                        for part in fn_node.children(&mut inner) {
+                            if part.kind() == "identifier" {
+                                if recv.is_none() {
+                                    recv = node_text(part);
+                                } else {
+                                    method = node_text(part);
+                                }
+                            }
+                        }
+                        (method.or_else(|| recv.clone()), recv)
+                    }
+                    _ => (node_text(fn_node), None),
+                };
+                if let Some(name) = name {
+                    if !is_noise_call(&name) {
+                        let parent_name = parent.unwrap_or("");
+                        let source = if parent_name.is_empty() {
+                            self.file_path.to_string()
+                        } else {
+                            format!("{}::{}", self.file_path, parent_name)
+                        };
+                        relationships.push(Relationship {
+                            id: None,
+                            source_qualified: source,
+                            target_qualified: format!("__unresolved__{}", name),
+                            rel_type: "calls".to_string(),
+                            confidence: 0.5,
+                            metadata: serde_json::json!({
+                                "bare_name": &name,
+                                "callee_file_hint": self.file_path,
+                                "is_method_call": receiver.is_some(),
+                                "receiver": receiver,
+                            }),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            return;
+        }
+
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             let kind = child.kind();

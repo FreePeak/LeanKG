@@ -92,7 +92,7 @@ fn language_from_file(file_path: &str) -> Option<&'static str> {
         // registry indexes every function/class regardless of language, so
         // module (same-folder) and unique-name hits resolve Python defs and
         // Rust fns without spawning pylsp/rust-analyzer.
-        "py" => Some("python"),
+        "py" | "pyi" => Some("python"),
         "rs" => Some("rust"),
         "swift" => Some("swift"),
         "m" | "mm" => Some("objc"),
@@ -455,5 +455,104 @@ mod tests {
         // Smoke: pure function path — no process handles involved.
         let reg = TypeRegistry::default();
         assert!(resolve_call(&reg, "x.go", "missing", None).is_none());
+    }
+
+    #[test]
+    fn apply_typed_resolve_upgrades_python_calls() {
+        let elements = vec![
+            elem(
+                "services/payments.py::charge",
+                "function",
+                "charge",
+                "services/payments.py",
+                "python",
+            ),
+            elem("app.py::handle", "function", "handle", "app.py", "python"),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let mut rels = vec![Relationship {
+            id: None,
+            source_qualified: "app.py::handle".to_string(),
+            target_qualified: "__unresolved__charge".to_string(),
+            rel_type: "calls".to_string(),
+            confidence: 0.5,
+            metadata: serde_json::json!({"resolution_method": "unresolved"}),
+            env: "local".to_string(),
+        }];
+        let n = apply_typed_resolve(&mut rels, &reg, "go,ts,py");
+        assert_eq!(
+            n, 1,
+            "python CALLS should upgrade when typed_resolve includes py"
+        );
+        assert_eq!(rels[0].target_qualified, "services/payments.py::charge");
+        assert_eq!(
+            rels[0].metadata["resolution_method"].as_str(),
+            Some("typed")
+        );
+    }
+
+    #[test]
+    fn apply_typed_resolve_upgrades_rust_calls() {
+        let elements = vec![
+            elem(
+                "core/math.rs::add",
+                "function",
+                "add",
+                "core/math.rs",
+                "rust",
+            ),
+            elem("main.rs::run", "function", "run", "main.rs", "rust"),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let mut rels = vec![Relationship {
+            id: None,
+            source_qualified: "main.rs::run".to_string(),
+            target_qualified: "__unresolved__add".to_string(),
+            rel_type: "calls".to_string(),
+            confidence: 0.5,
+            metadata: serde_json::json!({"resolution_method": "unresolved"}),
+            env: "local".to_string(),
+        }];
+        let n = apply_typed_resolve(&mut rels, &reg, "rs");
+        assert_eq!(
+            n, 1,
+            "rust CALLS should upgrade when typed_resolve includes rs"
+        );
+        assert_eq!(rels[0].target_qualified, "core/math.rs::add");
+        assert_eq!(
+            rels[0].metadata["resolution_method"].as_str(),
+            Some("typed")
+        );
+    }
+
+    #[test]
+    fn python_rust_not_upgraded_when_disabled() {
+        let elements = vec![
+            elem("a.py::helper", "function", "helper", "a.py", "python"),
+            elem("b.rs::helper", "function", "helper", "b.rs", "rust"),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let mut rels = vec![
+            Relationship {
+                id: None,
+                source_qualified: "b.py::main".to_string(),
+                target_qualified: "__unresolved__helper".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 0.5,
+                metadata: serde_json::json!({"resolution_method": "unresolved"}),
+                env: "local".to_string(),
+            },
+            Relationship {
+                id: None,
+                source_qualified: "c.rs::main".to_string(),
+                target_qualified: "__unresolved__helper".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 0.5,
+                metadata: serde_json::json!({"resolution_method": "unresolved"}),
+                env: "local".to_string(),
+            },
+        ];
+        // go,ts only — python/rust files must be skipped.
+        assert_eq!(apply_typed_resolve(&mut rels, &reg, "go,ts"), 0);
     }
 }
