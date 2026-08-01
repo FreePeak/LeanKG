@@ -608,4 +608,25 @@ class Session {
             calls
         );
     }
+
+    #[test]
+    fn extracts_demo_swift_fixture_from_disk() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/swift/Session.swift"
+        );
+        let src = std::fs::read(path).expect("Session.swift fixture");
+        let (elems, rels) = SwiftExtractor::new(&src, "Session.swift").extract_with_calls();
+        assert!(elems
+            .iter()
+            .any(|e| e.element_type == "class" && e.name == "Session"));
+        assert!(rels.iter().any(|r| {
+            r.rel_type == "extends"
+                && r.source_qualified.ends_with("::Session")
+                && r.target_qualified == "NSObject"
+        }));
+        assert!(rels
+            .iter()
+            .any(|r| r.rel_type == "calls" && r.target_qualified.contains("authenticate")));
+    }
 }

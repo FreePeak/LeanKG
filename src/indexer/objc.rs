@@ -665,4 +665,35 @@ mod tests {
             "#ifndef FOO_H\n#define FOO_H\nstruct Foo { int x; };\n#endif\n"
         ));
     }
+
+    #[test]
+    fn extracts_demo_objc_fixtures_from_disk() {
+        let header = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/objc/Greeter.h");
+        let impl_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/objc/Greeter.m");
+        let header_src = std::fs::read(header).expect("Greeter.h");
+        let impl_src = std::fs::read(impl_path).expect("Greeter.m");
+
+        let (hdr_elems, hdr_rels) =
+            ObjCExtractor::new(&header_src, "Greeter.h").extract_with_calls();
+        assert!(hdr_elems
+            .iter()
+            .any(|e| e.element_type == "class" && e.name == "Greeter"));
+        assert!(hdr_elems
+            .iter()
+            .any(|e| e.element_type == "method" && e.name == "setName:age:"));
+        assert!(hdr_rels.iter().any(|r| {
+            r.rel_type == "implements"
+                && r.source_qualified.ends_with("::Greeter")
+                && r.target_qualified == "Greetable"
+        }));
+
+        let (_impl_elems, impl_rels) =
+            ObjCExtractor::new(&impl_src, "Greeter.m").extract_with_calls();
+        assert!(impl_rels
+            .iter()
+            .any(|r| r.rel_type == "calls" && r.target_qualified.contains("setup")));
+        assert!(impl_rels
+            .iter()
+            .any(|r| r.rel_type == "calls" && r.target_qualified.contains("log:level:")));
+    }
 }
