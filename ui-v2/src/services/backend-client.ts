@@ -176,6 +176,22 @@ export async function runQuery(query: string): Promise<unknown> {
   return unwrapEnvelope(json, 'Query failed');
 }
 
+/** FR-UI2-08: NL subgraph query via GraphEngine::query_graph. */
+export async function runQueryGraph(
+  question: string,
+  opts?: { token_budget?: number; max_depth?: number },
+): Promise<unknown> {
+  const json = await fetchJson<ApiEnvelope<unknown>>('/api/query-graph', {
+    method: 'POST',
+    body: JSON.stringify({
+      question: question.trim(),
+      token_budget: opts?.token_budget,
+      max_depth: opts?.max_depth,
+    }),
+  });
+  return unwrapEnvelope(json, 'Query graph failed');
+}
+
 export async function switchProject(path: string, reindex = false): Promise<{
   project_path?: string;
   element_count?: number;
