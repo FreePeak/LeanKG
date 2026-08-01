@@ -618,6 +618,94 @@ public protocol Authenticating {
     );
 }
 
+/// REL-032: bulk index walk must produce CodeElements for .vue / .svelte / .sql
+/// files (qualified_name file::<ext>).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_index_with_progress_discovers_vue_svelte_sql() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg.db");
+    let db = init_db(db_path.as_path()).unwrap();
+    let graph = GraphEngine::new(db);
+
+    std::fs::write(
+        tmp.path().join("App.vue"),
+        r#"<template><div class="counter">{{ count }}</div></template>
+<script setup lang="ts">
+import { ref } from 'vue'
+const count = ref(0)
+function inc() { count.value++ }
+</script>
+<style scoped>.counter { color: red }</style>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("Hello.svelte"),
+        r#"<script lang="ts">
+  export let name: string = 'world';
+</script>
+<h1>Hello {name}!</h1>
+<style>h1 { color: blue }</style>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("schema.sql"),
+        "CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL\n);\n",
+    )
+    .unwrap();
+
+    let mut parser = ParserManager::new();
+    let _ = parser.init_parsers();
+    let result = leankg::indexer::index_with_progress(
+        &graph,
+        &mut parser,
+        tmp.path().to_str().unwrap(),
+        |_count, _path| {},
+    )
+    .await
+    .expect("index_with_progress");
+    assert!(
+        result.indexed_files >= 3,
+        "expected >= 3 indexed files, got {} (total {}, skipped {})",
+        result.indexed_files,
+        result.total_files,
+        result.skipped_files
+    );
+
+    let elements = graph.all_elements().unwrap();
+    let kinds: Vec<String> = elements
+        .iter()
+        .map(|e| format!("{}::{}", e.element_type, e.qualified_name))
+        .collect();
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.qualified_name.ends_with("App.vue") && e.language == "vue"),
+        "missing .vue file element: {:?}",
+        kinds
+    );
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.qualified_name.ends_with("Hello.svelte") && e.language == "svelte"),
+        "missing .svelte file element: {:?}",
+        kinds
+    );
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.qualified_name.ends_with("schema.sql") && e.language == "sql"),
+        "missing .sql file element: {:?}",
+        kinds
+    );
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.element_type == "table" && e.name == "users" && e.language == "sql"),
+        "missing users table: {:?}",
+        kinds
+    );
+}
+
 /// Phase 0: incremental/watch path must index Objective-C .m files.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_index_file_objc_incremental() {
