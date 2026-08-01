@@ -1,0 +1,85 @@
+name: Embeddings Docker Gate
+
+# F2 follow-up (OnRender embeddings exit-101 RCA, 2026-08-01): pure Docker
+# build gate mirroring the Render pipeline (cargo build --release --features
+# embeddings), so openssl/RSS regressions fail here instead of on Render.
+# Separate file from ci.yml because `push` accepts only one filter map: the
+# test suite paths-ignores Cargo.lock, but the gate MUST fire on lockfile
+# changes (they recompile the embeddings stack: fastembed/ort/RocksDB).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'Cargo.lock'
+      - 'render.yaml'
+      - '.dockerignore'
+      - '.github/workflows/embeddings-gate.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'Cargo.lock'
+      - 'render.yaml'
+      - '.dockerignore'
+      - '.github/workflows/embeddings-gate.yml'
+  # Manual trigger so the gate can be run on demand (e.g. before a deploy).
+  workflow_dispatch:
+
+jobs:
+  docker-embeddings-gate:
+    name: Embeddings Docker Build Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Belt-and-suspenders on top of the paths filters: skip the heavy build
+      # when the event's diff range shows none of the Render inputs changed.
+      - name: Check whether Docker-affecting files changed
+        id: changes
+        run: |
+          case "${{ github.event_name }}" in
+            workflow_dispatch)
+              echo "run_gate=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            pull_request)
+              base="${{ github.event.pull_request.base.sha }}"
+              ;;
+            *)
+              base="${{ github.event.before }}"
+              ;;
+          esac
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "run_gate=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" HEAD -- Dockerfile Cargo.lock render.yaml .dockerignore .github/workflows/ci.yml | grep -q .; then
+            echo "run_gate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_gate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.run_gate == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Mirrors render.yaml + Dockerfile: full image (no target stage),
+      # UI_EMBED_REV build-arg from render.yaml envVars, embeddings build.
+      # type=gha layer cache keeps unchanged builds incremental (minutes).
+      - name: Docker build (Render mirror, embeddings)
+        if: steps.changes.outputs.run_gate == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: leankg:ci-gate
+          build-args: |
+            UI_EMBED_REV=2026-08-01-onrender-emb101
+          cache-from: type=gha,scope=embeddings-gate
+          cache-to: type=gha,mode=max,scope=embeddings-gate
