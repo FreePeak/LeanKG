@@ -17,7 +17,7 @@
 use std::io::Read;
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -493,6 +493,119 @@ async fn gcs_index_from_bucket_populates_graph() {
         mul_elements.iter().any(|e| e.name == "Mul"),
         "expected 'Mul' function; got: {:?}",
         mul_elements
+    );
+
+    let we_started_emulator = emulator.guard.is_some();
+    drop(emulator);
+    if we_started_emulator {
+        std::env::remove_var("STORAGE_EMULATOR_HOST");
+    }
+}
+
+/// REL-SRC-01: CLI seam — `leankg index --source gs://bucket` must populate
+/// the graph with elements (functions + File elements) from the bucket
+/// contents, using the real CLI binary so the full index code path
+/// (source sync → staging → find_files → index_files_parallel) is covered.
+#[tokio::test]
+async fn cli_index_gcs_source_populates_graph() {
+    if is_explicit_skip() {
+        return;
+    }
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let emulator = match resolve_or_start_emulator() {
+        Some(e) => e,
+        None => return,
+    };
+    let addr = emulator.addr.clone();
+
+    let bucket = "leankg-cli-index-bucket";
+    let project = "leankg-cli-index";
+    create_bucket(&addr, bucket, project).expect("create_bucket");
+    upload_object(
+        &addr,
+        bucket,
+        "main.go",
+        b"package main\nfunc main() { println(add(1, 2)) }\nfunc add(a, b int) int { return a + b }\n",
+    )
+    .expect("upload main.go");
+    upload_object(
+        &addr,
+        bucket,
+        "lib/math.go",
+        b"package lib\nfunc Mul(a, b int) int { return a * b }\n",
+    )
+    .expect("upload math.go");
+
+    let tmp_dir = TempDir::new().expect("tmpdir");
+    let bin = env!("CARGO_BIN_EXE_leankg");
+
+    let output = Command::new(bin)
+        .args(["index", "--source", &format!("gs://{}", bucket)])
+        .current_dir(tmp_dir.path())
+        .env("STORAGE_EMULATOR_HOST", &addr)
+        .output()
+        .expect("run leankg index --source gs://");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        output.status.success(),
+        "index --source failed: stdout={} stderr={}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("Indexed") && stdout.contains("files"),
+        "expected completion line, got: {}",
+        stdout
+    );
+
+    // The CLI wrote the graph into <project>/.leankg/leankg.db
+    let db_path = tmp_dir.path().join(".leankg/leankg.db");
+    assert!(
+        db_path.is_file(),
+        "index --source did not create {}",
+        db_path.display()
+    );
+    let db = leankg::db::schema::init_db(&db_path).expect("init_db");
+    let graph_engine = leankg::graph::GraphEngine::new(db);
+
+    // Functions from both uploaded files must be findable.
+    let mains = graph_engine
+        .search_by_name_typed("main", Some("function"), 10)
+        .expect("search main");
+    assert!(
+        mains.iter().any(|e| e.name == "main"),
+        "expected 'main' function after index --source; got: {:?}",
+        mains
+    );
+
+    let muls = graph_engine
+        .search_by_name_typed("Mul", Some("function"), 10)
+        .expect("search Mul");
+    assert!(
+        muls.iter().any(|e| e.name == "Mul"),
+        "expected 'Mul' function after index --source; got: {:?}",
+        muls
+    );
+
+    // File elements for both uploaded objects must be present.
+    let main_file = graph_engine
+        .search_by_name_typed("main.go", Some("File"), 10)
+        .expect("search main.go");
+    assert!(
+        main_file.iter().any(|e| e.name == "main.go"),
+        "expected main.go File element after index --source; got: {:?}",
+        main_file
+    );
+
+    let math_file = graph_engine
+        .search_by_name_typed("math.go", Some("File"), 10)
+        .expect("search math.go");
+    assert!(
+        math_file.iter().any(|e| e.name == "math.go"),
+        "expected math.go File element after index --source; got: {:?}",
+        math_file
     );
 
     let we_started_emulator = emulator.guard.is_some();
