@@ -127,6 +127,18 @@ jobs:
           fi
           printf '%s\n' '{"ui":"ui-v2","source":"release.yml"}' > ../src/embed/ui-build.json
 
+      - name: Build Vite UI (graph-ui → rust_embed 3d/)
+        shell: bash
+        run: |
+          cd graph-ui
+          npm ci
+          npm run build
+          rm -rf ../src/embed/3d
+          mkdir -p ../src/embed/3d
+          cp -r dist/* ../src/embed/3d/
+          test -f ../src/embed/3d/index.html
+          grep -q 'assets/' ../src/embed/3d/index.html
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -206,6 +218,18 @@ jobs:
           cp -r dist/* ../src/embed/
           test -f ../src/embed/index.html
           printf '%s\n' '{"ui":"ui-v2","source":"release.yml","job":"build-embeddings"}' > ../src/embed/ui-build.json
+
+      - name: Build Vite UI (graph-ui → rust_embed 3d/)
+        shell: bash
+        run: |
+          cd graph-ui
+          npm ci
+          npm run build
+          rm -rf ../src/embed/3d
+          mkdir -p ../src/embed/3d
+          cp -r dist/* ../src/embed/3d/
+          test -f ../src/embed/3d/index.html
+          grep -q 'assets/' ../src/embed/3d/index.html
 
       - name: Build embeddings binary
         run: |

@@ -67,9 +67,10 @@ describe('GraphExplorer (FR-E01..E05)', () => {
     vi.restoreAllMocks();
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
-      // eager: /api/graph/data + /api/graph/clusters (order of Promise.all)
+      // eager: /api/graph/data + /api/graph/clusters + /api/projects
       .mockResolvedValueOnce(envelope(GRAPH))
       .mockResolvedValueOnce(envelope(CLUSTERS))
+      .mockResolvedValueOnce(envelope([]))
       .mockImplementation((url: RequestInfo | URL) => {
         if (String(url).startsWith('/api/graph/layout3d')) {
           return Promise.resolve(envelope(LAYOUT));
@@ -103,8 +104,9 @@ describe('GraphExplorer (FR-E01..E05)', () => {
   it('FR-E04: cluster legend renders rows from /api/graph/clusters', async () => {
     render(<GraphExplorer />);
     await waitFor(() => expect(screen.getByTestId('cluster-legend')).toBeTruthy());
-    expect(screen.getByText('src')).toBeTruthy();
-    expect(screen.getByText('1')).toBeTruthy();
+    const legend = screen.getByTestId('cluster-legend');
+    expect(legend.textContent).toContain('src');
+    expect(legend.textContent).toContain('1');
   });
 });
 
@@ -122,14 +124,26 @@ describe('selection → detail (FR-E03)', () => {
   });
 
   it('DetailPanel renders element info for the selected node', () => {
-    render(<DetailPanel node={MAIN} degree={1} onClose={() => {}} />);
+    render(
+      <DetailPanel
+        node={MAIN}
+        relationships={GRAPH.relationships}
+        onClose={() => {}}
+      />,
+    );
     expect(screen.getByTestId('detail-title').textContent).toBe('main');
     expect(screen.getByText('src/main.rs')).toBeTruthy();
     expect(screen.getByText('Function')).toBeTruthy();
   });
 
   it('DetailPanel shows empty prompt when nothing selected', () => {
-    render(<DetailPanel node={null} degree={0} onClose={() => {}} />);
+    render(
+      <DetailPanel
+        node={null}
+        relationships={[]}
+        onClose={() => {}}
+      />,
+    );
     expect(screen.getByText('Select a node to inspect element details.')).toBeTruthy();
   });
 });
