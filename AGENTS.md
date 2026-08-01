@@ -97,6 +97,19 @@ Never paste personal host paths into commits.
 
 For 3+ independent tasks: dispatch to `.worktree/<feature>/` worktrees with feature branches. Verify isolation (`.gitignore` covers `.worktrees/`). Merge all feature branches after completion.
 
+## Cursor Cloud specific instructions
+
+Single Rust binary (`leankg`); all modes are subcommands. No external DB service in the default dev path — CozoDB is embedded (SQLite under `.leankg/`). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
+
+- **Toolchain**: build requires Rust **stable ≥ 1.85** (transitive deps use edition2024). The base image's 1.83 is too old; the snapshot ships `rustup default stable`. README's "Rust 1.75+" badge is outdated for building from source.
+- **Native build deps**: `cozo` (RocksDB via the `cxx`/C++ toolchain) needs C++ stdlib headers. `clang`/`cc` select GCC 14, so `libstdc++-14-dev` (plus `g++`) must be present or the build fails with `fatal error: 'algorithm' file not found`. These are installed in the snapshot.
+- **Always `--release`**: the debug profile sets `debug=false`; use `cargo build --release` / `cargo run --release --` per `Makefile`. First release build ≈ 4–5 min; `cargo clippy --all -- -D warnings` ≈ 3 min.
+- **Verify commands** (all pass): `cargo fmt --all -- --check`, `cargo clippy --all -- -D warnings` (CI gate; `make lint` adds `--all-features` which pulls the heavy `embeddings`/ONNX stack), `cargo test --lib` (734 tests, ~4s). See `AGENTS.md` Build & Test and `.github/workflows/ci.yml`.
+- **Index step is slow**: `leankg index ./src` inserts ~8k elements / ~50k relationships into SQLite and takes ~4–5 min; it is not hung. Run `leankg init` first.
+- **CLI quirk**: `impact` takes `--depth N` (a flag), not a positional depth arg as some docs show, e.g. `leankg impact src/main.rs --depth 2`.
+- **MCP HTTP**: `leankg mcp-http --port 9699 --project /workspace`; health `GET /health`, JSON-RPC `POST /mcp?project=/workspace`. Pass the container path `/workspace` as `project` (see MANDATORY section above).
+- **Embeddings/semantic search** need `--features embeddings` (downloads ONNX models at runtime); off by default — `semantic_search` returns "no vectors" without them.
+
 ---
 
-*Last updated: 2026-07-27*
+*Last updated: 2026-08-01*
