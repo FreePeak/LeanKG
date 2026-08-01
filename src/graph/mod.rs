@@ -5,6 +5,7 @@ pub mod context;
 pub mod entity_resolve;
 pub mod export;
 pub mod export_select;
+pub mod god_nodes;
 pub mod inventory;
 pub mod l1_cache;
 pub mod layout;
@@ -23,6 +24,8 @@ pub use clustering::*;
 pub use context::{ContextElement, ContextPriority, ContextProvider, ContextResult};
 #[allow(unused_imports)]
 pub use entity_resolve::{resolve, resolve_exact, Match, MAX_MATCHES};
+#[allow(unused_imports)]
+pub use god_nodes::{load_scores, persist_scores, refresh_node_scores, score_graph, NodeScore};
 #[allow(unused_imports)]
 pub use inventory::{
     ensure_index_inventory_table, inventory_to_json, load_latest_inventory,

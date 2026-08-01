@@ -260,6 +260,51 @@ fn test_get_architecture_on_leankg_patterns() {
     assert!(obj["total_files"].as_u64().unwrap() > 0);
 }
 
+// FR-GF-12: god nodes appear in get_architecture hotspots after an index
+// completion pass refreshes persisted node scores (FR-GF-10).
+#[test]
+fn test_architecture_god_nodes_after_index_time_scoring() {
+    let (engine, _tmp) = make_engine();
+    populate_with_leankg_patterns(&engine);
+
+    // Simulate the index-completion hook (runs inside
+    // refresh_index_inventory after both bulk and incremental indexing).
+    leankg::graph::god_nodes::refresh_node_scores(&engine).unwrap();
+
+    let arch = engine
+        .get_architecture(None)
+        .expect("get_architecture should succeed");
+    let obj = arch.as_object().unwrap();
+
+    let god_nodes = obj["god_nodes"].as_array().unwrap();
+    assert!(
+        !god_nodes.is_empty(),
+        "god_nodes section should list scored elements"
+    );
+
+    // Most-connected element in the fixture: execute_tool (3 calls out),
+    // ahead of main (2 calls out) and get_architecture (1 call in + 1
+    // tested_by in = 2).
+    let top = god_nodes[0].as_object().unwrap();
+    assert_eq!(
+        top["qualified_name"].as_str().unwrap(),
+        "src/mcp/handler.rs::execute_tool"
+    );
+    assert_eq!(top["degree"].as_u64().unwrap(), 3);
+    assert!(
+        top["rank_score"].as_f64().unwrap() > 0.0,
+        "rank_score should be populated"
+    );
+
+    // Persisted scores are the source: reloading must agree.
+    let persisted = leankg::graph::god_nodes::load_scores(engine.db()).unwrap();
+    assert_eq!(
+        persisted[0].qualified_name,
+        "src/mcp/handler.rs::execute_tool"
+    );
+    assert_eq!(persisted[0].degree, 3);
+}
+
 #[test]
 fn test_get_graph_schema_on_leankg_patterns() {
     let (engine, _tmp) = make_engine();
