@@ -6,6 +6,7 @@ pub mod export_select;
 pub mod inventory;
 pub mod l1_cache;
 pub mod layout;
+pub mod layout3d;
 pub mod nl_query;
 pub mod persistent_cache;
 pub mod query;
@@ -26,6 +27,8 @@ pub use inventory::{
 pub use l1_cache::*;
 #[allow(unused_imports)]
 pub use layout::*;
+#[allow(unused_imports)]
+pub use layout3d::*;
 #[allow(unused_imports)]
 pub use nl_query::{QueryGraphEdge, QueryGraphNode, QueryGraphResult};
 #[allow(unused_imports)]
