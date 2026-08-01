@@ -74,6 +74,39 @@ fn test_search_by_pattern_malicious_injection() {
     });
 }
 
+/// Regression for REL-SRC-01: search_by_name / search_by_name_typed must
+/// find elements whose names contain regex-special characters (every file
+/// name has a dot). Cozo does not unescape `\\` in Datalog string
+/// literals, so `escape_datalog` must preserve the single backslash that
+/// `regex::escape` produces.
+#[test]
+fn test_search_by_name_with_dotted_filename() {
+    with_test_graph(|graph, _| {
+        graph
+            .insert_elements(&[
+                create_code_element("main.go", "src/main.go", "File", 10),
+                create_code_element("main", "src/main.go", "function", 5),
+            ])
+            .unwrap();
+
+        let files = graph
+            .search_by_name_typed("main.go", Some("File"), 10)
+            .unwrap();
+        assert_eq!(files.len(), 1, "dotted File name must be findable");
+        assert_eq!(files[0].name, "main.go");
+
+        let by_name = graph.search_by_name("main.go").unwrap();
+        assert_eq!(by_name.len(), 1, "search_by_name must match dotted names");
+        assert_eq!(by_name[0].element_type, "File");
+
+        let functions = graph
+            .search_by_name_typed("main", Some("function"), 10)
+            .unwrap();
+        assert_eq!(functions.len(), 1);
+        assert_eq!(functions[0].name, "main");
+    });
+}
+
 #[test]
 fn test_search_by_type() {
     with_test_graph(|graph, _| {

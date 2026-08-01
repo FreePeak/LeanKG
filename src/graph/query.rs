@@ -8,8 +8,13 @@ use crate::graph::cache::QueryCache;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+/// Escape a value for embedding inside a Cozo Datalog string literal.
+/// Cozo does not process `\\` escapes (verified against regex_matches:
+/// a pattern with `\\` never matches, while a single `\` passes through),
+/// so backslashes must be preserved verbatim — doubling them breaks every
+/// regex-based name search for dotted file names (e.g. `main.go`).
 fn escape_datalog(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    s.replace('"', "\\\"")
 }
 
 const CODE_ELEMENTS_12_TAIL: &str = ", env";

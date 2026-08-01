@@ -742,7 +742,7 @@ pub fn run(
         let vectors = embedder.embed(&texts)?;
         let pairs: Vec<(&WorkItem, &Vec<f32>)> =
             chunk.iter().copied().zip(vectors.iter()).collect();
-        upsert_vectors(db, pairs.iter().copied())?;
+        upsert_vectors(db, pairs.iter().copied(), use_incr_hnsw)?;
         // FR-EMBED-RESUME-03: stamp fresh per batch so kill/resume skips done work.
         let batch_fresh: Vec<FreshRow> = pairs
             .iter()
@@ -1072,7 +1072,8 @@ pub fn build_index_parallel(
                                         (rows, fresh)
                                     },
                                 );
-                            upsert_pairs_to_db(&db_for_writer, &rows).map_err(|e| e.to_string())?;
+                            upsert_pairs_to_db(&db_for_writer, &rows, use_incr_hnsw)
+                                .map_err(|e| e.to_string())?;
                             // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
                             state::upsert_fresh(&db_for_writer, &fresh)
                                 .map_err(|e| e.to_string())?;
@@ -1100,7 +1101,8 @@ pub fn build_index_parallel(
                         },
                     );
                 if !rows.is_empty() {
-                    upsert_pairs_to_db(&db_for_writer, &rows).map_err(|e| e.to_string())?;
+                    upsert_pairs_to_db(&db_for_writer, &rows, use_incr_hnsw)
+                        .map_err(|e| e.to_string())?;
                     state::upsert_fresh(&db_for_writer, &fresh).map_err(|e| e.to_string())?;
                     done += rows.len();
                     tracing::info!("writer: final flush {} rows, total {}", rows.len(), done);
@@ -1294,6 +1296,7 @@ pub fn build_index_parallel(
 fn upsert_pairs_to_db(
     db: &CozoDb,
     pairs: &[(String, Vec<f32>)],
+    hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Redis HNSW side-store: skip Cozo import_relations when enabled.
     if crate::embeddings::redis_store::redis_vector_store_enabled() {
@@ -1314,6 +1317,15 @@ fn upsert_pairs_to_db(
                 .upsert_pairs(pairs)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
         });
+    }
+
+    if hnsw_live {
+        // The HNSW index stays live during incremental puts, and CozoDB
+        // 0.7.6 does NOT maintain usearch/HNSW indices on
+        // `import_relations` (vectors become invisible to
+        // `~embedding_vectors:vec_idx`). The `:put` script form does
+        // maintain the index, so the incremental path must use it.
+        return put_pairs_to_db_script(db, pairs);
     }
 
     use cozo::DataValue;
@@ -1352,13 +1364,54 @@ fn upsert_pairs_to_db(
     Ok(())
 }
 
+/// Write a batch of `(qualified_name, vector)` pairs via the `:put`
+/// script form, which maintains the live HNSW index (the bulk path drops
+/// and rebuilds the index instead, keeping `import_relations` for
+/// throughput — see `upsert_pairs_to_db`).
+fn put_pairs_to_db_script(
+    db: &CozoDb,
+    pairs: &[(String, Vec<f32>)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let chunk_size = effective_upsert_chunk();
+    for chunk in pairs.chunks(chunk_size) {
+        let rows: Vec<String> = chunk
+            .iter()
+            .map(|(qn, vector)| {
+                let vec_literal = vector
+                    .iter()
+                    .map(|f| format!("{:.6}", f))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "[{}, vec([{}])]",
+                    serde_json::Value::String(qn.clone()),
+                    vec_literal
+                )
+            })
+            .collect();
+        let values_clause = rows.join(", ");
+        let query = format!(
+            r#"?[qualified_name, vector] <- [{values_clause}]
+               :put embedding_vectors {{qualified_name => vector}}"#
+        );
+        run_script(db, &query, Default::default())?;
+    }
+    Ok(())
+}
+
 /// Sequential-path helper: write a batch of `(qualified_name, vector)`
 /// pairs via `import_relations` (same fast path as the parallel writer,
 /// see `upsert_pairs_to_db` for the rationale). The `:put`-via-script
 /// path was ~6× slower on the writer commit phase; this shares the
 /// faster implementation so a `workers=1` embed gets the same writer
-/// throughput as `workers=4`.
-fn upsert_vectors<'a, I>(db: &CozoDb, items: I) -> Result<(), Box<dyn std::error::Error>>
+/// throughput as `workers=4`. When `hnsw_live` is set (incremental path,
+/// index not dropped), writes go through `:put` instead because CozoDB
+/// 0.7.6 skips HNSW index maintenance on `import_relations`.
+fn upsert_vectors<'a, I>(
+    db: &CozoDb,
+    items: I,
+    hnsw_live: bool,
+) -> Result<(), Box<dyn std::error::Error>>
 where
     I: Iterator<Item = (&'a WorkItem, &'a Vec<f32>)>,
 {
@@ -1366,6 +1419,9 @@ where
     let collected: Vec<(String, Vec<f32>)> = items
         .map(|(item, vector)| (item.qualified_name.clone(), vector.clone()))
         .collect();
+    if hnsw_live {
+        return put_pairs_to_db_script(db, &collected);
+    }
     let chunk_size = effective_upsert_chunk();
     for chunk in collected.chunks(chunk_size) {
         let mut rows: Vec<Vec<DataValue>> = Vec::with_capacity(chunk.len());
@@ -2068,5 +2124,117 @@ mod tests {
         assert!(!cfg.full);
         assert!(cfg.types_filter.is_empty());
         assert_eq!(cfg.rss_fraction, 0.0);
+    }
+
+    /// Regression for REL-REFRESH-01: the incremental path writes vectors
+    /// while the HNSW index stays live, and CozoDB 0.7.6 does NOT update
+    /// usearch/HNSW indices on `import_relations` (vectors become
+    /// invisible to `~embedding_vectors:vec_idx` — semantic_search then
+    /// reports `ann_candidate_count: 0` forever on small projects). The
+    /// incremental writer must use the `:put` script form so the index is
+    /// maintained.
+    #[test]
+    fn hnsw_live_writes_are_queryable_via_put() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("hnsw_live.db");
+        let db = crate::db::schema::init_db(&db_path).expect("init_db");
+        crate::embeddings::state::ensure_embedding_state_table(&db).expect("ensure tables");
+
+        let n = 24usize;
+        let mut pairs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut v = vec![0.0f32; 384];
+            v[i % 384] = 1.0;
+            v[(i + 7) % 384] = 0.5;
+            pairs.push((format!("probe-{:02}", i), v));
+        }
+
+        // Incremental path: index live, writer must maintain it.
+        upsert_pairs_to_db(&db, &pairs, true).expect("put with live hnsw");
+
+        let query_vec = pairs[3].1.clone();
+        let vec_literal = query_vec
+            .iter()
+            .map(|f| format!("{:.6}", f))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            r#"?[dist, qualified_name] := ~embedding_vectors:vec_idx {{
+                    qualified_name |
+                    query: vec([{vec_literal}]),
+                    k: 5,
+                    ef: 50,
+                    bind_distance: dist
+                }}"#
+        );
+        let result = crate::db::schema::run_script(&db, &query, Default::default())
+            .expect("hnsw query over live-index writes");
+        let hits: Vec<String> = result
+            .rows
+            .iter()
+            .filter_map(|row| row.get(1).and_then(|v| v.get_str()).map(String::from))
+            .collect();
+        assert!(
+            hits.iter().any(|qn| qn == "probe-03"),
+            "exact vector must be found via HNSW after live :put; hits={:?}",
+            hits
+        );
+        assert!(
+            hits.len() >= 2,
+            "expected multiple neighbors after live :put; hits={:?}",
+            hits
+        );
+    }
+
+    /// The bulk path (index dropped, then rebuilt) keeps using
+    /// `import_relations`; after `create_hnsw_index` the vectors must be
+    /// queryable — guards the fast-path writer against the same bug.
+    #[test]
+    fn bulk_import_then_hnsw_rebuild_is_queryable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("hnsw_bulk.db");
+        let db = crate::db::schema::init_db(&db_path).expect("init_db");
+        crate::embeddings::state::ensure_embedding_state_table(&db).expect("ensure tables");
+
+        let n = 24usize;
+        let mut pairs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut v = vec![0.0f32; 384];
+            v[i % 384] = 1.0;
+            pairs.push((format!("bulk-{:02}", i), v));
+        }
+
+        // Bulk path: index dropped, import_relations, then ::hnsw create.
+        crate::embeddings::state::drop_hnsw_index(&db).expect("drop hnsw");
+        upsert_pairs_to_db(&db, &pairs, false).expect("bulk import");
+        crate::embeddings::state::create_hnsw_index(&db).expect("rebuild hnsw");
+
+        let query_vec = pairs[0].1.clone();
+        let vec_literal = query_vec
+            .iter()
+            .map(|f| format!("{:.6}", f))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            r#"?[dist, qualified_name] := ~embedding_vectors:vec_idx {{
+                    qualified_name |
+                    query: vec([{vec_literal}]),
+                    k: 5,
+                    ef: 50,
+                    bind_distance: dist
+                }}"#
+        );
+        let result = crate::db::schema::run_script(&db, &query, Default::default())
+            .expect("hnsw query over rebuilt index");
+        let hits: Vec<String> = result
+            .rows
+            .iter()
+            .filter_map(|row| row.get(1).and_then(|v| v.get_str()).map(String::from))
+            .collect();
+        assert!(
+            hits.iter().any(|qn| qn == "bulk-00"),
+            "exact vector must be found after HNSW rebuild; hits={:?}",
+            hits
+        );
     }
 }
