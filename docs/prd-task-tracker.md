@@ -195,7 +195,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 7 | `REL-063` | **DONE** | Live MCP smoke report under `docs/reports/` |
 | 8 | `FR-DOCJOIN-05` | **DONE** | Sync prefer-order / authoring in mcp-tools + skills |
 | 9 | `US-DOCJOIN-03` | **DONE** | Prefer annotations for FR IDs; extractable markdown refs |
-| 10 | `FR-DOCJOIN-06` | NOT_DONE | Could: best-effort `file::symbol` upgrade when unique |
+| 10 | `FR-DOCJOIN-06` | **DONE** | Could: best-effort `file::symbol` upgrade when unique |
 
 **Implement order (best practice):** FR-DOCJOIN-02 → 01 → 03 → 04 / REL-063 → 05 / US-DOCJOIN-03 → 06. See PRD §5.22 test matrix.
 
@@ -383,7 +383,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-DOCJOIN-04` | FR | **DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-06` | FR | **DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
@@ -562,7 +562,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-DOCJOIN-04` | FR | **DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-06` | FR | **DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
