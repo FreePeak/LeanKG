@@ -1,4 +1,4 @@
-//! Session memory (US-SM-01 / US-SM-02 / FR-SM-01..06).
+//! Session memory (US-SM-01 / US-SM-02 / US-SM-05 / US-SM-06 / FR-SM-01..11).
 //!
 //! Verbose MCP/tool payloads are persisted under
 //! `.leankg/sessions/<session_id>/refs/<node_id>.md`; a compact canvas
@@ -11,6 +11,15 @@
 //! write). `get_overview_context` opt-in injects top-K lessons when
 //! `recall=true` (default OFF); a ≤5s timeout skips injection so recall
 //! never blocks the MCP response.
+//!
+//! Heat promotion (US-SM-05 / US-SM-06 / FR-SM-10 / FR-SM-11): a
+//! deterministic heat score (recall frequency + recency) drives a
+//! white-box, heat-ranked `.leankg/MEMORY_INDEX.md` (state sidecar
+//! `.leankg/MEMORY_INDEX.json`). Repeated successful multi-tool sequences
+//! are mined into `add_ontology_workflow` PROPOSALS under
+//! `.leankg/proposals/workflows.jsonl` — LeanKG never writes ontology YAML
+//! as source of truth; the agent/harness reviews proposals before
+//! confirming them into `ontology/`.
 
 use std::path::{Path, PathBuf};
 
@@ -579,6 +588,372 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
+// ---------------------------------------------------------------------------
+// US-SM-05 / FR-SM-10 — heat-ranked MEMORY_INDEX (white-box)
+// ---------------------------------------------------------------------------
+
+pub const MEMORY_INDEX_MD: &str = "MEMORY_INDEX.md";
+pub const MEMORY_INDEX_JSON: &str = "MEMORY_INDEX.json";
+/// (US-SM-05) top-K sessions promoted into the markdown index.
+pub const DEFAULT_PROMOTE_TOP_K: usize = 10;
+/// Exponential decay half-life for recency (seconds).
+const RECENCY_HALF_LIFE_SECS: f64 = 86400.0;
+
+/// Raw heat components (white-box; rendered into MEMORY_INDEX.md).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct HeatScore {
+    pub frequency: f64,
+    pub recency: f64,
+    pub total: f64,
+}
+
+/// Deterministic heat score: recall frequency + recency. Pure function —
+/// same inputs always produce the same score. Recency decays exponentially
+/// with a 1-day half-life; frequency grows sub-linearly (log1p) so one
+/// hot memory does not starve the rest of the index.
+pub fn heat_score(recalls: u64, last_recalled_epoch_secs: u64, now_epoch_secs: u64) -> f64 {
+    let freq = (1.0 + recalls as f64).ln();
+    let age_secs = now_epoch_secs.saturating_sub(last_recalled_epoch_secs) as f64;
+    let recency = 0.5f64.powf(age_secs / RECENCY_HALF_LIFE_SECS);
+    freq + recency
+}
+
+/// One tracked memory (session, tool trace, lesson, …).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MemoryItem {
+    pub key: String,
+    pub source: String,
+    pub text: String,
+    pub recalls: u64,
+    pub first_seen_epoch_secs: u64,
+    pub last_recalled_epoch_secs: u64,
+}
+
+/// White-box heat index: JSON state under `.leankg/MEMORY_INDEX.json`,
+/// rendered markdown under `.leankg/MEMORY_INDEX.md` (FR-SM-10).
+/// Refreshed on recall; never touches ontology YAML.
+#[derive(Debug)]
+pub struct MemoryIndex {
+    project_dir: PathBuf,
+    items: Vec<MemoryItem>,
+}
+
+impl MemoryIndex {
+    pub fn new(project_dir: &Path) -> Result<Self, String> {
+        let dir = project_dir.join(".leankg");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let mut idx = Self {
+            project_dir: project_dir.to_path_buf(),
+            items: Vec::new(),
+        };
+        // Load existing state if present (crash-safe re-entry).
+        if let Ok(loaded) = Self::load(project_dir) {
+            idx.items = loaded.items;
+        }
+        Ok(idx)
+    }
+
+    pub fn json_path(&self) -> PathBuf {
+        self.project_dir.join(".leankg").join(MEMORY_INDEX_JSON)
+    }
+
+    pub fn md_path(&self) -> PathBuf {
+        self.project_dir.join(".leankg").join(MEMORY_INDEX_MD)
+    }
+
+    /// Load persisted state. Missing file => empty index (not an error).
+    pub fn load(project_dir: &Path) -> Result<Self, String> {
+        let path = project_dir.join(".leankg").join(MEMORY_INDEX_JSON);
+        let items = match std::fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str::<Vec<MemoryItem>>(&raw).map_err(|e| e.to_string())?,
+            Err(_) => Vec::new(),
+        };
+        Ok(Self {
+            project_dir: project_dir.to_path_buf(),
+            items,
+        })
+    }
+
+    pub fn items(&self) -> &[MemoryItem] {
+        &self.items
+    }
+
+    /// Register one recall/hit of a memory key. Creates or bumps the item.
+    /// Deterministic: identical keys coalesce into one tracked item.
+    pub fn record_hit(
+        &mut self,
+        key: &str,
+        source: &str,
+        text: &str,
+        now_epoch_secs: u64,
+    ) -> Result<(), String> {
+        let idx = self.items.iter().position(|i| i.key == key);
+        match idx {
+            Some(i) => {
+                let it = &mut self.items[i];
+                it.recalls += 1;
+                it.last_recalled_epoch_secs = now_epoch_secs;
+                it.source = source.to_string();
+                it.text = text.to_string();
+            }
+            None => {
+                self.items.push(MemoryItem {
+                    key: key.to_string(),
+                    source: source.to_string(),
+                    text: text.to_string(),
+                    recalls: 1,
+                    first_seen_epoch_secs: now_epoch_secs,
+                    last_recalled_epoch_secs: now_epoch_secs,
+                });
+            }
+        }
+        self.persist_json()
+    }
+
+    /// Mark a recall for an existing key (no-op for unknown keys). This is
+    /// the hook the recall path calls so hot sessions accumulate heat.
+    pub fn record_recall(&mut self, key: &str, now_epoch_secs: u64) -> Result<(), String> {
+        let mut changed = false;
+        if let Some(it) = self.items.iter_mut().find(|i| i.key == key) {
+            it.recalls += 1;
+            it.last_recalled_epoch_secs = now_epoch_secs;
+            changed = true;
+        }
+        if changed {
+            self.persist_json()?;
+        }
+        Ok(())
+    }
+
+    fn persist_json(&self) -> Result<(), String> {
+        let raw = serde_json::to_string_pretty(&self.items).map_err(|e| e.to_string())?;
+        std::fs::write(self.json_path(), raw).map_err(|e| e.to_string())
+    }
+
+    /// Refresh the markdown index. Writes only when the rendered text
+    /// actually changed (no-write-on-unchanged). FR-SM-11 guarantee: only
+    /// `.leankg/` files are written, never `ontology/` YAML.
+    pub fn refresh(&self) -> Result<(), String> {
+        let text = self.render();
+        let path = self.md_path();
+        match std::fs::read_to_string(&path) {
+            Ok(existing) if existing == text => return Ok(()),
+            _ => {}
+        }
+        std::fs::write(&path, text).map_err(|e| e.to_string())
+    }
+
+    /// Heat-ranked top-K list (deterministic sort by score, tie-break key).
+    pub fn top_k(&self, k: usize, now_epoch_secs: u64) -> Vec<(MemoryItem, HeatScore)> {
+        let mut ranked: Vec<(MemoryItem, HeatScore)> = self
+            .items
+            .iter()
+            .map(|it| {
+                let total = heat_score(it.recalls, it.last_recalled_epoch_secs, now_epoch_secs);
+                let age_secs = now_epoch_secs.saturating_sub(it.last_recalled_epoch_secs) as f64;
+                let score = HeatScore {
+                    frequency: (1.0 + it.recalls as f64).ln(),
+                    recency: 0.5f64.powf(age_secs / RECENCY_HALF_LIFE_SECS),
+                    total,
+                };
+                (it.clone(), score)
+            })
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.1.total
+                .partial_cmp(&a.1.total)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.key.cmp(&b.0.key))
+        });
+        ranked.truncate(k);
+        ranked
+    }
+
+    /// Render the white-box markdown index (heat-ranked, top-K).
+    pub fn render(&self) -> String {
+        let now = now_unix_secs();
+        let ranked = self.top_k(DEFAULT_PROMOTE_TOP_K, now);
+        let mut out = String::from("# MEMORY_INDEX\n\n");
+        out.push_str(&format!(
+            "- generated: {now} (epoch secs; deterministic score: log(1+recalls) + 0.5^(age/86400))\n"
+        ));
+        out.push_str(&format!(
+            "- tracked: {} | promoted (top-K): {}\n\n",
+            self.items.len(),
+            ranked.len()
+        ));
+        if ranked.is_empty() {
+            out.push_str("_No sessions tracked yet._\n");
+            return out;
+        }
+        out.push_str("## Hot sessions\n\n");
+        out.push_str("| rank | key | recalls | last recall (age s) | heat | source |\n");
+        out.push_str("|---|---|---|---|---|---|\n");
+        for (i, (it, score)) in ranked.iter().enumerate() {
+            let age = now.saturating_sub(it.last_recalled_epoch_secs);
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {:.6} | {} |\n",
+                i + 1,
+                it.key,
+                it.recalls,
+                age,
+                score.total,
+                it.source
+            ));
+        }
+        out.push_str("\n## Detail\n\n");
+        for (it, score) in &ranked {
+            out.push_str(&format!(
+                "- **{}** — recalls={}, heat={:.6} (freq={:.6}, recency={:.6})\n  {}\n",
+                it.key, it.recalls, score.total, score.frequency, score.recency, it.text
+            ));
+        }
+        out
+    }
+}
+
+// ---------------------------------------------------------------------------
+// US-SM-06 / FR-SM-11 — repeated successful tool traces => workflow proposals
+// ---------------------------------------------------------------------------
+
+pub const WORKFLOW_PROPOSALS_DIR: &str = "proposals";
+/// Minimum repeated occurrences before a trace is proposed (FR-SM-11).
+pub const MIN_SEQUENCE_LEN: usize = 3;
+/// Proposal detail step must be of length >= 3 to count as a shared trace.
+const MIN_TRACE_LEN: usize = 3;
+
+/// One proposed `add_ontology_workflow` payload (FR-SM-11). This is a
+/// PROPOSAL only — the harness/human reviews and confirms; LeanKG never
+/// writes it into `ontology/` YAML as source of truth.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkflowProposal {
+    pub name: String,
+    pub description: String,
+    pub steps: Vec<String>,
+    pub occurrences: usize,
+    pub confidence: f64,
+    pub created_epoch_secs: u64,
+}
+
+/// A proposal persisted to `.leankg/proposals/workflows.jsonl`. The content
+/// key dedups identical step sequences (FR-SM-04-style hashing).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ProposalRecord {
+    pub content_key: String,
+    pub proposal: WorkflowProposal,
+}
+
+/// Mines repeated successful multi-tool sequences into workflow proposals.
+/// Pure: no I/O, no ontology writes.
+#[derive(Debug)]
+pub struct SequenceMiner {
+    min_occurrences: usize,
+    min_trace_len: usize,
+}
+
+impl SequenceMiner {
+    pub fn new(min_occurrences: usize, min_trace_len: usize) -> Self {
+        Self {
+            min_occurrences,
+            min_trace_len,
+        }
+    }
+
+    pub fn propose(
+        &self,
+        traces: &[Vec<String>],
+        positive_terms: Option<&[&str]>,
+    ) -> Vec<WorkflowProposal> {
+        use std::collections::HashMap;
+        let mut counts: HashMap<Vec<String>, usize> = HashMap::new();
+        for t in traces {
+            if t.len() < self.min_trace_len {
+                continue;
+            }
+            let trimmed: Vec<String> = t
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if trimmed.len() < self.min_trace_len {
+                continue;
+            }
+            *counts.entry(trimmed).or_insert(0) += 1;
+        }
+        let mut proposals = Vec::new();
+        for (steps, occurrences) in counts {
+            if occurrences < self.min_occurrences {
+                continue;
+            }
+            if let Some(terms) = positive_terms {
+                if !terms.iter().any(|t| steps.contains(&t.to_string())) {
+                    continue;
+                }
+            }
+            proposals.push(WorkflowProposal {
+                name: workflow_name(&steps),
+                description: format!(
+                    "Repeated {} times across sessions: {}",
+                    occurrences,
+                    steps.join(" → ")
+                ),
+                steps,
+                occurrences,
+                confidence: confidence(occurrences),
+                created_epoch_secs: now_unix_secs(),
+            });
+        }
+        proposals.sort_by(|a, b| {
+            b.occurrences
+                .cmp(&a.occurrences)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        proposals
+    }
+}
+
+impl Default for SequenceMiner {
+    fn default() -> Self {
+        Self::new(MIN_SEQUENCE_LEN, MIN_TRACE_LEN)
+    }
+}
+
+/// Deterministic snake-case workflow name from the step sequence.
+fn workflow_name(steps: &[String]) -> String {
+    let mut joined: Vec<String> = steps
+        .iter()
+        .map(|s| s.split('_').collect::<Vec<_>>().join(" "))
+        .collect();
+    let joined_str = joined.join(" ");
+    joined = joined_str.split_whitespace().map(str::to_string).collect();
+    let mut name = joined
+        .into_iter()
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<String>>()
+        .join("_");
+    if name.is_empty() {
+        name = "workflow".to_string();
+    }
+    name
+}
+
+/// Confidence grows with occurrences, saturating near 1.0.
+fn confidence(occurrences: usize) -> f64 {
+    1.0 - 0.5f64.powi(occurrences as i32 - 1)
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// One offload operation: write ref, update canvas, return compact context.
 /// Stateless across calls — node_id derives from the canvas on disk, so the
 /// MCP handler needs no per-session in-memory state.
@@ -880,5 +1255,101 @@ mod tests {
             "recall must never block beyond the timeout: {:?}",
             start.elapsed()
         );
+    }
+
+    // ------------------------------------------------------------------
+    // US-SM-05 / US-SM-06 / FR-SM-10 / FR-SM-11 — heat promotion
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn heat_promotion_recall_path_bumps_heat() {
+        let tmp = TempDir::new().unwrap();
+        let mut idx = MemoryIndex::new(tmp.path()).unwrap();
+        idx.record_hit("wf-debug", "LESSONS.md", "debug workflow", 100)
+            .unwrap();
+        idx.record_recall("wf-debug", 200).unwrap();
+        idx.record_recall("wf-debug", 250).unwrap();
+        let now = 260;
+        let scored = heat_score(3, 250, now);
+        let top = idx.top_k(5, now);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].0.recalls, 3, "hit + 2 recalls");
+        assert_eq!(top[0].1.total, scored, "score equals pure fn");
+    }
+
+    #[test]
+    fn heat_promotion_top_k_truncates_and_orders() {
+        let tmp = TempDir::new().unwrap();
+        let mut idx = MemoryIndex::new(tmp.path()).unwrap();
+        for i in 0..20 {
+            idx.record_hit(
+                &format!("k{i:02}"),
+                "diary",
+                &format!("key {i}"),
+                1000 + i as u64,
+            )
+            .unwrap();
+        }
+        let top = idx.top_k(5, 2000);
+        assert_eq!(top.len(), 5, "top-K truncation");
+        // monotonic heat within the promoted slice
+        for w in top.windows(2) {
+            assert!(w[0].1.total >= w[1].1.total, "ranked desc: {:?}", w);
+        }
+        let md = idx.render();
+        assert!(md.contains("| rank | key |"), "table header: {md}");
+    }
+
+    #[test]
+    fn heat_promotion_markdown_is_white_box() {
+        let tmp = TempDir::new().unwrap();
+        let mut idx = MemoryIndex::new(tmp.path()).unwrap();
+        idx.record_hit("hot-session", "search telemetry", "the hot session", 100)
+            .unwrap();
+        let md = idx.render();
+        assert!(md.contains("hot-session"));
+        assert!(md.contains("recalls=1"), "raw recall count visible: {md}");
+        assert!(md.contains("heat="), "raw heat visible: {md}");
+        assert!(
+            md.contains("log(1+recalls) + 0.5^(age/86400)"),
+            "deterministic formula documented: {md}"
+        );
+    }
+
+    #[test]
+    fn workflow_proposal_shape_matches_add_ontology_workflow_payload() {
+        let miner = SequenceMiner::default();
+        let traces: Vec<Vec<String>> = vec![
+            vec!["search_code", "get_context", "query_file"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            vec!["search_code", "get_context", "query_file"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            vec!["search_code", "get_context", "query_file"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        ];
+        let proposals = miner.propose(&traces, None);
+        assert_eq!(proposals.len(), 1);
+        let p = &proposals[0];
+        // `add_ontology_workflow` requires name + description + steps array
+        assert!(!p.name.is_empty());
+        assert!(!p.description.is_empty());
+        assert_eq!(p.steps.len(), 3);
+        assert!(p.occurrences >= 3);
+        assert!(p.confidence > 0.5, "confidence grows with occurrences");
+    }
+
+    #[test]
+    fn workflow_proposal_dedup_key_identifies_sequence() {
+        let seq = vec!["search_code".to_string(), "get_context".to_string()];
+        let key = content_key(&seq.join("|"));
+        assert_eq!(key.len(), 12, "12-hex content key");
+        let seq2 = vec!["search_code".to_string(), "query_file".to_string()];
+        assert_ne!(key, content_key(&seq2.join("|")));
     }
 }
