@@ -104,6 +104,15 @@ After `mcp_index_docs`, path aliases resolve on read; markdown refs resolve to i
 
 Miss payloads include `tried[]` — do not assume empty graph when aliases fail.
 
+### Reflect (US-GF-16)
+
+After a graph query resolves a task, call
+`report_query_outcome(question, nodes, outcome: useful|dead_end|corrected, note)`
+**once per task** (not per tool call). If `dead_end` or `corrected`, include
+what actually worked in `note`. Lessons append to
+`.leankg/reflections/LESSONS.md` and feed next-session recall. See
+[`docs/reflect-skill.md`](../../docs/reflect-skill.md).
+
 ### Hard-removed tools (do not call)
 
 `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure`
