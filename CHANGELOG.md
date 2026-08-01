@@ -2,6 +2,58 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.31](https://github.com/FreePeak/LeanKG/compare/v0.19.30...v0.19.31) (2026-08-01)
+
+
+### Features
+
+* **docjoin:** unique file::symbol upgrade (FR-DOCJOIN-06) ([a21eef1](https://github.com/FreePeak/LeanKG/commit/a21eef1825f9d421d4cbc6080ffb807c94701660))
+* **docjoin:** unique file::symbol upgrade when unique (FR-DOCJOIN-06) ([a90d59c](https://github.com/FreePeak/LeanKG/commit/a90d59cb6352ddeac1e7f1714ace860acd221e08))
+* **ge:** ADR citation extraction + codex install target + service_calls breadth (Wave 2e) ([5f0f036](https://github.com/FreePeak/LeanKG/commit/5f0f036e8038d2adc181176af0b4835266526cbf))
+* **ge:** ADR extraction + install matrix + service_calls breadth (Wave 2e) ([43e610c](https://github.com/FreePeak/LeanKG/commit/43e610c324a68b6605e4fcd05dba8ddcf0dc4904))
+* **ge:** cluster-first agent navigation via precomputed cluster_id (US-GE-04) ([d2d3e54](https://github.com/FreePeak/LeanKG/commit/d2d3e54698afb244c4c9ac0cc5d3f0c691f2538c))
+* **ge:** cluster-first navigation (US-GE-04) ([971cb37](https://github.com/FreePeak/LeanKG/commit/971cb379a46fdc0e16a9d857f972cce3c66a3c2b))
+* **ge:** cross-alias entity resolution (US-GE-03 / FR-GE-03) ([4869cd1](https://github.com/FreePeak/LeanKG/commit/4869cd12d0e7d33ce9cbe932126b1bffb88533b3))
+* **ge:** cross-alias entity resolution (US-GE-03) ([7975681](https://github.com/FreePeak/LeanKG/commit/797568105e1f335cf9fe8125b3643284e459524d))
+* **ge:** graph-aware planner goal→MCP DAG (US-GE-02) ([ef8c036](https://github.com/FreePeak/LeanKG/commit/ef8c03608d22d7a472208321ce445de7b9a3b26a))
+* **ge:** graph-aware planner goal→MCP DAG (US-GE-02) ([94dd500](https://github.com/FreePeak/LeanKG/commit/94dd500a60251a70994b07cca87990694b4401ff))
+* **graph-ui:** degree-based importance from /api/graph/data (FR-E27) ([2edb110](https://github.com/FreePeak/LeanKG/commit/2edb110eae658473682ea5f1d9b026b81a4fac8e))
+* **graph-ui:** panels + serve wiring (FR-E30..E43, US-CBM-E4) ([ae7fb73](https://github.com/FreePeak/LeanKG/commit/ae7fb73728a092e99780ebca095fb93180fd1e44))
+* **graph-ui:** panels + serve wiring (FR-E30..E43) ([75f279f](https://github.com/FreePeak/LeanKG/commit/75f279fea85ca75f58966a45304653d4560ac71a))
+* **graph-ui:** scene LOD + cluster collapse + progressive load (FR-E20..E28, US-CBM-E3) ([96dd605](https://github.com/FreePeak/LeanKG/commit/96dd60511efa65fce44bc897e6f592314d44baa8))
+* **graph-ui:** scene LOD + cluster collapse + progressive load (FR-E20..E28) ([169fa91](https://github.com/FreePeak/LeanKG/commit/169fa91f469aa1650fc387ab67ed8096d4ccefc4))
+* **graph-ui:** Track E 3D graph explorer scaffold (FR-E01..E05) ([5152a31](https://github.com/FreePeak/LeanKG/commit/5152a31c5b1ee537ab66cedfc79480949183a3e8))
+* **graph-ui:** Track E 3D graph explorer scaffold (FR-E01..E05) ([26a2afd](https://github.com/FreePeak/LeanKG/commit/26a2afdd458a48c6ef6786f0ba74779f1a4c1be2))
+* **graph:** 3D layout API for Track E (FR-E10..E14) ([c2425f4](https://github.com/FreePeak/LeanKG/commit/c2425f43a83a4ebae40aa28e2e31e644f0b29cf9))
+* **graph:** deterministic 3D layout API for Track E (FR-E10..E14) ([0af4e09](https://github.com/FreePeak/LeanKG/commit/0af4e097412ae78fed69a77099a420db8aa76496))
+* **graph:** directory-level impact radius (US-MP-08 / FR-MP-24) ([ed54ae0](https://github.com/FreePeak/LeanKG/commit/ed54ae0b80ba48dae4a5fdb93febca4458515c8f))
+* **graph:** god-node importance scoring + architecture hotspots (FR-GF-10/12) ([fc75f54](https://github.com/FreePeak/LeanKG/commit/fc75f5456bf9a8c7f5b604037ece0659ffcdd519))
+* **graph:** god-node importance scoring + architecture hotspots (FR-GF-10/12) ([9e35b00](https://github.com/FreePeak/LeanKG/commit/9e35b00ea9f4e2d3a7b31600dce01005d50827ca))
+* **indexer:** index .vue/.svelte/.sql files (REL-032) ([de3a605](https://github.com/FreePeak/LeanKG/commit/de3a605906fa31397465abeb379e28feb86823f8))
+* **indexer:** inline REFERENCES FK extraction for PG/MySQL DDL (US-GF-12) ([a5a73b7](https://github.com/FreePeak/LeanKG/commit/a5a73b7ab05df3bb2729036c3f3a5090d0b99007))
+* **indexer:** wire .vue/.svelte/.sql files into index walk (REL-032 / US-08) ([14ce5c7](https://github.com/FreePeak/LeanKG/commit/14ce5c7602fa885d61b770cdae7c2a6d3e4ed9e3))
+* **lsp:** Python + Rust hybrid typed resolve (FR-B06) ([e101027](https://github.com/FreePeak/LeanKG/commit/e1010273d52cbd79dc371d403cd4b2f8318900ef))
+* **mcp:** formal MCP resources for overview context (US-GN-08) ([f707af2](https://github.com/FreePeak/LeanKG/commit/f707af2d4e1212b7c7072472b0072ba36da9daca))
+* **mcp:** L0-L3 layer budgets (US-MP-02) + hybrid typed resolve for Python/Rust (FR-B06) + folder-scoped query_file (FR-MP-25) ([a692cf7](https://github.com/FreePeak/LeanKG/commit/a692cf7e084c12fe91502bb4788d8dd0a0e181bb))
+* **mining:** mine-conversations CLI for Claude/ChatGPT/Slack (US-MP-03) ([d2cbe05](https://github.com/FreePeak/LeanKG/commit/d2cbe057f068618938fc660622c63f2ef92040a0))
+* **mining:** mine-conversations CLI for Claude/ChatGPT/Slack exports (US-MP-03, FR-MP-09..13) ([51e2290](https://github.com/FreePeak/LeanKG/commit/51e22900859fdf6e27ec0293be774a1ee011f07d))
+* **p3:** windows smoke + MCP resources overview + lang breadth (PR-63/64/65) ([6a190d3](https://github.com/FreePeak/LeanKG/commit/6a190d3a0b7045ca8a8025816efbe3f75e3fb516))
+* **platform:** C-series docs + LSP typed-resolve wiring (Wave 2e) ([f247ec5](https://github.com/FreePeak/LeanKG/commit/f247ec53452e94aeced7cb743c157111c5b32c03))
+* **sem:** token budget envelope + per-tool caps + HTTP hygiene (FR-SEM-01..03) ([97cdb39](https://github.com/FreePeak/LeanKG/commit/97cdb390e23185959a9e305cb5122e52227930fc))
+* **sem:** token budget envelope + per-tool caps + HTTP hygiene (FR-SEM-01..03) ([1ef0c26](https://github.com/FreePeak/LeanKG/commit/1ef0c26ee638254c464f74c7284382757cfdba15))
+* **session:** heat promotion to MEMORY_INDEX.md + workflow proposals (US-SM-05/06, FR-SM-10/11) ([234cb2d](https://github.com/FreePeak/LeanKG/commit/234cb2da841f166069deefb01c0be96e90aff9f9))
+* **session:** heat promotion to MEMORY_INDEX.md + workflow proposals (US-SM-05/06) ([5a96034](https://github.com/FreePeak/LeanKG/commit/5a96034d295b6ad4ad4fbce2854eea28e77678a5))
+* **session:** memory offload to .leankg/sessions + session_recall (US-SM-01 / FR-SM-01..03) ([3d617ac](https://github.com/FreePeak/LeanKG/commit/3d617ac3565819f8fafccbdd2e05d7192f72085b))
+* **session:** memory offload to .leankg/sessions + session_recall (US-SM-01) ([5db3f15](https://github.com/FreePeak/LeanKG/commit/5db3f15cf4c993efa7d87a3f0e58d698c79ecec6))
+* **session:** opt-in auto-recall into get_overview_context (US-SM-02 / FR-SM-04..06, closes US-GE-05) ([a178eff](https://github.com/FreePeak/LeanKG/commit/a178eff05be0499ca279f45d40a2fb22f176a10c))
+* **session:** opt-in auto-recall into overview (US-SM-02 / closes US-GE-05) ([4f14968](https://github.com/FreePeak/LeanKG/commit/4f149689d360cc9ba5f90bfb6c8a1af643d3b676))
+* **session:** provenance fields + typed kinds + RRF k=60 (US-SM-03/04, FR-SM-07..09) ([955973e](https://github.com/FreePeak/LeanKG/commit/955973e85d5020e4928249f1e496bd5ea1df3035))
+* **session:** provenance fields + typed kinds + RRF k=60 (US-SM-03/04) ([eadac90](https://github.com/FreePeak/LeanKG/commit/eadac90535c51fffcdff16fd16fc259d76d8e078))
+* **ui-v2:** cluster legend filters + incidents/env/conflicts panels (US-UI2-08/09, FR-UI2-10/11) ([185dc4b](https://github.com/FreePeak/LeanKG/commit/185dc4bd7a13e26fcf6247dfa2daefb80afde3bd))
+* **ui-v2:** cluster legend filters + incidents/env/conflicts panels (US-UI2-08/09) ([96d7df3](https://github.com/FreePeak/LeanKG/commit/96d7df333166b8feaf741a7f547f9346aa7ca7f9))
+* **web:** REST DELETE annotation mutation + router factory (REL-040) ([bb8285d](https://github.com/FreePeak/LeanKG/commit/bb8285d6de02870658ecda88c9f5ee8114aad291))
+* **web:** REST mutations + MemPalace budgets + CBM docs (Wave 2e) ([9e922d9](https://github.com/FreePeak/LeanKG/commit/9e922d95d4f6e1acd504ec2c20c01165fe82084b))
+
 ## [0.19.30](https://github.com/FreePeak/LeanKG/compare/v0.19.29...v0.19.30) (2026-08-01)
 
 
