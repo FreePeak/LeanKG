@@ -348,25 +348,10 @@ async fn root_handler() -> Response {
     serve_embedded_file("index.html").await
 }
 
-pub async fn start_server(
-    port: u16,
-    db_path: std::path::PathBuf,
-    _ui_dist_path: Option<std::path::PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let project_root = db_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| db_path.clone());
-    let state = AppState::new(db_path.clone(), project_root.clone()).await?;
-    state.init_db().await?;
-
-    // FR-ONT-PROC-01: watch ontology YAML while serve is running.
-    // GraphEngine caches are Arc-shared across clones; sync_from_dir invalidates them.
-    if let Ok(graph) = state.get_graph_engine().await {
-        let _ = crate::ontology::spawn_ontology_yaml_watcher(project_root.clone(), graph, |_| {});
-    }
-
-    let app = Router::new()
+/// Build the full web router. Extracted from `start_server` so REL-040
+/// route/mutation behavior is testable without binding a socket.
+pub fn build_router(state: AppState) -> Router {
+    Router::new()
         .route("/", get(root_handler))
         .route("/api/elements", get(handlers::api_elements))
         .route("/api/relationships", get(handlers::api_relationships))
@@ -379,6 +364,10 @@ pub async fn start_server(
         .route(
             "/api/annotations/:element",
             put(handlers::api_update_annotation),
+        )
+        .route(
+            "/api/annotations/:element",
+            delete(handlers::api_delete_annotation),
         )
         .route("/api/search", get(handlers::api_search))
         .route("/api/graph/data", get(handlers::api_graph_data))
@@ -451,7 +440,28 @@ pub async fn start_server(
         )
         .route("/services", get(handlers::services_page))
         .route("/*path", get(fallback_handler))
-        .with_state(state);
+        .with_state(state)
+}
+
+pub async fn start_server(
+    port: u16,
+    db_path: std::path::PathBuf,
+    _ui_dist_path: Option<std::path::PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project_root = db_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| db_path.clone());
+    let state = AppState::new(db_path.clone(), project_root.clone()).await?;
+    state.init_db().await?;
+
+    // FR-ONT-PROC-01: watch ontology YAML while serve is running.
+    // GraphEngine caches are Arc-shared across clones; sync_from_dir invalidates them.
+    if let Ok(graph) = state.get_graph_engine().await {
+        let _ = crate::ontology::spawn_ontology_yaml_watcher(project_root.clone(), graph, |_| {});
+    }
+
+    let app = build_router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     println!("LeanKG Web UI listening on http://localhost:{}", port);

@@ -127,7 +127,12 @@ pub fn delete_business_logic(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let query = r#":delete business_logic where element_qualified = $eq"#;
+    // CozoDB has no `:delete` operator. Read the matching row(s) by
+    // element_qualified via head-binding, then `:rm` exactly those rows
+    // (same pattern as `delete_knowledge_entry`). Deleting a missing row
+    // is a no-op (empty head bind, nothing removed).
+    let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], element_qualified = $eq
+:rm business_logic {element_qualified, description, user_story_id, feature_id}"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
         "eq".to_string(),

@@ -2566,6 +2566,40 @@ pub async fn api_update_annotation(
     }
 }
 
+/// REL-040: DELETE /api/annotations/:element — the missing mutation verb
+/// for the annotation resource (POST/PUT/GET existed; DELETE did not).
+#[allow(dead_code)]
+pub async fn api_delete_annotation(
+    State(state): State<AppState>,
+    Path(element): Path<String>,
+) -> impl IntoResponse {
+    let db = match state.get_db() {
+        Ok(db) => db,
+        Err(e) => {
+            return ApiResponse {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            }
+        }
+    };
+    match db::delete_business_logic(&db, &element) {
+        Ok(()) => ApiResponse {
+            success: true,
+            data: Some(serde_json::json!({
+                "element": element,
+                "deleted": true
+            })),
+            error: None,
+        },
+        Err(e) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
 #[allow(dead_code)]
 pub async fn api_search(
     State(state): State<AppState>,
@@ -4739,5 +4773,63 @@ mod fr_mg_03_tests {
         fs::create_dir_all(dir.join("platform").join("svc-a").join(".git")).unwrap();
         assert!(!detect_single_repo(&dir));
         fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod rel_040_mutation_tests {
+    use super::*;
+    use crate::db::schema::init_db;
+
+    fn make_state() -> (AppState, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_path = tmp.path().join("leankg.db");
+        let project = tmp.path().to_path_buf();
+        let state = crate::runtime::run_blocking(AppState::new(db_path.clone(), project))
+            .expect("AppState::new");
+        // Seed a business_logic row directly through the db seam.
+        let db = init_db(&db_path).unwrap();
+        crate::db::create_business_logic(&db, "src/auth.rs::login", "legacy note", None, None)
+            .unwrap();
+        let state_for_init = state.clone();
+        crate::runtime::run_blocking(async move {
+            state_for_init.init_db().await.unwrap();
+        });
+        (state, tmp)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_annotation_removes_row_and_second_delete_is_noop() {
+        // REL-040: DELETE /api/annotations/:element is the missing mutation
+        // verb; POST/PUT/GET existed. Verify delete round-trips.
+        let (state, _tmp) = make_state();
+        let element = "src/auth.rs::login".to_string();
+        let first = api_delete_annotation(State(state.clone()), Path(element.clone())).await;
+        let resp = first.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        // Row gone from the graph.
+        let graph = state.get_graph_engine().await.unwrap();
+        assert!(
+            graph.get_annotation(&element).unwrap().is_none(),
+            "annotation must be deleted"
+        );
+        // Deleting a missing row still succeeds (idempotent, Cozo :rm no-op).
+        let second = api_delete_annotation(State(state.clone()), Path(element)).await;
+        let resp = second.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_annotation_rejects_missing_db() {
+        // Uninitialized state -> clean error envelope, not a panic.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = crate::runtime::run_blocking(AppState::new(
+            tmp.path().join("nodb.db"),
+            tmp.path().to_path_buf(),
+        ))
+        .expect("AppState::new");
+        let resp = api_delete_annotation(State(state), Path("x".to_string())).await;
+        let resp = resp.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 }
