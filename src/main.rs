@@ -5,6 +5,7 @@ mod budget;
 mod cli;
 mod compress;
 mod config;
+mod conversation_indexer;
 mod db;
 mod doc;
 mod doc_indexer;
@@ -372,6 +373,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 out.as_deref(),
                 &db_path,
             )?;
+        }
+        cli::CLICommand::MineConversations {
+            format,
+            project,
+            input,
+        } => {
+            let project_path = std::path::PathBuf::from(&project);
+            let input_path = std::path::PathBuf::from(&input);
+            let fmt = conversation_indexer::ConversationFormat::from_str(&format);
+            if fmt == conversation_indexer::ConversationFormat::Unknown {
+                eprintln!(
+                    "Unknown format '{}'; use --format claude|chatgpt|slack",
+                    format
+                );
+                std::process::exit(2);
+            }
+            match conversation_indexer::mine_into_project(&project_path, &input_path, fmt) {
+                Ok(result) => {
+                    println!("{}", result.summary());
+                    for item in &result.items {
+                        println!(
+                            "  [{}] {}: {}",
+                            item.kind.as_str(),
+                            item.qualified_name(&project_path),
+                            item.verbatim.chars().take(120).collect::<String>()
+                        );
+                    }
+                    println!("Done.");
+                }
+                Err(e) => {
+                    eprintln!("mine-conversations failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         cli::CLICommand::CheckConsistency { severity, limit } => {
             let project_path = find_project_root()?;
