@@ -13,7 +13,7 @@
 >
 > **P0 CLOSED (v3.7.9):** **Procedural ontology auto-update while using** — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059` **DONE**. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). YAML watch + boot marker (concepts **and** workflows) + post-index sync + MCP `ontology_control`.
 >
-> **CURRENT next (P1 — company adoption waves):** Waves **0a–3** **DONE** (through NL Query FAB). **Next: Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`). Evidence: [`docs/reports/ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md).
+> **CURRENT next (P1 — company adoption waves):** Waves **0a–3** **DONE** (through NL Query FAB). **Next: Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`). **Ops blocker for live demo:** OnRender `cargo build --features embeddings` exit 101 — RCA + Dockerfile fix in [`docs/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md). Wave 3 evidence: [`docs/reports/ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md).
 >
 > **P2 follow-ons (do not preempt P1):** Doc↔code join quality §3.19 / §5.22 (`US-DOCJOIN-*` / `REL-063`); Graph-engineering curriculum gaps §1.2 / §3.20 / §5.23 (`US-GE-*` / `REL-064`). Evidence: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
 >

@@ -6,7 +6,7 @@ WORKDIR /ui
 COPY ui-v2/package.json ui-v2/package-lock.json ./
 RUN npm ci
 COPY ui-v2/ ./
-ARG UI_EMBED_REV=2026-07-22-render-ui-tsc-fix
+ARG UI_EMBED_REV=2026-08-01-onrender-emb101
 RUN echo "UI_EMBED_REV=${UI_EMBED_REV}" && npm run build
 
 FROM rust:1-bookworm AS builder
@@ -14,12 +14,19 @@ WORKDIR /app
 
 # Render Starter build pipeline: 2 CPU, 8 GB RAM (docs.render.com/build-pipeline).
 # ort + rocksdb + thin LTO can exceed 8 GB with default parallel codegen.
+# embeddings → fastembed → hf-hub → native-tls → openssl-sys needs libssl-dev.
 ENV CARGO_BUILD_JOBS=1 \
     CARGO_PROFILE_RELEASE_LTO=false \
+    CARGO_INCREMENTAL=0 \
+    RUSTFLAGS="-C debuginfo=0" \
     CARGO_TERM_COLOR=always
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends clang libclang-dev \
+    && apt-get install -y --no-install-recommends \
+        clang \
+        libclang-dev \
+        pkg-config \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
@@ -28,12 +35,13 @@ COPY src ./src
 COPY benches ./benches
 COPY ontology/ ./ontology/
 COPY --from=ui /ui/dist/ ./src/embed/
-ARG UI_EMBED_REV=2026-07-22-render-ui-tsc-fix
+ARG UI_EMBED_REV=2026-08-01-onrender-emb101
 RUN test -f src/embed/index.html \
     && grep -q '<title>LeanKG</title>' src/embed/index.html \
     && printf '{"ui":"ui-v2","rev":"%s","source":"Dockerfile"}\n' "${UI_EMBED_REV}" > src/embed/ui-build.json
 
 # US-CBM-C1 / FR-HNSW-C: embeddings feature for semantic_search on hosted demo.
+# See docs/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md
 RUN cargo build --release --features embeddings \
     && strip target/release/leankg \
     && cp target/release/leankg /usr/local/bin/leankg

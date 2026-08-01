@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 — Wave **3** NL Query FAB (`US-UI2-06` / `FR-UI2-08`) **DONE**. Evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md). **P1 CURRENT = Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`). Prior: waves 0a–2c DONE; tracker sync for GRAPH_REPORT + HTML export.
+**Last synced:** 2026-08-01 — Wave **3** NL Query FAB **DONE**. **Ops follow-up:** OnRender embeddings build exit 101 RCA + Dockerfile openssl fix ([`root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md)). **P1 CURRENT = Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`).
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
 
@@ -113,6 +113,25 @@ Evidence: [`honest-edges-smoke-2026-07-22.md`](reports/honest-edges-smoke-2026-0
 | `FR-GF-13` | DONE | Auto-write `.leankg/GRAPH_REPORT.md` on CLI index + MCP `mcp_index` + Docker auto-index; soft-fail; skip-unchanged; ui-v2 Overview card; Surprising Cross-Cluster Edges section |
 
 Evidence: [`auto-graph-report-2026-07-25.md`](reports/auto-graph-report-2026-07-25.md)
+
+### Wave 3 detail (NL Query FAB) — DONE
+
+| ID | Status | Intent |
+|----|--------|--------|
+| `US-UI2-06` | DONE | Query FAB default = NL `query_graph`; Advanced = raw Cozo |
+| `FR-UI2-08` | DONE | Dual-mode FAB + `POST /api/query-graph` |
+
+Evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md)
+
+### Ops — OnRender embeddings exit 101 (2026-08-01)
+
+| ID | Status | Intent |
+|----|--------|--------|
+| `REL-ONRENDER-101` | PARTIAL | Fix Render Docker `cargo build --features embeddings` exit 101 (openssl headers + RSS guards); clear cache; confirm live `/api/ui-build` |
+| Follow-up F2 | NOT_DONE | CI gate for embeddings Docker build on Dockerfile/Cargo.lock changes |
+| Follow-up F3 | NOT_DONE | Prebuilt image → Render pull (optional) |
+
+Evidence: [`root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md)
 
 ### Wave 2c detail (HTML export)
 

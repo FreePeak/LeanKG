@@ -26,7 +26,11 @@ WORKDIR /app
 
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y clang libclang-dev \
+    && apt-get install -y --no-install-recommends \
+        clang \
+        libclang-dev \
+        pkg-config \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Optional local patches (no-op if empty). Keep for offline/build reproducibility.

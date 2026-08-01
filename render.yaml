@@ -16,4 +16,4 @@ services:
       - key: LEANKG_SERVE_PROJECT
         value: /app
       - key: UI_EMBED_REV
-        value: "2026-07-21-onrender-rca4"
+        value: "2026-08-01-onrender-emb101"

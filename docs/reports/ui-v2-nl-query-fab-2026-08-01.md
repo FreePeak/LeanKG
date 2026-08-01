@@ -62,7 +62,25 @@ After `ui-v2` build → `src/embed/` + `cargo build --release`, served JS contai
 | `FR-UI2-08` | DONE |
 | `US-UI2-06` | DONE |
 
-## Follow-ups (not blocking)
+## Follow-ups (not blocking Wave 3 product AC)
 
 - Wave 4: `US-MG-02` / `FR-MG-03` single-repo expand
 - Playwright e2e extended for mode toggles (runs when `:8080` + `:5173` up)
+
+### OnRender deploy exit 101 (ops — blocks live demo refresh)
+
+Live Render build fails at:
+
+```text
+cargo build --release --features embeddings … exit code: 101
+```
+
+**RCA:** [`root_cause_onrender_embeddings_exit101-2026-08-01.md`](root_cause_onrender_embeddings_exit101-2026-08-01.md)
+
+| # | Follow-up | Status |
+|--:|-----------|--------|
+| F1 | Dockerfile: `libssl-dev` + `pkg-config` (embeddings → hf-hub → openssl-sys); extra RSS guards; bump `UI_EMBED_REV`; clear Render cache | **In this PR** |
+| F2 | CI gate: embeddings Docker/`cargo build --features embeddings` when Dockerfile/Cargo.lock change | Open |
+| F3 | Prebuilt image → Render pull (avoid 8 GB compile) | Open |
+| F4 | Performance build pipeline if Starter still OOMs after Swift/ObjC | Open |
+| F5 | Wave 4 single-repo expand (next P1 product) | Open |
