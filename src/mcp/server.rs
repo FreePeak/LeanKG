@@ -3410,6 +3410,88 @@ mod tests {
         assert!(!should_resolve_tool_paths("find_function"));
     }
 
+    // ---------------------------------------------------------------------
+    // FR-A01: MCP `project` resolves to the correct RocksDB project for
+    // multi-mount setups.
+    //
+    // The seam is `resolve_project_db_path(fp)` — used by every tool that
+    // receives a `project=` arg (`get_graph_engine_for_path`, embed_control,
+    // session paths, …). Each container mount is a separate project root
+    // with its own `.leankg`, so resolution must:
+    //   * return that mount's own `.leankg` (not the server default)
+    //   * walk up ancestors to the nearest `.leankg` for sub-paths
+    //   * return None when no `.leankg` exists (caller falls back to default)
+    // ---------------------------------------------------------------------
+
+    fn make_project_mount(root: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let mount = root.join(name);
+        std::fs::create_dir_all(mount.join(".leankg")).unwrap();
+        mount
+    }
+
+    #[test]
+    fn fr_a01_project_mount_resolves_to_own_leankg() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Two mounts side by side, each with its own .leankg — the MCP
+        // server keys RocksDB per project by that path (FR-A01).
+        let mount_a = make_project_mount(tmp.path(), "project-a");
+        let mount_b = make_project_mount(tmp.path(), "project-b");
+        assert_eq!(
+            MCPServer::resolve_project_db_path(mount_a.to_str().unwrap()),
+            Some(mount_a.join(".leankg"))
+        );
+        assert_eq!(
+            MCPServer::resolve_project_db_path(mount_b.to_str().unwrap()),
+            Some(mount_b.join(".leankg")),
+            "each mount must resolve to its own .leankg, not the server default"
+        );
+    }
+
+    #[test]
+    fn fr_a01_subpath_walks_up_to_nearest_leankg() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mount = make_project_mount(tmp.path(), "project-a");
+        let subdir = mount.join("src/deep/nested");
+        std::fs::create_dir_all(&subdir).unwrap();
+        // A file deep inside the mount resolves back to the mount's .leankg.
+        let file = subdir.join("main.rs");
+        std::fs::write(&file, "fn main() {}").unwrap();
+        assert_eq!(
+            MCPServer::resolve_project_db_path(file.to_str().unwrap()),
+            Some(mount.join(".leankg"))
+        );
+        assert_eq!(
+            MCPServer::resolve_project_db_path(subdir.to_str().unwrap()),
+            Some(mount.join(".leankg"))
+        );
+    }
+
+    #[test]
+    fn fr_a01_no_leankg_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let bare = tmp.path().join("uninitialized-project");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert_eq!(
+            MCPServer::resolve_project_db_path(bare.to_str().unwrap()),
+            None,
+            "no .leankg anywhere up the tree -> caller falls back to default db_path"
+        );
+    }
+
+    #[test]
+    fn fr_a01_resolve_project_db_path_does_not_descend_into_sibling_mounts() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // A sub-mount nested *inside* another mount — the nearest `.leankg`
+        // wins so a nested repo never bleeds into its parent project.
+        let outer = make_project_mount(tmp.path(), "outer");
+        let inner = make_project_mount(&outer, "inner");
+        assert_eq!(
+            MCPServer::resolve_project_db_path(inner.to_str().unwrap()),
+            Some(inner.join(".leankg")),
+            "nested mount must resolve to the innermost .leankg"
+        );
+    }
+
     #[test]
     fn test_parse_vacuum_interval_default_when_unset() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

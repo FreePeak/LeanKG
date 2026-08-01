@@ -6,9 +6,18 @@ Improvements vs ad-hoc /tmp harnesses:
   - Labels skips as mutating vs mega-graph-heavy (honest reasons)
   - Includes query_graph (US-GF-03) with a small token_budget
   - Defaults project=/workspace (LeanKG itself); set LEANKG_SMOKE_PROJECT for others
+  - Ontology gates (FR-A03): kg_self_test / kg_ontology_status / kg_trace_workflow
+    / ontology_control(action=status) must PASS before Phase 1 can be called done
+  - Routing gates (FR-A06): find_route / get_screen_args / get_nav_callers must
+    either PASS or refuse predictably (mega-graph guard) — a hard tool error fails
+  - run_raw_query recipe fixtures (FR-B50): a validated Datalog recipe per
+    relation/schema; each must return a result (count or rows)
+  - --check-only-ontology exits after the ontology+routing gates (CI-friendly,
+    no full-registry walk, no heavy tools)
 
 Usage:
   python3 scripts/mcp-smoke-tools.py
+  python3 scripts/mcp-smoke-tools.py --check-only-ontology   # FR-A03/A06 gates only
   LEANKG_SMOKE_PROJECT=/workspace python3 scripts/mcp-smoke-tools.py
   LEANKG_SMOKE_INCLUDE_HEAVY=1 python3 scripts/mcp-smoke-tools.py   # needs mem_limit >= 10g on mega-graphs
 """
@@ -17,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 import urllib.request
@@ -27,6 +35,78 @@ MCP_URL = os.environ.get("LEANKG_SMOKE_URL", "http://localhost:9699/mcp")
 PROJECT = os.environ.get("LEANKG_SMOKE_PROJECT", "/workspace")
 INCLUDE_HEAVY = os.environ.get("LEANKG_SMOKE_INCLUDE_HEAVY", "0") == "1"
 SAMPLE_FILE = os.environ.get("LEANKG_SMOKE_FILE", "src/main.rs")
+
+# FR-A03: ontology must stay healthy after a sync. A failed kg_* gate means
+# agents will see -32603 errors on the ontology layer, so these are hard gates.
+# kg_trace_workflow uses a real workflow id from the repo's ontology YAML;
+# override via LEANKG_SMOKE_WORKFLOW for other projects.
+WORKFLOW_ID = os.environ.get("LEANKG_SMOKE_WORKFLOW", "leankg-index-and-query")
+
+# FR-B50: >= 10 validated `run_raw_query` Datalog recipes. Each maps a
+# project's CozoDB relation to a useful probe. See
+# docs/guides/run-raw-query-recipes.md for the full catalogue with explanations.
+RAW_QUERY_RECIPES: list[tuple[str, str]] = [
+    # (recipe name, Datalog query)
+    ("count_elements", "?[count(qualified_name)] := *code_elements{qualified_name}"),
+    ("count_relationships", "?[count(source_qualified)] := *relationships{source_qualified}"),
+    (
+        "by_language",
+        "?[language, count(qualified_name)] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 15",
+    ),
+    (
+        "by_element_type",
+        "?[element_type, count(qualified_name)] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 20",
+    ),
+    (
+        "calls_edges",
+        '?[source_qualified, target_qualified] := *relationships{source_qualified, target_qualified, rel_type}, rel_type = "calls" :limit 5',
+    ),
+    (
+        "imports_edges",
+        '?[source_qualified, target_qualified] := *relationships{source_qualified, target_qualified, rel_type}, rel_type = "imports" :limit 5',
+    ),
+    (
+        "tested_by_edges",
+        '?[count(source_qualified)] := *relationships{source_qualified, rel_type}, rel_type = "tested_by"',
+    ),
+    (
+        "docs_elements",
+        '?[qualified_name, name, file_path] := *code_elements{qualified_name, name, file_path, language}, language = "markdown" :limit 5',
+    ),
+    (
+        "ontology_nodes",
+        '?[count(qualified_name)] := *code_elements{qualified_name, file_path}, regex_matches(file_path, "ontology://")',
+    ),
+    (
+        "knowledge_count",
+        "?[count(id)] := *knowledge_entries{id}",
+    ),
+    (
+        "vector_count",
+        "?[count(qualified_name)] := *embedding_vectors{qualified_name, vector}",
+    ),
+    (
+        "orphan_elements",
+        "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], not *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env] :limit 5",
+    ),
+    (
+        "longest_functions",
+        '?[qualified_name, name, line_end, lines] := *code_elements{qualified_name, name, line_start, line_end, element_type}, element_type = "function", lines = line_end - line_start, lines > 200 :limit 5',
+    ),
+    (
+        "incident_count",
+        "?[count(id)] := *incidents{id}",
+    ),
+]
+
+# FR-A06: routing tools must either answer or refuse with a *predictable*
+# guard (mega-graph full-scan cap). Anything else (schema error, missing
+# required arg, DB error) fails the routing gate.
+ROUTING_PROBES: list[tuple[str, dict[str, Any], str]] = [
+    ("find_route", {"route": "/login"}, "route lookup"),
+    ("get_screen_args", {"destination": "login"}, "screen args"),
+    ("get_nav_callers", {"destination": "login"}, "nav callers"),
+]
 
 MUTATING = {
     "mcp_init",
@@ -42,6 +122,10 @@ MUTATING = {
     "agent_diary_write",
     "report_query_outcome",
     "export_graph_snapshot",
+    "add_ontology_concept",
+    "add_ontology_workflow",
+    "delete_ontology_concept",
+    "index_prd",
 }
 
 # Full-graph / heavy tools — safe on small projects; skip on mega-graphs unless opted in.
@@ -133,6 +217,28 @@ DEFAULT_ARGS: dict[str, dict[str, Any]] = {
     "get_clusters": {"limit": 5},
     "semantic_search": {"query": "main", "limit": 5},
     "search_knowledge": {"query": "main", "limit": 5},
+    # --- tools that require non-empty args (missing-required-param fails) ---
+    "add_ontology_concept": {
+        "name": "smoke_concept",
+        "type_": "domain_entity",
+        "description": "smoke test concept",
+    },
+    "add_ontology_workflow": {
+        "name": "smoke_workflow",
+        "description": "smoke test workflow",
+        "steps": [{"name": "step_one"}],
+    },
+    "delete_ontology_concept": {"gid": "smoke-non-existent-gid"},
+    "embed_control": {"action": "status"},
+    "ontology_control": {"action": "status"},
+    "find_route": {"route": "/login"},
+    "get_screen_args": {"destination": "login"},
+    "get_nav_callers": {"destination": "login"},
+    "get_feature_flow": {"feature_id": "FR-A01"},
+    "load_layer": {"layer": "L0"},
+    "index_prd": {"source_doc": "README.md"},
+    "ctx_read": {"file": "AGENTS.md", "mode": "signatures"},
+    "orchestrate": {"intent": "show AGENTS.md context", "mode": "adaptive"},
 }
 
 
@@ -177,6 +283,138 @@ def call_tool(name: str, args: dict[str, Any]) -> str:
     return json.dumps(result)[:160]
 
 
+def call_tool_raw(name: str, args: dict[str, Any]) -> Any:
+    """Call a tool and return the full JSON-RPC payload (dict or error)."""
+    merged = dict(args)
+    if "project" not in merged:
+        merged["project"] = PROJECT
+    return rpc("tools/call", {"name": name, "arguments": merged})
+
+
+def _payload_text(payload: Any) -> str:
+    try:
+        content = payload.get("content", [])
+        if isinstance(content, list) and content:
+            return str(content[0].get("text", ""))
+    except Exception:
+        pass
+    return json.dumps(payload)[:300]
+
+
+# ---------------------------------------------------------------------------
+# FR-A03 / FR-A06 gates: ontology + routing must pass before Phase 1 done.
+# These run independently of the full-registry walk so CI can gate on them
+# alone (--check-only-ontology) without paying for heavy tools.
+# ---------------------------------------------------------------------------
+
+def run_ontology_gates() -> list[tuple[str, str, str]]:
+    results: list[tuple[str, str, str]] = []
+
+    # Hard gate: every kg_* tool self-tests clean (all_ok: true).
+    try:
+        payload = call_tool_raw("kg_self_test", {})
+        text = _payload_text(payload)
+        if "error" in payload:
+            results.append(("kg_self_test", "FAIL", f"rpc error: {payload['error']}"))
+        elif '"all_ok": true' in text or "all_ok: true" in text:
+            results.append(("kg_self_test", "PASS", "all_ok: true"))
+        else:
+            results.append(("kg_self_test", "FAIL", f"all_ok missing/false: {text[:200]}"))
+    except Exception as exc:
+        results.append(("kg_self_test", "FAIL", str(exc)[:160]))
+
+    # Ontology status: concept + procedural counts present and >= 0.
+    try:
+        payload = call_tool_raw("kg_ontology_status", {})
+        text = _payload_text(payload)
+        if "error" in payload:
+            results.append(("kg_ontology_status", "FAIL", f"rpc error: {payload['error']}"))
+        elif "procedural_counts" in text and "concept_counts" in text:
+            results.append(("kg_ontology_status", "PASS", "concept+procedural counts present"))
+        else:
+            results.append(("kg_ontology_status", "FAIL", f"missing counts: {text[:200]}"))
+    except Exception as exc:
+        results.append(("kg_ontology_status", "FAIL", str(exc)[:160]))
+
+    # Workflow trace: real workflow id -> ordered steps (FR-A03 post-sync).
+    try:
+        payload = call_tool_raw(
+            "kg_trace_workflow", {"workflow_id_or_query": WORKFLOW_ID}
+        )
+        text = _payload_text(payload)
+        if "error" in payload:
+            results.append(("kg_trace_workflow", "FAIL", f"rpc error: {payload['error']}"))
+        elif "step_count" in text and "steps" in text:
+            results.append(
+                ("kg_trace_workflow", "PASS", f"workflow={WORKFLOW_ID} traceable")
+            )
+        else:
+            results.append(("kg_trace_workflow", "FAIL", f"no steps: {text[:200]}"))
+    except Exception as exc:
+        results.append(("kg_trace_workflow", "FAIL", str(exc)[:160]))
+
+    # ontology_control(status): YAML mtimes + marker + counts (FR-ONT-PROC-03).
+    try:
+        payload = call_tool_raw("ontology_control", {"action": "status"})
+        text = _payload_text(payload)
+        if "error" in payload:
+            results.append(("ontology_control(status)", "FAIL", f"rpc error: {payload['error']}"))
+        elif "concepts_yaml" in text or "concept_counts" in text:
+            results.append(("ontology_control(status)", "PASS", "sync status readable"))
+        else:
+            results.append(("ontology_control(status)", "FAIL", f"odd status: {text[:200]}"))
+    except Exception as exc:
+        results.append(("ontology_control(status)", "FAIL", str(exc)[:160]))
+
+    return results
+
+
+def run_routing_gates() -> list[tuple[str, str, str]]:
+    results: list[tuple[str, str, str]] = []
+    for name, args, label in ROUTING_PROBES:
+        try:
+            payload = call_tool_raw(name, args)
+            text = _payload_text(payload)
+            if "error" in payload:
+                results.append((name, "FAIL", f"rpc error: {payload['error']}"))
+            elif "refused" in text and "element_count" in text:
+                # Mega-graph full-scan guard is a *predictable* refuse — the
+                # tool answers, it does not error. Acceptable for Phase 1.
+                results.append((name, "PASS", f"guard-refuse ({label}): {text[:120]}"))
+            elif "status: ok" in text:
+                results.append((name, "PASS", f"{label} answered"))
+            else:
+                results.append((name, "FAIL", f"unexpected: {text[:160]}"))
+        except Exception as exc:
+            results.append((name, "FAIL", str(exc)[:160]))
+    return results
+
+
+def run_raw_query_recipes() -> list[tuple[str, str, str]]:
+    results: list[tuple[str, str, str]] = []
+    for name, query in RAW_QUERY_RECIPES:
+        try:
+            payload = call_tool_raw("run_raw_query", {"query": query})
+            text = _payload_text(payload)
+            if "error" in payload:
+                results.append((name, "FAIL", f"rpc error: {payload['error']}"))
+            elif "rows" in text or "count(" in text or "headers" in text:
+                results.append((name, "PASS", "returned rows/count"))
+            else:
+                results.append((name, "FAIL", f"no rows: {text[:160]}"))
+        except Exception as exc:
+            results.append((name, "FAIL", str(exc)[:160]))
+    return results
+
+
+def print_gate_section(title: str, results: list[tuple[str, str, str]]) -> None:
+    passed = sum(1 for _, s, _ in results if s == "PASS")
+    print(f"\n--- {title} ({passed}/{len(results)} passed) ---")
+    for name, status, info in results:
+        print(f"[{status:4}] {name:28} {info}")
+    return passed == len(results)
+
+
 def main() -> int:
     try:
         tools = list_tools()
@@ -189,6 +427,37 @@ def main() -> int:
     print(f"tools/list  : {len(tools)}")
     print(f"include_heavy: {INCLUDE_HEAVY}")
     print()
+
+    # FR-A03 + FR-A06: ontology + routing gates (hard gates, always run).
+    ontology_results = run_ontology_gates()
+    routing_results = run_routing_gates()
+    ontology_ok = print_gate_section(
+        "FR-A03 ontology gates (kg_* after sync)", ontology_results
+    )
+    routing_ok = print_gate_section("FR-A06 routing gates", routing_results)
+
+    # FR-B50: validated run_raw_query recipes (>= 10).
+    recipe_results = run_raw_query_recipes()
+    recipes_ok = print_gate_section(
+        f"FR-B50 run_raw_query recipes ({len(recipe_results)} >= 10 required)",
+        recipe_results,
+    )
+    if len(recipe_results) < 10:
+        print(
+            f"[FAIL] FR-B50 requires >= 10 recipes, only {len(recipe_results)} defined",
+            file=sys.stderr,
+        )
+        recipes_ok = False
+
+    if not (ontology_ok and routing_ok and recipes_ok):
+        return 1
+
+    if "--check-only-ontology" in sys.argv:
+        print(
+            "\nOntology + routing + recipes gates PASS — full registry walk skipped "
+            "(--check-only-ontology)."
+        )
+        return 0
 
     results: list[tuple[str, str, str]] = []
     for name in tools:
@@ -222,9 +491,10 @@ def main() -> int:
     passed = sum(1 for _, s, _ in results if s == "PASS")
     failed = sum(1 for _, s, _ in results if s == "FAIL")
     skipped = sum(1 for _, s, _ in results if s == "SKIP")
-    print(f"Passed : {passed}")
-    print(f"Failed : {failed}")
-    print(f"Skipped: {skipped}")
+    print(f"\nRegistry walk  : {passed} passed, {failed} failed, {skipped} skipped")
+    print(f"FR-A03 ontology: {'PASS' if ontology_ok else 'FAIL'}")
+    print(f"FR-A06 routing : {'PASS' if routing_ok else 'FAIL'}")
+    print(f"FR-B50 recipes : {'PASS' if recipes_ok else 'FAIL'} ({len(recipe_results)})")
     print()
     for name, status, info in results:
         print(f"[{status:4}] {name:28} {info}")
@@ -235,7 +505,7 @@ def main() -> int:
         print()
         print(f"NOTE: DEFAULT_ARGS has tools not in tools/list: {unknown}")
 
-    return 0 if failed == 0 else 1
+    return 0 if (failed == 0 and ontology_ok and routing_ok and recipes_ok) else 1
 
 
 if __name__ == "__main__":
