@@ -267,6 +267,7 @@ impl ToolHandler {
             "agent_diary_write" => self.agent_diary_write(arguments),
             "agent_diary_read" => self.agent_diary_read(arguments),
             "session_recall" => self.session_recall(arguments),
+            "sessions_gc" => self.sessions_gc(arguments),
             "session_memory_write" => self.session_memory_write(arguments),
             "search_memory_rrf" => self.search_memory_rrf(arguments),
             "report_query_outcome" => self.report_query_outcome(arguments),
@@ -1698,6 +1699,80 @@ impl ToolHandler {
             "payload": payload,
             "ref_file": store.ref_path(node_id).display().to_string(),
             "bytes": raw.len(),
+        }))
+    }
+
+    /// US-SM-07 / FR-SM-12: GC old/low-heat session refs + agent-memory
+    /// artifacts. Pinned (.md.pin) and high-heat exempt; min retention 3
+    /// days. Thin dispatch — logic lives in `crate::session::gc`.
+    fn sessions_gc(&self, args: &Value) -> Result<Value, String> {
+        use crate::session::gc::{gc_candidates, reclaim_gc_candidates, GcCandidate};
+        let project = args["project"].as_str().unwrap_or(".");
+        let retention_days = args["retention_days"].as_u64().unwrap_or(14).max(3);
+        let sessions_root = std::path::Path::new(project)
+            .join(".leankg")
+            .join("sessions");
+
+        let mut candidates: Vec<GcCandidate> = Vec::new();
+        let mut scanned = 0usize;
+        if let Ok(entries) = std::fs::read_dir(&sessions_root) {
+            for dir in entries.flatten() {
+                if !dir.path().is_dir() {
+                    continue;
+                }
+                let session_id = dir.file_name().to_string_lossy().to_string();
+                let refs_dir = dir.path().join("refs");
+                let Ok(ref_entries) = std::fs::read_dir(&refs_dir) else {
+                    continue;
+                };
+                for ref_file in ref_entries.flatten() {
+                    let path = ref_file.path();
+                    let name = ref_file.file_name().to_string_lossy().to_string();
+                    // Skip the pin marker files themselves.
+                    if name.ends_with(crate::session::gc::PIN_SUFFIX) {
+                        continue;
+                    }
+                    scanned += 1;
+                    let mtime = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| {
+                            t.duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    candidates.push(GcCandidate::new(
+                        &path.to_string_lossy(),
+                        &session_id,
+                        mtime,
+                        0,
+                    ));
+                }
+            }
+        }
+
+        // Pinned = `.md.pin` sidecar present (FR-SM-12 exemption).
+        let pinned: Vec<String> = candidates
+            .iter()
+            .filter(|c| crate::session::gc::is_pinned(std::path::Path::new(&c.path)))
+            .map(|c| c.path.clone())
+            .collect();
+        let pinned_refs: Vec<&str> = pinned.iter().map(|s| s.as_str()).collect();
+        let eligible = gc_candidates(
+            &candidates,
+            retention_days,
+            crate::session::gc::GC_HEAT_THRESHOLD,
+            &pinned_refs,
+        );
+        let report = reclaim_gc_candidates(&eligible)?;
+        Ok(serde_json::json!({
+            "scanned": scanned,
+            "removed": report.removed,
+            "failed": report.failed,
+            "exempt_pinned": pinned.len(),
+            "retention_days": retention_days,
+            "summary": report.summary,
         }))
     }
 

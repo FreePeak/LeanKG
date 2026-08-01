@@ -785,6 +785,54 @@ mod session_offload {
             "hit carries the session source label: {hit}"
         );
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sessions_gc_removes_old_refs_and_skips_fresh_and_pinned() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+
+        // Seed two sessions with refs; backdate one so GC reclaims it.
+        let store = leankg::session::SessionStore::new("sess-old", tmp.path()).expect("store");
+        let payload: Value = serde_json::json!({"tool": "search_code", "hits": []});
+        store
+            .write_ref("offload-001", "search_code", 1, &payload)
+            .expect("write old ref");
+        let old_ref = store.ref_path("offload-001");
+        let mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(20 * 86400);
+        std::fs::File::open(&old_ref)
+            .and_then(|f| f.set_modified(mtime))
+            .expect("backdate old ref");
+
+        let pinned_store =
+            leankg::session::SessionStore::new("sess-pin", tmp.path()).expect("store");
+        pinned_store
+            .write_ref("offload-002", "query_file", 1, &payload)
+            .expect("write pinned ref");
+        let pinned_ref = pinned_store.ref_path("offload-002");
+        let mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86400);
+        std::fs::File::open(&pinned_ref)
+            .and_then(|f| f.set_modified(mtime))
+            .expect("backdate pinned ref");
+        std::fs::write(pinned_ref.with_extension("md.pin"), "pin").expect("pin marker");
+
+        let resp = call(
+            &handler,
+            "sessions_gc",
+            json!({"project": project, "retention_days": 14}),
+        )
+        .await
+        .expect("sessions_gc");
+        assert_eq!(
+            resp["removed"], 1,
+            "only the old unpinned ref is removed: {resp}"
+        );
+        assert_eq!(
+            resp["exempt_pinned"], 1,
+            "pinned ref must be exempt: {resp}"
+        );
+        assert!(!old_ref.exists(), "old ref deleted");
+        assert!(pinned_ref.exists(), "pinned ref survives");
+    }
 }
 
 // ---------------------------------------------------------------------------

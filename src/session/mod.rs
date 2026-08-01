@@ -28,6 +28,10 @@ use serde_json::Value;
 
 use crate::compress::estimate_tokens;
 
+pub mod gc;
+#[allow(unused_imports)]
+pub use gc::{gc_candidates, reclaim_gc_candidates, GcCandidate, GcReport};
+
 pub const CANVAS_FILE: &str = "canvas.md";
 pub const REFS_DIR: &str = "refs";
 pub const RECALL_INDEX_FILE: &str = "recall_index.jsonl";

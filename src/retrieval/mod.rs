@@ -7,12 +7,18 @@
 #![cfg(feature = "embeddings")]
 
 pub mod filter_policy;
+pub mod mmr;
 pub mod ontology_traversal;
 pub mod pipeline;
 pub mod rerank;
 
 #[allow(unused_imports)]
 pub use filter_policy::FilterPolicy;
+#[allow(unused_imports)]
+pub use mmr::{
+    apply_mmr_diversity, greedy_mmr, GreedyMmrItem, DEFAULT_DIVERSITY_LAMBDA,
+    DEFAULT_MIN_DISTINCT_FILES,
+};
 #[allow(unused_imports)]
 pub use ontology_traversal::{
     composite_text, cosine, downward_rule_for, is_function_target, is_upper_type, score_functions,
