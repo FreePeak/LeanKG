@@ -611,6 +611,8 @@ mcp:
 | `LEANKG_MAX_FILE_SIZE` | 2 MiB | Max file size for indexing |
 | `LEANKG_SKIP_FRESHNESS_CHECK` | off | Skip MCP startup freshness check |
 | `LEANKG_EMBED_FAST` | off | Use DirectEmbedder (ONNX Runtime, INT8, per-worker intra_threads) |
+| `LEANKG_EMBED_MODEL` | `bge` | Embedding model: `bge` (FP32), `bge-q` (INT8 quantized, preferred fast path), `bge-fp16`, `minilm` (faster, still 384-d) — see [Model & batch-size options](#model--batch-size-options) |
+| `LEANKG_EMBED_MAX_SEQ` | 512 | Max BPE sequence length; lower (e.g. 256) ≈ 2× faster cold embed on short code blobs |
 | `LEANKG_EMBED_MAX_MB` | 2048/4096 | Soft RSS cap for embed |
 | `LEANKG_EMBED_MAX_BLOB_CHARS` | 500/1500 | Max text blob chars |
 | `LEANKG_EMBED_UPSERT_CHUNK` | 5000 | Vectors per CozoDB import batch |
@@ -624,6 +626,32 @@ mcp:
 | `LEANKG_COZO_ROCKS_BULK` | off | Disable WAL + sync(false) for bulk writes |
 | `LEANKG_INCREMENTAL_SKIP_DEPENDENTS` | off | Skip dependent expansion on mega-graphs |
 | `LEANKG_EMBED_VECTOR_STORE` | cozo | `redis` for Redis side-store |
+
+### Model & batch-size options (FR-C02)
+
+**Models** (via `LEANKG_EMBED_MODEL`, all 384-dim):
+
+| Value | Weights | Trade-off |
+|-------|---------|-----------|
+| `bge` (default) | `Xenova/bge-small-en-v1.5` FP32 (`onnx/model.onnx`) | Baseline accuracy; ~130 MB ONNX |
+| `bge-q` | INT8 quantized (`onnx/model_quantized.onnx`) | Preferred fast path; smaller + faster, ~same recall |
+| `bge-fp16` | FP16 (`onnx/model_fp16.onnx`) | Half-size FP precision |
+| `minilm` | `Xenova/all-MiniLM-L6-v2` FP32 | Faster cold embed; still 384-d |
+
+Switch models only with a full re-embed (`leankg embed --full`) —
+`embedding_state` content hashes do not carry a model fingerprint, so mixed
+model vectors would poison ANN recall.
+
+**Batch size** (`leankg embed --batch-size N`, default 32):
+
+- ONNX Runtime pre-allocates per-thread memory arenas, so **peak RSS scales
+  with batch size** (`src/embeddings/build.rs` `plan_embed_memory`).
+- On small hosts (≤ 2 GiB cgroup / M2 Pro 16 GB while serving MCP) pass
+  `--batch-size 4` (or lower); `LEANKG_EMBED_MAX_MB` auto-caps it anyway.
+- Larger batches (64–256) amortize inference overhead on quiet machines with
+  headroom — `plan_embed_memory_with_budget` allows up to 256 for a single
+  worker under ≥ 4 GiB.
+- `leankg.yaml` `mcp.embed_batch_size: 0` = auto-detect from RSS budget.
 
 ---
 

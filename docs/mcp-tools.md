@@ -47,7 +47,7 @@ Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without).
 
 | Tool | Description |
 |------|-------------|
-| `get_overview_context` | Session-start L0+L1 overview (replaces removed `wake_up`) |
+| `get_overview_context` | Session-start L0+L1 overview (replaces removed `wake_up`). US-MP-02: returns `layer_budgets` (L0 ~50 tok / L1 ~120 tok budgets + truncation flags; L2 → `get_cluster_context`, L3 → `search_code` / `find_function`) |
 | `get_context` | Get AI context for file (minimal, token-optimized) |
 | `get_tested_by` | Get test coverage for a function/file |
 | `find_large_functions` | Find oversized functions by line count |
