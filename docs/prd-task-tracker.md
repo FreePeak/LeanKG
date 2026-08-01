@@ -130,7 +130,7 @@ Evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-0
 | ID | Status | Intent |
 |----|--------|--------|
 | `REL-ONRENDER-101` | DONE | Fix Render Docker `cargo build --features embeddings` exit 101 — Dockerfile fix landed (libssl-dev + pkg-config + memory guards, committed); clear cache; confirm live `/api/ui-build` |
-| Follow-up F2 | NOT_DONE | CI gate for embeddings Docker build on Dockerfile/Cargo.lock changes |
+| Follow-up F2 | DONE | CI gate for embeddings Docker build on Dockerfile/Cargo.lock changes — `.github/workflows/embeddings-gate.yml` (paths: Dockerfile/Cargo.lock/render.yaml/.dockerignore/gate workflow + workflow_dispatch) |
 | Follow-up F3 | NOT_DONE | Prebuilt image → Render pull (optional) |
 
 Evidence: [`root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md)
