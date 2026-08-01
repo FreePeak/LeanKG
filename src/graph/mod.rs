@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod cluster_nav;
 pub mod clustering;
 pub mod context;
 pub mod entity_resolve;
