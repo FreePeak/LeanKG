@@ -24,6 +24,7 @@ mod report;
 #[cfg(feature = "embeddings")]
 mod retrieval;
 mod runtime;
+mod session;
 mod sources;
 mod watcher;
 mod web;

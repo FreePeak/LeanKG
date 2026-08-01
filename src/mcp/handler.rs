@@ -266,6 +266,7 @@ impl ToolHandler {
             "agent_focus" => self.agent_focus(arguments),
             "agent_diary_write" => self.agent_diary_write(arguments),
             "agent_diary_read" => self.agent_diary_read(arguments),
+            "session_recall" => self.session_recall(arguments),
             "report_query_outcome" => self.report_query_outcome(arguments),
             "get_team_map" => self.get_team_map(arguments),
             "get_overview_context" => self.get_overview_context(arguments),
@@ -1672,6 +1673,25 @@ impl ToolHandler {
             entries = entries.split_off(entries.len() - limit);
         }
         Ok(json!({ "count": entries.len(), "entries": entries }))
+    }
+
+    /// US-SM-01 / FR-SM-03: thin dispatch — recover an offloaded payload
+    /// bit-for-bit by node_id from `.leankg/sessions/<id>/refs/<node_id>.md`.
+    fn session_recall(&self, args: &Value) -> Result<Value, String> {
+        let node_id = args["node_id"].as_str().ok_or("Missing 'node_id'")?;
+        let session_id = args["session_id"].as_str().ok_or("Missing 'session_id'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let store = crate::session::SessionStore::new(session_id, std::path::Path::new(project))?;
+        let payload = store.read_ref(node_id)?;
+        let raw = std::fs::read_to_string(store.ref_path(node_id))
+            .map_err(|e| format!("read ref file: {e}"))?;
+        Ok(json!({
+            "node_id": node_id,
+            "session_id": session_id,
+            "payload": payload,
+            "ref_file": store.ref_path(node_id).display().to_string(),
+            "bytes": raw.len(),
+        }))
     }
 
     fn report_query_outcome(&self, args: &Value) -> Result<Value, String> {

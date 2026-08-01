@@ -142,6 +142,7 @@ fn every_tested_tool_is_registered() {
         "get_service_context",
         "get_team_map",
         "get_upcoming_changes",
+        "session_recall",
         "kg_concept_map",
         "kg_context",
         "kg_ontology_status",
@@ -358,6 +359,74 @@ mod agent {
         .expect("report_query_outcome");
         // The handler returns {recorded: true}; accept any non-empty payload.
         assert!(!report.to_string().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session memory offload (US-SM-01 / FR-SM-01..03)
+// ---------------------------------------------------------------------------
+
+mod session_offload {
+    use super::*;
+    use leankg::session::{offload_step, SessionStore};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn offload_then_recall_via_mcp_round_trips() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+        let payload: Value = serde_json::from_str(
+            r#"{"tool":"search_code","hits":[
+                {"qualified_name":"src/auth/mod.rs::login","file":"src/auth/mod.rs","line":10},
+                {"qualified_name":"src/auth/mod.rs::verify_token","file":"src/auth/mod.rs","line":31}
+            ]}"#,
+        )
+        .unwrap();
+
+        // Offload through the lib seam (writes ref + canvas under <tmp>/.leankg/sessions).
+        let store = SessionStore::new("sess-mcp-1", tmp.path()).expect("store");
+        let compact = offload_step(&store, "search_code", &payload, 100).expect("offload");
+        assert_eq!(compact["steps"][0]["node_id"], "offload-001");
+
+        // session_recall via the MCP dispatch must return the exact payload.
+        let recalled = call(
+            &handler,
+            "session_recall",
+            json!({
+                "node_id": "offload-001",
+                "session_id": "sess-mcp-1",
+                "project": &project
+            }),
+        )
+        .await
+        .expect("session_recall");
+        assert_eq!(recalled["node_id"], "offload-001");
+        assert_eq!(recalled["session_id"], "sess-mcp-1");
+        assert_eq!(recalled["payload"], payload, "bit-for-bit recall");
+        assert!(
+            recalled["ref_file"]
+                .as_str()
+                .unwrap_or("")
+                .contains("refs/offload-001.md"),
+            "ref file path: {recalled}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn session_recall_missing_node_errors() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+        let err = call(
+            &handler,
+            "session_recall",
+            json!({
+                "node_id": "offload-999",
+                "session_id": "sess-mcp-1",
+                "project": &project
+            }),
+        )
+        .await
+        .expect_err("missing node must error");
+        assert!(err.contains("not found"), "{err}");
     }
 }
 
