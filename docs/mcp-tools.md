@@ -6,14 +6,14 @@ Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without).
 
 | Prefer-order | Tools |
 |--------------|-------|
-| Overview | `get_overview_context` → optional `load_layer` → `get_architecture` (not `load_layer(L0)` alone) |
+| Overview | `get_overview_context` → optional `get_architecture` |
 | Search | `concept_search` → `semantic_search` → `search_code` |
 | Semantic context | `semantic_search` → `kg_semantic_context` → `kg_context` |
 | Environment filter | `env=` on search / `kg_*` tools |
 | File context | `get_context` (skill default); `ctx_read` for compression modes |
 | **Doc↔code join** | `search_by_requirement` / `get_traceability` (FR/US IDs) → `get_files_for_doc` / `find_related_docs` (after `mcp_index_docs`, canonical `docs/…` paths) → `concept_search` / `kg_trace_workflow` → `semantic_search` |
 
-**Hard-removed:** `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment` — see [redundancy impact report](reports/mcp-tool-redundancy-impact-2026-07-20.md).  
+**Hard-removed:** `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure` — see [Wave 1b report](reports/rel-076-mcp-surf-1b-2026-08-01.md).  
 **Machine-checked matrix:** `tests/redundant_tools_matrix.rs` (every tool classified).
 
 ## Core Tools
@@ -58,8 +58,7 @@ Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without).
 |------|-------------|
 | `generate_doc` | Generate documentation for file |
 | `get_files_for_doc` | Get code files referenced in a markdown doc (`doc` accepts `docs/…`, `./docs/…`, or short name when unique). Returns `resolved_doc`, `files[]`, and `tried[]` on miss. |
-| `get_doc_structure` | Get documentation directory structure |
-| `get_doc_tree` | Get documentation tree structure |
+| `get_doc_tree` | Get documentation tree structure with hierarchy |
 | `find_related_docs` | Find markdown docs citing a code file (`file` accepts `./src/…`, `src/…`, or basename when unique). Returns `resolved_file`, `related_docs[]`, and `tried[]` on miss. |
 
 **Doc↔code join (v3.7.13):** Run `mcp_index_docs` so markdown backtick/link paths resolve to indexed file keys. Prefer annotations (`search_by_requirement`, `get_traceability`, `link_element`) for `FR-*` / `US-*` IDs; use structural tools for file-path neighbors. Author markdown refs as repo-relative paths outside fenced code blocks (e.g. `` `src/mcp/handler.rs` ``).

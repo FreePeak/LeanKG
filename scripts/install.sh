@@ -584,7 +584,7 @@ const ROUTING_BLOCK = `
   Gate: curl -sf --max-time 2 http://localhost:9699/health — if fail, use Grep/Glob/Read (no LeanKG).
 
   Prefer-order (HTTP healthy) — discover BEFORE query_graph:
-  0. get_overview_context(project=…) — session start; not load_layer(L0) alone
+  0. get_overview_context(project=…) — session start; then optional get_architecture
   1. mcp_status(project=…) — container path e.g. /workspace for Docker
   2. DISCOVER: concept_search → semantic_search → search_code / find_function
   3. CONNECTION (after seeds): shortest_path / explain_node / query_graph
@@ -601,7 +601,7 @@ const ROUTING_BLOCK = `
   - Do NOT pass host Mac paths as project= against Docker MCP (use /workspace)
   - Do NOT use Grep for code search when LeanKG is healthy and returns hits
   - Do NOT open NL discovery with query_graph — run concept_search → semantic_search first
-  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment)
+  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment, load_layer, get_doc_structure)
 </forbidden_actions>
 `;
 
@@ -987,7 +987,7 @@ function buildSessionContext(input) {
   - Do NOT pass host Mac paths as project= against Docker MCP
   - Do NOT use Grep when LeanKG is healthy and returns hits
   - Do NOT open NL discovery with query_graph — run semantic_search first
-  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment)
+  - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment, load_layer, get_doc_structure)
 </forbidden_actions>
 
 <project_context>
@@ -1645,7 +1645,7 @@ curl -sf --max-time 2 http://localhost:9699/health
 
 ### When HTTP is healthy
 
-0. `get_overview_context(project=…)` — session start (not `load_layer(L0)` alone)
+0. `get_overview_context(project=…)` — session start (optional `get_architecture` follow-on)
 1. `mcp_status(project=…)` — Docker: container mount (`/workspace`), not a host Mac path
 2. Prefer-order discover: `concept_search` → `semantic_search` → `search_code` / `find_function`
 3. Exact follow-up: `get_context` / `get_impact_radius` / `get_dependencies` / `get_dependents` / `get_tested_by`

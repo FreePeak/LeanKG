@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.8.0-prd-in-kg
-**Date:** 2026-07-24
+**Version:** 3.8.3-mcp-surf-1b
+**Date:** 2026-08-01
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
@@ -11,11 +11,15 @@
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
 >
-> **P0 CLOSED (v3.7.9):** **Procedural ontology auto-update while using** — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059` **DONE**. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). YAML watch + boot marker (concepts **and** workflows) + post-index sync + MCP `ontology_control`.
+> ### Priority order (work top → bottom)
 >
-> **CURRENT next (P1 — company adoption waves):** Waves **0a–3** **DONE** (through NL Query FAB). **Next: Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`). **Ops blocker for live demo:** OnRender `cargo build --features embeddings` exit 101 — RCA + Dockerfile fix in [`docs/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md). Wave 3 evidence: [`docs/reports/ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md).
->
-> **P2 follow-ons (do not preempt P1):** Doc↔code join quality §3.19 / §5.22 (`US-DOCJOIN-*` / `REL-063`); Graph-engineering curriculum gaps §1.2 / §3.20 / §5.23 (`US-GE-*` / `REL-064`). Evidence: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
+> | Focus | Status | What |
+> |------:|--------|------|
+> | **P0** | **CLOSED** | Procedural ontology auto-update — `US-ONT-PROC-01` / `REL-059` ([smoke](reports/ontology-proc-auto-smoke-2026-07-21.md)) |
+> | **P1** | **CURRENT** | Wave **4** single-repo expand — `US-MG-02` / `FR-MG-03`. Waves 0a–3 **DONE** (Wave 3: [NL Query FAB](reports/ui-v2-nl-query-fab-2026-08-01.md)). Ops: OnRender embeddings exit 101 — [RCA](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md) |
+> | **P1** | **DONE** | Wave **1b** MCP hard-delete — `load_layer` + `get_doc_structure` (`US-SURF-08..11` / `REL-076`) — [evidence](reports/rel-076-mcp-surf-1b-2026-08-01.md). Cumulative hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure` |
+> | **P2** | Next (do **not** preempt P1) | Ordered: (1) Session MCP offload `US-SM-01` → (2) Auto-recall `US-SM-02` / closes `US-GE-05` → (3) Provenance+RRF `US-SM-03/04` → (4) Doc↔code join polish `US-DOCJOIN-*` → (5) Graph-eng `US-GE-02..04` → (6) Heat index / promote traces `US-SM-05/06` |
+> | **P3** | Backlog | `US-SM-07` retention/GC; `US-GE-06` LLM pass-2; Track E 3D |
 >
 > **Prior P0 mega-graph serve CLOSED** — `US-MG-TOOL-01` / `REL-055` / `FR-SEM-07` / `REL-054` DONE.
 >
@@ -28,6 +32,56 @@
 ---
 
 ## Changelog
+
+### v3.8.3-mcp-surf-1b - Wave 1b hard-delete remaining redundant MCP tools (2026-08-01)
+
+> **Trigger:** Full re-audit of live registry (~89 tools in `tools.rs`) vs `tests/redundant_tools_matrix.rs` + handler implementations. Wave 1a already removed `wake_up` / `search_by_environment` (+ earlier `mcp_hello` / `mcp_impact` / `get_doc_for_file` / `find_clones`). Remaining **true subsets**:
+> - `load_layer` — L0/L1 ⊂ `get_overview_context`; L2 ⊂ `get_cluster_context`; L3 ⊂ `search_code` / `find_function` (and L2 still uses `all_elements()`)
+> - `get_doc_structure` — flat doc list via `all_elements()`; superseded by `get_doc_tree` (hierarchy + sections)
+
+> **Product intent:** Shrink agent tool wall further. Prefer-order overview becomes `get_overview_context` → `get_architecture` (no progressive-layer chooser). Doc structure = one tool (`get_doc_tree`). Do **not** collapse prefer-order search/semantic stacks or domain-specific Android/nav tools.
+
+**Product actions this revision (priority order):**
+
+| # | ID | Priority | Focus | Intent | Status |
+|--:|----|----------|-------|--------|--------|
+| 1 | US-SURF-08 / FR-SURF-12 / REL-076 | Must Have | **P1** | Publish full redundancy review in PRD (§3.16 / §5.18) | **DONE** |
+| 2 | US-SURF-09 / FR-SURF-13 | Must Have | **P1** | Hard-delete `load_layer`; overview prefer-order = overview → architecture | **DONE** |
+| 3 | US-SURF-10 / FR-SURF-14 | Must Have | **P1** | Hard-delete `get_doc_structure`; keep `get_doc_tree` | **DONE** |
+| 4 | US-SURF-11 / FR-SURF-15 | Must Have | **P1** | Sync matrix, smoke, install, CLAUDE/mcp-tools/using-leankg | **DONE** |
+
+**Hard-removed set (cumulative):** `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, **`load_layer`**, **`get_doc_structure`**.
+
+**Keep-both (documented — not deleted):** search prefer-order triple; semantic context triple; `get_context`↔`ctx_read`; `orchestrate`↔`query_graph`; callers↔call_graph; cluster trio; Android nav set; `get_god_nodes`↔`get_graph_report`; PRD tools (`get_feature_flow` / `get_traceability_matrix` / `get_traceability`).
+
+**New content:** §3.16 Wave 1b; §5.18 FR-SURF-12..15 + REL-076. Evidence: [`docs/reports/rel-076-mcp-surf-1b-2026-08-01.md`](reports/rel-076-mcp-surf-1b-2026-08-01.md).
+
+### v3.8.2-tencentdb-session-memory - Steal session-memory patterns from TencentDB Agent Memory (2026-08-01)
+
+> **Trigger:** Deep explore of local Freepeak clone of [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (README + `src/core/` pipeline/hooks/store + `src/offload/` Mermaid offload). Prior thin analysis existed; this revision **productizes** the transferable patterns without becoming a chat-memory competitor.
+
+> **Product intent:** LeanKG remains the **typed code/knowledge graph + MCP retrieval** layer. Add **session continuity around the graph** — symbolic MCP-result offload, auto-recall of lessons/diary, provenance, hybrid RRF over agent-memory stores. Do **not** rebuild Tencent’s conversation L0→L3 persona pyramid as LeanKG’s core. Do **not** displace §1.1 company-adoption P1.
+
+**Product actions this revision (P2 priority order — after Wave 4):**
+
+| # | ID | Priority | Focus | Intent |
+|--:|----|----------|-------|--------|
+| 1 | US-SM-01 / FR-SM-01..03 / REL-075 | Must Have | **P2** | Session MCP/tool-result offload: `refs/<node_id>.md` + compact canvas; `session_recall` drill-down |
+| 2 | US-SM-02 / FR-SM-04..06 | Must Have | **P2** | Auto-recall at session start (enrich `get_overview_context`); closes **US-GE-05** |
+| 3 | US-SM-03 / FR-SM-07..08 | Should Have | **P2** | Provenance (`source_ids` / `node_id`) + typed agent-memory kinds |
+| 4 | US-SM-04 / FR-SM-09 | Should Have | **P2** | Hybrid RRF (`k=60`) over knowledge + diary + LESSONS + dynamic ontology |
+| 5 | US-SM-05 / FR-SM-10 | Could Have | **P2** | Heat-ranked white-box `MEMORY_INDEX.md` |
+| 6 | US-SM-06 / FR-SM-11 | Could Have | **P2** | Promote repeated successful tool traces → `add_ontology_workflow` proposals |
+| 7 | US-SM-07 / FR-SM-12 | Could Have | **P3** | Retention / GC for session refs + agent-memory artifacts |
+
+**Out of scope (this revision / Won’t Do):**
+- Competing with Mem0 / Tencent on long-term **chat** persona memory.
+- Binding LeanKG to OpenClaw, Hermes, or Tencent Vector DB.
+- Renaming LeanKG code-context `load_layer` L0–L3 to match Tencent’s conversation pyramid (document the name collision instead).
+- Owning a multi-agent planner/harness (unchanged from §1.2).
+
+**New content:** §1.3; §3.28 US-SM; §5.32 FR-SM + REL-075. Analysis: [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md) (deepened 2026-08-01).  
+**Related:** Strengthen US-GE-05 / FR-GE-05 ACs to require auto-recall path (`US-SM-02`).
 
 ### v3.8.1-enterprise-docker - Separate RocksDB into cozoserver sidecar (2026-07-28)
 
@@ -692,8 +746,40 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 2. **US-GE-02** — Graph-aware planner (goal → MCP DAG)  
 3. **US-GE-03** — Cross-alias entity resolution  
 4. **US-GE-04** — Cluster-first navigation for agents  
-5. **US-GE-05** — Closed outcome→graph self-improve loop  
+5. **US-GE-05** — Closed outcome→graph self-improve loop (**implementation path = US-SM-02**)  
 6. **US-GE-06** — Selective LLM pass-2 (Could)
+
+### 1.3 Session memory (vs TencentDB Agent Memory)
+
+> **Audience:** product + eng deciding what LeanKG should steal from conversation-memory plugins.  
+> **Full matrix:** [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md) (deepened 2026-08-01).  
+> **Upstream:** [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) — symbolic short-term Mermaid offload + layered long-term L0→L3 (conversation → atom → scene → persona).
+
+**One-line decision:** TencentDB Agent Memory is an excellent **host-plugin for chat/persona continuity**. LeanKG is the **company code-graph memory** those agents should query. Steal **session offload + auto-recall + provenance + hybrid ranking**; do **not** become a Mem0/chat-persona competitor.
+
+| Decision criterion | LeanKG | TencentDB Agent Memory | Why LeanKG adapts selectively |
+|--------------------|--------|------------------------|-------------------------------|
+| **Primary SoT** | Typed code/KG + ontology | Conversation + persona pyramid | Keep code graph as SoT; add session layer *around* it |
+| **Token win** | TOON/RTK + budgeted MCP; surgical retrieval | Mermaid offload of tool logs (~61% tokens claimed on WideSearch) | Steal **symbolic MCP-result offload** (`US-SM-01`) — highest on-brand ROI |
+| **Long-term memory** | Knowledge, diary, LESSONS, ontology workflows | L1 atoms → L2 scenes → L3 `persona.md` | Steal **auto-recall + typed kinds + dedup** (`US-SM-02..04`); skip chat-persona SoT |
+| **Recall ranking** | Strong for code (concept → semantic → keyword) | Hybrid BM25 + vector + RRF (`k=60`) | Apply RRF to **agent-memory stores** (`US-SM-04`) |
+| **White-box** | `GRAPH_REPORT.md`, cluster skills, LESSONS | Readable persona/scene/MMD/refs tree | Add session canvas + `MEMORY_INDEX` (`US-SM-01` / `US-SM-05`) |
+| **Host binding** | MCP (Cursor / Claude / OpenCode) | OpenClaw / Hermes HostAdapter | Stay MCP-first; optional hooks only |
+| **Where they still teach us** | Manual diary/knowledge; no session canvas | Auto-capture, warmup pipeline, recall timeout, reclaim | Close via `US-SM-*` P2 backlog |
+
+**Ordered backlog (Focus P2 — after Wave 4; do not preempt §1.1 P1):**
+
+1. **US-SM-01** — Session MCP offload + `node_id` drill-down (**highest token ROI**)  
+2. **US-SM-02** — Auto-recall at session start (**closes US-GE-05**)  
+3. **US-SM-03** / **US-SM-04** — Provenance + typed kinds + RRF agent-memory search  
+4. Doc↔code join polish (`US-DOCJOIN-*`) / Graph-eng `US-GE-02..04` (planner, entity resolve, cluster-first)  
+5. **US-SM-05** / **US-SM-06** — Heat index + promote traces → workflows  
+6. **US-SM-07** — Retention / GC (P3)  
+7. **US-GE-06** — Selective LLM pass-2 (P3)
+
+**Vocabulary rule:** LeanKG `load_layer` L0–L3 = **code-context** layers. Tencent L0–L3 = **conversation-memory** layers. Never conflate in skills/docs without an explicit qualifier.
+
+**Explicit non-goals:** chat-persona SoT; OpenClaw/Hermes/Tencent VDB product binding; Mermaid as primary graph store; renaming LeanKG code-context layers.
 
 **Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
 - **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; Cozo default until callers honor `preferred_ann_backend()`
@@ -720,6 +806,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 **Competitive notes:**
 - vs [Graphify](https://github.com/Graphify-Labs/graphify): **company vs personal** — see §1.1 + §3.10 + [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (Jul-13 matrix: [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md); many MCP “Missing” rows are now DONE)
+- vs [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory): **code-graph memory vs chat/persona memory** — see §1.3 + §3.28 / §5.32 + [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md) — steal session offload + auto-recall; Won’t Do chat-persona SoT
 - vs “Graph Engineering with Claude” curriculum (Codez Jul 2026 scaffold): see §1.2 + §3.20 / §5.23 + [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md) — LeanKG = memory layer; gaps = planner/DAG, entity resolution, cluster-first nav, self-improve loop
 - vs [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): see Section 3.11 / 5.10 — Lean into business-context depth; close structural gaps; do **not** chase 158-language / Pure-C parity
 - vs LSP-by-default (CBM style): see Section 3.11 / 5.10 — LeanKG now has the bridge + wiring (FR-B03..B07 + FR-B08); `typed`-class edges still PENDING for Go (`FR-B03`) and TS (`FR-B04`).
@@ -750,6 +837,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | **Straight-line agent loops over the graph** | Agents call LeanKG tools sequentially; no first-class goal→MCP DAG planner (US-GE-02 — P2) |
 | **Weak cross-alias identity** | Same symbol under naming variants may not merge (US-GE-03 — P2) |
 | **Clusters are secondary** | Louvain/`get_clusters` exist but are not the default agent neighborhood path (US-GE-04 — P2) |
+| **Session token bloat + forgotten lessons** | Long multi-tool sessions replay large MCP payloads; LESSONS/diary only help if the agent remembers to call tools (US-SM-01 / US-SM-02 / US-GE-05 — P2) |
 
 ---
 
@@ -1450,17 +1538,21 @@ Palace Mapping:
 
 ---
 
-### 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4
+### 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 + Wave 1b (v3.8.3)
 
 > **Trigger:** Agent-facing overlap among discovery / semantic / identity tools plus legacy `mcp_*` names. Review evidence: live MCP schemas + `src/mcp/handler.rs` / `tools.rs`; redundancy matrix in `tests/redundant_tools_matrix.rs`.
 >
-> **Baseline:** `ToolRegistry::list_tools()` ≈ **85** tools (7 `mcp_*`). Soft-deprecations do not shrink `tools/list` until removed.
+> **Baseline (v3.7.4):** `ToolRegistry::list_tools()` ≈ **85** tools. Soft-deprecations do not shrink `tools/list` until removed.
+>
+> **Wave 1a (DONE 2026-07-21):** Hard-deleted `wake_up`, `search_by_environment` (+ earlier `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`). Evidence: [`docs/reports/rel-062-mcp-surf-hard-delete-2026-07-21.md`](reports/rel-062-mcp-surf-hard-delete-2026-07-21.md).
+>
+> **Wave 1b (v3.8.3):** Hard-delete remaining true subsets `load_layer`, `get_doc_structure`. Full keep-both matrix below.
 >
 > **Policy:** Document first → hard-delete true subsets → soft-deprecate with explicit replacements. Prefer wrong-tool prevention over cosmetic renames.
 >
-> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SURF-*` / `FR-SURF-*` / `REL-053`.
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SURF-*` / `FR-SURF-*` / `REL-053` / `REL-062` / `REL-076`.
 
-#### Prefer-order (canonical)
+#### Prefer-order (canonical — post Wave 1b)
 
 **Search triple (discovery):**
 1. `concept_search` — domain terms / aliases / matched concepts payload
@@ -1472,11 +1564,36 @@ Palace Mapping:
 2. `kg_semantic_context` — ranked seeds + 1–2 hop neighborhood (**embeddings required**)
 3. `kg_context` — ontology match + expand (**no vectors**)
 
-**Identity triple (session start):**
-1. `get_overview_context` — structured L0 + L1 + wake summary
-2. `load_layer` — progressive L0 / L1 / L2 / L3 chooser
-3. `get_architecture` — deep single-call overview
-4. `wake_up` — **deprecated path** (cached L0+L1 text in `.leankg/wake_up.txt`)
+**Identity / overview (session start):**
+1. `get_overview_context` — structured L0 + L1 + wake summary (**only** session-start overview)
+2. `get_architecture` — deep single-call overview (optional follow-on)
+3. ~~`load_layer`~~ / ~~`wake_up`~~ — **hard-removed** (Wave 1a/1b)
+
+**Doc structure:** `get_doc_tree` only (~~`get_doc_structure`~~ hard-removed Wave 1b).
+
+#### Full redundancy review (Wave 1b — 2026-08-01)
+
+| Tool / group | Verdict | Replacement / reason |
+|--------------|---------|----------------------|
+| `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones` | **Hard-removed** (prior) | `kg_self_test`/`mcp_status`; `get_impact_radius`; `find_related_docs`; semantic HNSW |
+| `wake_up`, `search_by_environment` | **Hard-removed** (Wave 1a) | `get_overview_context`; `env=` on search/`kg_*` |
+| `load_layer` | **Hard-delete Wave 1b** | L0/L1 → `get_overview_context`; L2 → `get_cluster_context`; L3 → `search_code` / `find_function` |
+| `get_doc_structure` | **Hard-delete Wave 1b** | `get_doc_tree` (hierarchy + sections; closes FR-SURF-06 as delete-weaker) |
+| Search prefer-order triple | **Keep both** | Intentional layers — do not merge |
+| Semantic context triple | **Keep both** | Discovery vs embed-traverse vs ontology-only |
+| `get_context` ↔ `ctx_read` | **Keep both** | Graph context vs compression-mode file read |
+| `orchestrate` ↔ `query_graph` | **Keep both** | Intent router+cache vs NL connection subgraph |
+| `get_callers` ↔ `get_call_graph` | **Keep both** | Inbound vs outbound |
+| `get_nav_*` / `find_route` / `get_screen_args` | **Keep both** | Android Navigation domain |
+| Cluster trio | **Keep both** | List / context / SKILL.md |
+| `get_god_nodes` ↔ `get_graph_report` | **Keep both** | Hotspots JSON vs prose report (+ disk write) |
+| `get_overview_context` ↔ `get_architecture` | **Keep both** | Session overview vs deep arch dump |
+| `get_traceability` / `search_by_requirement` / `get_feature_flow` / `get_traceability_matrix` | **Keep both** | Element chain vs req search vs FR→workflow vs PO matrix |
+| `temporal_query` ↔ `timeline` | **Keep both** | As-of snapshot vs per-element evolution |
+| `generate_doc` ↔ `add_documentation` | **Keep both** | Generate vs index existing file |
+| `find_large_functions` ↔ `find_dead_code` | **Keep both** | Size heuristic vs zero-caller heuristic |
+| `export_html` ↔ `export_graph_snapshot` | **Keep both** | Vis HTML vs portable JSON |
+| Ops `mcp_*` bootstrap | **Keep** | Do not rename for cosmetic consistency |
 
 #### US-SURF-01 — Agents know which search/semantic tool to call first (Must Have)
 
@@ -1497,31 +1614,45 @@ Palace Mapping:
 - **Given** callers needing docs for a file, **When** they use `find_related_docs`, **Then** they get `documented_by` **and** `references` (superset of former `get_doc_for_file`).
 - **Given** `tests/redundant_tools_matrix.rs`, **When** the suite runs, **Then** it reflects the removals (no stale SUPERSEDED rows for deleted tools).
 
-#### US-SURF-03 — Soft-deprecate wake_up in favor of get_overview_context (Should Have)
+#### US-SURF-03 — Soft-deprecate wake_up in favor of get_overview_context (Should Have) — **DONE → hard-removed Wave 1a**
 
-**As an** AI agent starting a session, **I want** one structured overview tool, **so that** I do not choose among three identity loaders incorrectly.
+Historical soft-deprecation ACs satisfied; tool absent from registry.
 
-**Acceptance criteria:**
-- **Given** `wake_up` still registered during the deprecation window, **When** its description is read, **Then** it is marked deprecated and points to `get_overview_context` (and optionally `load_layer` for progressive budgets).
-- **Given** a caller that previously used `wake_up` for L0+L1, **When** migrated, **Then** they do **not** replace it with `load_layer(layer="L0")` alone (L0 is identity-only ~50 tok; wake_up is L0+L1 ~170 tok).
-- **Given** one release after soft-deprecation lands, **When** product decides, **Then** hard removal is allowed if call telemetry / docs are clear.
+#### US-SURF-04 — Soft-deprecate search_by_environment (Should Have) — **DONE → hard-removed Wave 1a**
 
-#### US-SURF-04 — Soft-deprecate search_by_environment (Should Have)
+Historical soft-deprecation ACs satisfied; use `env=` on primary search / `kg_*`.
 
-**As an** AI agent, **I want** environment scoping via the `env=` parameter on primary search/kg tools, **so that** I do not maintain a parallel env-only search tool.
+#### US-SURF-05 — Unify doc structure tools (Could → Must Wave 1b) — **DONE via hard-delete**
 
-**Acceptance criteria:**
-- **Given** `search_by_environment` during deprecation, **When** its schema is read, **Then** it points callers to `env=` on `search_code` / `semantic_search` / `concept_search` / `kg_*`.
-- **Given** primary search tools, **When** `env` is set, **Then** behavior remains unchanged (no regression).
+**As an** AI agent exploring documentation, **I want** one doc-structure tool, **so that** I do not pick between `get_doc_tree` and `get_doc_structure`.
 
-#### US-SURF-05 — Optional unify doc structure tools (Could Have)
+**Acceptance (Wave 1b):** `get_doc_structure` absent; `get_doc_tree` remains. Mega-safe pagination of `get_doc_tree` remains a follow-on (still refuses unbounded `all_elements()` on mega).
 
-**As an** AI agent exploring documentation, **I want** one doc-structure tool with a format flag, **so that** I do not pick between `get_doc_tree` and `get_doc_structure`.
+#### US-SURF-08 — Publish full redundancy review (Must Have — Wave 1b)
 
-**Acceptance criteria:**
-- **Given** mega-graphs, **When** either tool (or the merged tool) runs, **Then** it must not call unbounded `all_elements()` (refuse or paginate — safety before merge).
-- **Given** a merge, **When** `format` is `"tree"` | `"list"`, **Then** payloads match today's tree vs flat list shapes.
-- **Out of scope for Must Have:** cosmetic merge alone without mega-graph safety.
+**As a** product owner, **I want** the keep-both vs hard-delete matrix in the PRD, **so that** agents/engineers do not re-propose deleting intentional prefer-order layers.
+
+**Acceptance:** §3.16 table above + tracker rows + `REL-076` evidence report.
+
+#### US-SURF-09 — Hard-delete load_layer (Must Have — Wave 1b)
+
+**As an** AI agent, **I want** `load_layer` removed, **so that** I use `get_overview_context` / `get_cluster_context` / search instead of a half-wired progressive chooser.
+
+**Acceptance:**
+- **Given** registry after Wave 1b, **When** `tools/list` runs, **Then** `load_layer` is absent.
+- **Given** overview prefer-order in AGENTS / skills / install hooks, **When** read, **Then** they say `get_overview_context` → optional `get_architecture` (no `load_layer`).
+
+#### US-SURF-10 — Hard-delete get_doc_structure (Must Have — Wave 1b)
+
+**As an** AI agent, **I want** only `get_doc_tree` for doc hierarchy, **so that** I cannot call the flat duplicate.
+
+**Acceptance:** `get_doc_structure` absent; docs/smoke point to `get_doc_tree`.
+
+#### US-SURF-11 — Sync agent surface after Wave 1b (Must Have)
+
+**As an** operator, **I want** matrix/smoke/skills/docs grep-clean of preferred calls to deleted tools, **so that** agents do not chase ghosts.
+
+**Acceptance:** `redundant_tools_matrix` green; smoke/install updated; hard-removed list includes Wave 1b tools.
 
 ## 4. Implementation Status Summary
 
@@ -1822,14 +1953,19 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-SURF-03 | Must Have | Remove `mcp_hello`, `mcp_impact`, `get_doc_for_file` from `ToolRegistry` + handlers; update `tests/redundant_tools_matrix.rs` and any docs that reference them |
 | FR-SURF-04 | Should Have | Soft-deprecate `wake_up`: description marks deprecated and points to `get_overview_context` (not `load_layer(L0)` alone) |
 | FR-SURF-05 | Should Have | Soft-deprecate `search_by_environment`: description points to `env=` on primary search / `kg_*` tools |
-| FR-SURF-06 | Could Have | Mega-safe `get_doc_structure` / `get_doc_tree` (no unbounded `all_elements()`); optional merge behind `format: "tree" \| "list"` after safety |
+| FR-SURF-06 | Could Have → **DONE Wave 1b** | Closed by hard-deleting `get_doc_structure`; keep `get_doc_tree` (mega-safe pagination of tree remains optional follow-on) |
 | REL-053 | Should Have | Release note: tool surface shrink after FR-SURF-03 (registry count before/after from `list_tools`) |
+| FR-SURF-12 | Must Have | Publish Wave 1b keep-both vs hard-delete matrix in PRD §3.16 |
+| FR-SURF-13 | Must Have | Remove `load_layer` from `ToolRegistry` + handlers; overview prefer-order = `get_overview_context` → `get_architecture` |
+| FR-SURF-14 | Must Have | Remove `get_doc_structure` from `ToolRegistry` + handlers; docs/smoke use `get_doc_tree` only |
+| FR-SURF-15 | Must Have | Update `tests/redundant_tools_matrix.rs`, smoke/install, AGENTS/CLAUDE/mcp-tools/using-leankg; hard-removed list includes Wave 1b |
+| REL-076 | Must Have | Evidence report: `list_tools` before/after (−2); matrix green; grep-clean preferred refs |
 
 **Won't Do (this track):**
 - Deprecating or renaming `mcp_status` / `mcp_init` / `mcp_index` / `mcp_index_docs` / `mcp_install` for cosmetic `get_*` consistency
-- Replacing `wake_up` with `load_layer(layer="L0")` alone
 - Merging the intentional search triple or semantic triple into one tool
-- Quoting a “64 → 57” shrink without recounting the live registry
+- Deleting `get_god_nodes`, `orchestrate`, `ctx_read`, or Android nav tools (keep-both)
+- Quoting a shrink without recounting the live registry
 
 ### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.9
 
@@ -2036,11 +2172,12 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | US-GE-02 | Should Have (**P2**) | As an agent user, I can ask LeanKG (or a thin companion) to turn a goal into a **DAG of MCP tool/subagent steps** that share graph context and join results |
 | US-GE-03 | Should Have (**P2**) | As an indexer user, symbols that are the same entity under naming variants resolve to one identity (beyond `qualified_name` + `typed_resolve` alone) |
 | US-GE-04 | Should Have (**P2**) | As an agent, I can navigate by **precomputed cluster/neighborhood** as a first-class path (not only rare `get_clusters`) |
-| US-GE-05 | Should Have (**P2**) | As an agent, useful/dead-end query outcomes write back into the graph (or diary/lessons) so the **next** plan improves without manual YAML |
+| US-GE-05 | Should Have (**P2**) | As an agent, useful/dead-end query outcomes write back into the graph (or diary/lessons) **and are auto-recalled on the next session** so the plan improves without manual YAML — **implementation path: US-SM-02** |
 | US-GE-06 | Could Have (**P3**) | As an ontology author, I can optionally run selective LLM pass-2 extraction for workflows/decisions while YAML remains source of truth |
 
 **Acceptance (US-GE-01):** Analysis checked into `docs/analysis/`; PRD §1.2 + tracker rows exist; competitive notes link the matrix.  
-**Acceptance (US-GE-02..05):** Deferred to implementation PRs — tracker status stays PENDING/NOT_DONE until shipped.  
+**Acceptance (US-GE-05):** Given prior `report_query_outcome` / diary / knowledge writes, **When** a new session calls `get_overview_context` (with memory recall enabled), **Then** top-K ranked prior lessons appear without the agent manually calling diary/knowledge tools; duplicates are deduped; timeout never blocks MCP. Tracker stays PENDING until `US-SM-02` ships.  
+**Acceptance (US-GE-02..04):** Deferred to implementation PRs — tracker status stays PENDING/NOT_DONE until shipped.  
 **Won't Do:** LeanKG-owned multi-agent Claude runtime; full OpenTrace ticket/ops/trace graph as core; displacing §1.1 P1 queue.
 
 ### 5.19 UI v2 Graph Explorer (v3.7.10)
@@ -2167,7 +2304,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-GE-02 | Should Have | Optional graph-aware planner: accept a goal string; emit ordered/parallel MCP tool steps (and optional subagent roles) with shared `project=` context; join/synthesize results without replacing Cursor/Claude as the harness |
 | FR-GE-03 | Should Have | Entity-resolution pass: merge or alias CodeElements that are the same symbol under naming variants; surface confidence; preserve `qualified_name` as canonical when unique |
 | FR-GE-04 | Should Have | Agent-facing cluster/neighborhood navigation: prefer precomputed `cluster_id` (mega-safe) as a discovery path alongside search; document in skills |
-| FR-GE-05 | Should Have | Close self-improve loop: `report_query_outcome` / diary / knowledge write-back feeds a durable artifact agents read on next session (extend existing reflect/diary — do not invent a second memory store) |
+| FR-GE-05 | Should Have | Close self-improve loop: `report_query_outcome` / diary / knowledge write-back feeds a durable **ranked** artifact that **`get_overview_context` auto-injects** on next session (opt-in until measured; timeout + char budgets; extend existing reflect/diary — do not invent a second memory store). **Shipped when US-SM-02 / FR-SM-04..06 land.** |
 | FR-GE-06 | Could Have | Selective LLM pass-2 extraction for workflow/decision candidates with human/YAML confirm; must not replace procedural YAML SoT |
 
 **Won't Do:** Multi-agent runtime competing with Claude Code/Cursor; OpenTrace-complete ops graph as LeanKG core; full automatic LLM workflow generation without YAML.
@@ -2258,6 +2395,59 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | REL-072 | Must Have | Live evidence: HTTP `POST /text-query` returns `{"ok": true, "rows": [...]}` for `:create`, `:put`, and `*persist_test[name, value]` |
 | REL-073 | Must Have | Live evidence: after `docker rm -f cozoserver && docker run ... -v leankg-live-cozo-data:/data/cozo`, the same query still returns the same rows (RocksDB persistence) |
 | REL-074 | Must Have | Unit + compose + live test runner (`tests/enterprise_docker/run_all.sh`) reports `Test files: PASS=N FAIL=0` |
+
+
+### 3.28 Session memory from TencentDB Agent Memory (US-SM) — v3.8.2 **P2**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SM-*` / `FR-SM-*` / `REL-075`.  
+> **Evidence:** [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md).  
+> **Relationship to §1.1 / §1.2:** Company-adoption remains **P1 CURRENT**. These stories are **P2** (US-SM-07 = P3) — do not preempt Wave 4. `US-SM-02` is the concrete path that closes **US-GE-05**.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-SM-01 | Must Have (**P2**) | As an agent in a long multi-tool session, **I want** verbose MCP/tool payloads offloaded to `.leankg/sessions/<id>/refs/<node_id>.md` with only a compact canvas (Mermaid or graph JSON) kept in context, **so that** I can recover details via `node_id` without replaying hundreds of KB |
+| US-SM-02 | Must Have (**P2**) | As an agent starting a new session, **I want** top-K ranked prior lessons / diary tags auto-injected into `get_overview_context` (opt-in), **so that** I improve without remembering to call diary/knowledge tools — **closes US-GE-05** |
+| US-SM-03 | Should Have (**P2**) | As an agent writing durable memory, **I want** typed kinds (`preference` / `decision` / `standing_rule`, aligned to Tencent’s persona/episodic/instruction) plus `source_ids` / `node_id` provenance, **so that** summaries remain expandable to evidence |
+| US-SM-04 | Should Have (**P2**) | As an agent searching past experience, **I want** hybrid BM25 + vector recall merged with RRF (`k=60`) across knowledge + diary + LESSONS + dynamic ontology, **so that** I do not miss memories that keyword or ANN alone would drop |
+| US-SM-05 | Could Have (**P2**) | As a human or agent debugging memory, **I want** a heat-ranked white-box `MEMORY_INDEX.md`, **so that** inspection does not require probing opaque scores |
+| US-SM-06 | Could Have (**P2**) | As a team encoding SOPs, **I want** repeated successful tool traces proposed as `add_ontology_workflow` candidates (YAML remains SoT), **so that** session wins become shared procedural knowledge |
+| US-SM-07 | Could Have (**P3**) | As an operator, **I want** retention/GC for session `refs/` and low-heat agent-memory artifacts (pinned/high-heat exempt), **so that** disk and index noise stay bounded |
+
+**Acceptance (US-SM-01):**
+- **Given** a session with ≥N MCP tool results exceeding a configured token/char budget, **When** offload triggers, **Then** full payloads land under `.leankg/sessions/<id>/refs/<node_id>.md`, a canvas lists `node_id`s, and `session_recall(node_id=…)` (or `ctx_read`) returns the original payload.
+- **Given** a fixed multi-tool fixture, **When** offload is enabled vs disabled, **Then** injected context tokens drop ≥30% while drill-down still recovers evidence.
+
+**Acceptance (US-SM-02):**
+- **Given** prior `report_query_outcome` / diary / knowledge entries and recall enabled, **When** `get_overview_context` runs, **Then** top-K ranked lessons appear within char budgets; recall timeout (default ≤5s) skips injection without failing the tool; duplicate outcomes are deduped.
+- **Given** recall disabled (default until measured), **When** overview runs, **Then** behavior matches today (no forced injection).
+
+**Acceptance (US-SM-03..04):** Tracker PENDING until shipped; provenance fields present on new writes; RRF search returns merged ranked hits with score threshold + budgets.
+
+**Won't Do:** Chat-persona SoT; OpenClaw/Hermes product binding; renaming LeanKG code-context L0–L3; Mermaid as primary Cozo graph store.
+
+
+### 5.32 Session memory (FR-SM) — v3.8.2 **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SM-*` / `US-SM-*` / `REL-075`.  
+> **Narrative:** §1.3. **Does not preempt** §1.1 / Wave 4.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SM-01 | Must Have | Persist offloaded MCP/tool payloads under `.leankg/sessions/<session_id>/refs/<node_id>.md` with stable `node_id` scheme |
+| FR-SM-02 | Must Have | Maintain session canvas (Mermaid or compact JSON) listing steps + `node_id`s; inject canvas (not raw payloads) when budget threshold hit |
+| FR-SM-03 | Must Have | MCP `session_recall` (or documented `ctx_read` path) recovers payload by `node_id`; bit-for-bit or lossless reference |
+| FR-SM-04 | Must Have | Ranked lessons index fed by `report_query_outcome` / diary / knowledge (dedup before write; vector or hash) |
+| FR-SM-05 | Must Have | Optional enrichment of `get_overview_context` (or `get_memory_context`) with top-K lessons; default **off** until A/B measured |
+| FR-SM-06 | Must Have | Recall timeout + per-item / total char budgets; on timeout skip injection (never block MCP response) |
+| FR-SM-07 | Should Have | Durable writes accept `source_ids` / `node_id` / tool-call refs on knowledge, diary, ontology, outcomes |
+| FR-SM-08 | Should Have | Typed agent-memory kinds: at least `preference`, `decision`, `standing_rule` (map from Tencent persona/episodic/instruction) |
+| FR-SM-09 | Should Have | Hybrid search over knowledge + diary + LESSONS + dynamic ontology: FTS + vector merged with RRF `k=60`; score threshold + budgets |
+| FR-SM-10 | Could Have | Generate/update heat-ranked `.leankg/MEMORY_INDEX.md` from outcome + search telemetry |
+| FR-SM-11 | Could Have | Detect repeated successful multi-tool sequences; propose `add_ontology_workflow` (human/YAML confirm; no silent SoT replace) |
+| FR-SM-12 | Could Have | Retention days + reclaim for session refs / low-heat memories; pinned and high-heat exempt; min retention ≥3 days when enabled |
+| REL-075 | Must Have | Analysis deepened + PRD §1.3/§3.28/§5.32 + tracker `US-SM-*`/`FR-SM-*` rows landed; smoke report when US-SM-01/02 implement |
+
+**Won't Do:** Tencent VDB / OpenClaw plugin packaging; irreversible summarization without drill-down IDs; second parallel memory DB beside Cozo + `.leankg/` files.
 
 
 ### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**

@@ -1,13 +1,14 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 — Wave **3** NL Query FAB **DONE**. **Ops follow-up:** OnRender embeddings build exit 101 RCA + Dockerfile openssl fix ([`root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md)). **P1 CURRENT = Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`).
+**Last synced:** 2026-08-01 — Priority order: **P1 CURRENT = Wave 4** (`US-MG-02` / `FR-MG-03`). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
 **This file is the SoT for task inventory + status.**  
-**PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §3.16 / §3.19–3.20 / §5.18 / §5.22–5.23  
+**PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §5.18 / §5.22–5.23 / §5.32  
 
 > **Agent rule:** Work **P0 first**, then P1 waves → P2 → P3.  
 > **P0:** Procedural ontology auto-update — **DONE**.  
-> **P1 CURRENT:** Company adoption waves — **Wave 4 = single-repo expand** (next). Waves 0a–3 **DONE**.  
-> **P2 follow-ons:** Doc↔code join (§3.19 / §5.22); graph-engineering curriculum gaps (§1.2 / §3.20 / §5.23) — do **not** interrupt P1 waves.  
+> **P1 CURRENT:** Wave **4** single-repo expand. Waves 0a–3 + Wave 1b MCP hard-delete — **DONE**.  
+> **P2 (priority order):** `US-SM-01` offload → `US-SM-02` auto-recall → `US-SM-03/04` → DOCJOIN → GE planner/entity/cluster → `US-SM-05/06`. Do **not** interrupt P1.  
+> **P3:** `US-SM-07` GC; `US-GE-06` LLM pass-2.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
 ---
@@ -17,9 +18,9 @@
 | Focus | Meaning | When to work |
 |------:|---------|--------------|
 | **P0** | Procedural ontology auto-update | **DONE** |
-| **P1** | Company adoption waves 0–4 (incl. MCP surface) | **NOW** |
-| **P2** | Reliability / semantic UX / CBM leftovers | Next |
-| **P3** | Track E 3D / doc-tool merge / aspirational | Backlog |
+| **P1** | Company adoption waves 0–4 + MCP surface Wave 1b | **NOW = Wave 4** (1b DONE) |
+| **P2** | Session memory SM → DOCJOIN → GE curriculum | After Wave 4 |
+| **P3** | Retention/GC, LLM pass-2, Track E 3D | Backlog |
 
 ## Status legend
 
@@ -38,21 +39,21 @@
 
 | Metric | Count |
 |--------|------:|
-| **Total tracked** | **510** |
-| NOT_DONE | 58 |
-| PENDING | 28 |
-| PARTIAL | 9 |
+| **Total tracked** | **539** |
+| NOT_DONE | 65 |
+| PENDING | 34 |
+| PARTIAL | 13 |
 | OPEN | 1 |
-| DONE | 410 |
+| DONE | 423 |
 | WONT_DO | 3 |
-| Open work | **96** |
+| Open work | **113** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
 | P1 | 2 |
-| P2 | 83 |
-| P3 | 11 |
+| P2 | ~98 |
+| P3 | ~13 |
 
 | Kind | Count |
 |------|------:|
@@ -256,8 +257,36 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 2 | `US-GE-02` / `FR-GE-02` | PENDING / NOT_DONE | Graph-aware planner (goal → MCP DAG) |
 | 3 | `US-GE-03` / `FR-GE-03` | PENDING / NOT_DONE | Cross-alias entity resolution |
 | 4 | `US-GE-04` / `FR-GE-04` | PENDING / NOT_DONE | Cluster-first agent navigation |
-| 5 | `US-GE-05` / `FR-GE-05` | PENDING / NOT_DONE | Closed outcome→graph self-improve loop |
+| 5 | `US-GE-05` / `FR-GE-05` | PENDING / NOT_DONE | Closed outcome→graph self-improve loop (**path = US-SM-02**) |
 | 6 | `US-GE-06` / `FR-GE-06` | PENDING / NOT_DONE (P3) | Selective LLM pass-2 (YAML SoT) |
+
+## Session memory from TencentDB Agent Memory (US-SM) (P2 — after Wave 4)
+
+> Fit matrix: [`analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md). Steal session offload + auto-recall; Won’t Do chat-persona SoT. Does **not** preempt Wave packaging.
+>
+> **Build order (priority):** `US-SM-01` → `US-SM-02` (closes `US-GE-05`) → `US-SM-03`/`04` → `US-SM-05`/`06` → `US-SM-07` (P3).
+
+| # | ID | Status | Intent |
+|--:|----|--------|--------|
+| 1 | `US-SM-01` / `FR-SM-01..03` | PENDING / NOT_DONE | Session MCP offload + `node_id` canvas + `session_recall` |
+| — | `REL-075` | **PARTIAL** | Docs/PRD/tracker landed; smoke when US-SM-01/02 ship |
+| 2 | `US-SM-02` / `FR-SM-04..06` | PENDING / NOT_DONE | Auto-recall into `get_overview_context` (closes US-GE-05) |
+| 3 | `US-SM-03` / `FR-SM-07..08` | PENDING / NOT_DONE | Provenance + typed agent-memory kinds |
+| 4 | `US-SM-04` / `FR-SM-09` | PENDING / NOT_DONE | Hybrid RRF over knowledge/diary/LESSONS/ontology |
+| 5 | `US-SM-05` / `FR-SM-10` | PENDING / NOT_DONE | Heat-ranked `MEMORY_INDEX.md` |
+| 6 | `US-SM-06` / `FR-SM-11` | PENDING / NOT_DONE | Promote successful traces → workflow proposals |
+| 7 | `US-SM-07` / `FR-SM-12` | PENDING / NOT_DONE (P3) | Retention / GC for session refs + agent memory |
+
+## Wave 1b MCP surface hard-delete (P1 — DONE)
+
+| # | ID | Status | Intent |
+|--:|----|--------|--------|
+| 1 | `US-SURF-08` / `FR-SURF-12` / `REL-076` | **DONE** | Full redundancy keep-both vs hard-delete matrix in PRD |
+| 2 | `US-SURF-09` / `FR-SURF-13` | **DONE** | Hard-delete `load_layer` |
+| 3 | `US-SURF-10` / `FR-SURF-14` | **DONE** | Hard-delete `get_doc_structure` (keep `get_doc_tree`) |
+| 4 | `US-SURF-11` / `FR-SURF-15` | **DONE** | Sync matrix/smoke/docs/skills |
+
+Evidence: [`reports/rel-076-mcp-surf-1b-2026-08-01.md`](reports/rel-076-mcp-surf-1b-2026-08-01.md).
 
 ## Cross-Tool Agent A/B Benchmark (US-CT-BMK) (P2 — adds public evidence)
 
@@ -324,7 +353,27 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan (path US-SM-02) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-SM-01` | FR | **NOT_DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-02` | FR | **NOT_DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-03` | FR | **NOT_DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-04` | FR | **NOT_DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-05` | FR | **NOT_DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-06` | FR | **NOT_DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-07` | FR | **NOT_DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-08` | FR | **NOT_DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-09` | FR | **NOT_DONE** | Should Have | Hybrid RRF search over knowledge + diary + LESSONS + ontology | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
+| **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
+| **P2** | `REL-075` | Release | **NOT_DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-05` | User Story | **PENDING** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-06` | User Story | **PENDING** | Could Have | Promote successful traces → ontology workflow proposals | 3.28 Session memory from TencentDB (US-SM) |
+| **P3** | `US-SM-07` | User Story | **PENDING** | Could Have | Retention/GC for session refs + agent memory | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `FR-DOCJOIN-02` | FR | **DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-01` | FR | **DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-03` | FR | **DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
@@ -483,7 +532,27 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan (path US-SM-02) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-SM-01` | FR | **NOT_DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-02` | FR | **NOT_DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-03` | FR | **NOT_DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-04` | FR | **NOT_DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-05` | FR | **NOT_DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-06` | FR | **NOT_DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-07` | FR | **NOT_DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-08` | FR | **NOT_DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-09` | FR | **NOT_DONE** | Should Have | Hybrid RRF search over knowledge + diary + LESSONS + ontology | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
+| **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
+| **P2** | `REL-075` | Release | **NOT_DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-05` | User Story | **PENDING** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-06` | User Story | **PENDING** | Could Have | Promote successful traces → ontology workflow proposals | 3.28 Session memory from TencentDB (US-SM) |
+| **P3** | `US-SM-07` | User Story | **PENDING** | Could Have | Retention/GC for session refs + agent memory | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `FR-DOCJOIN-02` | FR | **DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-01` | FR | **DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-03` | FR | **DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
