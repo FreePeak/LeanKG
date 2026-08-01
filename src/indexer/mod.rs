@@ -428,14 +428,34 @@ fn extract_elements_for_file(
         });
     }
 
-    // Objective-C: regex-based v0 extractor for .m, .mm, .h.
-    if file_path.ends_with(".m") || file_path.ends_with(".mm") || file_path.ends_with(".h") {
+    // Objective-C: regex entities + tree-sitter message-send calls.
+    // `.h` files are only treated as ObjC when ObjC markers are present
+    // (avoids poisoning pure C/C++ headers).
+    if file_path.ends_with(".m") || file_path.ends_with(".mm") {
         let extractor = crate::indexer::objc::ObjCExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
+        let (elements, relationships) = extractor.extract_with_calls();
         return Ok(ParsedFile {
             element_count: elements.len(),
             elements,
             relationships,
+        });
+    }
+    if file_path.ends_with(".h") {
+        let text = std::str::from_utf8(source).unwrap_or("");
+        if crate::indexer::objc::looks_like_objc(text) {
+            let extractor = crate::indexer::objc::ObjCExtractor::new(source, file_path);
+            let (elements, relationships) = extractor.extract_with_calls();
+            return Ok(ParsedFile {
+                element_count: elements.len(),
+                elements,
+                relationships,
+            });
+        }
+        // Pure C/C++ header — leave for a future C extractor.
+        return Ok(ParsedFile {
+            element_count: 0,
+            elements: vec![],
+            relationships: vec![],
         });
     }
 
@@ -937,15 +957,29 @@ pub fn index_file_sync(
         let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
     }
-    if file_path.ends_with(".m") || file_path.ends_with(".mm") || file_path.ends_with(".h") {
+    if file_path.ends_with(".m") || file_path.ends_with(".mm") {
         let extractor = crate::indexer::objc::ObjCExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
+        let (elements, relationships) = extractor.extract_with_calls();
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }
         let _ = graph.insert_elements_with(&elements, true);
         let _ = graph.insert_relationships_with(&relationships, true);
         return Ok(elements.len());
+    }
+    if file_path.ends_with(".h") {
+        let text = std::str::from_utf8(source).unwrap_or("");
+        if crate::indexer::objc::looks_like_objc(text) {
+            let extractor = crate::indexer::objc::ObjCExtractor::new(source, file_path);
+            let (elements, relationships) = extractor.extract_with_calls();
+            if elements.is_empty() && relationships.is_empty() {
+                return Ok(0);
+            }
+            let _ = graph.insert_elements_with(&elements, true);
+            let _ = graph.insert_relationships_with(&relationships, true);
+            return Ok(elements.len());
+        }
+        return Ok(0);
     }
 
     if is_cicd_yaml_file(std::path::Path::new(file_path))

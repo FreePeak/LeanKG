@@ -957,7 +957,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P3** | `US-GN-09` | User Story | **DONE** | Could Have | Repository wiki generation | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `US-INF-08` | User Story | **DONE** | Could Have | Wiki generation from code structure | 3.6 Infrastructure Stories (US-INF-01 to US-INF-10) |
 | **P3** | `US-LANG-03` | User Story | **DONE** | Could Have | XML parser (tree-sitter-xml) with child-elements + attributes | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
-| **P2** | `US-LANG-04` | User Story | **PARTIAL** | Should Have | Objective-C indexing (regex wired; protocol conformance, selectors, optional AST) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
+| **P2** | `US-LANG-04` | User Story | **PARTIAL** | Should Have | Objective-C indexing (tree-sitter message sends + regex entities; typed resolve pending) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P3** | `US-MP-06` | User Story | **DONE** | Could Have | Cross-Domain Tunnels — auto-link clusters across projects/modules that share the same doma… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `FR-BENCH-A` | FR | **WONT_DO** | Should Have | CBM clone quality head-to-head — **Won't Do** (v3.6.2) | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
 | **P2** | `FR-HNSW-A` | FR | **WONT_DO** | Should Have | Remove custom MinHash/LSH — delete 'src/minhash.rs', drop 'mod minhash' from 'lib.rs' / 'm… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |

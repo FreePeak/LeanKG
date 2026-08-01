@@ -6639,10 +6639,10 @@
     {
       "id": "US-LANG-04",
       "kind": "User Story",
-      "title": "Objective-C indexing (regex wired; protocol conformance, selectors, optional tree-sitter-objc)",
+      "title": "Objective-C indexing (tree-sitter message sends + regex entities; typed resolve pending)",
       "priority": "Should Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL \u2014 objc.rs regex v0 wired for bulk + incremental (.m/.mm/.h); heritage/selectors/AST pending. Do not confuse with US-LANG-03 (XML).",
+      "notes": "PARTIAL \u2014 regex entities + heritage/selectors + tree-sitter-objc message-send calls + .h sniff; SourceKit/clangd typed resolve pending (Phase 4)",
       "section": "3.7 Additional Language Stories (US-LANG-01 to US-LANG-04)",
       "prd_line": null,
       "focus": "P2",

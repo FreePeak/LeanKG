@@ -1591,7 +1591,7 @@ Palace Mapping:
 | CI/CD YAML | `.yml`, `.yaml` | DONE (indexed) | GitHub Actions, GitLab CI, Azure Pipelines |
 | Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
 | Swift | `.swift` | DONE (indexed) — regex entities + tree-sitter-swift call edges; heritage edges | tree-sitter-swift + `swift.rs` |
-| Objective-C | `.m`, `.mm`, `.h` | DONE (indexed, regex v0) — bulk + incremental; protocol conformance / selectors PENDING (`US-LANG-04`) | `src/indexer/objc.rs` |
+| Objective-C | `.m`, `.mm`, `.h` | DONE (indexed) — regex entities + tree-sitter-objc message-send calls; `.h` sniff skips pure C headers | tree-sitter-objc + `objc.rs` |
 | Vue (SFC) | `.vue` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
 | Svelte (SFC) | `.svelte` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
 | SQL DDL | `.sql` | PARTIAL (unwired) — `src/indexer/sql.rs` (`de314eb`) | regex stub |

@@ -257,6 +257,19 @@ impl<'a> ObjCExtractor<'a> {
         (elements, relationships)
     }
 
+    /// Regex entities plus tree-sitter-objc message-send call edges.
+    pub fn extract_with_calls(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
+        let (elements, mut relationships) = self.extract();
+        if let Some(tree) = parse_objc(self.source.as_bytes()) {
+            relationships.extend(extract_objc_message_calls(
+                &tree,
+                self.source.as_bytes(),
+                self.file_path,
+            ));
+        }
+        (elements, relationships)
+    }
+
     fn push_decl(
         &self,
         elements: &mut Vec<CodeElement>,
@@ -308,6 +321,153 @@ fn parse_objc_selector(after_rettype: &str) -> Option<String> {
     BARE_METHOD_RE
         .captures(trimmed)
         .map(|c| c[1].to_string())
+}
+
+/// Heuristic: treat a `.h` as Objective-C when ObjC markers are present.
+pub fn looks_like_objc(source: &str) -> bool {
+    source.contains("@interface")
+        || source.contains("@implementation")
+        || source.contains("@protocol")
+        || source.contains("@class")
+        || source.contains("#import")
+        || source.contains("@property")
+}
+
+fn parse_objc(source: &[u8]) -> Option<tree_sitter::Tree> {
+    let mut parser = tree_sitter::Parser::new();
+    let lang: tree_sitter::Language = tree_sitter_objc::LANGUAGE.into();
+    parser.set_language(&lang).ok()?;
+    parser.parse(source, None)
+}
+
+fn extract_objc_message_calls(
+    tree: &tree_sitter::Tree,
+    source: &[u8],
+    file_path: &str,
+) -> Vec<Relationship> {
+    let mut calls = Vec::new();
+    let mut stack = vec![(tree.root_node(), None::<String>)];
+
+    while let Some((node, current_method)) = stack.pop() {
+        let kind = node.kind();
+        let mut method_ctx = current_method.clone();
+
+        if kind == "method_definition" {
+            // Prefer identifier after method_type as the selector base; rebuild
+            // keyword parts from sibling identifiers followed by ':'.
+            if let Some(sel) = objc_method_definition_selector(node, source) {
+                method_ctx = Some(format!("{}::{}", file_path, sel));
+            }
+        }
+
+        if kind == "message_expression" {
+            if let Some(sel) = objc_message_selector(node, source) {
+                let caller = method_ctx
+                    .clone()
+                    .unwrap_or_else(|| file_path.to_string());
+                calls.push(Relationship {
+                    id: None,
+                    source_qualified: caller,
+                    target_qualified: format!("{}::{}", file_path, sel),
+                    rel_type: "calls".to_string(),
+                    confidence: 0.7,
+                    metadata: serde_json::json!({
+                        "resolution_method": "name",
+                        "line": node.start_position().row as u32 + 1
+                    }),
+                    ..Default::default()
+                });
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push((child, method_ctx.clone()));
+        }
+    }
+
+    calls
+}
+
+fn node_text<'a>(source: &'a [u8], node: tree_sitter::Node) -> Option<&'a str> {
+    std::str::from_utf8(&source[node.byte_range()]).ok()
+}
+
+fn objc_method_definition_selector(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    // Collect identifier / identifier: parts in order.
+    let mut parts = Vec::new();
+    let mut cursor = node.walk();
+    let children: Vec<_> = node.children(&mut cursor).collect();
+    let mut i = 0;
+    while i < children.len() {
+        let child = children[i];
+        if child.kind() == "identifier" {
+            let name = node_text(source, child)?.to_string();
+            if i + 1 < children.len() && children[i + 1].kind() == ":" {
+                parts.push(format!("{}:", name));
+                i += 2;
+                continue;
+            }
+            if parts.is_empty() {
+                // Bare method name (no args) — take first identifier after types.
+                // Skip if this looks like we're still inside method_type.
+                if child.start_byte() > 0 {
+                    parts.push(name);
+                    break;
+                }
+            }
+        }
+        i += 1;
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(""))
+    }
+}
+
+fn objc_message_selector(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    // message_expression: [recv sel] or [recv sel:arg other:arg2]
+    // Skip first identifier (receiver); subsequent identifier / identifier: form selector.
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|c| c.kind() != "[" && c.kind() != "]")
+        .collect();
+    if children.is_empty() {
+        return None;
+    }
+    // Receiver is first non-bracket child.
+    let mut parts = Vec::new();
+    let mut i = 1; // skip receiver
+    while i < children.len() {
+        let child = children[i];
+        if child.kind() == "identifier" {
+            let name = node_text(source, child)?.to_string();
+            if i + 1 < children.len() && children[i + 1].kind() == ":" {
+                parts.push(format!("{}:", name));
+                i += 2;
+                // skip argument expression(s) until next identifier or end
+                while i < children.len()
+                    && children[i].kind() != "identifier"
+                    && children[i].kind() != ":"
+                {
+                    i += 1;
+                }
+                continue;
+            }
+            if parts.is_empty() {
+                parts.push(name);
+                break;
+            }
+        }
+        i += 1;
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(""))
+    }
 }
 
 #[cfg(test)]
@@ -470,5 +630,45 @@ mod tests {
             }),
             "Greeter should implement Logging"
         );
+    }
+
+    #[test]
+    fn extracts_objc_message_sends_as_calls() {
+        let src = r#"
+@implementation Greeter
+- (void)sayHello {
+    [self setup];
+    [logger log:@"hi" level:1];
+}
+- (void)setup {}
+@end
+"#;
+        let (_elems, rels) =
+            ObjCExtractor::new(src.as_bytes(), "Greeter.m").extract_with_calls();
+        let calls: Vec<_> = rels
+            .iter()
+            .filter(|r| r.rel_type == "calls")
+            .map(|r| r.target_qualified.as_str())
+            .collect();
+        assert!(
+            calls.iter().any(|t| t.contains("setup")),
+            "expected call to setup, got {:?}",
+            calls
+        );
+        assert!(
+            calls.iter().any(|t| t.contains("log:level:")),
+            "expected call to log:level:, got {:?}",
+            calls
+        );
+    }
+
+    #[test]
+    fn looks_like_objc_detects_headers() {
+        assert!(looks_like_objc(
+            "#import <Foundation/Foundation.h>\n@interface Foo : NSObject\n@end\n"
+        ));
+        assert!(!looks_like_objc(
+            "#ifndef FOO_H\n#define FOO_H\nstruct Foo { int x; };\n#endif\n"
+        ));
     }
 }
