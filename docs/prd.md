@@ -5,7 +5,7 @@
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.3 (`origin/main`)
+**Codebase Version:** 0.19.27 (`origin/main`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
@@ -13,7 +13,7 @@
 >
 > **P0 CLOSED (v3.7.9):** **Procedural ontology auto-update while using** — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059` **DONE**. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). YAML watch + boot marker (concepts **and** workflows) + post-index sync + MCP `ontology_control`.
 >
-> **CURRENT next (P1 — company adoption waves):** Wave **1a** MCP hard-delete (`wake_up`, `search_by_environment`) **DONE** (`REL-062`). Next: Graphify packaging / cost queue in §1.1. Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
+> **CURRENT next (P1 — company adoption waves):** Waves **0a–2c** **DONE** (ROI, ui-v2 cutover, MCP surface, three-verb, hooks, honest edges, auto GRAPH_REPORT, HTML export). **Next: Wave 3** NL Query FAB (`US-UI2-06` / `FR-UI2-08`) → Wave 4 single-repo expand (`US-MG-02` / `FR-MG-03`). Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
 >
 > **P2 follow-ons (do not preempt P1):** Doc↔code join quality §3.19 / §5.22 (`US-DOCJOIN-*` / `REL-063`); Graph-engineering curriculum gaps §1.2 / §3.20 / §5.23 (`US-GE-*` / `REL-064`). Evidence: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
 >
