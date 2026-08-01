@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub mod file_resolve;
 pub mod handlers;
+pub mod query_graph_api;
 
 use axum::{
     body::Body,
