@@ -257,7 +257,6 @@ impl ToolHandler {
             "find_function" => self.find_function(arguments),
             "explain_node" => self.explain_node(arguments),
             "get_god_nodes" => self.get_god_nodes(arguments),
-            "load_layer" => self.load_layer(arguments),
             "temporal_query" => self.temporal_query(arguments),
             "check_consistency" => self.check_consistency(arguments),
             "timeline" => self.timeline(arguments),
@@ -286,7 +285,6 @@ impl ToolHandler {
             "find_large_functions" => self.find_large_functions(arguments),
             "get_tested_by" => self.get_tested_by(arguments),
             "get_files_for_doc" => self.get_files_for_doc(arguments),
-            "get_doc_structure" => self.get_doc_structure(arguments),
             "get_traceability" => self.get_traceability(arguments),
             "search_by_requirement" => self.search_by_requirement(arguments),
             "get_doc_tree" => self.get_doc_tree(arguments),
@@ -1857,87 +1855,6 @@ impl ToolHandler {
         }))
     }
 
-    fn load_layer(&self, args: &Value) -> Result<Value, String> {
-        let layer = args["layer"].as_str().unwrap_or("L0");
-        let project_name = args["project_name"].as_str().unwrap_or("project");
-        match layer {
-            "L0" => {
-                let text = self
-                    .graph_engine
-                    .identity_context(project_name)
-                    .map_err(|e| e.to_string())?;
-                // Persist for next session to skip regeneration.
-                let project = args["project"].as_str().unwrap_or(".");
-                let path = std::path::Path::new(project)
-                    .join(".leankg")
-                    .join("identity.md");
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&path, &text);
-                Ok(json!({ "layer": "L0", "context": text }))
-            }
-            "L1" => {
-                let text = self
-                    .graph_engine
-                    .critical_facts_context()
-                    .map_err(|e| e.to_string())?;
-                let project = args["project"].as_str().unwrap_or(".");
-                let path = std::path::Path::new(project)
-                    .join(".leankg")
-                    .join("critical_facts.md");
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&path, &text);
-                Ok(json!({ "layer": "L1", "context": text }))
-            }
-            "L2" => {
-                let cluster_id = args["cluster_id"]
-                    .as_str()
-                    .ok_or("L2 requires cluster_id")?;
-                let elements = self
-                    .graph_engine
-                    .all_elements()
-                    .map_err(|e| e.to_string())?;
-                let members: Vec<_> = elements
-                    .into_iter()
-                    .filter(|e| e.cluster_id.as_deref() == Some(cluster_id))
-                    .take(args["limit"].as_u64().unwrap_or(20) as usize)
-                    .map(|e| {
-                        json!({
-                            "qualified_name": e.qualified_name,
-                            "element_type": e.element_type,
-                            "name": e.name,
-                        })
-                    })
-                    .collect();
-                Ok(json!({ "layer": "L2", "cluster_id": cluster_id, "members": members }))
-            }
-            "L3" => {
-                let query = args["query"].as_str().ok_or("L3 requires query")?;
-                let _limit = args["limit"].as_u64().unwrap_or(20) as usize;
-                let elements = self
-                    .graph_engine
-                    .search_by_name(query)
-                    .map_err(|e| e.to_string())?;
-                let hits: Vec<_> = elements
-                    .into_iter()
-                    .map(|e| {
-                        json!({
-                            "qualified_name": e.qualified_name,
-                            "element_type": e.element_type,
-                            "name": e.name,
-                            "file": e.file_path,
-                        })
-                    })
-                    .collect();
-                Ok(json!({ "layer": "L3", "query": query, "results": hits }))
-            }
-            other => Err(format!("Unknown layer: {}", other)),
-        }
-    }
-
     fn get_callers(&self, args: &Value) -> Result<Value, String> {
         let function = args["function"]
             .as_str()
@@ -2408,47 +2325,6 @@ impl ToolHandler {
             "resolved_doc": doc_key,
             "tried": resolve.tried,
         }))
-    }
-
-    fn get_doc_structure(&self, _args: &Value) -> Result<Value, String> {
-        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
-            &self.graph_engine,
-            "get_doc_structure",
-        ) {
-            return Ok(refusal);
-        }
-
-        let elements = self
-            .graph_engine
-            .all_elements()
-            .map_err(|e| e.to_string())?;
-
-        let docs: Vec<_> = elements
-            .iter()
-            .filter(|e| e.element_type == "document")
-            .map(|e| {
-                let category = e
-                    .metadata
-                    .get("category")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("root");
-                let headings = e
-                    .metadata
-                    .get("headings")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                    .unwrap_or_default();
-                json!({
-                    "qualified_name": e.qualified_name,
-                    "title": e.name,
-                    "category": category,
-                    "headings": headings,
-                    "file_path": e.file_path
-                })
-            })
-            .collect();
-
-        Ok(json!({ "documents": docs }))
     }
 
     fn get_traceability(&self, args: &Value) -> Result<Value, String> {

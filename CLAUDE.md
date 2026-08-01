@@ -71,7 +71,7 @@ cargo run --release -- <cmd>  # Run CLI commands
 
 Core tools: `query_file`, `get_dependencies`, `get_dependents`, `get_impact_radius`, `get_review_context`, `find_function`, `get_call_graph`, `search_code`, `generate_doc`, `find_large_functions`, `get_tested_by`
 
-Doc/Traceability tools: `get_files_for_doc`, `get_doc_structure`, `get_traceability`, `search_by_requirement`, `get_doc_tree`, `get_code_tree`, `find_related_docs`
+Doc/Traceability tools: `get_files_for_doc`, `get_doc_tree`, `get_traceability`, `search_by_requirement`, `get_code_tree`, `find_related_docs`
 
 **Doc↔code prefer-order (v3.7.13):** `search_by_requirement` / `get_traceability` for `FR-*` / `US-*` IDs → `get_files_for_doc` / `find_related_docs` (after `mcp_index_docs`, canonical `docs/…` paths) → `concept_search` / `kg_trace_workflow` → `semantic_search` → `search_code`.
 
@@ -135,7 +135,7 @@ Local-only mount lists live in gitignored `.dockerfile` / `docker-compose.overri
 #### Step 1: Always Try LeanKG First
 1. Call `mcp_status(project="/workspace")` to check if LeanKG is ready for this repo
 2. If Docker MCP is down / not ready, try other mounts from `LEANKG_PROJECT_DIRS`, then local `mcp_init` only as last resort
-3. **Session overview:** `get_overview_context(project="/workspace")` — not `load_layer(L0)` alone
+3. **Session overview:** `get_overview_context(project="/workspace")` — not a progressive-layer chooser
 4. Use appropriate LeanKG tools with `project="/workspace"`: `concept_search` → `semantic_search` → `search_code`, `find_function`, `query_file`, `get_impact_radius`, `get_dependencies`, `get_dependents`, `get_tested_by`, `get_context`
 5. **Environment filter:** `env=` on search / `kg_*` (hard-removed: `search_by_environment`)
 
@@ -143,12 +143,12 @@ Local-only mount lists live in gitignored `.dockerfile` / `docker-compose.overri
 
 | Chain | Tools |
 |-------|-------|
-| Overview | `get_overview_context` → optional `load_layer` → `get_architecture` |
+| Overview | `get_overview_context` → optional `get_architecture` |
 | Search | `concept_search` → `semantic_search` → `search_code` |
 | Env | `env=` on search / `kg_*` |
 | File context | `get_context` (default) |
 
-Hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
+Hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure`
 
 #### Step 2: Fallback Only If LeanKG Fails
 - LeanKG returns empty results OR

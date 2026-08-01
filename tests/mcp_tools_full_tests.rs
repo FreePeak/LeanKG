@@ -489,22 +489,6 @@ mod documentation_tools {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_get_doc_structure() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler.execute_tool("get_doc_structure", &json!({})).await;
-        assert!(
-            result.is_ok(),
-            "get_doc_structure should succeed: {:?}",
-            result.err()
-        );
-        let value = result.unwrap();
-        let has_data = value.get("structure").is_some()
-            || value.get("docs").is_some()
-            || !value.to_string().is_empty();
-        assert!(has_data, "get_doc_structure should return data");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_doc_tree() {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler.execute_tool("get_doc_tree", &json!({})).await;

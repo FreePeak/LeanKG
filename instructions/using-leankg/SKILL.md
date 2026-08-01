@@ -41,8 +41,9 @@ Do **not** pass a Mac host path (e.g. `/Users/.../leankg`) as `project` against 
 
 **Session start (overview):**
 ```
-get_overview_context(project=…)  # L0+L1 summary — not load_layer(L0) alone
-→ optional load_layer for progressive budgets
+get_overview_context(project=…)  # L0+L1 summary — session start
+→ optional get_architecture for deep overview
+→ get_cluster_context for cluster members (replaces removed load_layer L2)
 → get_architecture for deep single-call overview
 ```
 
@@ -105,7 +106,7 @@ Miss payloads include `tried[]` — do not assume empty graph when aliases fail.
 
 ### Hard-removed tools (do not call)
 
-`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`
+`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure`
 
 ### If mcp_status is not ready (but HTTP health was OK)
 

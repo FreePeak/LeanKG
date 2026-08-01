@@ -149,7 +149,6 @@ fn every_tested_tool_is_registered() {
         "kg_semantic_context",
         "kg_trace_workflow",
         "link_element",
-        "load_layer",
         "promote_environment",
         "query_incidents",
         "report_query_outcome",
@@ -521,15 +520,6 @@ mod graph_features {
         )
         .await
         .expect("timeline");
-        assert!(!resp.to_string().is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn load_layer_returns_layer_payload() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "load_layer", json!({}))
-            .await
-            .expect("load_layer");
         assert!(!resp.to_string().is_empty());
     }
 

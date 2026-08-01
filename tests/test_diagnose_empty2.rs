@@ -72,22 +72,13 @@ async fn test_diagnose_relationships() {
         .unwrap();
     println!("get_dependents './src/lib.rs': {}", dependents1);
 
-    // Check doc structure
-    println!("\n=== Checking doc structure ===");
-    let doc_struct = handler
-        .execute_tool("get_doc_structure", &json!({}))
+    // Check doc tree
+    println!("\n=== Checking doc tree ===");
+    let doc_tree = handler
+        .execute_tool("get_doc_tree", &json!({}))
         .await
         .unwrap();
-    let docs = doc_struct
-        .get("documents")
-        .and_then(|d| d.as_array())
-        .unwrap();
-    println!("get_doc_structure: {} documents found", docs.len());
-    if !docs.is_empty() {
-        if let Some(first) = docs.first() {
-            println!("First doc: {:?}", first);
-        }
-    }
+    println!("get_doc_tree: {}", doc_tree);
 
     // Check if README exists in docs
     let related = handler

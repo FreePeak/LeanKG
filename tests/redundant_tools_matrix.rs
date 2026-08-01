@@ -2,9 +2,11 @@
 //!
 //! Every registered tool must appear exactly once in [`TOOL_CLASSIFICATION`].
 //! Overlap relationships live in [`OVERLAP_TABLE`] (documentation + keep-both).
-//! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21).
+//! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21)
+//! and Wave 1b FR-SURF-13/14 (2026-08-01: `load_layer`, `get_doc_structure`).
 //!
 //! Report: `docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`
+//! Wave 1b: `docs/reports/rel-076-mcp-surf-1b-2026-08-01.md`
 //!
 //! ```bash
 //! cargo test --release --test redundant_tools_matrix
@@ -39,7 +41,7 @@ struct OverlapEntry {
     note: &'static str,
 }
 
-/// Tools hard-removed (FR-SURF-03 + find_clones + FR-SURF-07/08 hard-delete 2026-07-21).
+/// Tools hard-removed (FR-SURF-03 + find_clones + FR-SURF-07/08 + Wave 1b FR-SURF-13/14).
 const REMOVED_TOOLS: &[&str] = &[
     "mcp_hello",
     "mcp_impact",
@@ -47,6 +49,8 @@ const REMOVED_TOOLS: &[&str] = &[
     "find_clones",
     "wake_up",
     "search_by_environment",
+    "load_layer",
+    "get_doc_structure",
 ];
 
 /// Full inventory — must match `ToolRegistry::list_tools()` exactly (one row each).
@@ -190,12 +194,7 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
     ClassEntry {
         name: "get_overview_context",
         kind: Kind::Complementary,
-        note: "L0+L1 overview; session-start prefer-order entry.",
-    },
-    ClassEntry {
-        name: "load_layer",
-        kind: Kind::Complementary,
-        note: "Progressive L0–L3 layers; not a full overview replacement alone.",
+        note: "L0+L1 overview; session-start prefer-order entry (replaces removed load_layer + wake_up).",
     },
     ClassEntry {
         name: "get_architecture",
@@ -327,14 +326,9 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
     },
     // --- Docs / traceability ---
     ClassEntry {
-        name: "get_doc_structure",
-        kind: Kind::Complementary,
-        note: "Doc directory list; merge with get_doc_tree pending FR-SURF-06.",
-    },
-    ClassEntry {
         name: "get_doc_tree",
-        kind: Kind::Complementary,
-        note: "Doc hierarchy tree; merge with get_doc_structure pending FR-SURF-06.",
+        kind: Kind::KeepUnique,
+        note: "Doc hierarchy tree; sole doc-structure tool after Wave 1b (get_doc_structure removed).",
     },
     ClassEntry {
         name: "get_files_for_doc",
@@ -471,9 +465,44 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         note: "Portable JSON snapshot.",
     },
     ClassEntry {
+        name: "export_html",
+        kind: Kind::KeepUnique,
+        note: "Interactive HTML visualization export.",
+    },
+    ClassEntry {
         name: "resolve_with_lsp",
         kind: Kind::KeepUnique,
         note: "External LSP symbol resolve.",
+    },
+    ClassEntry {
+        name: "add_ontology_concept",
+        kind: Kind::KeepUnique,
+        note: "Dynamic ontology concept write.",
+    },
+    ClassEntry {
+        name: "add_ontology_workflow",
+        kind: Kind::KeepUnique,
+        note: "Dynamic ontology workflow write.",
+    },
+    ClassEntry {
+        name: "delete_ontology_concept",
+        kind: Kind::KeepUnique,
+        note: "Delete dynamic ontology concept/workflow.",
+    },
+    ClassEntry {
+        name: "index_prd",
+        kind: Kind::KeepUnique,
+        note: "Parse PRD markdown into knowledge_entries.",
+    },
+    ClassEntry {
+        name: "get_feature_flow",
+        kind: Kind::KeepUnique,
+        note: "FR → workflows → steps → annotated code.",
+    },
+    ClassEntry {
+        name: "get_traceability_matrix",
+        kind: Kind::KeepUnique,
+        note: "PO-facing FR coverage matrix.",
     },
 ];
 
@@ -511,9 +540,9 @@ const OVERLAP_TABLE: &[OverlapEntry] = &[
     },
     OverlapEntry {
         primary: "get_architecture",
-        related: &["get_overview_context", "load_layer"],
+        related: &["get_overview_context"],
         kind: Kind::Complementary,
-        note: "Deep arch vs overview vs progressive layers.",
+        note: "Deep arch vs session overview (load_layer hard-removed Wave 1b).",
     },
     OverlapEntry {
         primary: "get_graph_schema",
@@ -538,12 +567,6 @@ const OVERLAP_TABLE: &[OverlapEntry] = &[
         related: &["query_graph"],
         kind: Kind::Complementary,
         note: "Intent router vs NL connection subgraph.",
-    },
-    OverlapEntry {
-        primary: "get_doc_structure",
-        related: &["get_doc_tree"],
-        kind: Kind::Complementary,
-        note: "Pending FR-SURF-06 merge after mega-safe pagination.",
     },
     OverlapEntry {
         primary: "kg_context",

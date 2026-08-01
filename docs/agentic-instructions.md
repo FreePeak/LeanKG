@@ -60,7 +60,7 @@ User asks about codebase
 
 ## Prefer-order (FR-SURF-02)
 
-- Overview: `get_overview_context` → optional `load_layer` → `get_architecture` (not `load_layer(L0)` alone)
+- Overview: `get_overview_context` → optional `get_architecture`
 - Search: `concept_search` → `semantic_search` → `search_code`
 - Semantic context: `semantic_search` → `kg_semantic_context` → `kg_context`
 - Environment: `env=` on search / `kg_*` (hard-removed: `search_by_environment`)

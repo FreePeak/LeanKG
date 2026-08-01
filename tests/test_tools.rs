@@ -50,7 +50,6 @@ async fn test_all_mcp_tools() {
         ("find_large_functions", json!({"min_lines": 100})),
         ("get_tested_by", json!({"file": "src/main.rs"})),
         ("get_files_for_doc", json!({"doc": "README.md"})),
-        ("get_doc_structure", json!({})),
         ("get_traceability", json!({"element": "src/main.rs::main"})),
         ("search_by_requirement", json!({"requirement_id": "US-01"})),
         ("get_doc_tree", json!({})),
