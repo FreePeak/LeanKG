@@ -5,6 +5,8 @@ import { FileTreePanel } from './components/FileTreePanel';
 import { GraphCanvas } from './components/GraphCanvas';
 import { CodePanel } from './components/CodePanel';
 import { useGraphFilters, useUrlProject } from './hooks/useGraphFilters';
+import { useClusterLegend } from './hooks/useClusterLegend';
+import type { EnvValue } from './components/OpsPanels';
 import {
   buildLayoutGraph,
   type LayoutMode,
@@ -81,6 +83,15 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
 
   const filters = useGraphFilters();
+  const legend = useClusterLegend();
+  const [opsEnv, setOpsEnv] = useState<EnvValue>('local');
+
+  const opsService: string | null = useMemo(() => {
+    const n = kg?.nodes.find((node) => node.id === selectedId);
+    if (!n) return null;
+    if (!isContainerNode(n)) return null;
+    return String(n.properties.name || n.label || '');
+  }, [kg, selectedId]);
 
   const selectedNode: GraphNode | null = useMemo(() => {
     if (!kg || !selectedId) return null;
@@ -610,6 +621,10 @@ export default function App() {
               void drillIntoPath(path || '.', label);
             }}
             selectedId={selectedId}
+            legend={legend}
+            opsService={opsService ?? undefined}
+            opsEnv={opsEnv}
+            onOpsEnvChange={setOpsEnv}
           />
           <div className="relative flex-1 min-w-0 min-h-0 h-full flex flex-col">
             <GraphCanvas
