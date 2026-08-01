@@ -1579,6 +1579,15 @@ impl MCPServer {
     /// Register our session, returns (should_start_server, existing_port)
     /// - If another session owns the port and is alive: (false, existing_port)
     /// - If we're the owner or no one else: (true, port)
+    ///
+    /// FR-SEM-03: stale-listener cleanup decision. A session file is only
+    /// reusable when the PID is alive AND the server answers /health. Any
+    /// other combination (zombie listener, recycled PID, both dead) must be
+    /// cleaned so a stale :9699 listener cannot shadow a fresh server.
+    pub(crate) fn should_clean_stale_session(pid_alive: bool, server_alive: bool) -> bool {
+        !(pid_alive && server_alive)
+    }
+
     async fn register_session(
         &self,
         port: u16,
@@ -1614,15 +1623,19 @@ impl MCPServer {
                             );
                             return Ok((false, Some(port)));
                         }
-                        if pid_alive && !server_alive {
-                            tracing::warn!(
-                                "Session PID {} alive but server not responding on port {}, cleaning stale session",
-                                session.pid, port
-                            );
-                            let _ = fs::remove_file(entry.path());
-                        } else {
-                            let _ = fs::remove_file(entry.path());
+                        // FR-SEM-03: stale-listener hygiene — clean any session
+                        // that is not both PID-alive and /health-answering.
+                        if !Self::should_clean_stale_session(pid_alive, server_alive) {
+                            unreachable!("covered by the reuse branch above");
                         }
+                        tracing::warn!(
+                            "Cleaning stale session {} on port {} (pid_alive={}, server_alive={})",
+                            session.pid,
+                            port,
+                            pid_alive,
+                            server_alive
+                        );
+                        let _ = fs::remove_file(entry.path());
                     }
                 }
             }
@@ -3833,5 +3846,37 @@ mod tests {
         let resp = build_sse_endpoint_response(Some("/workspace-be"));
         let ct = resp.headers().get(header::CONTENT_TYPE).unwrap();
         assert_eq!(ct, "text/event-stream");
+    }
+
+    // FR-SEM-03: SSE discovery must advertise keep-alive so long read-only
+    // semantic calls survive transient socket idle drops on :9699 daemons.
+    #[tokio::test]
+    async fn sse_response_advertises_keep_alive() {
+        let resp = build_sse_endpoint_response(Some("/workspace"));
+        let conn = resp.headers().get(header::CONNECTION).unwrap();
+        assert_eq!(conn, "keep-alive", "SSE discovery must send keep-alive");
+    }
+
+    // FR-SEM-03: stale-listener hygiene decision. A session file is only
+    // reusable when BOTH the PID is alive AND the server actually answers
+    // /health; PID-recycled or zombie listeners must be cleaned.
+    #[test]
+    fn stale_listener_cleanup_policy() {
+        assert!(
+            !MCPServer::should_clean_stale_session(true, true),
+            "alive+healthy: reuse"
+        );
+        assert!(
+            MCPServer::should_clean_stale_session(true, false),
+            "PID alive but no /health: zombie listener -> clean"
+        );
+        assert!(
+            MCPServer::should_clean_stale_session(false, true),
+            "PID recycled: cannot trust health alone -> clean"
+        );
+        assert!(
+            MCPServer::should_clean_stale_session(false, false),
+            "both dead: clean"
+        );
     }
 }
