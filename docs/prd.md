@@ -1352,7 +1352,7 @@ Palace Mapping:
 
 **PENDING evidence:**
 - No `typed` `resolution_method` produced at index time; LSP bridge returns `LspLocation[]` but does not yet write CALLS edges with `resolution_method=typed`
-- No `graph-ui/` directory; no `get_graph_layout` / 3D scene
+- ~~No `graph-ui/` directory; no `get_graph_layout` / 3D scene~~ — **RESOLVED 2026-08-02 (PR-53 / FR-E30..E43):** `graph-ui/` panels (summary, edge filter, settings, projects, search, history, export) + `/3d/` serve via rust_embed `src/embed/3d/`; `GET /api/projects`; `api_ui_build` advertises `has_3d` + `3d_route`
 - No formal `resources/read` endpoint for `get_overview_context` (tool-only)
 - ~~Vue / Svelte / SQL extractors exist as modules but `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`~~ — **RESOLVED 2026-08-02 (REL-032 / PR-14):** `.vue` / `.svelte` / `.sql` in `find_files_sync`, `extract_elements_for_file`, `index_file_sync`
 
@@ -3018,9 +3018,9 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | Supported parser / extractor count | Tree-sitter + specialized extractors; **indexed walk ≈ 12 code langs + Android/XML/TF/CI + Vue/Svelte/SQL/Swift/ObjC** (REL-032 wired 2026-08-02) | PARTIAL (Ruby/PHP/C# walk still pending) |
 | MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14; still 85 on v0.19.0) |
 | Cross-platform | Apple Silicon (ARM64) Local + Linux x86_64 Cloud | PARTIAL (FR-VE-ABS DONE; CloudEngine TiKV Tier-1 still stub root) |
-| Token honesty (delivered vs actual) | When `truncated: true`, agents can read both figures; docs teach ≥3× budget | PENDING (FR-SEM-01) |
-| Ontology-tool default budgets | `concept_search` / `kg_semantic_context` ≥ 2k (align with sibling `kg_*`) | PENDING (FR-SEM-02) |
-| MCP HTTP semantic flake | Read-only semantic tools survive one transient socket drop via retry / hygiene | PENDING (FR-SEM-03) |
+| Token honesty (delivered vs actual) | When `truncated: true`, agents can read both figures; docs teach ≥3× budget | DONE (FR-SEM-01, 2026-08-02) |
+| Ontology-tool default budgets | `concept_search` / `kg_semantic_context` ≥ 2k (align with sibling `kg_*`) | DONE (FR-SEM-02, 2026-08-02 — both 4000) |
+| MCP HTTP semantic flake | Read-only semantic tools survive one transient socket drop via retry / hygiene | DONE (FR-SEM-03, 2026-08-02) |
 | Live semantic MCP smoke | Checklist run (or waived) as release complement to embeddings cargo tests | PENDING (FR-SEM-04 / REL-051) |
 | Day-2 embed (unchanged graph) | Near-zero ONNX; wall time ≪ cold; minutes not hours on mega-graph | DONE local smoke + e2e (FR-EMBED-RESUME-01 / 02); mega-graph wall-time PARTIAL (FR-05) |
 | Zero-dirty embed | No HNSW drop/rebuild when nothing to write | DONE (FR-EMBED-RESUME-02) |

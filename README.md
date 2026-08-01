@@ -64,6 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 | `cursor`                          | Binary + MCP + skill + AGENTS.md + session hook                           |
 | `claude`                          | Binary + MCP + plugin + skill + CLAUDE.md + hooks                         |
 | `opencode`                        | Binary + MCP + plugin + skill + AGENTS.md                                 |
+| `codex`                           | Binary + MCP (`~/.codex/config.toml`) + skill + AGENTS.md                 |
 | `gemini` / `kilo` / `antigravity` | Binary + MCP + skill + agent docs                                         |
 | `docker`                          | Hub image (`freepeak/leankg:latest`, `:0.19.21`) + MCP HTTP (**no Rust**) |
 
@@ -334,8 +335,9 @@ Repo ──► Indexer ──► Knowledge Graph ──► MCP Tools ──► A
 | Cursor                     | Yes        | Per-project install; always-on graph-first rule + session hook; skill `using-leankg` |
 | Claude Code                | Yes        | Plugin + full lifecycle hooks (PreToolUse nudge)                                     |
 | OpenCode                   | Yes        | Plugin + skill                                                                       |
+| Codex CLI                  | Yes        | `~/.codex/config.toml` `[mcp_servers.leankg]` + skill + AGENTS.md                    |
 | Gemini CLI                 | Yes        | MCP + skill / agent docs                                                             |
-| Codex / Antigravity / Kilo | Yes        | MCP + skill / agent docs                                                             |
+| Antigravity / Kilo         | Yes        | MCP + skill / agent docs                                                             |
 | Docker MCP HTTP            | Yes        | Shared RocksDB; multi-repo mounts                                                    |
 
 ```bash
@@ -457,6 +459,8 @@ Full CLI: [docs/cli-reference.md](docs/cli-reference.md)
 | [docs/cli-reference.md](docs/cli-reference.md)               | All CLI commands                                                                           |
 | [docs/mcp-tools.md](docs/mcp-tools.md)                       | MCP tool reference                                                                         |
 | [docs/agentic-instructions.md](docs/agentic-instructions.md) | AI tool setup & auto-trigger                                                               |
+| [docs/install-matrix.md](docs/install-matrix.md)             | Assistant install matrix (Cursor / Claude Code / Codex / …)                                |
+| [docs/reflect-skill.md](docs/reflect-skill.md)               | Reflect / query-outcome loop guidance                                                      |
 | [docs/architecture.md](docs/architecture.md)                 | System design & data model                                                                 |
 | [docs/web-ui.md](docs/web-ui.md)                             | Web UI                                                                                     |
 | [docs/benchmark.md](docs/benchmark.md)                       | Benchmark methodology                                                                      |

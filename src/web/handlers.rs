@@ -3719,6 +3719,62 @@ pub async fn api_index_status(State(state): State<AppState>) -> impl IntoRespons
     }
 }
 
+#[derive(Serialize, Clone)]
+pub struct ProjectEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_indexed: Option<String>,
+}
+
+/// FR-E33/E36 — list projects from the registry + LEANKG_PROJECT_DIRS so the
+/// 3D UI can offer a project selector (multi-repo galaxies).
+pub async fn api_projects(State(state): State<AppState>) -> impl IntoResponse {
+    let mut seen = std::collections::HashSet::new();
+    let mut projects: Vec<ProjectEntry> = Vec::new();
+
+    let registry = crate::registry::Registry::load().unwrap_or_default();
+    for (name, entry) in registry.list_repos() {
+        if seen.insert(entry.path.clone()) {
+            projects.push(ProjectEntry {
+                name: name.clone(),
+                path: entry.path.clone(),
+                element_count: entry.element_count,
+                last_indexed: entry.last_indexed.clone(),
+            });
+        }
+    }
+    // Docker multi-root mounts — no registry rows, but valid projects.
+    for dir in crate::web::file_resolve::project_dirs_from_env() {
+        let path = dir.to_string_lossy().to_string();
+        if seen.insert(path.clone()) {
+            projects.push(ProjectEntry {
+                name: dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("project")
+                    .to_string(),
+                path,
+                element_count: None,
+                last_indexed: None,
+            });
+        }
+    }
+
+    // Active project first.
+    let active = state.current_project_path.read().await.clone();
+    let active_str = active.to_string_lossy().to_string();
+    projects.sort_by_key(|p| if p.path == active_str { 0 } else { 1 });
+
+    ApiResponse {
+        success: true,
+        data: Some(projects),
+        error: None,
+    }
+}
+
 /// Fingerprint of the rust_embed UI baked into this binary (OnRender deploy verification).
 #[allow(dead_code)]
 pub async fn api_ui_build() -> impl IntoResponse {
@@ -3747,6 +3803,9 @@ pub async fn api_ui_build() -> impl IntoResponse {
             payload["index_js"] = serde_json::json!(cap);
         }
     }
+    // FR-E43 — advertise the Track E 3D UI embedded under /3d/.
+    payload["has_3d"] = serde_json::json!(crate::embed::get("3d/index.html").is_some());
+    payload["3d_route"] = serde_json::json!("/3d");
     ApiResponse {
         success: true,
         data: Some(payload),
@@ -4831,5 +4890,34 @@ mod rel_040_mutation_tests {
         let resp = api_delete_annotation(State(state), Path("x".to_string())).await;
         let resp = resp.into_response();
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+mod fr_e33_projects_tests {
+    use super::*;
+
+    /// FR-E33 — ProjectEntry serializes element_count optionally (ui parity).
+    #[test]
+    fn project_entry_serializes_optional_counts() {
+        let full = ProjectEntry {
+            name: "leankg".into(),
+            path: "/workspace".into(),
+            element_count: Some(42),
+            last_indexed: Some("2026-08-02".into()),
+        };
+        let json = serde_json::to_string(&full).unwrap();
+        assert!(json.contains("\"element_count\":42"));
+        assert!(json.contains("\"last_indexed\""));
+
+        let bare = ProjectEntry {
+            name: "p".into(),
+            path: "/p".into(),
+            element_count: None,
+            last_indexed: None,
+        };
+        let json = serde_json::to_string(&bare).unwrap();
+        assert!(!json.contains("element_count"));
+        assert!(!json.contains("last_indexed"));
     }
 }

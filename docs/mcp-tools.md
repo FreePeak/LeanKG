@@ -177,6 +177,37 @@ Behavior notes:
 - The top-down traversal reuses the already-embedded query vector (no second embed call per request). For `domain_entity` / `workflow` / `workflow_step` upper seeds whose code links live in `metadata.code_refs` rather than DB edges, it falls back to keyed path-prefix resolution (same path as `concept_search`) — no full-table scan.
 - Known limits: `traversal.traversed_function_count` is `0` against indexes where doc↔code edges are file-granular or where `domain_entity` / `workflow` / `workflow_step` nodes carry no `metadata.code_refs`. To activate FR-SEM-08, run `mcp_index_docs` (populates `metadata.code_refs`) or rebuild the index with per-symbol doc↔code edges. Baseline reproduction: `docs/reports/semantic-traversal-vs-main-2026-07-27.md`.
 
+## Token budget envelope (FR-SEM-01 / FR-SEM-02)
+
+Every structured tool response carries a token-accounting envelope:
+
+```json
+{
+  "...": "...",
+  "tokens": 641,
+  "_token_budget": { "max": 4000, "actual": 2428, "truncated": true }
+}
+```
+
+Dual accounting (honesty rule):
+- `tokens` = **delivered** figure — what actually entered your context window after trimming.
+- `_token_budget.actual` = **pre-truncation** cost — the full payload the tool built before trimming.
+- `_token_budget.max` = the **tool-specific** budget (never the anonymous default).
+- `_token_budget.truncated` = `true` when anything was trimmed.
+
+**Budgeting rule of thumb:** when `truncated: true`, budget **≥ 3× the delivered `tokens`** (or use `_token_budget.actual`) for the real cost of the tool call — live probes measured `concept_search` actual ≈ 4× and `kg_semantic_context` actual ≈ 3.6× the delivered figure.
+
+Per-tool budgets (FR-SEM-02): `concept_search` and `kg_semantic_context` are capped at 4000 tokens (sibling `kg_*` band 2k–4k) so ontology + graph payloads are not silently cut mid-result. Tools without a listed budget use the 1000 default; heavy tools (`get_impact_radius` 6000, `get_call_graph`/`search_code`/`get_code_tree`/`get_doc_tree` 4000) get explicit caps in `src/mcp/token_budget.rs`.
+
+## HTTP resilience for long semantic calls (FR-SEM-03)
+
+Read-only semantic tools over HTTP/SSE (`:9699`) are retry-safe: they never mutate state, so a transient "socket connection was closed unexpectedly" can be retried once with the same arguments. The SSE discovery response advertises `Connection: keep-alive`, and stale-listener cleanup (PID-alive + `/health`-responding) runs on session registration so a zombie `:9699` listener cannot shadow a fresh server.
+
+Operator guidance for long-lived daemons:
+- One-shot client retry is the documented recovery path for a single transient socket drop (matches the 2026-07-17 probe).
+- Stale-listener cleanup is the ops path; see `docs/analysis/mcp-http-stability-analysis-2026-05-05.md` for keep-alive / restart hygiene.
+- Verify liveness with `curl http://localhost:9699/health` before assuming the server is down.
+
 ## Auto-Indexing
 
 When the MCP server starts with an existing LeanKG project, it checks if the index is stale (by comparing git HEAD commit time vs database file modification time). If stale, it automatically runs incremental indexing to ensure AI tools have up-to-date context.
