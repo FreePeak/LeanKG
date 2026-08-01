@@ -2,21 +2,21 @@
   "generated": "2026-08-01",
   "source": "docs/prd.md",
   "counts": {
-    "NOT_DONE": 50,
+    "NOT_DONE": 49,
     "PENDING": 29,
     "PARTIAL": 8,
     "OPEN": 1,
-    "DONE": 448,
+    "DONE": 449,
     "WONT_DO": 3,
     "by_status": {
-      "NOT_DONE": 50,
+      "NOT_DONE": 49,
       "PARTIAL": 8,
-      "DONE": 448,
+      "DONE": 449,
       "PENDING": 29,
       "OPEN": 1,
       "WONT_DO": 3
     },
-    "open_work": 88
+    "open_work": 87
   },
   "tasks": [
     {
@@ -323,7 +323,7 @@
       "kind": "FR",
       "title": "Rust 3D layout + 'get_graph_layout' / '/api/graph'",
       "priority": "Should Have",
-      "status": "NOT_DONE",
+      "status": "DONE",
       "notes": "[ ]",
       "section": "5.10 CBM Structural Parity Requirements (merged)",
       "prd_line": null,
