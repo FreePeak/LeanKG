@@ -90,3 +90,34 @@ jobs:
       - name: Install and build ui-v2
         working-directory: ui-v2
         run: npm ci && npm run build
+
+  graph-ui:
+    name: Graph UI tests + build (Track E)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: graph-ui/package-lock.json
+
+      - name: Install
+        working-directory: graph-ui
+        run: npm ci
+
+      - name: Test (vitest)
+        working-directory: graph-ui
+        run: npm test
+
+      - name: Build
+        working-directory: graph-ui
+        run: npm run build
+
+      - name: Verify embeddable 3d shell
+        shell: bash
+        run: |
+          test -f graph-ui/dist/index.html
+          grep -q 'assets/' graph-ui/dist/index.html

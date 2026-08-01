@@ -209,3 +209,302 @@ button.primary {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
+
+/* ── FR-E30..E43 panels ────────────────────────────────────────────── */
+
+.panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 260px;
+  max-height: 70%;
+  overflow-y: auto;
+  background: #0f172acc;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  font-size: 13px;
+  padding: 10px 12px;
+  z-index: 5;
+}
+
+.panel-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.panel-subtitle {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.panel-muted {
+  color: #64748b;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+/* Stacked panels: summary left-top, others offset below/right. */
+.panel[data-testid='graph-summary'] { left: 12px; top: 12px; }
+.panel[data-testid='filter-panel'] { left: 284px; top: 12px; }
+.panel[data-testid='settings-panel'] { left: 556px; top: 12px; }
+.panel[data-testid='projects-panel'] { left: 284px; top: 220px; }
+.panel[data-testid='search-panel'] { left: 284px; top: 12px; width: 320px; }
+.panel[data-testid='export-panel'] { left: 556px; top: 220px; }
+.panel[data-testid='history-panel'] { left: 12px; top: 220px; }
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0 0 8px;
+}
+
+.summary-grid dt { color: #64748b; }
+.summary-grid dd { margin: 0; text-align: right; }
+
+.breakdown-list,
+.filter-list,
+.project-list,
+.history-list,
+.detail-rels ul,
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.breakdown-list li,
+.detail-rels li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #94a3b8;
+}
+
+.breakdown-count { color: #64748b; }
+
+.filter-hint { color: #94a3b8; font-size: 12px; margin: 0 0 8px; }
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.filter-row input[type='checkbox'],
+.setting-row.toggle input[type='checkbox'] {
+  accent-color: #2563eb;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #94a3b8;
+}
+
+.setting-row input[type='range'] { flex: 1; min-width: 0; }
+.setting-value { color: #64748b; font-size: 12px; width: 34px; text-align: right; }
+
+.history-actions,
+.export-actions,
+.project-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.history-item { color: #94a3b8; }
+
+.export-note { color: #34d399; font-size: 12px; }
+
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.search-result {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 4px 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.search-result:hover,
+.search-result.selected { background: #1e293b; }
+
+.search-name { color: #e2e8f0; }
+.search-file { color: #64748b; font-size: 11px; grid-column: 2 / 4; }
+.search-type { color: #94a3b8; font-size: 11px; }
+.search-rank { color: #475569; font-size: 11px; }
+
+.project-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+}
+
+.project-row.active { background: #1e3a5f; }
+.project-name { color: #e2e8f0; }
+.project-count { color: #64748b; }
+
+.detail-rels {
+  border-top: 1px solid #1e293b;
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.detail-rels h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.detail-snippet {
+  margin: 8px 0 0;
+  padding: 8px;
+  background: #0b1120;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  max-height: 220px;
+  overflow-y: auto;
+  color: #94a3b8;
+  white-space: pre;
+}
+
+/* Error banner (FR-E40) */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: #7f1d1d66;
+  color: #fca5a5;
+  font-size: 13px;
+  border-bottom: 1px solid #7f1d1d;
+}
+
+.error-text { flex: 1; }
+.error-retry,
+.error-dismiss {
+  background: #450a0a;
+  border-color: #7f1d1d;
+}
+
+/* Loading overlay (FR-E39) */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #0b1120cc;
+  color: #94a3b8;
+  font-size: 14px;
+  z-index: 20;
+}
+
+.spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #1e293b;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-progress { color: #64748b; }
+
+/* Shortcuts hint (FR-E41) */
+.shortcuts-hint {
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  font-size: 11px;
+  color: #475569;
+  user-select: none;
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.panel-tabs button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.panel-tabs button.active {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+/* FR-E42 — responsive layout: collapse panels to overlay on small screens. */
+@media (max-width: 900px) {
+  .panel[data-testid='filter-panel'],
+  .panel[data-testid='settings-panel'],
+  .panel[data-testid='projects-panel'],
+  .panel[data-testid='export-panel'],
+  .panel[data-testid='history-panel'],
+  .panel[data-testid='search-panel'] {
+    left: 12px;
+    top: auto;
+    bottom: 56px;
+    width: min(320px, calc(100vw - 24px));
+  }
+
+  .topbar-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .panel-tabs { order: 3; width: 100%; }
+}
+
+/* FR-E43 — a11y: visible focus, reduced motion. */
+button:focus-visible,
+input:focus-visible,
+.search-result:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  * { transition: none !important; }
+}
