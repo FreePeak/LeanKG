@@ -176,9 +176,21 @@ pub fn downward_rule_for(element_type: &str) -> DownwardRule {
             edge_types: FILE_DOWN_EDGES,
             fanout_cap: 12,
         },
-        "document" | "doc_section" => DownwardRule {
+        "document" => DownwardRule {
             hops: 1,
             edge_types: DOC_DOWN_EDGES,
+            fanout_cap: 10,
+        },
+        // A doc_section carries no direct references — the doc indexer
+        // attaches `references` edges to the containing document node —
+        // so sections need 2 hops: `contains` (doc → section) up to the
+        // document, then the document's `references`/`documented_by`
+        // edges down to code. Without this, section seeds (the exact
+        // elements vector search returns for kind=docs) never reach
+        // functions and vanish from semantic_search output.
+        "doc_section" => DownwardRule {
+            hops: 2,
+            edge_types: &["contains", "references", "documented_by"],
             fanout_cap: 10,
         },
         "workflow" => DownwardRule {
@@ -761,6 +773,120 @@ mod tests {
         assert!(is_upper_type("document"));
         assert!(!is_upper_type("function"));
         assert!(!is_upper_type("method"));
+    }
+
+    /// REL-REFRESH-01: doc_section seeds must reach functions through
+    /// their containing document (`contains` up, `references` down) so
+    /// kind=docs semantic_search surfaces them; the document node keeps
+    /// its direct 1-hop rule.
+    #[test]
+    fn doc_section_rule_reaches_through_containing_document() {
+        let doc = downward_rule_for("document");
+        assert_eq!(doc.hops, 1);
+        assert!(doc.edge_types.contains(&"references"));
+
+        let section = downward_rule_for("doc_section");
+        assert_eq!(section.hops, 2, "sections need 2 hops via their document");
+        assert!(section.edge_types.contains(&"contains"));
+        assert!(section.edge_types.contains(&"references"));
+        assert!(section.edge_types.contains(&"documented_by"));
+
+        // Other rules are untouched.
+        assert_eq!(downward_rule_for("class").hops, 1);
+        assert_eq!(downward_rule_for("workflow").hops, 2);
+    }
+
+    /// REL-REFRESH-01 end-to-end: a doc_section seed whose document node
+    /// carries the `references` edges must reach the referenced functions
+    /// through the 2-hop `contains` → `references` path (the doc indexer
+    /// attaches references to the document node, not the sections).
+    #[test]
+    fn doc_section_seed_traverses_through_document_references() {
+        use crate::db::models::Relationship;
+        use crate::db::schema::init_db;
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let db = init_db(&tmp.path().join("traverse.db")).expect("init_db");
+        let graph = GraphEngine::new(db);
+
+        let make_el = |qn: &str, element_type: &str, file_path: &str| CodeElement {
+            qualified_name: qn.to_string(),
+            element_type: element_type.to_string(),
+            name: qn.rsplit("::").next().unwrap_or(qn).to_string(),
+            file_path: file_path.to_string(),
+            env: "local".to_string(),
+            ..Default::default()
+        };
+        graph
+            .insert_elements(&[
+                make_el("docs/prd.md", "document", "docs/prd.md"),
+                make_el(
+                    "docs/prd.md::5.28 Remote source indexing",
+                    "doc_section",
+                    "docs/prd.md",
+                ),
+                make_el(
+                    "src/sources/gcs.rs::remote_fingerprint",
+                    "function",
+                    "src/sources/gcs.rs",
+                ),
+                make_el(
+                    "src/sources/gcs.rs::resolve_endpoint",
+                    "function",
+                    "src/sources/gcs.rs",
+                ),
+            ])
+            .expect("insert elements");
+
+        let make_rel = |src: &str, tgt: &str, rel_type: &str| Relationship {
+            source_qualified: src.to_string(),
+            target_qualified: tgt.to_string(),
+            rel_type: rel_type.to_string(),
+            confidence: 1.0,
+            env: "local".to_string(),
+            ..Default::default()
+        };
+        graph
+            .insert_relationships(&[
+                make_rel(
+                    "docs/prd.md",
+                    "docs/prd.md::5.28 Remote source indexing",
+                    "contains",
+                ),
+                make_rel(
+                    "docs/prd.md",
+                    "src/sources/gcs.rs::remote_fingerprint",
+                    "references",
+                ),
+                make_rel(
+                    "docs/prd.md",
+                    "src/sources/gcs.rs::resolve_endpoint",
+                    "references",
+                ),
+            ])
+            .expect("insert relationships");
+
+        let seeds = vec![UpperSeed::with_name(
+            "docs/prd.md::5.28 Remote source indexing",
+            "doc_section",
+            "5.28",
+        )];
+        let found = traverse_to_functions(&graph, &seeds, Some("local")).expect("traverse");
+        let qns: Vec<&str> = found.iter().map(|f| f.qualified_name.as_str()).collect();
+        assert!(
+            qns.contains(&"src/sources/gcs.rs::remote_fingerprint"),
+            "doc_section seed must reach referenced functions; got {:?}",
+            qns
+        );
+        assert!(
+            qns.len() >= 2,
+            "both referenced functions expected: {:?}",
+            qns
+        );
+        assert!(
+            found.iter().all(|f| f.via_upper_type == "doc_section"),
+            "provenance must point at the doc_section seed"
+        );
     }
 
     #[test]
