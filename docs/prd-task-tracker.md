@@ -271,8 +271,8 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 | # | ID | Status | Intent |
 |--:|----|--------|--------|
-| 1 | `US-SM-01` / `FR-SM-01..03` | PENDING / NOT_DONE | Session MCP offload + `node_id` canvas + `session_recall` |
-| — | `REL-075` | **PARTIAL** | Docs/PRD/tracker landed; smoke when US-SM-01/02 ship |
+| 1 | `US-SM-01` / `FR-SM-01..03` | DONE / DONE | Session MCP offload + `node_id` canvas + `session_recall` — merged (#174, evidence: reports/rel-075-session-offload-2026-08-02.md) |
+| — | `REL-075` | **DONE** | Offload shipped (#174); live report reports/rel-075-session-offload-2026-08-02.md |
 | 2 | `US-SM-02` / `FR-SM-04..06` | PENDING / NOT_DONE | Auto-recall into `get_overview_context` (closes US-GE-05) |
 | 3 | `US-SM-03` / `FR-SM-07..08` | PENDING / NOT_DONE | Provenance + typed agent-memory kinds |
 | 4 | `US-SM-04` / `FR-SM-09` | PENDING / NOT_DONE | Hybrid RRF over knowledge/diary/LESSONS/ontology |
@@ -369,8 +369,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
 | **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
-| **P2** | `REL-075` | Release | **PARTIAL** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
-| **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
@@ -426,7 +426,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-C08..C11` | FR | **NOT_DONE** | Should Have | Windows, pkg channel, SLSA, install targets (Could) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-D04` | FR | **NOT_DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E01..E05` | FR | **NOT_DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E10..E14` | FR | **NOT_DONE** | Should Have | Rust 3D layout + 'get_graph_layout' / '/api/graph' | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E10..E14` | FR | **DONE** | Should Have | Rust 3D layout + get_graph_layout / /api/graph/layout3d — merged (#171) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
@@ -548,8 +548,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
 | **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
-| **P2** | `REL-075` | Release | **PARTIAL** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
-| **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
@@ -612,7 +612,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-C08..C11` | FR | **NOT_DONE** | Should Have | Windows, pkg channel, SLSA, install targets (Could) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-D04` | FR | **NOT_DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E01..E05` | FR | **NOT_DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E10..E14` | FR | **NOT_DONE** | Should Have | Rust 3D layout + 'get_graph_layout' / '/api/graph' | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E10..E14` | FR | **DONE** | Should Have | Rust 3D layout + get_graph_layout / /api/graph/layout3d — merged (#171) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
