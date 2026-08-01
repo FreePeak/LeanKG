@@ -654,16 +654,17 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 **Ordered company-adoption queue (Focus P1 — after P0 procedural auto-update):**
 
-1. **US-COST-01** — Publish manager ROI brief (tokens + tool calls + multi-repo TCO)  
-2. **US-GF-14** — Three-verb narrative (path · explain · query) so agents pick cheap tools first  
-3. **US-GF-17** — Always-on graph-first install/hooks (primary **cost lever**: agents stop grepping first)  
-4. **US-GF-04** — Honest edges in MCP + ui-v2 (trust = adoption)  
-5. **US-GF-06** — Auto `GRAPH_REPORT.md` (onboarding without 85-tool wall)  
-6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI)  
-7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb)  
-8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company)
+1. **US-COST-01** — Publish manager ROI brief (tokens + tool calls + multi-repo TCO) — **DONE**
+2. **US-GF-14** — Three-verb narrative (path · explain · query) so agents pick cheap tools first — **DONE**
+3. **US-GF-17** — Always-on graph-first install/hooks (primary **cost lever**: agents stop grepping first) — **DONE**
+4. **US-GF-04** — Honest edges in MCP + ui-v2 (trust = adoption) — **DONE**
+5. **US-GF-06** — Auto `GRAPH_REPORT.md` (onboarding without 85-tool wall) — **DONE**
+6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI) — **DONE**
+7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb) — **CURRENT (Wave 3)**
+8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company) — **DONE**
+9. **US-MG-02** — Single-repo expand (Wave 4) — PARTIAL / next after Wave 3
 
-**P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact.
+**P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact. **DONE**.
 
 **Explicit non-goals for company ROI:** PDF/image/video graph ingest; replacing CozoDB with NetworkX; chasing 36 languages before typed resolve depth.
 
