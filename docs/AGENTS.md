@@ -43,6 +43,12 @@ cargo run -- impact <file> --depth 3   # Calculate impact radius
 cargo run -- status            # Show index status
 ```
 
+### Reflect (US-GF-16)
+After a graph query resolves a task, call `report_query_outcome` once
+(`useful` / `dead_end` / `corrected`, with a `note` on what worked for
+dead-ends/corrections). Lessons land in `.leankg/reflections/LESSONS.md` and
+feed next-session recall. See [`docs/reflect-skill.md`](reflect-skill.md).
+
 ---
 
 ## Code Structure Overview
