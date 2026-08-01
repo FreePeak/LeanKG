@@ -127,6 +127,12 @@ pub fn refresh_index_inventory(
         notes: notes.to_string(),
     };
     upsert_inventory(db, &inv)?;
+    // FR-GF-10: index completion refreshes persisted god-node importance
+    // scores so `get_architecture` hotspots (FR-GF-12) and `get_god_nodes`
+    // read index-time scores instead of recomputing per call.
+    if let Err(e) = crate::graph::god_nodes::refresh_node_scores(graph) {
+        tracing::warn!("node_scores refresh at index completion failed: {}", e);
+    }
     Ok(inv)
 }
 
@@ -255,5 +261,62 @@ mod tests {
         let loaded = load_latest_inventory(graph.db()).unwrap().unwrap();
         assert_eq!(loaded.total_elements, 0);
         assert_eq!(loaded.notes, "test");
+    }
+
+    // FR-GF-10: index completion refreshes persisted god-node scores.
+    #[test]
+    fn refresh_index_inventory_refreshes_node_scores() {
+        let dir = TempDir::new().unwrap();
+        let db = init_db(dir.path()).unwrap();
+        let graph = GraphEngine::new(db);
+        use crate::db::models::CodeElement;
+        graph
+            .insert_element(&CodeElement {
+                qualified_name: "src/hub.rs::hub".to_string(),
+                element_type: "function".to_string(),
+                name: "hub".to_string(),
+                file_path: "src/hub.rs".to_string(),
+                line_start: 1,
+                line_end: 5,
+                language: "rust".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        graph
+            .insert_element(&CodeElement {
+                qualified_name: "src/leaf.rs::leaf".to_string(),
+                element_type: "function".to_string(),
+                name: "leaf".to_string(),
+                file_path: "src/leaf.rs".to_string(),
+                line_start: 1,
+                line_end: 5,
+                language: "rust".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        graph
+            .insert_relationship(&crate::db::models::Relationship {
+                source_qualified: "src/hub.rs::hub".to_string(),
+                target_qualified: "src/leaf.rs::leaf".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 0.9,
+                metadata: serde_json::json!({}),
+                ..Default::default()
+            })
+            .unwrap();
+
+        refresh_index_inventory(&graph, "test").unwrap();
+
+        let scores = crate::graph::god_nodes::load_scores(graph.db()).unwrap();
+        assert!(
+            !scores.is_empty(),
+            "node_scores should be refreshed at index completion"
+        );
+        let hub = scores
+            .iter()
+            .find(|s| s.qualified_name == "src/hub.rs::hub")
+            .expect("hub should be scored");
+        assert_eq!(hub.degree, 1);
+        assert!(scores[0].rank_score > 0.0);
     }
 }

@@ -4089,6 +4089,32 @@ impl GraphEngine {
             Self::truncate_section("clusters", clusters, max_items, &mut truncated_sections);
         let hotspots =
             Self::truncate_section("hotspots", hotspots, max_items, &mut truncated_sections);
+
+        // FR-GF-12: include god nodes (index-time importance scores) in the
+        // hotspots section. Never fails the whole response: a scoring read
+        // problem degrades to an empty list.
+        let god_node_values: Vec<serde_json::Value> = self
+            .get_god_nodes(10, None)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|g| {
+                serde_json::json!({
+                    "qualified_name": g.qualified_name,
+                    "name": g.name,
+                    "element_type": g.element_type,
+                    "degree": g.degree,
+                    "rank_score": g.rank_score,
+                    "pagerank_score": g.pagerank_score,
+                })
+            })
+            .collect();
+        let god_nodes = Self::truncate_section(
+            "god_nodes",
+            god_node_values,
+            max_items,
+            &mut truncated_sections,
+        );
+
         let relationship_counts = Self::truncate_section(
             "relationship_summary",
             relationship_counts,
@@ -4102,6 +4128,7 @@ impl GraphEngine {
             "routes": routes,
             "clusters": clusters,
             "hotspots": hotspots,
+            "god_nodes": god_nodes,
             "relationship_summary": relationship_counts,
             "knowledge_count": self.count_knowledge().unwrap_or(0),
             "total_elements": self.count_elements().unwrap_or(0),
@@ -4439,12 +4466,18 @@ pub struct NodeExplanation {
 }
 
 /// US-GF-05: Top-degree node entry for god-node ranking.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// FR-GF-10: `rank_score` / `pagerank_score` carry the index-time
+/// importance scores persisted by `src/graph/god_nodes.rs`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GodNode {
     pub qualified_name: String,
     pub name: String,
     pub element_type: String,
     pub degree: usize,
+    #[serde(default)]
+    pub rank_score: f64,
+    #[serde(default)]
+    pub pagerank_score: Option<f64>,
 }
 
 /// US-GF-06: Per-label count + percentage for confidence distribution.
@@ -5189,17 +5222,41 @@ impl GraphEngine {
         exclude_hubs_percentile: Option<u8>,
     ) -> Result<Vec<GodNode>, Box<dyn std::error::Error>> {
         let limit = limit.clamp(1, 200);
-        let all_rels = self.all_relationships()?;
         let elements = self.all_elements()?;
 
-        let mut degree: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        for r in &all_rels {
-            *degree.entry(r.source_qualified.clone()).or_default() += 1;
-            *degree.entry(r.target_qualified.clone()).or_default() += 1;
-        }
+        // FR-GF-10: prefer index-time persisted scores (degree + rank) when
+        // present; fall back to a live degree pass for DBs indexed before
+        // this feature.
+        let persisted = crate::graph::god_nodes::load_scores(self.db())?;
+        let use_persisted = !persisted.is_empty();
 
-        let mut nodes: Vec<(String, usize)> = degree.into_iter().collect();
-        nodes.sort_by_key(|n| std::cmp::Reverse(n.1));
+        let mut nodes: Vec<(String, u64, f64, Option<f64>)> = if use_persisted {
+            persisted
+                .into_iter()
+                .map(|s| (s.qualified_name, s.degree, s.rank_score, s.pagerank_score))
+                .collect()
+        } else {
+            let all_rels = self.all_relationships()?;
+            let mut degree: std::collections::HashMap<String, u64> =
+                std::collections::HashMap::new();
+            for r in &all_rels {
+                *degree.entry(r.source_qualified.clone()).or_default() += 1;
+                *degree.entry(r.target_qualified.clone()).or_default() += 1;
+            }
+            let max_degree = degree.values().cloned().max().unwrap_or(0).max(1);
+            degree
+                .into_iter()
+                .map(|(qn, deg)| (qn, deg, deg as f64 / max_degree as f64, None))
+                .collect()
+        };
+
+        // Rank first, then degree, then name for deterministic ordering.
+        nodes.sort_by(|a, b| {
+            b.2.partial_cmp(&a.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(b.1.cmp(&a.1))
+                .then(a.0.cmp(&b.0))
+        });
 
         if let Some(pctl) = exclude_hubs_percentile {
             if !nodes.is_empty() {
@@ -5210,7 +5267,7 @@ impl GraphEngine {
         }
 
         let qn_set: std::collections::HashSet<String> =
-            nodes.iter().map(|(qn, _)| qn.clone()).collect();
+            nodes.iter().map(|(qn, _, _, _)| qn.clone()).collect();
         let by_qn: std::collections::HashMap<String, CodeElement> = elements
             .into_iter()
             .filter(|e| qn_set.contains(&e.qualified_name))
@@ -5220,7 +5277,7 @@ impl GraphEngine {
         Ok(nodes
             .into_iter()
             .take(limit)
-            .map(|(qn, deg)| {
+            .map(|(qn, deg, rank_score, pagerank_score)| {
                 let element_type = by_qn
                     .get(&qn)
                     .map(|e| e.element_type.clone())
@@ -5233,7 +5290,9 @@ impl GraphEngine {
                     qualified_name: qn,
                     name,
                     element_type,
-                    degree: deg,
+                    degree: deg as usize,
+                    rank_score,
+                    pagerank_score,
                 }
             })
             .collect())
@@ -6400,6 +6459,73 @@ mod tests {
         assert_eq!(obj["total_elements"].as_u64().unwrap(), 2);
     }
 
+    // FR-GF-12: get_architecture hotspots section must include god nodes
+    // computed at index time (persisted `node_scores` relation).
+
+    #[test]
+    fn test_architecture_hotspots_include_god_nodes_from_persisted_scores() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "hub", "function", "src/hub.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "leaf_a", "function", "src/leaf.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "leaf_b", "function", "src/leaf.rs", "rust", 6, 10);
+        insert_test_rel(
+            &engine,
+            "src/hub.rs::hub",
+            "src/leaf.rs::leaf_a",
+            "calls",
+            0.9,
+        );
+        insert_test_rel(
+            &engine,
+            "src/hub.rs::hub",
+            "src/leaf.rs::leaf_b",
+            "calls",
+            0.9,
+        );
+        // Index-time scoring pass (the FR-GF-10 hook).
+        crate::graph::god_nodes::refresh_node_scores(&engine).unwrap();
+
+        let arch = engine.get_architecture(None).unwrap();
+        let obj = arch.as_object().unwrap();
+        let god_nodes = obj["god_nodes"].as_array().unwrap();
+        assert!(
+            !god_nodes.is_empty(),
+            "god_nodes section should be populated"
+        );
+        let top = god_nodes[0].as_object().unwrap();
+        assert_eq!(top["qualified_name"].as_str().unwrap(), "src/hub.rs::hub");
+        assert_eq!(top["degree"].as_u64().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_architecture_hotspots_falls_back_to_live_compute_without_scores() {
+        // No persisted node_scores yet (e.g. DB written before FR-GF-10):
+        // get_architecture must still emit god nodes via a live degree pass.
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element_full(&engine, "hub", "function", "src/hub.rs", "rust", 1, 5);
+        insert_test_element_full(&engine, "leaf", "function", "src/leaf.rs", "rust", 1, 5);
+        insert_test_rel(
+            &engine,
+            "src/hub.rs::hub",
+            "src/leaf.rs::leaf",
+            "calls",
+            0.9,
+        );
+
+        let arch = engine.get_architecture(None).unwrap();
+        let obj = arch.as_object().unwrap();
+        let god_nodes = obj["god_nodes"].as_array().unwrap();
+        assert!(
+            !god_nodes.is_empty(),
+            "god_nodes should fall back to live degree"
+        );
+        assert_eq!(
+            god_nodes[0]["qualified_name"].as_str().unwrap(),
+            "src/hub.rs::hub"
+        );
+        assert_eq!(god_nodes[0]["degree"].as_u64().unwrap(), 1);
+    }
+
     #[test]
     fn test_architecture_finds_entry_points() {
         let (engine, _tmp) = make_test_engine();
@@ -7013,12 +7139,14 @@ mod tests {
             name: "a".into(),
             element_type: "file".into(),
             degree: 5,
+            ..Default::default()
         };
         let b = GodNode {
             qualified_name: "b".into(),
             name: "b".into(),
             element_type: "file".into(),
             degree: 10,
+            ..Default::default()
         };
         let mut v = [a.clone(), b.clone()];
         v.sort_by_key(|x| std::cmp::Reverse(x.degree));
@@ -7041,6 +7169,7 @@ mod tests {
                 name: "a".into(),
                 element_type: "file".into(),
                 degree: 4,
+                ..Default::default()
             }],
             confidence_distribution: vec![
                 LabelCount {
