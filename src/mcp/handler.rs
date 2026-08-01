@@ -5182,6 +5182,35 @@ mod tests {
         assert!(prompt.contains("No elements"));
     }
 
+    // FR-SEM-01 integration: in-process MCP dispatch must attach the
+    // `_token_budget` envelope + delivered `tokens` to structured tool
+    // responses, with max reflecting the tool-specific budget (FR-SEM-02).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_tool_attaches_token_budget_envelope() {
+        use crate::db::schema::init_db;
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("leankg.db");
+        let db = init_db(&db_path).unwrap();
+        let graph = GraphEngine::new(db);
+        let handler = ToolHandler::new(graph, db_path);
+
+        let resp = handler
+            .execute_tool("concept_search", &json!({"query": "auth"}))
+            .await
+            .expect("concept_search");
+        let budget = resp.get("_token_budget").expect("envelope present");
+        assert_eq!(
+            budget["max"].as_u64(),
+            Some(4000),
+            "concept_search max must be tool budget (FR-SEM-02)"
+        );
+        assert!(resp.get("tokens").is_some(), "delivered tokens present");
+        // Envelope shape: {max, actual, truncated} all present.
+        assert!(budget.get("actual").is_some());
+        assert!(budget.get("truncated").is_some());
+    }
+
     #[test]
     fn test_generate_review_prompt_with_elements() {
         let elements = vec![CodeElement {
