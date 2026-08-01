@@ -8,7 +8,7 @@ Complete reference for all LeanKG CLI commands.
 |---------|-------------|
 | `leankg version` | Show LeanKG version |
 | `leankg init` | Initialize LeanKG in the current directory |
-| `leankg init --with-lsp` | Initialize and write a prefab `lsp:` block (gopls / typescript-language-server / pyright / …) plus `indexer.typed_resolve: go,ts` |
+| `leankg init --with-lsp` | Initialize and write a prefab `lsp:` block (gopls / typescript-language-server / pyright / …) plus `indexer.typed_resolve` for detected languages (default `go,ts`; adds `py,rs` for Python/Rust, `swift`/`objc` when detected) |
 | `leankg lsp-resolve <file> <line> <col>` | Resolve definition/references via LSP bridge (or hybrid fallback) |
 | `leankg lsp-list` | List catalogued LSP servers |
 | `leankg lsp-install <lang>` | Install the preferred LSP server for a language |
@@ -21,7 +21,7 @@ Complete reference for all LeanKG CLI commands.
 | `leankg serve` | Start the MCP server (WebSocket) |
 | `leankg serve --mcp-port 3000` | Custom MCP server port |
 | `leankg mcp-stdio` | Start MCP server with stdio transport |
-| `leankg impact <file> --depth N` | Compute blast radius for a file |
+| `leankg impact <file> --depth N` | Compute blast radius for a file (`--max-affected N` caps result set, default 10000) |
 | `leankg status` | Show index statistics and status |
 | `leankg generate` | Generate documentation from the graph |
 | `leankg install` | Auto-install MCP config for AI tools |
@@ -89,6 +89,27 @@ leankg index --lang go,ts,py,rs,java,kotlin
 # Exclude patterns
 leankg index --exclude vendor,node_modules,dist
 ```
+
+## Embedding Options (FR-C02)
+
+```bash
+# Incremental embed (stale + missing rows only)
+leankg embed
+
+# Full rebuild / parallel / batch control
+leankg embed --full
+leankg embed --workers 4          # parallel inference workers
+leankg embed --batch-size 64      # vectors per inference batch (small hosts: 4)
+leankg embed --types function,method
+
+# Model selection (smaller / faster models)
+LEANKG_EMBED_MODEL=bge-q leankg embed --wait   # INT8 quantized (default fast path)
+LEANKG_EMBED_MODEL=minilm leankg embed --wait  # all-MiniLM-L6-v2, lightest
+LEANKG_EMBED_MAX_SEQ=128 leankg embed --wait   # seq cap → ~2× faster cold embed
+```
+
+See [`docs/index-embed-flow.md`](index-embed-flow.md) "Smaller model /
+batch-size options" for the full knob table and RSS guidance.
 
 ## Multi-Project Setup (Docker Compose)
 

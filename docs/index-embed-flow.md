@@ -333,7 +333,7 @@ Each `CodeElement` gets a short text blob for the BGE-small-en-v1.5 model (384-d
 | `domain_entity`, `service`, `workflow` (ontology) | name + aliases + description + element_type |
 | `cluster`, `process`, etc. | **Skipped** (no embedding) |
 
-Blob length capped at 1500 chars (500 on `LEANKG_EMBED_FAST=1`).
+Blob length capped at 1500 chars (500 on the default fast path; override with `LEANKG_EMBED_MAX_BLOB_CHARS`).
 
 Content hash: SHA-256 hex digest of the blob bytes, stored in `embedding_state.content_hash`.
 
@@ -610,9 +610,10 @@ mcp:
 |----------|---------|---------|
 | `LEANKG_MAX_FILE_SIZE` | 2 MiB | Max file size for indexing |
 | `LEANKG_SKIP_FRESHNESS_CHECK` | off | Skip MCP startup freshness check |
-| `LEANKG_EMBED_FAST` | off | Use DirectEmbedder (ONNX Runtime, INT8, per-worker intra_threads) |
-| `LEANKG_EMBED_MODEL` | `bge` | Embedding model: `bge` (FP32), `bge-q` (INT8 quantized, preferred fast path), `bge-fp16`, `minilm` (faster, still 384-d) — see [Model & batch-size options](#model--batch-size-options) |
-| `LEANKG_EMBED_MAX_SEQ` | 512 | Max BPE sequence length; lower (e.g. 256) ≈ 2× faster cold embed on short code blobs |
+| `LEANKG_EMBED_FAST` | on | Use DirectEmbedder (ONNX Runtime, INT8, per-worker intra_threads). Set `0` for the legacy FP32 profile. |
+| `LEANKG_EMBED_MODEL` | `bge` | Embedding model weights: `bge` (BGE-small FP32), `bge-q` (INT8 quantized — preferred fast path), `bge-fp16` (FP16), `minilm` (all-MiniLM-L6-v2, faster, still 384-dim) |
+| `LEANKG_EMBED_MAX_SEQ` | 512 (128 fast) | Runtime sequence-length cap (64..512). `256` ≈ 2× faster cold embed on short code blobs |
+| `LEANKG_EMBED_DIRECT_INTRA` | 1 | ORT intra-thread count per DirectEmbedder session. Higher on many-core hosts |
 | `LEANKG_EMBED_MAX_MB` | 2048/4096 | Soft RSS cap for embed |
 | `LEANKG_EMBED_MAX_BLOB_CHARS` | 500/1500 | Max text blob chars |
 | `LEANKG_EMBED_UPSERT_CHUNK` | 5000 | Vectors per CozoDB import batch |
@@ -627,31 +628,25 @@ mcp:
 | `LEANKG_INCREMENTAL_SKIP_DEPENDENTS` | off | Skip dependent expansion on mega-graphs |
 | `LEANKG_EMBED_VECTOR_STORE` | cozo | `redis` for Redis side-store |
 
-### Model & batch-size options (FR-C02)
+### Smaller model / batch-size options (FR-C02)
 
-**Models** (via `LEANKG_EMBED_MODEL`, all 384-dim):
+Cold-embed wall time on mega-graphs is dominated by ONNX inference
+(~170 vec/sec e2e → ~36 min for ~371k functions; writer paths are
+~100k+ vec/sec). The levers below trade recall/latency for throughput
+and RSS, in order of impact:
 
-| Value | Weights | Trade-off |
-|-------|---------|-----------|
-| `bge` (default) | `Xenova/bge-small-en-v1.5` FP32 (`onnx/model.onnx`) | Baseline accuracy; ~130 MB ONNX |
-| `bge-q` | INT8 quantized (`onnx/model_quantized.onnx`) | Preferred fast path; smaller + faster, ~same recall |
-| `bge-fp16` | FP16 (`onnx/model_fp16.onnx`) | Half-size FP precision |
-| `minilm` | `Xenova/all-MiniLM-L6-v2` FP32 | Faster cold embed; still 384-d |
+| Lever | What it does | Example |
+|-------|--------------|---------|
+| Model weights | `LEANKG_EMBED_MODEL=bge-q` (INT8) is the default fast path (~2–4× faster, small recall delta on short code blobs). `minilm` is the lightest model. `bge`/`bge-fp16` are higher-fidelity FP paths. | `LEANKG_EMBED_MODEL=bge-q` |
+| Seq cap | `LEANKG_EMBED_MAX_SEQ=128` (default under fast path) truncates blobs before the ONNX graph — short code blobs spend less time in BPE/attention. Clamped 64..512. | `LEANKG_EMBED_MAX_SEQ=256` |
+| Batch size | `leankg embed --batch-size N`. Small hosts should use `4` or lower; the memory planner auto-caps `batch_size` 8..256 from `LEANKG_EMBED_MAX_MB`. | `leankg embed --batch-size 4` |
+| Worker threads | `leankg embed --workers N`; capped by RSS budget (≈350 MB/worker). | `leankg embed --workers 2` |
+| ORT intra-threads | `LEANKG_EMBED_DIRECT_INTRA=N` — per-session threads; default 1 is the M-series sweet spot. | `LEANKG_EMBED_DIRECT_INTRA=4` on 10c+ hosts |
+| Duty-cycling | `LEANKG_EMBED_PARTIAL_BATCHES` / `_PAUSE_MS` — background (MCP) embeds yield between slices so requests keep flowing. | defaults 4 / 500 |
 
-Switch models only with a full re-embed (`leankg embed --full`) —
-`embedding_state` content hashes do not carry a model fingerprint, so mixed
-model vectors would poison ANN recall.
-
-**Batch size** (`leankg embed --batch-size N`, default 32):
-
-- ONNX Runtime pre-allocates per-thread memory arenas, so **peak RSS scales
-  with batch size** (`src/embeddings/build.rs` `plan_embed_memory`).
-- On small hosts (≤ 2 GiB cgroup / M2 Pro 16 GB while serving MCP) pass
-  `--batch-size 4` (or lower); `LEANKG_EMBED_MAX_MB` auto-caps it anyway.
-- Larger batches (64–256) amortize inference overhead on quiet machines with
-  headroom — `plan_embed_memory_with_budget` allows up to 256 for a single
-  worker under ≥ 4 GiB.
-- `leankg.yaml` `mcp.embed_batch_size: 0` = auto-detect from RSS budget.
+RSS rule of thumb: base process + Cozo ≈ 700–900 MB, each ONNX worker
+session ≈ 300–400 MB. On a 2 GB cgroup keep `--workers 1 --batch-size 4`.
+Set `LEANKG_EMBED_MAX_MB=0` to disable auto-caps (not recommended).
 
 ---
 
