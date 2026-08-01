@@ -520,6 +520,17 @@ pub const ALL_LSP_SERVERS: &[LspServerSpec] = &[
         }],
     },
     LspServerSpec {
+        language: "objc",
+        command: "clangd",
+        args: &["--background-index"],
+        extensions: &["m", "mm"],
+        aliases: &["objective-c", "objectivec"],
+        install: &[
+            InstallMethod::Brew { formula: "clangd" },
+            InstallMethod::Npm { package: "clangd" },
+        ],
+    },
+    LspServerSpec {
         language: "dart",
         command: "dart-language-server",
         args: &["--protocol=lsp"],
@@ -787,6 +798,9 @@ mod tests {
         assert_eq!(detect_language_by_extension("vue"), Some("vue"));
         assert_eq!(detect_language_by_extension("svelte"), Some("svelte"));
         assert_eq!(detect_language_by_extension("sol"), Some("solidity"));
+        assert_eq!(detect_language_by_extension("swift"), Some("swift"));
+        assert_eq!(detect_language_by_extension("m"), Some("objc"));
+        assert_eq!(detect_language_by_extension("mm"), Some("objc"));
     }
 
     #[test]
