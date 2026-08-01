@@ -306,13 +306,7 @@ mod tests {
     #[test]
     fn apply_typed_resolve_upgrades_objc_calls() {
         let elements = vec![
-            elem(
-                "Greeter.m::setup",
-                "method",
-                "setup",
-                "Greeter.m",
-                "objc",
-            ),
+            elem("Greeter.m::setup", "method", "setup", "Greeter.m", "objc"),
             elem(
                 "Greeter.m::sayHello",
                 "method",

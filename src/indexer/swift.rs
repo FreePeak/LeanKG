@@ -52,8 +52,7 @@ static PROPERTY_RE: Lazy<Regex> = Lazy::new(|| {
 });
 static IMPORT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^\s*import\s+([A-Za-z_][A-Za-z0-9_.]*)").unwrap());
-static TYPE_TOKEN_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").unwrap());
+static TYPE_TOKEN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").unwrap());
 
 pub struct SwiftExtractor<'a> {
     source: &'a str,

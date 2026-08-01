@@ -33,8 +33,7 @@ static METHOD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^\s*[-+]\s*\([^)]*\)\s*(.+)").unwrap());
 static IMPORT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?m)^\s*(?:#import\s+["<]([^">]+)[">]|@import\s+(\w+))"#).unwrap());
-static SELECTOR_PART_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(\w+)\s*:").unwrap());
+static SELECTOR_PART_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\w+)\s*:").unwrap());
 static BARE_METHOD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(\w+)\b").unwrap());
 
 pub struct ObjCExtractor<'a> {
@@ -318,9 +317,7 @@ fn parse_objc_selector(after_rettype: &str) -> Option<String> {
     if !parts.is_empty() {
         return Some(parts.join(""));
     }
-    BARE_METHOD_RE
-        .captures(trimmed)
-        .map(|c| c[1].to_string())
+    BARE_METHOD_RE.captures(trimmed).map(|c| c[1].to_string())
 }
 
 /// Heuristic: treat a `.h` as Objective-C when ObjC markers are present.
@@ -362,9 +359,7 @@ fn extract_objc_message_calls(
 
         if kind == "message_expression" {
             if let Some(sel) = objc_message_selector(node, source) {
-                let caller = method_ctx
-                    .clone()
-                    .unwrap_or_else(|| file_path.to_string());
+                let caller = method_ctx.clone().unwrap_or_else(|| file_path.to_string());
                 calls.push(Relationship {
                     id: None,
                     source_qualified: caller,
@@ -643,8 +638,7 @@ mod tests {
 - (void)setup {}
 @end
 "#;
-        let (_elems, rels) =
-            ObjCExtractor::new(src.as_bytes(), "Greeter.m").extract_with_calls();
+        let (_elems, rels) = ObjCExtractor::new(src.as_bytes(), "Greeter.m").extract_with_calls();
         let calls: Vec<_> = rels
             .iter()
             .filter(|r| r.rel_type == "calls")
