@@ -1,8 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 (PR-00 reconcile + Wave 4 DONE + PR-03 remote-source closeouts) — **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01` closed with evidence: docs/reports/rel-src-*-2026-08-01.md). Priority order: **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md)). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
-**Last synced:** 2026-08-01 (PR-00 reconcile + PR-03 remote-source closeouts) — **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01` closed with evidence: docs/reports/rel-src-*-2026-08-01.md). Priority order: **P1 CURRENT = Wave 4** (`US-MG-02` / `FR-MG-03`). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
->>>>>>> 23623f79 (docs: refresh kind=docs live smoke + tracker DONE (REL-REFRESH-01))
+**Last synced:** 2026-08-02 (PR-13 SEM token budgets — FR-SEM-01..03 / US-SEM-01..03 DONE). **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01`). **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §5.18 / §5.22–5.23 / §5.32  
 **All-open fan-out campaign (worktrees + TDD + PRs):** [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)
@@ -43,19 +41,19 @@
 | Metric | Count |
 |--------|------:|
 | **Total tracked** | **539** |
-| NOT_DONE | 64 |
-| PENDING | 31 |
+| NOT_DONE | 58 |
+| PENDING | 25 |
 | PARTIAL | 9 |
 | OPEN | 1 |
-| DONE | 431 |
+| DONE | 443 |
 | WONT_DO | 3 |
-| Open work | **105** |
+| Open work | **93** |
 
 | Open by Focus | Count |
 |---------------|------:|
 | P0 | 0 |
 | P1 | 2 |
-| P2 | ~98 |
+| P2 | ~92 |
 | P3 | ~13 |
 
 | Kind | Count |
@@ -353,30 +351,30 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `FR-GF-21` | FR | **DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-MG-03` | FR | **DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
-| **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan (path US-SM-02) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-SM-01` | FR | **NOT_DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-02` | FR | **NOT_DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-03` | FR | **NOT_DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-04` | FR | **NOT_DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-05` | FR | **NOT_DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-06` | FR | **NOT_DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-07` | FR | **NOT_DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-08` | FR | **NOT_DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-09` | FR | **NOT_DONE** | Should Have | Hybrid RRF search over knowledge + diary + LESSONS + ontology | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
-| **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-GE-02` | FR | **DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-03` | FR | **DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-04` | FR | **DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-05` | FR | **DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan (path US-SM-02) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-SM-01` | FR | **DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-02` | FR | **DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-03` | FR | **DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-04` | FR | **DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-05` | FR | **DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-06` | FR | **DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-07` | FR | **DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-08` | FR | **DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-09` | FR | **DONE** | Should Have | Hybrid RRF search over knowledge + diary + LESSONS + ontology | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-10` | FR | **DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-11` | FR | **DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
+| **P3** | `FR-SM-12` | FR | **DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
 | **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
 | **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-05` | User Story | **PENDING** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-06` | User Story | **PENDING** | Could Have | Promote successful traces → ontology workflow proposals | 3.28 Session memory from TencentDB (US-SM) |
-| **P3** | `US-SM-07` | User Story | **PENDING** | Could Have | Retention/GC for session refs + agent memory | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-02` | User Story | **DONE** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-03` | User Story | **DONE** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-04` | User Story | **DONE** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-05` | User Story | **DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-06` | User Story | **DONE** | Could Have | Promote successful traces → ontology workflow proposals | 3.28 Session memory from TencentDB (US-SM) |
+| **P3** | `US-SM-07` | User Story | **DONE** | Could Have | Retention/GC for session refs + agent memory | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `FR-DOCJOIN-02` | FR | **DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-01` | FR | **DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-03` | FR | **DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
@@ -387,7 +385,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
-| **P2** | `REL-SRC-01` | Release | **NOT_DONE** | Should Have | E2e: index --source gs:// populates graph (e2e closeout: PR-03) | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `REL-SRC-01` | Release | **DONE** | Should Have | E2e: index --source gs:// populates graph (e2e closeout: PR-03) | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-WATCH-01` | FR | **DONE** | Should Have | Source trait: remote_fingerprint + materialize_ephemeral | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-02` | FR | **DONE** | Should Have | Git watch via ls-remote + archive download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
@@ -405,89 +403,89 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `US-SRC-WATCH-01` | User Story | **DONE** | Should Have | leankg watch --source git+https:// polling | 3.25 Remote source indexing (US-SRC) |
 | **P2** | `US-SRC-WATCH-02` | User Story | **DONE** | Should Have | leankg watch --source gs:// polling | 3.25 Remote source indexing (US-SRC) |
 | **P2** | `US-SRC-WATCH-03` | User Story | **DONE** | Should Have | Watch state survives restart | 3.25 Remote source indexing (US-SRC) |
-| **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A04` | FR | **NOT_DONE** | Should Have | Index per 'leankg.yaml'; expose counts | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A06` | FR | **NOT_DONE** | Should Have | Smoke: ontology + routing must pass before Phase 1 “fully done” | 5.10 CBM Structural Parity Requirements (merged) |
+| **P3** | `FR-GE-06` | FR | **DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-A01` | FR | **DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A02` | FR | **DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A03` | FR | **DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A04` | FR | **DONE** | Should Have | Index per 'leankg.yaml'; expose counts | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A06` | FR | **DONE** | Should Have | Smoke: ontology + routing must pass before Phase 1 “fully done” | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-B05` | FR | **NOT_DONE** | Should Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B06` | FR | **NOT_DONE** | Should Have | Python + Rust typed resolve (Could) — infra works; LSP server default wiring PENDING | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B13` | FR | **NOT_DONE** | Should Have | Extend 'service_calls' beyond k8s DNS regex (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B06` | FR | **DONE** | Should Have | Python + Rust typed resolve (Could) — infra works; LSP server default wiring PENDING | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B13` | FR | **DONE** | Should Have | Extend 'service_calls' beyond k8s DNS regex (Should) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-B16` | FR | **NOT_DONE** | Should Have | Runtime trace ingestion (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B40..B44` | FR | **NOT_DONE** | Should Have | IaC Resource/Module, ADR, snapshot (subset done), DATA_FLOWS (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B50` | FR | **NOT_DONE** | Should Have | ≥ 10 'run_raw_query' recipes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B40..B44` | FR | **DONE** | Should Have | IaC Resource/Module, ADR, snapshot (subset done), DATA_FLOWS (Could) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B50` | FR | **DONE** | Should Have | ≥ 10 'run_raw_query' recipes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-B51` | FR | **NOT_DONE** | Should Have | Optional openCypher→Cozo subset (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C02` | FR | **NOT_DONE** | Should Have | Document smaller-model / batch-size options (Should) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C04` | FR | **NOT_DONE** | Should Have | Profile impact-radius latency (Should) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C05` | FR | **NOT_DONE** | Should Have | Incremental languages with tier notes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C06` | FR | **NOT_DONE** | Should Have | Per-language quality tier template; Go/TS first (Must Go/TS) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C07` | FR | **NOT_DONE** | Should Have | Large-repo benchmark ≥ 1M nodes or documented ceiling (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C02` | FR | **DONE** | Should Have | Document smaller-model / batch-size options (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C04` | FR | **DONE** | Should Have | Profile impact-radius latency (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C05` | FR | **DONE** | Should Have | Incremental languages with tier notes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C06` | FR | **DONE** | Should Have | Per-language quality tier template; Go/TS first (Must Go/TS) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C07` | FR | **DONE** | Should Have | Large-repo benchmark ≥ 1M nodes or documented ceiling (Should) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-C08..C11` | FR | **NOT_DONE** | Should Have | Windows, pkg channel, SLSA, install targets (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-D04` | FR | **NOT_DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E01..E05` | FR | **NOT_DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-D04` | FR | **DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E01..E05` | FR | **DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E10..E14` | FR | **DONE** | Should Have | Rust 3D layout + get_graph_layout / /api/graph/layout3d — merged (#171) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-GF-10` | FR | **NOT_DONE** | Should Have | Index-time god-node / importance scoring (degree + optional PageRank-like) | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-12` | FR | **NOT_DONE** | Should Have | Include god nodes in 'get_architecture' hotspots section | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-16` | FR | **NOT_DONE** | Should Have | ADR/RFC citation extraction from docs → rationale nodes linked to code (parser done in 'b0… | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-23` | FR | **NOT_DONE** | Should Have | Expand leankg install platforms (start Cursor+Claude+Codex; grow toward Graphify breadth) | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-MP-02` | FR | **NOT_DONE** | Should Have | On re-index, set 'valid_to = now()' on removed edges instead of deleting them (deferred; n… | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-09` | FR | **NOT_DONE** | Should Have | New conversation_indexer module: parse Claude export JSON format | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-10` | FR | **NOT_DONE** | Should Have | New conversation_indexer module: parse ChatGPT export JSON format | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-11` | FR | **NOT_DONE** | Should Have | New conversation_indexer module: parse Slack export JSON format | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-12` | FR | **NOT_DONE** | Should Have | Extract decisions, preferences, milestones, problems from conversations as new element typ… | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-13` | FR | **NOT_DONE** | Should Have | New CLI command 'mine-conversations' with '--format' and '--project' flags | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-20` | FR | **NOT_DONE** | Should Have | Enhance 'orchestrate' intent parser to follow tunnels and use L0-L3 layer strategy (deferr… | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-E20..E28` | FR | **DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E30..E36` | FR | **DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E40..E43` | FR | **DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-GF-10` | FR | **DONE** | Should Have | Index-time god-node / importance scoring (degree + optional PageRank-like) | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-12` | FR | **DONE** | Should Have | Include god nodes in 'get_architecture' hotspots section | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-16` | FR | **DONE** | Should Have | ADR/RFC citation extraction from docs → rationale nodes linked to code (parser done in 'b0… | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-23` | FR | **DONE** | Should Have | Expand leankg install platforms (start Cursor+Claude+Codex; grow toward Graphify breadth) | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-MP-02` | FR | **DONE** | Should Have | On re-index, set 'valid_to = now()' on removed edges instead of deleting them (deferred; n… | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-09` | FR | **DONE** | Should Have | New conversation_indexer module: parse Claude export JSON format | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-10` | FR | **DONE** | Should Have | New conversation_indexer module: parse ChatGPT export JSON format | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-11` | FR | **DONE** | Should Have | New conversation_indexer module: parse Slack export JSON format | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-12` | FR | **DONE** | Should Have | Extract decisions, preferences, milestones, problems from conversations as new element typ… | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-13` | FR | **DONE** | Should Have | New CLI command 'mine-conversations' with '--format' and '--project' flags | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-20` | FR | **DONE** | Should Have | Enhance 'orchestrate' intent parser to follow tunnels and use L0-L3 layer strategy (deferr… | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-24` | FR | **DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-25` | FR | **DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-26` | FR | **DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-SEM-01` | FR | **DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-UI2-10` | FR | **DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
 | **P2** | `FR-UI2-11` | FR | **DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
 | **P2** | `REL-032` | Release | **DONE** | Should Have | Vue / Svelte / SQL DDL wired into index walk (`find_files_sync` + bulk + incremental); Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P2** | `REL-040` | Release | **NOT_DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `REL-040` | Release | **DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P3** | `FR-SEM-05` | FR | **DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P3** | `REL-041` | Release | **NOT_DONE** | Could Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P3** | `REL-041` | Release | **DONE** | Could Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `US-UI2-07` | User Story | **DONE** | Must Have | ui-v2 production cutover: embed into src/embed/ / Docker serve; become default explorer | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P1** | `US-SURF-06` | User Story | **DONE** | Must Have | Hard-delete soft-deprecated MCP tools (wake_up, search_by_environment) after grace | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
 | **P1** | `US-SURF-07` | User Story | **DONE** | Must Have | After tool shrink: sync skills, rules, guidelines, and install/setup to reduced roster | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
 | **P2** | `US-DOCJOIN-02` | User Story | **DONE** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-01` | User Story | **DONE** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-03` | User Story | **DONE** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
-| **P2** | `US-GE-02` | User Story | **PENDING** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P2** | `US-GE-03` | User Story | **PENDING** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P2** | `US-GE-04` | User Story | **PENDING** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P2** | `US-GE-05` | User Story | **PENDING** | Should Have | Closed self-improve loop: outcome write-back improves next plan | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-02` | User Story | **DONE** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-03` | User Story | **DONE** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-04` | User Story | **DONE** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-05` | User Story | **DONE** | Should Have | Closed self-improve loop: outcome write-back improves next plan | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P1** | `US-GF-14` | User Story | **DONE** | Must Have | Three-verb product narrative: path · explain · query first in README / AGENTS / skills | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-17` | User Story | **DONE** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-13` | User Story | **DONE** | Must Have | Shareable single-file HTML graph export (leankg export html, bounded subgraph/community) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-UI2-06` | User Story | **DONE** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
-| **P2** | `US-CBM-A1` | User Story | **PENDING** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-A4` | User Story | **PENDING** | Should Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-C3` | User Story | **PENDING** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-D3` | User Story | **PENDING** | Should Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E1` | User Story | **PENDING** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E2` | User Story | **PENDING** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E3` | User Story | **PENDING** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E4` | User Story | **PENDING** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-GF-15` | User Story | **PENDING** | Should Have | Expand assistant install matrix (Cursor/Claude/Codex/…) toward Graphify-style one-command … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P2** | `US-GF-16` | User Story | **PENDING** | Should Have | Productize reflect / query-outcome loop as default skill guidance | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decis… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-CBM-A1` | User Story | **DONE** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-A4` | User Story | **DONE** | Should Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-B12` | User Story | **DONE** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-C3` | User Story | **DONE** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-D3` | User Story | **DONE** | Should Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E1` | User Story | **DONE** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E2` | User Story | **DONE** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E3` | User Story | **DONE** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E4` | User Story | **DONE** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-GF-15` | User Story | **DONE** | Should Have | Expand assistant install matrix (Cursor/Claude/Codex/…) toward Graphify-style one-command … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P2** | `US-GF-16` | User Story | **DONE** | Should Have | Productize reflect / query-outcome loop as default skill guidance | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P2** | `US-MP-03` | User Story | **DONE** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decis… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-SEM-01` | User Story | **DONE** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **DONE** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **DONE** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-UI2-08` | User Story | **DONE** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-UI2-09` | User Story | **DONE** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
-| **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P3** | `US-CBM-C5` | User Story | **DONE** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P3** | `US-SEM-04` | User Story | **DONE** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `US-GE-06` | User Story | **DONE** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
 | **P1** | `FR-COST-01` | FR | **DONE** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `US-COST-01` | User Story | **DONE** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
@@ -495,13 +493,13 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-GF-06` | User Story | **DONE** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **DONE** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **DONE** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
-| **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-A2` | User Story | **DONE** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-LANG-02` | User Story | **DONE** | Should Have | Swift indexing (tree-sitter calls + heritage + typed resolve) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
-| **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-MP-08` | User Story | **PARTIAL** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-MP-02` | User Story | **DONE** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-MP-08` | User Story | **DONE** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Ap… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GF-12` | User Story | **PARTIAL** | Could Have | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app cod… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
+| **P3** | `US-GN-08` | User Story | **DONE** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. **… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
 
 ---
@@ -532,30 +530,30 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `FR-GF-21` | FR | **DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
 | **P1** | `FR-MG-03` | FR | **DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
-| **P2** | `FR-GE-02` | FR | **NOT_DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-03` | FR | **NOT_DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-04` | FR | **NOT_DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-GE-05` | FR | **NOT_DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan (path US-SM-02) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
-| **P2** | `FR-SM-01` | FR | **NOT_DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-02` | FR | **NOT_DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-03` | FR | **NOT_DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-04` | FR | **NOT_DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-05` | FR | **NOT_DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-06` | FR | **NOT_DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-07` | FR | **NOT_DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-08` | FR | **NOT_DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-09` | FR | **NOT_DONE** | Should Have | Hybrid RRF search over knowledge + diary + LESSONS + ontology | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
-| **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-GE-02` | FR | **DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-03` | FR | **DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-04` | FR | **DONE** | Should Have | Cluster-first agent navigation via precomputed cluster_id (mega-safe) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-GE-05` | FR | **DONE** | Should Have | Closed self-improve loop: outcome → diary/knowledge → next plan (path US-SM-02) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P2** | `FR-SM-01` | FR | **DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-02` | FR | **DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-03` | FR | **DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-04` | FR | **DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-05` | FR | **DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-06` | FR | **DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-07` | FR | **DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-08` | FR | **DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-09` | FR | **DONE** | Should Have | Hybrid RRF search over knowledge + diary + LESSONS + ontology | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-10` | FR | **DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-11` | FR | **DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
+| **P3** | `FR-SM-12` | FR | **DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
 | **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
 | **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-05` | User Story | **PENDING** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-06` | User Story | **PENDING** | Could Have | Promote successful traces → ontology workflow proposals | 3.28 Session memory from TencentDB (US-SM) |
-| **P3** | `US-SM-07` | User Story | **PENDING** | Could Have | Retention/GC for session refs + agent memory | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-02` | User Story | **DONE** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-03` | User Story | **DONE** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-04` | User Story | **DONE** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-05` | User Story | **DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-06` | User Story | **DONE** | Could Have | Promote successful traces → ontology workflow proposals | 3.28 Session memory from TencentDB (US-SM) |
+| **P3** | `US-SM-07` | User Story | **DONE** | Could Have | Retention/GC for session refs + agent memory | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `FR-DOCJOIN-02` | FR | **DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-01` | FR | **DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-03` | FR | **DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
@@ -566,7 +564,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
-| **P2** | `REL-SRC-01` | Release | **NOT_DONE** | Should Have | E2e: index --source gs:// populates graph (e2e closeout: PR-03) | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `REL-SRC-01` | Release | **DONE** | Should Have | E2e: index --source gs:// populates graph (e2e closeout: PR-03) | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-WATCH-01` | FR | **DONE** | Should Have | Source trait: remote_fingerprint + materialize_ephemeral | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-02` | FR | **DONE** | Should Have | Git watch via ls-remote + archive download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
@@ -584,62 +582,62 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `US-SRC-WATCH-01` | User Story | **DONE** | Should Have | leankg watch --source git+https:// polling | 3.25 Remote source indexing (US-SRC) |
 | **P2** | `US-SRC-WATCH-02` | User Story | **DONE** | Should Have | leankg watch --source gs:// polling | 3.25 Remote source indexing (US-SRC) |
 | **P2** | `US-SRC-WATCH-03` | User Story | **DONE** | Should Have | Watch state survives restart | 3.25 Remote source indexing (US-SRC) |
-| **P3** | `FR-GE-06` | FR | **NOT_DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
+| **P3** | `FR-GE-06` | FR | **DONE** | Could Have | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `US-DOCJOIN-02` | User Story | **DONE** | Must Have | Doc query tools accept human path aliases for indexed docs/… keys | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-01` | User Story | **DONE** | Must Have | Markdown documented_by/references attach to same keys as code index | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
 | **P2** | `US-DOCJOIN-03` | User Story | **DONE** | Should Have | Prefer-order + authoring practices for annotations vs markdown edges | 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 |
-| **P2** | `US-GE-02` | User Story | **PENDING** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P2** | `US-GE-03` | User Story | **PENDING** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P2** | `US-GE-04` | User Story | **PENDING** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P2** | `US-GE-05` | User Story | **PENDING** | Should Have | Closed self-improve loop: outcome write-back improves next plan | 3.20 Graph Engineering curriculum gaps (US-GE) |
-| **P2** | `FR-A01` | FR | **NOT_DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A02` | FR | **NOT_DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A03` | FR | **NOT_DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A04` | FR | **NOT_DONE** | Should Have | Index per 'leankg.yaml'; expose counts | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-A06` | FR | **NOT_DONE** | Should Have | Smoke: ontology + routing must pass before Phase 1 “fully done” | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `US-GE-02` | User Story | **DONE** | Should Have | Graph-aware planner: goal → MCP tool/subagent DAG over shared LeanKG graph | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-03` | User Story | **DONE** | Should Have | Cross-alias entity resolution for same-symbol naming variants | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-04` | User Story | **DONE** | Should Have | Cluster-first agent navigation (precomputed neighborhoods) | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `US-GE-05` | User Story | **DONE** | Should Have | Closed self-improve loop: outcome write-back improves next plan | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P2** | `FR-A01` | FR | **DONE** | Should Have | MCP 'project' resolves to correct RocksDB project for multi-mount setups | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A02` | FR | **DONE** | Should Have | Automate/document ontology sync for concepts + workflows YAML | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A03` | FR | **DONE** | Should Have | Verify ontology/knowledge tools after sync | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A04` | FR | **DONE** | Should Have | Index per 'leankg.yaml'; expose counts | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-A06` | FR | **DONE** | Should Have | Smoke: ontology + routing must pass before Phase 1 “fully done” | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-B05` | FR | **NOT_DONE** | Should Have | Benchmark harness vs CBM (50-edge samples) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B06` | FR | **NOT_DONE** | Should Have | Python + Rust typed resolve (Could) — infra works; LSP server default wiring PENDING | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B13` | FR | **NOT_DONE** | Should Have | Extend 'service_calls' beyond k8s DNS regex (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B06` | FR | **DONE** | Should Have | Python + Rust typed resolve (Could) — infra works; LSP server default wiring PENDING | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B13` | FR | **DONE** | Should Have | Extend 'service_calls' beyond k8s DNS regex (Should) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-B16` | FR | **NOT_DONE** | Should Have | Runtime trace ingestion (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B40..B44` | FR | **NOT_DONE** | Should Have | IaC Resource/Module, ADR, snapshot (subset done), DATA_FLOWS (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-B50` | FR | **NOT_DONE** | Should Have | ≥ 10 'run_raw_query' recipes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B40..B44` | FR | **DONE** | Should Have | IaC Resource/Module, ADR, snapshot (subset done), DATA_FLOWS (Could) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-B50` | FR | **DONE** | Should Have | ≥ 10 'run_raw_query' recipes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-B51` | FR | **NOT_DONE** | Should Have | Optional openCypher→Cozo subset (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C02` | FR | **NOT_DONE** | Should Have | Document smaller-model / batch-size options (Should) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C04` | FR | **NOT_DONE** | Should Have | Profile impact-radius latency (Should) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C05` | FR | **NOT_DONE** | Should Have | Incremental languages with tier notes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C06` | FR | **NOT_DONE** | Should Have | Per-language quality tier template; Go/TS first (Must Go/TS) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-C07` | FR | **NOT_DONE** | Should Have | Large-repo benchmark ≥ 1M nodes or documented ceiling (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C02` | FR | **DONE** | Should Have | Document smaller-model / batch-size options (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C04` | FR | **DONE** | Should Have | Profile impact-radius latency (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C05` | FR | **DONE** | Should Have | Incremental languages with tier notes (Should) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C06` | FR | **DONE** | Should Have | Per-language quality tier template; Go/TS first (Must Go/TS) | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-C07` | FR | **DONE** | Should Have | Large-repo benchmark ≥ 1M nodes or documented ceiling (Should) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-C08..C11` | FR | **NOT_DONE** | Should Have | Windows, pkg channel, SLSA, install targets (Could) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-D04` | FR | **NOT_DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E01..E05` | FR | **NOT_DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-D04` | FR | **DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E01..E05` | FR | **DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E10..E14` | FR | **DONE** | Should Have | Rust 3D layout + get_graph_layout / /api/graph/layout3d — merged (#171) | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-GF-10` | FR | **NOT_DONE** | Should Have | Index-time god-node / importance scoring (degree + optional PageRank-like) | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-12` | FR | **NOT_DONE** | Should Have | Include god nodes in 'get_architecture' hotspots section | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-16` | FR | **NOT_DONE** | Should Have | ADR/RFC citation extraction from docs → rationale nodes linked to code (parser done in 'b0… | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-GF-23` | FR | **NOT_DONE** | Should Have | Expand leankg install platforms (start Cursor+Claude+Codex; grow toward Graphify breadth) | 5.9 Graphify-Inspired Features |
-| **P2** | `FR-MP-02` | FR | **NOT_DONE** | Should Have | On re-index, set 'valid_to = now()' on removed edges instead of deleting them (deferred; n… | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-09` | FR | **NOT_DONE** | Should Have | New conversation_indexer module: parse Claude export JSON format | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-10` | FR | **NOT_DONE** | Should Have | New conversation_indexer module: parse ChatGPT export JSON format | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-11` | FR | **NOT_DONE** | Should Have | New conversation_indexer module: parse Slack export JSON format | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-12` | FR | **NOT_DONE** | Should Have | Extract decisions, preferences, milestones, problems from conversations as new element typ… | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-13` | FR | **NOT_DONE** | Should Have | New CLI command 'mine-conversations' with '--format' and '--project' flags | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-20` | FR | **NOT_DONE** | Should Have | Enhance 'orchestrate' intent parser to follow tunnels and use L0-L3 layer strategy (deferr… | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-24` | FR | **NOT_DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-25` | FR | **NOT_DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-MP-26` | FR | **NOT_DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
-| **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-E20..E28` | FR | **DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E30..E36` | FR | **DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E40..E43` | FR | **DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-GF-10` | FR | **DONE** | Should Have | Index-time god-node / importance scoring (degree + optional PageRank-like) | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-12` | FR | **DONE** | Should Have | Include god nodes in 'get_architecture' hotspots section | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-16` | FR | **DONE** | Should Have | ADR/RFC citation extraction from docs → rationale nodes linked to code (parser done in 'b0… | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-GF-23` | FR | **DONE** | Should Have | Expand leankg install platforms (start Cursor+Claude+Codex; grow toward Graphify breadth) | 5.9 Graphify-Inspired Features |
+| **P2** | `FR-MP-02` | FR | **DONE** | Should Have | On re-index, set 'valid_to = now()' on removed edges instead of deleting them (deferred; n… | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-09` | FR | **DONE** | Should Have | New conversation_indexer module: parse Claude export JSON format | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-10` | FR | **DONE** | Should Have | New conversation_indexer module: parse ChatGPT export JSON format | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-11` | FR | **DONE** | Should Have | New conversation_indexer module: parse Slack export JSON format | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-12` | FR | **DONE** | Should Have | Extract decisions, preferences, milestones, problems from conversations as new element typ… | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-13` | FR | **DONE** | Should Have | New CLI command 'mine-conversations' with '--format' and '--project' flags | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-20` | FR | **DONE** | Should Have | Enhance 'orchestrate' intent parser to follow tunnels and use L0-L3 layer strategy (deferr… | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-24` | FR | **DONE** | Should Have | 'get_impact_radius' accepts directory qualified names (e.g., '"src/indexer/"') | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-25` | FR | **DONE** | Should Have | 'search_code' and 'query_file' accept directory nodes for folder-scoped search | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-MP-26` | FR | **DONE** | Should Have | Cluster-to-directory alignment via 'cluster_directory' metadata | 5.6 MemPalace-Inspired Features |
+| **P2** | `FR-SEM-01` | FR | **DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-02` | FR | **DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `FR-SEM-03` | FR | **DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-UI2-10` | FR | **DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
 | **P2** | `FR-UI2-11` | FR | **DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
 | **P2** | `REL-032` | Release | **DONE** | Should Have | Vue / Svelte / SQL DDL wired into index walk (`find_files_sync` + bulk + incremental); Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P2** | `REL-040` | Release | **NOT_DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
-| **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
+| **P2** | `REL-040` | Release | **DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P3** | `FR-SEM-05` | FR | **DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
-| **P3** | `REL-041` | Release | **NOT_DONE** | Could Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P3** | `REL-041` | Release | **DONE** | Could Have | 3D graph UI Track E ('graph-ui/'; keep 2D 'ui/') | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P1** | `US-UI2-07` | User Story | **DONE** | Must Have | ui-v2 production cutover: embed into src/embed/ / Docker serve; become default explorer | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P1** | `US-SURF-06` | User Story | **DONE** | Must Have | Hard-delete soft-deprecated MCP tools (wake_up, search_by_environment) after grace | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
 | **P1** | `US-SURF-07` | User Story | **DONE** | Must Have | After tool shrink: sync skills, rules, guidelines, and install/setup to reduced roster | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.12 |
@@ -647,26 +645,26 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-GF-17` | User Story | **DONE** | Must Have | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary company cost lever | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-GF-13` | User Story | **DONE** | Must Have | Shareable single-file HTML graph export (leankg export html, bounded subgraph/community) | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
 | **P1** | `US-UI2-06` | User Story | **DONE** | Must Have | Query FAB NL mode calls query_graph (raw Cozo remains advanced) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
-| **P2** | `US-CBM-A1` | User Story | **PENDING** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-A4` | User Story | **PENDING** | Should Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-B12` | User Story | **PENDING** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-C3` | User Story | **PENDING** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-D3` | User Story | **PENDING** | Should Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E1` | User Story | **PENDING** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E2` | User Story | **PENDING** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E3` | User Story | **PENDING** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-CBM-E4` | User Story | **PENDING** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-GF-15` | User Story | **PENDING** | Should Have | Expand assistant install matrix (Cursor/Claude/Codex/…) toward Graphify-style one-command … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P2** | `US-GF-16` | User Story | **PENDING** | Should Have | Productize reflect / query-outcome loop as default skill guidance | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
-| **P2** | `US-MP-03` | User Story | **PENDING** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decis… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-CBM-A1` | User Story | **DONE** | Should Have | Correct MCP 'project' routing (multi-mount ≠ wrong RocksDB project) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-A4` | User Story | **DONE** | Should Have | Moat smoke (ontology + routing) gates Phase 1 “done” | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-B12` | User Story | **DONE** | Should Have | ≥10 'run_raw_query' recipes in skills/docs | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-C3` | User Story | **DONE** | Should Have | Selective language expansion with quality tiers | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-D3` | User Story | **DONE** | Should Have | Re-evaluate dual-run after typed-resolve Phase | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E1` | User Story | **DONE** | Should Have | New 3D graph UI ('graph-ui/') with WebGL galaxy + Bloom (keep existing 2D 'ui/') | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E2` | User Story | **DONE** | Should Have | Server-computed 3D layout in Rust + 'get_graph_layout' / '/api/graph' | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E3` | User Story | **DONE** | Should Have | Adaptive rendering (InstancedMesh &lt;75k; point sprites above) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-E4` | User Story | **DONE** | Should Have | Node detail + edge-type filter panels | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-GF-15` | User Story | **DONE** | Should Have | Expand assistant install matrix (Cursor/Claude/Codex/…) toward Graphify-style one-command … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P2** | `US-GF-16` | User Story | **DONE** | Should Have | Productize reflect / query-outcome loop as default skill guidance | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17) |
+| **P2** | `US-MP-03` | User Story | **DONE** | Should Have | Conversation/Decision Mining — import Claude/ChatGPT/Slack transcripts; auto-extract decis… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-SEM-01` | User Story | **DONE** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-02` | User Story | **DONE** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P2** | `US-SEM-03` | User Story | **DONE** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-UI2-08` | User Story | **DONE** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P2** | `US-UI2-09` | User Story | **DONE** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
-| **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
+| **P3** | `US-CBM-C5` | User Story | **DONE** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P3** | `US-SEM-04` | User Story | **DONE** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
+| **P3** | `US-GE-06` | User Story | **DONE** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
 | **P3** | `US-SURF-05` | User Story | **PENDING** | Could Have | Optional unify get_doc_tree + get_doc_structure (mega-safe first) | 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 |
 | **P1** | `FR-COST-01` | FR | **DONE** | Must Have | Publish ROI brief: token/tool-call floors, multi-repo Docker TCO, mega-graph + ops differe… | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `US-COST-01` | User Story | **DONE** | Must Have | Manager ROI brief: why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company… | 5.20 Company cost / competitive ROI (v3.7.8) |
@@ -674,13 +672,13 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-GF-06` | User Story | **DONE** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **DONE** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **DONE** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
-| **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
+| **P2** | `US-CBM-A2` | User Story | **DONE** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-LANG-02` | User Story | **DONE** | Should Have | Swift indexing (tree-sitter calls + heritage + typed resolve) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
-| **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
-| **P2** | `US-MP-08` | User Story | **PARTIAL** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-MP-02` | User Story | **DONE** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
+| **P2** | `US-MP-08` | User Story | **DONE** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Ap… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P3** | `US-GF-12` | User Story | **PARTIAL** | Could Have | Live SQL / Postgres schema introspection into the same graph (tables, FKs, views ↔ app cod… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
-| **P3** | `US-GN-08` | User Story | **PARTIAL** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
+| **P3** | `US-GN-08` | User Story | **DONE** | Could Have | MCP Resources for overview context | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `FR-EMBED-R4` | FR | **OPEN** | Could Have | (open / aspirational): Cold functions-only &lt;20 min on ~371k on reference M2 Pro 10c. **… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
 | **P0** | `FR-HNSW-E` | FR | **DONE** | Must Have | Incremental embed filter (foundation) — PARTIAL: day-2 resume/HNSW no-op/stale-blast track… | 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) + 5.12 |
 | **P0** | `US-MG-TOOL-01` | User Story | **DONE** | Must Have | Mega-safe concept_search / query_graph / get_clusters serve | 3.14 / US-MG-TOOL-01 |
