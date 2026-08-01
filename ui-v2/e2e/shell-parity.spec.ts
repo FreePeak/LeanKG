@@ -69,6 +69,10 @@ test.describe('UI v2 shell parity', () => {
     await page.getByTestId('header-search').press('Enter');
     await page.getByTestId('query-fab').click();
     await expect(page.getByTestId('query-panel')).toBeVisible();
+    // FR-UI2-08: default NL mode; Advanced remains available
+    await expect(page.getByTestId('query-mode-nl')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId('query-mode-advanced').click();
+    await expect(page.getByTestId('query-mode-advanced')).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('mega-graph-skip via URL', async ({ page }) => {

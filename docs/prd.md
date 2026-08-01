@@ -5,7 +5,7 @@
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.3 (`origin/main`)
+**Codebase Version:** 0.19.27 (`origin/main`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
@@ -13,7 +13,7 @@
 >
 > **P0 CLOSED (v3.7.9):** **Procedural ontology auto-update while using** — `US-ONT-PROC-01` / `FR-ONT-PROC-01..03` / `REL-059` **DONE**. Evidence: [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md). YAML watch + boot marker (concepts **and** workflows) + post-index sync + MCP `ontology_control`.
 >
-> **CURRENT next (P1 — company adoption waves):** Wave **1a** MCP hard-delete (`wake_up`, `search_by_environment`) **DONE** (`REL-062`). Next: Graphify packaging / cost queue in §1.1. Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
+> **CURRENT next (P1 — company adoption waves):** Waves **0a–3** **DONE** (through NL Query FAB). **Next: Wave 4** single-repo expand (`US-MG-02` / `FR-MG-03`). **Ops blocker for live demo:** OnRender `cargo build --features embeddings` exit 101 — RCA + Dockerfile fix in [`docs/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md). Wave 3 evidence: [`docs/reports/ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md).
 >
 > **P2 follow-ons (do not preempt P1):** Doc↔code join quality §3.19 / §5.22 (`US-DOCJOIN-*` / `REL-063`); Graph-engineering curriculum gaps §1.2 / §3.20 / §5.23 (`US-GE-*` / `REL-064`). Evidence: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
 >
@@ -654,16 +654,17 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 **Ordered company-adoption queue (Focus P1 — after P0 procedural auto-update):**
 
-1. **US-COST-01** — Publish manager ROI brief (tokens + tool calls + multi-repo TCO)  
-2. **US-GF-14** — Three-verb narrative (path · explain · query) so agents pick cheap tools first  
-3. **US-GF-17** — Always-on graph-first install/hooks (primary **cost lever**: agents stop grepping first)  
-4. **US-GF-04** — Honest edges in MCP + ui-v2 (trust = adoption)  
-5. **US-GF-06** — Auto `GRAPH_REPORT.md` (onboarding without 85-tool wall)  
-6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI)  
-7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb)  
-8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company)
+1. **US-COST-01** — Publish manager ROI brief (tokens + tool calls + multi-repo TCO) — **DONE**
+2. **US-GF-14** — Three-verb narrative (path · explain · query) so agents pick cheap tools first — **DONE**
+3. **US-GF-17** — Always-on graph-first install/hooks (primary **cost lever**: agents stop grepping first) — **DONE**
+4. **US-GF-04** — Honest edges in MCP + ui-v2 (trust = adoption) — **DONE**
+5. **US-GF-06** — Auto `GRAPH_REPORT.md` (onboarding without 85-tool wall) — **DONE**
+6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI) — **DONE**
+7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb) — **DONE**
+8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company) — **DONE**
+9. **US-MG-02** — Single-repo expand (Wave 4) — **CURRENT** / PARTIAL
 
-**P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact.
+**P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact. **DONE**.
 
 **Explicit non-goals for company ROI:** PDF/image/video graph ingest; replacing CozoDB with NetworkX; chasing 36 languages before typed resolve depth.
 
@@ -741,7 +742,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | **Impact radius lacks confidence grades** | `get_impact_radius` returns all edges at equal weight; LLM cannot distinguish "WILL BREAK" from "MIGHT BE AFFECTED" |
 | **No pre-commit risk signal** | No tool exists to assess change risk before commit |
 | **Flat search results** | `search_code` returns symbol matches with no grouping by functional area |
-| **No shortest-path / explain verbs** | *(closing)* MCP `shortest_path` / `explain_node` exist; product narrative + UI NL still incomplete — see US-GF-14 / US-UI2-06 |
+| **No shortest-path / explain verbs** | *(closing)* MCP `shortest_path` / `explain_node` exist; ui-v2 Query FAB NL mode **DONE** (Wave 3 / FR-UI2-08) — see [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md) |
 | **Opaque edge provenance** | Agents cannot tell EXTRACTED vs INFERRED vs AMBIGUOUS at a glance (US-GF-04 / FR-GF-07..09 — **P1**) |
 | **No architecture brief artifact** | Missing auto god-node + surprising-connection report (`GRAPH_REPORT.md`) after index (US-GF-06 / FR-GF-13 — **P1**) |
 | **Agents still grep first** | Without always-on install/hooks, token savings never materialize at company scale (US-GF-17 — **P1**) |
