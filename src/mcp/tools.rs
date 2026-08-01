@@ -337,6 +337,19 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "session_recall".to_string(),
+                description: "US-SM-01 / FR-SM-03: Recover an offloaded MCP/tool payload bit-for-bit by node_id from .leankg/sessions/<session_id>/refs/<node_id>.md. Use when a canvas entry shows node_id=offload-NNN.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "node_id": {"type": "string", "description": "Drill-down id from the session canvas (e.g. offload-001)"},
+                        "session_id": {"type": "string", "description": "Session id"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["node_id", "session_id"]
+                }),
+            },
+            ToolDefinition {
                 name: "get_cluster_skill".to_string(),
                 description: "US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
                 input_schema: json!({

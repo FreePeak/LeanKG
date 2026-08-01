@@ -33,6 +33,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 # benches/ required — Cargo.toml [[bench]] targets fail manifest parse if missing.
 COPY benches ./benches
+# examples/ required — Cargo.toml [[example]] targets (embeddings feature) fail
+# manifest parse if missing. This was the silent exit-101 cause on Render.
+COPY examples ./examples
 COPY ontology/ ./ontology/
 COPY --from=ui /ui/dist/ ./src/embed/
 ARG UI_EMBED_REV=2026-08-01-onrender-emb101

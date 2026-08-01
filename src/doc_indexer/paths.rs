@@ -153,8 +153,79 @@ pub fn resolve_file_key(graph: &GraphEngine, file_arg: &str) -> KeyResolveResult
     }
 }
 
-/// Resolve an extracted markdown code reference to a file-level element key.
+/// Split a `file.rs::symbol` mention into its parts. Returns `None` when the
+/// symbol part is not identifier-like (empty, or containing path/whitespace
+/// characters) so plain file refs and `docs/…::Section` anchors are untouched.
+fn split_file_symbol(raw_ref: &str) -> Option<(String, String)> {
+    let cleaned = slash_normalize(&strip_anchor(raw_ref));
+    let (file_part, sym_part) = cleaned.rsplit_once("::")?;
+    if sym_part.is_empty()
+        || sym_part.contains('/')
+        || sym_part.contains('.')
+        || sym_part.contains(char::is_whitespace)
+    {
+        return None;
+    }
+    Some((file_part.to_string(), sym_part.to_string()))
+}
+
+/// Code-symbol element types eligible for the FR-DOCJOIN-06 upgrade
+/// (PRD: "function/class qualified names").
+fn is_code_symbol(element_type: &str) -> bool {
+    matches!(
+        element_type,
+        "function"
+            | "method"
+            | "constructor"
+            | "class"
+            | "struct"
+            | "interface"
+            | "enum"
+            | "trait"
+            | "record"
+    )
+}
+
+/// Does the element's file path correspond to the `file` part of a
+/// `file::symbol` mention? `./` prefixes and relative basenames are allowed.
+fn file_matches_mention(element_file: &str, file_part: &str) -> bool {
+    let ef = slash_normalize(element_file);
+    let fp = slash_normalize(file_part);
+    ef == fp || ef.ends_with(&format!("/{fp}")) || fp.ends_with(&format!("/{ef}"))
+}
+
+/// Resolve an extracted markdown code reference to an element key.
+///
+/// FR-DOCJOIN-06: when the reference is `file.rs::symbol` and the symbol is
+/// unique in the index, upgrade the join target from file-level to
+/// symbol-level (best-effort). Non-unique symbols fall back to file-level.
 pub fn resolve_code_ref(graph: &GraphEngine, raw_ref: &str) -> Option<String> {
+    if let Some((file_part, sym_part)) = split_file_symbol(raw_ref) {
+        // FR-DOCJOIN-06: upgrade to the symbol key only when the symbol name
+        // is unique across the index AND its element lives in the mentioned
+        // file. Anything else (duplicated symbol name, unknown symbol) keeps
+        // the file-level join target (best-effort).
+        if let Ok(symbols) = graph.find_elements_by_name_exact(&sym_part, None) {
+            if symbols.len() == 1 {
+                let el = &symbols[0];
+                if is_code_symbol(&el.element_type)
+                    && file_matches_mention(&el.file_path, &file_part)
+                {
+                    return Some(el.qualified_name.clone());
+                }
+            }
+        }
+
+        // Fallback: resolve the file part alone -> file-level join.
+        if let Some(file_qn) = resolve_file_ref(graph, &file_part) {
+            return Some(file_qn);
+        }
+    }
+    resolve_file_ref(graph, raw_ref)
+}
+
+/// Resolve a file-level reference to an indexed `file` element key.
+fn resolve_file_ref(graph: &GraphEngine, raw_ref: &str) -> Option<String> {
     let candidates = code_ref_path_candidates(raw_ref);
 
     for path in &candidates {
@@ -354,5 +425,82 @@ mod tests {
         let (graph, _tmp) = graph_with_doc_and_file();
         let result = resolve_file_key(&graph, "src/widget.rs");
         assert_eq!(result.resolved.as_deref(), Some("./src/widget.rs"));
+    }
+
+    fn graph_with_symbols() -> (GraphEngine, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db = init_db(&tmp.path().join("leankg.db")).unwrap();
+        let elements = r#"
+        ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] <-
+        [
+            ["./src/widget.rs", "file", "widget.rs", "./src/widget.rs", 1, 1, "rust", null, null, null, "{}", "local"],
+            ["./src/widget.rs::widget", "function", "widget", "./src/widget.rs", 2, 2, "rust", null, null, null, "{}", "local"],
+            ["./src/widget.rs::Widget", "class", "Widget", "./src/widget.rs", 5, 9, "rust", null, null, null, "{}", "local"],
+            ["src/other.rs", "file", "other.rs", "src/other.rs", 1, 1, "rust", null, null, null, "{}", "local"],
+            ["src/other.rs::widget", "function", "widget", "src/other.rs", 3, 3, "rust", null, null, null, "{}", "local"],
+            ["docs/guide.md", "document", "Guide", "docs/guide.md", 1, 5, "markdown", null, null, null, "{}", "local"]
+        ]
+        :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}
+        "#;
+        crate::db::schema::run_script(&db, elements, Default::default()).unwrap();
+        (GraphEngine::new(db), tmp)
+    }
+
+    #[test]
+    fn resolve_code_ref_file_symbol_unique_upgrades_to_symbol() {
+        let (graph, _tmp) = graph_with_symbols();
+        // `widget.rs::Widget` is a unique symbol name -> symbol-level target,
+        // both with and without the `./` prefix.
+        assert_eq!(
+            resolve_code_ref(&graph, "./src/widget.rs::Widget").as_deref(),
+            Some("./src/widget.rs::Widget")
+        );
+        assert_eq!(
+            resolve_code_ref(&graph, "src/widget.rs::Widget").as_deref(),
+            Some("./src/widget.rs::Widget")
+        );
+    }
+
+    #[test]
+    fn resolve_code_ref_file_symbol_duplicate_symbol_stays_file_level() {
+        let (graph, _tmp) = graph_with_symbols();
+        // `widget` is defined in two files, so even an exact qualified-name
+        // mention must not upgrade (symbol not unique in the index).
+        assert_eq!(
+            resolve_code_ref(&graph, "./src/widget.rs::widget").as_deref(),
+            Some("./src/widget.rs")
+        );
+    }
+
+    #[test]
+    fn resolve_code_ref_file_symbol_ambiguous_stays_file_level() {
+        let (graph, _tmp) = graph_with_symbols();
+        // Symbol `widget` is not unique in the index (two files define it) ->
+        // keep the file-level join target rather than guessing.
+        assert_eq!(
+            resolve_code_ref(&graph, "widget.rs::widget").as_deref(),
+            Some("./src/widget.rs")
+        );
+    }
+
+    #[test]
+    fn resolve_code_ref_file_symbol_unknown_symbol_keeps_file() {
+        let (graph, _tmp) = graph_with_symbols();
+        // Symbol does not exist in the indexed file -> fall back to file-level.
+        assert_eq!(
+            resolve_code_ref(&graph, "src/widget.rs::nope").as_deref(),
+            Some("./src/widget.rs")
+        );
+    }
+
+    #[test]
+    fn resolve_code_ref_file_symbol_uses_unique_symbol_in_other_file() {
+        let (graph, _tmp) = graph_with_symbols();
+        // `Widget` is unique and lives in `./src/widget.rs`; mentioning it
+        // through that file's path upgrades to the symbol key.
+        assert_eq!(
+            resolve_code_ref(&graph, "src/widget.rs::Widget").as_deref(),
+            Some("./src/widget.rs::Widget")
+        );
     }
 }

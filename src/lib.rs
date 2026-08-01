@@ -6,6 +6,7 @@ pub mod budget;
 pub mod cli;
 pub mod compress;
 pub mod config;
+pub mod conversation_indexer;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;
@@ -26,6 +27,7 @@ pub mod report;
 #[cfg(feature = "embeddings")]
 pub mod retrieval;
 pub mod runtime;
+pub mod session;
 pub mod sources;
 pub mod vector_engine;
 pub mod watcher;

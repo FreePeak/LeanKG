@@ -266,6 +266,7 @@ impl ToolHandler {
             "agent_focus" => self.agent_focus(arguments),
             "agent_diary_write" => self.agent_diary_write(arguments),
             "agent_diary_read" => self.agent_diary_read(arguments),
+            "session_recall" => self.session_recall(arguments),
             "report_query_outcome" => self.report_query_outcome(arguments),
             "get_team_map" => self.get_team_map(arguments),
             "get_overview_context" => self.get_overview_context(arguments),
@@ -1674,6 +1675,25 @@ impl ToolHandler {
         Ok(json!({ "count": entries.len(), "entries": entries }))
     }
 
+    /// US-SM-01 / FR-SM-03: thin dispatch — recover an offloaded payload
+    /// bit-for-bit by node_id from `.leankg/sessions/<id>/refs/<node_id>.md`.
+    fn session_recall(&self, args: &Value) -> Result<Value, String> {
+        let node_id = args["node_id"].as_str().ok_or("Missing 'node_id'")?;
+        let session_id = args["session_id"].as_str().ok_or("Missing 'session_id'")?;
+        let project = args["project"].as_str().unwrap_or(".");
+        let store = crate::session::SessionStore::new(session_id, std::path::Path::new(project))?;
+        let payload = store.read_ref(node_id)?;
+        let raw = std::fs::read_to_string(store.ref_path(node_id))
+            .map_err(|e| format!("read ref file: {e}"))?;
+        Ok(json!({
+            "node_id": node_id,
+            "session_id": session_id,
+            "payload": payload,
+            "ref_file": store.ref_path(node_id).display().to_string(),
+            "bytes": raw.len(),
+        }))
+    }
+
     fn report_query_outcome(&self, args: &Value) -> Result<Value, String> {
         let question = args["question"].as_str().ok_or("Missing 'question'")?;
         let outcome = args["outcome"].as_str().ok_or("Missing 'outcome'")?;
@@ -1712,7 +1732,16 @@ impl ToolHandler {
     /// overview context (leankg-mcp doesn't currently expose the
     /// RMCP resources API; this provides the same ergonomics via a
     /// tool call).
+    ///
+    /// US-SM-02 / FR-SM-05..06: opt-in `recall=true` injects top-K ranked
+    /// session lessons (default OFF). Recall is timeout-bounded (≤5s) and
+    /// budgeted; on timeout or empty index injection is skipped — recall
+    /// never blocks the overview response.
     fn get_overview_context(&self, args: &Value) -> Result<Value, String> {
+        use crate::session::{
+            recall_for_overview_bounded, RecallStore, DEFAULT_RECALL_ENABLED, DEFAULT_RECALL_K,
+            DEFAULT_RECALL_TIMEOUT_SECS, RECALL_ITEM_CHAR_BUDGET, RECALL_TOTAL_CHAR_BUDGET,
+        };
         let project_name = args["project_name"].as_str().unwrap_or("project");
         let l0 = self
             .graph_engine
@@ -1726,12 +1755,30 @@ impl ToolHandler {
             .graph_engine
             .wake_up_summary()
             .unwrap_or_else(|e| format!("LeanKG project (wake_up error: {})", e));
-        Ok(json!({
+        let mut out = json!({
             "project": project_name,
             "l0_identity": l0,
             "l1_critical_facts": l1,
             "wake_up": wake,
-        }))
+        });
+        let recall = args["recall"].as_bool().unwrap_or(DEFAULT_RECALL_ENABLED);
+        if recall {
+            let project = args["project"].as_str().unwrap_or(".");
+            let lessons = RecallStore::new(std::path::Path::new(project))
+                .and_then(|s| s.load())
+                .unwrap_or_default();
+            let injected = recall_for_overview_bounded(
+                &lessons,
+                DEFAULT_RECALL_K,
+                RECALL_ITEM_CHAR_BUDGET,
+                RECALL_TOTAL_CHAR_BUDGET,
+                std::time::Duration::from_secs(DEFAULT_RECALL_TIMEOUT_SECS),
+            );
+            if let Some(s) = injected {
+                out["session_lessons"] = json!(s);
+            }
+        }
+        Ok(out)
     }
 
     fn resolve_with_lsp(&self, args: &Value) -> Result<Value, String> {

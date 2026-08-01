@@ -174,3 +174,49 @@ jobs:
           fi
           # Upload with --clobber so retries overwrite existing assets.
           gh release upload "$TAG" "$ARTIFACT" --clobber
+
+  # Embeddings build gate (OnRender RCA F2, 2026-08-01): mirrors the Render
+  # pipeline (cargo build --release --features embeddings) once per release,
+  # on the tag, in parallel with the binary matrix. Catches embeddings-stack
+  # regressions (openssl/ort/RocksDB/fastembed) at release time instead of at
+  # Render deploy. Deliberately NOT a push/PR workflow — a repeat 40-min gate
+  # on every Cargo.lock touch would slow releases more than it saves (see
+  # docs/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md F2 note).
+  build-embeddings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+
+      - name: Install build deps (mirrors Dockerfile builder stage)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang libclang-dev pkg-config libssl-dev
+
+      - name: Build Vite UI (ui-v2 → rust_embed)
+        shell: bash
+        run: |
+          cd ui-v2
+          npm ci
+          npm run build
+          rm -rf ../src/embed/*
+          cp -r dist/* ../src/embed/
+          test -f ../src/embed/index.html
+          printf '%s\n' '{"ui":"ui-v2","source":"release.yml","job":"build-embeddings"}' > ../src/embed/ui-build.json
+
+      - name: Build embeddings binary
+        run: |
+          cargo build --release --features embeddings
+          strip target/release/leankg
+
+      - name: Smoke test embeddings binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/leankg --version
+          test -x target/release/leankg
+          echo "embeddings build OK"
+

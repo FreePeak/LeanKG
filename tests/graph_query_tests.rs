@@ -214,3 +214,84 @@ fn test_update_element_cluster() {
         assert_eq!(updated.cluster_label.unwrap(), "Auth Services");
     });
 }
+
+#[test]
+fn test_resolve_alias_handler_from_graph() {
+    with_test_graph(|graph, _| {
+        graph
+            .insert_elements(&[
+                create_code_element("Handler", "src/mcp/handler.rs", "struct", 10),
+                create_code_element("handle_tool_call", "src/mcp/handler.rs", "function", 20),
+                create_code_element("handler", "src/mcp/handler.rs", "module", 5),
+            ])
+            .unwrap();
+
+        // US-GE-03: alias "handler" → exact name match first.
+        let matches = graph.resolve_alias("handler", 10).unwrap();
+        assert!(!matches.is_empty());
+        assert_eq!(matches[0].element.name, "handler");
+        assert_eq!(matches[0].score, 0);
+        assert_eq!(
+            matches[0].element.qualified_name,
+            "src/mcp/handler.rs::handler"
+        );
+
+        // Path::symbol alias resolves directly.
+        let matches = graph
+            .resolve_alias("src/mcp/handler.rs::handle_tool_call", 10)
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].element.name, "handle_tool_call");
+        assert_eq!(matches[0].score, 0);
+
+        // Unknown alias → empty.
+        assert!(graph
+            .resolve_alias("no_such_symbol_xyz", 10)
+            .unwrap()
+            .is_empty());
+    });
+}
+
+#[test]
+fn test_resolve_alias_ambiguous_ranked_not_silent() {
+    with_test_graph(|graph, _| {
+        graph
+            .insert_elements(&[
+                create_code_element("Handler", "src/a/handler.rs", "struct", 10),
+                create_code_element("Handler", "src/b/handler.rs", "struct", 10),
+            ])
+            .unwrap();
+
+        // Ambiguous alias must return BOTH candidates ranked, not a silent pick.
+        let matches = graph.resolve_alias("Handler", 10).unwrap();
+        assert_eq!(matches.len(), 2);
+        assert_eq!(
+            matches[0].element.qualified_name,
+            "src/a/handler.rs::Handler"
+        );
+        assert_eq!(
+            matches[1].element.qualified_name,
+            "src/b/handler.rs::Handler"
+        );
+        assert_eq!(matches[0].score, matches[1].score);
+    });
+}
+
+#[test]
+fn test_resolve_alias_file_basename() {
+    with_test_graph(|graph, _| {
+        graph
+            .insert_elements(&[create_code_element(
+                "handler.rs",
+                "src/mcp/handler.rs",
+                "file",
+                30,
+            )])
+            .unwrap();
+
+        let matches = graph.resolve_alias("handler.rs", 10).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].element.element_type, "file");
+        assert_eq!(matches[0].score, 0);
+    });
+}

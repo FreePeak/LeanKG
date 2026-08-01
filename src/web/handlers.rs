@@ -3233,6 +3233,43 @@ pub struct LayoutResponse {
     pub bounds: LayoutBounds,
 }
 
+/// Query params for the deterministic 3D layout endpoint.
+#[derive(Deserialize)]
+pub struct Layout3DParams {
+    #[serde(default = "default_layout_iterations")]
+    pub iterations: usize,
+    #[serde(default = "default_layout_seed")]
+    pub seed: u64,
+}
+
+fn default_layout_seed() -> u64 {
+    42
+}
+
+#[derive(Serialize)]
+pub struct Layout3DResponse {
+    pub nodes: Vec<Layout3DNode>,
+    pub bounds: Layout3DBounds,
+}
+
+#[derive(Serialize)]
+pub struct Layout3DNode {
+    pub node_id: String,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+#[derive(Serialize)]
+pub struct Layout3DBounds {
+    pub min_x: f64,
+    pub max_x: f64,
+    pub min_y: f64,
+    pub max_y: f64,
+    pub min_z: f64,
+    pub max_z: f64,
+}
+
 #[derive(Serialize)]
 pub struct LayoutNode {
     pub node_id: String,
@@ -3295,6 +3332,82 @@ pub async fn api_graph_layout(
             success: false,
             data: None,
             error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Deterministic 3D layout for graph visualization (Track E, FR-E10..E14).
+///
+/// Same graph + same `iterations` + same `seed` => byte-identical positions.
+/// Nodes/edges are read from the DB like `/api/graph/layout`, but positions
+/// are computed in 3D by `crate::graph::layout3d::layout3d` with a seeded
+/// PRNG (no wall-clock randomness).
+pub async fn api_graph_layout3d(
+    State(state): State<AppState>,
+    Query(params): Query<Layout3DParams>,
+) -> impl IntoResponse {
+    let elements = match state.get_graph_engine().await {
+        Ok(g) => g.all_elements().map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    let relationships = match state.get_graph_engine().await {
+        Ok(g) => g.all_relationships().map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+
+    match (elements, relationships) {
+        (Ok(elements), Ok(relationships)) => {
+            let node_ids: Vec<String> = elements.iter().map(|e| e.qualified_name.clone()).collect();
+            let edges: Vec<crate::graph::LayoutEdge> = relationships
+                .iter()
+                .filter(|r| {
+                    r.rel_type == "calls"
+                        || r.rel_type == "imports"
+                        || r.rel_type == "contains"
+                        || r.rel_type == "references"
+                })
+                .map(|r| {
+                    crate::graph::LayoutEdge::new(
+                        r.source_qualified.clone(),
+                        r.target_qualified.clone(),
+                    )
+                })
+                .collect();
+
+            let res = crate::graph::layout3d(&node_ids, &edges, params.iterations, params.seed);
+            let nodes: Vec<Layout3DNode> = node_ids
+                .iter()
+                .filter_map(|id| {
+                    res.positions.get(id).map(|p| Layout3DNode {
+                        node_id: id.clone(),
+                        x: p.x,
+                        y: p.y,
+                        z: p.z,
+                    })
+                })
+                .collect();
+            let b = res.bounds;
+            let layout = Layout3DResponse {
+                nodes,
+                bounds: Layout3DBounds {
+                    min_x: b.min_x,
+                    max_x: b.max_x,
+                    min_y: b.min_y,
+                    max_y: b.max_y,
+                    min_z: b.min_z,
+                    max_z: b.max_z,
+                },
+            };
+            ApiResponse {
+                success: true,
+                data: Some(layout),
+                error: None,
+            }
+        }
+        (Err(e), _) | (_, Err(e)) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e),
         },
     }
 }

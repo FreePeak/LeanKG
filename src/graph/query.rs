@@ -6010,6 +6010,27 @@ impl GraphEngine {
         out.flush()?;
         Ok(total)
     }
+
+    /// US-GE-03 / FR-GE-03: resolve an alias/mention to its best-matching
+    /// elements using only indexed data (qualified_name, name, file_path) —
+    /// no LLM. Delegates to the pure [`crate::graph::entity_resolve`]
+    /// resolver with the element universe from the graph.
+    ///
+    /// Exact `name` matches come first (score 0), then case-insensitive,
+    /// then exact file_path / basename, then prefix. Ambiguous aliases
+    /// return a ranked list — never a silent arbitrary pick.
+    pub fn resolve_alias(
+        &self,
+        alias: &str,
+        max_matches: usize,
+    ) -> Result<Vec<crate::graph::entity_resolve::Match>, Box<dyn std::error::Error>> {
+        let elements = self.all_elements()?;
+        Ok(crate::graph::entity_resolve::resolve(
+            &elements,
+            alias,
+            max_matches,
+        ))
+    }
 }
 
 fn relativize(path: &str, root: &str) -> String {

@@ -463,8 +463,11 @@ impl DocIndexer {
         let md_link_pattern =
             Regex::new(r"\[([^\]]+)\]\(([\w\-/.]+\.(?:go|rs|ts|tsx|js|jsx|py))\)").unwrap();
 
-        // Pattern 3: backtick-enclosed code references `file.rs`
-        let code_ref_pattern = Regex::new(r"`([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py))`").unwrap();
+        // Pattern 3: backtick-enclosed code references `file.rs` or
+        // `file.rs::symbol` (FR-DOCJOIN-06 keeps the `::symbol` suffix so the
+        // resolver can upgrade to the symbol key when unique).
+        let code_ref_pattern =
+            Regex::new(r"`([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py)(?:::[A-Za-z_][\w]*)?)`").unwrap();
 
         let mut in_code_block = false;
 
@@ -492,6 +495,14 @@ impl DocIndexer {
                 if let Some(m) = cap.get(1) {
                     let target = m.as_str().to_string();
                     let context = trimmed.chars().take(100).collect::<String>();
+                    // A `file.rs::symbol` mention also matches the bare file
+                    // pattern below on the same line; keep the richer
+                    // symbol-qualified target once per line.
+                    if let Some((file_part, _)) = target.rsplit_once("::") {
+                        if refs.iter().any(|(t, _)| t == file_part) {
+                            continue;
+                        }
+                    }
                     refs.push((target, context));
                 }
             }
