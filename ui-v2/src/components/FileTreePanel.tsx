@@ -7,6 +7,10 @@ import {
   type ExplorerEntry,
 } from '../lib/file-tree';
 import type { GraphNode } from '../core/graph/types';
+import type { ClusterLegendState } from '../hooks/useClusterLegend';
+import type { EnvValue } from './OpsPanels';
+import { ClusterLegend } from './ClusterLegend';
+import { OpsPanels } from './OpsPanels';
 
 interface FileTreePanelProps {
   collapsed: boolean;
@@ -25,6 +29,12 @@ interface FileTreePanelProps {
   onSelectNode: (id: string) => void;
   onOpenFolder?: (path: string, label: string) => void;
   selectedId: string | null;
+  /** US-UI2-08 — cluster legend (optional; wired when App provides it). */
+  legend?: ClusterLegendState;
+  /** US-UI2-09 — ops panels service/env (optional; wired when App provides it). */
+  opsService?: string;
+  opsEnv?: EnvValue;
+  onOpsEnvChange?: (env: EnvValue) => void;
 }
 
 function TreeRow(props: {
@@ -133,6 +143,10 @@ export function FileTreePanel(props: FileTreePanelProps) {
     onSelectNode,
     onOpenFolder,
     selectedId,
+    legend,
+    opsService,
+    opsEnv,
+    onOpsEnvChange,
   } = props;
 
   const tree = useMemo(
@@ -328,6 +342,16 @@ export function FileTreePanel(props: FileTreePanelProps) {
             </div>
           )}
         </section>
+
+        {legend && <ClusterLegend legend={legend} />}
+
+        {opsService != null && (
+          <OpsPanels
+            service={opsService}
+            env={opsEnv ?? 'local'}
+            onEnvChange={onOpsEnvChange ?? (() => {})}
+          />
+        )}
       </div>
     </aside>
   );
