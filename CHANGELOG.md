@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.30](https://github.com/FreePeak/LeanKG/compare/v0.19.29...v0.19.30) (2026-08-01)
+
+
+### Features
+
+* **web:** wave4 single-repo expand closeout — integration tests + live evidence (US-MG-02 / FR-MG-03) ([#164](https://github.com/FreePeak/LeanKG/issues/164)) ([4206184](https://github.com/FreePeak/LeanKG/commit/42061848269c0ae13675358d11bd240d14108c02))
+
 ## [0.19.29](https://github.com/FreePeak/LeanKG/compare/v0.19.28...v0.19.29) (2026-08-01)
 
 
