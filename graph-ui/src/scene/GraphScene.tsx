@@ -1,6 +1,6 @@
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Mesh, Points } from 'three';
 import type { GraphNode, Layout3DNode } from '../lib/types';
@@ -11,10 +11,24 @@ interface SceneNodeProps {
   color: string;
   size: number;
   selected: boolean;
+  dimmed: boolean;
+  labelsVisible: boolean;
+  onHover: () => void;
+  onUnhover: () => void;
   onSelect: () => void;
 }
 
-function SceneNode({ pos, color, size, selected, onSelect }: SceneNodeProps) {
+function SceneNode({
+  pos,
+  color,
+  size,
+  selected,
+  dimmed,
+  labelsVisible,
+  onHover,
+  onUnhover,
+  onSelect,
+}: SceneNodeProps) {
   const ref = useRef<Mesh>(null);
   useFrame((_, delta) => {
     const m = ref.current;
@@ -31,26 +45,49 @@ function SceneNode({ pos, color, size, selected, onSelect }: SceneNodeProps) {
         e.stopPropagation();
         onSelect();
       }}
+      onPointerOver={onHover}
+      onPointerOut={onUnhover}
     >
       <sphereGeometry args={[1, 20, 20]} />
-      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={selected ? 0.5 : 0.08} />
+      <meshStandardMaterial
+        color={color}
+        emissive={color}
+        emissiveIntensity={selected ? 0.5 : dimmed ? 0.02 : 0.08}
+        transparent
+        opacity={dimmed ? 0.25 : 1}
+      />
+      {labelsVisible && selected && (
+        <sprite position={[0, 1.6, 0]}>
+          <spriteMaterial color="#ffffff" />
+        </sprite>
+      )}
     </mesh>
   );
 }
 
-/** FR-E01 — 3D scene: nodes as spheres (layout3d positions), edges as lines. */
+/**
+ * FR-E01 — 3D scene: nodes as spheres (layout3d positions), edges as lines.
+ * FR-E32/E38: edgeBrightness, labelsVisible, densityScale from settings.
+ * FR-E35: hover highlights the hovered node and dims non-related nodes.
+ */
 export default function GraphScene({
   layoutNodes,
   nodes,
   edges,
   selectedId,
   onSelect,
+  edgeBrightness = 0.45,
+  labelsVisible = true,
+  densityScale = 1,
 }: {
   layoutNodes: Layout3DNode[];
   nodes: GraphNode[];
   edges: Array<[string, string]>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  edgeBrightness?: number;
+  labelsVisible?: boolean;
+  densityScale?: number;
 }) {
   const posById = useMemo(
     () => new Map(layoutNodes.map((n) => [n.node_id, n as Layout3DNode])),
@@ -102,6 +139,21 @@ export default function GraphScene({
 
   const pointsRef = useRef<Points>(null);
 
+  // FR-E35 — hover dims unrelated nodes/edges when a node is hovered.
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const focusId = hoveredId ?? selectedId;
+  const focusNeighborIds = useMemo(() => {
+    if (!focusId) return null;
+    const ids = new Set<string>([focusId]);
+    for (const [s, t] of edges) {
+      if (s === focusId) ids.add(t);
+      if (t === focusId) ids.add(s);
+    }
+    return ids;
+  }, [focusId, edges]);
+
+  const dimmed = (id: string) => focusNeighborIds != null && !focusNeighborIds.has(id);
+
   return (
     <Canvas camera={{ position: [0, 0, 260], fov: 55, near: 0.1, far: 5000 }}>
       <ambientLight intensity={0.5} />
@@ -112,21 +164,35 @@ export default function GraphScene({
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" args={[edgePositions, 3]} count={edgePositions.length / 3} />
         </bufferGeometry>
-        <lineBasicMaterial color="#64748b" transparent opacity={0.45} />
+        <lineBasicMaterial
+          color="#64748b"
+          transparent
+          opacity={focusNeighborIds ? edgeBrightness * 0.35 : edgeBrightness}
+        />
       </lineSegments>
       <points ref={pointsRef}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" args={[positions, 3]} count={count} />
         </bufferGeometry>
-        <pointsMaterial size={0.6} color="#cbd5e1" sizeAttenuation transparent opacity={0.9} />
+        <pointsMaterial
+          size={0.6 * densityScale}
+          color="#cbd5e1"
+          sizeAttenuation
+          transparent
+          opacity={focusNeighborIds ? 0.25 : 0.9}
+        />
       </points>
       {sceneNodes.map((n) => (
         <SceneNode
           key={n.id}
           pos={[n.pos[0], n.pos[1], n.pos[2]]}
           color={n.color}
-          size={n.size}
+          size={n.size * densityScale}
           selected={n.selected}
+          dimmed={dimmed(n.id)}
+          labelsVisible={labelsVisible}
+          onHover={() => setHoveredId(n.id)}
+          onUnhover={() => setHoveredId(null)}
           onSelect={() => onSelect(n.id)}
         />
       ))}
