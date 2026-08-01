@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-01 — Priority order: **P1 CURRENT = Wave 4** (`US-MG-02` / `FR-MG-03`). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
+**Last synced:** 2026-08-01 (PR-00 reconcile: Wave 0 stale rows closed, JSON re-synced) — Priority order: **P1 CURRENT = Wave 4** (`US-MG-02` / `FR-MG-03`). **P1 Wave 1b DONE** (`load_layer` + `get_doc_structure` hard-deleted — `REL-076`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §5.18 / §5.22–5.23 / §5.32  
 **All-open fan-out campaign (worktrees + TDD + PRs):** [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)
@@ -42,12 +42,12 @@
 |--------|------:|
 | **Total tracked** | **539** |
 | NOT_DONE | 65 |
-| PENDING | 34 |
-| PARTIAL | 13 |
+| PENDING | 31 |
+| PARTIAL | 10 |
 | OPEN | 1 |
-| DONE | 423 |
+| DONE | 429 |
 | WONT_DO | 3 |
-| Open work | **113** |
+| Open work | **107** |
 
 | Open by Focus | Count |
 |---------------|------:|
@@ -129,7 +129,7 @@ Evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-0
 
 | ID | Status | Intent |
 |----|--------|--------|
-| `REL-ONRENDER-101` | PARTIAL | Fix Render Docker `cargo build --features embeddings` exit 101 (openssl headers + RSS guards); clear cache; confirm live `/api/ui-build` |
+| `REL-ONRENDER-101` | DONE | Fix Render Docker `cargo build --features embeddings` exit 101 — Dockerfile fix landed (libssl-dev + pkg-config + memory guards, committed); clear cache; confirm live `/api/ui-build` |
 | Follow-up F2 | NOT_DONE | CI gate for embeddings Docker build on Dockerfile/Cargo.lock changes |
 | Follow-up F3 | NOT_DONE | Prebuilt image → Render pull (optional) |
 
@@ -218,7 +218,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 9 | `REL-066` | **DONE** | Mega perf embed coverage |
 | 10 | `REL-067` | **DONE** | Mega inventory evidence |
 | 11 | `REL-068` | **DONE** | Master test report |
-| 12 | `FR-DOCEMBED-04` | **PARTIAL** | semantic_search kind=docs filter for doc hits without code noise |
+| 12 | `FR-DOCEMBED-04` | **DONE** | semantic_search kind=docs filter for doc hits without code noise |
 | 13 | `FR-REFRESH-01` | **DONE** | leankg refresh: index code → index docs → embed in one command |
 
 ## P2 — Remote source indexing (v3.7.16 — NEW)
@@ -367,7 +367,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
 | **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
-| **P2** | `REL-075` | Release | **NOT_DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `REL-075` | Release | **PARTIAL** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
 | **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
@@ -385,7 +385,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
-| **P2** | `REL-SRC-01` | Release | **DONE** | Should Have | E2e: index --source gs:// populates graph | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `REL-SRC-01` | Release | **NOT_DONE** | Should Have | E2e: index --source gs:// populates graph (e2e closeout: PR-03) | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-WATCH-01` | FR | **DONE** | Should Have | Source trait: remote_fingerprint + materialize_ephemeral | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-02` | FR | **DONE** | Should Have | Git watch via ls-remote + archive download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
@@ -546,7 +546,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
 | **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
-| **P2** | `REL-075` | Release | **NOT_DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `REL-075` | Release | **PARTIAL** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
 | **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
@@ -564,7 +564,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
-| **P2** | `REL-SRC-01` | Release | **DONE** | Should Have | E2e: index --source gs:// populates graph | 5.28 Remote source indexing (FR-SRC) |
+| **P2** | `REL-SRC-01` | Release | **NOT_DONE** | Should Have | E2e: index --source gs:// populates graph (e2e closeout: PR-03) | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-WATCH-01` | FR | **DONE** | Should Have | Source trait: remote_fingerprint + materialize_ephemeral | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-02` | FR | **DONE** | Should Have | Git watch via ls-remote + archive download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
 | **P2** | `FR-SRC-WATCH-03` | FR | **DONE** | Should Have | GCS watch via etag listing + delta download | 5.29 Remote source hot-reload (FR-SRC-WATCH) |
