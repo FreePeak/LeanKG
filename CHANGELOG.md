@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.27](https://github.com/FreePeak/LeanKG/compare/v0.19.26...v0.19.27) (2026-08-01)
+
+
+### Features
+
+* full Swift and Objective-C language support ([#158](https://github.com/FreePeak/LeanKG/issues/158)) ([d9bbc4c](https://github.com/FreePeak/LeanKG/commit/d9bbc4c9b1b3b3fab6f18d88738d56bc67f0907d))
+
 ## [0.19.26](https://github.com/FreePeak/LeanKG/compare/v0.19.25...v0.19.26) (2026-07-31)
 
 
