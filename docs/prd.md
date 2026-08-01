@@ -1352,7 +1352,7 @@ Palace Mapping:
 
 **PENDING evidence:**
 - No `typed` `resolution_method` produced at index time; LSP bridge returns `LspLocation[]` but does not yet write CALLS edges with `resolution_method=typed`
-- No `graph-ui/` directory; no `get_graph_layout` / 3D scene
+- ~~No `graph-ui/` directory; no `get_graph_layout` / 3D scene~~ — **RESOLVED 2026-08-02 (PR-53 / FR-E30..E43):** `graph-ui/` panels (summary, edge filter, settings, projects, search, history, export) + `/3d/` serve via rust_embed `src/embed/3d/`; `GET /api/projects`; `api_ui_build` advertises `has_3d` + `3d_route`
 - No formal `resources/read` endpoint for `get_overview_context` (tool-only)
 - ~~Vue / Svelte / SQL extractors exist as modules but `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`~~ — **RESOLVED 2026-08-02 (REL-032 / PR-14):** `.vue` / `.svelte` / `.sql` in `find_files_sync`, `extract_elements_for_file`, `index_file_sync`
 

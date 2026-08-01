@@ -297,29 +297,48 @@ fn content_type_for_path(path: &str) -> &'static str {
         "image/svg+xml"
     } else if path.ends_with(".ico") {
         "image/x-icon"
+    } else if path.ends_with(".wasm") {
+        "application/wasm"
+    } else if path.ends_with(".map") {
+        "application/json"
+    } else if path.ends_with(".woff2") {
+        "font/woff2"
     } else {
         "application/octet-stream"
     }
 }
 
+/// FR-E43 — Track E 3D graph-ui is embedded under `src/embed/3d/` and served
+/// at the `/3d/` route. The 2D `ui-v2` shell stays on `/` (FR-E42).
+const GRAPH_UI_PREFIX: &str = "3d/";
+
 async fn serve_embedded_file(path: &str) -> Response {
     let path = path.trim_start_matches('/');
-    let file_path = if path.is_empty() || path == "/" {
-        "index.html"
+    let (embed_key, ui_header) = if path == "3d" || path.starts_with(GRAPH_UI_PREFIX) {
+        // Map /3d/<file> -> embed "3d/<file>"; /3d or /3d/ -> 3d/index.html.
+        let rel = path.trim_start_matches("3d").trim_start_matches('/');
+        let key = if rel.is_empty() {
+            format!("{GRAPH_UI_PREFIX}index.html")
+        } else {
+            format!("{GRAPH_UI_PREFIX}{rel}")
+        };
+        (key, "graph-ui")
+    } else if path.is_empty() || path == "/" {
+        ("index.html".to_string(), "ui-v2")
     } else {
-        path
+        (path.to_string(), "ui-v2")
     };
 
-    if let Some(data) = embed::get(file_path) {
-        let ct = content_type_for_path(file_path);
+    if let Some(data) = embed::get(&embed_key) {
+        let ct = content_type_for_path(&embed_key);
         let mut builder = Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, ct);
         // Prevent CDN/browser from pinning a stale HTML shell to old hashed assets.
-        if file_path.ends_with(".html") || file_path == "index.html" {
+        if embed_key.ends_with(".html") {
             builder = builder
                 .header(header::CACHE_CONTROL, "no-store, must-revalidate")
-                .header("X-LeanKG-UI", "ui-v2");
+                .header("X-LeanKG-UI", ui_header);
         }
         builder
             .body(Body::from(data.to_vec()))
@@ -346,6 +365,23 @@ async fn fallback_handler(path: axum::extract::Path<String>) -> Response {
 
 async fn root_handler() -> Response {
     serve_embedded_file("index.html").await
+}
+
+/// FR-E43 — `/3d` shell for the Track E 3D explorer.
+async fn root_handler_3d() -> Response {
+    serve_embedded_file("3d").await
+}
+
+/// FR-E43 — `/3d/<rest>` where axum captures only `<rest>`; re-prefix so the
+/// embedded file is resolved under `3d/`.
+async fn fallback_handler_3d(path: axum::extract::Path<String>) -> Response {
+    let rest = path.0.trim_start_matches('/');
+    let key = if rest.is_empty() {
+        "3d".to_string()
+    } else {
+        format!("3d/{rest}")
+    };
+    serve_embedded_file(&key).await
 }
 
 pub async fn start_server(
@@ -410,6 +446,7 @@ pub async fn start_server(
         .route("/api/query-graph", post(handlers::api_query_graph))
         .route("/api/project/switch", post(handlers::api_switch_path))
         .route("/api/index/status", get(handlers::api_index_status))
+        .route("/api/projects", get(handlers::api_projects))
         .route("/api/ui-build", get(handlers::api_ui_build))
         .route(
             "/api/cache/invalidate",
@@ -450,6 +487,10 @@ pub async fn start_server(
             get(handlers::api_team_permissions),
         )
         .route("/services", get(handlers::services_page))
+        // FR-E43 — Track E 3D graph-ui at its own route, separate from 2D ui-v2.
+        .route("/3d", get(root_handler_3d))
+        .route("/3d/", get(root_handler_3d))
+        .route("/3d/*path", get(fallback_handler_3d))
         .route("/*path", get(fallback_handler))
         .with_state(state);
 
@@ -461,4 +502,88 @@ pub async fn start_server(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod serve_tests {
+    use super::*;
+
+    #[test]
+    fn content_type_covers_3d_asset_extensions() {
+        assert_eq!(content_type_for_path("3d/index.html"), "text/html");
+        assert_eq!(
+            content_type_for_path("3d/assets/app.js"),
+            "application/javascript"
+        );
+        assert_eq!(content_type_for_path("3d/assets/app.css"), "text/css");
+        assert_eq!(
+            content_type_for_path("3d/assets/app.wasm"),
+            "application/wasm"
+        );
+        assert_eq!(
+            content_type_for_path("3d/assets/app.js.map"),
+            "application/json"
+        );
+        assert_eq!(content_type_for_path("3d/assets/font.woff2"), "font/woff2");
+    }
+
+    /// FR-E43 — /3d maps to the embedded 3d/index.html with the graph-ui header.
+    #[tokio::test]
+    async fn serve_3d_route_returns_graph_ui_shell() {
+        let resp = serve_embedded_file("3d").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("X-LeanKG-UI")
+                .map(|v| v.to_str().unwrap()),
+            Some("graph-ui")
+        );
+        // Trailing-slash form resolves the same shell (route "/3d/").
+        let resp = serve_embedded_file("3d/").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// FR-E43 — /3d/<asset> serves the embedded asset under 3d/.
+    #[tokio::test]
+    async fn serve_3d_asset_under_prefix() {
+        // Discover embedded 3d assets by walking the on-disk source dir
+        // (rust_embed does not expose iteration).
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/embed/3d");
+        let mut found = 0;
+        for (dir, rel_prefix) in [(base.clone(), "3d/"), (base.join("assets"), "3d/assets/")] {
+            if !dir.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(dir).expect("src/embed/3d must exist") {
+                let path = entry.unwrap().path();
+                if !path.is_file() {
+                    continue;
+                }
+                let rel = format!(
+                    "{rel_prefix}{}",
+                    path.file_name().unwrap().to_string_lossy()
+                );
+                let resp = serve_embedded_file(&rel).await;
+                assert_eq!(resp.status(), StatusCode::OK, "{rel} should serve");
+                found += 1;
+            }
+        }
+        assert!(
+            found >= 2,
+            "expected index.html + at least one asset, found {found}"
+        );
+    }
+
+    /// FR-E42 — the root route still serves the 2D ui-v2 shell.
+    #[tokio::test]
+    async fn serve_root_returns_ui_v2() {
+        let resp = serve_embedded_file("index.html").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("X-LeanKG-UI")
+                .map(|v| v.to_str().unwrap()),
+            Some("ui-v2")
+        );
+    }
 }
