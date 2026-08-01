@@ -130,7 +130,7 @@ Evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-0
 | ID | Status | Intent |
 |----|--------|--------|
 | `REL-ONRENDER-101` | DONE | Fix Render Docker `cargo build --features embeddings` exit 101 — Dockerfile fix landed (libssl-dev + pkg-config + memory guards, committed); clear cache; confirm live `/api/ui-build` |
-| Follow-up F2 | NOT_DONE | CI gate for embeddings Docker build on Dockerfile/Cargo.lock changes |
+| Follow-up F2 | DONE | Embeddings build gate on the release path — `release.yml` `build-embeddings` job (runs once per release on the tag, `--features embeddings`, mirrors Render pipeline). No 40-min push/PR gate: would slow every Cargo.lock-touching release bump. See PR #169 + OnRender RCA F2 note |
 | Follow-up F3 | NOT_DONE | Prebuilt image → Render pull (optional) |
 
 Evidence: [`root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md)
@@ -193,7 +193,7 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 7 | `REL-063` | **DONE** | Live MCP smoke report under `docs/reports/` |
 | 8 | `FR-DOCJOIN-05` | **DONE** | Sync prefer-order / authoring in mcp-tools + skills |
 | 9 | `US-DOCJOIN-03` | **DONE** | Prefer annotations for FR IDs; extractable markdown refs |
-| 10 | `FR-DOCJOIN-06` | NOT_DONE | Could: best-effort `file::symbol` upgrade when unique |
+| 10 | `FR-DOCJOIN-06` | **DONE** | Could: best-effort `file::symbol` upgrade when unique |
 
 **Implement order (best practice):** FR-DOCJOIN-02 → 01 → 03 → 04 / REL-063 → 05 / US-DOCJOIN-03 → 06. See PRD §5.22 test matrix.
 
@@ -269,8 +269,8 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 | # | ID | Status | Intent |
 |--:|----|--------|--------|
-| 1 | `US-SM-01` / `FR-SM-01..03` | PENDING / NOT_DONE | Session MCP offload + `node_id` canvas + `session_recall` |
-| — | `REL-075` | **PARTIAL** | Docs/PRD/tracker landed; smoke when US-SM-01/02 ship |
+| 1 | `US-SM-01` / `FR-SM-01..03` | DONE / DONE | Session MCP offload + `node_id` canvas + `session_recall` — merged (#174, evidence: reports/rel-075-session-offload-2026-08-02.md) |
+| — | `REL-075` | **DONE** | Offload shipped (#174); live report reports/rel-075-session-offload-2026-08-02.md |
 | 2 | `US-SM-02` / `FR-SM-04..06` | PENDING / NOT_DONE | Auto-recall into `get_overview_context` (closes US-GE-05) |
 | 3 | `US-SM-03` / `FR-SM-07..08` | PENDING / NOT_DONE | Provenance + typed agent-memory kinds |
 | 4 | `US-SM-04` / `FR-SM-09` | PENDING / NOT_DONE | Hybrid RRF over knowledge/diary/LESSONS/ontology |
@@ -367,8 +367,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
 | **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
-| **P2** | `REL-075` | Release | **PARTIAL** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
-| **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
@@ -381,7 +381,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-DOCJOIN-04` | FR | **DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-06` | FR | **DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
@@ -424,7 +424,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-C08..C11` | FR | **NOT_DONE** | Should Have | Windows, pkg channel, SLSA, install targets (Could) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-D04` | FR | **NOT_DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E01..E05` | FR | **NOT_DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E10..E14` | FR | **NOT_DONE** | Should Have | Rust 3D layout + 'get_graph_layout' / '/api/graph' | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E10..E14` | FR | **DONE** | Should Have | Rust 3D layout + get_graph_layout / /api/graph/layout3d — merged (#171) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
@@ -445,9 +445,9 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-UI2-10` | FR | **NOT_DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
-| **P2** | `FR-UI2-11` | FR | **NOT_DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
-| **P2** | `REL-032` | Release | **PARTIAL** | Should Have | Vue / Svelte / SQL DDL unwired; Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P2** | `FR-UI2-10` | FR | **DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
+| **P2** | `FR-UI2-11` | FR | **DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
+| **P2** | `REL-032` | Release | **DONE** | Should Have | Vue / Svelte / SQL DDL wired into index walk (`find_files_sync` + bulk + incremental); Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P2** | `REL-040` | Release | **NOT_DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
@@ -481,8 +481,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-UI2-08` | User Story | **PENDING** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
-| **P2** | `US-UI2-09` | User Story | **PENDING** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P2** | `US-UI2-08` | User Story | **DONE** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P2** | `US-UI2-09` | User Story | **DONE** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
@@ -492,7 +492,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-GF-04` | User Story | **DONE** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-GF-06` | User Story | **DONE** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **DONE** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
-| **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
+| **P2** | `US-08` | User Story | **DONE** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-LANG-02` | User Story | **DONE** | Should Have | Swift indexing (tree-sitter calls + heritage + typed resolve) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
@@ -546,8 +546,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-10` | FR | **NOT_DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-11` | FR | **NOT_DONE** | Could Have | Propose add_ontology_workflow from repeated successful traces | 5.32 Session memory (FR-SM) |
 | **P3** | `FR-SM-12` | FR | **NOT_DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
-| **P2** | `REL-075` | Release | **PARTIAL** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
-| **P2** | `US-SM-01` | User Story | **PENDING** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
+| **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **PENDING** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-04` | User Story | **PENDING** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
@@ -560,7 +560,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-DOCJOIN-04` | FR | **DONE** | Must Have | Unit + TempDir integration tests for doc↔code join round-trip | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `REL-063` | Release | **DONE** | Must Have | Evidence: fixture + live MCP smoke for doc↔code join quality (docs/reports/) | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-05` | FR | **DONE** | Should Have | Sync mcp-tools / AGENTS / using-leankg prefer-order for annotations vs markdown edges | 5.22 Doc↔Code Join Quality (v3.7.13) |
-| **P2** | `FR-DOCJOIN-06` | FR | **NOT_DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
+| **P2** | `FR-DOCJOIN-06` | FR | **DONE** | Could Have | Optional best-effort upgrade of file::symbol mentions to unique function/class keys | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-SRC-GIT-01` | FR | **DONE** | Should Have | GitLab auth: --auth → GITLAB_TOKEN → GIT_TOKEN | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GIT-03` | FR | **DONE** | Should Have | Fix incremental remote double-sync | 5.28 Remote source indexing (FR-SRC) |
 | **P2** | `FR-SRC-GCS-02` | FR | **DONE** | Should Have | Honest CLI help for GCS auth (no SA JSON claims) | 5.28 Remote source indexing (FR-SRC) |
@@ -610,7 +610,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-C08..C11` | FR | **NOT_DONE** | Should Have | Windows, pkg channel, SLSA, install targets (Could) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-D04` | FR | **NOT_DONE** | Should Have | Re-evaluate dual-run after Phase 3 typed resolve | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E01..E05` | FR | **NOT_DONE** | Should Have | Vite/React/R3F/shadcn stack in 'graph-ui/' | 5.10 CBM Structural Parity Requirements (merged) |
-| **P2** | `FR-E10..E14` | FR | **NOT_DONE** | Should Have | Rust 3D layout + 'get_graph_layout' / '/api/graph' | 5.10 CBM Structural Parity Requirements (merged) |
+| **P2** | `FR-E10..E14` | FR | **DONE** | Should Have | Rust 3D layout + get_graph_layout / /api/graph/layout3d — merged (#171) | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E20..E28` | FR | **NOT_DONE** | Should Have | R3F scene, Bloom, adaptive LOD, edge colors | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E30..E36` | FR | **NOT_DONE** | Should Have | Detail/filter panels, settings, multi-repo galaxies | 5.10 CBM Structural Parity Requirements (merged) |
 | **P2** | `FR-E40..E43` | FR | **NOT_DONE** | Should Have | HTTP integration; embed or static serve; keep 2D 'ui/' untouched | 5.10 CBM Structural Parity Requirements (merged) |
@@ -631,9 +631,9 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SEM-01` | FR | **NOT_DONE** | Should Have | Dual token accounting: delivered tokens + _token_budget.{max,actual,truncated}; docs teach… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-02` | FR | **NOT_DONE** | Should Have | Explicit max_tokens_for_tool for concept_search + kg_semantic_context (≥ sibling kg_*, tar… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
-| **P2** | `FR-UI2-10` | FR | **NOT_DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
-| **P2** | `FR-UI2-11` | FR | **NOT_DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
-| **P2** | `REL-032` | Release | **PARTIAL** | Should Have | Vue / Svelte / SQL DDL unwired; Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P2** | `FR-UI2-10` | FR | **DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
+| **P2** | `FR-UI2-11` | FR | **DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
+| **P2** | `REL-032` | Release | **DONE** | Should Have | Vue / Svelte / SQL DDL wired into index walk (`find_files_sync` + bulk + incremental); Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P2** | `REL-040` | Release | **NOT_DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
@@ -660,8 +660,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `US-SEM-01` | User Story | **PENDING** | Should Have | Honest token accounting on truncated MCP payloads (delivered vs _token_budget.actual) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-SEM-02` | User Story | **PENDING** | Should Have | Adequate per-tool budgets for concept_search / kg_semantic_context (not default 1000) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P2** | `US-SEM-03` | User Story | **PENDING** | Should Have | Resilient MCP HTTP for long semantic calls (transient socket drop retry) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
-| **P2** | `US-UI2-08` | User Story | **PENDING** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
-| **P2** | `US-UI2-09` | User Story | **PENDING** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P2** | `US-UI2-08` | User Story | **DONE** | Should Have | Community/cluster legend with show-hide filters (Graphify sidebar parity) | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
+| **P2** | `US-UI2-09` | User Story | **DONE** | Should Have | Port legacy ops panels (incidents / env / conflicts) into ui-v2 | 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) |
 | **P3** | `US-CBM-C5` | User Story | **PENDING** | Could Have | Windows build + smoke | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P3** | `US-SEM-04` | User Story | **PENDING** | Could Have | Semantic hit diversity across files (MMR / file-diversity post-filter) | 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1 |
 | **P3** | `US-GE-06` | User Story | **PENDING** | Could Have | Selective LLM pass-2 for workflows/decisions (YAML remains SoT) | 3.20 Graph Engineering curriculum gaps (US-GE) |
@@ -671,7 +671,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-GF-04` | User Story | **DONE** | Must Have | Edge provenance labels 'EXTRACTED' / 'INFERRED' / 'AMBIGUOUS' on all relationships (unify … | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-GF-06` | User Story | **DONE** | Must Have | Generate 'GRAPH_REPORT.md': god nodes, surprising cross-module links, suggested questions,… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
 | **P1** | `US-MG-02` | User Story | **DONE** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
-| **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
+| **P2** | `US-08` | User Story | **DONE** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
 | **P2** | `US-LANG-02` | User Story | **DONE** | Should Have | Swift indexing (tree-sitter calls + heritage + typed resolve) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
