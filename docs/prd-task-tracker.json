@@ -2,21 +2,21 @@
   "generated": "2026-08-01",
   "source": "docs/prd.md",
   "counts": {
-    "DONE": 429,
-    "NOT_DONE": 65,
+    "DONE": 431,
+    "NOT_DONE": 64,
     "PENDING": 31,
-    "PARTIAL": 10,
+    "PARTIAL": 9,
     "OPEN": 1,
     "WONT_DO": 3,
     "by_status": {
-      "NOT_DONE": 65,
-      "PARTIAL": 10,
-      "DONE": 429,
+      "NOT_DONE": 64,
+      "PARTIAL": 9,
+      "DONE": 431,
       "PENDING": 31,
       "OPEN": 1,
       "WONT_DO": 3
     },
-    "open_work": 107
+    "open_work": 105
   },
   "tasks": [
     {
@@ -37,8 +37,8 @@
       "kind": "FR",
       "title": "Single-repo projects treated as single service — root double-click loads everything",
       "priority": "Must Have",
-      "status": "NOT_DONE",
-      "notes": "[ ] 2026-07-21 priority reorder: Wave 4 UI correctness after packaging",
+      "status": "DONE",
+      "notes": "DONE 2026-08-01 — root double-click auto-enables all_content for single-repo (detect_single_repo); evidence: reports/wave4-single-repo-expand-2026-08-01.md",
       "section": "5.7 Massive Graph UI (DONE)",
       "prd_line": null,
       "focus": "P1",
@@ -1168,8 +1168,8 @@
       "kind": "User Story",
       "title": "Single-repo projects expand fully on service double-click (no multi-level drilling)",
       "priority": "Must Have",
-      "status": "PARTIAL",
-      "notes": "PARTIAL (expand-service called, FR-MG-03 still pending) 2026-07-21 priority reorder: Wave 4 UI correctness after packaging",
+      "status": "DONE",
+      "notes": "DONE 2026-08-01 — expand-service root loads entire tree in one call; evidence: reports/wave4-single-repo-expand-2026-08-01.md",
       "section": "3.8 Massive Graph Stories (US-MG-01 to US-MG-05)",
       "prd_line": null,
       "focus": "P1",
