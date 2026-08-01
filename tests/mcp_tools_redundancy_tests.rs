@@ -368,7 +368,9 @@ mod agent {
 
 mod session_offload {
     use super::*;
-    use leankg::session::{offload_step, Lesson, RecallStore, SessionStore};
+    use leankg::session::{
+        offload_step, Lesson, MemoryKind, MemoryProvenance, RecallStore, SessionStore,
+    };
 
     #[tokio::test(flavor = "multi_thread")]
     async fn offload_then_recall_via_mcp_round_trips() {
@@ -464,6 +466,7 @@ mod session_offload {
                 source: "report_query_outcome".to_string(),
                 rank: 9.0,
                 text: "prefer get_overview_context at session start (never grep first)".to_string(),
+                provenance: None,
             })
             .expect("push lesson");
         recall
@@ -472,6 +475,7 @@ mod session_offload {
                 source: "diary".to_string(),
                 rank: 3.0,
                 text: "validate_key is the hot entry point for auth changes".to_string(),
+                provenance: None,
             })
             .expect("push lesson");
 
@@ -518,6 +522,7 @@ mod session_offload {
                 source: "LESSONS.md".to_string(),
                 rank: 9.0,
                 text: "duplicate lesson text for dedup verification".to_string(),
+                provenance: None,
             })
             .expect("push");
         recall
@@ -526,6 +531,7 @@ mod session_offload {
                 source: "knowledge".to_string(),
                 rank: 8.0,
                 text: "duplicate lesson text for dedup verification".to_string(),
+                provenance: None,
             })
             .expect("push");
         let lessons = recall.load().expect("load");
@@ -540,6 +546,7 @@ mod session_offload {
                     source: "diary".to_string(),
                     rank: i as f64,
                     text: format!("lesson {i}"),
+                    provenance: None,
                 })
                 .expect("push");
         }
@@ -556,6 +563,116 @@ mod session_offload {
         assert!(
             lessons.matches("lesson ").count() <= 5,
             "top-K exceeded: {lessons}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // PR-22: US-SM-03/04 / FR-SM-07..09 — provenance + typed kinds + RRF
+    // ------------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn session_memory_write_records_provenance_and_typed_kind() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+        let resp = call(
+            &handler,
+            "session_memory_write",
+            json!({
+                "text": "decision: use RRF k=60 for hybrid memory search",
+                "session_id": "sess-9f31",
+                "node_id": "offload-007",
+                "kind": "decision",
+                "element_refs": ["src/search/mod.rs::fuse_ranked_lists"],
+                "project": project
+            }),
+        )
+        .await
+        .expect("session_memory_write");
+        assert_eq!(resp["written"], true);
+        assert_eq!(resp["kind"], "decision", "typed kind on the response");
+        assert_eq!(resp["source_session_id"], "sess-9f31");
+        assert_eq!(resp["node_id"], "offload-007");
+
+        // The lesson must be retrievable through the recall index seam with
+        // full provenance (FR-SM-07 round trip).
+        let store = RecallStore::new(tmp.path()).expect("recall store");
+        let lessons = store.load().expect("load");
+        assert_eq!(lessons.len(), 1);
+        let p = lessons[0].provenance.as_ref().expect("provenance");
+        assert_eq!(p.source_session_id, "sess-9f31");
+        assert_eq!(p.node_id.as_deref(), Some("offload-007"));
+        assert_eq!(p.kind, MemoryKind::Decision);
+        assert_eq!(
+            p.element_refs,
+            vec!["src/search/mod.rs::fuse_ranked_lists".to_string()]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn session_memory_write_auto_classifies_kind_when_omitted() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+        let resp = call(
+            &handler,
+            "session_memory_write",
+            json!({"text": "standing_rule: never pass host paths", "project": project}),
+        )
+        .await
+        .expect("session_memory_write");
+        assert_eq!(resp["kind"], "standing_rule", "auto-classified kind");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn search_memory_rrf_merges_recall_index_and_returns_provenance() {
+        let (handler, tmp) = make_handler().await;
+        let project = tmp.path().to_string_lossy().to_string();
+        // Seed the recall index through the same lib seam the tool reads.
+        let recall = RecallStore::new(tmp.path()).expect("recall store");
+        recall
+            .push_dedup(&Lesson {
+                id: "r-1".to_string(),
+                source: "report_query_outcome".to_string(),
+                rank: 9.0,
+                text: "prefer get_overview_context at session start (never grep first)".to_string(),
+                provenance: Some(MemoryProvenance {
+                    source_session_id: "sess-9f31".to_string(),
+                    node_id: Some("offload-002".to_string()),
+                    kind: MemoryKind::Preference,
+                    element_refs: vec!["src/mcp/handler.rs::get_overview_context".to_string()],
+                    timestamp: Some(1754100000),
+                    tool_call: Some("report_query_outcome".to_string()),
+                }),
+            })
+            .expect("push");
+
+        let resp = call(
+            &handler,
+            "search_memory_rrf",
+            json!({"query": "overview", "project": project}),
+        )
+        .await
+        .expect("search_memory_rrf");
+        assert!(resp["count"].as_u64().unwrap_or(0) >= 1, "{resp}");
+        let hit = &resp["results"][0];
+        assert_eq!(hit["id"], "r-1");
+        assert_eq!(hit["kind"], "preference");
+        assert_eq!(hit["node_id"], "offload-002");
+        assert_eq!(hit["source_session_id"], "sess-9f31");
+        assert_eq!(
+            hit["element_refs"][0],
+            "src/mcp/handler.rs::get_overview_context"
+        );
+        assert!(
+            hit["score"].as_f64().unwrap_or(0.0) > 0.0,
+            "fused score positive: {hit}"
+        );
+        assert!(
+            hit["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s == "session"),
+            "hit carries the session source label: {hit}"
         );
     }
 }

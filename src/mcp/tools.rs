@@ -350,6 +350,38 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "session_memory_write".to_string(),
+                description: "US-SM-03 / FR-SM-07..08: Write a durable agent memory with provenance (source session id, node_id, typed kind preference|decision|standing_rule, element refs) into the recall index. Kind auto-classifies from text when omitted. Use instead of ad-hoc knowledge notes for session memory.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Memory text (lesson, preference, decision, rule)"},
+                        "session_id": {"type": "string", "description": "Source session id (default: recall)"},
+                        "node_id": {"type": "string", "description": "Offload node_id this memory expands, if any"},
+                        "kind": {"type": "string", "enum": ["preference", "decision", "standing_rule"], "description": "Typed agent-memory kind; auto-classified from text when omitted"},
+                        "element_refs": {"type": "array", "items": {"type": "string"}, "description": "Code element qualified names this memory references"},
+                        "rank": {"type": "number", "default": 5.0, "description": "Initial rank for recall ordering"},
+                        "id": {"type": "string", "description": "Optional stable id"},
+                        "source": {"type": "string", "description": "Source label (default: session_memory_write)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["text"]
+                }),
+            },
+            ToolDefinition {
+                name: "search_memory_rrf".to_string(),
+                description: "US-SM-04 / FR-SM-09: Hybrid recall search over session recall index + LESSONS journal merged with Reciprocal Rank Fusion (k=60). Returns ranked hits with provenance (kind, node_id, source session, element refs). Score threshold + result budget applied.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query (keyword overlap on memory text)"},
+                        "limit": {"type": "integer", "default": 10, "description": "Max results (max 50)"},
+                        "project": {"type": "string", "description": "Optional: project path"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
                 name: "get_cluster_skill".to_string(),
                 description: "US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
                 input_schema: json!({
