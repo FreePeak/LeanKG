@@ -32,6 +32,27 @@ export interface GraphEdge {
   target: string;
 }
 
+export interface GraphDataNode {
+  id: string;
+}
+
+export interface GraphDataResponse {
+  nodes: GraphDataNode[];
+  edges: { source: string; target: string }[];
+}
+
+/** Fetch node+edge graph data (source of truth for degrees). */
+export async function fetchGraphData(
+  url = '/api/graph/data',
+): Promise<GraphDataResponse> {
+  const res = await fetch(url);
+  const json = (await res.json()) as ApiResponse<GraphDataResponse>;
+  if (!json.success || !json.data) {
+    throw new Error(json.error ?? 'graph data request failed');
+  }
+  return json.data;
+}
+
 /** Fetch the 3D layout. `onBatch` streams progressive batches (FR-E22). */
 export async function fetchLayout3d(
   url = '/api/graph/layout3d',
