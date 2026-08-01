@@ -7039,7 +7039,7 @@
       "P2": "Next — reliability, semantic UX, install breadth, CBM leftovers",
       "P3": "Backlog — Track E 3D, FR-SURF-06 doc merge, aspirational OPEN"
     },
-    "updated": "2026-07-21 — v3.7.13 DOCJOIN P2 join-quality backlog added",
+    "updated": "2026-08-01 — PR-03 closed: REL-SRC-01 / REL-SRC-WATCH-01 / REL-REFRESH-01 DONE (docs/reports/rel-src-*-2026-08-01.md); HNSW live-:put + doc_section 2-hop traversal fixes",
     "sync_note": "P2 DOCJOIN after Wave 1a; FR-51-56 remain DONE; FR-SURF-06 stays P3",
     "company_adoption_order": [
       "US-COST-01",
