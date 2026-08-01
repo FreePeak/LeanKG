@@ -255,7 +255,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let mut files = Vec::new();
     let extensions = [
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod", "xml", "dart", "swift", "m", "mm", "h",
+        "mod", "xml", "dart", "swift", "m", "mm", "h", "vue", "svelte", "sql",
     ];
     let config_files = [
         "package.json",
@@ -539,6 +539,37 @@ fn extract_elements_for_file(
     } else if file_path.ends_with(".xml") {
         // Handle generic XML files not caught by Android extractors
         let extractor = crate::indexer::GenericXmlExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
+    }
+
+    // REL-032: Vue / Svelte single-file components + SQL DDL. Regex
+    // extractors (no tree-sitter grammars bundled); must run before the
+    // tree-sitter language gate which would otherwise return empty.
+    if file_path.ends_with(".vue") {
+        let extractor = crate::indexer::sfc::SfcExtractor::vue(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
+    }
+    if file_path.ends_with(".svelte") {
+        let extractor = crate::indexer::sfc::SfcExtractor::svelte(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
+    }
+    if file_path.ends_with(".sql") {
+        let extractor = crate::indexer::sql::SqlExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         return Ok(ParsedFile {
             element_count: elements.len(),
@@ -986,6 +1017,33 @@ pub fn index_file_sync(
         && (file_path.ends_with(".yml") || file_path.ends_with(".yaml"))
     {
         let extractor = CicdYamlExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
+        return Ok(elements.len());
+    }
+
+    // REL-032: Vue / Svelte / SQL regex extractors — short-circuit before the
+    // tree-sitter language gate (same pattern as Swift/ObjC).
+    if file_path.ends_with(".vue") || file_path.ends_with(".svelte") {
+        let extractor = if file_path.ends_with(".vue") {
+            crate::indexer::sfc::SfcExtractor::vue(source, file_path)
+        } else {
+            crate::indexer::sfc::SfcExtractor::svelte(source, file_path)
+        };
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
+        return Ok(elements.len());
+    }
+    if file_path.ends_with(".sql") {
+        let extractor = crate::indexer::sql::SqlExtractor::new(source, file_path);
         let (elements, relationships) = extractor.extract();
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
@@ -2238,6 +2296,46 @@ include("web-app")"#;
         let submodules = detect_maven_submodules(content);
         assert!(submodules.contains(&"api".to_string()));
         assert!(submodules.contains(&"core".to_string()));
+    }
+
+    // REL-032: walker must find .vue / .svelte / .sql files.
+    #[test]
+    fn test_find_files_sync_discovers_vue_svelte_sql() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("App.vue"),
+            "<template><div/></template>\n<script setup>\n</script>\n",
+        )
+        .expect("write vue");
+        std::fs::write(
+            dir.path().join("Hello.svelte"),
+            "<script>\n</script>\n<h1>hi</h1>\n",
+        )
+        .expect("write svelte");
+        std::fs::write(
+            dir.path().join("schema.sql"),
+            "CREATE TABLE users (id INTEGER PRIMARY KEY);\n",
+        )
+        .expect("write sql");
+
+        let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
+        let names: Vec<&str> = files
+            .iter()
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            })
+            .collect();
+        assert!(names.contains(&"App.vue"), "missing .vue: {:?}", names);
+        assert!(
+            names.contains(&"Hello.svelte"),
+            "missing .svelte: {:?}",
+            names
+        );
+        assert!(names.contains(&"schema.sql"), "missing .sql: {:?}", names);
     }
 
     // US-GF-07: rationale extraction
