@@ -555,8 +555,8 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
   - US-LANG-02 Swift — **PARTIAL**: regex extractor wired for bulk + incremental index (`src/indexer/swift.rs`); heritage/call-graph/tree-sitter still pending
   - US-LANG-03 XML — **DONE and indexed** (`.xml` + Android path) (`92db9aa`)
   - US-LANG-04 Objective-C — **PARTIAL**: regex extractor wired for bulk + incremental (`.m`/`.mm`/`.h`); protocol conformance / full selectors pending
-  - US-GF-10 Vue/Svelte — **DONE (index walk)**: regex extractors in `src/indexer/sfc.rs` (`e617a49`); `.vue` / `.svelte` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02)
-  - US-GF-12 SQL DDL — **DONE (index walk)**: parser in `src/indexer/sql.rs` (`de314eb`); `.sql` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02); live `--postgres <dsn>` introspection still open
+  - US-GF-10 Vue/Svelte — **DONE (index walk)**: regex extractors in `src/indexer/sfc.rs` (`e617a49`); `.vue` / `.svelte` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02). Verified 2026-08-02 (`extracts_vue_sfc_with_script_setup_and_template` / `extracts_svelte_component`); remaining long-tail grammars (shell, Scala, Lua, Zig, Astro) stay P3 leftovers, non-blocking
+  - US-GF-12 SQL DDL — **DONE (index walk) / PARTIAL (live DSN)**: parser in `src/indexer/sql.rs` (`de314eb`); `.sql` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02). 2026-08-02: inline `REFERENCES` FK extraction for PG/MySQL column style + PG-dialect dump test (`extracts_postgres_dialect_dump`) covering SERIAL/BIGSERIAL, quoted identifiers, `nextval()` defaults. Live `--postgres <dsn>` introspection remains the open half of US-GF-12
 - Agent-graph UX series — DONE:
   - US-GF-07 rationale extraction (`# WHY:` / `# NOTE:` / `# HACK:` / `# FIXME:` / `# XXX:` markers) → `rationale` elements with `explains` edges (`b0c9477`)
   - US-GF-08 PR impact dashboard — `get_pr_impact` MCP + `leankg prs` CLI (`30e41f0`)
@@ -572,9 +572,10 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
   - US-CBM-B7 clone / near-duplicate detection — historically shipped as `find_clones` MCP + `leankg clones` CLI (`55e6e72`); **hard-removed 2026-07-20** (prefer semantic HNSW discovery)
   - US-CBM-B8 cross-repo similar edges — `find_cross_repo_similar` (`ab16c9b`)
   - US-CBM-C2 hot-path cache for high-frequency MCP tools (`836f0a3`)
+  - US-CBM-C5 Windows build + smoke — release CI ships a `windows-latest` job (`.github/workflows/release.yml`, `x86_64-pc-windows-msvc`); 2026-08-02 added `tests/windows_smoke.rs` (`#[cfg(windows)]`) exercising real-binary `init → index → query → version` on Windows. CI test job itself remains ubuntu-only; Windows is exercised at release time by the smoke suite
 - GitNexus — DONE:
   - US-GN-07 `get_cluster_skill` MCP — per-cluster `SKILL.md` (`10b15a0`)
-  - US-GN-08 `get_overview_context` MCP — resource-style overview (`9124959`); formal `resources/read` not yet wired (PARTIAL).
+  - US-GN-08 `get_overview_context` MCP — resource-style overview (`9124959`); formal `resources/read` wired 2026-08-02 — `leankg://overview` + `leankg://overview/wake_up` via RMCP `ServerHandler::{list_resources,read_resource}` + JSON-RPC `resources/list` / `resources/read` (DONE).
 - Team / distribution — DONE:
   - US-14 npm-based installation wrapper (`df0fec2`)
   - US-V2-11 CI/CD auto-graph update — GitHub Actions workflow that reindexes / commits the portable snapshot on release (`eb3d331`)

@@ -30,6 +30,13 @@ static FK_RE: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// Inline `REFERENCES` in a column definition (PostgreSQL / MySQL style):
+/// `user_id INTEGER REFERENCES users(id)` — no FOREIGN KEY constraint form.
+/// Captures column name + referenced table.
+static INLINE_FK_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?i)\bREFERENCES\s+(?:`|"|\[)?(\w+)(?:`|"|\])?(?:\s*\([^)]*\))?"#).unwrap()
+});
+
 static PK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)PRIMARY\s+KEY"#).unwrap());
 
 pub struct SqlExtractor<'a> {
@@ -157,6 +164,44 @@ impl<'a> SqlExtractor<'a> {
                     target_qualified: target_qn,
                     rel_type: "references".to_string(),
                     confidence: 0.95,
+                    metadata: serde_json::json!({
+                        "resolution_method": "name",
+                        "fk_column": fk_col,
+                    }),
+                    ..Default::default()
+                });
+            }
+
+            // Inline REFERENCES (PG/MySQL style): `user_id INTEGER REFERENCES users(id)`.
+            // One pass over column definitions; a REFERENCES match after the
+            // column name (not inside a default expression) emits the FK edge.
+            // `nextval('seq')` references never match (no table word after
+            // `REFERENCES` inside a string literal is a false positive only
+            // if the literal contains `REFERENCES tbl` — acceptable for v0).
+            for raw in split_top_level(body) {
+                let trimmed = raw.trim().trim_end_matches(',').trim();
+                if trimmed.is_empty() || is_constraint_keyword(trimmed) {
+                    continue;
+                }
+                let Some(fk_col) = column_name(trimmed) else {
+                    continue;
+                };
+                let Some(cap) = INLINE_FK_RE.captures(trimmed) else {
+                    continue;
+                };
+                let m = cap.get(0).unwrap();
+                if m.start() == 0 {
+                    continue; // column name itself is not `REFERENCES ...`
+                }
+                let target_table = cap[1].to_string();
+                let target_qn = format!("{}::{}", self.file_path, target_table);
+                let source_qn = format!("{}::{}", table_qn, fk_col);
+                relationships.push(Relationship {
+                    id: None,
+                    source_qualified: source_qn,
+                    target_qualified: target_qn,
+                    rel_type: "references".to_string(),
+                    confidence: 0.9,
                     metadata: serde_json::json!({
                         "resolution_method": "name",
                         "fk_column": fk_col,
@@ -323,5 +368,64 @@ CREATE TABLE orders (
         let parts: Vec<&str> = split_top_level(body);
         assert_eq!(parts.len(), 3);
         assert!(parts[0].contains("DEFAULT nextval('seq')"));
+    }
+
+    // US-GF-12 (index-walk half): a typical PostgreSQL dump — SERIAL /
+    // BIGSERIAL identities, `nextval(...)` defaults, quoted identifiers,
+    // inline REFERENCES — must parse into table/column/FK nodes the same
+    // way a live `--postgres <dsn>` introspection would produce them.
+    // The live-DSN half remains an explicit open follow-up (PRD notes).
+    #[test]
+    fn extracts_postgres_dialect_dump() {
+        let sql = r#"
+-- PostgreSQL dump
+CREATE TABLE "users" (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE orders (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    total NUMERIC(10,2) DEFAULT 0
+);
+"#;
+        let (elems, rels) = SqlExtractor::new(sql.as_bytes(), "dump.sql").extract();
+        assert!(elems
+            .iter()
+            .any(|e| e.element_type == "table" && e.name == "users"));
+        assert!(elems
+            .iter()
+            .any(|e| e.element_type == "table" && e.name == "orders"));
+        // SERIAL PK columns: `id` under quoted `"users"` and bare `orders`.
+        let users_id = elems.iter().find(|e| {
+            e.element_type == "column" && e.name == "id" && e.qualified_name.contains("users")
+        });
+        assert!(
+            users_id.is_some(),
+            "users.id column: {:?}",
+            elems
+                .iter()
+                .filter(|e| e.element_type == "column")
+                .map(|e| &e.name)
+                .collect::<Vec<_>>()
+        );
+        let orders_id = elems.iter().find(|e| {
+            e.element_type == "column" && e.name == "id" && e.qualified_name.contains("orders")
+        });
+        assert!(orders_id.is_some(), "orders.id column present");
+        // Inline FK: `user_id INTEGER REFERENCES users(id)`.
+        assert!(
+            rels.iter()
+                .any(|r| r.rel_type == "references" && r.target_qualified.ends_with("::users")),
+            "FK references edge for orders.user_id -> users"
+        );
+        // DDL `DEFAULT now()` / `DEFAULT 0` must not be mistaken for columns.
+        assert!(
+            elems
+                .iter()
+                .all(|e| e.element_type != "column" || e.name != "now"),
+            "now() is a default expression, not a column"
+        );
     }
 }

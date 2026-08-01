@@ -142,6 +142,16 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      # US-CBM-C5: Windows smoke — the release job builds the binary but
+      # never runs it. `tests/windows_smoke.rs` (`#[cfg(windows)]`) runs the
+      # real CLI end-to-end (init → index → query → version) on the host
+      # where it was compiled, so path/quoting/CRLF regressions surface at
+      # release time instead of in the field.
+      - name: Windows smoke (init → index → query)
+        if: matrix.runs-on == 'windows-latest'
+        shell: bash
+        run: cargo test --release --test windows_smoke
+
       - name: Package
         run: |
           mkdir -p release

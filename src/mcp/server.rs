@@ -21,7 +21,11 @@ use moka::future::Cache;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use rmcp::handler::server::ServerHandler;
-use rmcp::model::{CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool};
+use rmcp::model::{
+    AnnotateAble, CallToolRequestParams, CallToolResult, Content, ListResourcesResult,
+    ListToolsResult, RawResource, ReadResourceRequestParams, ReadResourceResult, ResourceContents,
+    Tool,
+};
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
 use serde::{Deserialize, Serialize};
@@ -2807,6 +2811,7 @@ impl ServerHandler for MCPServer {
         rmcp::model::ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
+                .enable_resources()
                 .build(),
         )
         .with_server_info(
@@ -2834,6 +2839,69 @@ impl ServerHandler for MCPServer {
             })
             .collect();
         Ok(ListToolsResult::with_all_items(rmcp_tools))
+    }
+
+    /// US-GN-08: MCP Resources for session-start overview context.
+    ///
+    /// Two static resources, backed by the same graph-query seam as the
+    /// `get_overview_context` tool:
+    ///   - `leankg://overview`            — L0 identity + L1 critical facts
+    ///   - `leankg://overview/wake_up`    — wake_up_summary project snapshot
+    ///
+    /// The RMCP protocol requests these via `resources/list` +
+    /// `resources/read` (formal Resources API), which the JSON-RPC HTTP
+    /// transport mirrors in `process_jsonrpc_request`.
+    async fn list_resources(
+        &self,
+        _params: Option<rmcp::model::PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, rmcp::model::ErrorData> {
+        let resources = vec![
+            RawResource::new("leankg://overview", "LeanKG overview")
+                .with_description(
+                    "Session-start overview: project identity (L0) + critical facts (L1)",
+                )
+                .with_mime_type("text/markdown")
+                .no_annotation(),
+            RawResource::new("leankg://overview/wake_up", "LeanKG wake-up summary")
+                .with_description(
+                    "Project snapshot: file/function/class counts, languages, top directories",
+                )
+                .with_mime_type("text/markdown")
+                .no_annotation(),
+        ];
+        Ok(ListResourcesResult::with_all_items(resources))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: rmcp::service::RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, rmcp::model::ErrorData> {
+        let uri = request.uri.as_str();
+        let engine = self.get_graph_engine().map_err(|e| {
+            rmcp::model::ErrorData::internal_error(format!("LeanKG not initialized: {e}"), None)
+        })?;
+        let project_name = "project";
+        let text = match uri {
+            "leankg://overview" => {
+                let l0 = engine.identity_context(project_name).unwrap_or_default();
+                let l1 = engine.critical_facts_context().unwrap_or_default();
+                format!("{}\n{}", l0, l1)
+            }
+            "leankg://overview/wake_up" => engine.wake_up_summary().unwrap_or_default(),
+            _ => {
+                return Err(rmcp::model::ErrorData::resource_not_found(
+                    format!("unknown resource URI: {uri}"),
+                    None,
+                ))
+            }
+        };
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(
+            text,
+            uri.to_string(),
+        )
+        .with_mime_type("text/markdown")]))
     }
 
     async fn call_tool(
@@ -3198,8 +3266,53 @@ async fn process_jsonrpc_request(
             Ok(serde_json::Value::Null)
         }
         "resources/list" => {
-            // LeanKG exposes tools only, no resources
-            Ok(serde_json::json!({ "resources": [] }))
+            // US-GN-08: formal MCP Resources — overview + wake_up snapshot.
+            Ok(serde_json::json!({
+                "resources": [
+                    {
+                        "uri": "leankg://overview",
+                        "name": "LeanKG overview",
+                        "description": "Session-start overview: project identity (L0) + critical facts (L1)",
+                        "mimeType": "text/markdown"
+                    },
+                    {
+                        "uri": "leankg://overview/wake_up",
+                        "name": "LeanKG wake-up summary",
+                        "description": "Project snapshot: file/function/class counts, languages, top directories",
+                        "mimeType": "text/markdown"
+                    }
+                ]
+            }))
+        }
+        "resources/read" => {
+            let uri = params
+                .and_then(|p| p.get("uri"))
+                .and_then(|v| v.as_str())
+                .ok_or("Missing uri for resources/read")?;
+            // Route through `project_param` the same way tools/call does:
+            // the overview content is per-project (identity + critical facts
+            // live in that project's graph).
+            let project_ref = project_param.map(|s| s.to_string());
+            let engine = mcp_server
+                .get_graph_engine_for_path(project_ref.as_ref())
+                .map_err(|e| e.to_string())?;
+            let project_name = "project";
+            let text = match uri {
+                "leankg://overview" => {
+                    let l0 = engine.identity_context(project_name).unwrap_or_default();
+                    let l1 = engine.critical_facts_context().unwrap_or_default();
+                    format!("{}\n{}", l0, l1)
+                }
+                "leankg://overview/wake_up" => engine.wake_up_summary().unwrap_or_default(),
+                _ => return Err(format!("unknown resource URI: {uri}")),
+            };
+            Ok(serde_json::json!({
+                "contents": [{
+                    "uri": uri,
+                    "mimeType": "text/markdown",
+                    "text": text
+                }]
+            }))
         }
         "resources/templates/list" => Ok(serde_json::json!({ "resourceTemplates": [] })),
         "prompts/list" => Ok(serde_json::json!({ "prompts": [] })),
@@ -3488,6 +3601,122 @@ mod tests {
             MCPServer::resolve_project_db_path(bare.to_str().unwrap()),
             None,
             "no .leankg anywhere up the tree -> caller falls back to default db_path"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // US-GN-08: MCP Resources — `leankg://overview` + `leankg://overview/wake_up`
+    // via the formal `resources/list` / `resources/read` seam (RMCP + JSON-RPC).
+    // ---------------------------------------------------------------------
+
+    fn make_jsonrpc_request(method: &str, params: Option<serde_json::Value>) -> JsonRpcRequest {
+        JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: method.to_string(),
+            params,
+        }
+    }
+
+    fn admin_auth() -> crate::db::models::AuthContext {
+        crate::db::models::AuthContext {
+            client_id: "anonymous".to_string(),
+            role: crate::db::models::Role::Admin,
+        }
+    }
+
+    #[tokio::test]
+    async fn us_gn08_resources_list_lists_overview_uris() {
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+        let result = process_jsonrpc_request(
+            &server,
+            &make_jsonrpc_request("resources/list", None),
+            None,
+            admin_auth(),
+        )
+        .await
+        .expect("resources/list must not error even with no DB");
+        let resources = result["resources"].as_array().expect("resources array");
+        let uris: Vec<&str> = resources.iter().filter_map(|r| r["uri"].as_str()).collect();
+        assert!(
+            uris.contains(&"leankg://overview"),
+            "overview URI listed: {uris:?}"
+        );
+        assert!(
+            uris.contains(&"leankg://overview/wake_up"),
+            "wake_up URI listed: {uris:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn us_gn08_resources_read_unknown_uri_is_error() {
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+        let result = process_jsonrpc_request(
+            &server,
+            &make_jsonrpc_request(
+                "resources/read",
+                Some(serde_json::json!({"uri": "leankg://nope"})),
+            ),
+            None,
+            admin_auth(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "unknown resource URI must error (no invented scope)"
+        );
+    }
+
+    #[tokio::test]
+    async fn us_gn08_resources_read_overview_contains_identity_when_indexed() {
+        use crate::db::schema::init_db;
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        // Project layout mirrors `leankg init`: `<project>/.leankg` dir.
+        let project_root = tmp.path().join("res-project");
+        std::fs::create_dir_all(project_root.join(".leankg")).unwrap();
+        let db = init_db(&project_root.join(".leankg")).unwrap();
+        let graph = crate::graph::GraphEngine::new(db);
+        let element = crate::db::models::CodeElement {
+            qualified_name: "src/app.rs::main".to_string(),
+            element_type: "function".to_string(),
+            name: "main".to_string(),
+            file_path: "src/app.rs".to_string(),
+            line_start: 1,
+            line_end: 5,
+            language: "rust".to_string(),
+            ..Default::default()
+        };
+        graph.insert_element(&element).unwrap();
+
+        let server = MCPServer::new(project_root.join(".leankg"));
+        // Prime the shared engine cache the same way the HTTP path does.
+        server.get_graph_engine().expect("engine init");
+        let result = process_jsonrpc_request(
+            &server,
+            &make_jsonrpc_request(
+                "resources/read",
+                Some(serde_json::json!({"uri": "leankg://overview"})),
+            ),
+            Some(project_root.to_str().unwrap()),
+            admin_auth(),
+        )
+        .await
+        .expect("resources/read on indexed project");
+        let text = result["contents"][0]["text"]
+            .as_str()
+            .expect("text content");
+        assert!(
+            text.contains("Languages"),
+            "overview should include L0 identity: {text}"
+        );
+        assert!(
+            text.contains("Critical facts"),
+            "overview should include L1 critical facts: {text}"
+        );
+        assert!(
+            text.contains("Elements: 1 (functions: 1)"),
+            "overview critical facts should count the indexed element: {text}"
         );
     }
 
