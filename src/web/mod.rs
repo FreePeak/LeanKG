@@ -404,6 +404,7 @@ pub async fn start_server(
             get(handlers::api_graph_expand_node),
         )
         .route("/api/graph/layout", get(handlers::api_graph_layout))
+        .route("/api/graph/layout3d", get(handlers::api_graph_layout3d))
         .route("/api/export/graph", get(handlers::api_export_graph))
         .route("/api/query", post(handlers::api_query))
         .route("/api/query-graph", post(handlers::api_query_graph))
