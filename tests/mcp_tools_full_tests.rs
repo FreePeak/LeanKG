@@ -93,6 +93,48 @@ mod mcp_core_tools {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn test_mcp_status_include_counts_exposes_per_project_counts() {
+        // FR-A04: mcp_status include_counts=true must expose element counts
+        // for the resolved project (index per leankg.yaml / project mount).
+        let (handler, _tmp) = create_real_handler().await;
+        let result = handler
+            .execute_tool("mcp_status", &json!({"include_counts": true}))
+            .await;
+        assert!(
+            result.is_ok(),
+            "mcp_status include_counts should succeed: {:?}",
+            result.err()
+        );
+        let value = result.unwrap();
+        assert_eq!(
+            value.get("counts_included").and_then(|v| v.as_bool()),
+            Some(true),
+            "counts_included must be true when requested"
+        );
+        // Seed data: 4 elements / 4 relationships (see seed_test_data).
+        assert_eq!(
+            value.get("elements").and_then(|v| v.as_i64()),
+            Some(4),
+            "elements count must come from the resolved project DB"
+        );
+        assert_eq!(
+            value.get("relationships").and_then(|v| v.as_i64()),
+            Some(4),
+            "relationships count must come from the resolved project DB"
+        );
+        // Default (no include_counts) must NOT expose counts.
+        let plain = handler
+            .execute_tool("mcp_status", &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            plain.get("counts_included").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(plain.get("elements").is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mcp_index() {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler
