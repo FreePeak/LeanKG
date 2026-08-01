@@ -41,7 +41,8 @@ Copy GitNexus exploring UX (Header, FileTree+Filters, Sigma Force/Tree/Circles, 
 | Clusters | `GET /api/graph/clusters` |
 | File | `GET /api/file?path=` |
 | Search | `GET /api/search?q=` |
-| Query | `POST /api/query` |
+| Query | `POST /api/query` (Advanced / raw Cozo) |
+| Query graph (NL) | `POST /api/query-graph` (FR-UI2-08 default FAB mode) |
 | Graph data | `GET /api/graph/data` |
 
 ## Sequence Flow

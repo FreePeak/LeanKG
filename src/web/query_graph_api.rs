@@ -40,6 +40,10 @@ pub fn execute_query_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::models::{CodeElement, Relationship};
+    use crate::db::schema::init_db;
+    use crate::graph::query::GraphEngine;
+    use tempfile::TempDir;
 
     #[test]
     fn fr_ui2_08_rejects_blank_question() {
@@ -72,5 +76,59 @@ mod tests {
         .unwrap();
         assert_eq!(req.token_budget, Some(2000));
         assert_eq!(req.max_depth, Some(2));
+    }
+
+    fn make_engine() -> (GraphEngine, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db = init_db(&tmp.path().join("test.db")).unwrap();
+        (GraphEngine::new(db), tmp)
+    }
+
+    #[test]
+    fn fr_ui2_08_execute_query_graph_returns_seeds() {
+        let (engine, _tmp) = make_engine();
+        let elem = CodeElement {
+            qualified_name: "src/auth.rs::authenticate".into(),
+            element_type: "function".into(),
+            name: "authenticate".into(),
+            file_path: "src/auth.rs".into(),
+            line_start: 1,
+            line_end: 10,
+            language: "rust".into(),
+            ..Default::default()
+        };
+        engine.insert_element(&elem).unwrap();
+        let rel = Relationship {
+            source_qualified: "src/auth.rs::authenticate".into(),
+            target_qualified: "src/auth.rs::authenticate".into(),
+            rel_type: "calls".into(),
+            confidence: 0.9,
+            metadata: serde_json::json!({"resolution_method": "name"}),
+            ..Default::default()
+        };
+        let _ = engine.insert_relationship(&rel);
+
+        let req = QueryGraphRequest {
+            question: "authenticate".into(),
+            token_budget: Some(2000),
+            max_depth: Some(1),
+        };
+        let result = execute_query_graph(&engine, &req).expect("execute");
+        assert_eq!(result.question, "authenticate");
+        assert!(
+            !result.seeds.is_empty() || !result.nodes.is_empty(),
+            "expected seeds or nodes: {result:?}"
+        );
+    }
+
+    #[test]
+    fn fr_ui2_08_execute_rejects_blank() {
+        let (engine, _tmp) = make_engine();
+        let req = QueryGraphRequest {
+            question: "   ".into(),
+            token_budget: None,
+            max_depth: None,
+        };
+        assert!(execute_query_graph(&engine, &req).is_err());
     }
 }

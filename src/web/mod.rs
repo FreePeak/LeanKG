@@ -406,6 +406,7 @@ pub async fn start_server(
         .route("/api/graph/layout", get(handlers::api_graph_layout))
         .route("/api/export/graph", get(handlers::api_export_graph))
         .route("/api/query", post(handlers::api_query))
+        .route("/api/query-graph", post(handlers::api_query_graph))
         .route("/api/project/switch", post(handlers::api_switch_path))
         .route("/api/index/status", get(handlers::api_index_status))
         .route("/api/ui-build", get(handlers::api_ui_build))

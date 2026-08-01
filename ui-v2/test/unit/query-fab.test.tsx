@@ -25,9 +25,9 @@ describe('QueryFAB dual-mode (FR-UI2-08)', () => {
   it('opens in NL mode by default', async () => {
     render(<QueryFAB />);
     fireEvent.click(screen.getByTestId('query-fab'));
-    expect(screen.getByTestId('query-mode-nl')).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('query-mode-advanced')).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByTestId('query-panel-title')).toHaveTextContent(/natural|nl|query/i);
+    expect(screen.getByTestId('query-mode-nl').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('query-mode-advanced').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('query-panel-title').textContent).toMatch(/natural|nl|query/i);
   });
 
   it('submits NL questions via runQueryGraph', async () => {
@@ -47,7 +47,7 @@ describe('QueryFAB dual-mode (FR-UI2-08)', () => {
     render(<QueryFAB />);
     fireEvent.click(screen.getByTestId('query-fab'));
     fireEvent.click(screen.getByTestId('query-mode-advanced'));
-    expect(screen.getByTestId('query-mode-advanced')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('query-mode-advanced').getAttribute('aria-pressed')).toBe('true');
     fireEvent.change(screen.getByTestId('query-input'), {
       target: { value: '?[a] := *code_elements{qualified_name: a}' },
     });

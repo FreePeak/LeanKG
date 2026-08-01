@@ -3179,6 +3179,32 @@ pub async fn api_query(
     }
 }
 
+/// FR-UI2-08 / US-UI2-06: NL `query_graph` for ui-v2 Query FAB default mode.
+pub async fn api_query_graph(
+    State(state): State<AppState>,
+    Json(req): Json<crate::web::query_graph_api::QueryGraphRequest>,
+) -> impl IntoResponse {
+    match state.get_graph_engine().await {
+        Ok(engine) => match crate::web::query_graph_api::execute_query_graph(&engine, &req) {
+            Ok(result) => ApiResponse {
+                success: true,
+                data: Some(result),
+                error: None,
+            },
+            Err(e) => ApiResponse {
+                success: false,
+                data: None,
+                error: Some(e),
+            },
+        },
+        Err(e) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
 /// Get pre-calculated layout for graph visualization
 /// This offloads expensive force-directed layout computation to the server
 #[derive(Deserialize)]
