@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.29](https://github.com/FreePeak/LeanKG/compare/v0.19.28...v0.19.29) (2026-08-01)
+
+
+### Features
+
+* **mcp:** Wave 1b hard-delete load_layer + get_doc_structure ([4b5d24a](https://github.com/FreePeak/LeanKG/commit/4b5d24aa47de1ebad3246bfd20de044a51e2e8b1))
+
 ## [0.19.28](https://github.com/FreePeak/LeanKG/compare/v0.19.27...v0.19.28) (2026-08-01)
 
 
