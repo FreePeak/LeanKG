@@ -132,7 +132,7 @@ Evidence: [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-0
 | ID | Status | Intent |
 |----|--------|--------|
 | `REL-ONRENDER-101` | DONE | Fix Render Docker `cargo build --features embeddings` exit 101 — Dockerfile fix landed (libssl-dev + pkg-config + memory guards, committed); clear cache; confirm live `/api/ui-build` |
-| Follow-up F2 | NOT_DONE | CI gate for embeddings Docker build on Dockerfile/Cargo.lock changes |
+| Follow-up F2 | DONE | Embeddings build gate on the release path — `release.yml` `build-embeddings` job (runs once per release on the tag, `--features embeddings`, mirrors Render pipeline). No 40-min push/PR gate: would slow every Cargo.lock-touching release bump. See PR #169 + OnRender RCA F2 note |
 | Follow-up F3 | NOT_DONE | Prebuilt image → Render pull (optional) |
 
 Evidence: [`root_cause_onrender_embeddings_exit101-2026-08-01.md`](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md)
