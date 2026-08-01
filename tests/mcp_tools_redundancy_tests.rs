@@ -363,6 +363,54 @@ mod agent {
 }
 
 // ---------------------------------------------------------------------------
+// US-MP-08 / FR-MP-25: folder-scoped search accepts directory qualified
+// names (trailing slash) even though the indexer stores directory nodes
+// without one.
+// ---------------------------------------------------------------------------
+
+mod folder_scoped_search {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_file_trailing_slash_hits_directory_subtree() {
+        let (handler, _tmp) = make_handler().await;
+        // The seed fixture stores no directory nodes, so exercise the
+        // normalization seam directly: a trailing-slash folder pattern must
+        // match the same rows as its slash-less form (both hit the `src/auth`
+        // subtree files).
+        let with_slash = call(&handler, "query_file", json!({"pattern": "src/auth/"}))
+            .await
+            .expect("query_file with trailing slash");
+        let no_slash = call(&handler, "query_file", json!({"pattern": "src/auth"}))
+            .await
+            .expect("query_file without slash");
+        let hits_slash = with_slash
+            .get("results")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let hits_noslash = no_slash
+            .get("results")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !hits_noslash.is_empty(),
+            "src/auth must match files: {no_slash}"
+        );
+        assert!(
+            !hits_slash.is_empty(),
+            "trailing slash must not kill folder-scoped search: {with_slash}"
+        );
+        assert_eq!(
+            hits_slash.len(),
+            hits_noslash.len(),
+            "slash normalization must be behavior-preserving"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Session memory offload (US-SM-01 / FR-SM-01..03)
 // ---------------------------------------------------------------------------
 
@@ -450,6 +498,68 @@ mod session_offload {
         .await
         .expect("get_overview_context");
         assert!(resp.get("session_lessons").is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn overview_reports_l0_l1_token_budgets() {
+        // US-MP-02: L0 identity ~50 tok / L1 critical facts ~120 tok budgets
+        // with per-layer accounting; no resurrected load_layer/wake_up tools.
+        let (handler, _tmp) = make_handler().await;
+        let resp = call(
+            &handler,
+            "get_overview_context",
+            json!({"project_name": "smoke"}),
+        )
+        .await
+        .expect("get_overview_context");
+        assert!(resp.get("l0_identity").is_some(), "{resp}");
+        assert!(resp.get("l1_critical_facts").is_some(), "{resp}");
+        let budgets = resp
+            .get("layer_budgets")
+            .expect("layer_budgets envelope")
+            .clone();
+        let l0 = budgets.get("L0_identity").expect("L0 budget entry").clone();
+        assert_eq!(
+            l0.get("max_tokens").and_then(|v| v.as_u64()),
+            Some(50),
+            "L0 budget must be 50 tokens: {l0}"
+        );
+        let l1 = budgets
+            .get("L1_critical_facts")
+            .expect("L1 budget entry")
+            .clone();
+        assert_eq!(
+            l1.get("max_tokens").and_then(|v| v.as_u64()),
+            Some(120),
+            "L1 budget must be 120 tokens: {l1}"
+        );
+        assert!(l0.get("actual_tokens").is_some());
+        assert!(l0.get("truncated").is_some());
+        assert_eq!(
+            budgets
+                .get("L2_cluster_context")
+                .and_then(|v| v.get("tool"))
+                .and_then(|v| v.as_str()),
+            Some("get_cluster_context"),
+            "L2 maps to get_cluster_context (load_layer stays removed)"
+        );
+        assert!(budgets.get("L3_deep_search").is_some());
+        // The stored payload must actually be under budget (truncated when
+        // the raw context exceeded it).
+        let l0_text = resp
+            .get("l0_identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let l1_text = resp
+            .get("l1_critical_facts")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        for (label, text, budget_tok) in [("L0", l0_text, 50usize), ("L1", l1_text, 120usize)] {
+            assert!(
+                text.len() <= budget_tok * 4 + 4,
+                "{label} payload must stay near budget (chars): {text}"
+            );
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

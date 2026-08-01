@@ -88,6 +88,12 @@ fn language_from_file(file_path: &str) -> Option<&'static str> {
     match ext {
         "go" => Some("go"),
         "ts" | "tsx" | "js" | "jsx" => Some("typescript"),
+        // FR-B06: Python + Rust join the in-process hybrid resolver. The
+        // registry indexes every function/class regardless of language, so
+        // module (same-folder) and unique-name hits resolve Python defs and
+        // Rust fns without spawning pylsp/rust-analyzer.
+        "py" => Some("python"),
+        "rs" => Some("rust"),
         "swift" => Some("swift"),
         "m" | "mm" => Some("objc"),
         // `.h` may be C or ObjC; hybrid resolve still runs when typed_resolve
@@ -218,6 +224,117 @@ mod tests {
         let reg = TypeRegistry::from_elements(&elements);
         let hit = resolve_call(&reg, "src/app.ts", "format", None).unwrap();
         assert_eq!(hit.qualified_name, "src/util.ts::format");
+    }
+
+    #[test]
+    fn python_same_module_def_is_typed() {
+        // FR-B06: Python joins the in-process hybrid resolver via `py` ext.
+        let elements = vec![
+            elem(
+                "pkg/utils.py::helper",
+                "function",
+                "helper",
+                "pkg/utils.py",
+                "python",
+            ),
+            elem(
+                "pkg/app.py::main",
+                "function",
+                "main",
+                "pkg/app.py",
+                "python",
+            ),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let hit = resolve_call(&reg, "pkg/app.py", "helper", None).unwrap();
+        assert_eq!(hit.qualified_name, "pkg/utils.py::helper");
+        assert!(hit.confidence >= 0.95);
+    }
+
+    #[test]
+    fn rust_same_module_fn_is_typed() {
+        // FR-B06: Rust joins via `rs` ext; unique-name cross-file also works.
+        let elements = vec![
+            elem(
+                "src/math.rs::square",
+                "function",
+                "square",
+                "src/math.rs",
+                "rust",
+            ),
+            elem("src/main.rs::run", "function", "run", "src/main.rs", "rust"),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let hit = resolve_call(&reg, "src/main.rs", "square", None).unwrap();
+        assert_eq!(hit.qualified_name, "src/math.rs::square");
+        assert!(hit.confidence >= 0.95);
+    }
+
+    #[test]
+    fn apply_typed_resolve_upgrades_python_and_rust_calls() {
+        // FR-B06: `typed_resolve=all` must upgrade py/rs CALLS edges too.
+        let elements = vec![
+            elem(
+                "pkg/utils.py::helper",
+                "function",
+                "helper",
+                "pkg/utils.py",
+                "python",
+            ),
+            elem(
+                "pkg/app.py::main",
+                "function",
+                "main",
+                "pkg/app.py",
+                "python",
+            ),
+            elem(
+                "src/math.rs::square",
+                "function",
+                "square",
+                "src/math.rs",
+                "rust",
+            ),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let mut rels = vec![
+            Relationship {
+                id: None,
+                source_qualified: "pkg/app.py::main".to_string(),
+                target_qualified: "__unresolved__helper".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 0.5,
+                metadata: serde_json::json!({"resolution_method": "unresolved"}),
+                env: "local".to_string(),
+            },
+            Relationship {
+                id: None,
+                source_qualified: "src/main.rs::run".to_string(),
+                target_qualified: "__unresolved__square".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 0.5,
+                metadata: serde_json::json!({"resolution_method": "unresolved"}),
+                env: "local".to_string(),
+            },
+        ];
+        let n = apply_typed_resolve(&mut rels, &reg, "all");
+        assert_eq!(n, 2, "python + rust CALLS both upgrade under all");
+        for rel in &rels {
+            assert_eq!(
+                rel.metadata["resolution_method"].as_str(),
+                Some("typed"),
+                "{}",
+                rel.source_qualified
+            );
+        }
+        assert_eq!(
+            rels[0].target_qualified, "pkg/utils.py::helper",
+            "python target resolves"
+        );
+        assert_eq!(
+            rels[1].target_qualified, "src/math.rs::square",
+            "rust target resolves via unique name"
+        );
     }
 
     #[test]
