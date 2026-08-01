@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
 import { LodNodeScene } from './components/LodNodeScene';
 import { DEFAULT_LOD_CONFIG, batchNodes } from './lod/lod';
-import { degreeByNode, fetchLayout3d, type GraphNode3D } from './services/graphData';
+import { degreeByNode, fetchGraphData, fetchLayout3d, type GraphNode3D } from './services/graphData';
 
 /** Scene-level LOD demo — FR-E20..E28. Loads the server 3D layout (PR-50). */
 export default function App() {
@@ -11,9 +11,19 @@ export default function App() {
   const [stats, setStats] = useState({ fps: 0, visible: 0, total: 0 });
   const [loaded, setLoaded] = useState(0);
   const allNodes = useRef<GraphNode3D[]>([]);
+  const degreeMap = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
+    // FR-E27: importance from degree (backend god score not exposed per node).
+    fetchGraphData()
+      .then((data) => {
+        if (cancelled) return;
+        degreeMap.current = degreeByNode(data.edges);
+      })
+      .catch(() => {
+        // Layout still renders with default degree 1.
+      });
     fetchLayout3d('/api/graph/layout3d', (all) => {
       if (cancelled) return;
       allNodes.current = all;
@@ -47,12 +57,12 @@ export default function App() {
   // FR-E27: importance = degree (backend god score not exposed per node).
   const degrees = useMemo(() => {
     const d = new Float32Array(visibleNodes.length);
-    const deg = degreeByNode([]);
+    const deg = degreeMap.current;
     visibleNodes.forEach((n, i) => {
       d[i] = deg.get(n.node_id) ?? 1;
     });
     return d;
-  }, [visibleNodes]);
+  }, [visibleNodes, degreeMap]);
 
   const frameStats = useCallback(
     (s: { fps: number; visible: number; total: number }) => setStats(s),
