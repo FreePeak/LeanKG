@@ -369,7 +369,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-UI2-10` | FR | **NOT_DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
 | **P2** | `FR-UI2-11` | FR | **NOT_DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
-| **P2** | `REL-032` | Release | **NOT_DONE** | Should Have | Swift / Vue / Svelte / SQL DDL — extractors present ('swift.rs' / 'sfc.rs' / 'sql.rs') but… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P2** | `REL-032` | Release | **PARTIAL** | Should Have | Vue / Svelte / SQL DDL unwired; Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P2** | `REL-040` | Release | **NOT_DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
@@ -416,7 +416,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
+| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift indexing (regex wired; tree-sitter-swift + call graph pending) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `US-MP-08` | User Story | **PARTIAL** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Ap… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
@@ -535,7 +535,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SEM-03` | FR | **NOT_DONE** | Should Have | MCP HTTP resilience for long read-only semantic tools (retry docs + keep-alive / stale-lis… | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P2** | `FR-UI2-10` | FR | **NOT_DONE** | Should Have | Cluster legend + show/hide filters wired to /api/graph/clusters | 5.19 UI v2 Graph Explorer |
 | **P2** | `FR-UI2-11` | FR | **NOT_DONE** | Should Have | Port incidents / env / conflicts panels from legacy ui/ into ui-v2 | 5.19 UI v2 Graph Explorer |
-| **P2** | `REL-032` | Release | **NOT_DONE** | Should Have | Swift / Vue / Svelte / SQL DDL — extractors present ('swift.rs' / 'sfc.rs' / 'sql.rs') but… | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
+| **P2** | `REL-032` | Release | **PARTIAL** | Should Have | Vue / Svelte / SQL DDL unwired; Swift/ObjC bulk+incremental wired (AST/heritage pending) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P2** | `REL-040` | Release | **NOT_DONE** | Should Have | REST API auth wiring + mutation endpoints (mutation endpoints still partial) | 8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS |
 | **P3** | `FR-SEM-05` | FR | **NOT_DONE** | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank (top-k not ≥70% one file) | 5.15 Semantic MCP Agent UX Enhancements (v3.7.1) |
 | **P3** | `FR-SURF-06` | FR | **NOT_DONE** | Could Have | Mega-safe get_doc_structure/tree; optional merge format tree\|list after safety | 5.18 MCP Tool Surface Rationalization (v3.7.4) |
@@ -575,7 +575,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift parser (tree-sitter-swift) with regex entity extraction | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
+| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift indexing (regex wired; tree-sitter-swift + call graph pending) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `US-MP-08` | User Story | **PARTIAL** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Ap… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
@@ -957,6 +957,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P3** | `US-GN-09` | User Story | **DONE** | Could Have | Repository wiki generation | 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09) |
 | **P3** | `US-INF-08` | User Story | **DONE** | Could Have | Wiki generation from code structure | 3.6 Infrastructure Stories (US-INF-01 to US-INF-10) |
 | **P3** | `US-LANG-03` | User Story | **DONE** | Could Have | XML parser (tree-sitter-xml) with child-elements + attributes | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03) |
+| **P2** | `US-LANG-04` | User Story | **PARTIAL** | Should Have | Objective-C indexing (regex wired; protocol conformance, selectors, optional AST) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P3** | `US-MP-06` | User Story | **DONE** | Could Have | Cross-Domain Tunnels — auto-link clusters across projects/modules that share the same doma… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `FR-BENCH-A` | FR | **WONT_DO** | Should Have | CBM clone quality head-to-head — **Won't Do** (v3.6.2) | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |
 | **P2** | `FR-HNSW-A` | FR | **WONT_DO** | Should Have | Remove custom MinHash/LSH — delete 'src/minhash.rs', drop 'mod minhash' from 'lib.rs' / 'm… | 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed r… |

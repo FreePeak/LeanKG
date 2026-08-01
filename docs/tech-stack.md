@@ -49,6 +49,8 @@ LeanKG supports indexing and analysis for the following languages:
 | Perl | `.pl`, `.pm` | Full - packages, subs, imports, calls |
 | R | `.r`, `.R` | Full - functions, assignments, imports |
 | Elixir | `.ex`, `.exs` | Full - modules, functions, macros, structs, calls |
+| Swift | `.swift` | Partial - classes, structs, enums, protocols, methods, imports (regex; no call graph yet) |
+| Objective-C | `.m`, `.mm`, `.h` | Partial - interfaces, implementations, protocols, methods, imports (regex v0) |
 | Terraform | `.tf` | Full - resources, variables, outputs, modules |
 | YAML | `.yaml`, `.yml` | Full - CI/CD pipelines, configurations |
 | Markdown | `.md` | Full - documentation sections, code references |

@@ -497,8 +497,9 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 - Codebase version: 0.17.8 → 0.17.9 (`3e103b1 chore(release): regen Cargo.lock for 0.17.9` + `1c6f1eb chore(release): bump version to 0.17.9`).
 - Language breadth — **status corrected 2026-07-15 (wiring audit):**
   - US-LANG-01 Dart — **DONE and indexed** (in `find_files_sync` + `get_language`) (`7ec6484`)
-  - US-LANG-02 Swift — **PARTIAL**: regex extractor in `src/indexer/swift.rs` (`7027d6b`); **not wired** into `find_files_sync` / index walk (`.swift` not scanned)
+  - US-LANG-02 Swift — **PARTIAL**: regex extractor wired for bulk + incremental index (`src/indexer/swift.rs`); heritage/call-graph/tree-sitter still pending
   - US-LANG-03 XML — **DONE and indexed** (`.xml` + Android path) (`92db9aa`)
+  - US-LANG-04 Objective-C — **PARTIAL**: regex extractor wired for bulk + incremental (`.m`/`.mm`/`.h`); protocol conformance / full selectors pending
   - US-GF-10 Vue/Svelte — **PARTIAL**: regex extractors in `src/indexer/sfc.rs` (`e617a49`); **not wired** into index walk (`.vue` / `.svelte` not scanned)
   - US-GF-12 SQL DDL — **PARTIAL**: parser in `src/indexer/sql.rs` (`de314eb`); **not wired** into index walk (`.sql` not scanned)
 - Agent-graph UX series — DONE:
@@ -1256,13 +1257,14 @@ Palace Mapping:
 - CI/CD auto-update — `.github/workflows/leankg-graph-update.yml` (`eb3d331`)
 - Vue + Svelte — `src/indexer/sfc.rs` (regex; **not called from index walk**) (`e617a49`)
 - SQL DDL — `src/indexer/sql.rs` (**not called from index walk**) (`de314eb`)
-- Swift — `src/indexer/swift.rs` (**not called from index walk**) (`7027d6b`)
+- Swift — `src/indexer/swift.rs` (**bulk + incremental wired**; call graph pending)
+- Objective-C — `src/indexer/objc.rs` (**bulk + incremental wired**; US-LANG-04)
 
 **PENDING evidence:**
 - No `typed` `resolution_method` produced at index time; LSP bridge returns `LspLocation[]` but does not yet write CALLS edges with `resolution_method=typed`
 - No `graph-ui/` directory; no `get_graph_layout` / 3D scene
 - No formal `resources/read` endpoint for `get_overview_context` (tool-only)
-- Swift / Vue / Svelte / SQL extractors exist as modules but `.swift` / `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`
+- Vue / Svelte / SQL extractors exist as modules but `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`
 
 **Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace Cozo/RocksDB; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path; **custom MinHash/LSH or Cozo `::lsh` clone ANN** (v3.6.2 — semantic HNSW only).
 </details>
@@ -1588,7 +1590,8 @@ Palace Mapping:
 | Terraform | `.tf` | DONE (indexed) | Custom extractor |
 | CI/CD YAML | `.yml`, `.yaml` | DONE (indexed) | GitHub Actions, GitLab CI, Azure Pipelines |
 | Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
-| Swift | `.swift` | PARTIAL (unwired) — `src/indexer/swift.rs` (`7027d6b`) | regex stub |
+| Swift | `.swift` | DONE (indexed, regex) — bulk + incremental/`index_file_sync` + watcher; call graph / heritage PENDING | `src/indexer/swift.rs` |
+| Objective-C | `.m`, `.mm`, `.h` | DONE (indexed, regex v0) — bulk + incremental; protocol conformance / selectors PENDING (`US-LANG-04`) | `src/indexer/objc.rs` |
 | Vue (SFC) | `.vue` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
 | Svelte (SFC) | `.svelte` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
 | SQL DDL | `.sql` | PARTIAL (unwired) — `src/indexer/sql.rs` (`de314eb`) | regex stub |

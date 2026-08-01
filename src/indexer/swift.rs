@@ -7,6 +7,9 @@
 //! mirrors the tree-sitter-based extractors so agents don't need to
 //! special-case Swift sources.
 //!
+//! Wired into both the bulk index walk and incremental `index_file_sync`
+//! / MCP watcher paths. Call-graph and heritage edges land in later phases.
+//!
 //! Limitations:
 //!   - String-literal and comment contexts are not tracked, so a
 //!     `class Foo` inside a doc-comment may still be picked up. This

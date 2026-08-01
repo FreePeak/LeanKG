@@ -924,6 +924,30 @@ pub fn index_file_sync(
         return Ok(elements.len());
     }
 
+    // Swift / Objective-C: regex extractors (no tree-sitter parser yet).
+    // Must short-circuit before the parser path or watcher reindex silently
+    // returns Ok(0).
+    if file_path.ends_with(".swift") {
+        let extractor = crate::indexer::swift::SwiftExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
+        return Ok(elements.len());
+    }
+    if file_path.ends_with(".m") || file_path.ends_with(".mm") || file_path.ends_with(".h") {
+        let extractor = crate::indexer::objc::ObjCExtractor::new(source, file_path);
+        let (elements, relationships) = extractor.extract();
+        if elements.is_empty() && relationships.is_empty() {
+            return Ok(0);
+        }
+        let _ = graph.insert_elements_with(&elements, true);
+        let _ = graph.insert_relationships_with(&relationships, true);
+        return Ok(elements.len());
+    }
+
     if is_cicd_yaml_file(std::path::Path::new(file_path))
         && (file_path.ends_with(".yml") || file_path.ends_with(".yaml"))
     {
@@ -997,8 +1021,6 @@ pub fn index_file_sync(
         "kotlin"
     } else if file_path.ends_with(".dart") {
         "dart"
-    } else if file_path.ends_with(".m") || file_path.ends_with(".mm") || file_path.ends_with(".h") {
-        "objc"
     } else {
         return Ok(0);
     };

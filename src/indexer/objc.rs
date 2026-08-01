@@ -1,10 +1,15 @@
-//! US-LANG-03 / FR-LANG-03: Objective-C entity extraction (regex-based v0).
+//! US-LANG-04 / FR-LANG-04: Objective-C entity extraction (regex-based v0).
+//!
+//! Note: US-LANG-03 is XML (DONE). ObjC uses US-LANG-04.
 //!
 //! LeanKG doesn't currently bundle tree-sitter-objc, so this extractor uses
 //! regex patterns for the most common ObjC constructs: @interface,
 //! @implementation, @protocol, @property, instance/class methods, categories,
 //! and imports. The output schema mirrors the tree-sitter-based extractors so
 //! agents don't need to special-case ObjC sources.
+//!
+//! Wired into both the bulk index walk and incremental `index_file_sync`
+//! / MCP watcher paths (`.m`, `.mm`, `.h`).
 //!
 //! Limitations:
 //!   - C functions, blocks, typedef, #define macros are not extracted

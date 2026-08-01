@@ -48,10 +48,10 @@
     {
       "id": "REL-032",
       "kind": "Release",
-      "title": "Swift / Vue / Svelte / SQL DDL \u2014 extractors present ('swift.rs' / 'sfc.rs' / 'sql.rs') but **not wired** into \u2026",
+      "title": "Vue / Svelte / SQL DDL \u2014 extractors present but not wired; Swift/ObjC bulk+incremental wired (heritage/AST pending)",
       "priority": "Should Have",
-      "status": "NOT_DONE",
-      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026 2026-07-21 priority reorder: Language breadth not ROI; extractors exist, index-walk later",
+      "status": "PARTIAL",
+      "notes": "Swift/ObjC removed from 'unwired' set after Phase 0; remaining: Vue/Svelte/SQL + Swift AST/call graph",
       "section": "8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS",
       "prd_line": null,
       "focus": "P2",
@@ -1257,10 +1257,10 @@
     {
       "id": "US-LANG-02",
       "kind": "User Story",
-      "title": "Swift parser (tree-sitter-swift) with regex entity extraction",
+      "title": "Swift indexing (regex wired; tree-sitter-swift + call graph pending)",
       "priority": "Should Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL \u2014 'src/indexer/swift.rs' + unit tests ('7027d6b'); **not wired** into in\u2026",
+      "notes": "PARTIAL \u2014 regex extractor wired for bulk + incremental index_file_sync/watcher; tree-sitter-swift + call/heritage edges still open",
       "section": "3.7 Additional Language Stories (US-LANG-01 to US-LANG-03)",
       "prd_line": null,
       "focus": "P2",
@@ -6635,6 +6635,19 @@
       "focus": "P3",
       "ve_suborder": null,
       "moscow_rank": 3
+    },
+    {
+      "id": "US-LANG-04",
+      "kind": "User Story",
+      "title": "Objective-C indexing (regex wired; protocol conformance, selectors, optional tree-sitter-objc)",
+      "priority": "Should Have",
+      "status": "PARTIAL",
+      "notes": "PARTIAL \u2014 objc.rs regex v0 wired for bulk + incremental (.m/.mm/.h); heritage/selectors/AST pending. Do not confuse with US-LANG-03 (XML).",
+      "section": "3.7 Additional Language Stories (US-LANG-01 to US-LANG-04)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 0
     }
   ],
   "meta": {
