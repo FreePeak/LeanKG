@@ -55,8 +55,8 @@
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **Typed call resolve Go+TS deepen** | P2 after waves | FR-B03..B05 |
-| **CBM comparison + scale report** | P2 | FR-C06, FR-C07, FR-D04 |
+| **Typed call resolve Go+TS deepen** | **Done** | FR-B03..B05 + Python/Rust typed resolve (FR-B06) |
+| **CBM comparison + scale report** | **Done (2026-08-02)** | FR-C06 tier template ([`docs/language-tiers.md`](language-tiers.md)), FR-C07 scale ceiling + FR-C04 impact profile ([`docs/reports/platform-c-impact-scale-profile-2026-08-02.md`](reports/platform-c-impact-scale-profile-2026-08-02.md)), FR-D04 dual-run re-eval ([`docs/reports/cbm-dual-run-re-evaluation-2026-08-02.md`](reports/cbm-dual-run-re-evaluation-2026-08-02.md)) |
 | **Wiki Generation** | **Done** | Markdown wiki from structure |
 | **Wake-up / overview context** | **Done** | `wake_up` soft-deprecated → `get_overview_context` |
 

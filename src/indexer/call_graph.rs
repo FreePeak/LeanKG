@@ -120,8 +120,10 @@ impl<'a> CallGraphBuilder<'a> {
     ) {
         let node_type = node.kind();
 
-        // Process call expressions
-        if node_type == "call_expression" || node_type == "method_invocation" {
+        // Process call expressions. Python tree-sitter uses a bare `call`
+        // node (function field) instead of `call_expression`.
+        if node_type == "call_expression" || node_type == "method_invocation" || node_type == "call"
+        {
             if let Some(call) = self.extract_call(node, current_function, current_class) {
                 calls.push(Relationship {
                     id: None,
@@ -229,6 +231,27 @@ impl<'a> CallGraphBuilder<'a> {
 
     fn extract_call_target(&self, node: Node) -> Option<(String, Option<String>, bool)> {
         let mut cursor = node.walk();
+
+        // Python: `call` node — the callee is the `function` field child
+        // (identifier or attribute). Attribute = method call on a receiver.
+        if node.kind() == "call" {
+            if let Some(fn_node) = node.child_by_field_name("function") {
+                match fn_node.kind() {
+                    "identifier" => {
+                        if let Some(name) = self.get_node_text(fn_node) {
+                            return Some((name, None, false));
+                        }
+                    }
+                    "attribute" => {
+                        if let Some((name, receiver)) = self.extract_navigation_target(fn_node) {
+                            return Some((name, Some(receiver), false));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return None;
+        }
 
         for child in node.children(&mut cursor) {
             let kind = child.kind();
@@ -453,6 +476,20 @@ mod tests {
         parser.parse(source, None).unwrap()
     }
 
+    fn parse_python(source: &str) -> tree_sitter::Tree {
+        let mut parser = tree_sitter::Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_python::LANGUAGE.into();
+        parser.set_language(&lang).unwrap();
+        parser.parse(source, None).unwrap()
+    }
+
+    fn parse_rust(source: &str) -> tree_sitter::Tree {
+        let mut parser = tree_sitter::Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&lang).unwrap();
+        parser.parse(source, None).unwrap()
+    }
+
     #[test]
     fn test_resolve_same_file_function() {
         let source = r#"
@@ -532,6 +569,82 @@ mod tests {
         assert!(
             builder.extension_functions.contains("extension"),
             "Should detect extension function"
+        );
+    }
+
+    #[test]
+    fn test_python_cross_file_call_uses_call_node() {
+        let source = r#"
+def helper():
+    pass
+
+def main():
+    helper()
+"#;
+        let tree = parse_python(source);
+        let calls = extract_calls_with_resolution(&tree, source.as_bytes(), "./main.py", "python");
+        assert!(
+            !calls.is_empty(),
+            "python `call` node should produce a calls edge"
+        );
+        let helper_call = calls.iter().find(|c| c.target_qualified.contains("helper"));
+        assert!(
+            helper_call.is_some(),
+            "Should find call to helper, got {:?}",
+            calls
+                .iter()
+                .map(|c| &c.target_qualified)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_python_method_call_has_receiver() {
+        let source = r#"
+class Svc:
+    def run(self):
+        pass
+
+def main():
+    s = Svc()
+    s.run()
+"#;
+        let tree = parse_python(source);
+        let calls = extract_calls_with_resolution(&tree, source.as_bytes(), "./main.py", "python");
+        let run_call = calls.iter().find(|c| c.target_qualified.contains("run"));
+        assert!(
+            run_call.is_some(),
+            "method call should be extracted, got {:?}",
+            calls
+                .iter()
+                .map(|c| &c.target_qualified)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_rust_cross_file_call_expression() {
+        let source = r#"
+fn helper() -> i32 { 1 }
+
+fn main() {
+    let _ = helper();
+}
+"#;
+        let tree = parse_rust(source);
+        let calls = extract_calls_with_resolution(&tree, source.as_bytes(), "./main.rs", "rust");
+        assert!(
+            !calls.is_empty(),
+            "rust call_expression should produce a calls edge"
+        );
+        let helper_call = calls.iter().find(|c| c.target_qualified.contains("helper"));
+        assert!(
+            helper_call.is_some(),
+            "Should find call to helper, got {:?}",
+            calls
+                .iter()
+                .map(|c| &c.target_qualified)
+                .collect::<Vec<_>>()
         );
     }
 }

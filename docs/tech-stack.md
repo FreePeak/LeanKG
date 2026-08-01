@@ -33,49 +33,43 @@ docs/
 
 # Supported Languages
 
-LeanKG supports indexing and analysis for the following languages, with
-**quality tiers** (US-CBM-C3 — honest per-language tier, no 158-language
-parity chase). Tiers reflect what the index walk actually produces today
-(`find_files_sync` + `extract_elements_for_file`, `src/indexer/mod.rs`).
+LeanKG supports indexing and analysis for the following languages.
+Tiers follow the per-language quality template (FR-C06 / US-CBM-C3):
 
-| Tier | Meaning |
-|------|---------|
-| **T1 — Full** | tree-sitter parse: entities + call edges + imports, wired into bulk + incremental index |
-| **T2 — Entity+Call** | regex entities + tree-sitter (or regex) call edges, wired into bulk + incremental index |
-| **T3 — Entity only** | regex/config extractor, entities without deep call-graph resolution |
-| **T4 — Config/file only** | manifest / config parsing, no code elements |
+- **Tier 1** — full walk: entities, imports, calls, routes (Go/TS),
+  heritage + typed resolve where supported.
+- **Tier 2** — indexed walk: entities + calls; some depth (Swift/ObjC
+  regex entities + tree-sitter calls; Vue/Svelte/SQL regex).
+- **Tier 3** — parser present, **not wired** into the index walk
+  (`find_files_sync` / `get_language`).
 
-| Language | Extensions | Tier | Coverage |
-|----------|------------|------|----------|
-| Go | `.go` | T1 | functions, structs, interfaces, imports, calls; hybrid typed resolve (`typed_resolve=go`) |
-| TypeScript | `.ts`, `.tsx` | T1 | functions, classes, imports, calls; hybrid typed resolve (`typed_resolve=ts`) |
-| JavaScript | `.js`, `.jsx` | T1 | functions, classes, imports, calls (TS grammar path) |
-| Python | `.py` | T1 | functions, classes, imports, calls; hybrid typed resolve (`typed_resolve=python`) since FR-B06 |
-| Rust | `.rs` | T1 | functions, structs, traits, imports, calls; hybrid typed resolve (`typed_resolve=rust`) since FR-B06 |
-| Java | `.java` | T1 | classes, interfaces, methods, constructors, enums, imports, calls |
-| Kotlin | `.kt`, `.kts` | T1 | classes, objects, companion objects, functions, constructors, imports, calls + Android extractors (Room/Hilt/nav/WorkManager) |
-| Dart | `.dart` | T1 | functions, classes, imports, calls |
-| Swift | `.swift` | T2 | classes, structs, protocols, methods, imports, heritage, calls (regex entities + tree-sitter calls) |
-| Objective-C | `.m`, `.mm`, `.h` | T2 | interfaces, methods, heritage, imports, message-send calls (regex + tree-sitter); `.h` sniff |
-| Terraform | `.tf` | T3 | resources, variables, outputs, modules (regex) |
-| Vue | `.vue` | T3 | single-file components (regex, `src/indexer/sfc.rs`) |
-| Svelte | `.svelte` | T3 | single-file components (regex, `src/indexer/sfc.rs`) |
-| SQL | `.sql` | T3 | DDL entities (regex, `src/indexer/sql.rs`) |
-| XML | `.xml` | T3 | Android manifests / resources / navigation + generic XML |
-| YAML | `.yaml`, `.yml` | T4 | CI/CD pipelines, configurations (config files incl. `package.json`, `tsconfig.json`, `Cargo.toml`, `go.mod`, Gradle, Maven) |
+| Language | Extensions | Tier | Support Level |
+|----------|------------|------|---------------|
+| Go | `.go` | 1 | Full - functions, structs, interfaces, imports, calls, routes, typed resolve (`typed_resolve=go`) |
+| TypeScript | `.ts`, `.tsx` | 1 | Full - functions, classes, imports, calls, routes, typed resolve (`typed_resolve=ts`) |
+| JavaScript | `.js`, `.jsx` | 1 | Full - functions, classes, imports, calls |
+| Python | `.py` | 1 | Full - functions, classes, imports, calls, typed resolve (`typed_resolve=py`) |
+| Rust | `.rs` | 1 | Full - functions, structs, traits, imports, calls, typed resolve (`typed_resolve=rs`) |
+| Java | `.java` | 1 | Full - classes, interfaces, methods, constructors, enums, imports, calls |
+| Kotlin | `.kt`, `.kts` | 1 | Full - classes, objects, companion objects, functions, constructors, imports, calls + Android depth |
+| Swift | `.swift` | 2 | Full-ish - classes, structs, protocols, methods, imports, heritage, calls (regex entities + tree-sitter calls) + typed resolve |
+| Objective-C | `.m`, `.mm`, `.h` | 2 | Full-ish - interfaces, methods, heritage, imports, message-send calls (regex + tree-sitter); `.h` sniff + typed resolve |
+| Vue (SFC) | `.vue` | 2 | Regex extractor wired into walk (REL-032) |
+| Svelte (SFC) | `.svelte` | 2 | Regex extractor wired into walk (REL-032) |
+| SQL DDL | `.sql` | 2 | Regex extractor wired into walk (REL-032) |
+| Terraform | `.tf` | 2 | Full - resources, variables, outputs, modules |
+| YAML | `.yaml`, `.yml` | 2 | Full - CI/CD pipelines, configurations |
+| Markdown | `.md` | 2 | Full - documentation sections, code references |
+| Ruby | `.rb` | 3 | Parser present; not in index walk |
+| PHP | `.php` | 3 | Parser present; not in index walk |
+| C/C++ | `.cpp`, `.cxx`, `.cc`, `.hpp`, `.h`, `.c` | 3 | Parser present; not in `find_files_sync` extensions |
+| C# | `.cs` | 3 | Parser present; not in index walk |
+| Perl | `.pl`, `.pm` | 3 | Parser present; not in index walk |
+| R | `.r`, `.R` | 3 | Parser present; not in index walk |
+| Elixir | `.ex`, `.exs` | 3 | Parser present; not in index walk |
 
-**Not indexed today** (do not claim): Ruby, PHP, Perl, R, Elixir, C/C++
-(pure headers skipped), Markdown code elements (docs handled by
-`mcp_index_docs`, not the code walk).
-
-**Quality guardrails** (US-CBM-C3):
-
-- Extensions are wired into `find_files_sync` **before** a tier is claimed —
-  an extractor that exists as a module but is not in the walk is not
-  "supported".
-- T2/T3 languages land only after live smoke, not parser PR alone.
-- `leankg index --lang <csv>` filters by extension; the filter applies to
-  the T1–T4 sets above.
+See [`docs/language-tiers.md`](language-tiers.md) for the tier template
+and the Go/TS reference entries (FR-C06).
 
 # Architecture
 
