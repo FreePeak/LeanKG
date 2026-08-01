@@ -102,8 +102,13 @@ const IGNORED_EXTENSIONS: &[&str] = &[
 const SOURCE_EXTENSIONS: &[&str] = &[
     "rs", "go", "ts", "tsx", "js", "jsx", "py", "java", "kt", "kts", "c", "cpp", "h", "hpp", "cs",
     "rb", "swift", "scala", "clj", "hs", "zig", "nim", "tf", "proto", "graphql", "toml", "yaml",
-    "yml", "md", "rst", "dart",
+    "yml", "md", "rst", "dart", "m", "mm",
 ];
+
+/// Returns true when the MCP file watcher should reindex this extension.
+pub fn is_watched_source_extension(ext: &str) -> bool {
+    SOURCE_EXTENSIONS.contains(&ext.to_lowercase().as_str())
+}
 
 fn env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key)
@@ -211,7 +216,7 @@ pub async fn start_watcher(
                     .and_then(|e| e.to_str())
                     .map(|e| e.to_lowercase())
                     .unwrap_or_default();
-                if !SOURCE_EXTENSIONS.contains(&ext.as_str()) {
+                if !is_watched_source_extension(&ext) {
                     continue;
                 }
 
@@ -288,5 +293,20 @@ fn check_and_enforce_db_size(db_path: &Path, graph: &GraphEngine, max_size: u64)
     );
     if let Err(e) = graph.vacuum() {
         tracing::warn!("VACUUM failed: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watches_swift_and_objc_extensions() {
+        assert!(is_watched_source_extension("swift"));
+        assert!(is_watched_source_extension("m"));
+        assert!(is_watched_source_extension("mm"));
+        assert!(is_watched_source_extension("h"));
+        assert!(is_watched_source_extension("M")); // case-insensitive
+        assert!(!is_watched_source_extension("xyz"));
     }
 }

@@ -1193,10 +1193,20 @@ fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Er
         config.project.languages = detected_langs;
     }
 
-    // FR-LSP-B / REL-039: prefab lsp block + typed_resolve for Go/TS MVP
+    // FR-LSP-B / REL-039: prefab lsp block + typed_resolve (Go/TS + detected Swift/ObjC)
     if with_lsp {
         config.lsp = Some(crate::lsp::config::LspConfig::prefab_defaults());
-        config.indexer.typed_resolve = "go,ts".to_string();
+        let mut tr = vec!["go".to_string(), "ts".to_string()];
+        for lang in &config.project.languages {
+            let l = lang.to_lowercase();
+            if l == "swift" && !tr.iter().any(|x| x == "swift") {
+                tr.push("swift".to_string());
+            }
+            if (l == "objc" || l == "objective-c") && !tr.iter().any(|x| x == "objc") {
+                tr.push("objc".to_string());
+            }
+        }
+        config.indexer.typed_resolve = tr.join(",");
     }
 
     let config_yaml = serde_yaml::to_string(&config)?;
@@ -1297,6 +1307,9 @@ fn detect_languages(root: &str, languages: &mut Vec<String>) {
         (".kt", "kotlin"),
         (".kts", "kotlin"),
         (".swift", "swift"),
+        (".m", "objc"),
+        (".mm", "objc"),
+        (".h", "objc"),
     ];
 
     for (ext, lang) in ext_lang {

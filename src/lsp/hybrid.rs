@@ -88,6 +88,11 @@ fn language_from_file(file_path: &str) -> Option<&'static str> {
     match ext {
         "go" => Some("go"),
         "ts" | "tsx" | "js" | "jsx" => Some("typescript"),
+        "swift" => Some("swift"),
+        "m" | "mm" => Some("objc"),
+        // `.h` may be C or ObjC; hybrid resolve still runs when typed_resolve
+        // includes objc and the index tagged the file as objc.
+        "h" => Some("objc"),
         _ => None,
     }
 }
@@ -108,8 +113,8 @@ fn receiver_from_metadata(meta: &serde_json::Value) -> Option<&str> {
 /// Apply hybrid typed resolve to CALLS relationships in place.
 ///
 /// Only touches edges whose source file language is enabled by
-/// `typed_resolve` (Go / TypeScript MVP). Returns the number of
-/// edges upgraded to `resolution_method=typed`.
+/// `typed_resolve` (Go / TypeScript / Swift / Objective-C). Returns the
+/// number of edges upgraded to `resolution_method=typed`.
 pub fn apply_typed_resolve(
     relationships: &mut [Relationship],
     registry: &TypeRegistry,
@@ -260,6 +265,72 @@ mod tests {
             env: "local".to_string(),
         }];
         assert_eq!(apply_typed_resolve(&mut rels, &reg, "off"), 0);
+    }
+
+    #[test]
+    fn apply_typed_resolve_upgrades_swift_calls() {
+        let elements = vec![
+            elem(
+                "App/Session.swift::authenticate",
+                "method",
+                "authenticate",
+                "App/Session.swift",
+                "swift",
+            ),
+            elem(
+                "App/Session.swift::start",
+                "method",
+                "start",
+                "App/Session.swift",
+                "swift",
+            ),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let mut rels = vec![Relationship {
+            id: None,
+            source_qualified: "App/Session.swift::start".to_string(),
+            target_qualified: "App/Session.swift::authenticate".to_string(),
+            rel_type: "calls".to_string(),
+            confidence: 0.7,
+            metadata: serde_json::json!({"resolution_method": "name"}),
+            env: "local".to_string(),
+        }];
+        let n = apply_typed_resolve(&mut rels, &reg, "go,ts,swift,objc");
+        assert_eq!(n, 1, "swift CALLS should upgrade when enabled");
+        assert_eq!(
+            rels[0].metadata["resolution_method"].as_str(),
+            Some("typed")
+        );
+    }
+
+    #[test]
+    fn apply_typed_resolve_upgrades_objc_calls() {
+        let elements = vec![
+            elem("Greeter.m::setup", "method", "setup", "Greeter.m", "objc"),
+            elem(
+                "Greeter.m::sayHello",
+                "method",
+                "sayHello",
+                "Greeter.m",
+                "objc",
+            ),
+        ];
+        let reg = TypeRegistry::from_elements(&elements);
+        let mut rels = vec![Relationship {
+            id: None,
+            source_qualified: "Greeter.m::sayHello".to_string(),
+            target_qualified: "Greeter.m::setup".to_string(),
+            rel_type: "calls".to_string(),
+            confidence: 0.7,
+            metadata: serde_json::json!({"resolution_method": "name"}),
+            env: "local".to_string(),
+        }];
+        let n = apply_typed_resolve(&mut rels, &reg, "swift,objc");
+        assert_eq!(n, 1);
+        assert_eq!(
+            rels[0].metadata["resolution_method"].as_str(),
+            Some("typed")
+        );
     }
 
     #[test]

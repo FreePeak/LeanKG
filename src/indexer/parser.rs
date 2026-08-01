@@ -14,6 +14,7 @@ pub struct ParserManager {
     pub perl_parser: Parser,
     pub r_parser: Parser,
     pub elixir_parser: Parser,
+    pub swift_parser: Parser,
 }
 
 impl ParserManager {
@@ -31,6 +32,7 @@ impl ParserManager {
             perl_parser: Parser::new(),
             r_parser: Parser::new(),
             elixir_parser: Parser::new(),
+            swift_parser: Parser::new(),
         }
     }
 
@@ -47,6 +49,7 @@ impl ParserManager {
         let perl_lang: tree_sitter::Language = tree_sitter_perl::LANGUAGE.into();
         let r_lang: tree_sitter::Language = tree_sitter_r::LANGUAGE.into();
         let elixir_lang: tree_sitter::Language = tree_sitter_elixir::LANGUAGE.into();
+        let swift_lang: tree_sitter::Language = tree_sitter_swift::LANGUAGE.into();
 
         self.go_parser.set_language(&go_lang)?;
         self.ts_parser.set_language(&ts_lang)?;
@@ -60,6 +63,7 @@ impl ParserManager {
         self.perl_parser.set_language(&perl_lang)?;
         self.r_parser.set_language(&r_lang)?;
         self.elixir_parser.set_language(&elixir_lang)?;
+        self.swift_parser.set_language(&swift_lang)?;
 
         Ok(())
     }
@@ -78,6 +82,7 @@ impl ParserManager {
             "perl" => Some(&mut self.perl_parser),
             "r" => Some(&mut self.r_parser),
             "elixir" => Some(&mut self.elixir_parser),
+            "swift" => Some(&mut self.swift_parser),
             _ => None,
         }
     }

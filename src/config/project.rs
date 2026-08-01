@@ -121,6 +121,8 @@ pub fn typed_resolve_enabled(setting: &str, language: &str) -> bool {
                 ("rust", &["rs", "rust"]),
                 ("ruby", &["rb", "ruby"]),
                 ("csharp", &["cs", "csharp", "c#"]),
+                ("swift", &["swift"]),
+                ("objc", &["objc", "objective-c", "objectivec", "m", "mm"]),
             ];
             let lang_lower = language.to_lowercase();
             let mut accepted: std::collections::HashSet<String> = std::collections::HashSet::new();

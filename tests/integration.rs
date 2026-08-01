@@ -568,6 +568,114 @@ async fn test_index_file_java() {
     assert_eq!(java_classes[0].name, "UserService");
 }
 
+/// Phase 0: incremental/watch path must index Swift via regex extractor
+/// (not require a tree-sitter parser that does not exist yet).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_index_file_swift_incremental() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg.db");
+    let db = init_db(db_path.as_path()).unwrap();
+    let graph = GraphEngine::new(db);
+
+    let swift_file = tmp.path().join("Session.swift");
+    std::fs::write(
+        &swift_file,
+        r#"
+import Foundation
+
+public class Session {
+    public var token: String = ""
+    public func start() {}
+}
+
+public protocol Authenticating {
+    func authenticate()
+}
+"#,
+    )
+    .unwrap();
+
+    let mut parser = ParserManager::new();
+    let _ = parser.init_parsers();
+    let count = index_file_sync(&graph, &mut parser, swift_file.to_str().unwrap())
+        .expect("index_file_sync should not error on .swift");
+    assert!(
+        count > 0,
+        "Swift incremental index must extract elements, got {}",
+        count
+    );
+
+    let elements = graph.all_elements().unwrap();
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.element_type == "class" && e.name == "Session" && e.language == "swift"),
+        "expected Session class, got {:?}",
+        elements
+            .iter()
+            .map(|e| (&e.name, &e.element_type, &e.language))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Phase 0: incremental/watch path must index Objective-C .m files.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_index_file_objc_incremental() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg.db");
+    let db = init_db(db_path.as_path()).unwrap();
+    let graph = GraphEngine::new(db);
+
+    let objc_file = tmp.path().join("Greeter.m");
+    std::fs::write(
+        &objc_file,
+        r#"
+#import "Greeter.h"
+
+@implementation Greeter
+- (void)sayHello {
+    NSLog(@"hi");
+}
+@end
+"#,
+    )
+    .unwrap();
+
+    let mut parser = ParserManager::new();
+    let _ = parser.init_parsers();
+    let count = index_file_sync(&graph, &mut parser, objc_file.to_str().unwrap())
+        .expect("index_file_sync should not error on .m");
+    assert!(
+        count > 0,
+        "ObjC incremental index must extract elements, got {}",
+        count
+    );
+
+    let elements = graph.all_elements().unwrap();
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.name == "Greeter" && e.language == "objc"),
+        "expected Greeter, got {:?}",
+        elements
+            .iter()
+            .map(|e| (&e.name, &e.element_type, &e.language))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_find_files_discovers_swift_and_objc() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("A.swift"), "class A {}").unwrap();
+    std::fs::write(tmp.path().join("B.m"), "@implementation B\n@end\n").unwrap();
+    std::fs::write(tmp.path().join("B.h"), "@interface B : NSObject\n@end\n").unwrap();
+    let files = find_files_sync(tmp.path().to_str().unwrap()).unwrap();
+    assert!(files.iter().any(|f| f.ends_with("A.swift")));
+    assert!(files.iter().any(|f| f.ends_with("B.m")));
+    assert!(files.iter().any(|f| f.ends_with("B.h")));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_relationships_with_real_db() {
     // Use the real .leankg database from current dir

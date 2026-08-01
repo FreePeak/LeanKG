@@ -106,6 +106,8 @@ tree-sitter-perl = "1.1"
 tree-sitter-r = "1.2"
 tree-sitter-elixir = "0.3"
 tree-sitter-dart = "0.1"
+tree-sitter-swift = "0.7"
+tree-sitter-objc = "3.0"
 
 # Bounded MPMC channel used by the embed pipeline to keep N inference
 # workers and a single CozoDB writer decoupled. Without this, N workers

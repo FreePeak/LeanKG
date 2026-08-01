@@ -48,10 +48,10 @@
     {
       "id": "REL-032",
       "kind": "Release",
-      "title": "Swift / Vue / Svelte / SQL DDL \u2014 extractors present ('swift.rs' / 'sfc.rs' / 'sql.rs') but **not wired** into \u2026",
+      "title": "Vue / Svelte / SQL DDL \u2014 extractors present but not wired; Swift/ObjC bulk+incremental wired (heritage/AST pending)",
       "priority": "Should Have",
-      "status": "NOT_DONE",
-      "notes": "8.3 v3.6 Roll-up (Current: v0.17.9) - ST\u2026 2026-07-21 priority reorder: Language breadth not ROI; extractors exist, index-walk later",
+      "status": "PARTIAL",
+      "notes": "Swift/ObjC full support DONE (Phases 0-4); remaining: Vue/Svelte/SQL DDL unwired",
       "section": "8.3 v3.6 Roll-up (Current: v0.17.9) - STATUS",
       "prd_line": null,
       "focus": "P2",
@@ -1257,10 +1257,10 @@
     {
       "id": "US-LANG-02",
       "kind": "User Story",
-      "title": "Swift parser (tree-sitter-swift) with regex entity extraction",
+      "title": "Swift indexing (tree-sitter calls + heritage + typed resolve)",
       "priority": "Should Have",
-      "status": "PARTIAL",
-      "notes": "PARTIAL \u2014 'src/indexer/swift.rs' + unit tests ('7027d6b'); **not wired** into in\u2026",
+      "status": "DONE",
+      "notes": "DONE \u2014 regex entities + heritage + tree-sitter-swift calls + hybrid typed_resolve/sourcekit registry",
       "section": "3.7 Additional Language Stories (US-LANG-01 to US-LANG-03)",
       "prd_line": null,
       "focus": "P2",
@@ -6635,6 +6635,19 @@
       "focus": "P3",
       "ve_suborder": null,
       "moscow_rank": 3
+    },
+    {
+      "id": "US-LANG-04",
+      "kind": "User Story",
+      "title": "Objective-C indexing (tree-sitter message sends + heritage + typed resolve)",
+      "priority": "Should Have",
+      "status": "DONE",
+      "notes": "DONE \u2014 regex entities + heritage/selectors + tree-sitter-objc message sends + .h sniff + hybrid typed_resolve/clangd",
+      "section": "3.7 Additional Language Stories (US-LANG-01 to US-LANG-04)",
+      "prd_line": null,
+      "focus": "P2",
+      "focus_rank": 2,
+      "ve_suborder": 0
     }
   ],
   "meta": {
