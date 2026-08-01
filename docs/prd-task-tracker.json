@@ -1257,10 +1257,10 @@
     {
       "id": "US-LANG-02",
       "kind": "User Story",
-      "title": "Swift indexing (regex wired; tree-sitter-swift + call graph pending)",
+      "title": "Swift indexing (tree-sitter calls + regex entities; typed resolve pending)",
       "priority": "Should Have",
       "status": "PARTIAL",
-      "notes": "PARTIAL \u2014 regex extractor wired for bulk + incremental index_file_sync/watcher; tree-sitter-swift + call/heritage edges still open",
+      "notes": "PARTIAL \u2014 regex entities + tree-sitter-swift call edges + heritage; typed resolve / SourceKit still open (Phase 4)",
       "section": "3.7 Additional Language Stories (US-LANG-01 to US-LANG-03)",
       "prd_line": null,
       "focus": "P2",

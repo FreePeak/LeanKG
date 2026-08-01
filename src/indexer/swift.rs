@@ -283,6 +283,21 @@ impl<'a> SwiftExtractor<'a> {
         (elements, relationships)
     }
 
+    /// Regex entity extraction plus tree-sitter call edges (Phase 2).
+    pub fn extract_with_calls(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
+        let (elements, mut relationships) = self.extract();
+        if let Some(tree) = parse_swift(self.source.as_bytes()) {
+            let calls = crate::indexer::call_graph::extract_calls_with_resolution(
+                &tree,
+                self.source.as_bytes(),
+                self.file_path,
+                "swift",
+            );
+            relationships.extend(calls);
+        }
+        (elements, relationships)
+    }
+
     fn push_decl(
         &self,
         elements: &mut Vec<CodeElement>,
@@ -433,6 +448,13 @@ fn first_type_token(segment: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
+fn parse_swift(source: &[u8]) -> Option<tree_sitter::Tree> {
+    let mut parser = tree_sitter::Parser::new();
+    let lang: tree_sitter::Language = tree_sitter_swift::LANGUAGE.into();
+    parser.set_language(&lang).ok()?;
+    parser.parse(source, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,6 +575,38 @@ protocol Authenticating: AnyObject {
                 .any(|(s, t)| s.ends_with("::Authenticating") && *t == "AnyObject"),
             "Authenticating should extend AnyObject, got {:?}",
             extends
+        );
+    }
+
+    #[test]
+    fn extracts_swift_calls_via_tree_sitter() {
+        let src = r#"
+class Session {
+    func authenticate() {}
+    func start() {
+        authenticate()
+        helper.doWork()
+    }
+}
+"#;
+        let (_elems, rels) =
+            SwiftExtractor::new(src.as_bytes(), "calls.swift").extract_with_calls();
+        let calls: Vec<_> = rels
+            .iter()
+            .filter(|r| r.rel_type == "calls")
+            .map(|r| (r.source_qualified.as_str(), r.target_qualified.as_str()))
+            .collect();
+        assert!(
+            calls
+                .iter()
+                .any(|(s, t)| s.contains("start") && t.contains("authenticate")),
+            "start should call authenticate, got {:?}",
+            calls
+        );
+        assert!(
+            calls.iter().any(|(_, t)| t.contains("doWork")),
+            "should see doWork call, got {:?}",
+            calls
         );
     }
 }

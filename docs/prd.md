@@ -1590,7 +1590,7 @@ Palace Mapping:
 | Terraform | `.tf` | DONE (indexed) | Custom extractor |
 | CI/CD YAML | `.yml`, `.yaml` | DONE (indexed) | GitHub Actions, GitLab CI, Azure Pipelines |
 | Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
-| Swift | `.swift` | DONE (indexed, regex) — bulk + incremental/`index_file_sync` + watcher; call graph / heritage PENDING | `src/indexer/swift.rs` |
+| Swift | `.swift` | DONE (indexed) — regex entities + tree-sitter-swift call edges; heritage edges | tree-sitter-swift + `swift.rs` |
 | Objective-C | `.m`, `.mm`, `.h` | DONE (indexed, regex v0) — bulk + incremental; protocol conformance / selectors PENDING (`US-LANG-04`) | `src/indexer/objc.rs` |
 | Vue (SFC) | `.vue` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
 | Svelte (SFC) | `.svelte` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |

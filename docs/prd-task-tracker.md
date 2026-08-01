@@ -416,7 +416,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift indexing (regex wired; tree-sitter-swift + call graph pending) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
+| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift indexing (tree-sitter calls + regex entities; typed resolve pending) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `US-MP-08` | User Story | **PARTIAL** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Ap… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |
@@ -575,7 +575,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `US-MG-02` | User Story | **PARTIAL** | Must Have | Single-repo projects expand fully on service double-click (no multi-level drilling) | 3.8 Massive Graph Stories (US-MG-01 to US-MG-05) |
 | **P2** | `US-08` | User Story | **PARTIAL** | Should Have | Multi-language support (Go, TS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) | 3.1 Core MVP Stories (US-01 to US-18) |
 | **P2** | `US-CBM-A2` | User Story | **PARTIAL** | Should Have | Ontology online ('kg_ontology_status', 'concept_search' non-empty after sync) | 3.11 CBM Structural Parity Stories (US-CBM) — merged from 'p… |
-| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift indexing (regex wired; tree-sitter-swift + call graph pending) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
+| **P2** | `US-LANG-02` | User Story | **PARTIAL** | Should Have | Swift indexing (tree-sitter calls + regex entities; typed resolve pending) | 3.7 Additional Language Stories (US-LANG-01 to US-LANG-04) |
 | **P2** | `US-MP-02` | User Story | **PARTIAL** | Should Have | Layered Context Loading (L0-L3) — explicit token budgets per layer: L0 identity (~50 tok),… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P2** | `US-MP-08` | User Story | **PARTIAL** | Should Have | Folder Structure as Graph Edges — directories as first-class 'directory' nodes with 'conta… | 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08) |
 | **P3** | `US-GF-10` | User Story | **PARTIAL** | Could Have | Expand language extractors toward Graphify breadth (Vue/Svelte, Scala, Lua, Zig, shell, Ap… | 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-12) |

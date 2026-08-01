@@ -417,10 +417,10 @@ fn extract_elements_for_file(
         });
     }
 
-    // Swift: regex-based extractor (no tree-sitter-swift binding yet).
+    // Swift: regex entities + tree-sitter call edges.
     if file_path.ends_with(".swift") {
         let extractor = crate::indexer::swift::SwiftExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
+        let (elements, relationships) = extractor.extract_with_calls();
         return Ok(ParsedFile {
             element_count: elements.len(),
             elements,
@@ -929,7 +929,7 @@ pub fn index_file_sync(
     // returns Ok(0).
     if file_path.ends_with(".swift") {
         let extractor = crate::indexer::swift::SwiftExtractor::new(source, file_path);
-        let (elements, relationships) = extractor.extract();
+        let (elements, relationships) = extractor.extract_with_calls();
         if elements.is_empty() && relationships.is_empty() {
             return Ok(0);
         }

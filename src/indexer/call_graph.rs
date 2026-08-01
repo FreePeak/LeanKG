@@ -284,9 +284,23 @@ impl<'a> CallGraphBuilder<'a> {
 
             // Method is the right side (after .)
             if kind == "navigation_suffix" || kind == "field_identifier" || kind == "identifier" {
-                if let Some(name) = self.get_node_text(child) {
+                if kind == "navigation_suffix" {
+                    let mut inner = child.walk();
+                    for part in child.children(&mut inner) {
+                        if part.kind() == "simple_identifier" || part.kind() == "identifier" {
+                            if let Some(name) = self.get_node_text(part) {
+                                method = Some(name);
+                            }
+                        }
+                    }
+                } else if let Some(name) = self.get_node_text(child) {
                     method = Some(name);
                 }
+            }
+
+            // Swift `self.foo` receiver
+            if receiver.is_none() && kind == "self_expression" {
+                receiver = Some("self".to_string());
             }
         }
 
