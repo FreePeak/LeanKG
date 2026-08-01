@@ -555,8 +555,8 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
   - US-LANG-02 Swift — **PARTIAL**: regex extractor wired for bulk + incremental index (`src/indexer/swift.rs`); heritage/call-graph/tree-sitter still pending
   - US-LANG-03 XML — **DONE and indexed** (`.xml` + Android path) (`92db9aa`)
   - US-LANG-04 Objective-C — **PARTIAL**: regex extractor wired for bulk + incremental (`.m`/`.mm`/`.h`); protocol conformance / full selectors pending
-  - US-GF-10 Vue/Svelte — **PARTIAL**: regex extractors in `src/indexer/sfc.rs` (`e617a49`); **not wired** into index walk (`.vue` / `.svelte` not scanned)
-  - US-GF-12 SQL DDL — **PARTIAL**: parser in `src/indexer/sql.rs` (`de314eb`); **not wired** into index walk (`.sql` not scanned)
+  - US-GF-10 Vue/Svelte — **DONE (index walk)**: regex extractors in `src/indexer/sfc.rs` (`e617a49`); `.vue` / `.svelte` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02)
+  - US-GF-12 SQL DDL — **DONE (index walk)**: parser in `src/indexer/sql.rs` (`de314eb`); `.sql` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02); live `--postgres <dsn>` introspection still open
 - Agent-graph UX series — DONE:
   - US-GF-07 rationale extraction (`# WHY:` / `# NOTE:` / `# HACK:` / `# FIXME:` / `# XXX:` markers) → `rationale` elements with `explains` edges (`b0c9477`)
   - US-GF-08 PR impact dashboard — `get_pr_impact` MCP + `leankg prs` CLI (`30e41f0`)
@@ -786,7 +786,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; Cozo default until callers honor `preferred_ann_backend()`
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
 - 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg reflect`; `leankg clones` hard-removed 2026-07-20)
-- **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests. **Extractor modules exist but not indexed yet:** Swift (`swift.rs`), Vue/Svelte (`sfc.rs`), SQL DDL (`sql.rs`). Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
+- **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests + **Vue/Svelte (`sfc.rs`) + SQL DDL (`sql.rs`) + Swift (`swift.rs`) + Objective-C (`objc.rs`) (REL-032 wired 2026-08-02)**. Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
 - 8 compression/read modes + TOON responses
 - Smart orchestrator with persistent cache + hot-path cache for high-frequency MCP tools (`836f0a3`)
 - Git hooks (pre-commit, post-commit, post-checkout) + CI/CD auto-graph update GitHub Actions workflow (`eb3d331`)
@@ -1345,8 +1345,8 @@ Palace Mapping:
 - Cluster SKILL — `get_cluster_skill` MCP (`10b15a0`)
 - Overview context — `get_overview_context` MCP (`9124959`)
 - CI/CD auto-update — `.github/workflows/leankg-graph-update.yml` (`eb3d331`)
-- Vue + Svelte — `src/indexer/sfc.rs` (regex; **not called from index walk**) (`e617a49`)
-- SQL DDL — `src/indexer/sql.rs` (**not called from index walk**) (`de314eb`)
+- Vue + Svelte — `src/indexer/sfc.rs` (regex; **wired into index walk** — REL-032) (`e617a49`)
+- SQL DDL — `src/indexer/sql.rs` (**wired into index walk** — REL-032) (`de314eb`)
 - Swift — `src/indexer/swift.rs` (**bulk + incremental wired**; call graph pending)
 - Objective-C — `src/indexer/objc.rs` (**bulk + incremental wired**; US-LANG-04)
 
@@ -1354,7 +1354,7 @@ Palace Mapping:
 - No `typed` `resolution_method` produced at index time; LSP bridge returns `LspLocation[]` but does not yet write CALLS edges with `resolution_method=typed`
 - No `graph-ui/` directory; no `get_graph_layout` / 3D scene
 - No formal `resources/read` endpoint for `get_overview_context` (tool-only)
-- Vue / Svelte / SQL extractors exist as modules but `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`
+- ~~Vue / Svelte / SQL extractors exist as modules but `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`~~ — **RESOLVED 2026-08-02 (REL-032 / PR-14):** `.vue` / `.svelte` / `.sql` in `find_files_sync`, `extract_elements_for_file`, `index_file_sync`
 
 **Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace Cozo/RocksDB; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path; **custom MinHash/LSH or Cozo `::lsh` clone ANN** (v3.6.2 — semantic HNSW only).
 </details>
@@ -1725,9 +1725,9 @@ Historical soft-deprecation ACs satisfied; use `env=` on primary search / `kg_*`
 | Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
 | Swift | `.swift` | DONE (indexed) — regex entities + tree-sitter-swift calls + heritage; hybrid typed resolve when `typed_resolve` includes `swift` | tree-sitter-swift + `swift.rs` + sourcekit-lsp |
 | Objective-C | `.m`, `.mm`, `.h` | DONE (indexed) — regex entities + tree-sitter-objc message sends; `.h` sniff; hybrid typed resolve when `typed_resolve` includes `objc` | tree-sitter-objc + `objc.rs` + clangd |
-| Vue (SFC) | `.vue` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
-| Svelte (SFC) | `.svelte` | PARTIAL (unwired) — `src/indexer/sfc.rs` (`e617a49`) | regex stub |
-| SQL DDL | `.sql` | PARTIAL (unwired) — `src/indexer/sql.rs` (`de314eb`) | regex stub |
+| Vue (SFC) | `.vue` | DONE (indexed) — `src/indexer/sfc.rs` regex wired into walk (REL-032) | regex |
+| Svelte (SFC) | `.svelte` | DONE (indexed) — `src/indexer/sfc.rs` regex wired into walk (REL-032) | regex |
+| SQL DDL | `.sql` | DONE (indexed) — `src/indexer/sql.rs` regex wired into walk (REL-032) | regex |
 | C/C++ | `.cpp`, `.cxx`, `.cc`, `.hpp`, `.h`, `.c` | PARTIAL — tree-sitter parser present; **not** in current `find_files_sync` extensions list | tree-sitter-cpp |
 | C# | `.cs` | PARTIAL — parser present; **not** in current index walk | tree-sitter-c-sharp |
 | Ruby | `.rb` | PARTIAL — parser present; **not** in current index walk | tree-sitter-ruby |
@@ -3015,7 +3015,7 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | detect_changes response time | < 2 seconds | TBD |
 | get_context enhanced response size | < 4000 tokens | TBD |
 | Batch insert size | 5000 rows/batch | DONE |
-| Supported parser / extractor count | Tree-sitter + specialized extractors; **indexed walk ≈ 8 code langs + Android/XML/TF/CI** (Swift/Vue/Svelte/SQL modules unwired) | PARTIAL |
+| Supported parser / extractor count | Tree-sitter + specialized extractors; **indexed walk ≈ 12 code langs + Android/XML/TF/CI + Vue/Svelte/SQL/Swift/ObjC** (REL-032 wired 2026-08-02) | PARTIAL (Ruby/PHP/C# walk still pending) |
 | MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14; still 85 on v0.19.0) |
 | Cross-platform | Apple Silicon (ARM64) Local + Linux x86_64 Cloud | PARTIAL (FR-VE-ABS DONE; CloudEngine TiKV Tier-1 still stub root) |
 | Token honesty (delivered vs actual) | When `truncated: true`, agents can read both figures; docs teach ≥3× budget | PENDING (FR-SEM-01) |
