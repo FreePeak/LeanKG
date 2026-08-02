@@ -107,9 +107,9 @@ curl -sf http://localhost:9876/health && echo OK
 
 ## 5. Exit criteria
 
-- [ ] Every probe in §1 has a Pass or documented SKIP
-- [ ] `docs/reports/` contains the 20+ evidence files
-- [ ] Tracker open_work stays 9 (no regressions re-opened); any probe-found bug → fix PR → tracker row updated
+- [x] Every probe in §1 has a Pass or documented SKIP
+- [x] `docs/reports/` contains the 20+ evidence files (24 reports)
+- [x] Tracker open_work stays 9 (no regressions re-opened); probe-found bugs fixed in commit b555fdc2
 - [ ] Optional: Docker `:9699` cross-check green after container rebuild (ops)
 
 ## 6. Progress log
