@@ -1,22 +1,22 @@
 {
-  "generated": "2026-08-01",
+  "generated": "2026-08-02",
   "source": "docs/prd.md",
   "counts": {
-    "NOT_DONE": 5,
+    "NOT_DONE": 7,
     "PENDING": 1,
     "PARTIAL": 2,
     "OPEN": 1,
     "DONE": 527,
     "WONT_DO": 3,
     "by_status": {
-      "NOT_DONE": 5,
+      "NOT_DONE": 7,
       "DONE": 527,
       "PENDING": 1,
       "PARTIAL": 2,
       "OPEN": 1,
       "WONT_DO": 3
     },
-    "open_work": 9
+    "open_work": 11
   },
   "tasks": [
     {
@@ -7025,6 +7025,32 @@
       "focus": "P2",
       "focus_rank": 2,
       "ve_suborder": 96
+    },
+    {
+      "id": "FR-P0-EMBED-LOCK",
+      "kind": "FR",
+      "title": "Serving MCP must not hold RocksDB LOCK during embed: read-only mcp-http or reader/writer split or LEANKG_EMBED_AUTO_ARM=0 default on serving containers",
+      "priority": "Must Have",
+      "status": "NOT_DONE",
+      "notes": "P0 defect 2026-08-02 A/B",
+      "section": "5.33 RocksDB LOCK poison (v3.8.4)",
+      "prd_line": null,
+      "focus": "P0",
+      "focus_rank": 0,
+      "ve_suborder": 0
+    },
+    {
+      "id": "REL-P0-EMBED-LOCK",
+      "kind": "Release",
+      "title": "Fix + live smoke: boot -> 30s+ idle -> semantic_search completes, all DB tools healthy; 5x parallel storm keeps :9699/health ok",
+      "priority": "Must Have",
+      "status": "NOT_DONE",
+      "notes": "P0 defect 2026-08-02 A/B",
+      "section": "5.33 RocksDB LOCK poison (v3.8.4)",
+      "prd_line": null,
+      "focus": "P0",
+      "focus_rank": 0,
+      "ve_suborder": 0
     }
   ],
   "meta": {

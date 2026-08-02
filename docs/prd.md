@@ -1,11 +1,11 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.8.3-mcp-surf-1b
-**Date:** 2026-08-01
+**Version:** 3.8.5-mcp-validation-rca
+**Date:** 2026-08-02
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.27 (`origin/main`)
+**Codebase Version:** 0.19.31 (`origin/main`)
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
@@ -16,6 +16,8 @@
 >
 > | Focus | Status | What |
 > |------:|--------|------|
+> | **P0** | **OPEN** | MCP validation root causes — file-arg project routing (`FR-P0-MCP-RC-01`), RocksDB double-open lock (`FR-P0-MCP-RC-02`), blocking-sync/async stall (`FR-P0-MCP-RC-03`), mega-guard gaps (`FR-P0-MCP-RC-04`) — [validation](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md) + [RCA](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md), §3.30 / §5.34 |
+> | **P0** | **OPEN** | RocksDB LOCK poison — embed auto-arm blocks all DB tools — `FR-P0-EMBED-LOCK` / `REL-P0-EMBED-LOCK` ([A/B](reports/ab-leankg-vs-raw-live-2026-08-02.md), §3.29 / §5.33) |
 > | **P0** | **CLOSED** | Procedural ontology auto-update — `US-ONT-PROC-01` / `REL-059` ([smoke](reports/ontology-proc-auto-smoke-2026-07-21.md)) |
 > | **P1** | **DONE** | Wave **4** single-repo expand — `US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md). Waves 0a–3 **DONE** (Wave 3: [NL Query FAB](reports/ui-v2-nl-query-fab-2026-08-01.md)). Ops: OnRender embeddings exit 101 — [RCA](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md) |
 > | **P1** | **DONE** | Wave **1b** MCP hard-delete — `load_layer` + `get_doc_structure` (`US-SURF-08..11` / `REL-076`) — [evidence](reports/rel-076-mcp-surf-1b-2026-08-01.md). Cumulative hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure` |
@@ -33,6 +35,44 @@
 ---
 
 ## Changelog
+
+### v3.8.5-mcp-validation-rca - MCP 88-tool validation: 44 failures traced to 4 root causes (2026-08-02)
+
+> **Trigger:** Live validation of all 88 leankg HTTP MCP tools on Docker `:9699` against the `/workspace-be` mega-graph (662,378 elements / 2,259,855 relationships) ([validation](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [RCA](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md)). Empty results treated as failures per the goal. **44 / 88 tools failed** (50% pass). Deep-dive (4 subagents, code-traced + live-DB-verified) collapsed the failures into 4 code defects + a data-absence class:
+> - **D1 — file-arg project routing shadows `project`** (`src/mcp/server.rs:2640-2682`): tools taking `file`/`path` route the DB via `find_leankg_for_path` from container cwd `/workspace` → opens `/workspace/.leankg` (wrong project) instead of honoring `project=/workspace-be`. Breaks ~8 empty + 4 lock tools.
+> - **D2 — no single-handle-per-DB invariant → RocksDB double-open lock** (`src/db/schema.rs:193-204`, ontology watcher `src/ontology/watcher.rs:50` holds the `/workspace` handle forever; cache-clear `server.rs:2734-2737` then re-opens → `lock hold by current process`). 4 lock tools.
+> - **D3 — blocking sync CozoDB on Tokio async workers + no request timeout** (`server.rs:2979`, `schema.rs:25`, no `spawn_blocking` in `src/mcp/`): one heavy full-scan starves all `num_cpus` workers → `/health` times out → container `(unhealthy)` until `docker restart`. This is the whole-server-collapse mechanism.
+> - **D4 — mega-guard opt-in (7 of ~90 tools) + guard's own check is a full COUNT** (`safe_discover.rs:68`, `query.rs:3483`): 15 unguarded tools full-scan; `get_cluster_skill` runs live Louvain on 662k nodes; ontology write tools not in `WRITE_TOOLS`.
+> - **Data-absence (tool correct, ~8):** `/workspace-be` is code-only — no PRD, incidents, service metadata, clusters, or docs. `find_tunnels`/`get_service_*`/`get_traceability_*`/`query_incidents`/`get_files_for_doc` correctly return empty.
+
+> **Product intent:** MCP serving must be (1) safe on mega-graphs (guard everything that scans), (2) non-blocking (never stall `/health`), (3) project-correct (honor `project` over `file`-derived routing). All four defects are P0 — they disable the agent tool wall on the primary mega-graph deployment.
+
+**Product actions this revision (priority order):**
+
+| # | ID | Priority | Focus | Intent | Status |
+|--:|----|----------|-------|--------|--------|
+| 1 | FR-P0-MCP-RC-01 | Must Have | **P0** | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it — no more wrong-project opens | **NOT_DONE** |
+| 2 | FR-P0-MCP-RC-02 | Must Have | **P0** | Single process-wide GraphEngine per DB path (no cache-clear re-open) — kills `lock hold by current process` | **NOT_DONE** |
+| 3 | FR-P0-MCP-RC-03 | Must Have | **P0** | `tokio::time::timeout` + `spawn_blocking` in the MCP path — a slow tool must not stall `/health` | **NOT_DONE** |
+| 4 | FR-P0-MCP-RC-04 | Must Have | **P0** | Mega-guard wired into all unguarded full-scan tools; cached `is_mega_graph` in the guard; ontology writes in `WRITE_TOOLS` | **NOT_DONE** |
+| 5 | REL-P0-MCP-RC | Must Have | **P0** | Fix + live smoke on `/workspace-be`: all 88 tools return within budget, `/health` stays ok under a 5× parallel storm | **NOT_DONE** |
+
+**New content:** §3.30 / §5.34. Evidence: [`docs/reports/mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [`docs/reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md).
+
+### v3.8.4-embed-lock-p0 - RocksDB LOCK poison: embed auto-arm blocks all DB tools (2026-08-02)
+
+> **Trigger:** 2026-08-02 A/B of LeanKG tools vs raw grep/read ([evidence](reports/ab-leankg-vs-raw-live-2026-08-02.md)) on Docker MCP `:9699` (`project=/workspace`). `LEANKG_EMBED_AUTO_ARM=1` + `LEANKG_EMBED_IDLE_AFTER_SECS=30` → embed idle scheduler auto-arms ~30s after boot; its incremental scan holds the RocksDB `data/LOCK`. From then on every DB-backed tool fails `RocksDB IO error: lock hold by current process ... data/LOCK: No locks available` until `docker restart`. First `semantic_search` on fresh boot hangs 30s+ and never returns. Contradicts the [v3.7.3-embed-no-block](#v373-embed-no-block---http-mcp-stays-responsive-while-embed-runs-2026-07-28-fr-embed-r1-follow-up) intent ("MCP keeps serving").
+
+> **Product intent:** Serving MCP must never contend with the embed writer over the RocksDB LOCK. Fix = read-only mcp-http, or reader/writer split, or `LEANKG_EMBED_AUTO_ARM=0` default on serving containers. Priority **P0** — it disables `semantic_search` (the headline differentiator) and degrades every DB tool on the default Docker setup.
+
+**Product actions this revision (priority order):**
+
+| # | ID | Priority | Focus | Intent | Status |
+|--:|----|----------|-------|--------|--------|
+| 1 | FR-P0-EMBED-LOCK | Must Have | **P0** | Serving MCP must not hold the RocksDB LOCK during embed; semantic_search completes on fresh boot | **NOT_DONE** |
+| 2 | REL-P0-EMBED-LOCK | Must Have | **P0** | Fix + live smoke (boot → idle → semantic_search + storm keeps /health ok) | **NOT_DONE** |
+
+**New content:** §3.29 / §5.33. Evidence: [`docs/reports/ab-leankg-vs-raw-live-2026-08-02.md`](reports/ab-leankg-vs-raw-live-2026-08-02.md).
 
 ### v3.8.3-mcp-surf-1b - Wave 1b hard-delete remaining redundant MCP tools (2026-08-01)
 
@@ -2427,6 +2467,59 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 **Won't Do:** Chat-persona SoT; OpenClaw/Hermes product binding; renaming LeanKG code-context L0–L3; Mermaid as primary Cozo graph store.
 
 
+### 3.29 RocksDB LOCK poison — embed auto-arm blocks all DB tools — v3.8.4 **P0**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-EMBED-LOCK` / `REL-P0-EMBED-LOCK`.
+> **Evidence:** [`docs/reports/ab-leankg-vs-raw-live-2026-08-02.md`](reports/ab-leankg-vs-raw-live-2026-08-02.md).
+> **Trigger:** 2026-08-02 A/B of LeanKG tools vs raw grep/read on this repo exposed that on the Docker MCP (`:9699`, `project=/workspace`) the embed idle scheduler auto-arms ~30s after boot and its incremental scan holds the RocksDB `data/LOCK`. Thereafter every DB-backed tool (`semantic_search`, `find_function`, `get_context`, `search_code`, `query_file`) fails `RocksDB IO error: lock hold by current process ... data/LOCK: No locks available` until `docker restart`. First `semantic_search` on a fresh boot hangs 30s+ and never returns. This contradicts the [v3.7.3-embed-no-block](#v373-embed-no-block---http-mcp-stays-responsive-while-embed-runs-2026-07-28-fr-embed-r1-follow-up) intent — MCP must keep serving while embed runs.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| FR-P0-EMBED-LOCK | Must Have (**P0**) | Serving MCP (`mcp-http`) must never hold the RocksDB LOCK while embedding: read-only mode for mcp-http, or a reader/writer DB split, or `LEANKG_EMBED_AUTO_ARM=0` as the default for serving containers |
+| REL-P0-EMBED-LOCK | Must Have (**P0**) | Fix + live smoke: boot → 30s+ idle → `semantic_search` completes, all DB tools stay healthy; 5× parallel `semantic_search` storm keeps `:9699/health` ok |
+
+**Acceptance (FR-P0-EMBED-LOCK):**
+- **Given** the Docker MCP serving `:9699` with current env, **When** the server idles ≥30s and the embed scheduler auto-arms, **Then** no DB-backed tool errors with `lock hold by current process`; `semantic_search` returns within budget.
+- **Given** a fresh container boot, **When** `semantic_search` is the first call, **Then** it completes without hanging (no 30s+ stall).
+- **Given** the fix ships, **When** `docker-compose.override.yml` default env is applied, **Then** the LOCK is never contended between the reader server and the embed writer.
+
+**Won't Do:** Blocking `semantic_search` while cold-embed runs; requiring manual `embed_control(on)` after every boot.
+
+
+### 3.30 MCP 88-tool validation root causes — v3.8.5 **P0**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-MCP-RC-01..04` / `REL-P0-MCP-RC`.
+> **Evidence:** [`docs/reports/mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [`docs/reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md).
+> **Trigger:** 2026-08-02 live validation of all 88 MCP tools against the `/workspace-be` mega-graph (662,378 elements / 2,259,855 relationships) — empty treated as failure. 44 / 88 failed. Four root causes, code-traced and live-DB-verified:
+> - **D1 file-arg routing shadows `project`** — `execute_tool` picks the DB by `file → path → project` priority (`src/mcp/server.rs:2640-2662`); relative `file`/`path` args resolve via `find_leankg_for_path` from container cwd `/workspace` → wrong project DB. `project=/workspace-be` is ignored for file/path tools.
+> - **D2 RocksDB double-open lock** — no single-handle-per-DB invariant (`src/db/schema.rs:193-204` is a debug-only assert); the ontology YAML watcher holds the `/workspace` `GraphEngine` for the process lifetime (`src/ontology/watcher.rs:50`), and the cache-clear on write (`src/mcp/server.rs:2734-2737`) makes the next request re-open the same path → `lock hold by current process`.
+> - **D3 blocking-sync stall** — synchronous `cozo::Db::run_script` on Tokio async workers with no `spawn_blocking` and no `tokio::time::timeout` in the MCP path (`src/mcp/server.rs:2979`, `src/db/schema.rs:25`). Heavy full-scans starve all `num_cpus` workers → `/health` stalls → container `(unhealthy)`.
+> - **D4 mega-guard opt-in** — `refuse_full_scan_if_mega` (`src/ontology/safe_discover.rs:68`) is wired into only 7 of ~90 tools; 15 unguarded tools full-scan; the guard's `count_elements()` is itself a full COUNT (`src/graph/query.rs:3483`); `get_cluster_skill` runs live Louvain on 662k nodes; ontology write tools not in `WRITE_TOOLS`.
+> - **Data-absence (tool correct, ~8)** — `/workspace-be` is code-only: no PRD, incidents, service metadata, clusters, or docs.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| FR-P0-MCP-RC-01 | Must Have (**P0**) | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it (never via cwd) — file/path tools open `/workspace-be` when `project=/workspace-be` |
+| FR-P0-MCP-RC-02 | Must Have (**P0**) | One process-wide `GraphEngine` per DB path behind a single mutex — no cache-clear re-open; `lock hold by current process` eliminated |
+| FR-P0-MCP-RC-03 | Must Have (**P0**) | `tokio::time::timeout` around tool execution + heavy `GraphEngine` calls on `spawn_blocking` — a slow tool must not stall `/health` or flip the container unhealthy |
+| FR-P0-MCP-RC-04 | Must Have (**P0**) | Mega-guard (`refuse_full_scan_if_mega`) wired into every unguarded full-scan tool; guard uses the cached `is_mega_graph` probe (`query.rs:3508`); `get_cluster_skill` skips live Louvain on mega; ontology writes added to `WRITE_TOOLS` |
+| REL-P0-MCP-RC | Must Have (**P0**) | Fix + live smoke on `/workspace-be`: all 88 tools return within budget, empty is data-absent only; 5× parallel storm keeps `:9699/health` ok |
+
+**Acceptance (FR-P0-MCP-RC-01):**
+- **Given** `get_dependencies` / `get_dependents` / `get_impact_radius` / `get_context` called with `project=/workspace-be` and a relative `file`, **Then** they query `/workspace-be` (key `workspace-be-6917453a1780`) and return the anchor file's real edges — not a `/workspace` lock error or empty.
+- **Given** `mcp_index` / `mcp_index_docs` with `project=/workspace-be`, **Then** they index into `/workspace-be` without `lock hold by current process`.
+
+**Acceptance (FR-P0-MCP-RC-02):**
+- **Given** a write tool (e.g. `add_knowledge`) then a doc tool (`find_related_docs`) on the same project, **Then** no `RocksDB IO error: lock hold by current process`; the second tool reuses the existing handle.
+
+**Acceptance (FR-P0-MCP-RC-03):**
+- **Given** a deliberately slow query (full-graph export) concurrent with `/health`, **Then** `/health` responds <1s and the container stays `(healthy)`; the slow tool returns a timeout/503 rather than holding the worker forever.
+
+**Acceptance (FR-P0-MCP-RC-04):**
+- **Given** any of the 15 unguarded full-scan tools (`find_dead_code`, `get_graph_report`, `export_html`, `export_graph_snapshot`, `check_consistency`, `get_tested_by`, `temporal_query`, `timeline`, `query_graph`, `get_cluster_skill`, `kg_semantic_context`, `resolve_with_lsp`) on a mega-graph, **Then** they either return within budget or refuse with the documented `max 50000 for full-scan tools` message — never hang.
+
+**Won't Do:** Requiring clients to pass absolute container paths as a workaround for D1; silently dropping data-absent results (they should surface as "no data", not as tool errors); blocking cold-embed.
+
 ### 5.32 Session memory (FR-SM) — v3.8.2 **P2**
 
 > **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SM-*` / `US-SM-*` / `REL-075`.  
@@ -2449,6 +2542,44 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | REL-075 | Must Have | Analysis deepened + PRD §1.3/§3.28/§5.32 + tracker `US-SM-*`/`FR-SM-*` rows landed; smoke report when US-SM-01/02 implement |
 
 **Won't Do:** Tencent VDB / OpenClaw plugin packaging; irreversible summarization without drill-down IDs; second parallel memory DB beside Cozo + `.leankg/` files.
+
+
+### 5.33 RocksDB LOCK poison — embed auto-arm blocks all DB tools (FR-P0-EMBED-LOCK) — v3.8.4 **P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-EMBED-LOCK` / `REL-P0-EMBED-LOCK` (NOT_DONE).
+> **Narrative:** §3.29. Evidence: [`ab-leankg-vs-raw-live-2026-08-02.md`](reports/ab-leankg-vs-raw-live-2026-08-02.md).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-P0-EMBED-LOCK | Must Have (**P0**) | Serving `mcp-http` must never hold the RocksDB LOCK while embedding — implement read-only RocksDB open for mcp-http, or a reader/writer DB split, or default `LEANKG_EMBED_AUTO_ARM=0` on serving containers |
+| FR-P0-EMBED-LOCK-2 | Must Have (**P0**) | `semantic_search` on a fresh boot must complete within budget (no 30s+ stall); no DB tool may error with `lock hold by current process` after the embed scheduler arms |
+| REL-P0-EMBED-LOCK | Must Have (**P0**) | Fix + live smoke on Docker MCP `:9699`: boot → 30s+ idle → `semantic_search` returns; `find_function` / `get_context` / `search_code` / `query_file` healthy; 5× parallel `semantic_search` storm keeps `/health` ok |
+
+**Won't Do:** Making MCP block on cold-embed; requiring manual `embed_control(on)` after every container boot; wiping existing vectors to clear a stale LOCK.
+
+
+### 5.34 MCP 88-tool validation root causes (FR-P0-MCP-RC) — v3.8.5 **P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-MCP-RC-01..04` / `REL-P0-MCP-RC` (NOT_DONE).
+> **Narrative:** §3.30. Evidence: [`mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [`root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-P0-MCP-RC-01 | Must Have (**P0**) | `project` is the authoritative DB-routing key in `execute_tool` (`src/mcp/server.rs:2640-2662`); `file`/`path` resolved relative to `project`, never via cwd `find_leankg_for_path`. File/path tools open `workspace-be-6917453a1780` when `project=/workspace-be` |
+| FR-P0-MCP-RC-02 | Must Have (**P0**) | Single process-wide `GraphEngine` per canonical DB path behind one mutex — the ontology watcher (`src/ontology/watcher.rs:50`) and the request path share the same handle; the cache-clear re-open (`server.rs:2734-2737`) is removed. `lock hold by current process` eliminated (overlaps `FR-P0-EMBED-LOCK`) |
+| FR-P0-MCP-RC-03 | Must Have (**P0**) | `tokio::time::timeout` around handler execution in `process_jsonrpc_request` (`server.rs:3254`) + heavy `GraphEngine` calls moved to `spawn_blocking`. A slow tool returns a timeout/503; `/health` and the container stay responsive |
+| FR-P0-MCP-RC-04 | Must Have (**P0**) | Wire `refuse_full_scan_if_mega` into every unguarded full-scan tool (`find_dead_code`, `get_graph_report`, `export_html`, `export_graph_snapshot`, `check_consistency`, `get_tested_by`, `temporal_query`, `timeline`, `query_graph`, `get_cluster_skill`, `kg_semantic_context`, `resolve_with_lsp`); guard uses cached `is_mega_graph` (`query.rs:3508`) not `count_elements`; `get_cluster_skill` skips live Louvain on mega; ontology write tools added to `WRITE_TOOLS` |
+| REL-P0-MCP-RC | Must Have (**P0**) | Fix + live smoke on `/workspace-be`: all 88 tools return within budget (empty only where data absent); 5× parallel storm keeps `:9699/health` ok; container stays `(healthy)` |
+
+**Root causes (verified at file:line):**
+1. **D1 file-arg routing shadows `project`** — `src/mcp/server.rs:2640-2662` picks DB by `file → path → project`; `find_leankg_for_path` (`:318-335`) walks cwd `/workspace`. Breaks `get_dependencies` / `get_dependents` / `get_impact_radius` / `get_context` (wrong-project empty) and `mcp_index` / `mcp_index_docs` / `add_documentation` / `find_related_docs` (wrong-project lock).
+2. **D2 RocksDB double-open lock** — `src/db/schema.rs:193-204` invariant is debug-only; ontology watcher `src/ontology/watcher.rs:50` holds `/workspace` handle forever; cache-clear `server.rs:2734-2737` forces re-open → `lock hold by current process`.
+3. **D3 blocking-sync stall** — `run_script` (`src/db/schema.rs:25`) is sync; no `spawn_blocking` in `src/mcp/`; no request timeout (`server.rs:2979` → `:3254`). Full-scans starve all Tokio workers → `/health` (`:3421`) stalls → container `(unhealthy)`.
+4. **D4 mega-guard opt-in** — `refuse_full_scan_if_mega` (`src/ontology/safe_discover.rs:68`) only in 7 tools; guard's `count_elements` (`src/graph/query.rs:3483`) is a full COUNT; cached probe `is_mega_graph` (`query.rs:3508`) unused.
+
+**Data-absence (tool correct):** `/workspace-be` code-only — no PRD, incidents, service metadata, clusters, docs. `find_tunnels`, `get_service_*`, `get_traceability*`, `query_incidents`, `get_files_for_doc` correctly empty. Fix = index the data, not the tools.
+
+**Won't Do:** Requiring absolute container paths from clients as the D1 workaround; treating data-absent empty results as tool errors; blocking cold-embed for D3.
 
 
 ### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
