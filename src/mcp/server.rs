@@ -2794,6 +2794,7 @@ impl ServerHandler for MCPServer {
         rmcp::model::ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
+                .enable_resources()
                 .build(),
         )
         .with_server_info(
@@ -3185,8 +3186,54 @@ async fn process_jsonrpc_request(
             Ok(serde_json::Value::Null)
         }
         "resources/list" => {
-            // LeanKG exposes tools only, no resources
-            Ok(serde_json::json!({ "resources": [] }))
+            // US-GN-08: two static resources, backed by the same seam as
+            // `get_overview_context`. Kept in sync with the rmcp
+            // ServerHandler::list_resources (used by stdio transport).
+            let resources = vec![
+                serde_json::json!({
+                    "uri": "leankg://overview",
+                    "name": "LeanKG overview",
+                    "description": "Session-start overview: project identity (L0) + critical facts (L1)",
+                    "mimeType": "text/markdown",
+                }),
+                serde_json::json!({
+                    "uri": "leankg://overview/wake_up",
+                    "name": "LeanKG wake-up summary",
+                    "description": "wake_up_summary project snapshot",
+                    "mimeType": "text/markdown",
+                }),
+            ];
+            Ok(serde_json::json!({ "resources": resources }))
+        }
+        "resources/read" => {
+            // US-GN-08: read overview / wake_up resources. Mirrors the rmcp
+            // ServerHandler::read_resource (stdio transport); routes through
+            // project_param the same way tools/call does (per-project graph).
+            let uri = params
+                .and_then(|p| p.get("uri"))
+                .and_then(|v| v.as_str())
+                .ok_or("Missing uri for resources/read")?;
+            let project_ref = project_param.map(|s| s.to_string());
+            let engine = mcp_server
+                .get_graph_engine_for_path(project_ref.as_ref())
+                .map_err(|e| e.to_string())?;
+            let project_name = "project";
+            let text = match uri {
+                "leankg://overview" => {
+                    let l0 = engine.identity_context(project_name).unwrap_or_default();
+                    let l1 = engine.critical_facts_context().unwrap_or_default();
+                    format!("{}\n{}", l0, l1)
+                }
+                "leankg://overview/wake_up" => engine.wake_up_summary().unwrap_or_default(),
+                _ => return Err(format!("unknown resource URI: {uri}")),
+            };
+            Ok(serde_json::json!({
+                "contents": [{
+                    "uri": uri,
+                    "mimeType": "text/markdown",
+                    "text": text,
+                }]
+            }))
         }
         "resources/templates/list" => Ok(serde_json::json!({ "resourceTemplates": [] })),
         "prompts/list" => Ok(serde_json::json!({ "prompts": [] })),

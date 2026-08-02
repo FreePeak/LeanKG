@@ -380,6 +380,10 @@ pub async fn start_server(
             "/api/annotations/:element",
             put(handlers::api_update_annotation),
         )
+        .route(
+            "/api/annotations/:element",
+            delete(handlers::api_delete_annotation),
+        )
         .route("/api/search", get(handlers::api_search))
         .route("/api/graph/data", get(handlers::api_graph_data))
         .route("/api/graph/services", get(handlers::api_service_graph))

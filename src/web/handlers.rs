@@ -2567,6 +2567,36 @@ pub async fn api_update_annotation(
 }
 
 #[allow(dead_code)]
+pub async fn api_delete_annotation(
+    State(state): State<AppState>,
+    Path(element): Path<String>,
+) -> impl IntoResponse {
+    let db = match state.get_db() {
+        Ok(db) => db,
+        Err(e) => {
+            return ApiResponse {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            }
+        }
+    };
+    let result = db::delete_business_logic(&db, &element);
+    match result {
+        Ok(()) => ApiResponse {
+            success: true,
+            data: Some(serde_json::json!({"deleted": element})),
+            error: None,
+        },
+        Err(e) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+#[allow(dead_code)]
 pub async fn api_search(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
