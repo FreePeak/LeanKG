@@ -63,6 +63,37 @@ static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
+/// FR-P0-MCP-RC-03: concurrency cap for tool execution. `num_cpus - 1`
+/// permits (min 1) guarantees at least one Tokio worker is always free for
+/// `/health` and the SSE loop, so a heavy full-scan tool can't stall the
+/// whole server. Overridable via `LEANKG_MCP_TOOL_CONCURRENCY`.
+fn build_tool_semaphore() -> Arc<tokio::sync::Semaphore> {
+    let permits = std::env::var("LEANKG_MCP_TOOL_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .saturating_sub(1)
+                .max(1)
+        });
+    Arc::new(tokio::sync::Semaphore::new(permits))
+}
+
+/// FR-P0-MCP-RC-03: per-tool execution timeout. A slow tool returns
+/// `-32000 timed out` instead of holding a Tokio worker forever. Duration from
+/// `LEANKG_MCP_TOOL_TIMEOUT_SECS` (default 30).
+fn tool_timeout() -> std::time::Duration {
+    let secs = std::env::var("LEANKG_MCP_TOOL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|s| *s >= 1)
+        .unwrap_or(30);
+    std::time::Duration::from_secs(secs)
+}
+
 /// Build the per-server dispatch JSON response cache. Sized and TTL'd
 /// independently of the engine-level caches inside `CachingGraphEngine` so
 /// they can be tuned per deployment.
@@ -151,6 +182,11 @@ pub struct MCPServer {
     /// Default is the in-process serial bus; a distributed impl (Kafka /
     /// Pub/Sub) plugs in here when the remote-cozoserver path lands.
     write_bus: Arc<dyn crate::db::write_bus::WriteBus>,
+    /// FR-P0-MCP-RC-03: concurrency cap so a heavy full-scan tool can never
+    /// starve every Tokio worker (which stalled `/health` and flipped the
+    /// container `(unhealthy)`). `num_cpus - 1` permits (min 1) keeps at
+    /// least one worker free for `/health` and the SSE loop.
+    tool_semaphore: Arc<tokio::sync::Semaphore>,
     /// When true, the server rejects any tool that mutates state. Read tools
     /// (search_code, get_context, kg_*, etc.) still work; write tools return
     /// `"server is in read-only mode"` before being dispatched.
@@ -183,6 +219,7 @@ impl Clone for MCPServer {
             bound_port: self.bound_port.clone(),
             write_lock: self.write_lock.clone(),
             write_bus: self.write_bus.clone(),
+            tool_semaphore: self.tool_semaphore.clone(),
             read_only: self.read_only,
         }
     }
@@ -206,6 +243,7 @@ impl MCPServer {
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
             write_bus: Arc::new(crate::db::write_bus::InProcessWriteBus::default()),
+            tool_semaphore: build_tool_semaphore(),
             read_only: false,
         }
     }
@@ -227,6 +265,7 @@ impl MCPServer {
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
             write_bus: Arc::new(crate::db::write_bus::InProcessWriteBus::default()),
+            tool_semaphore: build_tool_semaphore(),
             read_only: false,
         }
     }
@@ -3299,10 +3338,36 @@ async fn process_jsonrpc_request(
                     .or_insert(serde_json::Value::String(project.to_string()));
             }
 
-            let result = mcp_server
-                .execute_tool(tool_name, arguments)
-                .await
-                .map_err(|e| e.to_string())?;
+            // FR-P0-MCP-RC-03: acquire a concurrency permit (bounded by
+            // num_cpus-1) and wrap execution in a timeout so a slow tool
+            // returns `-32000 timed out` instead of stalling `/health`.
+            let _permit = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                mcp_server.tool_semaphore.clone().acquire_owned(),
+            )
+            .await
+            {
+                Ok(Ok(permit)) => Some(permit),
+                Ok(Err(_)) | Err(_) => {
+                    return Err(
+                        "tool concurrency limit reached; retry after in-flight tools finish"
+                            .to_string(),
+                    );
+                }
+            };
+
+            let result = tokio::time::timeout(
+                tool_timeout(),
+                mcp_server.execute_tool(tool_name, arguments),
+            )
+            .await
+            .map_err(|_| {
+                format!(
+                    "tool {tool_name} timed out after {}s",
+                    tool_timeout().as_secs()
+                )
+            })?
+            .map_err(|e| e.to_string())?;
 
             // Format as MCP tool result
             // Tool results are either plain strings (as_str()) or structured JSON
@@ -3950,5 +4015,48 @@ mod tests {
     fn resolve_db_route_no_keys_returns_none() {
         let args = serde_json::Map::new();
         assert_eq!(MCPServer::resolve_db_route(&args), None);
+    }
+
+    // FR-P0-MCP-RC-03: timeout + concurrency cap.
+    #[test]
+    fn tool_timeout_defaults_to_30_secs() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEANKG_MCP_TOOL_TIMEOUT_SECS");
+        assert_eq!(tool_timeout(), std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn tool_timeout_reads_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LEANKG_MCP_TOOL_TIMEOUT_SECS", "5");
+        assert_eq!(tool_timeout(), std::time::Duration::from_secs(5));
+        std::env::remove_var("LEANKG_MCP_TOOL_TIMEOUT_SECS");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn timeout_wraps_slow_future() {
+        let slow = async { std::future::pending::<()>().await };
+        let result = tokio::time::timeout(std::time::Duration::from_millis(50), slow).await;
+        assert!(result.is_err(), "pending future must time out");
+    }
+
+    #[test]
+    fn tool_semaphore_keeps_one_worker_free() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEANKG_MCP_TOOL_CONCURRENCY");
+        let sem = build_tool_semaphore();
+        let max = sem.available_permits();
+        // num_cpus - 1 (min 1); must be at least 1 permit for tool calls.
+        assert!(max >= 1, "semaphore must have >= 1 permit");
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        assert_eq!(max, cpus.saturating_sub(1).max(1));
+    }
+
+    #[test]
+    fn cozo_db_is_send_for_spawn_blocking() {
+        fn assert_send<T: Send>() {}
+        assert_send::<crate::db::schema::CozoDb>();
     }
 }
