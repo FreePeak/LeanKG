@@ -334,6 +334,35 @@ impl MCPServer {
         None
     }
 
+    /// FR-P0-MCP-RC-01: pure DB-routing decision from tool arguments.
+    ///
+    /// `project` is the authoritative routing key; `file`/`path` are query
+    /// args resolved *relative* to it, never routing keys via cwd. Priority:
+    /// `project` → `file` → `path`. Returns `None` when no routing key is
+    /// present (caller falls back to cwd/default). Kept pure so it is
+    /// unit-testable without a DB.
+    fn resolve_db_route(arguments: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+        arguments
+            .get("project")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .or_else(|| {
+                arguments
+                    .get("file")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+            })
+            .or_else(|| {
+                arguments
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+            })
+    }
+
     /// Resolve `<project>/.leankg` for MCP `project=` routing (multi-mount RocksDB).
     fn resolve_project_db_path(fp: &str) -> Option<PathBuf> {
         if let Some(found) = Self::find_leankg_for_path(fp) {
@@ -2637,49 +2666,34 @@ impl MCPServer {
             }
         }
 
-        let file_path: Option<String> = if tool_name == "orchestrate" {
-            // For orchestrate, parse intent to extract target file
-            arguments
-                .get("intent")
-                .and_then(|v| v.as_str())
-                .and_then(|intent| {
-                    let parsed = self.intent_parser.parse(intent);
-                    parsed.target
-                })
-                .or_else(|| {
-                    arguments
-                        .get("file")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                })
-        } else {
-            arguments
-                .get("file")
-                .and_then(|v| v.as_str())
-                .or_else(|| arguments.get("path").and_then(|v| v.as_str()))
-                .or_else(|| arguments.get("project").and_then(|v| v.as_str()))
-                .map(String::from)
-        };
+        // FR-P0-MCP-RC-01: `project` is the AUTHORITATIVE DB-routing key.
+        // `file`/`path` are query args resolved relative to it — never routing
+        // keys via cwd. Without this, file/path tools ignored
+        // `project=/workspace-be` and opened `/workspace` (wrong-project empty
+        // or wrong-project lock).
+        let routing_key = Self::resolve_db_route(&arguments);
 
-        let project_db_path = if let Some(ref fp) = file_path {
-            if let Some(leankg_path) = Self::resolve_project_db_path(fp.as_str()) {
-                tracing::debug!(
-                    "Routing query for '{}' to database at {}",
-                    fp,
-                    leankg_path.display()
-                );
-                leankg_path
-            } else {
-                tracing::debug!("No .leankg found for '{}', using default db_path", fp);
-                self.get_db_path()
-            }
-        } else {
-            Self::resolve_project_db_path(".")
+        let project_db_path = match &routing_key {
+            Some(key) => match Self::resolve_project_db_path(key) {
+                Some(leankg_path) => {
+                    tracing::debug!(
+                        "Routing query to database at {} (key={})",
+                        leankg_path.display(),
+                        key
+                    );
+                    leankg_path
+                }
+                None => {
+                    tracing::debug!("No .leankg found for '{}', using default db_path", key);
+                    self.get_db_path()
+                }
+            },
+            None => Self::resolve_project_db_path(".")
                 .or_else(|| Self::find_leankg_for_path("."))
-                .unwrap_or_else(|| self.get_db_path())
+                .unwrap_or_else(|| self.get_db_path()),
         };
 
-        let graph_engine = self.get_graph_engine_for_path(file_path.as_ref())?;
+        let graph_engine = self.get_graph_engine_for_path(routing_key.as_ref())?;
 
         // On-demand auto-indexing: if project has .leankg but no RocksDB index, index it
         if tool_name != "mcp_index" && tool_name != "mcp_init" && tool_name != "mcp_index_docs" {
@@ -3880,5 +3894,60 @@ mod tests {
         let resp = build_sse_endpoint_response(Some("/workspace-be"));
         let ct = resp.headers().get(header::CONTENT_TYPE).unwrap();
         assert_eq!(ct, "text/event-stream");
+    }
+
+    // FR-P0-MCP-RC-01: `project` is the authoritative DB-routing key.
+    fn args_with(pairs: &[(&str, &str)]) -> serde_json::Map<String, serde_json::Value> {
+        let mut m = serde_json::Map::new();
+        for (k, v) in pairs {
+            m.insert(
+                (*k).to_string(),
+                serde_json::Value::String((*v).to_string()),
+            );
+        }
+        m
+    }
+
+    #[test]
+    fn resolve_db_route_project_wins_over_file_and_path() {
+        let args = args_with(&[
+            ("project", "/workspace-be"),
+            ("file", "src/handler.rs"),
+            ("path", "docs/prd.md"),
+        ]);
+        assert_eq!(
+            MCPServer::resolve_db_route(&args),
+            Some("/workspace-be".into())
+        );
+    }
+
+    #[test]
+    fn resolve_db_route_file_fallback_when_no_project() {
+        let args = args_with(&[("file", "src/handler.rs")]);
+        assert_eq!(
+            MCPServer::resolve_db_route(&args),
+            Some("src/handler.rs".into())
+        );
+    }
+
+    #[test]
+    fn resolve_db_route_path_fallback_when_no_project_or_file() {
+        let args = args_with(&[("path", "docs/prd.md")]);
+        assert_eq!(
+            MCPServer::resolve_db_route(&args),
+            Some("docs/prd.md".into())
+        );
+    }
+
+    #[test]
+    fn resolve_db_route_empty_project_is_ignored() {
+        let args = args_with(&[("project", ""), ("file", "src/x.rs")]);
+        assert_eq!(MCPServer::resolve_db_route(&args), Some("src/x.rs".into()));
+    }
+
+    #[test]
+    fn resolve_db_route_no_keys_returns_none() {
+        let args = serde_json::Map::new();
+        assert_eq!(MCPServer::resolve_db_route(&args), None);
     }
 }
