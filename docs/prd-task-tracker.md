@@ -368,13 +368,13 @@ make report                                 # regenerate Markdown + JSON from JS
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `FR-P0-MCP-RC-01` | FR | **NOT_DONE** | Must Have | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it — file/path tools open `/workspace-be` when `project=/workspace-be` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-MCP-RC-02` | FR | **NOT_DONE** | Must Have | Single process-wide GraphEngine per DB path (no cache-clear re-open) — kills `lock hold by current process` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-MCP-RC-03` | FR | **NOT_DONE** | Must Have | `tokio::time::timeout` + `spawn_blocking` in MCP path — a slow tool must not stall `/health` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-MCP-RC-04` | FR | **NOT_DONE** | Must Have | Mega-guard wired into all unguarded full-scan tools; cached `is_mega_graph` in guard; ontology writes in `WRITE_TOOLS` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `REL-P0-MCP-RC` | Release | **NOT_DONE** | Must Have | Fix + live smoke on `/workspace-be`: all 88 tools return within budget; 5× parallel storm keeps `:9699/health` ok | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-EMBED-LOCK` | FR | **NOT_DONE** | Must Have | Serving MCP must not hold RocksDB LOCK during embed: read-only mcp-http or reader/writer split or `LEANKG_EMBED_AUTO_ARM=0` default on serving containers | 5.33 RocksDB LOCK poison (v3.8.4) |
-| **P0** | `REL-P0-EMBED-LOCK` | Release | **NOT_DONE** | Must Have | Fix + live smoke: boot → 30s+ idle → semantic_search completes, all DB tools healthy; 5× parallel storm keeps `:9699/health` ok | 5.33 RocksDB LOCK poison (v3.8.4) |
+| **P0** | `FR-P0-MCP-RC-01` | FR | **DONE** | Must Have | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it — file/path tools open `/workspace-be` when `project=/workspace-be` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-MCP-RC-02` | FR | **DONE** | Must Have | Single process-wide GraphEngine per DB path (no cache-clear re-open) — kills `lock hold by current process` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-MCP-RC-03` | FR | **DONE** | Must Have | `tokio::time::timeout` + `spawn_blocking` in MCP path — a slow tool must not stall `/health` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-MCP-RC-04` | FR | **DONE** | Must Have | Mega-guard wired into all unguarded full-scan tools; cached `is_mega_graph` in guard; ontology writes in `WRITE_TOOLS` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `REL-P0-MCP-RC` | Release | **DONE** | Must Have | Fix + live smoke on `/workspace-be`: all 88 tools return within budget; 5× parallel storm keeps `:9699/health` ok | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-EMBED-LOCK` | FR | **DONE** | Must Have | Serving MCP must not hold RocksDB LOCK during embed: read-only mcp-http or reader/writer split or `LEANKG_EMBED_AUTO_ARM=0` default on serving containers | 5.33 RocksDB LOCK poison (v3.8.4) |
+| **P0** | `REL-P0-EMBED-LOCK` | Release | **DONE** | Must Have | Fix + live smoke: boot → 30s+ idle → semantic_search completes, all DB tools healthy; 5× parallel storm keeps `:9699/health` ok | 5.33 RocksDB LOCK poison (v3.8.4) |
 | **P1** | `REL-058` | Release | **DONE** | Must Have | Manager ROI brief checked into docs/reports/ and linked from README competitive section | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `FR-UI2-09` | FR | **DONE** | Must Have | Build ui-v2 into src/embed/; leankg serve + Docker serve ui-v2 by default | 5.19 UI v2 Graph Explorer |
 | **P1** | `REL-057` | Release | **DONE** | Must Have | ui-v2 cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default | 5.19 UI v2 Graph Explorer |
@@ -554,13 +554,13 @@ make report                                 # regenerate Markdown + JSON from JS
 
 | Focus | ID | Kind | Status | Priority | Title | PRD § |
 |------:|----|------|--------|----------|-------|-------|
-| **P0** | `FR-P0-MCP-RC-01` | FR | **NOT_DONE** | Must Have | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it — file/path tools open `/workspace-be` when `project=/workspace-be` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-MCP-RC-02` | FR | **NOT_DONE** | Must Have | Single process-wide GraphEngine per DB path (no cache-clear re-open) — kills `lock hold by current process` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-MCP-RC-03` | FR | **NOT_DONE** | Must Have | `tokio::time::timeout` + `spawn_blocking` in MCP path — a slow tool must not stall `/health` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-MCP-RC-04` | FR | **NOT_DONE** | Must Have | Mega-guard wired into all unguarded full-scan tools; cached `is_mega_graph` in guard; ontology writes in `WRITE_TOOLS` | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `REL-P0-MCP-RC` | Release | **NOT_DONE** | Must Have | Fix + live smoke on `/workspace-be`: all 88 tools return within budget; 5× parallel storm keeps `:9699/health` ok | 5.34 MCP validation root causes (v3.8.5) |
-| **P0** | `FR-P0-EMBED-LOCK` | FR | **NOT_DONE** | Must Have | Serving MCP must not hold RocksDB LOCK during embed: read-only mcp-http or reader/writer split or `LEANKG_EMBED_AUTO_ARM=0` default on serving containers | 5.33 RocksDB LOCK poison (v3.8.4) |
-| **P0** | `REL-P0-EMBED-LOCK` | Release | **NOT_DONE** | Must Have | Fix + live smoke: boot → 30s+ idle → semantic_search completes, all DB tools healthy; 5× parallel storm keeps `:9699/health` ok | 5.33 RocksDB LOCK poison (v3.8.4) |
+| **P0** | `FR-P0-MCP-RC-01` | FR | **DONE** | Must Have | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it — file/path tools open `/workspace-be` when `project=/workspace-be` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-MCP-RC-02` | FR | **DONE** | Must Have | Single process-wide GraphEngine per DB path (no cache-clear re-open) — kills `lock hold by current process` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-MCP-RC-03` | FR | **DONE** | Must Have | `tokio::time::timeout` + `spawn_blocking` in MCP path — a slow tool must not stall `/health` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-MCP-RC-04` | FR | **DONE** | Must Have | Mega-guard wired into all unguarded full-scan tools; cached `is_mega_graph` in guard; ontology writes in `WRITE_TOOLS` | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `REL-P0-MCP-RC` | Release | **DONE** | Must Have | Fix + live smoke on `/workspace-be`: all 88 tools return within budget; 5× parallel storm keeps `:9699/health` ok | 5.34 MCP validation root causes (v3.8.5) |
+| **P0** | `FR-P0-EMBED-LOCK` | FR | **DONE** | Must Have | Serving MCP must not hold RocksDB LOCK during embed: read-only mcp-http or reader/writer split or `LEANKG_EMBED_AUTO_ARM=0` default on serving containers | 5.33 RocksDB LOCK poison (v3.8.4) |
+| **P0** | `REL-P0-EMBED-LOCK` | Release | **DONE** | Must Have | Fix + live smoke: boot → 30s+ idle → semantic_search completes, all DB tools healthy; 5× parallel storm keeps `:9699/health` ok | 5.33 RocksDB LOCK poison (v3.8.4) |
 | **P1** | `REL-058` | Release | **DONE** | Must Have | Manager ROI brief checked into docs/reports/ and linked from README competitive section | 5.20 Company cost / competitive ROI (v3.7.8) |
 | **P1** | `FR-UI2-09` | FR | **DONE** | Must Have | Build ui-v2 into src/embed/; leankg serve + Docker serve ui-v2 by default | 5.19 UI v2 Graph Explorer |
 | **P1** | `REL-057` | Release | **DONE** | Must Have | ui-v2 cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default | 5.19 UI v2 Graph Explorer |
