@@ -36,11 +36,11 @@ pub fn clamp_limit(limit: usize) -> usize {
 }
 
 /// True when element count exceeds the mega-graph threshold.
+///
+/// FR-P0-MCP-RC-04: delegate to the cached `GraphEngine::is_mega_graph` probe
+/// (limit-1 paginated read) rather than a full `count_elements()`.
 pub fn is_mega_graph(engine: &GraphEngine) -> bool {
-    engine
-        .count_elements()
-        .map(|n| n > mega_graph_threshold())
-        .unwrap_or(true)
+    engine.is_mega_graph()
 }
 
 /// Standard refusal payload when a tool would full-scan a mega-graph.
@@ -65,10 +65,17 @@ pub fn mega_graph_refusal(tool: &str, element_count: usize) -> Value {
 }
 
 /// If mega-graph, return refusal; otherwise None (caller may proceed).
+///
+/// FR-P0-MCP-RC-04: uses the cached `GraphEngine::is_mega_graph` probe (a
+/// limit-1 paginated read) instead of a full `count_elements()` — counting
+/// 662k rows on the async worker was itself a stall. The exact element count
+/// is only fetched when we already know the graph is mega (refusal payload).
 pub fn refuse_full_scan_if_mega(engine: &GraphEngine, tool: &str) -> Option<Value> {
+    if !engine.is_mega_graph() {
+        return None;
+    }
     match engine.count_elements() {
-        Ok(n) if n > mega_graph_threshold() => Some(mega_graph_refusal(tool, n)),
-        Ok(_) => None,
+        Ok(n) => Some(mega_graph_refusal(tool, n)),
         Err(e) => Some(json!({
             "error": format!("{tool} refused: failed to count elements: {e}"),
             "hint": "Use concept_search / semantic_search with pagination."

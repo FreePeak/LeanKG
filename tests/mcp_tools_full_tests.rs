@@ -895,3 +895,76 @@ mod error_handling {
         }
     }
 }
+// full-scan must return a refusal payload instead of executing. The guard uses
+// the cheap cached `is_mega_graph` probe, not a full `count_elements`.
+mod mega_guard_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static MEGA_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Seeded graph of 4 elements > threshold 2 -> mega.
+    fn create_mega_handler() -> (ToolHandler, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("leankg.db");
+        let db = init_db(db_path.as_path()).unwrap();
+        seed_test_data(&db);
+        let graph = GraphEngine::new(db);
+        (ToolHandler::new(graph, db_path), tmp)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn full_scan_tools_refuse_on_mega_graph() {
+        // Recover from a poisoned lock (a prior failing test) so env is still
+        // serialized but the suite does not cascade-fail.
+        let _guard = MEGA_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("LEANKG_MAX_CACHE_ELEMENTS", "2");
+        let (handler, _tmp) = create_mega_handler();
+
+        // Each of these tools full-scans on a mega-graph and must refuse.
+        // get_cluster_skill is excluded: it now serves precomputed cluster rows
+        // on mega (better than refusal) — covered by the dedicated test below.
+        let cases: Vec<(&str, serde_json::Value)> = vec![
+            ("find_dead_code", json!({"min_lines": 1})),
+            ("get_graph_report", json!({})),
+            ("export_html", json!({})),
+            ("export_graph_snapshot", json!({})),
+            ("check_consistency", json!({})),
+            ("temporal_query", json!({"at": 1718000000})),
+            ("timeline", json!({"qualified_name": "./src/main.rs::main"})),
+        ];
+
+        for (tool, args) in cases {
+            let result = handler.execute_tool(tool, &args).await;
+            let value = result.expect(&format!("{tool} should return a value on mega"));
+            let text = value.to_string();
+            assert!(
+                text.contains("refused") || text.contains("max 50000"),
+                "{tool} must refuse on mega graph, got: {text}"
+            );
+        }
+
+        std::env::remove_var("LEANKG_MAX_CACHE_ELEMENTS");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cluster_skill_mega_path_uses_precomputed() {
+        let _guard = MEGA_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("LEANKG_MAX_CACHE_ELEMENTS", "2");
+        let (handler, _tmp) = create_mega_handler();
+
+        // Precomputed cluster_id=1 exists in seed; on mega the tool must serve
+        // from precomputed rows (source:"precomputed") — never run live Louvain.
+        let result = handler
+            .execute_tool("get_cluster_skill", &json!({"cluster_id": "1"}))
+            .await;
+        let value = result.expect("get_cluster_skill must return a value on mega");
+        assert_eq!(value["source"], "precomputed", "got: {value}");
+        assert!(
+            value["markdown"].as_str().unwrap_or("").contains("SKILL"),
+            "markdown must be a SKILL doc, got: {value}"
+        );
+
+        std::env::remove_var("LEANKG_MAX_CACHE_ELEMENTS");
+    }
+}

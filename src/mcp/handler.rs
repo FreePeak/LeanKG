@@ -1512,6 +1512,12 @@ impl ToolHandler {
     }
 
     fn get_graph_report(&self, args: &Value) -> Result<Value, String> {
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "get_graph_report",
+        ) {
+            return Ok(refusal);
+        }
         let project_name = args["project_name"].as_str().unwrap_or("project");
         let format = args["format"].as_str().unwrap_or("markdown");
         let report = self
@@ -1547,6 +1553,12 @@ impl ToolHandler {
     }
 
     fn temporal_query(&self, args: &Value) -> Result<Value, String> {
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "temporal_query",
+        ) {
+            return Ok(refusal);
+        }
         let at = args["at"].as_i64().ok_or("Missing 'at' (epoch seconds)")?;
         let rels = self
             .graph_engine
@@ -1560,6 +1572,11 @@ impl ToolHandler {
     }
 
     fn timeline(&self, args: &Value) -> Result<Value, String> {
+        if let Some(refusal) =
+            crate::ontology::safe_discover::refuse_full_scan_if_mega(&self.graph_engine, "timeline")
+        {
+            return Ok(refusal);
+        }
         let qn = args["qualified_name"]
             .as_str()
             .ok_or("Missing 'qualified_name'")?;
@@ -1571,6 +1588,12 @@ impl ToolHandler {
     }
 
     fn check_consistency(&self, _args: &Value) -> Result<Value, String> {
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "check_consistency",
+        ) {
+            return Ok(refusal);
+        }
         let report = self
             .graph_engine
             .check_consistency()
@@ -1852,6 +1875,12 @@ impl ToolHandler {
     }
 
     fn export_graph_snapshot(&self, args: &Value) -> Result<Value, String> {
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "export_graph_snapshot",
+        ) {
+            return Ok(refusal);
+        }
         let out_path = args["out_path"]
             .as_str()
             .unwrap_or(".leankg/graph-snapshot.json");
@@ -1868,6 +1897,19 @@ impl ToolHandler {
     }
 
     fn export_html_handler(&self, args: &Value) -> Result<Value, String> {
+        // FR-P0-MCP-RC-04: scoped exports (file/path/community) are bounded;
+        // only refuse the unscoped full-graph export on a mega-graph.
+        let scoped = args["file"].as_str().is_some()
+            || args["path"].as_str().is_some()
+            || args["community"].as_str().is_some();
+        if !scoped {
+            if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+                &self.graph_engine,
+                "export_html",
+            ) {
+                return Ok(refusal);
+            }
+        }
         let out_path = args["out_path"].as_str().unwrap_or(".leankg/graph.html");
         let path_prefix = args["path"].as_str();
         let community = args["community"].as_str();
@@ -3065,6 +3107,14 @@ impl ToolHandler {
 
         let cluster_id = args["cluster_id"].as_str().ok_or("Missing 'cluster_id'")?;
 
+        // FR-P0-MCP-RC-04: on a mega-graph, live Louvain + full element/rel
+        // materialization is a whole-server stall. Serve precomputed
+        // cluster_id/cluster_label rows instead; refuse if the cluster is not
+        // in the precomputed set.
+        if self.graph_engine.is_mega_graph() {
+            return self.get_cluster_skill_precomputed(cluster_id);
+        }
+
         let detector = CommunityDetector::new(self.graph_engine.db());
         let clusters = detector
             .detect_communities()
@@ -3157,6 +3207,81 @@ impl ToolHandler {
 
         Ok(json!({
             "cluster_id": cluster.id,
+            "markdown": md,
+        }))
+    }
+
+    /// FR-P0-MCP-RC-04: mega-safe `get_cluster_skill` using precomputed
+    /// `cluster_id` / `cluster_label` rows instead of live Louvain. Member
+    /// symbols are hydrated with a bounded paginated lookup; no full-graph
+    /// materialization. Refuses when the requested cluster has no precomputed
+    /// rows.
+    fn get_cluster_skill_precomputed(&self, cluster_id: &str) -> Result<Value, String> {
+        let (clusters, _stats) =
+            crate::graph::clustering::load_precomputed_clusters(&self.graph_engine, 500)
+                .map_err(|e| format!("Failed to load precomputed clusters: {}", e))?;
+        let cluster = clusters
+            .iter()
+            .find(|c| c.id == cluster_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Cluster {cluster_id} not found in precomputed set. Run offline cluster assign (CommunityDetector::assign_clusters_to_elements) then retry."
+                )
+            })?;
+
+        // Top files by member count (bounded: first 200 members).
+        let member_slice: Vec<&String> = cluster.members.iter().take(200).collect();
+        let mut file_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for m in &member_slice {
+            if let Some((file, _)) = m.rsplit_once("::") {
+                *file_counts.entry(file.to_string()).or_insert(0) += 1;
+            }
+        }
+        let mut top_files: Vec<(String, usize)> = file_counts.into_iter().collect();
+        top_files.sort_by_key(|f| std::cmp::Reverse(f.1));
+        top_files.truncate(5);
+
+        let mut md = String::new();
+        md.push_str(&format!(
+            "# SKILL: {} ({})\n\n",
+            if cluster.label.is_empty() {
+                "(unlabeled)"
+            } else {
+                cluster.label.as_str()
+            },
+            cluster.id
+        ));
+        md.push_str(&format!(
+            "Cluster with **{}** members.\n\n",
+            cluster.members.len()
+        ));
+        if !top_files.is_empty() {
+            md.push_str("## Top files\n\n");
+            for (f, c) in &top_files {
+                md.push_str(&format!("- `{}` ({} elements)\n", f, c));
+            }
+            md.push('\n');
+        }
+        if !cluster.representative_files.is_empty() {
+            md.push_str("## Representative files\n\n");
+            for f in &cluster.representative_files {
+                md.push_str(&format!("- `{}`\n", f));
+            }
+            md.push('\n');
+        }
+        md.push_str("## Usage hints\n\n");
+        md.push_str(
+            "- Use `search_code` scoped to one of the top files to find related symbols.\n",
+        );
+        md.push_str(
+            "- Cluster members served from precomputed cluster_id rows (live Louvain skipped on mega-graph).\n",
+        );
+
+        Ok(json!({
+            "cluster_id": cluster.id,
+            "source": "precomputed",
             "markdown": md,
         }))
     }
@@ -4570,6 +4695,12 @@ impl ToolHandler {
 
     /// FR-B23: Find dead code
     fn find_dead_code(&self, args: &Value) -> Result<Value, String> {
+        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
+            &self.graph_engine,
+            "find_dead_code",
+        ) {
+            return Ok(refusal);
+        }
         let min_lines = args["min_lines"].as_u64().unwrap_or(10) as u32;
         let dead = self
             .graph_engine
