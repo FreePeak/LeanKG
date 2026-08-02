@@ -142,6 +142,10 @@ pub struct MCPServer {
     bound_port: Arc<AtomicU32>,
     /// Serializes MCP write/index operations so Cozo SQLite is not written concurrently.
     write_lock: Arc<TokioMutex<()>>,
+    /// Priority write bus. FR-P0-MCP-RC-02 seam: tool writes jump embed writes.
+    /// Default is the in-process serial bus; a distributed impl (Kafka /
+    /// Pub/Sub) plugs in here when the remote-cozoserver path lands.
+    write_bus: Arc<dyn crate::db::write_bus::WriteBus>,
     /// When true, the server rejects any tool that mutates state. Read tools
     /// (search_code, get_context, kg_*, etc.) still work; write tools return
     /// `"server is in read-only mode"` before being dispatched.
@@ -173,6 +177,7 @@ impl Clone for MCPServer {
             shutdown_flag: self.shutdown_flag.clone(),
             bound_port: self.bound_port.clone(),
             write_lock: self.write_lock.clone(),
+            write_bus: self.write_bus.clone(),
             read_only: self.read_only,
         }
     }
@@ -195,6 +200,7 @@ impl MCPServer {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
+            write_bus: Arc::new(crate::db::write_bus::InProcessWriteBus::default()),
             read_only: false,
         }
     }
@@ -215,6 +221,7 @@ impl MCPServer {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             bound_port: Arc::new(AtomicU32::new(0)),
             write_lock: Arc::new(TokioMutex::new(())),
+            write_bus: Arc::new(crate::db::write_bus::InProcessWriteBus::default()),
             read_only: false,
         }
     }
@@ -1056,12 +1063,16 @@ impl MCPServer {
                 return;
             }
         };
-        let me = self.clone();
-        if crate::ontology::spawn_ontology_yaml_watcher(project_root, graph, move |_stats| {
-            let mut guard = me.graph_engine.lock();
-            *guard = None;
-            let mut cache = me.graph_engine_cache.lock();
-            cache.clear();
+        if crate::ontology::spawn_ontology_yaml_watcher(project_root, graph, |stats| {
+            // FR-P0-MCP-RC-02: keep the shared per-project RocksDB handle. The
+            // old code cleared graph_engine + graph_engine_cache here, so the
+            // next request re-opened the same path → `lock hold by current
+            // process`. Ontology writes go through the single handle.
+            tracing::info!(
+                "Ontology YAML watcher: synced workflows={}, steps={} (shared handle kept)",
+                stats.workflows,
+                stats.workflow_steps
+            );
         })
         .is_some()
         {
@@ -1089,10 +1100,9 @@ impl MCPServer {
                     stats.workflows,
                     stats.workflow_steps
                 );
-                let mut guard = self.graph_engine.lock();
-                *guard = None;
-                let mut cache = self.graph_engine_cache.lock();
-                cache.clear();
+                // FR-P0-MCP-RC-02: keep the shared handle; only the L1 caches
+                // are invalidated by the caller (invalidate_l1_caches in
+                // execute_tool). Re-opening here would 2nd-open RocksDB.
             }
             Err(e) => {
                 tracing::debug!("Ontology post-index sync skipped: {}", e);
@@ -1129,14 +1139,8 @@ impl MCPServer {
                 let graph = self.get_graph_engine()?;
                 let stats = crate::ontology::sync_for_project(&project_root, &graph)
                     .map_err(|e| format!("ontology sync failed: {}", e))?;
-                {
-                    let mut guard = self.graph_engine.lock();
-                    *guard = None;
-                }
-                {
-                    let mut cache = self.graph_engine_cache.lock();
-                    cache.clear();
-                }
+                // FR-P0-MCP-RC-02: keep the shared handle. Writes go through the
+                // single per-path handle; a re-open here would 2nd-open RocksDB.
                 Ok(serde_json::json!({
                     "status": "ok",
                     "tool": "ontology_control",
@@ -2708,33 +2712,13 @@ impl MCPServer {
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;
 
-        if tool_name == "mcp_index" {
-            if result.is_ok() {
-                self.refresh_ontology_after_index();
-            }
-            let mut guard = self.graph_engine.lock();
-            *guard = None;
-        }
-
-        // Invalidate cached GraphEngine after write tools so subsequent reads
-        // get a fresh RocksDB connection (avoids lock contention from :put ops)
-        if matches!(
-            tool_name,
-            "mcp_index"
-                | "mcp_index_docs"
-                | "add_knowledge"
-                | "update_knowledge"
-                | "delete_knowledge"
-                | "add_annotation"
-                | "link_element"
-                | "add_documentation"
-                | "promote_environment"
-                | "ontology_control"
-        ) {
-            let mut guard = self.graph_engine.lock();
-            *guard = None;
-            let mut cache = self.graph_engine_cache.lock();
-            cache.clear();
+        if tool_name == "mcp_index" && result.is_ok() {
+            self.refresh_ontology_after_index();
+            // FR-P0-MCP-RC-02: keep the shared per-project handle. Dropping it
+            // here (and in the write-tool block below) forced a second
+            // `init_db` open of the same RocksDB path on the next request,
+            // which failed with `lock hold by current process`. The handle is
+            // one-per-path; L1 caches are invalidated separately below.
         }
 
         // Mark write tracker dirty for knowledge contribution tools
@@ -2786,6 +2770,18 @@ impl MCPServer {
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
         self.execute_tool(tool_name, arguments).await
+    }
+
+    /// Identity of the shared per-project DB handle (as a usize pointer).
+    ///
+    /// FR-P0-MCP-RC-02: tests assert that a write tool does NOT force a second
+    /// `init_db` open of the same path (which is what produced
+    /// `RocksDB IO error: lock hold by current process`). Exposes the
+    /// underlying `Arc` pointer address so tests can compare two calls.
+    pub fn db_handle_ptr(&self) -> usize {
+        self.get_graph_engine()
+            .map(|engine| std::sync::Arc::as_ptr(engine.db_arc()) as usize)
+            .unwrap_or(0)
     }
 }
 
