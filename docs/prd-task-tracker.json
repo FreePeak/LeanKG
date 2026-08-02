@@ -2,21 +2,21 @@
   "generated": "2026-08-02",
   "source": "docs/prd.md",
   "counts": {
-    "NOT_DONE": 7,
+    "NOT_DONE": 5,
     "PENDING": 1,
     "PARTIAL": 2,
     "OPEN": 1,
-    "DONE": 532,
+    "DONE": 534,
     "WONT_DO": 3,
     "by_status": {
-      "NOT_DONE": 7,
-      "DONE": 532,
+      "NOT_DONE": 5,
+      "DONE": 534,
       "PENDING": 1,
       "PARTIAL": 2,
       "OPEN": 1,
       "WONT_DO": 3
     },
-    "open_work": 11
+    "open_work": 9
   },
   "tasks": [
     {
@@ -7044,7 +7044,7 @@
       "kind": "Release",
       "title": "Fix + live smoke: boot -> 30s+ idle -> semantic_search completes, all DB tools healthy; 5x parallel storm keeps :9699/health ok",
       "priority": "Must Have",
-      "status": "NOT_DONE",
+      "status": "DONE",
       "notes": "P0 defect 2026-08-02 A/B",
       "section": "5.33 RocksDB LOCK poison (v3.8.4)",
       "prd_line": null,
@@ -7082,7 +7082,7 @@
     },
     {
       "id": "REL-P0-MCP-RC",
-      "status": "NOT_DONE",
+      "status": "DONE",
       "priority": "Must Have",
       "focus": "P0",
       "kind": "Release"
