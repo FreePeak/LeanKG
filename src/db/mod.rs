@@ -3,6 +3,7 @@ pub mod keys;
 pub mod models;
 pub mod schema;
 pub mod versioning;
+pub mod write_bus;
 
 #[allow(unused_imports)]
 pub use models::*;

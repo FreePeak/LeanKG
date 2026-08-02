@@ -511,3 +511,67 @@ mod server_tests {
         assert_eq!(r3, 3);
     }
 }
+
+/// FR-P0-MCP-RC-02: one process-wide GraphEngine per DB path. A write tool
+/// (add_knowledge) must NOT force a cache-clear + re-open of the same path —
+/// that second handle is what produced `lock hold by current process`.
+mod handle_reuse_tests {
+    use super::*;
+
+    fn engine_ptr(server: &MCPServer) -> usize {
+        server.db_handle_ptr()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn same_handle_reused_across_write_tool() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+        let server = MCPServer::new(db_path.clone());
+
+        // Open once, capture the shared handle pointer.
+        let ptr_before = engine_ptr(&server);
+        assert_ne!(ptr_before, 0, "a DB handle must have opened");
+
+        // Drive a real write tool through execute_tool — this used to clear
+        // graph_engine_cache, forcing a re-open on the next get_graph_engine().
+        let mut args = serde_json::Map::new();
+        args.insert("knowledge_type".into(), json!("general"));
+        args.insert("title".into(), json!("rc02 probe"));
+        args.insert("content".into(), json!("handle reuse test"));
+        let result = server
+            .execute_tool_pub("add_knowledge", args)
+            .await
+            .expect("add_knowledge must succeed");
+        assert!(result.get("id").is_some(), "write should return an id");
+
+        // Re-open — must be the SAME handle, not a re-init_db.
+        let ptr_after = engine_ptr(&server);
+        assert_eq!(
+            ptr_before, ptr_after,
+            "write tool must not force a second DB handle open (lock hold by current process)"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn index_tool_keeps_shared_handle() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+        let server = MCPServer::new(db_path.clone());
+
+        let ptr_before = engine_ptr(&server);
+        assert_ne!(ptr_before, 0, "a DB handle must have opened");
+
+        // mcp_index (no path → uses cwd/project root) would clear the engine
+        // slot + cache in the old code. Running it must keep the handle.
+        let args = serde_json::Map::new();
+        let _ = server.execute_tool_pub("mcp_index", args).await;
+
+        let ptr_after = engine_ptr(&server);
+        assert_eq!(
+            ptr_before, ptr_after,
+            "mcp_index must not force a second DB handle open"
+        );
+    }
+}

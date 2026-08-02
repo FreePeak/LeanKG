@@ -117,6 +117,13 @@ impl GraphEngine {
         &self.db
     }
 
+    /// Expose the shared `Arc` handle so tests can assert that two engines
+    /// resolve to the SAME underlying DB (no second RocksDB/SQLite open).
+    /// FR-P0-MCP-RC-02: one process-wide handle per DB path.
+    pub fn db_arc(&self) -> &std::sync::Arc<CozoDb> {
+        &self.db
+    }
+
     /// Open a read-only `GraphEngine` over the given database path.
     ///
     /// Wraps [`crate::db::schema::init_db_readonly`] so `MCPServer` in
