@@ -736,21 +736,15 @@ impl MCPServer {
             // First-pass auto-arm when LEANKG_EMBED_AUTO_ARM=1 (non-blocking
             // equivalent of LEANKG_EMBED_BACKGROUND=1, but with proper
             // partial=true + idle gating via embed_control).
-            if !crate::embeddings::is_armed() {
-                let auto_arm = std::env::var("LEANKG_EMBED_AUTO_ARM")
-                    .ok()
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
-                if auto_arm {
-                    let cfg = Self::auto_arm_cfg_from_env();
-                    crate::embeddings::control::arm_embed(cfg.clone());
-                    tracing::info!(
-                        "embed idle scheduler: auto-armed (workers={}, batch={}, full={})",
-                        cfg.workers,
-                        cfg.batch_size,
-                        cfg.full
-                    );
-                }
+            if !crate::embeddings::is_armed() && Self::auto_arm_enabled() {
+                let cfg = Self::auto_arm_cfg_from_env();
+                crate::embeddings::control::arm_embed(cfg.clone());
+                tracing::info!(
+                    "embed idle scheduler: auto-armed (workers={}, batch={}, full={})",
+                    cfg.workers,
+                    cfg.batch_size,
+                    cfg.full
+                );
             }
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -798,6 +792,17 @@ impl MCPServer {
 
     #[cfg(not(feature = "embeddings"))]
     fn spawn_embed_idle_scheduler(&self) {}
+
+    /// FR-P0-EMBED-LOCK: whether the embed idle scheduler auto-arms. Default
+    /// `false` (serving containers must not take the RocksDB LOCK for a
+    /// background embed). `LEANKG_EMBED_AUTO_ARM=1` opts in.
+    #[cfg(feature = "embeddings")]
+    fn auto_arm_enabled() -> bool {
+        std::env::var("LEANKG_EMBED_AUTO_ARM")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    }
 
     /// Build a default `BackgroundEmbedConfig` from the
     /// `LEANKG_EMBED_BACKGROUND_*` env vars (used by `LEANKG_EMBED_AUTO_ARM=1`
@@ -4058,5 +4063,36 @@ mod tests {
     fn cozo_db_is_send_for_spawn_blocking() {
         fn assert_send<T: Send>() {}
         assert_send::<crate::db::schema::CozoDb>();
+    }
+
+    // FR-P0-EMBED-LOCK: serving containers must not auto-arm embed (which
+    // holds the RocksDB LOCK). Default off; explicit opt-in only.
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn auto_arm_default_disabled() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEANKG_EMBED_AUTO_ARM");
+        assert!(!MCPServer::auto_arm_enabled());
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn auto_arm_explicit_opt_in() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LEANKG_EMBED_AUTO_ARM", "1");
+        assert!(MCPServer::auto_arm_enabled());
+        std::env::remove_var("LEANKG_EMBED_AUTO_ARM");
+    }
+
+    #[test]
+    fn dockerfile_sets_embed_auto_arm_zero_default() {
+        // Serving image default must be 0 so the RocksDB LOCK is never taken
+        // by an embed scheduler on boot.
+        let dockerfile = std::fs::read_to_string("Dockerfile.rocksdb")
+            .expect("Dockerfile.rocksdb must exist at repo root");
+        assert!(
+            dockerfile.contains("LEANKG_EMBED_AUTO_ARM=0"),
+            "Dockerfile.rocksdb must set LEANKG_EMBED_AUTO_ARM=0"
+        );
     }
 }
