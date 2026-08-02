@@ -36,6 +36,22 @@
 
 ## Changelog
 
+### v3.8.6-competitive-strategy-tactical - Competitive-strategy tactical wins: ctags export, cost estimate, context pack, steer config, content-hash helper (2026-08-03)
+
+> **Trigger:** Two research sweeps landed 2026-08-02 ([`docs/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md`](analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md) + [`docs/analysis/code-graph-code-search-landscape-2026-08-02.md`](analysis/code-graph-code-search-landscape-2026-08-02.md)): 37 ranked MCP/tool changes. This revision lands the **self-contained, no-MCP-dependency** tactical items that don't touch `src/mcp/*` or `src/db/*` (which the parallel P0 session owns).
+>
+> **Product actions this revision:**
+
+| # | ID (informal) | Focus | Intent | Status |
+|--:|---------------|-------|--------|--------|
+| 1 | `leankg tags --format=ctags` (strategy Tier 1 §17 #9) | **P3** | Export a `readtags`-compatible `tags` file from the indexed graph — editor integration via the ctags fast edge layer | **DONE** |
+| 2 | `leankg cost` (strategy §18.4 / landscape sweep) | **P3** | LOCOMO-style `kg_cost estimate`: price an impact radius or file set in out/in tokens | **DONE** |
+| 3 | `leankg pack` (strategy Tier 6 §17 #36) | **P3** | Deterministic portable context pack (relative paths, content-hash, manifest) — distribution artifact, never a live store | **DONE** |
+| 4 | `.leankg.yaml` steer (`priority_paths` / `ignore_paths`) (strategy Tier 6 §17 #34, DeepWiki pattern) | **P3** | Additive config block; indexer-walk consumption deferred to a follow-up | **DONE** |
+| 5 | Content-hash incremental helper (strategy Tier 3 §17 #24, Cognee pattern) | **P3** | Standalone `sha256(schema_version, path, repo, content, filters, branch)` cache-key + store CRUD; walk wiring deferred until P0 merges | **DONE** |
+
+> **New content:** `docs/cli-reference.md` entries for `tags` / `cost` / `pack`. Module map: `src/ctags_export.rs`, `src/cost_estimate.rs`, `src/pack/mod.rs`, `src/config/steer.rs`, `src/indexer/content_hash.rs`. Tests: 24 new unit tests (5 ctags, 4 steer, 4 content-hash, 4 cost, 7 pack); `cargo test --release --lib` 811 pass, clippy `-D warnings` clean.
+
 ### v3.8.5-mcp-validation-rca - MCP 88-tool validation: 44 failures traced to 4 root causes (2026-08-02)
 
 > **Trigger:** Live validation of all 88 leankg HTTP MCP tools on Docker `:9699` against the `/workspace-be` mega-graph (662,378 elements / 2,259,855 relationships) ([validation](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [RCA](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md)). Empty results treated as failures per the goal. **44 / 88 tools failed** (50% pass). Deep-dive (4 subagents, code-traced + live-DB-verified) collapsed the failures into 4 code defects + a data-absence class:
