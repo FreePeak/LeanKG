@@ -1,4 +1,5 @@
 pub mod cicd;
+pub mod content_hash;
 pub mod event_edges;
 pub mod extractor;
 pub mod git;

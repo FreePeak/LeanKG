@@ -6,6 +6,8 @@ mod cli;
 mod compress;
 mod config;
 mod conversation_indexer;
+mod cost_estimate;
+mod ctags_export;
 mod db;
 mod doc;
 mod doc_indexer;
@@ -19,6 +21,7 @@ mod mcp;
 mod obsidian;
 mod ontology;
 mod orchestrator;
+mod pack;
 mod prd_indexer;
 mod registry;
 mod report;
@@ -863,6 +866,125 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_nodes,
                 &db_path,
             )?;
+        }
+        cli::CLICommand::Tags {
+            output,
+            format,
+            project,
+        } => {
+            let project_path = match project {
+                Some(p) => std::path::PathBuf::from(p),
+                None => find_project_root()?,
+            };
+            let db_path = project_path.join(".leankg");
+            if format != "ctags" {
+                return Err(format!("unsupported tags format: {format} (only `ctags`)").into());
+            }
+            let tags = ctags_export::export_tags(&db_path)?;
+            let out_path = project_path.join(&output);
+            std::fs::write(&out_path, &tags)?;
+            println!(
+                "wrote {} tags to {}",
+                tags.lines().count(),
+                out_path.display()
+            );
+        }
+        cli::CLICommand::Cost {
+            file,
+            depth,
+            max_affected,
+            files,
+            format,
+            project,
+        } => {
+            let project_path = match project {
+                Some(p) => std::path::PathBuf::from(p),
+                None => find_project_root()?,
+            };
+            let db_path = project_path.join(".leankg");
+            let est = if let Some(start) = file {
+                let (result, cost) = cost_estimate::estimate_impact(
+                    &start,
+                    depth,
+                    max_affected,
+                    &db_path,
+                    &project_path,
+                )?;
+                if result.truncated {
+                    eprintln!(
+                        "  WARNING: impact truncated at max_affected={}; re-run with a higher cap.",
+                        max_affected
+                    );
+                }
+                cost
+            } else {
+                let files: Vec<String> = files
+                    .as_deref()
+                    .unwrap_or("")
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if files.is_empty() {
+                    return Err(
+                        "cost requires either --file <start> or --files <comma,separated>".into(),
+                    );
+                }
+                cost_estimate::estimate(&files, &project_path)?
+            };
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&est)?);
+            } else {
+                println!(
+                    "{} files, {} lines, {} bytes — est. out {} tokens / in {} tokens",
+                    est.files.len(),
+                    est.total_lines,
+                    est.total_bytes,
+                    est.out_tokens,
+                    est.in_tokens
+                );
+                for f in &est.files {
+                    println!(
+                        "  {}  ({} lines, out {} / in {})",
+                        f.file, f.lines, f.out_tokens, f.in_tokens
+                    );
+                }
+            }
+        }
+        cli::CLICommand::Pack {
+            output,
+            path,
+            max_nodes,
+            revision,
+            project,
+        } => {
+            let project_path = match project {
+                Some(p) => std::path::PathBuf::from(p),
+                None => find_project_root()?,
+            };
+            let db_path = project_path.join(".leankg");
+            let opts = pack::PackOptions {
+                path,
+                max_nodes,
+                source_revision: revision,
+            };
+            let m = pack::write_pack(
+                &project_path,
+                &db_path,
+                std::path::Path::new(&output),
+                &opts,
+            )?;
+            println!(
+                "context pack -> {output}/  ({} elements, {} rels{}, truncated={}, hash {})",
+                m.elements,
+                m.relationships,
+                m.path_scope
+                    .as_ref()
+                    .map(|p| format!(", scope={p}"))
+                    .unwrap_or_default(),
+                m.truncated,
+                &m.content_hash[..16.min(m.content_hash.len())]
+            );
         }
         cli::CLICommand::Annotate {
             element,

@@ -65,6 +65,11 @@ pub struct ProjectSettings {
     #[serde(skip_serializing, default)]
     pub project_path: Option<PathBuf>,
     pub languages: Vec<String>,
+    /// Steer file (`priority_paths` / `ignore_paths`). Additive; the indexer
+    /// walk consumes this in a follow-up PR (DeepWiki `.devin/wiki.json`
+    /// pattern, strategy §3.8 / §17 Tier 6 item 34).
+    #[serde(default)]
+    pub steer: crate::config::steer::SteerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +194,7 @@ impl Default for ProjectConfig {
                     "java".to_string(),
                     "kotlin".to_string(),
                 ],
+                steer: crate::config::steer::SteerConfig::default(),
             },
             indexer: IndexerConfig {
                 exclude: vec!["**/node_modules/**".to_string(), "**/vendor/**".to_string()],
