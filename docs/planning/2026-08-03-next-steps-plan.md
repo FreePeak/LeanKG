@@ -34,7 +34,16 @@
 
 **FIX 2 — chunk size does NOT help (2026-08-03 live):** the ~16s commit is NOT fixed; it scales with rows (5k in 16s, 20k in ~63s). CozoDB RocksDB write rate is **~190-320 v/s, chunk-independent.** Confirmed: 6→8 workers no gain, batch 64 vs 128 no gain.
 
-**FIX 3 — RocksDB bulk-load mode (decisive, vendored cozo):** cozorocks exposes `DbBuilder::prepare_for_bulk_load(true)` (WAL off, compactions off, max write throughput). The crates.io cozo doesn't call it. Vendored cozo into `vendor/cozo` + `[patch.crates-io]` so `LEANKG_COZO_ROCKS_BULK=1` triggers bulk-load. This is RocksDB's designed bulk-ingest path. NOTE: `vendor/` is gitignored — the vendored cozo is a local build artifact (Docker COPY still includes it), so the patch is local-only; document the vendoring steps for reproducibility.
+**FIX 3 — RocksDB bulk-load mode (decisive, vendored cozo):** cozorocks exposes `DbBuilder::prepare_for_bulk_load(true)` (WAL off, compactions off, max write throughput). The crates.io cozo doesn't call it. Vendored cozo into `vendor/cozo` + `[patch.crates-io]` so `LEANKG_COZO_ROCKS_BULK=1` triggers bulk-load.
+
+**Live PROOF (2026-08-03):** fresh 5000-file bench, bulk-load embed = **~1250 v/s** (5000 vectors in ~4s), vs 320 v/s WAL-on. This is the >1000 v/s path, confirmed.
+
+**Constraints discovered:**
+- bulk-load fails with `kInvalidArgument` on an EXISTING populated DB (RocksDB `PrepareForBulkLoad` is fresh-DB-only). The be DB must be wiped + re-indexed to use it.
+- The options-file WAL-disable also failed (`kInvalidArgument` — cozorocks uses TransactionDB, not raw DB).
+- Re-indexing be (19GB / 721k elements) HANGS — a separate index-hang bug (single-threaded, stuck on the large tree), blocking the bulk-load path for be.
+
+**Next step to close the goal:** fix the be index hang (diagnose the 19GB-tree walk; likely need exclude patterns for the huge CSV/binary dirs), then wipe + re-index + bulk-load embed be → ~5min total cold build at 1250 v/s.
 
 **If 20k chunks don't hit 1000 v/s:** the ~16s commit cost may not be constant (it grows with index size / SST count). Next lever: CozoDB WAL disable (`LEANKG_COZO_ROCKS_BULK=1` needs vendored cozo), or batching via `import_relations` with larger named-row sets.
 
