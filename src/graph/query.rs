@@ -5046,12 +5046,18 @@ impl GraphEngine {
 
         let total = self.count_elements().map_err(|e| e.to_string())?;
         let rel_count = self.count_relationships().map_err(|e| e.to_string())?;
-        let file_count = self.count_elements_by_type("File").map_err(|e| e.to_string())?;
-        let func_count = self.count_elements_by_type("function").map_err(|e| e.to_string())?;
+        let file_count = self
+            .count_elements_by_type("File")
+            .map_err(|e| e.to_string())?;
+        let func_count = self
+            .count_elements_by_type("function")
+            .map_err(|e| e.to_string())?;
         let class_count = self
             .count_elements_by_type_in(&["class", "struct"])
             .map_err(|e| e.to_string())?;
-        let import_count = self.count_elements_by_type("import").map_err(|e| e.to_string())?;
+        let import_count = self
+            .count_elements_by_type("import")
+            .map_err(|e| e.to_string())?;
 
         let sample = self
             .get_elements_paginated(SAMPLE_CAP, 0)
@@ -5162,7 +5168,9 @@ impl GraphEngine {
         // MCP overview resource on mega-graphs.
         let total = self.count_elements().map_err(|e| e.to_string())?;
         let rel_count = self.count_relationships().map_err(|e| e.to_string())?;
-        let func_count = self.count_elements_by_type("function").map_err(|e| e.to_string())?;
+        let func_count = self
+            .count_elements_by_type("function")
+            .map_err(|e| e.to_string())?;
         let gods = self.get_god_nodes(5, Some(90)).map_err(|e| e.to_string())?;
 
         let mut out = String::new();
@@ -5279,9 +5287,7 @@ impl GraphEngine {
             )?;
             for row in &result.rows {
                 if let (Some(node), Some(cnt)) = (row.first(), row.get(1)) {
-                    if let (Some(node_s), Some(cnt_i)) =
-                        (node.get_str(), cnt.get_int())
-                    {
+                    if let (Some(node_s), Some(cnt_i)) = (node.get_str(), cnt.get_int()) {
                         *degree.entry(node_s.to_string()).or_default() += cnt_i as usize;
                     }
                 }
@@ -5304,9 +5310,7 @@ impl GraphEngine {
         let qn_set: std::collections::HashSet<String> =
             nodes.iter().take(limit).map(|(qn, _)| qn.clone()).collect();
         let by_qn: std::collections::HashMap<String, CodeElement> = self
-            .get_elements_by_qualified_names(
-                &qn_set.iter().cloned().collect::<Vec<_>>(),
-            )?
+            .get_elements_by_qualified_names(&qn_set.iter().cloned().collect::<Vec<_>>())?
             .into_iter()
             .collect();
 

@@ -63,13 +63,7 @@ fn seed(graph: &GraphEngine, n: usize) {
         } else {
             format!("./src/file_{}.rs", i)
         };
-        let elem = make_element(
-            &format!("qn_{}", i),
-            et,
-            &format!("name_{}", i),
-            &fp,
-            lang,
-        );
+        let elem = make_element(&format!("qn_{}", i), et, &format!("name_{}", i), &fp, lang);
         graph.insert_element(&elem).expect("insert failed");
     }
 }
@@ -111,10 +105,7 @@ fn wake_up_summary_returns_valid_summary_on_large_graph() {
 
     let body = result.unwrap();
     assert!(!body.is_empty(), "wake_up_summary returned empty body");
-    assert!(
-        body.contains("Files:"),
-        "expected Files section in: {body}"
-    );
+    assert!(body.contains("Files:"), "expected Files section in: {body}");
     assert!(
         body.contains("Relationships:"),
         "expected Relationships section in: {body}"
@@ -160,7 +151,10 @@ fn critical_facts_context_returns_non_empty_on_large_graph() {
     assert_fast("critical_facts_context", started, &result);
 
     let body = result.unwrap();
-    assert!(!body.is_empty(), "critical_facts_context returned empty body");
+    assert!(
+        !body.is_empty(),
+        "critical_facts_context returned empty body"
+    );
     assert!(
         body.contains("Elements:") && body.contains("Relationships:"),
         "expected counts section in: {body}"

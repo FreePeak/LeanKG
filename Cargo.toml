@@ -1,6 +1,6 @@
 [package]
 name = "leankg"
-version = "0.19.31"
+version = "0.19.32"
 edition = "2021"
 description = "Lightweight Knowledge Graph for AI-Assisted Development"
 license = "Apache-2.0"
@@ -82,6 +82,29 @@ fastembed = { version = "4", optional = true }
 ort = { version = "2.0.0-rc.9", optional = true }
 tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
 ndarray = { version = "0.16", optional = true }
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-scala = "0.26.0"
+tree-sitter-zig = "1.1.2"
+tree-sitter-solidity = "1.2.13"
+tree-sitter-lua = "0.5.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-yaml = "0.7.2"
+tree-sitter-css = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-graphql = "0.1.0"
+tree-sitter-proto = "0.4.0"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-haskell = "0.23.1"
+tree-sitter-elm = "5.9.4"
+tree-sitter-ocaml = "0.25.0"
+tree-sitter-fsharp = "0.3.11"
+tree-sitter-erlang = "0.20.0"
+tree-sitter-nim = "0.1.0"
+tree-sitter-powershell = "0.26.4"
+tree-sitter-crystal = "0.1.0"
+tree-sitter-toml = "0.20.0"
+tree-sitter-dockerfile = "0.2.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -154,9 +177,3 @@ harness = false
 name = "redundant_tool_overhead"
 harness = false
 
-
-# LeanKG patch (FR-EMBED-PERF-1000): cozo 0.7.6 on crates.io does not honor
-# LEANKG_COZO_ROCKS_BULK for RocksDB bulk-load mode. Use the local vendored
-# copy in vendor/cozo that calls prepare_for_bulk_load() when the env is set.
-[patch.crates-io]
-cozo = { path = "vendor/cozo" }

@@ -3248,14 +3248,12 @@ async fn process_jsonrpc_request(
             // US-GN-08: two static resources, backed by the same seam as
             // `get_overview_context`. Kept in sync with the rmcp
             // ServerHandler::list_resources (used by stdio transport).
-            let resources = vec![
-                serde_json::json!({
-                    "uri": "leankg://overview",
-                    "name": "LeanKG overview",
-                    "description": "Session-start overview: project identity (L0) + critical facts (L1)",
-                    "mimeType": "text/markdown",
-                }),
-            ];
+            let resources = vec![serde_json::json!({
+                "uri": "leankg://overview",
+                "name": "LeanKG overview",
+                "description": "Session-start overview: project identity (L0) + critical facts (L1)",
+                "mimeType": "text/markdown",
+            })];
             Ok(serde_json::json!({ "resources": resources }))
         }
         "resources/read" => {

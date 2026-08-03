@@ -45,6 +45,12 @@ pub fn is_test_file(file_path: &str) -> bool {
         }
         "vue" => file_name.ends_with(".spec.vue") || file_name.ends_with(".test.vue"),
         "svelte" => file_name.ends_with(".spec.svelte") || file_name.ends_with(".test.svelte"),
+        "php" => file_name.ends_with("Test.php") || file_name.ends_with("_test.php"),
+        "pl" | "pm" => file_name.ends_with(".t") || file_name.ends_with("_test.pl"),
+        "ex" | "exs" => {
+            file_name.ends_with("_test.exs") || path.components().any(|c| c.as_os_str() == "test")
+        }
+        "r" => file_name.ends_with("_test.R") || file_name.ends_with("test_that.R"),
         _ => false,
     }
 }
@@ -295,7 +301,205 @@ impl<'a> EntityExtractor<'a> {
             self.extract_android_bindings(&mut relationships);
         }
 
+        // Ruby/Elixir/R imports are generic `call` nodes in their grammars, so
+        // regex-scan the source for the common require/import forms (mirrors the
+        // swift/objc regex-extractor pattern for grammars without import nodes).
+        if self.language == "ruby"
+            || self.language == "elixir"
+            || self.language == "r"
+            || self.language == "perl"
+            || self.language == "lua"
+            || self.language == "nim"
+            || self.language == "crystal"
+        {
+            self.extract_script_imports(&mut relationships);
+        }
+
+        // Elixir's bundled grammar (v0.3.5) has no `defmodule`/`def` node types —
+        // they parse as generic `call`s. Regex-extract module + function elements.
+        if self.language == "elixir" {
+            self.extract_elixir_definitions(&mut elements);
+        }
+
+        // MINIMAL-tier languages (json/toml/yaml/css/html/graphql/protobuf/
+        // dockerfile): emit a file-level document element so the file is indexed
+        // even when the grammar has no function/class node kinds.
+        if elements.is_empty()
+            && relationships.iter().all(|r| r.rel_type != "imports")
+            && crate::indexer::lang::registry::language_spec(self.language)
+                .map(|s| s.tier == crate::indexer::lang::registry::Tier::Minimal)
+                .unwrap_or(false)
+        {
+            let file_name = std::path::Path::new(self.file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(self.file_path);
+            elements.push(CodeElement {
+                qualified_name: format!("{}::<document>", self.file_path),
+                element_type: "document".to_string(),
+                name: format!("{}: <document>", file_name),
+                file_path: self.file_path.to_string(),
+                line_start: 1,
+                line_end: 1,
+                language: self.language.to_string(),
+                ..Default::default()
+            });
+        }
+
         (elements, relationships)
+    }
+
+    /// Elixir grammar lacks defmodule/def nodes; regex-extract them as elements.
+    fn extract_elixir_definitions(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let module_re = match regex::Regex::new(r"^\s*defmodule\s+([\w.]+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let def_re = match regex::Regex::new(
+            r"(?m)^\s*def(p|macro|macrop|guard)?\s+([a-zA-Z_]\w*)(?:\(|\s|$)",
+        ) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in module_re.captures_iter(content) {
+            if let Some(name) = cap.get(1) {
+                let qn = format!("{}::{}", source_path, name.as_str());
+                elements.push(CodeElement {
+                    qualified_name: qn,
+                    element_type: "module".to_string(),
+                    name: name.as_str().to_string(),
+                    file_path: source_path.clone(),
+                    line_start: 1,
+                    line_end: 1,
+                    language: "elixir".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+        for cap in def_re.captures_iter(content) {
+            if let Some(name) = cap.get(2) {
+                let qn = format!("{}::{}", source_path, name.as_str());
+                elements.push(CodeElement {
+                    qualified_name: qn,
+                    element_type: "function".to_string(),
+                    name: name.as_str().to_string(),
+                    file_path: source_path.clone(),
+                    line_start: 1,
+                    line_end: 1,
+                    language: "elixir".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    /// Regex-based import scan for grammars whose import forms are generic calls
+    /// (ruby `require 'x'`, elixir `import Module`, R `library(x)`).
+    fn extract_script_imports(&self, relationships: &mut Vec<Relationship>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let regexes: &[&str] = match self.language {
+            "ruby" => &[
+                r#"(?m)^\s*require\s+['"]([^'"]+)['"]"#,
+                r#"(?m)^\s*require_relative\s+['"]([^'"]+)['"]"#,
+            ],
+            "elixir" => &[r#"(?m)^\s*(?:import|alias|require|use)\s+([A-Z][\w.]+)"#],
+            "r" => &[r#"(?m)^\s*(?:library|require)\s*\(\s*['"]?([\w.]+)['"]?\s*\)"#],
+            "perl" => &[
+                r#"(?m)^\s*use\s+([A-Za-z][\w:]+)"#,
+                r#"(?m)^\s*require\s+([A-Za-z][\w:]*(?:\s+if\s+.*)?)"#,
+            ],
+            "lua" => &[
+                r#"(?m)^\s*local\s+\w+\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)"#,
+                r#"(?m)^\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)"#,
+            ],
+            "nim" => &[r#"(?m)^\s*import\s+([\w/]+)"#],
+            "crystal" => &[r#"(?m)^\s*require\s+['"]([^'"]+)['"]"#],
+            _ => &[],
+        };
+        for pat in regexes {
+            let re = match regex::Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for cap in re.captures_iter(content) {
+                if let Some(target) = cap.get(1) {
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: source_path.clone(),
+                        target_qualified: target.as_str().to_string(),
+                        rel_type: "imports".to_string(),
+                        confidence: 1.0,
+                        metadata: serde_json::json!({}),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+
+    /// TOML/Dockerfile grammar can't link — short-circuit to regex-only path.
+    pub fn extract_regex_only(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
+        let mut elements = Vec::new();
+        let relationships = Vec::new();
+        if self.language == "toml" {
+            self.extract_toml_sections(&mut elements);
+        }
+        if self.language == "dockerfile" {
+            self.extract_dockerfile_directives(&mut elements);
+        }
+        (elements, relationships)
+    }
+
+    fn extract_toml_sections(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let Ok(re) = regex::Regex::new(r"(?m)^\s*\[([^\]]+)\]") else {
+            return;
+        };
+        for cap in re.captures_iter(content) {
+            let raw = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+            let name = raw.split('.').next().unwrap_or(raw).to_string();
+            if name.is_empty() {
+                continue;
+            }
+            elements.push(CodeElement {
+                qualified_name: format!("{}::{}", source_path, name),
+                element_type: "section".to_string(),
+                name,
+                file_path: source_path.clone(),
+                line_start: 1,
+                line_end: 1,
+                language: "toml".to_string(),
+                ..Default::default()
+            });
+        }
+    }
+
+    fn extract_dockerfile_directives(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let Ok(re) = regex::Regex::new(r"(?m)^\s*FROM\s+(\S+)") else {
+            return;
+        };
+        for cap in re.captures_iter(content) {
+            let name = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+            if name.is_empty() {
+                continue;
+            }
+            elements.push(CodeElement {
+                qualified_name: format!("{}::stage::{}", source_path, name),
+                element_type: "stage".to_string(),
+                name: format!("stage:{}", name),
+                file_path: source_path.clone(),
+                line_start: 1,
+                line_end: 1,
+                language: "dockerfile".to_string(),
+                ..Default::default()
+            });
+        }
     }
 
     fn extract_android_bindings(&self, relationships: &mut Vec<Relationship>) {
@@ -461,7 +665,26 @@ impl<'a> EntityExtractor<'a> {
             | "constructor_signature"
             | "secondary_constructor"
             | "getter"
-            | "setter" => {
+            | "setter"
+            | "method"
+            | "singleton_method"
+            | "def"
+            | "defp"
+            | "defmacro"
+            | "defmacrop"
+            | "defguard"
+            | "sub"
+            | "test_declaration"
+            | "function"
+            | "value_binding"
+            | "fun_decl"
+            | "function_statement"
+            | "function_declaration_left"
+            | "func_declaration"
+            | "proc_declaration"
+            | "function_clause"
+            | "func"
+            | "value_definition" => {
                 self.extract_function(node, parent, elements, relationships);
             }
             "class_declaration"
@@ -475,7 +698,31 @@ impl<'a> EntityExtractor<'a> {
             | "companion_object"
             | "mixin_declaration"
             | "extension_declaration"
-            | "type_alias" => {
+            | "type_alias"
+            | "struct_specifier"
+            | "class_specifier"
+            | "union_specifier"
+            | "enum_specifier"
+            | "class"
+            | "module"
+            | "package_statement"
+            | "package"
+            | "defmodule"
+            | "defprotocol"
+            | "defimpl"
+            | "trait_declaration"
+            | "contract_declaration"
+            | "struct_declaration"
+            | "library_declaration"
+            | "namespace_declaration"
+            | "file_scoped_namespace_declaration"
+            | "class_decl"
+            | "data_type"
+            | "type_alias_declaration"
+            | "module_declaration"
+            | "module_binding"
+            | "type_definition"
+            | "class_statement" => {
                 self.extract_class(node, parent, elements, relationships);
             }
             "decorated_definition" => {
@@ -494,9 +741,28 @@ impl<'a> EntityExtractor<'a> {
             | "import"
             | "import_specifier"
             | "import_statement"
+            | "preproc_include"
             | "import_from_statement"
             | "use_declaration"
-            | "library_import" => {
+            | "library_import"
+            | "require"
+            | "require_relative"
+            | "require_statement"
+            | "library"
+            | "namespace_use_declaration"
+            | "namespace_use_clause"
+            | "alias"
+            | "use"
+            | "use_no_subs_statement"
+            | "import_directive"
+            | "using_directive"
+            | "import_clause"
+            | "open"
+            | "open_module"
+            | "import_attribute"
+            | "using_statement"
+            | "from_instruction"
+            | "import_module" => {
                 for source in self.get_import_sources(node, node_type) {
                     relationships.push(Relationship {
                         id: None,
@@ -953,13 +1219,18 @@ impl<'a> EntityExtractor<'a> {
         relationships: &mut Vec<Relationship>,
     ) {
         if let Some(name) = self.get_node_name(node) {
-            let element_type = if node.kind() == "enum_declaration" {
-                "enum"
-            } else if node.kind() == "record_declaration" {
-                "record"
-            } else {
-                "class"
-            };
+            let element_type =
+                if node.kind() == "enum_declaration" || node.kind() == "enum_specifier" {
+                    "enum"
+                } else if node.kind() == "record_declaration" {
+                    "record"
+                } else if node.kind() == "struct_specifier" || node.kind() == "struct_item" {
+                    "struct"
+                } else if node.kind() == "union_specifier" {
+                    "union"
+                } else {
+                    "class"
+                };
 
             let qualified_name = format!("{}::{}", self.file_path, name);
 
@@ -1532,6 +1803,118 @@ impl<'a> EntityExtractor<'a> {
     fn get_node_name(&self, node: Node) -> Option<String> {
         let node_type = node.kind();
 
+        // Generic name-field fallback: many grammars (bash `word`, C++ specifier,
+        // PHP, etc.) expose the declaration name via a `name` field. Try it before
+        // the language-specific branches below.
+        if node.child_by_field_name("name").is_some() {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if let Some(bytes) = self.source.get(name_node.byte_range()) {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() && !trimmed.contains(' ') && !trimmed.contains('(') {
+                            return Some(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Elm: function_declaration_left has a lower_case_identifier child.
+        // Powershell: function_statement has a function_name child.
+        // OCaml: value_definition wraps let_binding; let_binding name is a
+        // `value_name` child whose own text is the binding name.
+        if (node_type == "value_definition" || node_type == "let_binding")
+            && self.language == "ocaml"
+        {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "value_name" || child.kind() == "value_pattern" {
+                    let name = self.get_node_name(child);
+                    if name.is_some() {
+                        return name;
+                    }
+                    // value_name's own text is the identifier.
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() && trimmed.len() < 64 {
+                                return Some(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+                if child.kind() == "let_binding" {
+                    let name = self.get_node_name(child);
+                    if name.is_some() {
+                        return name;
+                    }
+                }
+            }
+        }
+
+        // Elm: function_declaration_left has a lower_case_identifier child.
+        // Powershell: function_statement has a function_name child.
+        // OCaml: let_binding's first identifier child is the binding name.
+        if node_type == "function_declaration_left"
+            || node_type == "function_statement"
+            || node_type == "let_binding"
+        {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "lower_case_identifier"
+                        | "function_name"
+                        | "identifier"
+                        | "lower_identifier"
+                        | "value_identifier"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() {
+                                return Some(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Zig: test "name" { ... } — the test name is the string child.
+        if node_type == "test_declaration" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "string" || child.kind() == "identifier" {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches('"');
+                            if !trimmed.is_empty() {
+                                return Some(format!("test_{}", trimmed));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Perl: package statement name lives in a `package_name` child.
+        if node_type == "package_statement" || node_type == "package" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "package_name" {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches(';');
+                            if !trimmed.is_empty() {
+                                return Some(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if node_type == "type_spec" {
             if let Some(name_node) = node.child_by_field_name("name") {
                 return std::str::from_utf8(self.source.get(name_node.byte_range())?)
@@ -1675,6 +2058,26 @@ impl<'a> EntityExtractor<'a> {
                     .map(String::from);
             }
         }
+
+        // C/C++: function_definition's name lives under the declarator
+        // (function_definition → declarator → function_declarator → identifier).
+        // Descend into the declarator field for the first identifier.
+        if node_type == "function_definition" || node_type == "function_declarator" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "function_declarator"
+                    || child.kind() == "pointer_declarator"
+                    || child.kind() == "parenthesized_declarator"
+                    || child.kind() == "declarator"
+                {
+                    let name = self.get_node_name(child);
+                    if name.is_some() {
+                        return name;
+                    }
+                }
+            }
+        }
+
         None
     }
 
@@ -1725,6 +2128,141 @@ impl<'a> EntityExtractor<'a> {
                     return sources;
                 }
             }
+        }
+
+        // C/C++: #include <stdio.h> / #include "my.h" — path field holds the target.
+        if node_type == "preproc_include" {
+            if let Some(path_node) = node.child_by_field_name("path") {
+                if let Some(bytes) = self.source.get(path_node.byte_range()) {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        sources.push(
+                            s.trim()
+                                .trim_matches('"')
+                                .trim_matches('<')
+                                .trim_matches('>')
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            return sources;
+        }
+
+        // Scala: import scala.collection.mutable — identifiers joined by dots.
+        if node_type == "import_declaration" && self.language == "scala" {
+            let mut parts = Vec::new();
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "identifier" | "operator_identifier" | "underscore"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            parts.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            if !parts.is_empty() {
+                sources.push(parts.join("."));
+            }
+            return sources;
+        }
+
+        // C#: using System; — scoped_identifier / identifier children.
+        if node_type == "using_directive" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(child.kind(), "identifier" | "scoped_identifier") {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches(';');
+                            if !trimmed.is_empty() {
+                                sources.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            return sources;
+        }
+
+        // Haskell: import Data.List (sort) — module field holds the target.
+        // Elm: import Html — moduleName field (camelCase).
+        if (node_type == "import" && self.language == "haskell")
+            || (node_type == "import_clause" && self.language == "elm")
+        {
+            let module_field = if self.language == "haskell" {
+                "module"
+            } else {
+                "moduleName"
+            };
+            if let Some(module_node) = node.child_by_field_name(module_field) {
+                if let Some(bytes) = self.source.get(module_node.byte_range()) {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            sources.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+            return sources;
+        }
+
+        // Haskell: import Data.List (sort) — module_name / identifier children.
+        // Ocaml/F#: open List / open System — identifier child.
+        // Elm: import Html exposing (text) — module_name child.
+        // Nim: import std/strutils — identifier/string.
+        // Erlang: -import(mod, [f/1]). — attribute.
+        // Guard against java/kotlin/dart/go which have their own specific branches
+        // below and would be shadowed by the generic identifier scan.
+        if matches!(
+            node_type,
+            "import" | "open" | "open_module" | "import_clause" | "import_attribute"
+        ) && !matches!(
+            self.language,
+            "java" | "kotlin" | "dart" | "go" | "typescript" | "javascript" | "rust"
+        ) {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "module_name"
+                        | "identifier"
+                        | "string"
+                        | "interpreted_string_literal"
+                        | "qualified_name"
+                        | "atom"
+                        | "variable"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches('"');
+                            if !trimmed.is_empty() {
+                                sources.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                } else if matches!(child.kind(), "module_path" | "module_name") {
+                    // Descend one level into OCaml module_path wrappers.
+                    let mut inner_cursor = child.walk();
+                    for inner in child.children(&mut inner_cursor) {
+                        if inner.kind() == "module_name" {
+                            if let Some(bytes) = self.source.get(inner.byte_range()) {
+                                if let Ok(s) = std::str::from_utf8(bytes) {
+                                    let trimmed = s.trim().trim_matches('"');
+                                    if !trimmed.is_empty() {
+                                        sources.push(trimmed.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return sources;
         }
 
         // Java: import com.example.Foo
@@ -1786,6 +2324,64 @@ impl<'a> EntityExtractor<'a> {
                         }
                     }
                     _ => {}
+                }
+            }
+            return sources;
+        }
+
+        // Ruby: require 'x' / require_relative 'x' — first string/identifier arg.
+        // Elixir: require/import/alias Module — the alias/module name.
+        // R: library(x) / require(x) — the identifier argument.
+        // Perl: use strict / use Module::Name — the module child.
+        if matches!(
+            node_type,
+            "require" | "require_relative" | "require_statement" | "library" | "use"
+        ) {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "string"
+                        | "interpreted_string_literal"
+                        | "simple_symbol"
+                        | "identifier"
+                        | "constant"
+                        | "alias"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches(['"', '\'', ':']);
+                            if !trimmed.is_empty() {
+                                sources.push(trimmed.to_string());
+                                return sources;
+                            }
+                        }
+                    }
+                }
+            }
+            return sources;
+        }
+
+        // PHP: use App\Support\Helper — namespace_use_declaration holds a
+        // qualified_name / namespace_name child.
+        if node_type == "namespace_use_declaration"
+            || node_type == "namespace_use_clause"
+            || node_type == "alias"
+        {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "namespace_name" | "qualified_name" | "name" | "scoped_identifier" | "alias"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() && !trimmed.starts_with('\\') {
+                                sources.push(trimmed.to_string());
+                            }
+                        }
+                    }
                 }
             }
             return sources;
@@ -1875,11 +2471,881 @@ mod tests {
         parser.parse(source, None)
     }
 
+    fn parse_c(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_c::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_cpp(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_bash(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_ruby(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_ruby::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_php(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_php::LANGUAGE_PHP.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_perl(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_perl::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_r(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_r::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_elixir(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_elixir::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_scala(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_scala::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_zig(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_zig::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_solidity(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_solidity::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_lua(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_lua::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_json(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_json::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_yaml(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_css(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_css::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_html(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_html::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_graphql(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_graphql::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_protobuf(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_proto::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_csharp(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_c_sharp::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_haskell(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_haskell::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_elm(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_elm::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_ocaml(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_ocaml::LANGUAGE_OCAML.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_fsharp(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_fsharp::LANGUAGE_FSHARP.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_erlang(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_erlang::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_nim(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_nim::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_powershell(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_powershell::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_crystal(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_crystal::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
     #[test]
     fn test_extractor_new() {
         let source = b"func foo() {}";
         let extractor = EntityExtractor::new(source, "test.go", "go");
         assert_eq!(extractor.language, "go");
+    }
+
+    #[test]
+    fn test_extract_c_function_and_struct() {
+        let source = b"#include <stdio.h>\nstruct Point { int x; int y; };\nint add(int a, int b) { return a + b; }\nint main(void) { struct Point p; return add(1, 2); }";
+        if let Some(tree) = parse_c(source) {
+            let extractor = EntityExtractor::new(source, "main.c", "c");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected C functions, got {:?}",
+                elements
+            );
+            let structs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "struct")
+                .collect();
+            assert!(!structs.is_empty(), "expected C struct, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected C imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_cpp_class_and_method() {
+        let source = b"#include <vector>\n#include \"utils.h\"\nusing namespace std;\nclass Foo {\npublic:\n    int bar(int x) { return x + 1; }\n};\nint main() { Foo f; return 0; }";
+        if let Some(tree) = parse_cpp(source) {
+            let extractor = EntityExtractor::new(source, "main.cpp", "cpp");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected C++ class, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" && e.name == "bar")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected C++ method bar, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected C++ imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_bash_functions() {
+        let source = b"#!/bin/bash\nGREETING=\"hello\"\ngreet() {\n  echo \"$GREETING\"\n}\nfunction farewell() {\n  echo \"bye\"\n}\ngreet\n";
+        if let Some(tree) = parse_bash(source) {
+            let extractor = EntityExtractor::new(source, "script.sh", "bash");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<&CodeElement> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert_eq!(
+                funcs.len(),
+                2,
+                "expected 2 bash functions, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_ruby_class_and_method() {
+        let source = b"require 'json'\nclass User\n  def initialize(name)\n    @name = name\n  end\n  def greet\n    \"hi #{@name}\"\n  end\nend\nmodule Utils\n  def self.helper\n  end\nend";
+        if let Some(tree) = parse_ruby(source) {
+            let extractor = EntityExtractor::new(source, "user.rb", "ruby");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected ruby class, got {:?}",
+                elements
+            );
+            let methods: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" || e.element_type == "method")
+                .collect();
+            assert!(
+                methods.len() >= 2,
+                "expected ruby methods, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected ruby require, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_php_class_and_function() {
+        let source = b"<?php\nnamespace App\\Models;\nuse App\\Support\\Helper;\nclass User {\n    private $name;\n    public function greet() { return 'hi'; }\n}\nfunction helper() { return 1; }";
+        if let Some(tree) = parse_php(source) {
+            let extractor = EntityExtractor::new(source, "User.php", "php");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected php class, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements.iter().filter(|e| e.name == "greet").collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected php method greet, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected php imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_perl_function_and_package() {
+        let source = b"package My::Module;\nuse strict;\nuse warnings;\nsub greet {\n  my $name = shift;\n  return \"hi $name\";\n}\nsub helper { return 42; }";
+        if let Some(tree) = parse_perl(source) {
+            let extractor = EntityExtractor::new(source, "My/Module.pm", "perl");
+            let (elements, relationships) = extractor.extract(&tree);
+            let packages: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !packages.is_empty(),
+                "expected perl package, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(funcs.len() >= 2, "expected perl subs, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected perl use, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_r_functions() {
+        let source = b"library(ggplot2)\nadd <- function(a, b) {\n  a + b\n}\nsquare <- function(x) {\n  x * x\n}\n";
+        if let Some(tree) = parse_r(source) {
+            let extractor = EntityExtractor::new(source, "math.R", "r");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(funcs.len() >= 2, "expected R functions, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected R library, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_elixir_module_and_function() {
+        let source = b"defmodule Greeter do\n  def hello(name) do\n    \"hi #{name}\"\n  end\n  defp secret do\n    42\n  end\nend";
+        if let Some(tree) = parse_elixir(source) {
+            let extractor = EntityExtractor::new(source, "greeter.ex", "elixir");
+            let (elements, _) = extractor.extract(&tree);
+            let modules: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class" || e.element_type == "module")
+                .collect();
+            assert!(
+                !modules.is_empty(),
+                "expected elixir module, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" && e.name == "hello")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected elixir def hello, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_scala_class_and_function() {
+        let source = b"package com.example\nimport scala.collection.mutable\nclass User(name: String) {\n  def greet: String = s\"hi $name\"\n}\ntrait Greetable {\n  def hello: String\n}\ndef helper(x: Int): Int = x + 1";
+        if let Some(tree) = parse_scala(source) {
+            let extractor = EntityExtractor::new(source, "User.scala", "scala");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected scala class, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements.iter().filter(|e| e.name == "greet").collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected scala def greet, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected scala imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_zig_functions() {
+        let source = b"const std = @import(\"std\");\nfn add(a: i32, b: i32) i32 {\n    return a + b;\n}\nconst Point = struct { x: i32, y: i32 };\ntest \"basic\" {\n    try std.testing.expect(add(1, 2) == 3);\n}";
+        if let Some(tree) = parse_zig(source) {
+            let extractor = EntityExtractor::new(source, "math.zig", "zig");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                funcs.len() >= 2,
+                "expected zig fns (add + test), got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_solidity_contract_and_function() {
+        let source = b"pragma solidity ^0.8.0;\nimport \"./Helper.sol\";\ncontract Counter {\n    uint256 private count;\n    function increment() public {\n        count += 1;\n    }\n}";
+        if let Some(tree) = parse_solidity(source) {
+            let extractor = EntityExtractor::new(source, "Counter.sol", "solidity");
+            let (elements, relationships) = extractor.extract(&tree);
+            let contracts: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class" && e.name == "Counter")
+                .collect();
+            assert!(
+                !contracts.is_empty(),
+                "expected solidity contract, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" && e.name == "increment")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected solidity fn, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected solidity imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_lua_functions() {
+        let source = b"local m = require(\"math\")\nfunction add(a, b)\n  return a + b\nend\nlocal function square(x)\n  return x * x\nend";
+        if let Some(tree) = parse_lua(source) {
+            let extractor = EntityExtractor::new(source, "math.lua", "lua");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(funcs.len() >= 2, "expected lua fns, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected lua require, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_json_minimal_document() {
+        let source = b"{\"name\": \"test\", \"count\": 3}";
+        if let Some(tree) = parse_json(source) {
+            let extractor = EntityExtractor::new(source, "config.json", "json");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected json document element, got {:?}",
+                elements
+            );
+            assert!(elements.iter().any(|e| e.element_type == "document"));
+        }
+    }
+
+    #[test]
+    fn test_extract_yaml_minimal_document() {
+        let source = b"name: test\nversion: 1.0\n";
+        if let Some(tree) = parse_yaml(source) {
+            let extractor = EntityExtractor::new(source, "config.yaml", "yaml");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected yaml document element, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_css_minimal_document() {
+        let source = b".btn { color: red; }\n#id { padding: 4px; }\n";
+        if let Some(tree) = parse_css(source) {
+            let extractor = EntityExtractor::new(source, "styles.css", "css");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected css document element, got {:?}",
+                elements
+            );
+            assert!(elements.iter().any(|e| e.element_type == "document"));
+        }
+    }
+
+    #[test]
+    fn test_extract_html_minimal_document() {
+        let source = b"<!doctype html><html><head><title>t</title></head><body></body></html>";
+        if let Some(tree) = parse_html(source) {
+            let extractor = EntityExtractor::new(source, "index.html", "html");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected html document element, got {:?}",
+                elements
+            );
+            assert!(elements.iter().any(|e| e.element_type == "document"));
+        }
+    }
+
+    #[test]
+    fn test_extract_graphql_minimal_document() {
+        let source = b"type User { id: ID! name: String }\ntype Query { user: User }\n";
+        if let Some(tree) = parse_graphql(source) {
+            let extractor = EntityExtractor::new(source, "schema.graphql", "graphql");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected graphql document element, got {:?}",
+                elements
+            );
+            assert!(elements.iter().any(|e| e.element_type == "document"));
+        }
+    }
+
+    #[test]
+    fn test_extract_protobuf_minimal_document() {
+        let source = b"message User { required string name = 1; optional int32 age = 2; }\n";
+        if let Some(tree) = parse_protobuf(source) {
+            let extractor = EntityExtractor::new(source, "schema.proto", "protobuf");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected protobuf document element, got {:?}",
+                elements
+            );
+            assert!(elements.iter().any(|e| e.element_type == "document"));
+        }
+    }
+
+    #[test]
+    fn test_extract_toml_sections() {
+        let source = b"[package]\nname = \"foo\"\n[dependencies]\nserde = \"1\"\n";
+        let extractor = EntityExtractor::new(source, "Cargo.toml", "toml");
+        let (elements, _) = extractor.extract_regex_only();
+        let sections: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "section")
+            .collect();
+        assert!(
+            sections.len() >= 2,
+            "expected at least 2 TOML sections, got {:?}",
+            elements
+        );
+        assert!(sections.iter().any(|e| e.name == "package"));
+        assert!(sections.iter().any(|e| e.name == "dependencies"));
+    }
+
+    #[test]
+    fn test_extract_dockerfile_stages() {
+        let source = b"FROM rust:1.70\nWORKDIR /app\nFROM alpine:3.18\n";
+        let extractor = EntityExtractor::new(source, "Dockerfile", "dockerfile");
+        let (elements, _) = extractor.extract_regex_only();
+        let stages: Vec<_> = elements
+            .iter()
+            .filter(|e| e.element_type == "stage")
+            .collect();
+        assert!(stages.len() >= 2);
+        assert!(stages.iter().any(|e| e.name.contains("rust:1.70")));
+        assert!(stages.iter().any(|e| e.name.contains("alpine:3.18")));
+    }
+
+    #[test]
+    fn test_extract_csharp_class_and_method() {
+        let source = b"using System;\nnamespace Demo {\n  public class User {\n    public string Greet(string name) {\n      return \"hi \" + name;\n    }\n  }\n}";
+        if let Some(tree) = parse_csharp(source) {
+            let extractor = EntityExtractor::new(source, "User.cs", "csharp");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class" && e.name == "User")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected csharp class, got {:?}",
+                elements
+            );
+            let methods: Vec<_> = elements.iter().filter(|e| e.name == "Greet").collect();
+            assert!(
+                !methods.is_empty(),
+                "expected csharp method Greet, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected csharp using, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_haskell_function_and_import() {
+        let source = b"module Main where\nimport Data.List (sort)\ndouble :: Int -> Int\ndouble x = x * 2\nmain :: IO ()\nmain = putStrLn \"hi\"";
+        if let Some(tree) = parse_haskell(source) {
+            let extractor = EntityExtractor::new(source, "Main.hs", "haskell");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected haskell funcs, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected haskell import, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_elm_function_and_type() {
+        let source = b"module Main exposing (main)\nimport Html exposing (text)\ntype Msg = Increment | Decrement\ndouble : Int -> Int\ndouble x = x * 2";
+        if let Some(tree) = parse_elm(source) {
+            let extractor = EntityExtractor::new(source, "Main.elm", "elm");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements.iter().filter(|e| e.name == "double").collect();
+            assert!(!funcs.is_empty(), "expected elm double, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected elm import, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_ocaml_module_and_function() {
+        let source =
+            b"open List\nlet double x = x * 2\nmodule Math = struct\n  let add a b = a + b\nend";
+        if let Some(tree) = parse_ocaml(source) {
+            let extractor = EntityExtractor::new(source, "math.ml", "ocaml");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected ocaml funcs, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected ocaml open, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_fsharp_module_and_function() {
+        let source = b"module Math\nlet double x = x * 2\nlet add a b = a + b";
+        if let Some(tree) = parse_fsharp(source) {
+            let extractor = EntityExtractor::new(source, "math.fs", "fsharp");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                funcs.len() >= 2,
+                "expected fsharp funcs, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_erlang_function_and_module() {
+        let source = b"-module(math).\n-export([double/1]).\ndouble(X) -> X * 2.";
+        if let Some(tree) = parse_erlang(source) {
+            let extractor = EntityExtractor::new(source, "math.erl", "erlang");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected erlang funcs, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_nim_function_and_type() {
+        let source = b"import std/strutils\nproc double(x: int): int =\n  x * 2\nfunc add(a, b: int): int = a + b";
+        if let Some(tree) = parse_nim(source) {
+            let extractor = EntityExtractor::new(source, "math.nim", "nim");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(!funcs.is_empty(), "expected nim funcs, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected nim import, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_powershell_function() {
+        let source = b"function Get-User {\n  param($id)\n  return $id\n}\nfunction Test-Helper { Write-Host 'hi' }";
+        if let Some(tree) = parse_powershell(source) {
+            let extractor = EntityExtractor::new(source, "user.ps1", "powershell");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                funcs.len() >= 2,
+                "expected powershell funcs, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_crystal_class_and_method() {
+        let source = b"require \"json\"\nclass User\n  def initialize(name)\n    @name = name\n  end\n  def greet\n    \"hi #{@name}\"\n  end\nend";
+        if let Some(tree) = parse_crystal(source) {
+            let extractor = EntityExtractor::new(source, "user.cr", "crystal");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected crystal class, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected crystal require, got {:?}",
+                relationships
+            );
+        }
     }
 
     #[test]

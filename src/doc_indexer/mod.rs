@@ -15,6 +15,20 @@ use walkdir::WalkDir;
 /// hundreds of functions (FR-SEM-08 + FR-SEM-09).
 const PER_SYMBOL_FANOUT_CAP: usize = 8;
 
+/// Maximum markdown doc file size to parse. Larger files are skipped
+/// to bound memory + parse time on huge generated markdown. Default 512 KiB.
+/// Override with `LEANKG_DOC_MAX_FILE_SIZE` (bytes).
+/// FR-DOC-CAP-512K: workspace-be's docs tree has multi-MiB generated .md
+/// files; without a cap the doc indexer stalls the entrypoint past the
+/// 10-min budget.
+fn doc_max_file_size() -> u64 {
+    std::env::var("LEANKG_DOC_MAX_FILE_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(512 * 1024)
+}
+
 #[derive(Debug, Clone)]
 pub struct DocIndexResult {
     pub documents: Vec<CodeElement>,
@@ -70,6 +84,26 @@ impl DocIndexer {
                 }
                 if let Some(ext) = path.extension() {
                     if ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd" {
+                        // FR-DOC-CAP-512K: skip oversized md files so a
+                        // multi-MiB generated .md can't stall the whole
+                        // doc indexer past the 10-min budget.
+                        let max_size = doc_max_file_size();
+                        match std::fs::metadata(path) {
+                            Ok(meta) if meta.len() > max_size => {
+                                eprintln!(
+                                    "Skipping oversize doc ({} bytes > {} cap): {}",
+                                    meta.len(),
+                                    max_size,
+                                    path.display()
+                                );
+                                continue;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                eprintln!("Warning: stat failed for {:?}: {}", path, e);
+                                continue;
+                            }
+                        }
                         match self.parse_doc_file(path, docs_path, graph) {
                             Ok((doc, secs, rels, _children)) => {
                                 documents.push(doc);
@@ -673,4 +707,35 @@ pub fn index_docs_directory(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // Serialize env-var tests; std::env is not thread-safe.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn doc_max_file_size_default_is_512_kib() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DOC_MAX_FILE_SIZE").ok();
+        std::env::remove_var("LEANKG_DOC_MAX_FILE_SIZE");
+        assert_eq!(doc_max_file_size(), 512 * 1024);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_DOC_MAX_FILE_SIZE", v),
+            None => std::env::remove_var("LEANKG_DOC_MAX_FILE_SIZE"),
+        }
+    }
+
+    #[test]
+    fn doc_max_file_size_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DOC_MAX_FILE_SIZE").ok();
+        std::env::set_var("LEANKG_DOC_MAX_FILE_SIZE", "1024");
+        assert_eq!(doc_max_file_size(), 1024);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_DOC_MAX_FILE_SIZE", v),
+            None => std::env::remove_var("LEANKG_DOC_MAX_FILE_SIZE"),
+        }
+    }
 }
