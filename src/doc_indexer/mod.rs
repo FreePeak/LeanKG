@@ -33,13 +33,14 @@ fn doc_max_file_size() -> u64 {
 /// single doc with hundreds of references blows the 10-min budget.
 /// Default 25 — doc joins are best-effort; a handful of resolved refs per
 /// file is plenty for get_files_for_doc / get_traceability.
+/// Setting 0 disables code-ref resolution entirely (sections/headings only);
+/// the doc walker still indexes documents + sections + contains edges.
 /// Override with `LEANKG_DOC_MAX_CODE_REFS`.
 /// FR-DOC-REF-CAP-100: docs/analysis/ files reference 500+ symbols.
 fn doc_max_code_refs() -> usize {
     std::env::var("LEANKG_DOC_MAX_CODE_REFS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .filter(|n: &usize| *n > 0)
         .unwrap_or(25)
 }
 
@@ -763,6 +764,20 @@ mod tests {
         let prev = std::env::var("LEANKG_DOC_MAX_CODE_REFS").ok();
         std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", "25");
         assert_eq!(doc_max_code_refs(), 25);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", v),
+            None => std::env::remove_var("LEANKG_DOC_MAX_CODE_REFS"),
+        }
+    }
+
+    #[test]
+    fn doc_max_code_refs_zero_disables_resolution() {
+        // FR-DOC-REF-CAP-0: 0 means "skip doc code-ref resolution" so the
+        // mega-graph fresh index stays under the 10-min budget.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DOC_MAX_CODE_REFS").ok();
+        std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", "0");
+        assert_eq!(doc_max_code_refs(), 0);
         match prev {
             Some(v) => std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", v),
             None => std::env::remove_var("LEANKG_DOC_MAX_CODE_REFS"),

@@ -552,6 +552,8 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 ### v3.6.3-embed-runtime - Cold embed SLA reality + MCP decoupling (2026-07-16)
 
 > **Measured reality (mega-graph cold embed):** end-to-end sustained rate is ~**170 vec/sec** → ~**36 min** for ~371k `function,method` nodes (M2 Pro 10c). Writer-only microbenches on empty RocksDB show Cozo `import_relations` at ~**100k–130k vec/sec** (&lt;1 min for 371k). **Storage commit / WAL is not the cold-SLA bottleneck**; ONNX inference + end-to-end CPU contention is.
+>
+> **2026-08-04 re-measure (8c M-series, Docker):** be fresh embed of **381,493** vectors (378k functions) took **~24 min** — ~**470 vec/sec** inference (≈13 min) + **201s** HNSW rebuild + collect/orphan. 1.4× better than the 170 v/s baseline above, but still volume-bound; be embed stays **accepted at ~24 min** for now. **Enhancement (future):** the vendored-cozo RocksDB bulk-load path (`feat/full-lang-support`, ~1250 v/s) would cut inference to ~5 min → total ~8 min. Not yet on main; do not regress via a new DB.
 
 **Done (ops / architecture):**
 - MCP boot decoupled from embed: `LEANKG_EMBED_ON_BOOT=0` + in-process `LEANKG_EMBED_BACKGROUND=1` (shared `CozoDb`). MCP healthy ~60s while embed continues. See FR-EMBED-R1.
