@@ -397,6 +397,93 @@ impl<'a> EntityExtractor<'a> {
 
     /// Regex-only entity extraction for languages whose tree-sitter grammar
     /// is unavailable (ABI conflict) or absent. Dispatches per language.
+
+    fn extract_clojure_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(defn\s+(\S+)\b", "function"),
+            (r"(?ms)^\s*\(defn-\s+(\S+)\b", "function"),
+            (r"(?ms)^\s*\(defmacro\s+(\S+)\b", "macro"),
+            (r"(?ms)^\s*\(defstruct\s+(\S+)\b", "type"),
+            (r"(?ms)^\s*\(defrecord\s+(\S+)\b", "type"),
+            (r"(?ms)^\s*\(ns\s+(\S+)\b", "module"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_vb_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?mi)^\s*(?:Public|Private|Friend|Protected)?\s*Sub\s+(\w+)", "function"),
+            (r"(?mi)^\s*(?:Public|Private|Friend|Protected)?\s*Function\s+(\w+)", "function"),
+            (r"(?mi)^\s*(?:Public|Private|Friend|Protected)?\s*Class\s+(\w+)", "class"),
+            (r"(?mi)^\s*(?:Public|Private|Friend|Protected)?\s*Module\s+(\w+)", "module"),
+            (r"(?mi)^\s*(?:Public|Private|Friend|Protected)?\s*Interface\s+(\w+)", "interface"),
+            (r"(?mi)^\s*Imports\s+(\S+)", "import"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_haxe_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:public|private)?\s*function\s+(\w+)", "function"),
+            (r"(?m)^\s*(?:public|private)?\s*class\s+(\w+)", "class"),
+            (r"(?m)^\s*(?:public|private)?\s*interface\s+(\w+)", "interface"),
+            (r"(?m)^\s*(?:public|private)?\s*enum\s+(\w+)", "type"),
+            (r"(?m)^\s*import\s+(\S+)", "import"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_pascal_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?mi)^\s*(?:procedure|function)\s+(\w+)", "function"),
+            (r"(?mi)^\s*(?:program|unit|library|package)\s+(\w+)", "module"),
+            (r"(?mi)^\s*type\s+\n?\s*(\w+)\s*=\s*(?:record|class|interface)", "type"),
+            (r"(?mi)^\s*constructor\s+(\w+)", "function"),
+            (r"(?mi)^\s*destructor\s+(\w+)", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
     pub fn extract_regex_only(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut elements: Vec<CodeElement> = Vec::new();
         let _relationships: Vec<Relationship> = Vec::new();
@@ -459,6 +546,10 @@ impl<'a> EntityExtractor<'a> {
             "mdx" => self.extract_mdx_elements(&mut elements),
             "vue" => self.extract_vue_elements(&mut elements),
             "svelte" => self.extract_svelte_elements(&mut elements),
+            "clojure" => self.extract_clojure_elements(&mut elements),
+            "vb" => self.extract_vb_elements(&mut elements),
+            "haxe" => self.extract_haxe_elements(&mut elements),
+            "pascal" => self.extract_pascal_elements(&mut elements),
             _ => {}
         }
         (elements, _relationships)
@@ -5768,5 +5859,46 @@ class Box {
     regex_web_test!(test_extract_mdx_regex, "mdx", "x.mdx", "import MyComponent from './comp.js'\n\n# Heading\n\n<MyComponent prop=\"hi\" />\n", ["MyComponent"]);
     regex_web_test!(test_extract_vue_regex, "vue", "x.vue", "<script setup>\nimport MyComponent from './Comp.vue'\nexport default { components: { MyComponent } }\n</script>\n<template>\n  <MyComponent />\n</template>\n", ["MyComponent"]);
     regex_web_test!(test_extract_svelte_regex, "svelte", "x.svelte", "<script>\n  import MyComponent from './Comp.svelte'\n  export let name = 'foo'\n</script>\n<MyComponent {name} />\n", ["name", "MyComponent"]);
+
+
+    #[test]
+    fn test_extract_clojure_regex() {
+        let source = b"(defn add [a b] (+ a b))\n(defmacro my-mac [x] x)\n(defrecord Point [x y])\n(ns my.core)\n";
+        let extractor = EntityExtractor::new(source, "core.clj", "clojure");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected clojure add, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("Point")), "expected clojure Point, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_vb_regex() {
+        let source = b"Imports System\nPublic Class Calculator\n  Public Function Add(a As Integer, b As Integer) As Integer\n    Return a + b\n  End Function\nEnd Class\n";
+        let extractor = EntityExtractor::new(source, "calc.vb", "vb");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Calculator"), "expected vb Calculator, got {:?}", names);
+        assert!(names.contains(&"Add"), "expected vb Add, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_haxe_regex() {
+        let source = b"class Main {\n  static function main() {}\n  function add(a:Int, b:Int):Int { return a+b; }\n}\n";
+        let extractor = EntityExtractor::new(source, "Main.hx", "haxe");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Main"), "expected haxe Main, got {:?}", names);
+        assert!(names.contains(&"add"), "expected haxe add, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_pascal_regex() {
+        let source = b"program Hello;\nprocedure SayHello;\nbegin\n  WriteLn('hi');\nend;\ntype\n  TPerson = record\n    Name: string;\n  end;\n";
+        let extractor = EntityExtractor::new(source, "hello.pas", "pascal");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Hello"), "expected pascal Hello, got {:?}", names);
+        assert!(names.contains(&"SayHello"), "expected pascal SayHello, got {:?}", names);
+    }
 
 }
