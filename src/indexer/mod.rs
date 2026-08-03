@@ -270,6 +270,7 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
         "mod", "xml", "dart", "swift", "m", "mm", "h", "vue", "svelte", "sql", "c", "cpp", "cxx",
         "hpp", "hh", "hxx", "cc", "sh", "bash", "zsh", "rb", "php", "pl", "r", "ex", "exs",
+        "scala", "sc", "zig", "sol", "lua",
     ];
     let config_files = [
         "package.json",

@@ -308,6 +308,7 @@ impl<'a> EntityExtractor<'a> {
             || self.language == "elixir"
             || self.language == "r"
             || self.language == "perl"
+            || self.language == "lua"
         {
             self.extract_script_imports(&mut relationships);
         }
@@ -382,6 +383,10 @@ impl<'a> EntityExtractor<'a> {
             "perl" => &[
                 r#"(?m)^\s*use\s+([A-Za-z][\w:]+)"#,
                 r#"(?m)^\s*require\s+([A-Za-z][\w:]*(?:\s+if\s+.*)?)"#,
+            ],
+            "lua" => &[
+                r#"(?m)^\s*local\s+\w+\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)"#,
+                r#"(?m)^\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)"#,
             ],
             _ => &[],
         };
@@ -577,7 +582,8 @@ impl<'a> EntityExtractor<'a> {
             | "defmacro"
             | "defmacrop"
             | "defguard"
-            | "sub" => {
+            | "sub"
+            | "test_declaration" => {
                 self.extract_function(node, parent, elements, relationships);
             }
             "class_declaration"
@@ -603,7 +609,10 @@ impl<'a> EntityExtractor<'a> {
             | "defmodule"
             | "defprotocol"
             | "defimpl"
-            | "trait_declaration" => {
+            | "trait_declaration"
+            | "contract_declaration"
+            | "struct_declaration"
+            | "library_declaration" => {
                 self.extract_class(node, parent, elements, relationships);
             }
             "decorated_definition" => {
@@ -634,7 +643,9 @@ impl<'a> EntityExtractor<'a> {
             | "namespace_use_clause"
             | "alias"
             | "use"
-            | "use_no_subs_statement" => {
+            | "use_no_subs_statement"
+            | "import_directive"
+            | "import_declaration" => {
                 for source in self.get_import_sources(node, node_type) {
                     relationships.push(Relationship {
                         id: None,
@@ -1691,6 +1702,23 @@ impl<'a> EntityExtractor<'a> {
             }
         }
 
+        // Zig: test "name" { ... } — the test name is the string child.
+        if node_type == "test_declaration" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "string" || child.kind() == "identifier" {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches('"');
+                            if !trimmed.is_empty() {
+                                return Some(format!("test_{}", trimmed));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Perl: package statement name lives in a `package_name` child.
         if node_type == "package_statement" || node_type == "package" {
             let mut cursor = node.walk();
@@ -1937,6 +1965,28 @@ impl<'a> EntityExtractor<'a> {
                         );
                     }
                 }
+            }
+            return sources;
+        }
+
+        // Scala: import scala.collection.mutable — identifiers joined by dots.
+        if node_type == "import_declaration" && self.language == "scala" {
+            let mut parts = Vec::new();
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "identifier" | "operator_identifier" | "underscore"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            parts.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            if !parts.is_empty() {
+                sources.push(parts.join("."));
             }
             return sources;
         }
@@ -2203,6 +2253,34 @@ mod tests {
         parser.parse(source, None)
     }
 
+    fn parse_scala(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_scala::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_zig(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_zig::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_solidity(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_solidity::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_lua(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_lua::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
     #[test]
     fn test_extractor_new() {
         let source = b"func foo() {}";
@@ -2444,6 +2522,116 @@ mod tests {
                 !funcs.is_empty(),
                 "expected elixir def hello, got {:?}",
                 elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_scala_class_and_function() {
+        let source = b"package com.example\nimport scala.collection.mutable\nclass User(name: String) {\n  def greet: String = s\"hi $name\"\n}\ntrait Greetable {\n  def hello: String\n}\ndef helper(x: Int): Int = x + 1";
+        if let Some(tree) = parse_scala(source) {
+            let extractor = EntityExtractor::new(source, "User.scala", "scala");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected scala class, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements.iter().filter(|e| e.name == "greet").collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected scala def greet, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected scala imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_zig_functions() {
+        let source = b"const std = @import(\"std\");\nfn add(a: i32, b: i32) i32 {\n    return a + b;\n}\nconst Point = struct { x: i32, y: i32 };\ntest \"basic\" {\n    try std.testing.expect(add(1, 2) == 3);\n}";
+        if let Some(tree) = parse_zig(source) {
+            let extractor = EntityExtractor::new(source, "math.zig", "zig");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                funcs.len() >= 2,
+                "expected zig fns (add + test), got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_solidity_contract_and_function() {
+        let source = b"pragma solidity ^0.8.0;\nimport \"./Helper.sol\";\ncontract Counter {\n    uint256 private count;\n    function increment() public {\n        count += 1;\n    }\n}";
+        if let Some(tree) = parse_solidity(source) {
+            let extractor = EntityExtractor::new(source, "Counter.sol", "solidity");
+            let (elements, relationships) = extractor.extract(&tree);
+            let contracts: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class" && e.name == "Counter")
+                .collect();
+            assert!(
+                !contracts.is_empty(),
+                "expected solidity contract, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" && e.name == "increment")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected solidity fn, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected solidity imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_lua_functions() {
+        let source = b"local m = require(\"math\")\nfunction add(a, b)\n  return a + b\nend\nlocal function square(x)\n  return x * x\nend";
+        if let Some(tree) = parse_lua(source) {
+            let extractor = EntityExtractor::new(source, "math.lua", "lua");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(funcs.len() >= 2, "expected lua fns, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected lua require, got {:?}",
+                relationships
             );
         }
     }

@@ -84,6 +84,10 @@ tokenizers = { version = "0.21", optional = true, default-features = false, feat
 ndarray = { version = "0.16", optional = true }
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
+tree-sitter-scala = "0.26.0"
+tree-sitter-zig = "1.1.2"
+tree-sitter-solidity = "1.2.13"
+tree-sitter-lua = "0.5.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
