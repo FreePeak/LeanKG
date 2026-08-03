@@ -299,6 +299,10 @@ mod tests {
 
     #[test]
     fn idle_trim_runs_at_most_once_per_activity_period() {
+        // Raise the force-trim cap so a memory-heavy CI runner can't
+        // preempt the idle-trim path under test with a ForceTrim.
+        let prev_cap = std::env::var("LEANKG_GC_MAX_RSS_MB").ok();
+        std::env::set_var("LEANKG_GC_MAX_RSS_MB", "1048576"); // 1 TiB
         let called = std::sync::Arc::new(AtomicUsize::new(0));
         let called2 = called.clone();
         let mut g = MemoryGuard::new(Some(Box::new(move || {
@@ -354,6 +358,12 @@ mod tests {
 
     #[test]
     fn release_returning_false_is_noop_not_idle_trim() {
+        // Raise the force-trim cap so a memory-heavy CI runner (RSS > 4 GB by
+        // the time the full suite reaches this test) can't preempt the
+        // idle-trim path under test with a ForceTrim. Otherwise the assertion
+        // on last_idle_trim_activity fails only in CI, never locally.
+        let prev_cap = std::env::var("LEANKG_GC_MAX_RSS_MB").ok();
+        std::env::set_var("LEANKG_GC_MAX_RSS_MB", "1048576"); // 1 TiB
         let mut g = MemoryGuard::new(Some(Box::new(|| false)));
         g.last_check = Instant::now() - Duration::from_secs(gc_poll_secs() + 1);
         let past = std::time::SystemTime::now()
@@ -372,5 +382,10 @@ mod tests {
         );
         // Period consumed so we do not retry every poll.
         assert_eq!(g.last_idle_trim_activity, past);
+
+        match prev_cap {
+            Some(v) => std::env::set_var("LEANKG_GC_MAX_RSS_MB", v),
+            None => std::env::remove_var("LEANKG_GC_MAX_RSS_MB"),
+        }
     }
 }
