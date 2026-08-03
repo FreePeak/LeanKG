@@ -697,6 +697,161 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+
+    fn extract_sql_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?im)^\s*(?:CREATE\s+(?:OR\s+REPLACE\s+)?)?(?:TABLE|VIEW|INDEX|TRIGGER|SEQUENCE|TYPE)\s+(\w+)", "table"),
+            (r"(?im)^\s*(?:CREATE\s+(?:OR\s+REPLACE\s+)?)?(?:FUNCTION|PROCEDURE)\s+(\w+)", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_arduino_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:void|int|float|char|double|long|byte|bool)\s+(\w+)\s*\(", "function"),
+            (r"(?m)^\s*#include\s+<([^>]+)>", "import"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_nix_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re2 = match Regex::new(r"(?m)^\s*(\w[\w-]*)\s*=\s*") { Ok(r) => r, Err(_) => return };
+        for cap in re2.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "attribute", m.as_str());
+            }
+        }
+    }
+
+    fn extract_nushell_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:export\s+)?def\s+(\S+)", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_fish_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*function\s+(\S+)", "function"),
+            (r"(?m)^\s*abbr\s+(\S+)", "command"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_fennel_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(\s*fn\s+([^\s\[(]+)", "function"),
+            (r"(?ms)^\s*\(\s*local\s+(\S+)", "variable"),
+            (r"(?ms)^\s*\(\s*global\s+(\S+)", "variable"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_brainfuck_elements(&self, elements: &mut Vec<CodeElement>) {
+        elements.push(CodeElement {
+            qualified_name: format!("{}::brainfuck", self.file_path),
+            element_type: "script".to_string(),
+            name: "brainfuck".to_string(),
+            file_path: self.file_path.to_string(),
+            line_start: 1, line_end: 1,
+            language: "brainfuck".to_string(),
+            ..Default::default()
+        });
+    }
+
+
+    fn extract_octave_elements(&self, elements: &mut Vec<CodeElement>) {
+        // Octave shares .m with MATLAB; extract function/classdef like MATLAB.
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*function\s+(?:[^\s=]*\s*=\s*)?(\w+)", "function"),
+            (r"(?m)^\s*classdef\s+(\w+)", "class"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_wat_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(func\s+\$?([\w.]+)", "function"),
+            (r"(?ms)^\s*\(global\s+\$?([\w.]+)", "global"),
+            (r"(?ms)^\s*\(module\s+\$?([\w.]+)", "module"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_clojurescript_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(defn\s+(\S+)", "function"),
+            (r"(?ms)^\s*\(defmacro\s+(\S+)", "macro"),
+            (r"(?ms)^\s*\(ns\s+(\S+)", "module"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
     pub fn extract_regex_only(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut elements: Vec<CodeElement> = Vec::new();
         let _relationships: Vec<Relationship> = Vec::new();
@@ -771,6 +926,16 @@ impl<'a> EntityExtractor<'a> {
             "vlang" => self.extract_vlang_elements(&mut elements),
             "d" => self.extract_d_elements(&mut elements),
             "lisp" => self.extract_lisp_elements(&mut elements),
+            "sql" => self.extract_sql_elements(&mut elements),
+            "arduino" => self.extract_arduino_elements(&mut elements),
+            "nix" => self.extract_nix_elements(&mut elements),
+            "nushell" => self.extract_nushell_elements(&mut elements),
+            "fish" => self.extract_fish_elements(&mut elements),
+            "fennel" => self.extract_fennel_elements(&mut elements),
+            "brainfuck" => self.extract_brainfuck_elements(&mut elements),
+            "octave" => self.extract_octave_elements(&mut elements),
+            "wat" => self.extract_wat_elements(&mut elements),
+            "clojurescript" => self.extract_clojurescript_elements(&mut elements),
             _ => {}
         }
         (elements, _relationships)
