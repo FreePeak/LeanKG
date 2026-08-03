@@ -587,6 +587,63 @@ MCP Idle Loop (every ~10s)
 
 ---
 
+## Operational Guide (real deployments)
+
+### Two-workspace local convention
+
+The local MCP container always mounts exactly two project roots:
+
+| Container mount | Host dir |
+|-----------------|----------|
+| `/workspace`    | the LeanKG repo (or your primary project tree) |
+| `/workspace-be` | the side-by-side monorepo (e.g. `/Users/<you>/work/be`) |
+
+Every MCP tool call that targets the side repo **must** pass `project=/workspace-be` (the container path, never the host path).
+
+### In-process embed can OOM on a mega-graph
+
+MCP already holds both `/workspace` + `/workspace-be` RocksDBs (~5–6 GB RSS before any embedding). `embed_control action=on` embeds inside that same process (RocksDB is single-writer per path). With `LEANKG_EMBED_MAX_MB=0` (no cap) and 4–6 workers, the embed pushes past the container `mem_limit` → exit 137 / restart loop. This is a **config problem, not a code bug** — cap RSS and/or reduce workers.
+
+### Reliable cold full embed of a side mount
+
+1. **Stop MCP** (single writer):
+   ```bash
+   docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml stop leankg
+   ```
+2. **Small/medium graph** → the compose profile (auto `--full`, capped RSS):
+   ```bash
+   LEANKG_MCP_PROJECT=/workspace-be \
+     docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml \
+     -f docker-compose.embed.yml --profile embed run --rm leankg-embed
+   ```
+3. **Mega-graph** → the compose profile's 4→6 workers pin RSS against the soft cap and duty-cycle. Use a throwaway container with `--workers 2` so RSS stays ~3 GB and inference runs flat-out:
+   ```bash
+   docker run --rm -v leankg_leankg-rocksdb:/data/leankg-rocksdb \
+     -v leankg_leankg_models:/root/.cache/leankg \
+     -v /Users/<you>/work/be:/workspace-be \
+     -e LEANKG_DB_ENGINE=rocksdb -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
+     -e LEANKG_EMBED_FAST=1 -e LEANKG_EMBED_MODEL=bge-q -e LEANKG_EMBED_MAX_SEQ=128 \
+     -e LEANKG_EMBED_MAX_BLOB_CHARS=500 -e LEANKG_EMBED_MAX_MB=5500 \
+     -e OMP_NUM_THREADS=1 freepeak/leankg:latest \
+     embed --wait --project /workspace-be --workers 2 --batch-size 64
+   ```
+4. **Interrupting is safe** — each batch stamps `embedding_state` fresh (FR-EMBED-RESUME-03), so `SIGKILL` only loses the in-flight batch. Resume with the **same command minus `--full`** (incremental) — it embeds only the remaining `stale` rows.
+5. **Restart MCP** and verify:
+   ```bash
+   docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml up -d leankg
+   ```
+   `embed_control(action=status, project=/workspace-be)` → `vectors_existing` non-zero, `resume_preflight.stale` trending to 0. Then `semantic_search` returns HNSW hits (`method: hnsw+ontology-traverse`, `ann_candidate_count > 0`).
+
+### Memory sizing
+
+`plan_embed_memory` budgets `BASE_MB=900` + `PER_WORKER_MB=350`/worker under `LEANKG_EMBED_MAX_MB`. Each DirectEmbedder INT8 session ≈ 300–400 MB. 6 workers + RocksDB block cache ≈ 5 GB, colliding with a 6 GB `mem_limit`. Drop workers to 2 or raise `LEANKG_EMBED_MAX_MB` only if the host has RAM. The RSS soft cap is 90% of `LEANKG_EMBED_MAX_MB` — stay under it to avoid duty-cycling.
+
+### Why "nothing to embed" after a cold fill is correct
+
+If `resume_preflight` reports `stale=0` and `fresh` matches the element count, the HNSW index is complete. `vectors_existing` from `embed_control(status)` reflects the live `embedding_vectors` rows; a small residual `stale` (elements whose content hash changed since last embed) is expected and handled by the next day-2 resume.
+
+---
+
 ## Configuration Reference
 
 ### `leankg.yaml` → `mcp` section
