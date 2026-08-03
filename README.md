@@ -383,6 +383,54 @@ Operator rules of thumb:
 
 To inspect / flip mid-flight: `embed_control(action=on|off|status)` over MCP.
 
+---
+
+### Embedding operational guide (what the docs above assume)
+
+**Two-workspace local convention.** The local MCP container always mounts exactly two project roots:
+
+| Container mount | Host dir |
+|-----------------|----------|
+| `/workspace`    | this repo (`freepeak/leankg` … your checked-out tree) |
+| `/workspace-be` | the side-by-side monorepo (`/Users/<you>/work/be` locally) |
+
+Pass `project=/workspace-be` (never the host path) on every MCP tool call that targets the side repo.
+
+**Why in-process `embed_control action=on` can OOM on a mega-graph.** MCP already holds both `/workspace` + `/workspace-be` RocksDBs (~5–6 GB RSS before embedding starts). The embed shares that same process (RocksDB is single-writer per path), so a 4–6 worker INT8 embed can push the container past its `mem_limit` (exit 137 / restart loop). `LEANKG_EMBED_MAX_MB=0` in the merged override disables the RSS cap — that combination is exactly what kills it.
+
+**Reliable cold full embed of a side mount (step-by-step):**
+
+1. **Stop MCP** so the embed is the single writer:
+   ```bash
+   docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml stop leankg
+   ```
+2. **Choose the embed command by workload:**
+   - Small / medium graph → the compose profile (auto `--full`):
+     ```bash
+     LEANKG_MCP_PROJECT=/workspace-be \
+       docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml \
+       -f docker-compose.embed.yml --profile embed run --rm leankg-embed
+     ```
+   - **Mega-graph (hundreds of k elements) → keep workers low.** The compose profile resolves 4→6 workers and pins RSS against the `LEANKG_EMBED_MAX_MB=5500` soft cap, so it duty-cycles (pauses inference) and crawls. Use a throwaway container with `--workers 2` (RSS stays ~3 GB, no throttle) and let it run:
+     ```bash
+     docker run --rm -v leankg_leankg-rocksdb:/data/leankg-rocksdb \
+       -v leankg_leankg_models:/root/.cache/leankg \
+       -v /Users/<you>/work/be:/workspace-be \
+       -e LEANKG_DB_ENGINE=rocksdb -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
+       -e LEANKG_EMBED_FAST=1 -e LEANKG_EMBED_MODEL=bge-q -e LEANKG_EMBED_MAX_SEQ=128 \
+       -e LEANKG_EMBED_MAX_BLOB_CHARS=500 -e LEANKG_EMBED_MAX_MB=5500 \
+       -e OMP_NUM_THREADS=1 freepeak/leankg:latest \
+       embed --wait --project /workspace-be --workers 2 --batch-size 64
+     ```
+3. **Interrupting an embed is safe (resume skips done work).** Every batch stamps `embedding_state` rows `fresh`, so `SIGKILL` mid-embed only loses the in-flight batch. To resume: re-run the same command **without** `--full` (incremental) — it embeds only the remaining `stale` rows.
+4. **Restart MCP:**
+   ```bash
+   docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml up -d leankg
+   ```
+5. **Verify:** `embed_control(action=status, project=/workspace-be)` → `vectors_existing` non-zero and `resume_preflight.stale` trending to 0; then a `semantic_search` returns HNSW hits (`method: hnsw+ontology-traverse`, `ann_candidate_count > 0`).
+
+**Memory sizing for a mega-graph embed.** `plan_embed_memory` budgets `BASE_MB=900` + `PER_WORKER_MB=350`/worker under `LEANKG_EMBED_MAX_MB`. Each DirectEmbedder INT8 session holds ~300–400 MB; 6 workers + RocksDB block cache ≈ 5 GB, which collides with a 6 GB `mem_limit`. Drop workers (2) or raise `LEANKG_EMBED_MAX_MB` only if the host has RAM to spare. The RSS soft cap is 90% of `LEANKG_EMBED_MAX_MB`; staying under it keeps inference running flat-out instead of duty-cycling.
+
 ### Procedural ontology (auto-update)
 
 While `mcp-http` / `mcp-stdio` / `leankg serve` runs, LeanKG watches `ontology/concepts.yaml` and `ontology/workflows.yaml`, debounces (≥1s), and **replaces** the ontology layer in the served DB so `kg_trace_workflow` stays fresh without a restart.
