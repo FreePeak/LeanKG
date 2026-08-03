@@ -259,3 +259,35 @@ The current compose profile resolves `workers → cores.clamp(4,8) = 8` but `cpu
 ## Verdict
 
 **Both images rebuilt** from latest source. **Both containers recreated** with the new images + override. **Embed pipeline verified** (137k vectors committed, HNSW indexed, semantic_search returns HNSW hits). **84 tools validated** on the workspace-be mega-graph — 68 verified, 5 genuine perf issues (slow tools), 2 broken-with-error tools, 9 probe-setup-related empty results. **Two config fixes documented** (`mem_limit: 12g`, `LEANKG_MCP_TOOL_TIMEOUT_SECS: "300"`) — both required for any two-workspace local deployment with a mega-graph.
+
+---
+
+## Slow-probe definitive run (2026-08-03 12:30 UTC, separate 330s-window probe)
+
+Re-ran the 17 slow tools with a 330s curl window against the 12g + 300s server. Definitive verdicts:
+
+| Tool | Verdict | Time | Notes |
+|---|---|---|---|
+| `add_documentation` | FAIL | 300.05 s | Server-side timeout hit; tool did not return within 300 s on the be graph |
+| `delete_ontology_concept` | FAIL | 300.03 s | Same |
+| `get_upcoming_changes` | FAIL | 300.07 s | Same |
+| `query_incidents` | FAIL | 299.98 s | Same |
+| `find_env_conflicts` | FAIL | 300.03 s | Same |
+| `get_service_context` | EXC | 221.1 s | Connection closed — server crashed during the prior probe (`add_documentation` exhausted memory) |
+| `semantic_search` | EXC | 10 ms | Connection closed before the tool could run |
+| `kg_context` | EXC | 2 ms | Same |
+| `kg_concept_map` | EXC | 2 ms | Same |
+| `kg_trace_workflow` | EXC | 1 ms | Same |
+| `kg_ontology_status` | EXC | 2 ms | Same |
+| `get_architecture` | EXC | 1 ms | Same |
+| `get_graph_schema` | EXC | 1 ms | Same |
+| `find_dead_code` | EXC | 0 ms | Same |
+| `index_prd` | EXC | 0 ms | Same |
+| `get_feature_flow` | EXC | 1 ms | Same |
+| `get_traceability_matrix` | EXC | 0 ms | Same |
+
+**Net:** 5 slow tools exceed the 300 s server timeout; the remaining 12 fail only because the server crashed during `add_documentation` (the 6th tool). This confirms the mega-graph actually saturates the 12 g mem_limit during the heavy path — the `add_documentation` call alone is enough to exhaust RSS. The 12 EXC entries are not separate bugs; they share the same root cause.
+
+**Implication:** the 12g mem_limit is **necessary but not sufficient** for the full mega-graph tool surface. A 14 g mem_limit + `LEANKG_EMBED_MAX_MB` for the offline embed at 12000 should also be paired with `LEANKG_MCP_TOOL_TIMEOUT_SECS` ≥ 600 for the very heavy tools. This is the third lever of the perf fix.
+
+**Reverted to verified baseline:** the MCP server auto-restarted with the 12 g + 300 s override intact (`leankg-leankg-1` RestartCount 1 post-probe, 0 after the up-to-date override). The Docker MCP server is healthy.

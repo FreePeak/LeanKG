@@ -1936,6 +1936,47 @@ mod tests {
         assert_eq!(plan.batch_size, 64);
     }
 
+    // FR-EMBED-PERF-15M: 12g mem_limit → 8 workers × 350 MB + 900 MB base
+    // (~3.7 GB) fits under the 10800 MB soft cap (90% of 12000). No auto-cap.
+    #[test]
+    fn zz_unique_probe_test_for_12g_budget() {
+        let plan = plan_embed_memory_with_budget(8, 128, 12000);
+        assert_eq!(plan.workers, 8);
+    }
+
+    #[test]
+    fn embed_memory_plan_12g_budget_keeps_eight_workers() {
+        let plan = plan_embed_memory_with_budget(8, 128, 12000);
+        assert_eq!(plan.workers, 8, "expected 8 workers under 12g budget");
+        assert_eq!(plan.batch_size, 128);
+        assert_eq!(plan.max_rss_mb, 12000);
+    }
+
+    // FR-EMBED-PERF-15M: 6g mem_limit → 8 workers capped to <= 7 (not 8).
+    #[test]
+    fn embed_memory_plan_6g_budget_caps_workers_to_seven_or_less() {
+        let plan = plan_embed_memory_with_budget(8, 128, 6000);
+        assert!(plan.workers <= 7, "workers={} expected <=7 under 6g", plan.workers);
+    }
+
+    // FR-EMBED-PERF-15M: env var LEANKG_EMBED_MAX_MB overrides the build-time default.
+    #[test]
+    fn embed_max_rss_mb_env_overrides_default() {
+        std::env::set_var("LEANKG_EMBED_MAX_MB", "12000");
+        let n = embed_max_rss_mb();
+        std::env::remove_var("LEANKG_EMBED_MAX_MB");
+        assert_eq!(n, 12000);
+    }
+
+    #[test]
+    fn embed_max_rss_mb_env_invalid_falls_back_to_default() {
+        std::env::set_var("LEANKG_EMBED_MAX_MB", "not_a_number");
+        let n = embed_max_rss_mb();
+        std::env::remove_var("LEANKG_EMBED_MAX_MB");
+        // Default is 4096 (macOS, fast) or 4096 (linux, fast) — both 4096.
+        assert_eq!(n, 4096, "fallback default must be 4096");
+    }
+
     #[test]
     fn default_options_mode_is_incremental() {
         assert_eq!(BuildOptions::default().mode, BuildMode::Incremental);
@@ -1977,6 +2018,31 @@ mod tests {
     fn effective_upsert_chunk_defaults_when_env_unset() {
         std::env::remove_var("LEANKG_EMBED_UPSERT_CHUNK");
         assert_eq!(effective_upsert_chunk(), 5000);
+    }
+
+    // FR-EMBED-PERF-15M: env override applies (large chunks amortize per-commit
+    // overhead on megagraphs; 20k reduces import_relations commits ~4×).
+    #[test]
+    fn effective_upsert_chunk_env_override_applies() {
+        std::env::set_var("LEANKG_EMBED_UPSERT_CHUNK", "20000");
+        let n = effective_upsert_chunk();
+        std::env::remove_var("LEANKG_EMBED_UPSERT_CHUNK");
+        assert_eq!(n, 20000);
+    }
+
+    // FR-EMBED-PERF-15M: env values outside 100..=50000 fall back to default.
+    #[test]
+    fn effective_upsert_chunk_env_out_of_range_falls_back() {
+        std::env::set_var("LEANKG_EMBED_UPSERT_CHUNK", "50");
+        let low = effective_upsert_chunk();
+        std::env::set_var("LEANKG_EMBED_UPSERT_CHUNK", "60000");
+        let high = effective_upsert_chunk();
+        std::env::set_var("LEANKG_EMBED_UPSERT_CHUNK", "not_a_number");
+        let bad = effective_upsert_chunk();
+        std::env::remove_var("LEANKG_EMBED_UPSERT_CHUNK");
+        assert_eq!(low, 5000, "below 100 must fall back to default");
+        assert_eq!(high, 5000, "above 50000 must fall back to default");
+        assert_eq!(bad, 5000, "non-numeric must fall back to default");
     }
 
     #[test]
