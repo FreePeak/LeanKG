@@ -504,4 +504,36 @@ mod tests {
         let parsers = init_parsers();
         assert!(parsers.contains_key("c"));
     }
+
+    /// Every grammar-backed language must parse a representative snippet without
+    /// a parse error — guards against grammars that fail to load at runtime.
+    #[test]
+    fn all_grammar_languages_parse_snippet() {
+        let samples: &[(&str, &str)] = &[
+            ("c", "int main(void) { return 0; }"),
+            ("cpp", "class Foo {}; int main() { return 0; }"),
+            ("bash", "greet() { echo hi; }\n"),
+            ("ruby", "class User\n  def greet\n  end\nend"),
+            ("php", "<?php class Foo {}"),
+            ("perl", "package Foo;\nsub bar { return 1; }"),
+            ("r", "square <- function(x) x * x\n"),
+            ("elixir", "defmodule M do\n  def f, do: 1\nend"),
+            ("scala", "class User\nobject Main { def main() = () }"),
+            ("zig", "fn add(a: i32) i32 { return a; }"),
+            ("solidity", "contract C { function f() public {} }"),
+            ("lua", "function f() end\n"),
+            ("json", "{\"a\": 1}"),
+            ("yaml", "a: 1\n"),
+            ("csharp", "class Foo {}"),
+        ];
+        for (lang, src) in samples {
+            let spec = language_spec(lang).expect("spec");
+            assert!(spec.grammar.is_some(), "{} missing grammar", lang);
+            let mut parser = parser_for(lang).expect("parser");
+            let tree = parser
+                .parse(src, None)
+                .unwrap_or_else(|| panic!("{} parse failed", lang));
+            assert!(!tree.root_node().has_error(), "{} parse has errors", lang);
+        }
+    }
 }
