@@ -475,7 +475,11 @@ impl<'a> EntityExtractor<'a> {
             | "companion_object"
             | "mixin_declaration"
             | "extension_declaration"
-            | "type_alias" => {
+            | "type_alias"
+            | "struct_specifier"
+            | "class_specifier"
+            | "union_specifier"
+            | "enum_specifier" => {
                 self.extract_class(node, parent, elements, relationships);
             }
             "decorated_definition" => {
@@ -494,6 +498,7 @@ impl<'a> EntityExtractor<'a> {
             | "import"
             | "import_specifier"
             | "import_statement"
+            | "preproc_include"
             | "import_from_statement"
             | "use_declaration"
             | "library_import" => {
@@ -953,13 +958,18 @@ impl<'a> EntityExtractor<'a> {
         relationships: &mut Vec<Relationship>,
     ) {
         if let Some(name) = self.get_node_name(node) {
-            let element_type = if node.kind() == "enum_declaration" {
-                "enum"
-            } else if node.kind() == "record_declaration" {
-                "record"
-            } else {
-                "class"
-            };
+            let element_type =
+                if node.kind() == "enum_declaration" || node.kind() == "enum_specifier" {
+                    "enum"
+                } else if node.kind() == "record_declaration" {
+                    "record"
+                } else if node.kind() == "struct_specifier" || node.kind() == "struct_item" {
+                    "struct"
+                } else if node.kind() == "union_specifier" {
+                    "union"
+                } else {
+                    "class"
+                };
 
             let qualified_name = format!("{}::{}", self.file_path, name);
 
@@ -1675,6 +1685,26 @@ impl<'a> EntityExtractor<'a> {
                     .map(String::from);
             }
         }
+
+        // C/C++: function_definition's name lives under the declarator
+        // (function_definition → declarator → function_declarator → identifier).
+        // Descend into the declarator field for the first identifier.
+        if node_type == "function_definition" || node_type == "function_declarator" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "function_declarator"
+                    || child.kind() == "pointer_declarator"
+                    || child.kind() == "parenthesized_declarator"
+                    || child.kind() == "declarator"
+                {
+                    let name = self.get_node_name(child);
+                    if name.is_some() {
+                        return name;
+                    }
+                }
+            }
+        }
+
         None
     }
 
@@ -1725,6 +1755,24 @@ impl<'a> EntityExtractor<'a> {
                     return sources;
                 }
             }
+        }
+
+        // C/C++: #include <stdio.h> / #include "my.h" — path field holds the target.
+        if node_type == "preproc_include" {
+            if let Some(path_node) = node.child_by_field_name("path") {
+                if let Some(bytes) = self.source.get(path_node.byte_range()) {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        sources.push(
+                            s.trim()
+                                .trim_matches('"')
+                                .trim_matches('<')
+                                .trim_matches('>')
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            return sources;
         }
 
         // Java: import com.example.Foo
@@ -1875,11 +1923,93 @@ mod tests {
         parser.parse(source, None)
     }
 
+    fn parse_c(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_c::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_cpp(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
     #[test]
     fn test_extractor_new() {
         let source = b"func foo() {}";
         let extractor = EntityExtractor::new(source, "test.go", "go");
         assert_eq!(extractor.language, "go");
+    }
+
+    #[test]
+    fn test_extract_c_function_and_struct() {
+        let source = b"#include <stdio.h>\nstruct Point { int x; int y; };\nint add(int a, int b) { return a + b; }\nint main(void) { struct Point p; return add(1, 2); }";
+        if let Some(tree) = parse_c(source) {
+            let extractor = EntityExtractor::new(source, "main.c", "c");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected C functions, got {:?}",
+                elements
+            );
+            let structs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "struct")
+                .collect();
+            assert!(!structs.is_empty(), "expected C struct, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected C imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_cpp_class_and_method() {
+        let source = b"#include <vector>\n#include \"utils.h\"\nusing namespace std;\nclass Foo {\npublic:\n    int bar(int x) { return x + 1; }\n};\nint main() { Foo f; return 0; }";
+        if let Some(tree) = parse_cpp(source) {
+            let extractor = EntityExtractor::new(source, "main.cpp", "cpp");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected C++ class, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" && e.name == "bar")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected C++ method bar, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected C++ imports, got {:?}",
+                relationships
+            );
+        }
     }
 
     #[test]

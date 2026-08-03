@@ -82,6 +82,8 @@ fastembed = { version = "4", optional = true }
 ort = { version = "2.0.0-rc.9", optional = true }
 tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
 ndarray = { version = "0.16", optional = true }
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

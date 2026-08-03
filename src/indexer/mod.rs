@@ -33,6 +33,7 @@ pub mod gradle_extractor;
 pub mod gradle_module_extractor;
 pub mod kotlin_annotations;
 pub mod kotlin_utils;
+pub mod lang;
 pub mod maven_extractor;
 pub mod viewmodel_repository;
 pub mod xml_generic;
@@ -267,7 +268,8 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let mut files = Vec::new();
     let extensions = [
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod", "xml", "dart", "swift", "m", "mm", "h", "vue", "svelte", "sql",
+        "mod", "xml", "dart", "swift", "m", "mm", "h", "vue", "svelte", "sql", "c", "cpp", "cxx",
+        "hpp", "hh", "hxx", "cc",
     ];
     let config_files = [
         "package.json",
@@ -1138,6 +1140,9 @@ pub fn index_file_sync(
         "kotlin"
     } else if file_path.ends_with(".dart") {
         "dart"
+    } else if let Some(spec) = crate::indexer::lang::registry::language_for_path(file_path) {
+        // Registry-driven languages (new grammars, e.g. c/cpp).
+        spec.name
     } else {
         return Ok(0);
     };
@@ -2403,6 +2408,32 @@ include("web-app")"#;
             names
         );
         assert!(names.contains(&"schema.sql"), "missing .sql: {:?}", names);
+    }
+
+    // Full language registry: walker must discover every registered extension.
+    #[test]
+    fn test_find_files_sync_discovers_registry_extensions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("main.c"), "int main() { return 0; }\n").expect("write c");
+        std::fs::write(
+            dir.path().join("main.cpp"),
+            "class Foo {};\nint main() { return 0; }\n",
+        )
+        .expect("write cpp");
+
+        let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
+        let names: Vec<&str> = files
+            .iter()
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap_or("")
+            })
+            .collect();
+        assert!(names.contains(&"main.c"), "missing .c: {:?}", names);
+        assert!(names.contains(&"main.cpp"), "missing .cpp: {:?}", names);
     }
 
     // US-GF-07: rationale extraction
