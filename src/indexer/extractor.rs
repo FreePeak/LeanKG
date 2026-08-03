@@ -45,6 +45,12 @@ pub fn is_test_file(file_path: &str) -> bool {
         }
         "vue" => file_name.ends_with(".spec.vue") || file_name.ends_with(".test.vue"),
         "svelte" => file_name.ends_with(".spec.svelte") || file_name.ends_with(".test.svelte"),
+        "php" => file_name.ends_with("Test.php") || file_name.ends_with("_test.php"),
+        "pl" | "pm" => file_name.ends_with(".t") || file_name.ends_with("_test.pl"),
+        "ex" | "exs" => {
+            file_name.ends_with("_test.exs") || path.components().any(|c| c.as_os_str() == "test")
+        }
+        "r" => file_name.ends_with("_test.R") || file_name.ends_with("test_that.R"),
         _ => false,
     }
 }
@@ -295,7 +301,109 @@ impl<'a> EntityExtractor<'a> {
             self.extract_android_bindings(&mut relationships);
         }
 
+        // Ruby/Elixir/R imports are generic `call` nodes in their grammars, so
+        // regex-scan the source for the common require/import forms (mirrors the
+        // swift/objc regex-extractor pattern for grammars without import nodes).
+        if self.language == "ruby"
+            || self.language == "elixir"
+            || self.language == "r"
+            || self.language == "perl"
+        {
+            self.extract_script_imports(&mut relationships);
+        }
+
+        // Elixir's bundled grammar (v0.3.5) has no `defmodule`/`def` node types —
+        // they parse as generic `call`s. Regex-extract module + function elements.
+        if self.language == "elixir" {
+            self.extract_elixir_definitions(&mut elements);
+        }
+
         (elements, relationships)
+    }
+
+    /// Elixir grammar lacks defmodule/def nodes; regex-extract them as elements.
+    fn extract_elixir_definitions(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let module_re = match regex::Regex::new(r"^\s*defmodule\s+([\w.]+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let def_re = match regex::Regex::new(
+            r"(?m)^\s*def(p|macro|macrop|guard)?\s+([a-zA-Z_]\w*)(?:\(|\s|$)",
+        ) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in module_re.captures_iter(content) {
+            if let Some(name) = cap.get(1) {
+                let qn = format!("{}::{}", source_path, name.as_str());
+                elements.push(CodeElement {
+                    qualified_name: qn,
+                    element_type: "module".to_string(),
+                    name: name.as_str().to_string(),
+                    file_path: source_path.clone(),
+                    line_start: 1,
+                    line_end: 1,
+                    language: "elixir".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+        for cap in def_re.captures_iter(content) {
+            if let Some(name) = cap.get(2) {
+                let qn = format!("{}::{}", source_path, name.as_str());
+                elements.push(CodeElement {
+                    qualified_name: qn,
+                    element_type: "function".to_string(),
+                    name: name.as_str().to_string(),
+                    file_path: source_path.clone(),
+                    line_start: 1,
+                    line_end: 1,
+                    language: "elixir".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    /// Regex-based import scan for grammars whose import forms are generic calls
+    /// (ruby `require 'x'`, elixir `import Module`, R `library(x)`).
+    fn extract_script_imports(&self, relationships: &mut Vec<Relationship>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let regexes: &[&str] = match self.language {
+            "ruby" => &[
+                r#"(?m)^\s*require\s+['"]([^'"]+)['"]"#,
+                r#"(?m)^\s*require_relative\s+['"]([^'"]+)['"]"#,
+            ],
+            "elixir" => &[r#"(?m)^\s*(?:import|alias|require|use)\s+([A-Z][\w.]+)"#],
+            "r" => &[r#"(?m)^\s*(?:library|require)\s*\(\s*['"]?([\w.]+)['"]?\s*\)"#],
+            "perl" => &[
+                r#"(?m)^\s*use\s+([A-Za-z][\w:]+)"#,
+                r#"(?m)^\s*require\s+([A-Za-z][\w:]*(?:\s+if\s+.*)?)"#,
+            ],
+            _ => &[],
+        };
+        for pat in regexes {
+            let re = match regex::Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for cap in re.captures_iter(content) {
+                if let Some(target) = cap.get(1) {
+                    relationships.push(Relationship {
+                        id: None,
+                        source_qualified: source_path.clone(),
+                        target_qualified: target.as_str().to_string(),
+                        rel_type: "imports".to_string(),
+                        confidence: 1.0,
+                        metadata: serde_json::json!({}),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
     }
 
     fn extract_android_bindings(&self, relationships: &mut Vec<Relationship>) {
@@ -461,7 +569,15 @@ impl<'a> EntityExtractor<'a> {
             | "constructor_signature"
             | "secondary_constructor"
             | "getter"
-            | "setter" => {
+            | "setter"
+            | "method"
+            | "singleton_method"
+            | "def"
+            | "defp"
+            | "defmacro"
+            | "defmacrop"
+            | "defguard"
+            | "sub" => {
                 self.extract_function(node, parent, elements, relationships);
             }
             "class_declaration"
@@ -479,7 +595,15 @@ impl<'a> EntityExtractor<'a> {
             | "struct_specifier"
             | "class_specifier"
             | "union_specifier"
-            | "enum_specifier" => {
+            | "enum_specifier"
+            | "class"
+            | "module"
+            | "package_statement"
+            | "package"
+            | "defmodule"
+            | "defprotocol"
+            | "defimpl"
+            | "trait_declaration" => {
                 self.extract_class(node, parent, elements, relationships);
             }
             "decorated_definition" => {
@@ -501,7 +625,16 @@ impl<'a> EntityExtractor<'a> {
             | "preproc_include"
             | "import_from_statement"
             | "use_declaration"
-            | "library_import" => {
+            | "library_import"
+            | "require"
+            | "require_relative"
+            | "require_statement"
+            | "library"
+            | "namespace_use_declaration"
+            | "namespace_use_clause"
+            | "alias"
+            | "use"
+            | "use_no_subs_statement" => {
                 for source in self.get_import_sources(node, node_type) {
                     relationships.push(Relationship {
                         id: None,
@@ -1542,6 +1675,39 @@ impl<'a> EntityExtractor<'a> {
     fn get_node_name(&self, node: Node) -> Option<String> {
         let node_type = node.kind();
 
+        // Generic name-field fallback: many grammars (bash `word`, C++ specifier,
+        // PHP, etc.) expose the declaration name via a `name` field. Try it before
+        // the language-specific branches below.
+        if node.child_by_field_name("name").is_some() {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if let Some(bytes) = self.source.get(name_node.byte_range()) {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() && !trimmed.contains(' ') && !trimmed.contains('(') {
+                            return Some(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Perl: package statement name lives in a `package_name` child.
+        if node_type == "package_statement" || node_type == "package" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "package_name" {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches(';');
+                            if !trimmed.is_empty() {
+                                return Some(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if node_type == "type_spec" {
             if let Some(name_node) = node.child_by_field_name("name") {
                 return std::str::from_utf8(self.source.get(name_node.byte_range())?)
@@ -1839,6 +2005,64 @@ impl<'a> EntityExtractor<'a> {
             return sources;
         }
 
+        // Ruby: require 'x' / require_relative 'x' — first string/identifier arg.
+        // Elixir: require/import/alias Module — the alias/module name.
+        // R: library(x) / require(x) — the identifier argument.
+        // Perl: use strict / use Module::Name — the module child.
+        if matches!(
+            node_type,
+            "require" | "require_relative" | "require_statement" | "library" | "use"
+        ) {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "string"
+                        | "interpreted_string_literal"
+                        | "simple_symbol"
+                        | "identifier"
+                        | "constant"
+                        | "alias"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches(['"', '\'', ':']);
+                            if !trimmed.is_empty() {
+                                sources.push(trimmed.to_string());
+                                return sources;
+                            }
+                        }
+                    }
+                }
+            }
+            return sources;
+        }
+
+        // PHP: use App\Support\Helper — namespace_use_declaration holds a
+        // qualified_name / namespace_name child.
+        if node_type == "namespace_use_declaration"
+            || node_type == "namespace_use_clause"
+            || node_type == "alias"
+        {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(
+                    child.kind(),
+                    "namespace_name" | "qualified_name" | "name" | "scoped_identifier" | "alias"
+                ) {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() && !trimmed.starts_with('\\') {
+                                sources.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            return sources;
+        }
+
         // Go and JS/TS: walk all children to find string literals and import_specifiers
         let mut stack = vec![node];
         while let Some(current) = stack.pop() {
@@ -1937,6 +2161,48 @@ mod tests {
         parser.parse(source, None)
     }
 
+    fn parse_bash(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_ruby(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_ruby::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_php(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_php::LANGUAGE_PHP.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_perl(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_perl::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_r(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_r::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_elixir(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_elixir::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
     #[test]
     fn test_extractor_new() {
         let source = b"func foo() {}";
@@ -2008,6 +2274,176 @@ mod tests {
                 !imports.is_empty(),
                 "expected C++ imports, got {:?}",
                 relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_bash_functions() {
+        let source = b"#!/bin/bash\nGREETING=\"hello\"\ngreet() {\n  echo \"$GREETING\"\n}\nfunction farewell() {\n  echo \"bye\"\n}\ngreet\n";
+        if let Some(tree) = parse_bash(source) {
+            let extractor = EntityExtractor::new(source, "script.sh", "bash");
+            let (elements, _) = extractor.extract(&tree);
+            let funcs: Vec<&CodeElement> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert_eq!(
+                funcs.len(),
+                2,
+                "expected 2 bash functions, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_ruby_class_and_method() {
+        let source = b"require 'json'\nclass User\n  def initialize(name)\n    @name = name\n  end\n  def greet\n    \"hi #{@name}\"\n  end\nend\nmodule Utils\n  def self.helper\n  end\nend";
+        if let Some(tree) = parse_ruby(source) {
+            let extractor = EntityExtractor::new(source, "user.rb", "ruby");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected ruby class, got {:?}",
+                elements
+            );
+            let methods: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" || e.element_type == "method")
+                .collect();
+            assert!(
+                methods.len() >= 2,
+                "expected ruby methods, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected ruby require, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_php_class_and_function() {
+        let source = b"<?php\nnamespace App\\Models;\nuse App\\Support\\Helper;\nclass User {\n    private $name;\n    public function greet() { return 'hi'; }\n}\nfunction helper() { return 1; }";
+        if let Some(tree) = parse_php(source) {
+            let extractor = EntityExtractor::new(source, "User.php", "php");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected php class, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements.iter().filter(|e| e.name == "greet").collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected php method greet, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected php imports, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_perl_function_and_package() {
+        let source = b"package My::Module;\nuse strict;\nuse warnings;\nsub greet {\n  my $name = shift;\n  return \"hi $name\";\n}\nsub helper { return 42; }";
+        if let Some(tree) = parse_perl(source) {
+            let extractor = EntityExtractor::new(source, "My/Module.pm", "perl");
+            let (elements, relationships) = extractor.extract(&tree);
+            let packages: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
+            assert!(
+                !packages.is_empty(),
+                "expected perl package, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(funcs.len() >= 2, "expected perl subs, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected perl use, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_r_functions() {
+        let source = b"library(ggplot2)\nadd <- function(a, b) {\n  a + b\n}\nsquare <- function(x) {\n  x * x\n}\n";
+        if let Some(tree) = parse_r(source) {
+            let extractor = EntityExtractor::new(source, "math.R", "r");
+            let (elements, relationships) = extractor.extract(&tree);
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
+            assert!(funcs.len() >= 2, "expected R functions, got {:?}", elements);
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected R library, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_elixir_module_and_function() {
+        let source = b"defmodule Greeter do\n  def hello(name) do\n    \"hi #{name}\"\n  end\n  defp secret do\n    42\n  end\nend";
+        if let Some(tree) = parse_elixir(source) {
+            let extractor = EntityExtractor::new(source, "greeter.ex", "elixir");
+            let (elements, _) = extractor.extract(&tree);
+            let modules: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class" || e.element_type == "module")
+                .collect();
+            assert!(
+                !modules.is_empty(),
+                "expected elixir module, got {:?}",
+                elements
+            );
+            let funcs: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function" && e.name == "hello")
+                .collect();
+            assert!(
+                !funcs.is_empty(),
+                "expected elixir def hello, got {:?}",
+                elements
             );
         }
     }
