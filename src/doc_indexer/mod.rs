@@ -29,8 +29,10 @@ fn doc_max_file_size() -> u64 {
 }
 
 /// Maximum `code_refs` resolved per markdown doc. Each resolution can fire
-/// multiple CozoDB round-trips; on a doc with hundreds of code references
-/// the indexer blows past the 10-min budget. Default 100.
+/// multiple CozoDB round-trips; on the be mega-graph (721k elements) a
+/// single doc with hundreds of references blows the 10-min budget.
+/// Default 25 — doc joins are best-effort; a handful of resolved refs per
+/// file is plenty for get_files_for_doc / get_traceability.
 /// Override with `LEANKG_DOC_MAX_CODE_REFS`.
 /// FR-DOC-REF-CAP-100: docs/analysis/ files reference 500+ symbols.
 fn doc_max_code_refs() -> usize {
@@ -38,7 +40,7 @@ fn doc_max_code_refs() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|n: &usize| *n > 0)
-        .unwrap_or(100)
+        .unwrap_or(25)
 }
 
 #[derive(Debug, Clone)]
@@ -723,4 +725,47 @@ pub fn index_docs_directory(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // Serialize env-var tests; std::env is not thread-safe.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn doc_max_file_size_default_is_512_kib() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DOC_MAX_FILE_SIZE").ok();
+        std::env::remove_var("LEANKG_DOC_MAX_FILE_SIZE");
+        assert_eq!(doc_max_file_size(), 512 * 1024);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_DOC_MAX_FILE_SIZE", v),
+            None => std::env::remove_var("LEANKG_DOC_MAX_FILE_SIZE"),
+        }
+    }
+
+    #[test]
+    fn doc_max_code_refs_default_is_25() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DOC_MAX_CODE_REFS").ok();
+        std::env::remove_var("LEANKG_DOC_MAX_CODE_REFS");
+        assert_eq!(doc_max_code_refs(), 25);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", v),
+            None => std::env::remove_var("LEANKG_DOC_MAX_CODE_REFS"),
+        }
+    }
+
+    #[test]
+    fn doc_max_code_refs_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("LEANKG_DOC_MAX_CODE_REFS").ok();
+        std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", "25");
+        assert_eq!(doc_max_code_refs(), 25);
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", v),
+            None => std::env::remove_var("LEANKG_DOC_MAX_CODE_REFS"),
+        }
+    }
 }
