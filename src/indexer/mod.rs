@@ -70,7 +70,6 @@ pub use xml_generic::GenericXmlExtractor;
 pub use xml_layout::*;
 
 use crate::db::models::{CodeElement, Relationship};
-use tree_sitter;
 use crate::graph::GraphEngine;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
@@ -715,8 +714,7 @@ fn extract_elements_for_file(
     let tree = PARSERS.with(|parsers| {
         let mut parsers = parsers.borrow_mut();
         let parser = parsers.entry(language.to_string()).or_insert_with(|| {
-            crate::indexer::lang::registry::parser_for(language)
-                .unwrap_or_else(tree_sitter::Parser::new)
+            crate::indexer::lang::registry::parser_for(language).unwrap_or_default()
         });
         parser.parse(source, None).ok_or("parse failed")
     })?;
