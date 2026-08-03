@@ -57,12 +57,17 @@ impl DocIndexer {
         }
 
         for entry in WalkDir::new(docs_path)
-            .follow_links(true)
+            // FR-INDEX-NO-HANG: don't follow symlinks (cycles hang the walk).
+            .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
             if path.is_file() {
+                // FR-INDEX-NO-HANG: skip symlinked files (duplicates / deps).
+                if path.is_symlink() {
+                    continue;
+                }
                 if let Some(ext) = path.extension() {
                     if ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd" {
                         match self.parse_doc_file(path, docs_path, graph) {
@@ -552,12 +557,17 @@ impl DocIndexer {
         }
 
         for entry in WalkDir::new(docs_path)
-            .follow_links(true)
+            // FR-INDEX-NO-HANG: don't follow symlinks (cycles hang the walk).
+            .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
             if path.is_file() {
+                // FR-INDEX-NO-HANG: skip symlinked files (duplicates / deps).
+                if path.is_symlink() {
+                    continue;
+                }
                 if let Some(ext) = path.extension() {
                     if ext == "md" || ext == "markdown" {
                         let relative = path.strip_prefix(docs_path).unwrap_or(path);
