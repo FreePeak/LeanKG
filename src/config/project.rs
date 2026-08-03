@@ -188,6 +188,23 @@ impl Default for ProjectConfig {
                     "python".to_string(),
                     "java".to_string(),
                     "kotlin".to_string(),
+                    "rust".to_string(),
+                    "dart".to_string(),
+                    "swift".to_string(),
+                    "objc".to_string(),
+                    "c".to_string(),
+                    "cpp".to_string(),
+                    "ruby".to_string(),
+                    "php".to_string(),
+                    "perl".to_string(),
+                    "r".to_string(),
+                    "elixir".to_string(),
+                    "bash".to_string(),
+                    "lua".to_string(),
+                    "scala".to_string(),
+                    "zig".to_string(),
+                    "solidity".to_string(),
+                    "csharp".to_string(),
                 ],
             },
             indexer: IndexerConfig {
@@ -199,6 +216,28 @@ impl Default for ProjectConfig {
                     "*.java".to_string(),
                     "*.kt".to_string(),
                     "*.xml".to_string(),
+                    "*.rs".to_string(),
+                    "*.dart".to_string(),
+                    "*.swift".to_string(),
+                    "*.m".to_string(),
+                    "*.mm".to_string(),
+                    "*.c".to_string(),
+                    "*.h".to_string(),
+                    "*.cpp".to_string(),
+                    "*.hpp".to_string(),
+                    "*.rb".to_string(),
+                    "*.php".to_string(),
+                    "*.pl".to_string(),
+                    "*.pm".to_string(),
+                    "*.r".to_string(),
+                    "*.ex".to_string(),
+                    "*.exs".to_string(),
+                    "*.sh".to_string(),
+                    "*.lua".to_string(),
+                    "*.scala".to_string(),
+                    "*.zig".to_string(),
+                    "*.sol".to_string(),
+                    "*.cs".to_string(),
                 ],
                 typed_resolve: default_typed_resolve(),
             },
@@ -243,10 +282,16 @@ mod tests {
     fn test_config_project_settings() {
         let config = ProjectConfig::default();
         assert_eq!(config.project.root, PathBuf::from("."));
-        assert_eq!(
-            config.project.languages,
-            vec!["go", "typescript", "python", "java", "kotlin"]
-        );
+        let langs = &config.project.languages;
+        // Default language list is a superset of the original five plus all
+        // registry-backed languages.
+        for l in [
+            "go", "typescript", "python", "java", "kotlin", "rust", "dart", "swift", "objc",
+            "c", "cpp", "ruby", "php", "perl", "r", "elixir", "bash", "lua", "scala", "zig",
+            "solidity", "csharp",
+        ] {
+            assert!(langs.contains(&l.to_string()), "missing default lang {}", l);
+        }
     }
 
     #[test]
