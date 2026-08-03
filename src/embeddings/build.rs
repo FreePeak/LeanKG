@@ -185,8 +185,16 @@ pub fn plan_embed_memory_with_budget(
         1_000
     } else if max_rss_mb <= 3_072 {
         2_500
-    } else {
+    } else if max_rss_mb <= 6_144 {
         DEFAULT_UPSERT_CHUNK
+    } else {
+        // FR-EMBED-PERF-1000: high-memory budgets allow much larger import
+        // batches. Each CozoDB commit has ~16s fixed overhead (WAL/fsync);
+        // at 5000 rows that caps the writer at ~320 vec/s regardless of worker
+        // count. 20000 rows amortizes the same fixed cost → ~1250 vec/s.
+        // Lower peak RSS per flush (per-vector 384 f32 ≈ 1.5 KB) so a 20k
+        // flush is ~30 MB of Cozo row data — safe under 12g.
+        DEFAULT_UPSERT_CHUNK * 4
     };
     let upsert_chunk = effective_upsert_chunk().min(upsert_cap).max(100);
 
@@ -1950,6 +1958,32 @@ mod tests {
         assert_eq!(plan.workers, 8, "expected 8 workers under 12g budget");
         assert_eq!(plan.batch_size, 128);
         assert_eq!(plan.max_rss_mb, 12000);
+    }
+
+    // FR-EMBED-PERF-1000: high-memory budgets allow 4× larger import batches
+    // so the ~16s/commit CozoDB writer cost amortizes toward >1000 vec/s.
+    #[test]
+    fn embed_memory_plan_12g_budget_allows_large_upsert_chunk() {
+        let plan = plan_embed_memory_with_budget(8, 128, 12000);
+        // DEFAULT_UPSERT_CHUNK = 5000; 12g budget → 20000 cap. Env override
+        // (20000) must pass through.
+        std::env::set_var("LEANKG_EMBED_UPSERT_CHUNK", "20000");
+        let plan_env = plan_embed_memory_with_budget(8, 128, 12000);
+        std::env::remove_var("LEANKG_EMBED_UPSERT_CHUNK");
+        assert_eq!(plan.upsert_chunk, 5000, "default chunk stays 5000 (no env)");
+        assert_eq!(
+            plan_env.upsert_chunk, 20000,
+            "12g budget must allow env 20000 chunk"
+        );
+    }
+
+    // FR-EMBED-PERF-1000: 6g budget still caps at default 5000 (no 4× bump).
+    #[test]
+    fn embed_memory_plan_6g_budget_keeps_default_upsert_chunk() {
+        std::env::set_var("LEANKG_EMBED_UPSERT_CHUNK", "20000");
+        let plan = plan_embed_memory_with_budget(8, 128, 6000);
+        std::env::remove_var("LEANKG_EMBED_UPSERT_CHUNK");
+        assert_eq!(plan.upsert_chunk, 5000, "6g budget caps chunk at default");
     }
 
     // FR-EMBED-PERF-15M: 6g mem_limit → 8 workers capped to <= 7 (not 8).
