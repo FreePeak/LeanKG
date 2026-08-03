@@ -569,7 +569,7 @@ impl<'a> EntityExtractor<'a> {
     fn extract_jai_elements(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
         let patterns: &[(&str, &str)] = &[
-            (r"(?m)^\s*::\s*(\w+)\s*::\s*\(", "function"),
+            (r"(?m)^\s*(\w+)\s*::\s*\(", "function"),
             (r"(?m)^\s*\w+\s*::\s*\(([^)]*)\)\s*\{", "function"),
         ];
         for (pat, etype) in patterns {
