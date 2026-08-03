@@ -286,9 +286,28 @@ mod tests {
         // Default language list is a superset of the original five plus all
         // registry-backed languages.
         for l in [
-            "go", "typescript", "python", "java", "kotlin", "rust", "dart", "swift", "objc",
-            "c", "cpp", "ruby", "php", "perl", "r", "elixir", "bash", "lua", "scala", "zig",
-            "solidity", "csharp",
+            "go",
+            "typescript",
+            "python",
+            "java",
+            "kotlin",
+            "rust",
+            "dart",
+            "swift",
+            "objc",
+            "c",
+            "cpp",
+            "ruby",
+            "php",
+            "perl",
+            "r",
+            "elixir",
+            "bash",
+            "lua",
+            "scala",
+            "zig",
+            "solidity",
+            "csharp",
         ] {
             assert!(langs.contains(&l.to_string()), "missing default lang {}", l);
         }
