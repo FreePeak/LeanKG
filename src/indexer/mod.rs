@@ -70,6 +70,7 @@ pub use xml_generic::GenericXmlExtractor;
 pub use xml_layout::*;
 
 use crate::db::models::{CodeElement, Relationship};
+use tree_sitter;
 use crate::graph::GraphEngine;
 use ignore::WalkBuilder;
 use rayon::prelude::*;

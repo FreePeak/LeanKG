@@ -395,6 +395,310 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+    /// Regex-only entity extraction for languages whose tree-sitter grammar
+    /// is unavailable (ABI conflict) or absent. Dispatches per language.
+    pub fn extract_regex_only(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
+        let mut elements: Vec<CodeElement> = Vec::new();
+        let _relationships: Vec<Relationship> = Vec::new();
+        match self.language {
+            "v" => self.extract_v_elements(&mut elements),
+            "odin" => self.extract_odin_elements(&mut elements),
+            "gleam" => self.extract_gleam_elements(&mut elements),
+            "agda" => self.extract_agda_elements(&mut elements),
+            "fortran" => self.extract_fortran_elements(&mut elements),
+            "ada" => self.extract_ada_elements(&mut elements),
+            "julia" => self.extract_julia_elements(&mut elements),
+            "matlab" => self.extract_matlab_elements(&mut elements),
+            "sas" => self.extract_sas_elements(&mut elements),
+            "cmake" => self.extract_cmake_elements(&mut elements),
+            "make" => self.extract_make_elements(&mut elements),
+            "starlark" => self.extract_starlark_elements(&mut elements),
+            "groovy" => self.extract_groovy_elements(&mut elements),
+            "jinja" => self.extract_jinja_elements(&mut elements),
+            "scss" => self.extract_scss_elements(&mut elements),
+            _ => {}
+        }
+        (elements, _relationships)
+    }
+
+    fn push_regex_element(
+        &self,
+        elements: &mut Vec<CodeElement>,
+        element_type: &str,
+        name: &str,
+    ) {
+        let qn = format!("{}::{}", self.file_path, name);
+        elements.push(CodeElement {
+            qualified_name: qn,
+            element_type: element_type.to_string(),
+            name: name.to_string(),
+            file_path: self.file_path.to_string(),
+            line_start: 1,
+            line_end: 1,
+            language: self.language.to_string(),
+            ..Default::default()
+        });
+    }
+
+    fn extract_v_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?m)^\s*fn\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_t = match Regex::new(r"(?m)^\s*(?:pub\s+)?(?:struct|enum)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_t.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+    }
+
+    fn extract_odin_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?m)^\s*(\w+)\s*::\s*proc\b") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_gleam_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_f = match Regex::new(r"(?m)^\s*pub\s+fn\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_t = match Regex::new(r"(?m)^\s*pub\s+type\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_t.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+    }
+
+    fn extract_agda_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?m)^data\s+(\w+)\s*:") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+        let re_f = match Regex::new(r"(?m)^(\w+)\s*:\s*\w") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                let n = m.as_str();
+                // Skip if it matches the data line pattern (already captured) or common keywords.
+                if matches!(n, "data" | "record" | "postulate" | "private" | "module" | "where" | "let" | "in") {
+                    continue;
+                }
+                self.push_regex_element(elements, "function", n);
+            }
+        }
+    }
+
+    fn extract_fortran_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?im)^\s*(?:recursive\s+)?(?:function|subroutine|program)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_ada_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?im)^\s*(?:procedure|function|package(?:\s+body)?|task|protected\s+type)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_julia_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?m)^\s*(?:function|macro|struct|module|abstract type|primitive type)\s+(\w+)?") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_matlab_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_f = match Regex::new(r"(?m)^\s*function\s+(?:[^\s=]*\s*=\s*)?(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_c = match Regex::new(r"(?m)^\s*classdef\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_c.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+    }
+
+    fn extract_sas_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_m = match Regex::new(r"(?im)^\s*%macro\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_m.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_p = match Regex::new(r"(?im)^\s*proc\s+(\w+)\s*;") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_p.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_cmake_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(
+            r"(?im)^\s*(?:function|macro|add_executable|add_library|target_sources)\s*\(\s*(\w+)",
+        ) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_make_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        // Top-level targets: line starts at column 0 with name:, no `=` (rule assignment).
+        let re = match Regex::new(r"(?m)^([A-Za-z0-9_./-]+):\s*[^=]") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_starlark_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?m)^\s*def\s+(\w+)\s*\(") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_groovy_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_m = match Regex::new(
+            r"(?m)^\s*(?:def|void|static|public|private|protected)\s+(\w+)\s*\(",
+        ) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_m.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_c = match Regex::new(r"(?m)^\s*(?:class|interface|trait|enum)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_c.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+    }
+
+    fn extract_jinja_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?ms)\{%\s*(?:block|macro)\s+(\w+)[^%]*?%\}") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_scss_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_m = match Regex::new(r"(?m)^\s*@(?:mixin|function)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_m.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
     /// Regex-based import scan for grammars whose import forms are generic calls
     /// (ruby `require 'x'`, elixir `import Module`, R `library(x)`).
     fn extract_script_imports(&self, relationships: &mut Vec<Relationship>) {
@@ -659,7 +963,6 @@ impl<'a> EntityExtractor<'a> {
             | "class_decl"
             | "data_type"
             | "type_alias_declaration"
-            | "module_declaration"
             | "module_binding"
             | "type_definition"
             | "class_statement" => {
@@ -4443,5 +4746,155 @@ class Box {
                 "Should extract value getter/setter"
             );
         }
+    }
+
+    // ---- regex-only extractors (grammar: None languages) ----
+
+    #[test]
+    fn test_extract_v_regex() {
+        let source = b"fn double(x int) int { return x * 2 }\nstruct Point { x int y int }\n";
+        let extractor = EntityExtractor::new(source, "math.v", "v");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"double"), "expected v double, got {:?}", names);
+        assert!(names.contains(&"Point"), "expected v Point struct, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_odin_regex() {
+        let source = b"package main\nadd :: proc(a, b: int) -> int { return a + b }\n";
+        let extractor = EntityExtractor::new(source, "main.odin", "odin");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected odin add, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_gleam_regex() {
+        let source = b"pub fn add(a: Int, b: Int) -> Int { a + b }\npub type Point { Point(x: Int, y: Int) }\n";
+        let extractor = EntityExtractor::new(source, "math.gleam", "gleam");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected gleam add, got {:?}", names);
+        assert!(names.contains(&"Point"), "expected gleam Point type, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_agda_regex() {
+        let source = b"data Bool : Set where\n  true : Bool\n  false : Bool\nid : Set -> Set\nid x = x\n";
+        let extractor = EntityExtractor::new(source, "Bool.agda", "agda");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Bool"), "expected agda Bool data, got {:?}", names);
+        assert!(names.contains(&"id"), "expected agda id, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_fortran_regex() {
+        let source = b"function add(a, b) result(s)\n  integer :: a, b, s\n  s = a + b\nend function\nprogram test\nend program\n";
+        let extractor = EntityExtractor::new(source, "math.f90", "fortran");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected fortran add, got {:?}", names);
+        assert!(names.contains(&"test"), "expected fortran test program, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_ada_regex() {
+        let source = b"package body Test is\n  function Add(A : Integer) return Integer is\n  begin\n    return A;\n  end Add;\nend Test;\n";
+        let extractor = EntityExtractor::new(source, "test.adb", "ada");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Add"), "expected ada Add function, got {:?}", names);
+        assert!(names.contains(&"Test"), "expected ada Test package, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_julia_regex() {
+        let source = b"function add(a::Int, b::Int)::Int\n  a + b\nend\nstruct Point\n  x::Float64\nend\n";
+        let extractor = EntityExtractor::new(source, "math.jl", "julia");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected julia add, got {:?}", names);
+        assert!(names.contains(&"Point"), "expected julia Point struct, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_matlab_regex() {
+        let source = b"function y = add(a, b)\n  y = a + b;\nend\nclassdef Point\n  properties\n    x\n  end\nend\n";
+        let extractor = EntityExtractor::new(source, "math.m", "matlab");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected matlab add, got {:?}", names);
+        assert!(names.contains(&"Point"), "expected matlab Point classdef, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_sas_regex() {
+        let source = b"%macro mymac();\n  data _null_; run;\n%mend;\nproc sql;\n  select * from foo;\nquit;\n";
+        let extractor = EntityExtractor::new(source, "x.sas", "sas");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"mymac"), "expected sas mymac, got {:?}", names);
+        assert!(names.contains(&"sql"), "expected sas sql proc, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_cmake_regex() {
+        let source = b"function(my_func a b)\n  math(EXPR sum \"${a}+${b}\")\n  return(${sum})\nendfunction()\nadd_executable(my_app main.cpp)\n";
+        let extractor = EntityExtractor::new(source, "CMakeLists.txt", "cmake");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"my_func"), "expected cmake my_func, got {:?}", names);
+        assert!(names.contains(&"my_app"), "expected cmake my_app, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_make_regex() {
+        let source = b"build:\n\tgcc -o app main.c\nclean:\n\trm -f app\n";
+        let extractor = EntityExtractor::new(source, "Makefile", "make");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"build"), "expected make build, got {:?}", names);
+        assert!(names.contains(&"clean"), "expected make clean, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_starlark_regex() {
+        let source = b"def my_rule(ctx):\n  return [DefaultInfo(files = depset(ctx.attr.srcs))]\nmy_rule = rule(implementation = my_rule)\n";
+        let extractor = EntityExtractor::new(source, "BUILD", "starlark");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"my_rule"), "expected starlark my_rule, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_groovy_regex() {
+        let source = b"def greet(name) { \"hello ${name}\" }\nclass User {\n  String name\n}\ntask build {\n  doLast { println 'build' }\n}\n";
+        let extractor = EntityExtractor::new(source, "build.gradle", "groovy");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"greet"), "expected groovy greet, got {:?}", names);
+        assert!(names.contains(&"User"), "expected groovy User class, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_jinja_regex() {
+        let source = b"{% block content %}{% endblock %}\n{% macro field(name) %}<input name=\"{{ name }}\">{% endmacro %}\n{% extends \"base.html\" %}\n{% include \"partials/nav.html\" %}\n";
+        let extractor = EntityExtractor::new(source, "x.jinja", "jinja");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"content"), "expected jinja content block, got {:?}", names);
+        assert!(names.contains(&"field"), "expected jinja field macro, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_scss_regex() {
+        let source = b"@mixin button($color) { background: $color; }\n@function rem($px) { @return $px / 16px * 1rem; }\n@import \"vars\";\n@include \"theme\";\n";
+        let extractor = EntityExtractor::new(source, "x.scss", "scss");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"button"), "expected scss button mixin, got {:?}", names);
+        assert!(names.contains(&"rem"), "expected scss rem function, got {:?}", names);
     }
 }
