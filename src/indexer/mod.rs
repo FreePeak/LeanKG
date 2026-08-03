@@ -271,8 +271,13 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     ];
 
     let root_path = Path::new(root).to_path_buf();
+    // FR-INDEX-NO-HANG: do NOT follow symlinks. `follow_links(true)` on a
+    // monorepo with symlink cycles (node_modules/.bin, linked modules) causes
+    // the walker to traverse forever — the be index hung for >10 min with
+    // 1 thread at 0% progress. Symlinked files are duplicates / deps we
+    // exclude anyway.
     let walker = WalkBuilder::new(root)
-        .follow_links(true)
+        .follow_links(false)
         .filter_entry(move |entry| !is_default_ignored_entry(&root_path, entry.path()))
         .build();
 
@@ -282,6 +287,14 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         let path = entry.path();
 
         if !path.is_file() {
+            continue;
+        }
+
+        // FR-INDEX-NO-HANG: skip symlinks outright. `follow_links(false)`
+        // stops the walker from descending symlinked dirs, but a symlinked
+        // FILE still passes `is_file()`. Indexing it duplicates the target
+        // and can pull in node_modules/.bin or other linked junk.
+        if path.is_symlink() {
             continue;
         }
 
@@ -2254,6 +2267,42 @@ mod tests {
             Some(v) => std::env::set_var("LEANKG_MAX_FILE_SIZE", v),
             None => std::env::remove_var("LEANKG_MAX_FILE_SIZE"),
         }
+    }
+
+    #[test]
+    fn test_symlink_cycle_does_not_hang_or_double_index() {
+        // FR-INDEX-NO-HANG: follow_links(false) must skip symlinks entirely,
+        // so a symlink cycle (a -> b -> a) can't hang the walker or index a
+        // file twice through the link.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a");
+        std::fs::create_dir_all(&a).expect("mkdir a");
+        let real = a.join("real.go");
+        std::fs::write(&real, b"package x\nfunc A() {}").expect("write real");
+
+        // Symlink cycle: a/back -> a, and a/link.go -> real.go.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&a, a.join("back")).expect("symlink back");
+            std::os::unix::fs::symlink(&real, a.join("link.go")).expect("symlink link");
+        }
+
+        let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
+        let names: Vec<&str> = files
+            .iter()
+            .map(|p| std::path::Path::new(p).file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            names.iter().filter(|n| **n == "real.go").count(),
+            1,
+            "real.go must be indexed exactly once (no symlink dup)"
+        );
+        assert!(
+            !names.contains(&"link.go"),
+            "symlinked file must not be indexed: {:?}",
+            names
+        );
     }
 
     #[test]
