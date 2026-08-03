@@ -271,9 +271,13 @@ A second, related fix targets the `get_overview_context` tool (and the `leankg:/
 | Root cause | Bulk `all_elements()` + `all_relationships()` calls in `wake_up_summary` / `identity_context` / `critical_facts_context` (`src/graph/query.rs:4986-5092`). Cache layer skipped above `LEANKG_MAX_CACHE_ELEMENTS=50000`. | `docs/reports/2026-08-03-mcp-overview-megagraph-fix.md` §2 |
 | Fix | Replace bulk pulls with `count_elements_by_type` / `count_elements_by_type_in` aggregates + 5k-row paginated sample; remove `leankg://overview/wake_up` resource. | §3 |
 | Unit tests | 3 new regression tests in `tests/overview_mega_tests.rs` (15k seed, 3s ceiling). 3/3 pass. Full graph_query_tests (10/10) + mcp_tests (30/30) regression suite passes. | §5 |
-| Live MCP rebuild | **Not done** — pending user approval to rebuild Docker images after the fix lands. | §6 |
+| Live MCP rebuild | **DONE** — rebuilt `freepeak/leankg:local` (sha 7db24880) + recreated container. `get_overview_context` warm call = **18 ms** (was >300s timeout). | commit `52908370` |
 
 When committed + rebuilt, `get_overview_context` on workspace-be should return in seconds (instead of OOM at the 6g/30s baseline, or ~90s with the 12g/300s band-aid). This addresses one of the 5 genuine perf issues identified above.
+
+**Follow-up fix found during live validation (commit `52908370`):** the user's `count_elements_by_type` fix eliminated the top-level bulk pulls, but `critical_facts_context` calls `get_god_nodes(5, …)` which **still used `all_relationships()`** (materializing the whole 2.3M-edge graph) → the overview hung again. Fixed `get_god_nodes` to compute node degree in ONE CozoDB aggregate pass (`?[node, count(node)] := *relationships[…]`) + bounded `get_elements_by_qualified_names` instead of `all_*`. New regression test `get_god_nodes_uses_bounded_pagination_not_all_relationships`. This was the last bulk pull in the overview path.
+
+Live result: `get_overview_context` warm = **0.018s** (18ms), cold = ~16s (RocksDB cache). `semantic_search` = 45s (HNSW on 137k vectors — separate perf issue, still returns 50 candidates).
 
 The remaining 4 slow tools (`kg_context`, `kg_concept_map`, `kg_trace_workflow`, `kg_ontology_status`, `get_architecture`, `get_graph_schema`, `find_dead_code`, `get_traceability_matrix`) are a separate HNSW/scanning bottleneck — the cold-embed >1000 vec/s follow-up task is the next lever for those.
 
