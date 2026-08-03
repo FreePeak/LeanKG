@@ -319,6 +319,31 @@ impl<'a> EntityExtractor<'a> {
             self.extract_elixir_definitions(&mut elements);
         }
 
+        // MINIMAL-tier languages (json/toml/yaml/css/html/graphql/protobuf/
+        // dockerfile): emit a file-level document element so the file is indexed
+        // even when the grammar has no function/class node kinds.
+        if elements.is_empty()
+            && relationships.iter().all(|r| r.rel_type != "imports")
+            && crate::indexer::lang::registry::language_spec(self.language)
+                .map(|s| s.tier == crate::indexer::lang::registry::Tier::Minimal)
+                .unwrap_or(false)
+        {
+            let file_name = std::path::Path::new(self.file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(self.file_path);
+            elements.push(CodeElement {
+                qualified_name: format!("{}::<document>", self.file_path),
+                element_type: "document".to_string(),
+                name: format!("{}: <document>", file_name),
+                file_path: self.file_path.to_string(),
+                line_start: 1,
+                line_end: 1,
+                language: self.language.to_string(),
+                ..Default::default()
+            });
+        }
+
         (elements, relationships)
     }
 
@@ -612,7 +637,9 @@ impl<'a> EntityExtractor<'a> {
             | "trait_declaration"
             | "contract_declaration"
             | "struct_declaration"
-            | "library_declaration" => {
+            | "library_declaration"
+            | "namespace_declaration"
+            | "file_scoped_namespace_declaration" => {
                 self.extract_class(node, parent, elements, relationships);
             }
             "decorated_definition" => {
@@ -645,7 +672,7 @@ impl<'a> EntityExtractor<'a> {
             | "use"
             | "use_no_subs_statement"
             | "import_directive"
-            | "import_declaration" => {
+            | "using_directive" => {
                 for source in self.get_import_sources(node, node_type) {
                     relationships.push(Relationship {
                         id: None,
@@ -1991,6 +2018,24 @@ impl<'a> EntityExtractor<'a> {
             return sources;
         }
 
+        // C#: using System; — scoped_identifier / identifier children.
+        if node_type == "using_directive" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if matches!(child.kind(), "identifier" | "scoped_identifier") {
+                    if let Some(bytes) = self.source.get(child.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let trimmed = s.trim().trim_matches(';');
+                            if !trimmed.is_empty() {
+                                sources.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            return sources;
+        }
+
         // Java: import com.example.Foo
         if node_type == "import_declaration" && self.language == "java" {
             let mut cursor = node.walk();
@@ -2277,6 +2322,27 @@ mod tests {
     fn parse_lua(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_lua::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_json(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_json::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_yaml(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    fn parse_csharp(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_c_sharp::LANGUAGE.into();
         parser.set_language(&lang).ok()?;
         parser.parse(source, None)
     }
@@ -2631,6 +2697,68 @@ mod tests {
             assert!(
                 !imports.is_empty(),
                 "expected lua require, got {:?}",
+                relationships
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_json_minimal_document() {
+        let source = b"{\"name\": \"test\", \"count\": 3}";
+        if let Some(tree) = parse_json(source) {
+            let extractor = EntityExtractor::new(source, "config.json", "json");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected json document element, got {:?}",
+                elements
+            );
+            assert!(elements.iter().any(|e| e.element_type == "document"));
+        }
+    }
+
+    #[test]
+    fn test_extract_yaml_minimal_document() {
+        let source = b"name: test\nversion: 1.0\n";
+        if let Some(tree) = parse_yaml(source) {
+            let extractor = EntityExtractor::new(source, "config.yaml", "yaml");
+            let (elements, _) = extractor.extract(&tree);
+            assert!(
+                !elements.is_empty(),
+                "expected yaml document element, got {:?}",
+                elements
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_csharp_class_and_method() {
+        let source = b"using System;\nnamespace Demo {\n  public class User {\n    public string Greet(string name) {\n      return \"hi \" + name;\n    }\n  }\n}";
+        if let Some(tree) = parse_csharp(source) {
+            let extractor = EntityExtractor::new(source, "User.cs", "csharp");
+            let (elements, relationships) = extractor.extract(&tree);
+            let classes: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class" && e.name == "User")
+                .collect();
+            assert!(
+                !classes.is_empty(),
+                "expected csharp class, got {:?}",
+                elements
+            );
+            let methods: Vec<_> = elements.iter().filter(|e| e.name == "Greet").collect();
+            assert!(
+                !methods.is_empty(),
+                "expected csharp method Greet, got {:?}",
+                elements
+            );
+            let imports: Vec<_> = relationships
+                .iter()
+                .filter(|r| r.rel_type == "imports")
+                .collect();
+            assert!(
+                !imports.is_empty(),
+                "expected csharp using, got {:?}",
                 relationships
             );
         }
