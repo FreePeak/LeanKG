@@ -15,6 +15,32 @@ use walkdir::WalkDir;
 /// hundreds of functions (FR-SEM-08 + FR-SEM-09).
 const PER_SYMBOL_FANOUT_CAP: usize = 8;
 
+/// Maximum markdown doc file size to parse. Larger files are skipped
+/// to bound memory + parse time on huge generated markdown. Default 512 KiB.
+/// Override with `LEANKG_DOC_MAX_FILE_SIZE` (bytes).
+/// FR-DOC-CAP-512K: multi-MiB generated .md files can stall the doc walker
+/// past the 10-min index budget.
+fn doc_max_file_size() -> u64 {
+    std::env::var("LEANKG_DOC_MAX_FILE_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(512 * 1024)
+}
+
+/// Maximum `code_refs` resolved per markdown doc. Each resolution can fire
+/// multiple CozoDB round-trips; on a doc with hundreds of code references
+/// the indexer blows past the 10-min budget. Default 100.
+/// Override with `LEANKG_DOC_MAX_CODE_REFS`.
+/// FR-DOC-REF-CAP-100: docs/analysis/ files reference 500+ symbols.
+fn doc_max_code_refs() -> usize {
+    std::env::var("LEANKG_DOC_MAX_CODE_REFS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n: &usize| *n > 0)
+        .unwrap_or(100)
+}
+
 #[derive(Debug, Clone)]
 pub struct DocIndexResult {
     pub documents: Vec<CodeElement>,
@@ -70,6 +96,26 @@ impl DocIndexer {
                 }
                 if let Some(ext) = path.extension() {
                     if ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd" {
+                        // FR-DOC-CAP-512K: skip oversized md files so a
+                        // multi-MiB generated .md can't stall the whole
+                        // doc indexer past the 10-min budget.
+                        let max_size = doc_max_file_size();
+                        match std::fs::metadata(path) {
+                            Ok(meta) if meta.len() > max_size => {
+                                eprintln!(
+                                    "Skipping oversize doc ({} bytes > {} cap): {}",
+                                    meta.len(),
+                                    max_size,
+                                    path.display()
+                                );
+                                continue;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                eprintln!("Warning: stat failed for {:?}: {}", path, e);
+                                continue;
+                            }
+                        }
                         match self.parse_doc_file(path, docs_path, graph) {
                             Ok((doc, secs, rels, _children)) => {
                                 documents.push(doc);
@@ -173,8 +219,12 @@ impl DocIndexer {
 
         let mut resolved_count = 0u32;
         let mut skipped_count = 0u32;
+        let cap = doc_max_code_refs();
 
-        for (target, context) in code_refs {
+        // FR-DOC-REF-CAP-100: stop resolving refs once we hit the per-doc
+        // budget so a single doc can't blow the 10-min index budget on
+        // thousands of CozoDB queries.
+        for (target, context) in code_refs.into_iter().take(cap) {
             let resolved_target = match graph {
                 Some(g) => match resolve_code_ref(g, &target) {
                     Some(qn) => {

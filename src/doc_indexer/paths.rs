@@ -1,7 +1,8 @@
 //! Path normalization and alias resolution for doc↔code joins (FR-DOCJOIN-01/02).
 
 use crate::graph::GraphEngine;
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Normalize slashes and strip a leading `./`.
@@ -199,7 +200,24 @@ fn file_matches_mention(element_file: &str, file_part: &str) -> bool {
 /// FR-DOCJOIN-06: when the reference is `file.rs::symbol` and the symbol is
 /// unique in the index, upgrade the join target from file-level to
 /// symbol-level (best-effort). Non-unique symbols fall back to file-level.
+/// FR-DOCJOIN-CACHE: memoize per-process so 24 md files referencing the
+/// same `handler.go` don't each pay the full CozoDB lookup cost.
 pub fn resolve_code_ref(graph: &GraphEngine, raw_ref: &str) -> Option<String> {
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    }
+    CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        if let Some(hit) = cache.get(raw_ref) {
+            return hit.clone();
+        }
+        let resolved = resolve_code_ref_uncached(graph, raw_ref);
+        cache.insert(raw_ref.to_string(), resolved.clone());
+        resolved
+    })
+}
+
+fn resolve_code_ref_uncached(graph: &GraphEngine, raw_ref: &str) -> Option<String> {
     if let Some((file_part, sym_part)) = split_file_symbol(raw_ref) {
         // FR-DOCJOIN-06: upgrade to the symbol key only when the symbol name
         // is unique across the index AND its element lives in the mentioned
