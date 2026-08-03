@@ -690,6 +690,22 @@ fn extract_elements_for_file(
         }
     };
 
+    // Languages whose grammar bundles but fails to load (toml/dockerfile pin
+    // incompatible tree-sitter versions) get a useless Parser::new() that
+    // returns None from .parse(). Short-circuit to the regex-only path.
+    if crate::indexer::lang::registry::language_spec(language)
+        .map(|s| s.grammar.is_none())
+        .unwrap_or(false)
+    {
+        let extractor = crate::indexer::EntityExtractor::new(source, file_path, language);
+        let (elements, relationships) = extractor.extract_regex_only();
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
+    }
+
     thread_local! {
         static PARSERS: std::cell::RefCell<std::collections::HashMap<String, tree_sitter::Parser>> =
             std::cell::RefCell::new(std::collections::HashMap::new());
