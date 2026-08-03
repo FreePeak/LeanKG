@@ -26,8 +26,9 @@ services:
     # Side mounts (e.g. /workspace-other) come from docker-compose.override.yml
     # under services.leankg-embed.volumes — same binds as the MCP service.
     # `--full`: paginated scan + type filter (avoids cold incremental
-    # per-QN find_element stall on mega-graphs). workers=4 fits typical
-    # 6–8g Docker VMs; 8×INT8 sessions OOM on ~4g.
+    # per-QN find_element stall on mega-graphs). workers=8 + 14g mem_limit
+    # let INT8 sessions run flat-out under the 12g soft cap (FR-EMBED-PERF-15M;
+    # see docs/validation/2026-08-03-leankg-mcp-validation.md).
     command:
       [
         "embed",
@@ -36,9 +37,9 @@ services:
         "--project",
         "${LEANKG_MCP_PROJECT:-/workspace}",
         "--workers",
-        "4",
+        "8",
         "--batch-size",
-        "64",
+        "128",
         "--types",
         "function,method",
       ]
@@ -51,8 +52,9 @@ services:
       LEANKG_EMBED_MODEL: "bge-q"
       LEANKG_EMBED_MAX_SEQ: "128"
       LEANKG_EMBED_MAX_BLOB_CHARS: "500"
-      # Cap plan_embed_memory for multi-worker INT8 under ~6g mem_limit.
-      LEANKG_EMBED_MAX_MB: "5500"
+      # 12g soft cap → 8 workers × 350 MB + 900 MB base (~3.7 GB) fits
+      # under 10800 MB (90% of 12000). No duty-cycling.
+      LEANKG_EMBED_MAX_MB: "12000"
       OMP_NUM_THREADS: "1"
       RUST_LOG: leankg=info
     volumes:
@@ -62,7 +64,7 @@ services:
       # services.leankg-embed.volumes (mirror services.leankg.volumes).
       - ${HOST_PROJECT_PATH:-./}:${CONTAINER_PROJECT_PATH:-/workspace}
     working_dir: ${CONTAINER_PROJECT_PATH:-/workspace}
-    cpus: "6"
-    mem_reservation: 3g
-    mem_limit: 6g
+    cpus: "10"
+    mem_reservation: 4g
+    mem_limit: 14g
     restart: "no"
