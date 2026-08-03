@@ -385,7 +385,8 @@ fn get_language(file_path: &str) -> Option<&'static str> {
         "dart" => Some("dart"),
         "swift" => Some("swift"),
         "m" | "mm" | "h" => Some("objc"),
-        _ => None,
+        // Registry-driven languages (c/cpp/ruby/php/...).
+        _ => crate::indexer::lang::registry::language_for_path(file_path).map(|s| s.name),
     }
 }
 
@@ -619,42 +620,15 @@ fn extract_elements_for_file(
     };
 
     thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None, None]);
+        static PARSERS: std::cell::RefCell<std::collections::HashMap<String, tree_sitter::Parser>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
     }
-
-    let parser_idx = match language {
-        "go" => 0,
-        "typescript" => 1,
-        "python" => 2,
-        "rust" => 3,
-        "java" => 4,
-        "kotlin" => 5,
-        "dart" => 6,
-        _ => {
-            return Ok(ParsedFile {
-                element_count: 0,
-                elements: vec![],
-                relationships: vec![],
-            })
-        }
-    };
 
     let tree = PARSERS.with(|parsers| {
         let mut parsers = parsers.borrow_mut();
-        let parser = parsers[parser_idx].get_or_insert_with(|| {
-            let mut p = tree_sitter::Parser::new();
-            let lang: tree_sitter::Language = match language {
-                "go" => tree_sitter_go::LANGUAGE.into(),
-                "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                "python" => tree_sitter_python::LANGUAGE.into(),
-                "rust" => tree_sitter_rust::LANGUAGE.into(),
-                "java" => tree_sitter_java::LANGUAGE.into(),
-                "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
-                "dart" => tree_sitter_dart::LANGUAGE.into(),
-                _ => return p,
-            };
-            let _ = p.set_language(&lang);
-            p
+        let parser = parsers.entry(language.to_string()).or_insert_with(|| {
+            crate::indexer::lang::registry::parser_for(language)
+                .unwrap_or_else(tree_sitter::Parser::new)
         });
         parser.parse(source, None).ok_or("parse failed")
     })?;
@@ -2436,6 +2410,44 @@ include("web-app")"#;
             .collect();
         assert!(names.contains(&"main.c"), "missing .c: {:?}", names);
         assert!(names.contains(&"main.cpp"), "missing .cpp: {:?}", names);
+    }
+
+    // Bulk path (extract_elements_for_file) must index registry languages.
+    #[test]
+    fn test_bulk_path_indexes_registry_languages() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = [
+            "main.c",
+            "main.rb",
+            "main.php",
+            "math.R",
+            "User.scala",
+            "Counter.sol",
+            "config.json",
+        ];
+        for f in files {
+            let content = match f {
+                "main.c" => "int add(int a, int b) { return a + b; }\nstruct Point { int x; };",
+                "main.rb" => "class User\n  def greet\n    'hi'\n  end\nend",
+                "main.php" => "<?php\nclass Foo {\n  public function bar() { return 1; }\n}",
+                "math.R" => "square <- function(x) { x * x }\n",
+                "User.scala" => "class User {\n  def greet: String = \"hi\"\n}",
+                "Counter.sol" => "contract Counter {\n  function inc() public { }\n}",
+                "config.json" => "{\"name\": \"test\"}",
+                _ => "",
+            };
+            std::fs::write(dir.path().join(f), content).expect("write");
+        }
+
+        for f in files {
+            let path = dir.path().join(f);
+            let parsed = extract_elements_for_file(path.to_str().unwrap()).expect("extract");
+            assert!(
+                parsed.element_count > 0,
+                "bulk path indexed 0 elements for {}",
+                f
+            );
+        }
     }
 
     // US-GF-07: rationale extraction
