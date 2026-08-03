@@ -989,6 +989,69 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+
+    fn extract_toml_sections(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let re = match Regex::new(r"(?m)^\s*\[([^\]]+)\]") { Ok(r) => r, Err(_) => return };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                let raw = m.as_str().trim();
+                let name = raw.split('.').next().unwrap_or(raw).to_string();
+                if name.is_empty() { continue; }
+                elements.push(CodeElement {
+                    qualified_name: format!("{}::{}", source_path, name),
+                    element_type: "section".to_string(),
+                    name,
+                    file_path: source_path.clone(),
+                    line_start: 1, line_end: 1,
+                    language: "toml".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    fn extract_dockerfile_directives(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let source_path = self.file_path.to_string();
+        let re = match Regex::new(r"(?m)^\s*FROM\s+(\S+)") { Ok(r) => r, Err(_) => return };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                let name = m.as_str().to_string();
+                if name.is_empty() { continue; }
+                elements.push(CodeElement {
+                    qualified_name: format!("{}::stage::{}", source_path, name),
+                    element_type: "stage".to_string(),
+                    name: format!("stage:{}", name),
+                    file_path: source_path.clone(),
+                    line_start: 1, line_end: 1,
+                    language: "dockerfile".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+
+    fn extract_javascript_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(", "function"),
+            (r"(?m)^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>", "function"),
+            (r"(?m)^\s*(?:export\s+)?class\s+(\w+)", "class"),
+            (r#"(?m)^\s*import\s+(?:[^;]*\s+from\s+)?['"]([^'"]+)['"]"#, "import"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
     pub fn extract_regex_only(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut elements: Vec<CodeElement> = Vec::new();
         let _relationships: Vec<Relationship> = Vec::new();
@@ -1069,6 +1132,9 @@ impl<'a> EntityExtractor<'a> {
             "nushell" => self.extract_nushell_elements(&mut elements),
             "fish" => self.extract_fish_elements(&mut elements),
             "fennel" => self.extract_fennel_elements(&mut elements),
+            "toml" => self.extract_toml_sections(&mut elements),
+            "dockerfile" => self.extract_dockerfile_directives(&mut elements),
+            "javascript" => self.extract_javascript_elements(&mut elements),
             "brainfuck" => self.extract_brainfuck_elements(&mut elements),
             "octave" => self.extract_octave_elements(&mut elements),
             "wat" => self.extract_wat_elements(&mut elements),
