@@ -810,6 +810,8 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 [[package]]
 name = "cozo"
 version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a0e07500b27e8f77ebcb6eac4c9a76a173f960da42e843fd13cd8f74178e3f8"
 dependencies = [
  "aho-corasick",
  "approx",

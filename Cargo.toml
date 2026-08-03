@@ -153,10 +153,3 @@ harness = false
 [[bench]]
 name = "redundant_tool_overhead"
 harness = false
-
-
-# LeanKG patch (FR-EMBED-PERF-1000): cozo 0.7.6 on crates.io does not honor
-# LEANKG_COZO_ROCKS_BULK for RocksDB bulk-load mode. Use the local vendored
-# copy in vendor/cozo that calls prepare_for_bulk_load() when the env is set.
-[patch.crates-io]
-cozo = { path = "vendor/cozo" }

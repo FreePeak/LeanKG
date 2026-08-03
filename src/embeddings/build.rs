@@ -1990,7 +1990,11 @@ mod tests {
     #[test]
     fn embed_memory_plan_6g_budget_caps_workers_to_seven_or_less() {
         let plan = plan_embed_memory_with_budget(8, 128, 6000);
-        assert!(plan.workers <= 7, "workers={} expected <=7 under 6g", plan.workers);
+        assert!(
+            plan.workers <= 7,
+            "workers={} expected <=7 under 6g",
+            plan.workers
+        );
     }
 
     // FR-EMBED-PERF-15M: env var LEANKG_EMBED_MAX_MB overrides the build-time default.

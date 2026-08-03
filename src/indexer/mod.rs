@@ -2291,7 +2291,13 @@ mod tests {
         let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
         let names: Vec<&str> = files
             .iter()
-            .map(|p| std::path::Path::new(p).file_name().unwrap().to_str().unwrap())
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            })
             .collect();
         assert_eq!(
             names.iter().filter(|n| **n == "real.go").count(),
