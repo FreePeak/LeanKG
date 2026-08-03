@@ -105,6 +105,13 @@ tree-sitter-powershell = "0.26.4"
 tree-sitter-crystal = "0.1.0"
 tree-sitter-toml = "0.20.0"
 tree-sitter-dockerfile = "0.2.0"
+tree-sitter-cuda = "0.21.1"
+tree-sitter-hlsl = "0.2.0"
+tree-sitter-glsl = "0.2.0"
+tree-sitter-verilog = "1.0.3"
+tree-sitter-systemverilog = "0.4.0"
+tree-sitter-vhdl = "1.4.0"
+tree-sitter-qsharp = "0.2.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
