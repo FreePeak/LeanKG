@@ -416,6 +416,49 @@ impl<'a> EntityExtractor<'a> {
             "groovy" => self.extract_groovy_elements(&mut elements),
             "jinja" => self.extract_jinja_elements(&mut elements),
             "scss" => self.extract_scss_elements(&mut elements),
+            "vyper" => self.extract_vyper_elements(&mut elements),
+            "move" => self.extract_move_elements(&mut elements),
+            "sway" => self.extract_sway_elements(&mut elements),
+            "tact" => self.extract_tact_elements(&mut elements),
+            "cairo" => self.extract_cairo_elements(&mut elements),
+            "func" => self.extract_func_elements(&mut elements),
+            "fe" => self.extract_fe_elements(&mut elements),
+            "cobol" => self.extract_cobol_elements(&mut elements),
+            "abap" => self.extract_abap_elements(&mut elements),
+            "pl_i" => self.extract_pl_i_elements(&mut elements),
+            "rpg" => self.extract_rpg_elements(&mut elements),
+            "jcl" => self.extract_jcl_elements(&mut elements),
+            "rexx" => self.extract_rexx_elements(&mut elements),
+            "hlasm" => self.extract_hlasm_elements(&mut elements),
+            "msl" => self.extract_msl_elements(&mut elements),
+            "wgsl" => self.extract_wgsl_elements(&mut elements),
+            "vhdl" => self.extract_vhdl_elements(&mut elements),
+            "yul" => self.extract_yul_elements(&mut elements),
+            "wasm" => self.extract_wasm_elements(&mut elements),
+            "commonlisp" => self.extract_commonlisp_elements(&mut elements),
+            "scheme" => self.extract_scheme_elements(&mut elements),
+            "racket" => self.extract_racket_elements(&mut elements),
+            "elisp" => self.extract_elisp_elements(&mut elements),
+            "purescript" => self.extract_purescript_elements(&mut elements),
+            "idris2" => self.extract_idris2_elements(&mut elements),
+            "lean" => self.extract_lean_elements(&mut elements),
+            "coq" => self.extract_coq_elements(&mut elements),
+            "less" => self.extract_less_elements(&mut elements),
+            "stylus" => self.extract_stylus_elements(&mut elements),
+            "sass" => self.extract_sass_elements(&mut elements),
+            "handlebars" => self.extract_handlebars_elements(&mut elements),
+            "pug" => self.extract_pug_elements(&mut elements),
+            "slim" => self.extract_slim_elements(&mut elements),
+            "haml" => self.extract_haml_elements(&mut elements),
+            "erb" => self.extract_erb_elements(&mut elements),
+            "ejs" => self.extract_ejs_elements(&mut elements),
+            "liquid" => self.extract_liquid_elements(&mut elements),
+            "twig" => self.extract_twig_elements(&mut elements),
+            "blade" => self.extract_blade_elements(&mut elements),
+            "astro" => self.extract_astro_elements(&mut elements),
+            "mdx" => self.extract_mdx_elements(&mut elements),
+            "vue" => self.extract_vue_elements(&mut elements),
+            "svelte" => self.extract_svelte_elements(&mut elements),
             _ => {}
         }
         (elements, _relationships)
@@ -438,6 +481,36 @@ impl<'a> EntityExtractor<'a> {
             language: self.language.to_string(),
             ..Default::default()
         });
+    }
+
+    fn regex_pairs(&self, elements: &mut Vec<CodeElement>, pattern: &str, kind: &str) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        if let Ok(re) = Regex::new(pattern) {
+            for cap in re.captures_iter(content) { if let Some(m) = cap.get(1) { self.push_regex_element(elements, kind, m.as_str()); } }
+        }
+    }
+
+    fn extract_msl_elements(&self, elements: &mut Vec<CodeElement>) {
+        self.regex_pairs(elements, r"(?m)^\s*(?:kernel|vertex|fragment)\s+\w+\s+(\w+)\s*\(", "function");
+        self.regex_pairs(elements, r"(?m)^\s*struct\s+(\w+)", "class");
+    }
+    fn extract_wgsl_elements(&self, elements: &mut Vec<CodeElement>) {
+        self.regex_pairs(elements, r"(?m)^\s*@(?:vertex|fragment|compute)\s+fn\s+(\w+)", "function");
+        self.regex_pairs(elements, r"(?m)^\s*struct\s+(\w+)", "class");
+    }
+    fn extract_vhdl_elements(&self, elements: &mut Vec<CodeElement>) {
+        self.regex_pairs(elements, r"(?mi)^\s*entity\s+(\w+)\s+is\b", "class");
+        self.regex_pairs(elements, r"(?mi)^\s*architecture\s+(\w+)\s+of\b", "class");
+        self.regex_pairs(elements, r"(?mi)^\s*process\s*\(?([\w]+)?\)?\s*(?:is|begin)\b", "function");
+    }
+    fn extract_yul_elements(&self, elements: &mut Vec<CodeElement>) {
+        self.regex_pairs(elements, r"(?m)^\s*function\s+(\w+)\s*\(", "function");
+        self.regex_pairs(elements, r##"(?m)^\s*object\s+"(\w+)"\s*\{"##, "class");
+    }
+    fn extract_wasm_elements(&self, elements: &mut Vec<CodeElement>) {
+        self.regex_pairs(elements, r##"(?ms)^\s*\(module\s+(\$?\w+|"[^"]+")\b"##, "class");
+        self.regex_pairs(elements, r##"(?ms)^\s*\(func\s+(\$?\w+|"[^"]+")\b"##, "function");
+        self.regex_pairs(elements, r##"(?ms)^\s*\(global\s+(\$?\w+|"[^"]+")\b"##, "variable");
     }
 
     fn extract_v_elements(&self, elements: &mut Vec<CodeElement>) {
@@ -695,6 +768,501 @@ impl<'a> EntityExtractor<'a> {
         for cap in re_m.captures_iter(content) {
             if let Some(m) = cap.get(1) {
                 self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_vyper_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_dec = match Regex::new(r"(?m)^\s*@\w+\s*\n\s*def\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_dec.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_f = match Regex::new(r"(?m)^\s*def\s+(\w+)\s*\(") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_i = match Regex::new(r"(?m)^\s*interface\s+(\w+):") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_i.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "interface", m.as_str());
+            }
+        }
+        let re_e = match Regex::new(r"(?m)^\s*event\s+(\w+):") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_e.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "event", m.as_str());
+            }
+        }
+    }
+
+    fn extract_move_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_mod = match Regex::new(r"(?m)^\s*module\s+[\w:]+::(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_mod.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "module", m.as_str());
+            }
+        }
+        let re_f = match Regex::new(r"(?m)^\s*(?:public\s+)?(?:entry\s+)?fun\s+(\w+)\s*\(") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_s = match Regex::new(r"(?m)^\s*(?:public\s+)?struct\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_s.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "struct", m.as_str());
+            }
+        }
+    }
+
+    fn extract_sway_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_f = match Regex::new(r"(?m)^\s*(?:pub\s+)?fn\s+(\w+)\s*\(") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_t = match Regex::new(r"(?m)^\s*(?:pub\s+)?(?:struct|enum|trait|impl)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_t.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+        let re_c = match Regex::new(r"(?m)^\s*(?:pub\s+)?(?:contract|abi)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_c.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "contract", m.as_str());
+            }
+        }
+    }
+
+    fn extract_tact_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_f = match Regex::new(r"(?m)^\s*(?:extends\s+)?(?:fun|function)\s+(\w+)\s*\(") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_t = match Regex::new(r"(?m)^\s*(?:contract|trait|struct|message|enum)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_t.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+    }
+
+    fn extract_cairo_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_f = match Regex::new(r"(?m)^\s*(?:pub\s+)?fn\s+(\w+)\s*\(") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_t = match Regex::new(r"(?m)^\s*(?:pub\s+)?(?:struct|trait|impl|enum|mod|contract)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_t.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+    }
+
+    fn extract_func_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_m = match Regex::new(r"(?m)^\s*\(\)\s*(?:recv|fun|asm)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_m.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_g = match Regex::new(r"(?m)^\s*global\s+(\w+)\s*:") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_g.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "variable", m.as_str());
+            }
+        }
+    }
+
+    fn extract_fe_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_f = match Regex::new(r"(?m)^\s*(?:pub\s+)?fn\s+(\w+)\s*\(") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_t = match Regex::new(r"(?m)^\s*(?:contract|struct|type|enum)\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_t.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+    }
+
+    fn extract_cobol_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_p = match Regex::new(r"(?mi)^\s*PROGRAM-ID\.\s*(\w+)\.?") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_p.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "program", m.as_str());
+            }
+        }
+        let re_para = match Regex::new(r"(?mi)^\s{0,7}(\w[\w-]*)\s*\.\s*$") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_para.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                let n = m.as_str();
+                if n.to_ascii_uppercase() == n {
+                    continue;
+                }
+                self.push_regex_element(elements, "paragraph", n);
+            }
+        }
+        let re_d = match Regex::new(r"(?mi)^\s*\d{2}\s+(\w[\w-]*)\s+PIC\s+") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_d.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "variable", m.as_str());
+            }
+        }
+    }
+
+    fn extract_abap_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_c = match Regex::new(r"(?mi)^\s*CLASS\s+(\w+)\s+DEFINITION") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_c.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "class", m.as_str());
+            }
+        }
+        let re_m = match Regex::new(r"(?mi)^\s*METHODS\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_m.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "method", m.as_str());
+            }
+        }
+        let re_f = match Regex::new(r"(?mi)^\s*FORM\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_f.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_pl_i_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_p = match Regex::new(r"(?mi)^\s*(\w+)\s*:\s*PROC(?:EDURE)?\b") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_p.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_d = match Regex::new(r"(?mi)^\s*DCL\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_d.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "variable", m.as_str());
+            }
+        }
+    }
+
+    fn extract_rpg_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_s = match Regex::new(r"(?mi)^\s*BEGSR\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_s.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+        let re_p = match Regex::new(r"(?mi)^\s*DCL-PROC\s+(\w+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_p.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_jcl_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re_j = match Regex::new(r"(?m)^//(\w+)\s+JOB\b") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_j.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "job", m.as_str());
+            }
+        }
+        let re_s = match Regex::new(r"(?m)^//(\w+)\s+EXEC\b") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re_s.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "step", m.as_str());
+            }
+        }
+    }
+
+    fn extract_rexx_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?mi)^\s*(\w+)\s*:\s*(?:procedure|routine)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "function", m.as_str());
+            }
+        }
+    }
+
+    fn extract_hlasm_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let re = match Regex::new(r"(?mi)^\s*(\w+)\s+(?:CSECT|DSECT)\b") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                self.push_regex_element(elements, "section", m.as_str());
+            }
+        }
+    }
+
+    fn extract_commonlisp_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(defun\s+(\S+)\b", "function"),
+            (r"(?ms)^\s*\(defmacro\s+(\S+)\b", "macro"),
+            (r"(?ms)^\s*\(def(?:struct|class)\s+(\S+)\b", "type"),
+            (r"(?ms)^\s*\(defpackage\s+(\S+)\b", "package"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    let name = m.as_str().trim_start_matches(':');
+                    self.push_regex_element(elements, etype, name);
+                }
+            }
+        }
+    }
+
+    fn extract_scheme_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(define\s+\(\s*(\S+)\b", "function"),
+            (r"(?ms)^\s*\(define\s+(\S+)\s+", "variable"),
+            (r"(?ms)^\s*\(define-syntax\s+(\S+)\b", "macro"),
+            (r"(?ms)^\s*\(define-struct\s+(\S+)\b", "type"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_racket_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(define\s+\(\s*(\S+)\b", "function"),
+            (r"(?ms)^\s*\(struct\s+(\S+)\b", "type"),
+            (r"(?ms)^\s*\(module\s+(\S+)\b", "module"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_elisp_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?ms)^\s*\(def(?:un|method|generic|advice)\s+([^\s()]+)", "function"),
+            (r"(?ms)^\s*\(defmacro\s+([^\s()]+)", "macro"),
+            (r"(?ms)^\s*\(def(?:var|custom)\s+([^\s()]+)", "variable"),
+            (r"(?ms)^\s*\((?:cl-)?defstruct\s+([^\s()]+)", "type"),
+            (r"(?ms)^\s*\((?:cl-)?defclass\s+([^\s()]+)", "class"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_purescript_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(\w+)\s+::\s", "function"),
+            (r"(?m)^\s*data\s+(\w+)\b", "type"),
+            (r"(?m)^\s*newtype\s+(\w+)\b", "type"),
+            (r"(?m)^\s*type\s+(\w+)\b", "type"),
+            (r"(?m)^\s*module\s+(\w+(?:\.\w+)*)\s+where", "module"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_idris2_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^(\w+)\s*:\s*\w", "function"),
+            (r"(?m)^data\s+(\w+)\b", "type"),
+            (r"(?m)^record\s+(\w+)\b", "type"),
+            (r"(?m)^interface\s+(\w+)\b", "interface"),
+            (r"(?m)^module\s+([\w.]+)", "module"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_lean_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:def|theorem|lemma|example)\s+(\w+)", "function"),
+            (r"(?m)^\s*structure\s+(\w+)", "type"),
+            (r"(?m)^\s*inductive\s+(\w+)", "type"),
+            (r"(?m)^\s*class\s+(\w+)", "class"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_coq_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:Definition|Fixpoint|Let)\s+(\w+)", "function"),
+            (r"(?m)^\s*(?:Theorem|Lemma|Corollary|Remark|Fact|Proposition)\s+(\w+)", "theorem"),
+            (r"(?m)^\s*(?:Inductive|Coinductive)\s+(\w+)", "type"),
+            (r"(?m)^\s*Module\s+(\w+)", "module"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
             }
         }
     }
@@ -2665,6 +3233,36 @@ impl<'a> EntityExtractor<'a> {
         }
         sources
     }
+
+    fn extract_patterns(&self, elements: &mut Vec<CodeElement>, patterns: &[(&str, &str)]) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        for &(element_type, pattern) in patterns {
+            let Ok(re) = Regex::new(pattern) else { continue };
+            for cap in re.captures_iter(content) {
+                if let Some(name) = cap.get(1) {
+                    self.push_regex_element(elements, element_type, name.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_less_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("selector", r"(?m)^\s*([.#&][\w-]+(?:\s*[+~>]\s*[.#&]?[\w-]+)*)\s*[,{]"), ("function", r"(?m)\.([\w-]+)\s*\("), ("function", r"(?m)\.([\w-]+)\s*;"), ("variable", r"(?m)@([\w-]+)\s*:")]); }
+    fn extract_stylus_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("function", r"(?m)^\s*(\w[\w-]*)\s*\(([^)]*)\)\s*$"), ("variable", r"(?m)^\s*(\w[\w-]*)\s*="), ("selector", r"(?m)^([.#&][\w-]+(?:\s*[+~>]\s*[.#&]?[\w-]+)*)\s*$")]); }
+    fn extract_sass_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("function", r"(?m)^\s*@mixin\s+(\w+)"), ("function", r"(?m)^\s*@include\s+(\w+)"), ("variable", r"(?m)^\s*\$(\w+)\s*:"), ("function", r"(?m)^\s*@function\s+(\w+)\s*\(")]); }
+    fn extract_handlebars_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("function", r"(?ms)\{\{#(\w+)\b"), ("import", r"(?ms)\{\{>\s*(\S+?)\s*\}\}")]); }
+    fn extract_pug_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("function", r"(?m)^\s*mixin\s+(\w+)"), ("block", r"(?m)^block\s+(\w+)"), ("import", r"(?m)^\s*include\s+(\S+)")]); }
+    fn extract_slim_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("class", r"(?m)^(\w[\w-]*)(?:\.[\w-]+|#[\w-]+)*\s*$"), ("function", r"(?m)^\s*==\s*(\w+)\b")]); }
+    fn extract_haml_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("class", r"(?m)^%(\w[\w-]*)"), ("function", r"(?m)^\s*=\s+(\w+)\s")]); }
+    fn extract_erb_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("block", r"(?ms)<%\s*(if)\s+[^%]+%>"), ("function", r"(?ms)<%\s*def\s+(\w+)\b"), ("function", r"(?ms)<%=\s*(\w+)\s*[(\s]")]); }
+    fn extract_ejs_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("block", r"(?ms)<%\s*(if)\s+[^%]+%>"), ("function", r"(?ms)<%\s*function\s+(\w+)\s*\(")]); }
+    fn extract_liquid_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("block", r"(?ms)\{%-?\s*(\w+)\b"), ("import", r#"(?ms)\{%-?\s*include\s+['\"]([^'\"]+)['\"]"#)]); }
+    fn extract_twig_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("block", r"(?ms)\{%-?\s*block\s+(\w+)\b"), ("function", r"(?ms)\{%-?\s*macro\s+(\w+)\b"), ("import", r#"(?ms)\{%-?\s*include\s+['\"]([^'\"]+)['\"]"#), ("variable", r"(?ms)\{%-?\s*for\s+(\w+)\s+in\b")]); }
+    fn extract_blade_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("block", r#"(?ms)@section\s*\(\s*['\"]?(\w+)['\"]?\s*\)"#), ("directive", r#"(?ms)@(?:extends|include|yield|if|foreach|for|while)\s*\(\s*['\"]?(\w+)"#)]); }
+    fn extract_astro_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("class", r"(?ms)<([A-Z]\w+)\b"), ("import", r"(?m)^import\s+(\w+)\s+from")]); }
+    fn extract_mdx_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("class", r"(?ms)<([A-Z]\w+)\b"), ("import", r"(?m)^import\s+(\w+)\s+from")]); }
+    fn extract_vue_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("class", r"(?ms)<([A-Z]\w+)\b"), ("import", r"(?m)^import\s+(\w+)\s+from")]); }
+    fn extract_svelte_elements(&self, e: &mut Vec<CodeElement>) { self.extract_patterns(e, &[("variable", r"(?m)^\s*export\s+let\s+(\w+)"), ("class", r"(?ms)<([A-Z]\w+)\b")]); }
+
 }
 
 #[cfg(test)]
@@ -4897,4 +5495,278 @@ class Box {
         assert!(names.contains(&"button"), "expected scss button mixin, got {:?}", names);
         assert!(names.contains(&"rem"), "expected scss rem function, got {:?}", names);
     }
+
+    #[test]
+    fn test_extract_vyper_regex() {
+        let source = b"@external\ndef foo() -> uint256:\n    return 1\ninterface IFoo:\n    def bar() -> uint256: view\n";
+        let extractor = EntityExtractor::new(source, "C.vy", "vyper");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"foo"), "expected vyper foo, got {:?}", names);
+        assert!(names.contains(&"IFoo"), "expected vyper IFoo interface, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_move_regex() {
+        let source = b"module 0xCAFE::counter\npublic fun add(a: u64, b: u64): u64 { a + b }\npublic struct Counter has key { value: u64 }\n";
+        let extractor = EntityExtractor::new(source, "counter.move", "move");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"counter"), "expected move counter module, got {:?}", names);
+        assert!(names.contains(&"add"), "expected move add fun, got {:?}", names);
+        assert!(names.contains(&"Counter"), "expected move Counter struct, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_sway_regex() {
+        let source = b"fn add(a: u64, b: u64) -> u64 { a + b }\npub struct Counter { value: u64 }\ncontract Foo { counter: u64 }\n";
+        let extractor = EntityExtractor::new(source, "C.sw", "sway");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected sway add fn, got {:?}", names);
+        assert!(names.contains(&"Counter"), "expected sway Counter struct, got {:?}", names);
+        assert!(names.contains(&"Foo"), "expected sway Foo contract, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_tact_regex() {
+        let source = b"contract Foo {\n    counter: Int as uint64;\n}\nfun add(a: Int, b: Int): Int { a + b }\n";
+        let extractor = EntityExtractor::new(source, "C.tact", "tact");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Foo"), "expected tact Foo contract, got {:?}", names);
+        assert!(names.contains(&"add"), "expected tact add fun, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_cairo_regex() {
+        let source = b"fn main() {\n    let x = 1;\n}\nstruct Point { x: u32, y: u32 }\n";
+        let extractor = EntityExtractor::new(source, "C.cairo", "cairo");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"main"), "expected cairo main fn, got {:?}", names);
+        assert!(names.contains(&"Point"), "expected cairo Point struct, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_func_regex() {
+        let source = b"() recv add(a: Int, b: Int) {\n    return (a + b);\n}\nglobal counter: Int = 0;\n";
+        let extractor = EntityExtractor::new(source, "wallet.fc", "func");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected func add recv, got {:?}", names);
+        assert!(names.contains(&"counter"), "expected func counter global, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_fe_regex() {
+        let source = b"pub fn add(a: u256, b: u256) -> u256 { a + b }\ncontract Counter { value: u256 }\n";
+        let extractor = EntityExtractor::new(source, "C.fe", "fe");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"add"), "expected fe add fn, got {:?}", names);
+        assert!(names.contains(&"Counter"), "expected fe Counter contract, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_cobol_regex() {
+        let source = b"       IDENTIFICATION DIVISION.\n       PROGRAM-ID. CalcMain.\n       PROCEDURE DIVISION.\n       Main-Logic.\n           DISPLAY \"hi\".\n           01  WS-COUNTER  PIC 9(4).\n";
+        let extractor = EntityExtractor::new(source, "C.cbl", "cobol");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"CalcMain"), "expected cobol CalcMain program, got {:?}", names);
+        assert!(names.contains(&"Main-Logic"), "expected cobol Main-Logic paragraph, got {:?}", names);
+        assert!(names.contains(&"WS-COUNTER"), "expected cobol WS-COUNTER data item, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_abap_regex() {
+        let source = b"CLASS cl_calc DEFINITION.\n  PUBLIC SECTION.\n    METHODS add IMPORTING a TYPE i RETURNING VALUE(b) TYPE i.\nENDCLASS.\n";
+        let extractor = EntityExtractor::new(source, "zcalc.abap", "abap");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"cl_calc"), "expected abap cl_calc class, got {:?}", names);
+        assert!(names.contains(&"add"), "expected abap add method, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_pl_i_regex() {
+        let source = b"MAIN: PROC;\n  DCL x FIXED;\n  x = 1;\nEND MAIN;\n";
+        let extractor = EntityExtractor::new(source, "M.pli", "pl_i");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"MAIN"), "expected pl/i MAIN proc, got {:?}", names);
+        assert!(names.contains(&"x"), "expected pl/i x DCL, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_rpg_regex() {
+        let source = b"dcl-proc myproc;\n  begsr init;\n    clear counter;\n  endsr;\nend-proc;\n";
+        let extractor = EntityExtractor::new(source, "M.rpgle", "rpg");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"myproc"), "expected rpg myproc proc, got {:?}", names);
+        assert!(names.contains(&"init"), "expected rpg init subroutine, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_jcl_regex() {
+        let source = b"//MYJOB JOB (ACCT),'HELLO',CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n//INPUT DD *\nhi\n//\n";
+        let extractor = EntityExtractor::new(source, "M.jcl", "jcl");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"MYJOB"), "expected jcl MYJOB job, got {:?}", names);
+        assert!(names.contains(&"STEP1"), "expected jcl STEP1 exec, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_rexx_regex() {
+        let source = b"main: procedure\n  parse arg x\n  return x\n";
+        let extractor = EntityExtractor::new(source, "M.rex", "rexx");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"main"), "expected rexx main procedure, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_hlasm_regex() {
+        let source = b"MYCSECT CSECT\n  USING *,12\n  ENTRY MAIN\n";
+        let extractor = EntityExtractor::new(source, "M.asm", "hlasm");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"MYCSECT"), "expected hlasm MYCSECT CSECT, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_commonlisp_regex() {
+        let source = b"(defun add (a b) (+ a b))\n(defstruct point x y)\n(defclass vehicle () ())\n(defpackage :my-app (:use :cl))\n";
+        let extractor = EntityExtractor::new(source, "M.lisp", "commonlisp");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("add")), "expected commonlisp add, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("point")), "expected commonlisp point, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("vehicle")), "expected commonlisp vehicle class, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("my-app")), "expected commonlisp my-app package, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_scheme_regex() {
+        let source = b"(define (add a b) (+ a b))\n(define pi 3.14)\n(define-syntax my-let (syntax-rules () ...))\n(define-struct point x y)\n";
+        let extractor = EntityExtractor::new(source, "M.scm", "scheme");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("add")), "expected scheme add, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("pi")), "expected scheme pi var, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("my-let")), "expected scheme my-let syntax, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("point")), "expected scheme point struct, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_racket_regex() {
+        let source = b"(define (add a b) (+ a b))\n(struct point (x y))\n(module my-mod racket/base ...)\n";
+        let extractor = EntityExtractor::new(source, "M.rkt", "racket");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("add")), "expected racket add, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("point")), "expected racket point struct, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("my-mod")), "expected racket my-mod module, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_elisp_regex() {
+        let source = b"(defun my-add (a b) (+ a b))\n(defvar my-var 42)\n(defclass my-class () (slot :name))\n(cl-defstruct point x y)\n";
+        let extractor = EntityExtractor::new(source, "init.el", "elisp");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("my-add")), "expected elisp my-add function, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("my-var")), "expected elisp my-var, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("my-class")), "expected elisp my-class, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("point")), "expected elisp point cl-defstruct, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_purescript_regex() {
+        let source = b"module Data.Point where\n\ndata Point = Point Number Number\n\nadd :: Number -> Number -> Number\nadd a b = a + b\n\ntype Name = String\n";
+        let extractor = EntityExtractor::new(source, "Point.purs", "purescript");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("Data.Point")), "expected purescript Data.Point module, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("Point")), "expected purescript Point data, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("add")), "expected purescript add function, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("Name")), "expected purescript Name type alias, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_idris2_regex() {
+        let source = b"module Data.Bool\n\ndata Bool = True | False\n\nnot : Bool -> Bool\nnot True = False\nnot False = True\n";
+        let extractor = EntityExtractor::new(source, "Bool.idr", "idris2");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("Data.Bool")), "expected idris2 Data.Bool module, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("Bool")), "expected idris2 Bool data, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("not")), "expected idris2 not def, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_lean_regex() {
+        let source = b"def add (a b : Nat) : Nat := a + b\ntheorem add_zero (n : Nat) : n + 0 = n := by simp\nstructure Point where\n  x : Nat\n  y : Nat\n";
+        let extractor = EntityExtractor::new(source, "Math.lean", "lean");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("add")), "expected lean add def, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("add_zero")), "expected lean add_zero theorem, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("Point")), "expected lean Point structure, got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_coq_regex() {
+        let source = b"Definition add (a b : nat) : nat := a + b.\nTheorem add_zero : forall n : nat, n + 0 = n.\nProof. intros. simpl. reflexivity. Qed.\nInductive day : Type := Mon | Tue | Wed.\nModule MyModule.\n";
+        let extractor = EntityExtractor::new(source, "Test.v", "coq");
+        let (elements, _) = extractor.extract_regex_only();
+        let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("add")), "expected coq add definition, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("add_zero")), "expected coq add_zero theorem, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("day")), "expected coq day inductive, got {:?}", names);
+        assert!(names.iter().any(|n| n.contains("MyModule")), "expected coq MyModule, got {:?}", names);
+    }
+
+    fn regex_names(lang: &str, path: &str, source: &str) -> Vec<String> {
+        EntityExtractor::new(source.as_bytes(), path, lang).extract_regex_only().0.into_iter().map(|e| e.name).collect()
+    }
+    #[test] fn test_regex_msl() { let n=regex_names("msl","x.metal","kernel void my_kernel() {}\nstruct Point {}"); assert!(n.contains(&"my_kernel".into()) && n.contains(&"Point".into())); }
+    #[test] fn test_regex_wgsl() { let n=regex_names("wgsl","x.wgsl","@vertex fn vs_main() {}\nstruct Uniforms {}"); assert!(n.contains(&"vs_main".into()) && n.contains(&"Uniforms".into())); }
+    #[test] fn test_regex_vhdl() { let n=regex_names("vhdl","x.vhdl","entity MyAdder is\narchitecture behavioral of MyAdder is\nprocess(slow) is"); assert!(n.contains(&"MyAdder".into()) && n.contains(&"behavioral".into()) && n.contains(&"slow".into())); }
+    #[test] fn test_regex_yul() { let n=regex_names("yul","x.yul","object \"Deployer\" {\nfunction helper() {} }"); assert!(n.contains(&"Deployer".into()) && n.contains(&"helper".into())); }
+    #[test] fn test_regex_wasm() { let n=regex_names("wasm","x.wat","(module $mymod\n(func $add)\n(global $counter (i32.const 0)))"); assert!(n.contains(&"$mymod".into()) && n.contains(&"$add".into()) && n.contains(&"$counter".into())); }
+
+
+    macro_rules! regex_web_test {
+        ($test:ident, $lang:literal, $file:literal, $source:literal, [$($name:literal),+ $(,)?]) => {
+            #[test]
+            fn $test() {
+                let extractor = EntityExtractor::new($source.as_bytes(), $file, $lang);
+                let (elements, _) = extractor.extract_regex_only();
+                let names: Vec<_> = elements.iter().map(|e| e.name.as_str()).collect();
+                $(assert!(names.contains(&$name), "expected {} in {:?}", $name, names);)+
+            }
+        };
+    }
+
+    regex_web_test!(test_extract_less_regex, "less", "x.less", ".btn { color: red; }\n.border(@w) { border: @w solid; }\n@brand: #ff0000;\n.my-class { .border(2px); }\n", [".btn", "border", "brand"]);
+    regex_web_test!(test_extract_stylus_regex, "stylus", "x.styl", "border(@w)\n  border @w solid\n.btn\n  color red\nmy-var = 5px\n", ["border", ".btn", "my-var"]);
+    regex_web_test!(test_extract_sass_regex, "sass", "x.sass", "@mixin border($w)\n  border: $w solid\n@include border(2px)\n$brand: #ff0000\n", ["border", "brand"]);
+    regex_web_test!(test_extract_handlebars_regex, "handlebars", "x.hbs", "{{#each items}}\n  {{> partial}}\n{{/each}}\n{{#if cond}}\n  hi\n{{/if}}\n", ["each", "partial", "if"]);
+    regex_web_test!(test_extract_pug_regex, "pug", "x.pug", "block content\n  h1 Hello\nmixin item(name)\n  p= name\ninclude partial\n", ["content", "item", "partial"]);
+    regex_web_test!(test_extract_slim_regex, "slim", "x.slim", "div.container\n  h1 Hello\n== render 'partial'\n", ["div", "render"]);
+    regex_web_test!(test_extract_haml_regex, "haml", "x.haml", "%h1 Hello\n= form_for @user do |f|\n  = f.text_field :name\n", ["h1", "form_for"]);
+    regex_web_test!(test_extract_erb_regex, "erb", "x.erb", "<% if user %><p>hi</p><% end %>\n<% def show %>\n<%= form_for @post %>\n", ["if", "show", "form_for"]);
+    regex_web_test!(test_extract_ejs_regex, "ejs", "x.ejs", "<% if (user) { %><p>hi</p><% } %>\n<% function render() { %>...<% } %>\n", ["if", "render"]);
+    regex_web_test!(test_extract_liquid_regex, "liquid", "x.liquid", "{% if user %}<p>hi</p>{% endif %}\n{% for item in items %}{% endfor %}\n{% include 'partial' %}\n", ["if", "for", "partial"]);
+    regex_web_test!(test_extract_twig_regex, "twig", "x.twig", "{% block sidebar %}<p>hi</p>{% endblock %}\n{% macro field(name) %}<input>{{ name }}{% endmacro %}\n{% include 'partial.html' %}\n{% for item in items %}{% endfor %}\n", ["sidebar", "field", "partial.html", "item"]);
+    regex_web_test!(test_extract_blade_regex, "blade", "x.blade.php", "@section('content')\n<p>hi</p>\n@endsection\n@extends('layout')\n@include('partial')\n@yield('content')\n", ["content", "layout", "partial"]);
+    regex_web_test!(test_extract_astro_regex, "astro", "x.astro", "---\nimport Layout from '../layouts/Layout.astro'\nconst name = 'foo'\n---\n<Layout><MyComponent /></Layout>\n", ["Layout", "MyComponent"]);
+    regex_web_test!(test_extract_mdx_regex, "mdx", "x.mdx", "import MyComponent from './comp.js'\n\n# Heading\n\n<MyComponent prop=\"hi\" />\n", ["MyComponent"]);
+    regex_web_test!(test_extract_vue_regex, "vue", "x.vue", "<script setup>\nimport MyComponent from './Comp.vue'\nexport default { components: { MyComponent } }\n</script>\n<template>\n  <MyComponent />\n</template>\n", ["MyComponent"]);
+    regex_web_test!(test_extract_svelte_regex, "svelte", "x.svelte", "<script>\n  import MyComponent from './Comp.svelte'\n  export let name = 'foo'\n</script>\n<MyComponent {name} />\n", ["name", "MyComponent"]);
+
 }
