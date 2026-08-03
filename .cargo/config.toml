@@ -1,12 +1,19 @@
 # LeanKG Build Configuration
-# Only build release profile by default to save disk space
+# Limit local release-build CPU and RAM usage on macOS.
 
 [build]
+jobs = 2
 
 [profile.dev]
 opt-level = 0
 debug = false
+codegen-units = 16
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+# codegen-units=1 avoids a rustc 1.95 linker bug (`core::error::Error::cause`
+# undefined) that appears in the lib-test binary once enough grammars are
+# linked. The release binary also benefits from the smaller single-CGU object.
+lto = "off"
+codegen-units = 1
+incremental = true

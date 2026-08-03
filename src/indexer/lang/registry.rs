@@ -433,6 +433,179 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
         },
         grammar: Some(|| tree_sitter_c_sharp::LANGUAGE.into()),
     },
+    LanguageSpec {
+        name: "haskell",
+        extensions: &["hs", "lhs"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["function", "function_signature"],
+            classes: &["class_decl", "data_type", "data_constructor"],
+            interfaces: EMPTY,
+            properties: &["constructor"],
+            imports: &["import"],
+            calls: &["function_call_expression"],
+        },
+        grammar: Some(|| tree_sitter_haskell::LANGUAGE.into()),
+    },
+    LanguageSpec {
+        name: "elm",
+        extensions: &["elm"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["function_declaration_left"],
+            classes: &[
+                "type_declaration",
+                "type_alias_declaration",
+                "module_declaration",
+            ],
+            interfaces: EMPTY,
+            properties: EMPTY,
+            imports: &["import_clause", "import"],
+            calls: &["function_call_expr"],
+        },
+        grammar: Some(|| tree_sitter_elm::LANGUAGE.into()),
+    },
+    LanguageSpec {
+        name: "ocaml",
+        extensions: &["ml", "mli"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["value_definition", "external", "function_expression"],
+            classes: &[
+                "class_definition",
+                "class_binding",
+                "module_binding",
+                "module_definition",
+            ],
+            interfaces: EMPTY,
+            properties: &["field_definition"],
+            imports: &["open", "include", "module_binding"],
+            calls: &["application_expression", "call_expression"],
+        },
+        grammar: Some(|| tree_sitter_ocaml::LANGUAGE_OCAML.into()),
+    },
+    LanguageSpec {
+        name: "fsharp",
+        extensions: &["fs", "fsi", "fsx"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["function_declaration_left", "value_definition"],
+            classes: &[
+                "type_definition",
+                "class_definition",
+                "module_definition",
+                "module",
+            ],
+            interfaces: EMPTY,
+            properties: &["member_definition"],
+            imports: &["open", "open_declaration", "import"],
+            calls: &["function_call_expression"],
+        },
+        grammar: Some(|| tree_sitter_fsharp::LANGUAGE_FSHARP.into()),
+    },
+    LanguageSpec {
+        name: "erlang",
+        extensions: &["erl", "hrl"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["fun_decl", "function_clause"],
+            classes: &["module", "module_attribute"],
+            interfaces: EMPTY,
+            properties: EMPTY,
+            imports: &[
+                "include_attribute",
+                "include_lib_attribute",
+                "import_attribute",
+                "import",
+            ],
+            calls: &["call", "external_fun"],
+        },
+        grammar: Some(|| tree_sitter_erlang::LANGUAGE.into()),
+    },
+    LanguageSpec {
+        name: "nim",
+        extensions: &["nim", "nims"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["func_declaration", "proc_declaration", "func", "proc"],
+            classes: &["type_declaration", "type"],
+            interfaces: EMPTY,
+            properties: &["let_declaration"],
+            imports: &["import_declaration", "import"],
+            calls: &["call"],
+        },
+        grammar: Some(|| tree_sitter_nim::LANGUAGE.into()),
+    },
+    LanguageSpec {
+        name: "powershell",
+        extensions: &["ps1", "psm1", "psd1"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["function_statement", "class_method_definition"],
+            classes: &["class_statement"],
+            interfaces: EMPTY,
+            properties: &["class_property_definition"],
+            imports: &["using_statement", "import_module"],
+            calls: &["command", "call_expression"],
+        },
+        grammar: Some(|| tree_sitter_powershell::LANGUAGE.into()),
+    },
+    LanguageSpec {
+        name: "crystal",
+        extensions: &["cr"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["method_definition", "def", "fun"],
+            classes: &["class_declaration", "class"],
+            interfaces: EMPTY,
+            properties: &["instance_var", "class_var"],
+            imports: &["require", "import"],
+            calls: &["call"],
+        },
+        grammar: Some(|| tree_sitter_crystal::LANGUAGE.into()),
+    },
+    LanguageSpec {
+        name: "toml",
+        extensions: &["toml"],
+        config_files: EMPTY,
+        tier: Tier::Minimal,
+        kinds: NodeKinds {
+            functions: EMPTY,
+            classes: EMPTY,
+            interfaces: EMPTY,
+            properties: EMPTY,
+            imports: EMPTY,
+            calls: EMPTY,
+        },
+        // No grammar: tree-sitter-toml v0.20 returns an incompatible tree-sitter
+        // Language type. File-level element + regex import scan still apply.
+        grammar: None,
+    },
+    LanguageSpec {
+        name: "dockerfile",
+        extensions: &["dockerfile", "Dockerfile"],
+        config_files: &["Dockerfile"],
+        tier: Tier::Minimal,
+        kinds: NodeKinds {
+            functions: EMPTY,
+            classes: EMPTY,
+            interfaces: EMPTY,
+            properties: EMPTY,
+            imports: EMPTY,
+            calls: EMPTY,
+        },
+        // No grammar: tree-sitter-dockerfile v0.2 returns an incompatible
+        // tree-sitter Language type. File-level element + regex import scan.
+        grammar: None,
+    },
 ];
 
 pub fn language_spec(name: &str) -> Option<&'static LanguageSpec> {
@@ -525,6 +698,32 @@ mod tests {
             ("json", "{\"a\": 1}"),
             ("yaml", "a: 1\n"),
             ("csharp", "class Foo {}"),
+            (
+                "haskell",
+                "module M where\nimport Data.List (sort)\ndouble x = x * 2",
+            ),
+            (
+                "elm",
+                "module M exposing (main)\nimport Html\ntype Msg = A\ndouble x = x",
+            ),
+            (
+                "ocaml",
+                "open List\nlet double x = x * 2\nmodule M = struct\n  let add a b = a + b\nend",
+            ),
+            ("fsharp", "module Math\nlet double x = x * 2"),
+            (
+                "erlang",
+                "-module(math).\n-export([double/1]).\ndouble(X) -> X * 2.",
+            ),
+            (
+                "nim",
+                "import std/strutils\nproc double(x: int): int =\n  x * 2",
+            ),
+            (
+                "powershell",
+                "function Get-User {\n  param($id)\n  return $id\n}",
+            ),
+            ("crystal", "class User\n  def greet\n  end\nend"),
         ];
         for (lang, src) in samples {
             let spec = language_spec(lang).expect("spec");
