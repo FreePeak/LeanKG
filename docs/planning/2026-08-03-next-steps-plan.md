@@ -20,7 +20,23 @@
 
 ## Item 1 — Cold-embed 15min target
 
-**Hypothesis:** raise `LEANKG_EMBED_MAX_MB` to 12000 + `cpus: 10` + `mem_limit: 14g` in `docker-compose.embed.yml`. Soft cap = 90% × 12000 = 10800MB. 8 workers × ~350MB + 900MB base + ~2GB block cache ≈ 5.7GB, well under soft cap. Flat-out throughput ≈ 8 × 60 = 480 vectors/s → 381k / 480 ≈ 13min + 3 min HNSW rebuild ≈ **16min**.
+**Measured baseline (2026-08-03, updated):**
+- 6 workers, batch 128, 12g, no throttle: **~340 v/s peak, ~175 v/s avg**, 381k in ~2174s embed + 232s HNSW = ~40min total.
+- 8 workers (after OrbStack CPU 6→8): **~313 v/s** — SAME as 6 workers. Adding workers did NOT increase throughput.
+- batch 64 vs 128: no meaningful difference.
+
+**Root-cause finding: the bottleneck is the CozoDB writer, not ONNX inference.**
+- The writer flushes 5120 rows every ~16s = ~320 v/s, regardless of worker count.
+- Each `import_relations` commit has ~16s fixed overhead (WAL/fsync).
+- At 5000-row chunks that caps the writer at ~320 v/s. Workers produce faster than the writer flushes, so they block on the channel.
+
+**Fix (commit `d4e53243`):** raise the upsert chunk cap to `DEFAULT_UPSERT_CHUNK * 4` (20000) for budgets ≥ 6.5g.
+
+**FIX 2 — chunk size does NOT help (2026-08-03 live):** the ~16s commit is NOT fixed; it scales with rows (5k in 16s, 20k in ~63s). CozoDB RocksDB write rate is **~190-320 v/s, chunk-independent.** Confirmed: 6→8 workers no gain, batch 64 vs 128 no gain.
+
+**FIX 3 — RocksDB bulk-load mode (decisive, vendored cozo):** cozorocks exposes `DbBuilder::prepare_for_bulk_load(true)` (WAL off, compactions off, max write throughput). The crates.io cozo doesn't call it. Vendored cozo into `vendor/cozo` + `[patch.crates-io]` so `LEANKG_COZO_ROCKS_BULK=1` triggers bulk-load. This is RocksDB's designed bulk-ingest path. NOTE: `vendor/` is gitignored — the vendored cozo is a local build artifact (Docker COPY still includes it), so the patch is local-only; document the vendoring steps for reproducibility.
+
+**If 20k chunks don't hit 1000 v/s:** the ~16s commit cost may not be constant (it grows with index size / SST count). Next lever: CozoDB WAL disable (`LEANKG_COZO_ROCKS_BULK=1` needs vendored cozo), or batching via `import_relations` with larger named-row sets.
 
 **Why we believe 60/s/worker:** measured on 2-worker run (123k in ~33min including 192s HNSW = ~60 embed/sec/worker). HNSW rebuild itself is ~100-200s on 381k.
 
