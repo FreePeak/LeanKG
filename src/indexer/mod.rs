@@ -269,9 +269,9 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let extensions = [
         "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
         "mod", "xml", "dart", "swift", "m", "mm", "h", "vue", "svelte", "sql", "c", "cpp", "cxx",
-        "hpp", "hh", "hxx", "cc", "sh", "bash", "zsh", "rb", "php", "pl", "r", "ex", "exs",
-        "scala", "sc", "zig", "sol", "lua", "json", "jsonc", "toml", "yaml", "css", "scss", "html",
-        "htm", "graphql", "gql", "proto", "cs",
+        "hpp", "hh", "hxx", "cc", "sh", "bash", "zsh", "rb", "php", "pl", "pm", "t", "r", "ex",
+        "exs", "scala", "sc", "zig", "sol", "lua", "json", "jsonc", "toml", "yaml", "css", "scss",
+        "html", "htm", "graphql", "gql", "proto", "cs",
     ];
     let config_files = [
         "package.json",
@@ -327,11 +327,12 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         }
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext_lower = ext.to_lowercase();
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         let is_valid_file = config_files.contains(&file_name)
             || (path.to_string_lossy().contains("/res/") && ext == "xml")
-            || extensions.contains(&ext)
+            || extensions.contains(&ext_lower.as_str())
             || is_cicd_yaml_file(path);
 
         if is_valid_file {
@@ -2396,6 +2397,9 @@ include("web-app")"#;
             "class Foo {};\nint main() { return 0; }\n",
         )
         .expect("write cpp");
+        std::fs::write(dir.path().join("script.sh"), "echo hi\n").expect("write sh");
+        std::fs::write(dir.path().join("math.R"), "x <- 1\n").expect("write R");
+        std::fs::write(dir.path().join("Foo.pm"), "package Foo;\n").expect("write pm");
 
         let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
         let names: Vec<&str> = files
@@ -2410,6 +2414,13 @@ include("web-app")"#;
             .collect();
         assert!(names.contains(&"main.c"), "missing .c: {:?}", names);
         assert!(names.contains(&"main.cpp"), "missing .cpp: {:?}", names);
+        assert!(names.contains(&"script.sh"), "missing .sh: {:?}", names);
+        assert!(
+            names.contains(&"math.R"),
+            "missing .R (uppercase): {:?}",
+            names
+        );
+        assert!(names.contains(&"Foo.pm"), "missing .pm: {:?}", names);
     }
 
     // Bulk path (extract_elements_for_file) must index registry languages.
