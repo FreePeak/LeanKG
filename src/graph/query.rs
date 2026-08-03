@@ -3510,6 +3510,60 @@ impl GraphEngine {
         Ok(!result.rows.is_empty())
     }
 
+    /// Count code elements of a single `element_type`. Cheap aggregate query
+    /// used by overview methods to avoid the deprecated `all_elements()` pull.
+    /// Arity-aware: matches `count_elements` (11 positional vars) plus tail.
+    /// `n` (the head var) maps to `qualified_name` (the 1st column) so `count`
+    /// counts rows. `et` is referenced as a filter only.
+    pub fn count_elements_by_type(
+        &self,
+        element_type: &str,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[count(n)] := *code_elements[n, et, a, b, c, d, e, f, g, h, i{tail}], et = $et"#
+        );
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "et".to_string(),
+            serde_json::Value::String(element_type.to_string()),
+        );
+        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
+    }
+
+    /// Count code elements whose `element_type` is in the provided set. Used
+    /// when one logical group spans multiple types (e.g. `class` + `struct`).
+    /// Arity-aware: matches `count_elements` (11 positional vars) plus tail.
+    pub fn count_elements_by_type_in(
+        &self,
+        element_types: &[&str],
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        if element_types.is_empty() {
+            return Ok(0);
+        }
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[count(n)] := *code_elements[n, et, a, b, c, d, e, f, g, h, i{tail}], et in $ets"#
+        );
+        let ets_json: Vec<serde_json::Value> = element_types
+            .iter()
+            .map(|s| serde_json::Value::String((*s).to_string()))
+            .collect();
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("ets".to_string(), serde_json::Value::Array(ets_json));
+        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        Ok(result
+            .rows
+            .first()
+            .and_then(|r| r[0].get_int())
+            .unwrap_or(0) as usize)
+    }
+
     /// Cheap mega probe: true when at least one element exists past the cache threshold
     /// (avoids a full `count()` over hundreds of thousands of rows). Result is cached.
     pub(crate) fn is_mega_graph(&self) -> bool {
@@ -4983,22 +5037,31 @@ impl GraphEngine {
     }
 
     pub fn wake_up_summary(&self) -> Result<String, String> {
-        let elements = self.all_elements().map_err(|e| e.to_string())?;
+        // Bounded overview: counts come from `count_*`; language / directory
+        // breakdowns come from a small paginated sample capped at 5k rows.
+        // Avoids the deprecated `all_elements()` / `all_relationships()` bulk
+        // pull that times out the MCP overview resource on mega-graphs
+        // (see test:overview_mega_tests).
+        const SAMPLE_CAP: usize = 5_000;
 
-        let total = elements.len();
-        let file_count = elements.iter().filter(|e| e.element_type == "File").count();
-        let func_count = elements
-            .iter()
-            .filter(|e| e.element_type == "function")
-            .count();
-        let class_count = elements
-            .iter()
-            .filter(|e| e.element_type == "class" || e.element_type == "struct")
-            .count();
+        let total = self.count_elements().map_err(|e| e.to_string())?;
+        let rel_count = self.count_relationships().map_err(|e| e.to_string())?;
+        let file_count = self.count_elements_by_type("File").map_err(|e| e.to_string())?;
+        let func_count = self.count_elements_by_type("function").map_err(|e| e.to_string())?;
+        let class_count = self
+            .count_elements_by_type_in(&["class", "struct"])
+            .map_err(|e| e.to_string())?;
+        let import_count = self.count_elements_by_type("import").map_err(|e| e.to_string())?;
+
+        let sample = self
+            .get_elements_paginated(SAMPLE_CAP, 0)
+            .map_err(|e| e.to_string())
+            .map(|(rows, _)| rows)
+            .unwrap_or_default();
 
         let mut languages: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
-        for e in &elements {
+        for e in &sample {
             if !e.language.is_empty() {
                 *languages.entry(e.language.clone()).or_insert(0) += 1;
             }
@@ -5009,7 +5072,7 @@ impl GraphEngine {
 
         let mut top_dirs: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
-        for e in &elements {
+        for e in &sample {
             if e.element_type == "directory" && !e.file_path.is_empty() {
                 let depth = e.file_path.chars().filter(|&c| c == '/').count();
                 if depth == 1 {
@@ -5036,11 +5099,6 @@ impl GraphEngine {
             lines.push(format!("Top directories: {}", dirs.join(", ")));
         }
 
-        let rel_count = self.all_relationships().map(|r| r.len()).unwrap_or(0);
-        let import_count = elements
-            .iter()
-            .filter(|e| e.element_type == "import")
-            .count();
         lines.push(format!(
             "Relationships: {} | Imports: {}",
             rel_count, import_count
@@ -5053,14 +5111,24 @@ impl GraphEngine {
     /// Project identity: name, languages, top-level directories,
     /// architecture pattern. Stored at `.leankg/identity.md`.
     pub fn identity_context(&self, project_name: &str) -> Result<String, String> {
-        let elements = self.all_elements().map_err(|e| e.to_string())?;
-        let langs: std::collections::BTreeSet<String> = elements
+        // Bounded identity: sample up to 5k rows to derive languages and
+        // top-level directories. Avoids the bulk `all_elements()` pull that
+        // times out the MCP overview resource on mega-graphs.
+        const SAMPLE_CAP: usize = 5_000;
+
+        let sample = self
+            .get_elements_paginated(SAMPLE_CAP, 0)
+            .map_err(|e| e.to_string())
+            .map(|(rows, _)| rows)
+            .unwrap_or_default();
+
+        let langs: std::collections::BTreeSet<String> = sample
             .iter()
             .map(|e| e.language.clone())
             .filter(|l| !l.is_empty())
             .collect();
 
-        let top_dirs: std::collections::BTreeSet<String> = elements
+        let top_dirs: std::collections::BTreeSet<String> = sample
             .iter()
             .filter_map(|e| {
                 let p = e.file_path.trim_start_matches("./").trim_start_matches('/');
@@ -5088,16 +5156,14 @@ impl GraphEngine {
     /// Critical facts: hot modules (top god nodes), element counts,
     /// relationship counts. Stored at `.leankg/critical_facts.md`.
     pub fn critical_facts_context(&self) -> Result<String, String> {
-        let elements = self.all_elements().map_err(|e| e.to_string())?;
-        let rels = self.all_relationships().map_err(|e| e.to_string())?;
+        // Bounded critical-facts: counts come from `count_*`; god-node list is
+        // already capped to 5 entries by `get_god_nodes`. Avoids the bulk
+        // `all_elements()` / `all_relationships()` pull that times out the
+        // MCP overview resource on mega-graphs.
+        let total = self.count_elements().map_err(|e| e.to_string())?;
+        let rel_count = self.count_relationships().map_err(|e| e.to_string())?;
+        let func_count = self.count_elements_by_type("function").map_err(|e| e.to_string())?;
         let gods = self.get_god_nodes(5, Some(90)).map_err(|e| e.to_string())?;
-
-        let total = elements.len();
-        let rel_count = rels.len();
-        let func_count = elements
-            .iter()
-            .filter(|e| e.element_type == "function")
-            .count();
 
         let mut out = String::new();
         out.push_str("## Critical facts\n\n");
@@ -5196,13 +5262,30 @@ impl GraphEngine {
         exclude_hubs_percentile: Option<u8>,
     ) -> Result<Vec<GodNode>, Box<dyn std::error::Error>> {
         let limit = limit.clamp(1, 200);
-        let all_rels = self.all_relationships()?;
-        let elements = self.all_elements()?;
-
+        // FR-GF-MEGA-01: degree computed in ONE CozoDB aggregate pass, not
+        // `all_relationships()` (materialized the whole 2.3M-edge graph on every
+        // overview call and timed out the MCP resource on mega-graphs).
         let mut degree: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        for r in &all_rels {
-            *degree.entry(r.source_qualified.clone()).or_default() += 1;
-            *degree.entry(r.target_qualified.clone()).or_default() += 1;
+        // source side: relationships[node, _, _, _, _, _]
+        // target side: relationships[_, node, _, _, _, _]
+        for pattern in [
+            r#"?[node, count(node)] := *relationships[node, _, _, _, _, _]"#,
+            r#"?[node, count(node)] := *relationships[_, node, _, _, _, _]"#,
+        ] {
+            let result = crate::db::schema::run_script(
+                &self.db,
+                pattern,
+                std::collections::BTreeMap::new(),
+            )?;
+            for row in &result.rows {
+                if let (Some(node), Some(cnt)) = (row.first(), row.get(1)) {
+                    if let (Some(node_s), Some(cnt_i)) =
+                        (node.get_str(), cnt.get_int())
+                    {
+                        *degree.entry(node_s.to_string()).or_default() += cnt_i as usize;
+                    }
+                }
+            }
         }
 
         let mut nodes: Vec<(String, usize)> = degree.into_iter().collect();
@@ -5216,12 +5299,15 @@ impl GraphEngine {
             }
         }
 
+        // Only fetch element metadata for the top-degree QNs (bounded),
+        // never `all_elements()`.
         let qn_set: std::collections::HashSet<String> =
-            nodes.iter().map(|(qn, _)| qn.clone()).collect();
-        let by_qn: std::collections::HashMap<String, CodeElement> = elements
+            nodes.iter().take(limit).map(|(qn, _)| qn.clone()).collect();
+        let by_qn: std::collections::HashMap<String, CodeElement> = self
+            .get_elements_by_qualified_names(
+                &qn_set.iter().cloned().collect::<Vec<_>>(),
+            )?
             .into_iter()
-            .filter(|e| qn_set.contains(&e.qualified_name))
-            .map(|e| (e.qualified_name.clone(), e))
             .collect();
 
         Ok(nodes
@@ -6100,6 +6186,50 @@ mod tests {
             ..Default::default()
         };
         engine.insert_element(&elem).unwrap();
+    }
+
+    #[test]
+    fn get_god_nodes_uses_bounded_pagination_not_all_relationships() {
+        // FR-GF-MEGA-01 regression: get_god_nodes must compute degree via a
+        // CozoDB aggregate (not all_relationships()), which would materialize
+        // the whole 2.3M-edge graph and time out the overview resource.
+        let (engine, _tmp) = make_test_engine();
+        for name in ["hub_a", "hub_b", "spoke_c", "spoke_d"] {
+            insert_test_element(&engine, name, "function");
+        }
+        let rels = vec![
+            crate::db::models::Relationship {
+                source_qualified: "src/test.rs::hub_a".to_string(),
+                target_qualified: "src/test.rs::spoke_c".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 1.0,
+                ..Default::default()
+            },
+            crate::db::models::Relationship {
+                source_qualified: "src/test.rs::hub_a".to_string(),
+                target_qualified: "src/test.rs::spoke_d".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 1.0,
+                ..Default::default()
+            },
+            crate::db::models::Relationship {
+                source_qualified: "src/test.rs::hub_b".to_string(),
+                target_qualified: "src/test.rs::spoke_c".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 1.0,
+                ..Default::default()
+            },
+        ];
+        engine.insert_relationships(&rels).unwrap();
+
+        let nodes = engine.get_god_nodes(5, None).unwrap();
+        assert!(!nodes.is_empty(), "god nodes should exist");
+        let hub = nodes
+            .iter()
+            .find(|n| n.qualified_name == "src/test.rs::hub_a");
+        assert!(hub.is_some(), "hub_a should be a god node");
+        assert_eq!(hub.unwrap().degree, 2, "hub_a degree should be 2");
+        assert!(nodes.len() <= 5, "limit should be respected");
     }
 
     #[test]

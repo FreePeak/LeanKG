@@ -3255,17 +3255,11 @@ async fn process_jsonrpc_request(
                     "description": "Session-start overview: project identity (L0) + critical facts (L1)",
                     "mimeType": "text/markdown",
                 }),
-                serde_json::json!({
-                    "uri": "leankg://overview/wake_up",
-                    "name": "LeanKG wake-up summary",
-                    "description": "wake_up_summary project snapshot",
-                    "mimeType": "text/markdown",
-                }),
             ];
             Ok(serde_json::json!({ "resources": resources }))
         }
         "resources/read" => {
-            // US-GN-08: read overview / wake_up resources. Mirrors the rmcp
+            // US-GN-08: read overview resource. Mirrors the rmcp
             // ServerHandler::read_resource (stdio transport); routes through
             // project_param the same way tools/call does (per-project graph).
             let uri = params
@@ -3281,9 +3275,9 @@ async fn process_jsonrpc_request(
                 "leankg://overview" => {
                     let l0 = engine.identity_context(project_name).unwrap_or_default();
                     let l1 = engine.critical_facts_context().unwrap_or_default();
-                    format!("{}\n{}", l0, l1)
+                    let wake = engine.wake_up_summary().unwrap_or_default();
+                    format!("{}\n{}\n{}", l0, l1, wake)
                 }
-                "leankg://overview/wake_up" => engine.wake_up_summary().unwrap_or_default(),
                 _ => return Err(format!("unknown resource URI: {uri}")),
             };
             Ok(serde_json::json!({
