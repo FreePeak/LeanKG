@@ -39,7 +39,7 @@ services:
         "--workers",
         "8",
         "--batch-size",
-        "128",
+        "64",
         "--types",
         "function,method",
       ]
