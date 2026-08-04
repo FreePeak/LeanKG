@@ -186,10 +186,6 @@ name = "bench_redis_writer"
 required-features = ["embeddings"]
 
 [[bench]]
-name = "vector_engine_ab"
-harness = false
-
-[[bench]]
 name = "orchestrator_bench"
 harness = false
 
