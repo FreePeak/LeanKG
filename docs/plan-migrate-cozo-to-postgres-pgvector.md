@@ -421,7 +421,7 @@ Worktree: `worktree-leankg-pg-migration` (worktree under `.claude/worktrees/`). 
 | 1. DbBackend abstraction | ✅ done | `src/db/backend.rs` (trait + `CozoBackend` shim + `PostgresBackend` stub + `Arc<dyn DbBackend>`); `Arc<dyn DbBackend>` threaded through 43 files. 960 lib tests green. Commit `e73c3298`. |
 | 2. Postgres schema + migrations | ✅ done | `src/db/pg/schema.sql` (16 tables, JSONB, pgvector HNSW, vector(384)); `src/db/pg/migrations.rs`; `leankg migrate` subcommand. Live-verified (16 tables, no query_cache). `tests/pg_schema_test.rs` 6/6 container tests pass. Commits `e749cad5`, `92f4b6f7`, `0182575f`, `7b115d42`. |
 | 3. SQL translator | 🚧 in progress | `src/db/pg/translate.rs` (2374 lines, committed `a9d83fc5`); PostgresBackend real impl + `tests/pg_translate_parity_test.rs` in flight. |
-| 4. Vector stack swap | 🚧 in progress | `src/vector_engine/` deleted (`ef1a9580`); hnsw_retrieve → direct SQL + `SET LOCAL ef_search` (`5fb112dd`); batch upserts landed; commit 4 (tests) in flight. |
+| 4. Vector stack swap | ✅ done | `src/vector_engine/` deleted (3,363 LOC, `ef1a9580`); hnsw_retrieve → direct SQL + `SET LOCAL ef_search` (`5fb112dd`); batched upserts 3,831–4,016 v/s (5.7× the 700 target, `e277054b`); round-trip + golden fixture tests 6/6 (`163055a1`). Lib tests 941 (1,078 w/ embeddings). |
 | 5. Remaining modules + grep `cozo::` = 0 | ⬜ pending | — |
 | 5.5. Full regression review (all tools/features before → after) | ⬜ pending | T5.5.1–T5.5.5, §4 Phase 5.5 — full MCP tool sweep (85 tools), CLI sweep, WebUI Playwright test w/ screenshots (`ui-v2/e2e/`), perf guard (no tool >2x cozo), regression report `docs/analysis/pg-regression-report.md`. |
 | 6. Read-only + server scaling | ⬜ pending | — |
