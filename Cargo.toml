@@ -163,6 +163,10 @@ redis = { version = "0.27", features = ["aio", "tokio-comp"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+# Phase 0 spike only (tests/pg_phase0_spike.rs). The migration proper uses
+# sqlx (plan D1) — this stays a dev-dependency through the spike, removed in
+# Phase 2 when sqlx lands.
+postgres = "0.19"
 
 [[example]]
 name = "bench_embed_stress"
