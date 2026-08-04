@@ -42,6 +42,30 @@ fn gc_max_rss_mb() -> u64 {
         .unwrap_or(4_096)
 }
 
+/// Per-instance cap, only used by tests that need to disable the
+/// force-trim path without mutating the process-global env var (which
+/// races with parallel tests).
+#[cfg(test)]
+fn test_max_rss_mb_override() -> Option<u64> {
+    TEST_MAX_RSS_MB_OVERRIDE.with(|c| *c.borrow())
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_MAX_RSS_MB_OVERRIDE: std::cell::RefCell<Option<u64>> = const { std::cell::RefCell::new(None) };
+}
+
+/// RAII guard: drops the test override when the test exits, even on panic.
+#[cfg(test)]
+pub struct TestMaxRssMbGuard;
+
+#[cfg(test)]
+impl Drop for TestMaxRssMbGuard {
+    fn drop(&mut self) {
+        TEST_MAX_RSS_MB_OVERRIDE.with(|c| *c.borrow_mut() = None);
+    }
+}
+
 /// Idle interval after which the guard's first poll tries to release
 /// memory. Default 60 s. Override via `LEANKG_GC_IDLE_AFTER_SECS`.
 fn gc_idle_after_secs() -> u64 {
@@ -96,6 +120,29 @@ impl MemoryGuard {
             last_idle_trim_activity: LAST_ACTIVITY_NANOS.load(Ordering::Relaxed),
             release_fn,
         }
+    }
+
+    /// Effective force-trim cap for this tick. Production reads
+    /// `LEANKG_GC_MAX_RSS_MB`; tests can override per-thread without
+    /// mutating the process-global env (which races with parallel tests).
+    fn effective_max_rss_mb(&self) -> u64 {
+        #[cfg(test)]
+        {
+            if let Some(v) = test_max_rss_mb_override() {
+                return v;
+            }
+        }
+        gc_max_rss_mb()
+    }
+
+    /// Test seam: pin a force-trim cap for the current thread, RAII-style.
+    /// Restores the default (env-driven) cap on drop. Use this instead of
+    /// `std::env::set_var("LEANKG_GC_MAX_RSS_MB", ...)` in tests — the env
+    /// var races with parallel tests.
+    #[cfg(test)]
+    pub fn set_test_max_rss_mb(cap: u64) -> TestMaxRssMbGuard {
+        TEST_MAX_RSS_MB_OVERRIDE.with(|c| *c.borrow_mut() = Some(cap));
+        TestMaxRssMbGuard
     }
 
     /// Configured poll interval (`LEANKG_GC_POLL_SECS`, default 10s).
@@ -165,7 +212,7 @@ impl MemoryGuard {
         let activity = Self::activity_nanos();
 
         // Force-trim: RSS over the hard cap (throttled).
-        if rss >= gc_max_rss_mb() {
+        if rss >= self.effective_max_rss_mb() {
             if now.duration_since(self.last_force_trim)
                 < Duration::from_secs(FORCE_TRIM_COOLDOWN_SECS)
             {
@@ -176,7 +223,7 @@ impl MemoryGuard {
                 eprintln!(
                     "leankg::gc: RSS {} MB >= max {} MB; force-trimmed caches",
                     rss,
-                    gc_max_rss_mb()
+                    self.effective_max_rss_mb()
                 );
                 return GcAction::ForceTrim { rss_mb: rss };
             }
@@ -299,6 +346,10 @@ mod tests {
 
     #[test]
     fn idle_trim_runs_at_most_once_per_activity_period() {
+        // Pin the force-trim cap high so a memory-heavy CI runner can't
+        // preempt the idle-trim path under test with a ForceTrim. RAII
+        // guard, so a panic in this test still releases the override.
+        let _cap = MemoryGuard::set_test_max_rss_mb(1_048_576); // 1 TiB
         let called = std::sync::Arc::new(AtomicUsize::new(0));
         let called2 = called.clone();
         let mut g = MemoryGuard::new(Some(Box::new(move || {
@@ -354,6 +405,11 @@ mod tests {
 
     #[test]
     fn release_returning_false_is_noop_not_idle_trim() {
+        // Pin the force-trim cap high so a memory-heavy CI runner (RSS > 4 GB
+        // by the time the full suite reaches this test) can't preempt the
+        // idle-trim path with a ForceTrim. RAII guard, so a panic here still
+        // releases the override for subsequent parallel tests.
+        let _cap = MemoryGuard::set_test_max_rss_mb(1_048_576); // 1 TiB
         let mut g = MemoryGuard::new(Some(Box::new(|| false)));
         g.last_check = Instant::now() - Duration::from_secs(gc_poll_secs() + 1);
         let past = std::time::SystemTime::now()

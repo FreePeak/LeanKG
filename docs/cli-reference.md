@@ -41,6 +41,10 @@ Complete reference for all LeanKG CLI commands.
 | `leankg trace --feature <id>` | Show feature-to-code traceability |
 | `leankg find-by-domain <domain>` | Find code by business domain |
 | `leankg export` | Export graph data as JSON |
+| `leankg tags [--output tags]` | Export a `readtags`-compatible `tags` file from the indexed graph (ctags/GNU Global fast edge layer) |
+| `leankg cost --file <f> [--depth N]` | Estimate out/in token cost of an impact radius |
+| `leankg cost --files a,b,c` | Estimate token cost of a direct file set |
+| `leankg pack [--path src] [--max-nodes 5000]` | Export a deterministic portable context pack (snapshot.json + manifest.json) |
 | `leankg docs --tree` | Show documentation directory structure |
 | `leankg docs --for <file>` | Show docs referencing a code file |
 | `leankg docs --link <doc> <element>` | Link documentation to code element |

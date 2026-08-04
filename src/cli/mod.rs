@@ -1,6 +1,22 @@
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 
 pub mod shell_runner;
+
+/// Output format for `leankg tags` (currently only `ctags`).
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TagsFormat {
+    /// readtags-compatible `tags` file.
+    Ctags,
+}
+
+/// Output format for `leankg cost`.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CostFormat {
+    /// Human-readable text.
+    Text,
+    /// JSON.
+    Json,
+}
 
 #[derive(Subcommand, Debug)]
 pub enum CLICommand {
@@ -486,6 +502,60 @@ pub enum CLICommand {
         /// without scope, the export refuses.
         #[arg(long, default_value = "5000")]
         max_nodes: usize,
+    },
+    /// Export a ctags-compatible `tags` file from the indexed graph
+    /// (strategy: ctags/GNU Global fast edge layer, Tier 1 item 9).
+    Tags {
+        /// Output path (default: `tags` in project root)
+        #[arg(long, default_value = "tags")]
+        output: String,
+        /// Export format
+        #[arg(long, value_enum, default_value_t = TagsFormat::Ctags)]
+        format: TagsFormat,
+        /// Project root (default: cwd / find_project_root)
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Estimate token cost of an impact radius or a file set
+    /// (strategy §18.4: `kg_cost estimate` — "rewriting this would cost N in / M out").
+    Cost {
+        /// File to compute impact radius from. When omitted, `--files` is used.
+        #[arg(long)]
+        file: Option<String>,
+        /// Impact depth (used with --file).
+        #[arg(long, default_value = "3")]
+        depth: u32,
+        /// Max affected elements to price (used with --file).
+        #[arg(long, default_value = "200")]
+        max_affected: usize,
+        /// Comma-separated file paths to price directly (no impact scan).
+        #[arg(long)]
+        files: Option<String>,
+        /// Output format
+        #[arg(long, value_enum, default_value_t = CostFormat::Text)]
+        format: CostFormat,
+        /// Project root (default: cwd / find_project_root).
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Export a portable context pack (deterministic graph slice + manifest)
+    /// (strategy §8.5 / §17 Tier 6 item 36).
+    Pack {
+        /// Output directory (default: ./leankg-pack)
+        #[arg(long, default_value = "leankg-pack")]
+        output: String,
+        /// Scope to a path prefix (e.g. "src").
+        #[arg(long)]
+        path: Option<String>,
+        /// Max elements (default 5000; pack refuses to truncate silently).
+        #[arg(long, default_value = "5000")]
+        max_nodes: usize,
+        /// Source revision to record in the manifest (git sha / tag).
+        #[arg(long)]
+        revision: Option<String>,
+        /// Project root (default: cwd / find_project_root).
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Annotate code element with business logic description
     Annotate {
