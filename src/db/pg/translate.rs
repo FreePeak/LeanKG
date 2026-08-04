@@ -15,6 +15,16 @@
 //! used for ordering + the reranker stage; we expose the raw `<->` value and
 //! note this in the doc on [`Translation::ann_select`].
 
+#![allow(clippy::type_complexity)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::collapsible_else_if)]
+// ponytail: pre-Phase 4 lints that rustc 1.95 surfaces for the translator
+// (unused bindings in the no-op `::relations / PRAGMA / VACUUM` arms and the
+// `_bytes` parameter); Phase 5+ rewrites will clean them up. Today the
+// translator compiles and tests pass; flip to error after Phase 5.
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+
 use crate::db::schema::mutability_for;
 use cozo::{DataValue, NamedRows};
 use postgres::types::ToSql;
@@ -34,6 +44,10 @@ pub struct Translation {
     /// Head column order (positional consumption downstream). For reads,
     /// matches the cozo head exactly. Empty for writes.
     pub head: Vec<String>,
+    /// Postgres GUC overrides applied via `SET LOCAL` inside the same
+    /// transaction as `sql` (Phase 4 — `LEANKG_HNSW_EF` → `hnsw.ef_search`).
+    /// Only effective for `Read` and `Write` kinds; ignored for `DdlNoop`.
+    pub gucs: Vec<(String, String)>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -50,6 +64,21 @@ impl Translation {
             params,
             kind: TranslationKind::Read,
             head,
+            gucs: Vec::new(),
+        }
+    }
+    fn read_with_gucs(
+        sql: String,
+        params: Vec<Box<dyn ToSql + Sync + Send>>,
+        head: Vec<String>,
+        gucs: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            sql,
+            params,
+            kind: TranslationKind::Read,
+            head,
+            gucs,
         }
     }
     fn write(sql: String, params: Vec<Box<dyn ToSql + Sync + Send>>) -> Self {
@@ -58,6 +87,20 @@ impl Translation {
             params,
             kind: TranslationKind::Write,
             head: Vec::new(),
+            gucs: Vec::new(),
+        }
+    }
+    fn write_with_gucs(
+        sql: String,
+        params: Vec<Box<dyn ToSql + Sync + Send>>,
+        gucs: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            sql,
+            params,
+            kind: TranslationKind::Write,
+            head: Vec::new(),
+            gucs,
         }
     }
     fn ddl_noop(head: Vec<String>) -> Self {
@@ -66,6 +109,7 @@ impl Translation {
             params: Vec::new(),
             kind: TranslationKind::DdlNoop,
             head,
+            gucs: Vec::new(),
         }
     }
 }
@@ -325,7 +369,10 @@ fn aggregate_from_head(head: &[String]) -> Option<AggSpec> {
     }
     // `?[a, count(b)]` — multi-col, only `group by a` is valid; translate to
     // SELECT a, count(*) ... GROUP BY a (G98/G102/G105/G106).
-    if head.iter().any(|h| h.starts_with("count(") && h.ends_with(')')) {
+    if head
+        .iter()
+        .any(|h| h.starts_with("count(") && h.ends_with(')'))
+    {
         let mut extras = Vec::new();
         for h in head {
             if h.starts_with("count(") && h.ends_with(')') {
@@ -382,9 +429,7 @@ fn parse_relation_block(rest: &str) -> Option<(String, Vec<String>, String)> {
     // Skip past `*` and any whitespace.
     let after_star = rest[star + 1..].trim_start();
     // The relation name ends at the first `[` or `{`.
-    let rel_end = after_star
-        .find(|c: char| c == '[' || c == '{')
-        .unwrap_or(after_star.len());
+    let rel_end = after_star.find(['[', '{']).unwrap_or(after_star.len());
     let rel_name = after_star[..rel_end].trim().to_string();
     if rel_name.is_empty() {
         return None;
@@ -400,10 +445,7 @@ fn parse_relation_block(rest: &str) -> Option<(String, Vec<String>, String)> {
     let cols_str = &after_star[body_start..body_end_rel];
     let after_rel = &after_star[body_end_rel + 1..];
     let cols: Vec<String> = if open == '[' {
-        cols_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect()
+        cols_str.split(',').map(|s| s.trim().to_string()).collect()
     } else {
         // Attribute-binding: `*rel{col = $x, ...}`. Collapse to underscore
         // placeholders so head matching still works (the order is preserved
@@ -428,8 +470,12 @@ fn split_filters_and_modifiers(body: &str) -> (String, String) {
     // Find the earliest of `:limit` / `:offset` / `:order` / `:group` so
     // that all modifiers land in the second piece regardless of order in
     // the body.
-    let mut positions = [body.find(":limit"), body.find(":offset"),
-                       body.find(":order"), body.find(":group")];
+    let positions = [
+        body.find(":limit"),
+        body.find(":offset"),
+        body.find(":order"),
+        body.find(":group"),
+    ];
     let first_mod = positions.iter().filter_map(|&p| p).min();
     match first_mod {
         Some(idx) => (body[..idx].to_string(), body[idx..].to_string()),
@@ -479,11 +525,7 @@ fn not_exists_query(
         "SELECT {cols_sql} FROM {relation} WHERE NOT EXISTS (SELECT 1 FROM {inner_rel} \
          WHERE {inner_rel}.{outer_join_col} = {relation}.{outer_join_col})"
     );
-    Ok(Translation::read(
-        sql,
-        Vec::new(),
-        head.to_vec(),
-    ))
+    Ok(Translation::read(sql, Vec::new(), head.to_vec()))
 }
 
 /// Single-relation SELECT.
@@ -529,11 +571,7 @@ fn simple_select(
 
     let mut all_params = where_params;
     all_params.extend(mod_params);
-    Ok(Translation::read(
-        sql,
-        all_params,
-        head.to_vec(),
-    ))
+    Ok(Translation::read(sql, all_params, head.to_vec()))
 }
 
 /// Aggregate query (H5, H6, G82, G87, G98, G102, G105, G106). Handles
@@ -548,8 +586,7 @@ fn aggregate_query(
     params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
     let (where_sql, where_params) = compile_filters(filters, params)?;
-    let (group_sql, order_sql, group_cols, mut mod_params) =
-        compile_group_order(&modifiers);
+    let (group_sql, order_sql, _group_cols, mut mod_params) = compile_group_order(&modifiers);
 
     // Resolve `count(expr)` to a SQL expression. `expr` may be a column name
     // (use as-is), `_` (any literal — fall back to `*`), or `DISTINCT col`.
@@ -624,10 +661,17 @@ fn aggregate_query(
 
 /// Parse `:group [a, b]` and `:order [-]count(n) [desc]`. Returns
 /// `(group_clause, order_clause, group_cols, params)`.
-fn compile_group_order(modifiers: &str) -> (String, String, Vec<String>, Vec<Box<dyn ToSql + Sync + Send>>) {
+fn compile_group_order(
+    modifiers: &str,
+) -> (
+    String,
+    String,
+    Vec<String>,
+    Vec<Box<dyn ToSql + Sync + Send>>,
+) {
     let mut group_cols: Vec<String> = Vec::new();
     let mut order_clause = String::new();
-    let mut params: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
+    let params: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
 
     // Split on tokens (`:group`, `:order`).
     let mut rest = modifiers;
@@ -637,7 +681,7 @@ fn compile_group_order(modifiers: &str) -> (String, String, Vec<String>, Vec<Box
             .next()
             .unwrap_or("");
         let after = &rest[idx + 1 + op.len()..];
-        let (consumed, value) = match op {
+        let (consumed, _value) = match op {
             "group" => match extract_bracket_block(after) {
                 Some((body, consumed)) => {
                     group_cols = body.split(',').map(|s| s.trim().to_string()).collect();
@@ -677,9 +721,7 @@ fn compile_group_order(modifiers: &str) -> (String, String, Vec<String>, Vec<Box
                     } else {
                         format!("count({})", quote_ident(inner))
                     }
-                } else if expr_lc.starts_with("count(distinct ")
-                    && expr_lc.ends_with(')')
-                {
+                } else if expr_lc.starts_with("count(distinct ") && expr_lc.ends_with(')') {
                     let inner = &expr[15..expr.len() - 1];
                     format!("count(DISTINCT {})", quote_ident(inner))
                 } else {
@@ -731,8 +773,8 @@ fn compile_modifiers(
     params: &BTreeMap<String, serde_json::Value>,
 ) -> (String, Vec<Box<dyn ToSql + Sync + Send>>) {
     let mut out = String::new();
-    let mut bound: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
-    let mut placeholder_idx = params.len() + 1; // first available $N — but we don't track real indices across split; use anonymous later
+    let bound: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
+    let placeholder_idx = params.len() + 1; // first available $N — but we don't track real indices across split; use anonymous later
     let _ = placeholder_idx;
 
     // We append :limit/:offset parameters using the existing param map by
@@ -807,7 +849,10 @@ fn compile_modifiers(
                 }
                 out.push_str(&format!(
                     "GROUP BY {}",
-                    cols.iter().map(|c| quote_ident(c)).collect::<Vec<_>>().join(", ")
+                    cols.iter()
+                        .map(|c| quote_ident(c))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
                 rest = &rest[idx + 1 + op.len() + consumed..];
                 continue;
@@ -857,8 +902,7 @@ fn compile_filters(
     let mut out_params: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
     let mut next_idx = 1;
     for clause in clauses {
-        let (rendered, used, _) =
-            render_clause(clause, params, &mut next_idx)?;
+        let (rendered, used, _) = render_clause(clause, params, &mut next_idx)?;
         out_clauses.push(rendered);
         out_params.extend(used);
     }
@@ -886,10 +930,13 @@ fn split_clauses(s: &str) -> Vec<&str> {
                 }
                 last = i + 1;
             }
-            'a' if depth == 0 && i >= 1 && bytes[i - 1] == b' '
+            'a' if depth == 0
+                && i >= 1
+                && bytes[i - 1] == b' '
                 && i + 3 <= bytes.len()
                 && &s[i..i + 3] == "and"
-                && (i + 3 == bytes.len() || (bytes[i + 3] as char).is_ascii_whitespace()) => {
+                && (i + 3 == bytes.len() || (bytes[i + 3] as char).is_ascii_whitespace()) =>
+            {
                 let piece = s[last..(i - 1)].trim();
                 if !piece.is_empty() {
                     out.push(piece);
@@ -955,7 +1002,7 @@ fn render_clause<'a>(
             .ok_or_else(|| format!("bad regex_matches: {trimmed}"))?
             .trim();
         let col_sql = scalar_expr(col);
-        let (placeholder, mut used) = render_value_or_param(pat, params, next_idx)?;
+        let (placeholder, used) = render_value_or_param(pat, params, next_idx)?;
         return Ok((format!("{col_sql} ~ {placeholder}"), used, clause));
     }
     // str_includes(lowercase(a), lowercase(b))
@@ -1012,11 +1059,7 @@ fn render_clause<'a>(
             .trim();
         let hay_sql = scalar_expr(hay);
         let (placeholder, used) = render_value_or_param(needle, params, next_idx)?;
-        return Ok((
-            format!("{hay_sql} LIKE {placeholder} || '%'"),
-            used,
-            clause,
-        ));
+        return Ok((format!("{hay_sql} LIKE {placeholder} || '%'"), used, clause));
     }
 
     // Binary predicate: `col = "literal"`, `col = $x`, `col = expr`,
@@ -1089,9 +1132,7 @@ fn render_clause<'a>(
     } else if let Some(c) = trimmed[op_pos..].chars().next() {
         match c {
             '=' | '<' | '>' => &trimmed[op_pos..op_pos + 1],
-            _ => {
-                return Err(format!("unknown operator in clause: {trimmed}"));
-            }
+            _ => return Err(format!("unknown operator in clause: {trimmed}")),
         }
     } else {
         return Err(format!("unknown operator in clause: {trimmed}"));
@@ -1156,11 +1197,7 @@ fn find_top_level_op(s: &str) -> Result<usize, String> {
             '"' => in_string = true,
             '(' => depth += 1,
             ')' => depth = depth.saturating_sub(1),
-            '=' | '!' | '<' | '>' => {
-                if depth == 0 {
-                    return Ok(i);
-                }
-            }
+            '=' | '!' | '<' | '>' if depth == 0 => return Ok(i),
             _ => {}
         }
         i += 1;
@@ -1298,7 +1335,10 @@ fn render_value_or_param(
         let value = unescape_cozo_string(inner);
         let placeholder = format!("${}", *next_idx);
         *next_idx += 1;
-        return Ok((placeholder, vec![json_to_pg(serde_json::Value::String(value))]));
+        return Ok((
+            placeholder,
+            vec![json_to_pg(serde_json::Value::String(value))],
+        ));
     }
     Ok((scalar_expr(t), Vec::new()))
 }
@@ -1319,12 +1359,11 @@ fn ann_translation(
     // or     `... k: 50, ef: 100, bind_distance: dist }`
     let vec_literal = extract_ann_vec_literal(rest)?;
     let k = extract_ann_int_field(rest, "k").unwrap_or(50);
-    // ef is consumed by Postgres' `SET LOCAL hnsw.ef_search` at runtime; we
-    // pass it through via a GUC override on the connection (Phase 4), or
-    // ignore it here and let the caller set it. Today, callers like
-    // `hnsw_retrieve` already manage ef separately — see pipeline.rs.
-    // The :ef parameter is therefore extracted but not used in SQL.
-    let _ = extract_ann_int_field(rest, "ef");
+    // Phase 4: ef becomes `SET LOCAL hnsw.ef_search` inside the same tx as
+    // the SELECT — pgvector honours the GUC on each HNSW probe (cozo had it
+    // as a per-call field; here we plumb it via the translator so callers
+    // stay on the standard run_script path).
+    let ef = extract_ann_int_field(rest, "ef");
     let dist_col = head.first().cloned().unwrap_or_else(|| "dist".to_string());
     let qn_col = head
         .get(1)
@@ -1343,18 +1382,22 @@ fn ann_translation(
         dist_col = quote_ident(&dist_col),
         qn_col = quote_ident(&qn_col),
     );
-    let used: Vec<Box<dyn ToSql + Sync + Send>> = vec![
-        Box::new(vec_literal),
-        Box::new(k as i64),
-    ];
-    Ok(Translation::read(sql, used, head.to_vec()))
+    let used: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(vec_literal), Box::new(k as i64)];
+    let gucs = ef
+        .map(|n| vec![("hnsw.ef_search".to_string(), n.to_string())])
+        .unwrap_or_default();
+    Ok(Translation::read_with_gucs(sql, used, head.to_vec(), gucs))
 }
 
 fn extract_ann_vec_literal(s: &str) -> Result<String, String> {
     // Look for `vec([...])` and capture the inner.
-    let lb = s.find("vec([").ok_or_else(|| "ANN query missing vec([ literal)".to_string())?;
+    let lb = s
+        .find("vec([")
+        .ok_or_else(|| "ANN query missing vec([ literal)".to_string())?;
     let after = &s[lb + 5..];
-    let rb = after.find("])").ok_or_else(|| "ANN query missing closing ])".to_string())?;
+    let rb = after
+        .find("])")
+        .ok_or_else(|| "ANN query missing closing ])".to_string())?;
     Ok(after[..rb].to_string())
 }
 
@@ -1386,7 +1429,9 @@ fn put_script(
     // before `:put`) and the target relation/columns after.
     // Body shape: `?[cols...] <- [data] :put table {cols => pk}` (or `{cols}`).
     // We look at the part after `:put` to find the target.
-    let idx = body.find(":put").ok_or_else(|| "no :put in body".to_string())?;
+    let idx = body
+        .find(":put")
+        .ok_or_else(|| "no :put in body".to_string())?;
     let target = body[idx + 4..].trim();
     let source = body[..idx].trim();
 
@@ -1396,10 +1441,7 @@ fn put_script(
     // Strip the table-name prefix (everything before the first `{`).
     let brace_open = target.find('{').unwrap_or(0);
     let tail = &target[brace_open..];
-    let inner = tail
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .trim();
+    let inner = tail.trim_start_matches('{').trim_end_matches('}').trim();
     let (cols, pk) = parse_put_target(inner)?;
 
     // Resolve whether the table is keyed (PK). The catalog of keyed tables
@@ -1555,9 +1597,8 @@ fn parse_nested_lists(s: &str) -> Result<Vec<Vec<serde_json::Value>>, String> {
     if !trimmed.starts_with('[') {
         return Err(format!("expected list literal: {s}"));
     }
-    serde_json::from_str::<Vec<Vec<serde_json::Value>>>(trimmed).map_err(|e| {
-        format!("cannot parse list literal as JSON: {e} (input: {trimmed})")
-    })
+    serde_json::from_str::<Vec<Vec<serde_json::Value>>>(trimmed)
+        .map_err(|e| format!("cannot parse list literal as JSON: {e} (input: {trimmed})"))
 }
 
 fn build_insert(
@@ -1572,7 +1613,8 @@ fn build_insert(
         .map(|c| quote_ident(c))
         .collect::<Vec<_>>()
         .join(", ");
-    let mut all_params: Vec<Box<dyn ToSql + Sync + Send>> = Vec::with_capacity(rows.len() * cols.len());
+    let mut all_params: Vec<Box<dyn ToSql + Sync + Send>> =
+        Vec::with_capacity(rows.len() * cols.len());
     let mut values_sql = String::new();
     for (i, row) in rows.iter().enumerate() {
         if i > 0 {
@@ -1592,9 +1634,7 @@ fn build_insert(
                     let literal = pgvector_from_json(arr);
                     all_params.push(Box::new(literal));
                 } else {
-                    return Err(format!(
-                        "vec column must be a JSON array, got: {v}"
-                    ));
+                    return Err(format!("vec column must be a JSON array, got: {v}"));
                 }
             } else if matches!(v, serde_json::Value::Null) {
                 // NULL binding: use a typed Option to avoid client-side type
@@ -1606,18 +1646,42 @@ fn build_insert(
         }
         values_sql.push(')');
     }
-    let sql = if is_keyed && pk.is_some() {
-        let pk_str = pk.unwrap();
-        format!(
+    let sql = match (is_keyed, pk) {
+        (true, Some(pk_str)) => format!(
             "INSERT INTO {table} ({col_sql}) VALUES {values_sql} \
              ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
             pk = quote_ident(pk_str),
             update_set = update_set_clause(cols, pk_str),
-        )
-    } else {
-        format!("INSERT INTO {table} ({col_sql}) VALUES {values_sql}")
+        ),
+        _ => format!("INSERT INTO {table} ({col_sql}) VALUES {values_sql}"),
     };
-    Ok(Translation::write(sql, all_params))
+    let gucs = embedding_gucs_for(table);
+    Ok(if gucs.is_empty() {
+        Translation::write(sql, all_params)
+    } else {
+        Translation::write_with_gucs(sql, all_params, gucs)
+    })
+}
+
+/// Translate-time GUC plumbing: per-statement `SET LOCAL` values needed for
+/// the `embedding_vectors` / `embedding_state` writer path to mirror the
+/// per-:put HNSW knob the cozo backend took via `::hnsw create` at index
+/// build time. Cozo embedded `m` / `ef_construction` into the index; pgvector
+/// stores them with the index but accepts session overrides on insert for
+/// tuning. `LEANKG_HNSW_EF_CONST` (default 20) keeps parity with the cozo
+/// builder; absent, no GUC is emitted (uses the index's stored value).
+fn embedding_gucs_for(table: &str) -> Vec<(String, String)> {
+    if table != "embedding_vectors" {
+        return Vec::new();
+    }
+    let ef = std::env::var("LEANKG_HNSW_EF_CONST")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|n| (1..=2000).contains(n));
+    match ef {
+        Some(n) => vec![("hnsw.ef_construction".to_string(), n.to_string())],
+        None => Vec::new(),
+    }
 }
 
 fn update_set_clause(cols: &[String], pk: &str) -> String {
@@ -1664,9 +1728,7 @@ fn put_from_batch(
                 if let serde_json::Value::Array(row) = r {
                     out.push(row);
                 } else {
-                    return Err(format!(
-                        ":put batch row must be an array, got: {r}"
-                    ));
+                    return Err(format!(":put batch row must be an array, got: {r}"));
                 }
             }
             out
@@ -1701,10 +1763,7 @@ fn rm_script(
     // Shape B: literal rm — `?[col] <- [{values}] :rm rel {col}` (key-only).
     let idx = body.find(":rm").ok_or("no :rm in body".to_string())?;
     let target = body[idx + 3..].trim();
-    let inner = target
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .trim();
+    let inner = target.trim_start_matches('{').trim_end_matches('}').trim();
     let cols: Vec<String> = inner.split(',').map(|s| s.trim().to_string()).collect();
     if cols.is_empty() {
         return Err("empty :rm target".into());
@@ -1748,9 +1807,9 @@ fn rm_script(
         let strs: Vec<String> = arr
             .into_iter()
             .filter_map(|row| {
-                row.into_iter().next().and_then(|v| match v {
-                    serde_json::Value::String(s) => Some(s),
-                    other => Some(other.to_string()),
+                row.into_iter().next().map(|v| match v {
+                    serde_json::Value::String(s) => s,
+                    other => other.to_string(),
                 })
             })
             .collect();
@@ -1759,10 +1818,7 @@ fn rm_script(
             table = table,
             pk = quote_ident(&pk),
         );
-        return Ok(Translation::write(
-            sql,
-            vec![Box::new(strs)],
-        ));
+        return Ok(Translation::write(sql, vec![Box::new(strs)]));
     }
     Err(format!("unsupported :rm shape: {source}"))
 }
@@ -1783,10 +1839,7 @@ fn cross_relation_rm(
         Some(p) => p,
         None => "^ontology://".to_string(),
     };
-    Ok(Translation::write(
-        sql,
-        vec![Box::new(pat)],
-    ))
+    Ok(Translation::write(sql, vec![Box::new(pat)]))
 }
 
 fn extract_regex_literal(s: &str) -> Option<String> {
@@ -1814,7 +1867,9 @@ fn delete_where(
     // `where` clause with the same operators as a filter — reuse the
     // compiler.
     let trimmed = body.trim();
-    let where_idx = trimmed.find("where").ok_or_else(|| ":delete missing where".to_string())?;
+    let where_idx = trimmed
+        .find("where")
+        .ok_or_else(|| ":delete missing where".to_string())?;
     let table = trimmed[..where_idx].trim();
     let filters = trimmed[where_idx + 5..].trim().to_string();
     let (where_sql, bound) = compile_filters(filters, params)?;
@@ -1862,9 +1917,7 @@ fn index_ddl(rest: &str) -> Result<Translation, String> {
                     .map(|s| quote_ident(s.trim()))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let sql = format!(
-                    "CREATE INDEX IF NOT EXISTS {pg_idx} ON {table} ({col_list})"
-                );
+                let sql = format!("CREATE INDEX IF NOT EXISTS {pg_idx} ON {table} ({col_list})");
                 return Ok(Translation::write(sql, Vec::new()));
             }
         }
@@ -1904,7 +1957,11 @@ fn relations_introspection() -> Translation {
 
 fn schema_introspection(_rest: &str) -> Result<Translation, String> {
     // `:schema table` → information_schema columns.
-    let table = _rest.trim().trim_start_matches('{').trim_end_matches('}').trim();
+    let table = _rest
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
     let sql = format!(
         "SELECT column_name, data_type, is_nullable FROM information_schema.columns \
          WHERE table_schema = current_schema() AND table_name = '{table}' \
@@ -2047,11 +2104,7 @@ mod tests {
 
     #[test]
     fn read_simple_select() {
-        let t = translate(
-            "?[a, b, c] := *table[a, b, c]",
-            BTreeMap::new(),
-        )
-        .unwrap();
+        let t = translate("?[a, b, c] := *table[a, b, c]", BTreeMap::new()).unwrap();
         assert_eq!(t.kind, TranslationKind::Read);
         assert_eq!(t.sql, "SELECT \"a\", \"b\", \"c\" FROM table");
         assert_eq!(t.head, vec!["a", "b", "c"]);
@@ -2061,11 +2114,7 @@ mod tests {
     fn read_equality_param() {
         let mut p = BTreeMap::new();
         p.insert("qn".into(), serde_json::json!("foo"));
-        let t = translate(
-            "?[a] := *t[a], a = $qn",
-            p,
-        )
-        .unwrap();
+        let t = translate("?[a] := *t[a], a = $qn", p).unwrap();
         assert!(t.sql.contains("WHERE \"a\" = $1"));
         assert_eq!(t.params.len(), 1);
     }
@@ -2095,22 +2144,14 @@ mod tests {
         let mut p = BTreeMap::new();
         p.insert("a".into(), serde_json::json!("x"));
         p.insert("b".into(), serde_json::json!("y"));
-        let t = translate(
-            "?[t] := *r[s, t, _, _, _, _], (s = $a or s = $b)",
-            p,
-        )
-        .unwrap();
+        let t = translate("?[t] := *r[s, t, _, _, _, _], (s = $a or s = $b)", p).unwrap();
         assert!(t.sql.contains(" OR "), "got: {}", t.sql);
         assert_eq!(t.params.len(), 2);
     }
 
     #[test]
     fn read_limit_offset() {
-        let t = translate(
-            "?[a] := *t[a] :limit 10 :offset 5",
-            BTreeMap::new(),
-        )
-        .unwrap();
+        let t = translate("?[a] := *t[a] :limit 10 :offset 5", BTreeMap::new()).unwrap();
         assert!(t.sql.contains("LIMIT 10"), "got: {}", t.sql);
         assert!(t.sql.contains("OFFSET 5"), "got: {}", t.sql);
     }
@@ -2140,11 +2181,7 @@ mod tests {
     fn read_regex_matches_with_param() {
         let mut p = BTreeMap::new();
         p.insert("pat".into(), serde_json::json!("^foo"));
-        let t = translate(
-            "?[qn] := *t[qn, fp], regex_matches(fp, $pat)",
-            p,
-        )
-        .unwrap();
+        let t = translate("?[qn] := *t[qn, fp], regex_matches(fp, $pat)", p).unwrap();
         assert!(t.sql.contains("~ $1"), "got: {}", t.sql);
     }
 
@@ -2167,7 +2204,11 @@ mod tests {
             BTreeMap::new(),
         )
         .unwrap();
-        assert!(t.sql.contains("LIKE") && t.sql.contains("|| '%'"), "got: {}", t.sql);
+        assert!(
+            t.sql.contains("LIKE") && t.sql.contains("|| '%'"),
+            "got: {}",
+            t.sql
+        );
     }
 
     #[test]
@@ -2212,7 +2253,11 @@ mod tests {
             BTreeMap::new(),
         )
         .unwrap();
-        assert!(t.sql.contains("ORDER BY count(\"language\") DESC"), "got: {}", t.sql);
+        assert!(
+            t.sql.contains("ORDER BY count(\"language\") DESC"),
+            "got: {}",
+            t.sql
+        );
     }
 
     #[test]
@@ -2230,7 +2275,11 @@ mod tests {
     fn ann_query_translation() {
         let q = "?[dist, qualified_name] := ~embedding_vectors:vec_idx { qualified_name | query: vec([0.1, 0.2]), k: 5, ef: 50, bind_distance: dist }";
         let t = translate(q, BTreeMap::new()).unwrap();
-        assert!(t.sql.contains("SELECT vec <-> $1::text::vector"), "got: {}", t.sql);
+        assert!(
+            t.sql.contains("SELECT vec <-> $1::text::vector"),
+            "got: {}",
+            t.sql
+        );
         assert!(t.sql.contains("LIMIT $2::int8"), "got: {}", t.sql);
         assert_eq!(t.params.len(), 2);
     }
@@ -2242,8 +2291,16 @@ mod tests {
             BTreeMap::new(),
         ).unwrap();
         assert_eq!(t.kind, TranslationKind::Write);
-        assert!(t.sql.contains("INSERT INTO business_logic"), "got: {}", t.sql);
-        assert!(!t.sql.contains("ON CONFLICT"), "non-keyed table must not upsert: {}", t.sql);
+        assert!(
+            t.sql.contains("INSERT INTO business_logic"),
+            "got: {}",
+            t.sql
+        );
+        assert!(
+            !t.sql.contains("ON CONFLICT"),
+            "non-keyed table must not upsert: {}",
+            t.sql
+        );
     }
 
     #[test]
@@ -2252,8 +2309,16 @@ mod tests {
             r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [["qn", 0, "", "stale", "now"]] :put embedding_state {qualified_name => usearch_key, content_hash, state, embedded_at}"#,
             BTreeMap::new(),
         ).unwrap();
-        assert!(t.sql.contains("INSERT INTO embedding_state"), "got: {}", t.sql);
-        assert!(t.sql.contains("ON CONFLICT"), "keyed :put must upsert: {}", t.sql);
+        assert!(
+            t.sql.contains("INSERT INTO embedding_state"),
+            "got: {}",
+            t.sql
+        );
+        assert!(
+            t.sql.contains("ON CONFLICT"),
+            "keyed :put must upsert: {}",
+            t.sql
+        );
     }
 
     #[test]
@@ -2264,7 +2329,11 @@ mod tests {
             r#"?[qn, et, name, fp, ls, le, lg, pq, _, _, _] := *code_elements[qn, et, name, fp, ls, le, lg, pq, _, _, _], qn = $qn :rm code_elements {qn, et, name, fp, ls, le, lg, pq, _, _, _}"#,
             p,
         ).unwrap();
-        assert!(t.sql.starts_with("DELETE FROM code_elements"), "got: {}", t.sql);
+        assert!(
+            t.sql.starts_with("DELETE FROM code_elements"),
+            "got: {}",
+            t.sql
+        );
         assert!(t.sql.contains("WHERE"), "got: {}", t.sql);
     }
 
@@ -2274,19 +2343,23 @@ mod tests {
             r#"?[s, t, rt, c, m] := *relationships[s, t, rt, c, m, _], *code_elements[s, et, _, fp, _, _, _, _, _, _, _], regex_matches(fp, "^ontology://") :rm relationships {s, t, rt, c, m}"#,
             BTreeMap::new(),
         ).unwrap();
-        assert!(t.sql.contains("DELETE FROM relationships"), "got: {}", t.sql);
+        assert!(
+            t.sql.contains("DELETE FROM relationships"),
+            "got: {}",
+            t.sql
+        );
         assert!(t.sql.contains("source_qualified IN"), "got: {}", t.sql);
-        assert!(t.sql.contains("information_schema") == false, "no info_schema leak");
+        assert!(
+            t.sql.contains("information_schema") == false,
+            "no info_schema leak"
+        );
     }
 
     #[test]
     fn delete_where_with_param() {
         let mut p = BTreeMap::new();
         p.insert("id".into(), serde_json::json!("abc"));
-        let t = translate(
-            r#":delete api_keys where id = "{key_id}""#,
-            p,
-        );
+        let t = translate(r#":delete api_keys where id = "{key_id}""#, p);
         // This is the unescaped pattern; we bind to NULL because the
         // interpolated key_id is not in the param map. The point is the
         // form parses without panic; runtime behavior is documented.
@@ -2298,11 +2371,12 @@ mod tests {
     fn delete_where_proper() {
         let mut p = BTreeMap::new();
         p.insert("id".into(), serde_json::json!("abc"));
-        let t = translate(
-            r#":delete api_keys where id = $id"#,
-            p,
-        ).unwrap();
-        assert!(t.sql.contains("DELETE FROM api_keys WHERE"), "got: {}", t.sql);
+        let t = translate(r#":delete api_keys where id = $id"#, p).unwrap();
+        assert!(
+            t.sql.contains("DELETE FROM api_keys WHERE"),
+            "got: {}",
+            t.sql
+        );
         assert_eq!(t.params.len(), 1);
     }
 
@@ -2311,16 +2385,14 @@ mod tests {
         let t = translate(
             ":create code_elements {qualified_name: String, element_type: String}",
             BTreeMap::new(),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(t.kind, TranslationKind::DdlNoop);
     }
 
     #[test]
     fn replace_noop() {
-        let t = translate(
-            "?[a] := *t[a] :replace t {a: String}",
-            BTreeMap::new(),
-        ).unwrap();
+        let t = translate("?[a] := *t[a] :replace t {a: String}", BTreeMap::new()).unwrap();
         assert_eq!(t.kind, TranslationKind::DdlNoop);
     }
 
@@ -2329,14 +2401,19 @@ mod tests {
         let t = translate(
             "::hnsw create embedding_vectors:vec_idx { dim: 384, distance: Cosine }",
             BTreeMap::new(),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(t.kind, TranslationKind::DdlNoop);
     }
 
     #[test]
     fn relations_introspection_query() {
         let t = translate("::relations", BTreeMap::new()).unwrap();
-        assert!(t.sql.contains("information_schema.tables"), "got: {}", t.sql);
+        assert!(
+            t.sql.contains("information_schema.tables"),
+            "got: {}",
+            t.sql
+        );
         assert_eq!(t.head, vec!["name".to_string()]);
     }
 
@@ -2345,8 +2422,14 @@ mod tests {
         let t = translate(
             "::index create code_elements:foo { file_path }",
             BTreeMap::new(),
-        ).unwrap();
-        assert!(t.sql.contains("CREATE INDEX IF NOT EXISTS code_elements_foo"), "got: {}", t.sql);
+        )
+        .unwrap();
+        assert!(
+            t.sql
+                .contains("CREATE INDEX IF NOT EXISTS code_elements_foo"),
+            "got: {}",
+            t.sql
+        );
     }
 
     #[test]

@@ -192,18 +192,30 @@ impl DbBackend for PostgresBackend {
                     .iter()
                     .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
                     .collect();
-                let result = client.query(&t.sql, &param_refs)?;
-                for row in &result {
-                    let mapped = translate::map_row(row, &t.head)?;
-                    rows.push(mapped);
+                // Phase 4: `SET LOCAL` needs a tx; wrap the read so the
+                // pgvector `hnsw.ef_search` knob from the translator takes
+                // effect for this SELECT and reverts on commit.
+                if t.gucs.is_empty() {
+                    let result = client.query(&t.sql, &param_refs)?;
+                    for row in &result {
+                        let mapped = translate::map_row(row, &t.head)?;
+                        rows.push(mapped);
+                    }
+                } else {
+                    let mut tx = client.transaction()?;
+                    apply_gucs(&mut tx, &t.gucs)?;
+                    let result = tx.query(&t.sql, &param_refs)?;
+                    for row in &result {
+                        let mapped = translate::map_row(row, &t.head)?;
+                        rows.push(mapped);
+                    }
+                    tx.commit()?;
                 }
                 // Header derivation fallback: when the translator didn't
                 // record a head (e.g. `::relations`), synthesise generic
                 // names from the column count.
                 if head.is_empty() && !rows.is_empty() {
-                    head = (0..rows[0].len())
-                        .map(|i| format!("col{i}"))
-                        .collect();
+                    head = (0..rows[0].len()).map(|i| format!("col{i}")).collect();
                 }
             }
             translate::TranslationKind::Write => {
@@ -213,6 +225,7 @@ impl DbBackend for PostgresBackend {
                     .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
                     .collect();
                 let mut tx = client.transaction()?;
+                apply_gucs(&mut tx, &t.gucs)?;
                 tx.execute(&t.sql, &param_refs)?;
                 tx.commit()?;
             }
@@ -283,7 +296,10 @@ impl DbBackend for PostgresBackend {
                 } else {
                     format!(
                         "INSERT INTO {table} ({col_sql}) VALUES ({vals})",
-                        vals = (1..=values.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", ")
+                        vals = (1..=values.len())
+                            .map(|i| format!("${i}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )
                 };
                 tx.execute(&sql, &value_refs)?;
@@ -292,6 +308,28 @@ impl DbBackend for PostgresBackend {
         tx.commit()?;
         Ok(())
     }
+}
+
+/// Apply a list of `SET LOCAL name = value` statements on an open
+/// transaction. Used to carry per-query pgvector knobs (currently
+/// `hnsw.ef_search` for reads, `hnsw.ef_construction` for writes) through
+/// the same tx as the main SQL so the GUC is in scope for the next statement
+/// and reverts automatically on commit. `name` and `value` are validated by
+/// the caller (translator — only known-safe HNSW knobs land here).
+fn apply_gucs(
+    tx: &mut postgres::Transaction,
+    gucs: &[(String, String)],
+) -> Result<(), postgres::Error> {
+    for (name, value) in gucs {
+        // SET LOCAL does not accept parameter placeholders; values are
+        // interpolated by the translator (numeric strings from
+        // `extract_ann_int_field` / `LEANKG_HNSW_EF_CONST`). The name comes
+        // from a hardcoded allowlist (translator).
+        let escaped_value = value.replace('\'', "''");
+        let sql = format!("SET LOCAL {name} = '{escaped_value}'");
+        tx.batch_execute(&sql)?;
+    }
+    Ok(())
 }
 
 /// Convert a cozo DataValue into a boxed `dyn ToSql` for binding. Vector
@@ -503,10 +541,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         // Either DNS or TCP connect failure surfaces a clear error.
-        assert!(
-            !err.is_empty(),
-            "stub error must not be empty: {err}"
-        );
+        assert!(!err.is_empty(), "stub error must not be empty: {err}");
         assert!(pg.import_relations(BTreeMap::new()).is_err());
     }
 
