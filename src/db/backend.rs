@@ -4,15 +4,14 @@
 //! outside this module holds a concrete `cozo::DbInstance`. The production
 //! backend is PostgreSQL (Phase 3+); [`CozoBackend`] is a temporary
 //! migration shim that delegates to CozoDB unchanged (deleted in Phase 8,
-//! plan D4). [`PostgresBackend`] is a stub that only validates
-//! `LEANKG_PG_URL` — the real connection + schema land in Phases 2-3
-//! (`src/db/pg/`).
+//! plan D4).
 
+use crate::db::pg::translate;
 use crate::db::schema::mutability_for;
 use cozo::{NamedRows, ScriptMutability};
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Shared handle used throughout the codebase. `Arc` because clones of
 /// `GraphEngine` must share ONE underlying DB handle (RocksDB allows one
@@ -108,16 +107,31 @@ impl DbBackend for CozoBackend {
     }
 }
 
-/// PostgreSQL backend stub — Phase 3 (plan T1.4, T2.x).
+/// PostgreSQL backend (Phase 3 — plan T1.4, T3.5).
 ///
-/// Today it only validates `LEANKG_PG_URL` (a `postgres://` URL must be
-/// set) and stores the URL. It runs NO queries and creates NO tables
-/// (Phase 2 owns schema). `run_script` always fails with the documented
-/// "not yet implemented" error.
-#[derive(Debug, Clone)]
+/// Holds one validated connection URL and a lazily-initialised
+/// `postgres::Client` behind a `Mutex<Option<_>>`. The first call to
+/// [`Self::run_script`] connects; subsequent calls reuse the handle.
+/// Phase 6 adds a connection pool; today we lock per call.
+///
+/// Read classification flows through [`crate::db::schema::mutability_for`].
+/// Writes are wrapped in a single transaction so multi-statement `:put`/
+/// `:rm` scripts roll back cleanly on the first failure.
+#[derive(Clone)]
 pub struct PostgresBackend {
-    /// Validated connection URL (format-checked only; no connection yet).
     pub pg_url: String,
+    /// Lazy connection handle — tests construct an empty `Arc<Mutex<None>>`
+    /// directly; production code goes through [`Self::from_env`].
+    pub conn: Arc<Mutex<Option<postgres::Client>>>,
+}
+
+impl std::fmt::Debug for PostgresBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresBackend")
+            .field("pg_url", &redact_url(&self.pg_url))
+            .field("conn", &"<lazy>")
+            .finish()
+    }
 }
 
 impl PostgresBackend {
@@ -132,17 +146,207 @@ impl PostgresBackend {
                 redact_url(&url)
             ));
         }
-        Ok(Self { pg_url: url })
+        Ok(Self {
+            pg_url: url,
+            conn: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    /// Connect lazily. Returns a guard that releases the mutex when
+    /// dropped.
+    fn connect(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut guard = self.conn.lock().unwrap();
+        if guard.is_none() {
+            let client = postgres::Client::connect(&self.pg_url, postgres::NoTls)?;
+            *guard = Some(client);
+        }
+        Ok(())
     }
 }
 
 impl DbBackend for PostgresBackend {
     fn run_script(
         &self,
-        _query: &str,
-        _params: BTreeMap<String, serde_json::Value>,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
     ) -> Result<NamedRows, Box<dyn std::error::Error>> {
-        Err("PostgresBackend: not yet implemented (Phase 3)".into())
+        self.connect()?;
+        let mut guard = self.conn.lock().unwrap();
+        let client = guard
+            .as_mut()
+            .ok_or("connection not initialised (lazy connect failed)".to_string())?;
+
+        let t = translate::translate(query, params).map_err(|e| -> Box<dyn std::error::Error> {
+            Box::new(std::io::Error::other(format!(
+                "translate({}): {e}",
+                &query[..query.len().min(60)]
+            )))
+        })?;
+
+        let mut head = t.head.clone();
+        let mut rows: Vec<Vec<cozo::DataValue>> = Vec::new();
+        match t.kind {
+            translate::TranslationKind::Read => {
+                let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = t
+                    .params
+                    .iter()
+                    .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+                    .collect();
+                let result = client.query(&t.sql, &param_refs)?;
+                for row in &result {
+                    let mapped = translate::map_row(row, &t.head)?;
+                    rows.push(mapped);
+                }
+                // Header derivation fallback: when the translator didn't
+                // record a head (e.g. `::relations`), synthesise generic
+                // names from the column count.
+                if head.is_empty() && !rows.is_empty() {
+                    head = (0..rows[0].len())
+                        .map(|i| format!("col{i}"))
+                        .collect();
+                }
+            }
+            translate::TranslationKind::Write => {
+                let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = t
+                    .params
+                    .iter()
+                    .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+                    .collect();
+                let mut tx = client.transaction()?;
+                tx.execute(&t.sql, &param_refs)?;
+                tx.commit()?;
+            }
+            translate::TranslationKind::DdlNoop => {
+                // `:create`, `:replace`, `VACUUM`, `PRAGMA`, `::hnsw` — no SQL
+                // emitted (the schema.sql already pre-created everything).
+            }
+        }
+        Ok(NamedRows::new(head, rows))
+    }
+
+    fn import_relations(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.connect()?;
+        let mut guard = self.conn.lock().unwrap();
+        let client = guard
+            .as_mut()
+            .ok_or("connection not initialised".to_string())?;
+        let mut tx = client.transaction()?;
+        for (table, named) in data {
+            let cols = named.headers.clone();
+            let col_sql = cols
+                .iter()
+                .map(|c| crate::db::pg::translate::quote_ident(c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            // Determine whether the table has a PK — keyed tables in
+            // schema.sql are: code_elements (no), relationships (no),
+            // embedding_state (qualified_name), embedding_vectors
+            // (qualified_name), index_inventory (key), index_hashes
+            // (path), migrations (id).
+            let pk_col = match table.as_str() {
+                "embedding_state" | "embedding_vectors" => Some("qualified_name"),
+                "index_inventory" => Some("key"),
+                "index_hashes" => Some("path"),
+                "migrations" => Some("id"),
+                _ => None,
+            };
+            for row in &named.rows {
+                let mut values: Vec<Box<dyn postgres::types::ToSql + Sync + Send>> = Vec::new();
+                for (i, val) in row.iter().enumerate() {
+                    values.push(cozo_to_pg(val, &cols[i]));
+                }
+                let value_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = values
+                    .iter()
+                    .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+                    .collect();
+                let sql = if let Some(pk) = pk_col {
+                    let update_set = cols
+                        .iter()
+                        .filter(|c| c.as_str() != pk)
+                        .map(|c| {
+                            format!(
+                                "{} = EXCLUDED.{}",
+                                crate::db::pg::translate::quote_ident(c),
+                                crate::db::pg::translate::quote_ident(c)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "INSERT INTO {table} ({col_sql}) VALUES ({vals}) ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
+                        vals = (1..=values.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", "),
+                        pk = crate::db::pg::translate::quote_ident(pk),
+                    )
+                } else {
+                    format!(
+                        "INSERT INTO {table} ({col_sql}) VALUES ({vals})",
+                        vals = (1..=values.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", ")
+                    )
+                };
+                tx.execute(&sql, &value_refs)?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+/// Convert a cozo DataValue into a boxed `dyn ToSql` for binding. Vector
+/// values are emitted as pgvector text literals (e.g. `[0.1, 0.2]`).
+fn cozo_to_pg(v: &cozo::DataValue, col: &str) -> Box<dyn postgres::types::ToSql + Sync + Send> {
+    use cozo::DataValue;
+    match v {
+        DataValue::Null => Box::new(Option::<String>::None),
+        DataValue::Bool(b) => Box::new(*b),
+        DataValue::Num(cozo::Num::Int(i)) => Box::new(*i),
+        DataValue::Num(cozo::Num::Float(f)) => Box::new(*f),
+        DataValue::Str(s) => Box::new(s.as_str().to_string()),
+        DataValue::Json(j) => Box::new(j.0.to_string()),
+        DataValue::List(items) if col == "vec" => {
+            // pgvector literal: `[0.1,0.2,...]`.
+            let mut s = String::from("[");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                match item {
+                    DataValue::Num(cozo::Num::Float(f)) => s.push_str(&format!("{f}")),
+                    DataValue::Num(cozo::Num::Int(i)) => s.push_str(&format!("{i}")),
+                    other => s.push_str(&format!("{other}")),
+                }
+            }
+            s.push(']');
+            Box::new(s)
+        }
+        DataValue::Vec(vec) => {
+            // F32 or F64 ndarray.
+            let mut s = String::from("[");
+            match vec {
+                cozo::Vector::F32(arr) => {
+                    for (i, x) in arr.iter().enumerate() {
+                        if i > 0 {
+                            s.push(',');
+                        }
+                        s.push_str(&format!("{x}"));
+                    }
+                }
+                cozo::Vector::F64(arr) => {
+                    for (i, x) in arr.iter().enumerate() {
+                        if i > 0 {
+                            s.push(',');
+                        }
+                        s.push_str(&format!("{x}"));
+                    }
+                }
+            }
+            s.push(']');
+            Box::new(s)
+        }
+        DataValue::Bytes(b) => Box::new(b.clone()),
+        other => Box::new(format!("{other}")),
     }
 }
 
@@ -288,17 +492,20 @@ mod tests {
 
     #[test]
     fn postgres_backend_stub_returns_documented_error() {
-        // (c) stub behavior is explicit, not a panic.
+        // (c) when the URL is bogus, run_script fails at connection time
+        // rather than silently panicking.
         let pg = PostgresBackend {
-            pg_url: "postgres://localhost/leankg".into(),
+            pg_url: "postgres://invalid-host-not-real:1/leankg".into(),
+            conn: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         let err = pg
             .run_script("?[a] := *x[a]", Default::default())
             .unwrap_err()
             .to_string();
+        // Either DNS or TCP connect failure surfaces a clear error.
         assert!(
-            err.contains("Phase 3"),
-            "stub error must name the phase: {err}"
+            !err.is_empty(),
+            "stub error must not be empty: {err}"
         );
         assert!(pg.import_relations(BTreeMap::new()).is_err());
     }

@@ -2000,7 +2000,7 @@ pub fn named_rows_from_result(
 /// punctuation marks like `.` for relation qualifiers and `-` for some
 /// naming). Postgres wants double-quoted identifiers. Map Cozo's bare form
 /// to PG's quoted form, rejecting anything that looks injection-adjacent.
-fn quote_ident(s: &str) -> String {
+pub(crate) fn quote_ident(s: &str) -> String {
     // Allow: letter | digit | underscore | dot (for relation.column, but
     // cozo uses space-separated heads, so dot is rare). Reject quotes and
     // semicolons outright.
