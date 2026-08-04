@@ -33,6 +33,7 @@ pub mod gradle_extractor;
 pub mod gradle_module_extractor;
 pub mod kotlin_annotations;
 pub mod kotlin_utils;
+pub mod lang;
 pub mod maven_extractor;
 pub mod viewmodel_repository;
 pub mod xml_generic;
@@ -266,8 +267,81 @@ fn insert_batch_size() -> usize {
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
     let extensions = [
-        "go", "ts", "js", "py", "rs", "java", "kt", "kts", "tf", "yml", "yaml", "json", "toml",
-        "mod", "xml", "dart", "swift", "m", "mm", "h", "vue", "svelte", "sql",
+        "go",
+        "ts",
+        "js",
+        "py",
+        "rs",
+        "java",
+        "kt",
+        "kts",
+        "tf",
+        "yml",
+        "yaml",
+        "json",
+        "toml",
+        "mod",
+        "xml",
+        "dart",
+        "swift",
+        "m",
+        "mm",
+        "h",
+        "vue",
+        "svelte",
+        "sql",
+        "c",
+        "cpp",
+        "cxx",
+        "hpp",
+        "hh",
+        "hxx",
+        "cc",
+        "sh",
+        "bash",
+        "zsh",
+        "rb",
+        "php",
+        "pl",
+        "pm",
+        "t",
+        "r",
+        "ex",
+        "exs",
+        "scala",
+        "sc",
+        "zig",
+        "sol",
+        "lua",
+        "json",
+        "jsonc",
+        "toml",
+        "yaml",
+        "css",
+        "scss",
+        "html",
+        "htm",
+        "graphql",
+        "gql",
+        "proto",
+        "cs",
+        "hs",
+        "lhs",
+        "elm",
+        "ml",
+        "mli",
+        "fs",
+        "fsi",
+        "fsx",
+        "erl",
+        "hrl",
+        "nim",
+        "nims",
+        "ps1",
+        "psm1",
+        "psd1",
+        "cr",
+        "dockerfile",
     ];
     let config_files = [
         "package.json",
@@ -323,11 +397,12 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         }
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext_lower = ext.to_lowercase();
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         let is_valid_file = config_files.contains(&file_name)
             || (path.to_string_lossy().contains("/res/") && ext == "xml")
-            || extensions.contains(&ext)
+            || extensions.contains(&ext_lower.as_str())
             || is_cicd_yaml_file(path);
 
         if is_valid_file {
@@ -381,7 +456,8 @@ fn get_language(file_path: &str) -> Option<&'static str> {
         "dart" => Some("dart"),
         "swift" => Some("swift"),
         "m" | "mm" | "h" => Some("objc"),
-        _ => None,
+        // Registry-driven languages (c/cpp/ruby/php/...).
+        _ => crate::indexer::lang::registry::language_for_path(file_path).map(|s| s.name),
     }
 }
 
@@ -614,43 +690,31 @@ fn extract_elements_for_file(
         }
     };
 
-    thread_local! {
-        static PARSERS: std::cell::RefCell<Vec<Option<tree_sitter::Parser>>> = std::cell::RefCell::new(vec![None, None, None, None, None, None, None, None]);
+    // Languages whose grammar bundles but fails to load (toml/dockerfile pin
+    // incompatible tree-sitter versions) get a useless Parser::new() that
+    // returns None from .parse(). Short-circuit to the regex-only path.
+    if crate::indexer::lang::registry::language_spec(language)
+        .map(|s| s.grammar.is_none())
+        .unwrap_or(false)
+    {
+        let extractor = crate::indexer::EntityExtractor::new(source, file_path, language);
+        let (elements, relationships) = extractor.extract_regex_only();
+        return Ok(ParsedFile {
+            element_count: elements.len(),
+            elements,
+            relationships,
+        });
     }
 
-    let parser_idx = match language {
-        "go" => 0,
-        "typescript" => 1,
-        "python" => 2,
-        "rust" => 3,
-        "java" => 4,
-        "kotlin" => 5,
-        "dart" => 6,
-        _ => {
-            return Ok(ParsedFile {
-                element_count: 0,
-                elements: vec![],
-                relationships: vec![],
-            })
-        }
-    };
+    thread_local! {
+        static PARSERS: std::cell::RefCell<std::collections::HashMap<String, tree_sitter::Parser>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
 
     let tree = PARSERS.with(|parsers| {
         let mut parsers = parsers.borrow_mut();
-        let parser = parsers[parser_idx].get_or_insert_with(|| {
-            let mut p = tree_sitter::Parser::new();
-            let lang: tree_sitter::Language = match language {
-                "go" => tree_sitter_go::LANGUAGE.into(),
-                "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                "python" => tree_sitter_python::LANGUAGE.into(),
-                "rust" => tree_sitter_rust::LANGUAGE.into(),
-                "java" => tree_sitter_java::LANGUAGE.into(),
-                "kotlin" => tree_sitter_kotlin_ng::LANGUAGE.into(),
-                "dart" => tree_sitter_dart::LANGUAGE.into(),
-                _ => return p,
-            };
-            let _ = p.set_language(&lang);
-            p
+        let parser = parsers.entry(language.to_string()).or_insert_with(|| {
+            crate::indexer::lang::registry::parser_for(language).unwrap_or_default()
         });
         parser.parse(source, None).ok_or("parse failed")
     })?;
@@ -1138,6 +1202,9 @@ pub fn index_file_sync(
         "kotlin"
     } else if file_path.ends_with(".dart") {
         "dart"
+    } else if let Some(spec) = crate::indexer::lang::registry::language_for_path(file_path) {
+        // Registry-driven languages (new grammars, e.g. c/cpp).
+        spec.name
     } else {
         return Ok(0);
     };
@@ -2403,6 +2470,80 @@ include("web-app")"#;
             names
         );
         assert!(names.contains(&"schema.sql"), "missing .sql: {:?}", names);
+    }
+
+    // Full language registry: walker must discover every registered extension.
+    #[test]
+    fn test_find_files_sync_discovers_registry_extensions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("main.c"), "int main() { return 0; }\n").expect("write c");
+        std::fs::write(
+            dir.path().join("main.cpp"),
+            "class Foo {};\nint main() { return 0; }\n",
+        )
+        .expect("write cpp");
+        std::fs::write(dir.path().join("script.sh"), "echo hi\n").expect("write sh");
+        std::fs::write(dir.path().join("math.R"), "x <- 1\n").expect("write R");
+        std::fs::write(dir.path().join("Foo.pm"), "package Foo;\n").expect("write pm");
+
+        let files = find_files_sync(dir.path().to_str().unwrap()).expect("find");
+        let names: Vec<&str> = files
+            .iter()
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap_or("")
+            })
+            .collect();
+        assert!(names.contains(&"main.c"), "missing .c: {:?}", names);
+        assert!(names.contains(&"main.cpp"), "missing .cpp: {:?}", names);
+        assert!(names.contains(&"script.sh"), "missing .sh: {:?}", names);
+        assert!(
+            names.contains(&"math.R"),
+            "missing .R (uppercase): {:?}",
+            names
+        );
+        assert!(names.contains(&"Foo.pm"), "missing .pm: {:?}", names);
+    }
+
+    // Bulk path (extract_elements_for_file) must index registry languages.
+    #[test]
+    fn test_bulk_path_indexes_registry_languages() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = [
+            "main.c",
+            "main.rb",
+            "main.php",
+            "math.R",
+            "User.scala",
+            "Counter.sol",
+            "config.json",
+        ];
+        for f in files {
+            let content = match f {
+                "main.c" => "int add(int a, int b) { return a + b; }\nstruct Point { int x; };",
+                "main.rb" => "class User\n  def greet\n    'hi'\n  end\nend",
+                "main.php" => "<?php\nclass Foo {\n  public function bar() { return 1; }\n}",
+                "math.R" => "square <- function(x) { x * x }\n",
+                "User.scala" => "class User {\n  def greet: String = \"hi\"\n}",
+                "Counter.sol" => "contract Counter {\n  function inc() public { }\n}",
+                "config.json" => "{\"name\": \"test\"}",
+                _ => "",
+            };
+            std::fs::write(dir.path().join(f), content).expect("write");
+        }
+
+        for f in files {
+            let path = dir.path().join(f);
+            let parsed = extract_elements_for_file(path.to_str().unwrap()).expect("extract");
+            assert!(
+                parsed.element_count > 0,
+                "bulk path indexed 0 elements for {}",
+                f
+            );
+        }
     }
 
     // US-GF-07: rationale extraction

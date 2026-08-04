@@ -15,6 +15,8 @@ pub struct ParserManager {
     pub r_parser: Parser,
     pub elixir_parser: Parser,
     pub swift_parser: Parser,
+    /// Registry-driven parsers (new grammars without a named field).
+    registry_parsers: std::collections::HashMap<String, Parser>,
 }
 
 impl ParserManager {
@@ -33,6 +35,7 @@ impl ParserManager {
             r_parser: Parser::new(),
             elixir_parser: Parser::new(),
             swift_parser: Parser::new(),
+            registry_parsers: std::collections::HashMap::new(),
         }
     }
 
@@ -65,6 +68,9 @@ impl ParserManager {
         self.elixir_parser.set_language(&elixir_lang)?;
         self.swift_parser.set_language(&swift_lang)?;
 
+        // Registry-driven parsers (languages without a named field, e.g. c/cpp).
+        self.registry_parsers = crate::indexer::lang::registry::init_parsers();
+
         Ok(())
     }
 
@@ -83,7 +89,9 @@ impl ParserManager {
             "r" => Some(&mut self.r_parser),
             "elixir" => Some(&mut self.elixir_parser),
             "swift" => Some(&mut self.swift_parser),
-            _ => None,
+            // Registry-driven languages (new grammars) reuse a shared pool
+            // keyed by language name instead of a named field.
+            _ => self.registry_parsers.get_mut(language),
         }
     }
 }
