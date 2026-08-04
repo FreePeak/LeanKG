@@ -4,3 +4,4 @@
 //! (Phase 3) picks the client (sqlx per plan D1, or postgres — the crate this
 //! module already uses, keeping dependencies minimal).
 pub mod migrations;
+pub mod translate;
