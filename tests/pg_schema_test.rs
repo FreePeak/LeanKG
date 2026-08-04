@@ -350,18 +350,16 @@ fn migrations_table_records_applied_at() {
     let mut s = ScratchSchema::new();
     leankg::db::pg::migrations::run_migrations(&mut s.client).unwrap();
 
-    let row: (String, String) = s
+    let row = s
         .client
         .query_one(
             "SELECT data_type, is_nullable FROM information_schema.columns
              WHERE table_schema = $1 AND table_name = 'migrations' AND column_name = 'applied_at'",
             &[&s.name],
         )
-        .unwrap()
-        .into_parts()
-        .0
-        .get(0);
-    let (data_type, is_nullable): (String, String) = row;
+        .unwrap();
+    let data_type: String = row.get(0);
+    let is_nullable: String = row.get(1);
     assert_eq!(data_type, "timestamp with time zone");
     assert_eq!(
         is_nullable, "YES",
