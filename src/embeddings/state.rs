@@ -515,10 +515,10 @@ mod tests {
         use crate::db::backend::init_db;
         let tmp = tempfile::TempDir::new().unwrap();
         let db = init_db(&tmp.path().join("has_any.db")).unwrap();
-        ensure_embedding_state_table(&db).unwrap();
-        assert!(!has_any(&db).unwrap());
+        ensure_embedding_state_table(db.as_ref()).unwrap();
+        assert!(!has_any(db.as_ref()).unwrap());
         upsert_fresh(
-            &db,
+            db.as_ref(),
             &[FreshRow {
                 qualified_name: "src/x.rs::f".to_string(),
                 usearch_key: 1,
@@ -526,6 +526,6 @@ mod tests {
             }],
         )
         .unwrap();
-        assert!(has_any(&db).unwrap());
+        assert!(has_any(db.as_ref()).unwrap());
     }
 }

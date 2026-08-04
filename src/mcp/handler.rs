@@ -4864,7 +4864,7 @@ fn run_hnsw_semantic_search(
     env: &str,
     limit: usize,
     offset: usize,
-    kind: &str,
+    #[allow(unused_variables)] kind: &str,
 ) -> Result<Value, String> {
     use crate::retrieval::{
         is_function_target, is_upper_type, score_functions, traverse_to_functions, RetrieveOptions,

@@ -554,7 +554,9 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     // calls are absent from the binary — keeps default builds lean.
     #[cfg(feature = "embeddings")]
     {
-        crate::embeddings::state::ensure_embedding_state_table(db)?;
+        crate::embeddings::state::ensure_embedding_state_table(
+            &crate::db::backend::CozoBackend::from_concrete(db.clone()),
+        )?;
     }
 
     Ok(())
