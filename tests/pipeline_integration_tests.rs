@@ -10,7 +10,10 @@ async fn test_full_ast_to_graph_pipeline() {
     let tmp = TempDir::new().unwrap();
     let db = init_db(tmp.path().join("full_pipe.db").as_path()).unwrap();
     let cache = QueryCache::new(60, 100);
-    let graph = GraphEngine::with_cache(db, cache);
+    let graph = GraphEngine::with_cache(
+        std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
+        cache,
+    );
 
     // We create a dummy rust code file dynamically via AST extraction
     let source_code = r#"
@@ -45,7 +48,10 @@ async fn test_pipeline_reindex_overwrite() {
     let tmp = TempDir::new().unwrap();
     let db = init_db(tmp.path().join("reindex.db").as_path()).unwrap();
     let cache = QueryCache::new(60, 100);
-    let graph = GraphEngine::with_cache(db, cache.clone());
+    let graph = GraphEngine::with_cache(
+        std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
+        cache.clone(),
+    );
 
     let mut parser_manager = ParserManager::new();
     parser_manager.init_parsers().unwrap();
@@ -108,7 +114,10 @@ async fn test_pipeline_project_structure() {
     let tmp = TempDir::new().unwrap();
     let db = init_db(tmp.path().join("structure.db").as_path()).unwrap();
     let cache = QueryCache::new(60, 100);
-    let graph = GraphEngine::with_cache(db, cache);
+    let graph = GraphEngine::with_cache(
+        std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
+        cache,
+    );
 
     // We mock index_files_parallel process
     let files = vec!["src/app.rs".to_string(), "src/utils/math.rs".to_string()];
@@ -151,7 +160,10 @@ async fn test_pipeline_execution_flow() {
     let tmp = TempDir::new().unwrap();
     let db = init_db(tmp.path().join("exec_flow.db").as_path()).unwrap();
     let cache = QueryCache::new(60, 100);
-    let graph = GraphEngine::with_cache(db, cache);
+    let graph = GraphEngine::with_cache(
+        std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
+        cache,
+    );
 
     let mut all_elements = vec![
         leankg::db::models::CodeElement {

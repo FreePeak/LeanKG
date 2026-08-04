@@ -4,7 +4,9 @@ fn main() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("debug_cache_test.db");
     let db = leankg::db::schema::init_db(&db_path).unwrap();
-    let graph = leankg::graph::GraphEngine::new(db);
+    let graph = leankg::graph::GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db),
+    ));
 
     let elem_b = CodeElement {
         qualified_name: "src/b.rs::mod_b".to_string(),

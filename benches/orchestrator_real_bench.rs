@@ -78,7 +78,9 @@ fn main() {
     // Create fresh db for benchmark
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     println!("Files being tested (from this repo):");

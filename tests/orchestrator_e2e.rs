@@ -21,7 +21,9 @@ fn cleanup_db(path: &std::path::PathBuf) {
 fn test_orchestrate_context_intent_real_file() {
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     // Use an actual file from the repo
@@ -51,7 +53,9 @@ fn test_orchestrate_context_intent_real_file() {
 fn test_orchestrate_cache_hit_on_real_file() {
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     // First call
@@ -84,7 +88,9 @@ fn test_orchestrate_cache_hit_on_real_file() {
 fn test_orchestrate_force_fresh_bypasses_cache() {
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     // First call
@@ -109,7 +115,9 @@ fn test_orchestrate_force_fresh_bypasses_cache() {
 fn test_orchestrate_search_intent() {
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     // Search without specifying file (searches all)
@@ -134,7 +142,9 @@ fn test_orchestrate_search_intent() {
 fn test_orchestrate_impact_with_file() {
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     // Impact requires a file
@@ -159,7 +169,9 @@ fn test_orchestrate_impact_with_file() {
 fn test_orchestrate_different_modes_on_real_file() {
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     let modes = vec!["adaptive", "full", "map", "signatures"];
@@ -186,7 +198,9 @@ fn test_orchestrate_different_modes_on_real_file() {
 fn test_orchestrate_doc_intent() {
     let db_path = get_db_path();
     let db = leankg::db::schema::init_db(&db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let orchestrator = QueryOrchestrator::new(graph);
 
     // Index some docs first (this would need the doc indexer to be populated)

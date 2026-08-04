@@ -12,7 +12,9 @@ fn make_test_engine() -> (GraphEngine, TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("loadtest.db");
     let db = init_db(&db_path).unwrap();
-    let engine = GraphEngine::new(db);
+    let engine = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     (engine, tmp)
 }
 

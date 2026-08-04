@@ -29,7 +29,9 @@ fn copy_fixtures(src_dir: &str, dest: &Path) {
 fn open_graph(tmp: &TempDir) -> (GraphEngine, ParserManager) {
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let mut parser = ParserManager::new();
     let _ = parser.init_parsers();
     (graph, parser)

@@ -8,7 +8,9 @@ use serde_json::json;
 async fn test_verify_correct_params() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let handler = ToolHandler::new(graph, db_path);
 
     println!("=== Testing query_file with correct patterns ===");

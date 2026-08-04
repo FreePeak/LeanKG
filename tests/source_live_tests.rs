@@ -69,7 +69,9 @@ async fn public_or_internal_gitlab_fingerprint_and_index_contract() {
     );
 
     let db = init_db(&tmp.path().join("graph.db")).expect("initialize graph");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let indexed = index_files_parallel(&graph, &files, false).expect("index live files");
     assert!(indexed > 0, "live repository produced no graph elements");
 }

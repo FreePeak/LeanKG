@@ -139,7 +139,9 @@ async fn test_init_db_repairs_legacy_code_elements_after_recorded_migration() {
     assert_eq!(canonical_query.rows[0][1].get_str(), Some("local"));
     assert_eq!(canonical_query.rows[0][2].get_str(), Some("procedural"));
 
-    let graph = GraphEngine::new(repaired_db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(repaired_db.clone()),
+    ));
     let results = graph
         .search_by_name_typed("main", Some("function"), 10)
         .unwrap();
@@ -205,7 +207,9 @@ async fn test_graph_queries_support_ontology_layer_code_elements_schema() {
     drop(db);
 
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db.clone());
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     assert!(graph.has_elements().unwrap());
     assert_eq!(graph.count_elements().unwrap(), 1);
@@ -216,7 +220,12 @@ async fn test_graph_queries_support_ontology_layer_code_elements_schema() {
     assert_eq!(search_results.len(), 1);
     assert_eq!(search_results[0].name, "registerPrometheus");
 
-    let env_results = get_elements_by_env(&db, "local", 10).unwrap();
+    let env_results = get_elements_by_env(
+        &leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+        "local",
+        10,
+    )
+    .unwrap();
     assert_eq!(env_results.len(), 1);
     assert_eq!(
         env_results[0].qualified_name,
@@ -264,7 +273,9 @@ async fn test_ontology_queries_support_13_column_code_elements_schema() {
     drop(raw_db);
 
     let db = init_db(db_path.as_path()).unwrap();
-    let engine = OntologyQueryEngine::new(db);
+    let engine = OntologyQueryEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     // search_ontology_nodes covers query.rs:89. Query "checkout" should
     // match the workflow (name contains "checkout") and the workflow_step
@@ -333,7 +344,9 @@ async fn test_kg_self_test_reports_all_ok_on_canonical_schema() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("selftest.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let engine = OntologyQueryEngine::new(db);
+    let engine = OntologyQueryEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let report = engine.self_test();
     assert!(report.all_ok, "all_ok should be true; report={:?}", report);
@@ -388,7 +401,9 @@ async fn test_kg_self_test_flags_legacy_11_column_schema() {
 
     // Self-test against the raw, un-repaired DB so we can verify the
     // non-canonical detection logic itself.
-    let engine = OntologyQueryEngine::new(raw_db);
+    let engine = OntologyQueryEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(raw_db),
+    ));
     let report = engine.self_test();
 
     assert_eq!(report.code_elements.arity, 11);
@@ -409,7 +424,9 @@ async fn test_graph_engine_all_elements_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let elements = graph.all_elements().unwrap();
     assert!(elements.is_empty());
 }
@@ -419,7 +436,9 @@ async fn test_graph_engine_find_element_missing() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let result = graph.find_element("nonexistent::foo").unwrap();
     assert!(result.is_none());
 }
@@ -429,7 +448,9 @@ async fn test_impact_analyzer_empty_graph() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let analyzer = ImpactAnalyzer::new(&graph);
     let result = analyzer.calculate_impact_radius("src/main.go", 3).unwrap();
     assert_eq!(result.start_file, "src/main.go");
@@ -442,7 +463,9 @@ async fn test_doc_generator_agents_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let content = doc_gen.generate_agents_md().unwrap();
     assert!(content.contains("# Agent Guidelines for LeanKG"));
@@ -456,7 +479,9 @@ async fn test_doc_generator_claude_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let content = doc_gen.generate_claude_md().unwrap();
     assert!(content.contains("# CLAUDE.md"));
@@ -470,7 +495,9 @@ async fn test_doc_sync_for_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let go_file = tmp.path().join("main.go");
     std::fs::write(
@@ -498,7 +525,9 @@ async fn test_index_file_go() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let go_file = tmp.path().join("main.go");
     std::fs::write(
@@ -543,7 +572,9 @@ async fn test_index_file_java() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let java_file = tmp.path().join("UserService.java");
     std::fs::write(
@@ -575,7 +606,9 @@ async fn test_index_file_swift_incremental() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let swift_file = tmp.path().join("Session.swift");
     std::fs::write(
@@ -625,7 +658,9 @@ async fn test_index_with_progress_discovers_vue_svelte_sql() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     std::fs::write(
         tmp.path().join("App.vue"),
@@ -712,7 +747,9 @@ async fn test_index_file_objc_incremental() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let objc_file = tmp.path().join("Greeter.m");
     std::fs::write(
@@ -787,7 +824,9 @@ async fn test_get_relationships_with_real_db() {
         return;
     }
 
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     // Test with path that exists in DB (from graph.json we know ./src/api/auth.rs has imports)
     let result = graph.get_relationships("./src/api/auth.rs");
@@ -841,7 +880,9 @@ async fn test_get_dependencies_with_real_db() {
     }
 
     let db = init_db(db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db.clone());
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     // get_dependencies returns CodeElements for imported items
     // Since most imports are external (std::, crate::), we might get empty results
@@ -884,7 +925,9 @@ async fn test_get_call_graph_with_real_db() {
     }
 
     let db = init_db(db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     // Find a function that has calls
     let call_graph_result = graph.get_call_graph_bounded("./src/api/auth.rs", 1, 10);
@@ -912,7 +955,9 @@ async fn test_persistent_cache_hit_after_insert() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg_cache_test.db");
     let db = init_db(&db_path).unwrap();
-    let graph = GraphEngine::with_persistence(db);
+    let graph = GraphEngine::with_persistence(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     use leankg::db::models::{CodeElement, Relationship};
 
@@ -963,7 +1008,9 @@ async fn test_persistent_cache_hit_on_second_call() {
     let db_path = tmp.path().join("leankg_cache_survive_test.db");
 
     let db = init_db(&db_path).unwrap();
-    let graph = GraphEngine::with_persistence(db);
+    let graph = GraphEngine::with_persistence(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     use leankg::db::models::{CodeElement, Relationship};
 
     let elem_y = CodeElement {

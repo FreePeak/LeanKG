@@ -6,7 +6,9 @@ use leankg::graph::GraphEngine;
 async fn test_find_valid_files_for_relationships() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let relationships = graph.all_relationships().unwrap();
     let all_elements = graph.all_elements().unwrap();

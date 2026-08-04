@@ -35,7 +35,12 @@ fn tmp_engine(name: &str) -> (PathBuf, GraphEngine) {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let db = leankg::db::schema::init_db(&dir).expect("init_db");
-    (dir, GraphEngine::new(db))
+    (
+        dir,
+        GraphEngine::new(std::sync::Arc::new(
+            leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+        )),
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

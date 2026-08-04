@@ -54,7 +54,9 @@ fn doc_indexer_enriches_metadata() {
     .unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let _guard = ProjectRootGuard::change_to(root);
     let result = index_docs_directory(Path::new("docs"), &graph).unwrap();
 
@@ -91,7 +93,9 @@ fn index_docs_marks_embedding_state_stale() {
     fs::write(docs.join("note.md"), "# Note\n\nEmbed me.\n").unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db.clone());
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     state::ensure_embedding_state_table(&db).unwrap();
     let _guard = ProjectRootGuard::change_to(root);
     index_docs_directory(Path::new("docs"), &graph).unwrap();
@@ -118,7 +122,9 @@ fn index_inventory_persists_after_doc_index() {
     .unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db.clone());
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let _guard = ProjectRootGuard::change_to(root);
     index_docs_directory(Path::new("docs"), &graph).unwrap();
 
@@ -138,7 +144,9 @@ fn index_inventory_updates_after_code_index() {
     fs::write(src.join("lib.rs"), "pub fn hello() {}\n").unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db.clone());
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let mut parser = ParserManager::new();
     parser.init_parsers().unwrap();
     let _guard = ProjectRootGuard::change_to(root);
@@ -189,7 +197,9 @@ fn untracked_elements_need_full_or_stale_mark() {
     let tmp = TempDir::new().unwrap();
     let db = init_db(tmp.path()).unwrap();
     state::ensure_embedding_state_table(&db).unwrap();
-    let graph = GraphEngine::new(db.clone());
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let el = CodeElement {
         element_type: "function".to_string(),

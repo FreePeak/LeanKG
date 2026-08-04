@@ -94,7 +94,9 @@ fn wake_up_summary_returns_valid_summary_on_large_graph() {
 
     let path = fresh_db();
     let db = leankg::db::schema::init_db(&path).expect("init_db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     // Seed enough to force the deprecated bulk-pull path (15k > 100 cache
     // threshold) but stay within CI wall-clock budget.
     seed(&graph, 15_000);
@@ -120,7 +122,9 @@ fn identity_context_returns_non_empty_on_large_graph() {
 
     let path = fresh_db();
     let db = leankg::db::schema::init_db(&path).expect("init_db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     seed(&graph, 15_000);
 
     let started = Instant::now();
@@ -143,7 +147,9 @@ fn critical_facts_context_returns_non_empty_on_large_graph() {
 
     let path = fresh_db();
     let db = leankg::db::schema::init_db(&path).expect("init_db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     seed(&graph, 15_000);
 
     let started = Instant::now();

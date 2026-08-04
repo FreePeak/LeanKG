@@ -6,7 +6,9 @@ use leankg::graph::GraphEngine;
 async fn test_debug_call_graph() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     // Test get_call_graph_bounded with depth 1
     println!("=== Testing get_call_graph_bounded('./src/main.rs::main', 1, 10) ===");

@@ -46,7 +46,9 @@ fn make_element(qn: &str, file: &str, line: i64) -> CodeElement {
 fn incremental_index_marks_embedded_elements_stale() {
     let dir = fresh_dir("auto_index_marks_stale");
     let db = init_db(&dir).expect("init_db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     // Simulate the production auto-index path: insert elements via the
     // graph, then call mark_files_stale (which incremental_index_sync now
@@ -75,7 +77,9 @@ fn incremental_index_marks_embedded_elements_stale() {
 fn mark_files_stale_sets_stale_state() {
     let dir = fresh_dir("mark_files_stale");
     let db = init_db(&dir).expect("init_db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     let elements: Vec<CodeElement> = (0..20)
         .map(|i| make_element(&format!("src/bar.rs::func_{}", i), "src/bar.rs", i * 10))

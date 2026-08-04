@@ -36,7 +36,9 @@ fn fixture_db() -> (ToolHandler, TempDir) {
         :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}
     "#;
     run_script(&db, seed, Default::default()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db),
+    ));
     (ToolHandler::new(graph, db_path), tmp)
 }
 

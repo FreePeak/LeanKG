@@ -9,7 +9,9 @@ use std::path::PathBuf;
 async fn test_all_mcp_tools_return_data() {
     let db_path = PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let handler = ToolHandler::new(graph.clone(), db_path);
 
     let valid_file = "./src/main.rs".to_string();

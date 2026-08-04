@@ -76,7 +76,9 @@ async fn make_handler() -> (ToolHandler, TempDir) {
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(&db_path).expect("init_db");
     seed_db(&db);
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     (ToolHandler::new(graph, db_path), tmp)
 }
 

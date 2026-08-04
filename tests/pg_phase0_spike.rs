@@ -234,7 +234,7 @@ fn test_cosine_distance_mapping() {
 
 #[test]
 fn test_pgvector_roundtrip() {
-    let v = vec![0.1f32, -0.5, 1.0, 0.0, 3.14];
+    let v = vec![0.1f32, -0.5, 1.0, 0.0, std::f32::consts::PI];
     assert_eq!(pgvector_from_row(&pgvector(&v)), v);
 }
 

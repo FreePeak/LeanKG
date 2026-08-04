@@ -6,7 +6,9 @@ use leankg::graph::GraphEngine;
 async fn test_check_import_targets() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
 
     // Get all relationships that are imports
     let relationships = graph.all_relationships().unwrap();

@@ -42,7 +42,9 @@ fn build_fixture(root: &Path) {
 
 fn index_code(root: &Path, database_name: &str) -> (GraphEngine, ParserManager) {
     let db = init_db(&root.join(database_name)).expect("initialize database");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     let mut parser = ParserManager::new();
     parser.init_parsers().expect("initialize parsers");
     index_file_sync(&graph, &mut parser, "src/lib.rs").expect("index code fixture");

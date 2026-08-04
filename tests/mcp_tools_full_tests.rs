@@ -17,7 +17,9 @@ async fn create_real_handler() -> (ToolHandler, TempDir) {
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
     seed_test_data(&db);
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(std::sync::Arc::new(
+        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+    ));
     (ToolHandler::new(graph, db_path), tmp)
 }
 
@@ -909,7 +911,9 @@ mod mega_guard_tests {
         let db_path = tmp.path().join("leankg.db");
         let db = init_db(db_path.as_path()).unwrap();
         seed_test_data(&db);
-        let graph = GraphEngine::new(db);
+        let graph = GraphEngine::new(std::sync::Arc::new(
+            leankg::db::backend::CozoBackend::from_concrete(db.clone()),
+        ));
         (ToolHandler::new(graph, db_path), tmp)
     }
 
