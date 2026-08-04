@@ -251,6 +251,18 @@ fn max_file_size() -> u64 {
         .unwrap_or(2 * 1024 * 1024)
 }
 
+/// Insert batch size used when chunking elements/relationships into CozoDB.
+/// Default 20_000. Override with `LEANKG_INSERT_BATCH_SIZE` (usize, > 0).
+/// FR-INDEX-BATCH-20K: bumping 5k → 20k cut commit overhead enough to keep
+/// the be fresh index under the 10-15min budget on 2-workspace Docker MCP.
+fn insert_batch_size() -> usize {
+    std::env::var("LEANKG_INSERT_BATCH_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(20_000)
+}
+
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
     let extensions = [
@@ -897,11 +909,11 @@ pub fn index_files_parallel_with_typed_resolve(
 
     if !all_elements.is_empty() {
         let total_elements = all_elements.len();
-        const ELEM_BATCH_SIZE: usize = 5000;
-        for (i, chunk) in all_elements.chunks(ELEM_BATCH_SIZE).enumerate() {
+        let elem_batch = insert_batch_size();
+        for (i, chunk) in all_elements.chunks(elem_batch).enumerate() {
             graph.insert_elements_with(chunk, true)?;
             if verbose {
-                let progress = ((i + 1) * ELEM_BATCH_SIZE).min(total_elements);
+                let progress = ((i + 1) * elem_batch).min(total_elements);
                 eprint!("\r  Inserted {}/{} elements", progress, total_elements);
             }
         }
@@ -939,11 +951,11 @@ pub fn index_files_parallel_with_typed_resolve(
 
     if !all_relationships.is_empty() {
         let total_rels = all_relationships.len();
-        const REL_BATCH_SIZE: usize = 5000;
-        for (i, chunk) in all_relationships.chunks(REL_BATCH_SIZE).enumerate() {
+        let rel_batch = insert_batch_size();
+        for (i, chunk) in all_relationships.chunks(rel_batch).enumerate() {
             graph.insert_relationships_with(chunk, true)?;
             if verbose {
-                let progress = ((i + 1) * REL_BATCH_SIZE).min(total_rels);
+                let progress = ((i + 1) * rel_batch).min(total_rels);
                 eprint!("\r  Inserted {}/{} relationships", progress, total_rels);
             }
         }
