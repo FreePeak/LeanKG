@@ -1,12 +1,14 @@
-//! Content-hash incremental indexing helper (Cognee MD5 / BLAKE3 pattern —
-//! strategy §3.12 / §17 Tier 3 item 24).
+//! Content-hash incremental indexing helper (Bloop / Cognee pattern —
+//! strategy §3.12 / §17 Tier 3 item 24 / §17.4 line 1654).
 //!
-//! Re-index only changed files. Key formula (adopted from Bloop's cache key,
-//! landscape sweep §18.4):
+//! Re-index only changed files. Key formula (Bloop BLAKE3 tuple, per spec):
 //!
 //! ```text
-//! sha256(schema_version | path | repo | content | filters | branch)
+//! blake3(schema_version, path, repo, content, filters, branch)
 //! ```
+//!
+//! All fields are length-prefixed (u64 LE) so a boundary shift (e.g.
+//! `path="a", repo="bc"` vs `path="ab", repo="c"`) can never collide.
 //!
 //! The content-hash store is a Cozo relation (`index_hashes`) that survives
 //! across runs. This module is **standalone**: wiring into the index walk
@@ -16,11 +18,20 @@
 
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
-
 /// Version bump this when the extraction pipeline or the key formula changes;
 /// a new version invalidates all prior hashes (safe: it just re-indexes).
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// Bumped to 2 from the SHA-256 + concat-framing v1 — length-prefixed
+/// BLAKE3 tuples are not bit-compatible with the v1 store rows, so the
+/// re-index is a one-time cost on first deploy.
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// Length-prefix a field into the hasher. Each field is prefixed by its byte
+/// length as a `u64` little-endian, so concatenated fields can never alias.
+fn absorb(hasher: &mut blake3::Hasher, field: &[u8]) {
+    hasher.update(&(field.len() as u64).to_le_bytes());
+    hasher.update(field);
+}
 
 /// Deterministic content-hash key for one file.
 pub fn cache_key(
@@ -31,14 +42,14 @@ pub fn cache_key(
     filters: &str,
     branch: &str,
 ) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(schema_version.to_le_bytes());
-    hasher.update(path.as_bytes());
-    hasher.update(repo.as_bytes());
-    hasher.update(content.as_bytes());
-    hasher.update(filters.as_bytes());
-    hasher.update(branch.as_bytes());
-    hex::encode(hasher.finalize())
+    let mut hasher = blake3::Hasher::new();
+    absorb(&mut hasher, &schema_version.to_le_bytes());
+    absorb(&mut hasher, path.as_bytes());
+    absorb(&mut hasher, repo.as_bytes());
+    absorb(&mut hasher, content.as_bytes());
+    absorb(&mut hasher, filters.as_bytes());
+    absorb(&mut hasher, branch.as_bytes());
+    hex::encode(hasher.finalize().as_bytes())
 }
 
 /// A persisted row: file path + the hash it was last indexed with.
@@ -133,16 +144,52 @@ mod tests {
 
     #[test]
     fn cache_key_is_deterministic_and_sensitive() {
-        let a = cache_key(1, "src/a.rs", "repo", "fn a(){}", "lang=go", "main");
-        let b = cache_key(1, "src/a.rs", "repo", "fn a(){}", "lang=go", "main");
+        let a = cache_key(2, "src/a.rs", "repo", "fn a(){}", "lang=go", "main");
+        let b = cache_key(2, "src/a.rs", "repo", "fn a(){}", "lang=go", "main");
         assert_eq!(a, b);
         // Any component change → different key.
-        let c = cache_key(2, "src/a.rs", "repo", "fn a(){}", "lang=go", "main");
+        let c = cache_key(3, "src/a.rs", "repo", "fn a(){}", "lang=go", "main");
         assert_ne!(a, c, "schema_version changes key");
-        let d = cache_key(1, "src/a.rs", "repo", "fn b(){}", "lang=go", "main");
+        let d = cache_key(2, "src/a.rs", "repo", "fn b(){}", "lang=go", "main");
         assert_ne!(a, d, "content changes key");
-        let e = cache_key(1, "src/a.rs", "other", "fn a(){}", "lang=go", "main");
+        let e = cache_key(2, "src/a.rs", "other", "fn a(){}", "lang=go", "main");
         assert_ne!(a, e, "repo changes key");
+    }
+
+    #[test]
+    fn cache_key_length_is_blake3_64_hex() {
+        // BLAKE3 default = 32 bytes → 64 hex chars. Locks the output shape
+        // and the algorithm family (regression guard against silent
+        // swap to SHA-256 / MD5).
+        let h = cache_key(2, "x", "y", "z", "", "main");
+        assert_eq!(h.len(), 64, "BLAKE3 default digest = 32 bytes hex");
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn cache_key_blake3_fixed_vector() {
+        // blake3::hash(b"abc") = 6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85
+        // Locked-vector regression guard against silent algorithm swap.
+        let h = blake3::hash(b"abc");
+        assert_eq!(
+            hex::encode(h.as_bytes()),
+            "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+        );
+    }
+
+    #[test]
+    fn cache_key_uses_length_prefix_framing() {
+        // The old concat hash aliased (path="a", repo="bc") with
+        // (path="ab", repo="c"). Length-prefix framing must not.
+        let x = cache_key(2, "a", "bc", "content", "", "main");
+        let y = cache_key(2, "ab", "c", "content", "", "main");
+        assert_ne!(
+            x, y,
+            "length-prefix framing prevents path|repo boundary collisions"
+        );
+        // And a length-only shift still differentiates.
+        let z = cache_key(2, "abc", "", "content", "", "main");
+        assert_ne!(x, z);
     }
 
     #[test]

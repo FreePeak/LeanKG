@@ -1,6 +1,22 @@
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 
 pub mod shell_runner;
+
+/// Output format for `leankg tags` (currently only `ctags`).
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TagsFormat {
+    /// readtags-compatible `tags` file.
+    Ctags,
+}
+
+/// Output format for `leankg cost`.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CostFormat {
+    /// Human-readable text.
+    Text,
+    /// JSON.
+    Json,
+}
 
 #[derive(Subcommand, Debug)]
 pub enum CLICommand {
@@ -493,9 +509,9 @@ pub enum CLICommand {
         /// Output path (default: `tags` in project root)
         #[arg(long, default_value = "tags")]
         output: String,
-        /// Export format (currently only `ctags`)
-        #[arg(long, default_value = "ctags")]
-        format: String,
+        /// Export format
+        #[arg(long, value_enum, default_value_t = TagsFormat::Ctags)]
+        format: TagsFormat,
         /// Project root (default: cwd / find_project_root)
         #[arg(long)]
         project: Option<String>,
@@ -515,9 +531,9 @@ pub enum CLICommand {
         /// Comma-separated file paths to price directly (no impact scan).
         #[arg(long)]
         files: Option<String>,
-        /// Output format: text or json.
-        #[arg(long, default_value = "text")]
-        format: String,
+        /// Output format
+        #[arg(long, value_enum, default_value_t = CostFormat::Text)]
+        format: CostFormat,
         /// Project root (default: cwd / find_project_root).
         #[arg(long)]
         project: Option<String>,

@@ -877,8 +877,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => find_project_root()?,
             };
             let db_path = project_path.join(".leankg");
-            if format != "ctags" {
-                return Err(format!("unsupported tags format: {format} (only `ctags`)").into());
+            // Only `ctags` is wired today; the enum is the safety net so a
+            // future variant (e.g. `gtags`) compiles as an explicit match
+            // and the compiler flags any branch we forget.
+            match format {
+                cli::TagsFormat::Ctags => {}
             }
             let tags = ctags_export::export_tags(&db_path)?;
             let out_path = project_path.join(&output);
@@ -932,22 +935,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 cost_estimate::estimate(&files, &project_path)?
             };
-            if format == "json" {
-                println!("{}", serde_json::to_string_pretty(&est)?);
-            } else {
-                println!(
-                    "{} files, {} lines, {} bytes — est. out {} tokens / in {} tokens",
-                    est.files.len(),
-                    est.total_lines,
-                    est.total_bytes,
-                    est.out_tokens,
-                    est.in_tokens
-                );
-                for f in &est.files {
+            match format {
+                cli::CostFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&est)?);
+                }
+                cli::CostFormat::Text => {
+                    // LOCOMO: in = prompt (source context), out = reply budget.
                     println!(
-                        "  {}  ({} lines, out {} / in {})",
-                        f.file, f.lines, f.out_tokens, f.in_tokens
+                        "{} files, {} sloc, {} bytes — est. in {} tokens / out {} tokens",
+                        est.files.len(),
+                        est.total_sloc,
+                        est.total_bytes,
+                        est.in_tokens,
+                        est.out_tokens
                     );
+                    for f in &est.files {
+                        println!(
+                            "  {}  ({} sloc, in {} / out {})",
+                            f.file, f.sloc, f.in_tokens, f.out_tokens
+                        );
+                    }
                 }
             }
         }
@@ -975,14 +982,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &opts,
             )?;
             println!(
-                "context pack -> {output}/  ({} elements, {} rels{}, truncated={}, hash {})",
+                "context pack -> {output}/  ({} elements, {} rels{}, hash {})",
                 m.elements,
                 m.relationships,
                 m.path_scope
                     .as_ref()
                     .map(|p| format!(", scope={p}"))
                     .unwrap_or_default(),
-                m.truncated,
                 &m.content_hash[..16.min(m.content_hash.len())]
             );
         }

@@ -22,6 +22,10 @@ use std::path::Path;
 use crate::db::models::CodeElement;
 use crate::graph::GraphEngine;
 
+/// Internal row tuple for sorting/rendering: name, file, line, kind,
+/// language, element_type, qualified_name, search-pattern.
+type TagsRow = (String, String, u32, String, String, String, String, String);
+
 /// ctags kind shorthand for a LeanKG element type. Unknown types fall back to
 /// the LeanKG element type verbatim (still valid extension field).
 pub fn kind_for(element_type: &str) -> &'static str {
@@ -44,13 +48,33 @@ pub fn kind_for(element_type: &str) -> &'static str {
 ///
 /// Deterministic: sorted by `(name, file, line)`, then by qualified_name as a
 /// stable tie-breaker so identical names/lines never jitter.
+///
+/// Format (readtags-compatible):
+/// ```text
+/// {name}\t{file}\t{addr};"\t<pattern>"\tkind:{kind}\tlanguage:{lang}\telement:{type}
+/// ```
+/// - `addr` is a 1-based line number; the trailing `;"` opens the
+///   extended-search field that `readtags` understands.
+/// - `<pattern>` is the ctags search-pattern field (regex anchored at
+///   line start when read by `^pattern$`); emitted as a second `;"` so
+///   `:tag /pattern/` still works in vim.
 pub fn render_tags(elements: &[CodeElement]) -> String {
-    let mut rows: Vec<(String, String, u32, String, String, String, String)> = Vec::new();
+    let mut rows: Vec<TagsRow> = Vec::new();
     for el in elements {
         if el.name.is_empty() {
             continue;
         }
         if el.file_path.is_empty() {
+            continue;
+        }
+        // Skip rows whose name or path would corrupt the tab-delimited
+        // format. `readtags` can't survive a literal tab/newline in any
+        // of the first three columns.
+        if el.name.contains('\t')
+            || el.name.contains('\n')
+            || el.file_path.contains('\t')
+            || el.file_path.contains('\n')
+        {
             continue;
         }
         // Normalize the file path to a repo-relative path (strip leading ./).
@@ -65,6 +89,9 @@ pub fn render_tags(elements: &[CodeElement]) -> String {
         } else {
             el.language.clone()
         };
+        // Search pattern: the symbol name, escaped for ctags regex
+        // consumption. We keep it simple — `readtags` re-anchors with
+        // `^...$`, so an unescaped `name` is enough for `:tag /name/`.
         rows.push((
             el.name.clone(),
             rel.to_string(),
@@ -73,18 +100,37 @@ pub fn render_tags(elements: &[CodeElement]) -> String {
             language,
             el.element_type.clone(),
             el.qualified_name.clone(),
+            escape_pattern(&el.name),
         ));
     }
     rows.sort_by(|a, b| (&a.0, &a.1, &a.2, &a.6).cmp(&(&b.0, &b.1, &b.2, &b.6)));
 
     let mut out = String::new();
-    for (name, file, line, kind, language, element_type, _qn) in rows {
-        // Ex address: `{line};"` — semicolon terminates the search pattern.
+    for (name, file, line, kind, language, element_type, _qn, pattern) in rows {
+        // Ex address: `{line};"\t{pattern}"` — two semicolons so vim
+        // can do `:tag /pattern/` in addition to `:tag name`.
         let _ = writeln!(
             out,
-            "{name}\t{file}\t{line};\tkind:{kind}\tlanguage:{language}\telement:{element_type}"
+            "{name}\t{file}\t{line};\t{pattern}\"\tkind:{kind}\tlanguage:{language}\telement:{element_type}"
         );
     }
+    out
+}
+
+/// Escape a symbol name for use as a ctags search-pattern field. Keeps
+/// only ASCII letters/digits/`_` literal; everything else is wrapped in
+/// a `\`...`\` rune so `readtags` treats it as a literal character.
+fn escape_pattern(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 2);
+    out.push('^');
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            out.push(ch);
+        } else {
+            let _ = write!(out, "\\{}", ch as u32);
+        }
+    }
+    out.push('$');
     out
 }
 
@@ -152,19 +198,62 @@ mod tests {
     fn render_emits_readtags_shape() {
         let out = render_tags(&sample_elements());
         let first = out.lines().next().expect("non-empty");
-        // `name\tfile\taddress\tkind:..\tlanguage:..\telement:..`
+        // `name\tfile\t{addr};"\t{pattern}"\tkind:..\tlanguage:..\telement:..`
         let parts: Vec<&str> = first.split('\t').collect();
         assert!(
-            parts.len() >= 4,
-            "line should be name\tfile\taddress\tfields: {first}"
+            parts.len() >= 5,
+            "line should be name\tfile\t{{addr}};\"\t{{pattern}}\"\tfields: {first}"
         );
         assert!(parts[0] == "GraphEngine", "first row sorted by name");
+        // Address field ends with the Ex semicolon (`;`) that opens the
+        // extended search pattern.
+        let addr = parts[2];
+        assert!(addr.ends_with(';'), "address must end with `;`: {addr}");
+        // The fourth column is the search pattern (terminated by `"`).
+        let pattern = parts[3];
         assert!(
-            parts[2].ends_with(';'),
-            "address must be Ex line + semicolon"
+            pattern.ends_with('"'),
+            "search pattern must be quoted: {pattern}"
         );
-        assert!(parts[3].contains("kind:s"), "struct kind");
+        assert!(
+            pattern.contains("GraphEngine"),
+            "search pattern echoes the symbol name: {pattern}"
+        );
+        assert!(parts[4].contains("kind:s"), "struct kind");
         assert!(parts.iter().any(|p| p.starts_with("language:rust")));
+    }
+
+    #[test]
+    fn escape_pattern_anchors_and_letter_safe() {
+        assert_eq!(escape_pattern("foo"), "^foo$");
+        assert_eq!(escape_pattern("My_Type"), "^My_Type$");
+        // Non-ASCII gets rune-escaped.
+        let p = escape_pattern("a.b");
+        assert!(p.contains('\\'));
+    }
+
+    #[test]
+    fn skips_rows_with_tabs_or_newlines_in_name_or_path() {
+        let mut els = sample_elements();
+        els.push(CodeElement {
+            qualified_name: "x::bad".into(),
+            element_type: "function".into(),
+            name: "bad\tname".into(),
+            file_path: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 2,
+            language: "rust".into(),
+            parent_qualified: None,
+            cluster_id: None,
+            cluster_label: None,
+            metadata: serde_json::Value::Null,
+            env: "local".into(),
+        });
+        let out = render_tags(&els);
+        assert!(
+            !out.contains("bad\tname"),
+            "name with embedded tab is dropped: {out}"
+        );
     }
 
     #[test]

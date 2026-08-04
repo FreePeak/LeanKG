@@ -4,8 +4,9 @@
 //! Given an impact radius (or a plain file set), estimate what it would cost
 //! an agent to *reason over* that blast radius vs *rewrite* it:
 //!
-//! - `out` tokens: the source lines that would enter context.
-//! - `in`  tokens: the model's reply budget (estimated 0.4× output).
+//! - `in`  tokens: the source lines that would enter the prompt (LOCOMO/scc
+//!   SLOC count × ~13 tokens/SLOC, code-aware).
+//! - `out` tokens: the model's reply budget (per-model `model_rate`).
 //! - per-file totals and the whole-set sum.
 //!
 //! Pure read; no DB writes. Estimation is token *counting* on source text,
@@ -21,25 +22,41 @@ use crate::graph::GraphEngine;
 pub struct FileCost {
     pub file: String,
     pub lines: usize,
+    pub sloc: usize,
     pub bytes: usize,
-    pub out_tokens: usize,
     pub in_tokens: usize,
+    pub out_tokens: usize,
 }
 
 /// Aggregate cost estimate.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CostEstimate {
+    pub model: &'static str,
     pub files: Vec<FileCost>,
     pub total_lines: usize,
+    pub total_sloc: usize,
     pub total_bytes: usize,
-    pub out_tokens: usize,
     pub in_tokens: usize,
+    pub out_tokens: usize,
 }
 
-/// Rough tokens-per-char heuristic (English + code ≈ 4 chars/token). This is
-/// intentionally coarse — it exists to *orient* the agent, not to bill.
-fn estimate_tokens(bytes: usize) -> usize {
-    bytes.div_ceil(4)
+/// Per-model knobs. Defaults track the LOCOMO / scc heuristic for source
+/// code (≈13 tokens per source line of code, mid-size model reply budget).
+#[derive(Debug, Clone, Copy)]
+pub struct ModelRate {
+    /// Tokens per source line of code (in-context). LOCOMO cites ~13.
+    pub tokens_per_sloc: u32,
+    /// Model reply budget (completion) per affected file.
+    pub out_tokens_per_file: u32,
+}
+
+impl Default for ModelRate {
+    fn default() -> Self {
+        Self {
+            tokens_per_sloc: 13,
+            out_tokens_per_file: 256,
+        }
+    }
 }
 
 /// Collect the distinct source files behind a set of impacted elements.
@@ -54,6 +71,31 @@ pub fn files_for_elements(elements: &[CodeElement]) -> Vec<String> {
     seen.into_iter().collect()
 }
 
+/// Count source lines of code in a byte buffer. Mirrors the scc heuristic:
+/// blank-only lines and lines that are only `{ } / whitespace` are stripped;
+/// everything else counts. The result is the in-context (prompt) volume.
+fn count_sloc(bytes: &[u8]) -> usize {
+    let mut sloc = 0usize;
+    for line in bytes.split(|&b| b == b'\n') {
+        let trimmed: Vec<u8> = line
+            .iter()
+            .skip_while(|&&b| b == b' ' || b == b'\t' || b == b'\r')
+            .copied()
+            .collect();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed
+            .iter()
+            .all(|&b| matches!(b, b'{' | b'}' | b'/' | b' ' | b'\t' | b'\r'))
+        {
+            continue;
+        }
+        sloc += 1;
+    }
+    sloc
+}
+
 /// Compute a cost estimate for a set of file paths.
 ///
 /// Files that are missing on disk (e.g. generated or unindexed) are skipped
@@ -62,12 +104,24 @@ pub fn estimate(
     files: &[String],
     base_dir: &Path,
 ) -> Result<CostEstimate, Box<dyn std::error::Error>> {
+    estimate_with_model(files, base_dir, &ModelRate::default())
+}
+
+/// As [`estimate`], with explicit model-rate knobs. Use this when you need
+/// to match a specific provider's token-per-SLOC or reply-budget figures.
+pub fn estimate_with_model(
+    files: &[String],
+    base_dir: &Path,
+    rate: &ModelRate,
+) -> Result<CostEstimate, Box<dyn std::error::Error>> {
     let mut out = CostEstimate {
+        model: "locomo-default",
         files: Vec::with_capacity(files.len()),
         total_lines: 0,
+        total_sloc: 0,
         total_bytes: 0,
-        out_tokens: 0,
         in_tokens: 0,
+        out_tokens: 0,
     };
     for f in files {
         let path = if f.starts_with('/') {
@@ -86,21 +140,22 @@ pub fn estimate(
             Err(_) => continue,
         };
         let newline_count = bytes.iter().filter(|&&b| b == b'\n').count();
-        // A file ending in `\n` has one line per newline; a non-terminated file
-        // has one more line than newlines.
         let lines = newline_count + usize::from(!bytes.is_empty() && !bytes.ends_with(b"\n"));
-        let out_tokens = estimate_tokens(bytes.len());
-        let in_tokens = (out_tokens as u64 * 4 / 10) as usize; // 0.4× output
+        let sloc = count_sloc(&bytes);
+        let in_tokens = sloc.saturating_mul(rate.tokens_per_sloc as usize);
+        let out_tokens = rate.out_tokens_per_file as usize;
         out.total_lines += lines;
+        out.total_sloc += sloc;
         out.total_bytes += bytes.len();
-        out.out_tokens += out_tokens;
         out.in_tokens += in_tokens;
+        out.out_tokens += out_tokens;
         out.files.push(FileCost {
             file: f.clone(),
             lines,
+            sloc,
             bytes: bytes.len(),
-            out_tokens,
             in_tokens,
+            out_tokens,
         });
     }
     Ok(out)
@@ -137,17 +192,61 @@ mod tests {
     }
 
     #[test]
-    fn counts_lines_bytes_tokens() {
+    fn counts_lines_sloc_tokens() {
+        // LOCOMO model: in_tokens = sloc × tokens_per_sloc, out_tokens = reply budget.
         let tmp = TempDir::new().unwrap();
-        write(tmp.path(), "src/a.rs", "fn a() {}\nfn b() {}\n");
+        write(
+            tmp.path(),
+            "src/a.rs",
+            "fn a() {}\nfn b() {}\n// comment\n\n",
+        );
         let files = vec!["src/a.rs".to_string()];
         let est = estimate(&files, tmp.path()).expect("estimate");
         assert_eq!(est.files.len(), 1);
-        assert_eq!(est.files[0].lines, 2);
-        assert!(est.files[0].bytes > 0);
-        assert_eq!(est.files[0].out_tokens, (est.files[0].bytes + 3) / 4);
-        assert_eq!(est.files[0].in_tokens, est.files[0].out_tokens * 4 / 10);
-        assert_eq!(est.total_lines, 2);
+        assert_eq!(est.files[0].lines, 4);
+        // 3 SLOC: `fn a() {}`, `fn b() {}`, `// comment`; the blank line is dropped.
+        assert_eq!(est.files[0].sloc, 3);
+        // Default rate: 13 tokens/SLOC, 256 reply tokens per file.
+        assert_eq!(est.files[0].in_tokens, 3 * 13);
+        assert_eq!(est.files[0].out_tokens, 256);
+        assert_eq!(est.in_tokens, 3 * 13);
+        assert_eq!(est.out_tokens, 256);
+        assert_eq!(est.total_lines, 4);
+        assert_eq!(est.total_sloc, 3);
+    }
+
+    #[test]
+    fn in_out_direction_matches_locomo() {
+        // Source text is INPUT (prompt), not output. The 0.4× ratio
+        // was the old wrong-direction model; regression guard.
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "src/a.rs", "fn x() {}\n");
+        let est = estimate(&["src/a.rs".into()], tmp.path()).expect("est");
+        // in_tokens = sloc × rate.tokens_per_sloc, NOT derived from out_tokens.
+        assert!(est.in_tokens > 0);
+        // out_tokens is the reply budget (constant per file), not bytes/4.
+        assert_eq!(est.out_tokens, 256);
+    }
+
+    #[test]
+    fn model_rate_hook_overrides() {
+        let tmp = TempDir::new().unwrap();
+        write(tmp.path(), "src/a.rs", "fn x() {}\n");
+        let rate = ModelRate {
+            tokens_per_sloc: 7,
+            out_tokens_per_file: 100,
+        };
+        let est = estimate_with_model(&["src/a.rs".into()], tmp.path(), &rate).expect("est");
+        assert_eq!(est.in_tokens, 7);
+        assert_eq!(est.out_tokens, 100);
+        assert_eq!(est.model, "locomo-default");
+    }
+
+    #[test]
+    fn blank_and_brace_only_lines_dropped_from_sloc() {
+        assert_eq!(count_sloc(b"fn a() {}\n\nfn b() {}\n"), 2);
+        assert_eq!(count_sloc(b"   \n{\n}\n// hi\nfn c() {}\n"), 2);
+        assert_eq!(count_sloc(b""), 0);
     }
 
     #[test]
