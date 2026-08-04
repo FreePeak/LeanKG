@@ -1427,7 +1427,7 @@ pub fn mark_files_stale(
                 .collect(),
         ),
     );
-    let result = crate::db::schema::run_script(graph.db(), &query, params)?;
+    let result = graph.db().run_script(&query, params)?;
     let all_qns: Vec<String> = result
         .rows
         .iter()

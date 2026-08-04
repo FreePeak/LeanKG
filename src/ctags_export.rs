@@ -139,7 +139,7 @@ fn escape_pattern(name: &str) -> String {
 /// `db_path` is the `.leankg` directory (matching the CLI convention in
 /// `src/main.rs`, e.g. `find_project_root()?.join(".leankg")`).
 pub fn export_tags(db_path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let db = crate::db::schema::init_db_readonly(db_path)?;
+    let db = crate::db::backend::init_db_readonly(db_path)?;
     let graph = GraphEngine::new(db);
     let elements = graph.all_elements()?;
     Ok(render_tags(&elements))

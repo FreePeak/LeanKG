@@ -4,6 +4,9 @@ use std::path::Path;
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
 
+/// The concrete CozoDB handle. Phase 1 keeps it public so the migration
+/// shim ([`crate::db::backend::CozoBackend`]) can wrap it; everything else
+/// must go through `Arc<dyn crate::db::backend::DbBackend>`.
 pub type CozoDb = cozo::DbInstance;
 
 /// Debug-only set of RocksDB paths already opened in this process.
@@ -27,6 +30,16 @@ pub fn run_script(
     query: &str,
     params: std::collections::BTreeMap<String, serde_json::Value>,
 ) -> Result<NamedRows, cozo::Error> {
+    run_script_cozo(db, query, params)
+}
+
+/// The raw cozo call behind [`run_script`] and the
+/// [`DbBackend`](crate::db::backend::DbBackend) implementation.
+pub fn run_script_cozo(
+    db: &CozoDb,
+    query: &str,
+    params: std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<NamedRows, cozo::Error> {
     let cozo_params: std::collections::BTreeMap<String, DataValue> = params
         .into_iter()
         .map(|(k, v)| (k, json_to_datavalue(v)))
@@ -42,7 +55,7 @@ fn json_to_datavalue(v: serde_json::Value) -> DataValue {
     DataValue::from(v)
 }
 
-fn mutability_for(query: &str) -> ScriptMutability {
+pub fn mutability_for(query: &str) -> ScriptMutability {
     // CozoDB 0.7.x enforces that Immutable scripts cannot acquire write locks.
     // A Datalog statement can combine a read head (`?[...] := ...`) with an
     // action operator (`:put`, `:rm`, etc.) in one script — the leading char
@@ -112,6 +125,12 @@ fn get_env_mmap_size() -> u64 {
 /// this path: read-only opens legitimately co-exist with the writer handle
 /// for query-only replicas.
 pub fn init_db_readonly(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
+    init_db_readonly_cozo(db_path)
+}
+
+/// The cozo implementation behind [`init_db_readonly`] and the
+/// [`DbBackend`](crate::db::backend::DbBackend) factory.
+pub fn init_db_readonly_cozo(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     let storage = resolve_storage_config(db_path);
     let path_str = storage.path.to_string_lossy().to_string();
     Ok(match storage.engine {
@@ -188,6 +207,12 @@ impl RocksDbTuning {
 }
 
 pub fn init_db(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
+    init_db_cozo(db_path)
+}
+
+/// The cozo implementation behind [`init_db`] and the
+/// [`DbBackend`](crate::db::backend::DbBackend) factory.
+pub fn init_db_cozo(db_path: &Path) -> Result<CozoDb, Box<dyn std::error::Error>> {
     let storage = resolve_storage_config(db_path);
 
     // Guard: detect duplicate RocksDB opens in debug builds (tests / cargo run).
@@ -676,7 +701,7 @@ const REPAIR_LEGACY_RELATIONSHIPS_5_TO_6: &str = r#"
 :replace relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}
 "#;
 
-fn get_column_count(db: &CozoDb, relation: &str) -> usize {
+fn get_column_count(db: &dyn crate::db::backend::DbBackend, relation: &str) -> usize {
     let arity_probe = match relation {
         "code_elements" => Some(vec![
             (
@@ -707,14 +732,14 @@ fn get_column_count(db: &CozoDb, relation: &str) -> usize {
 
     if let Some(probes) = arity_probe {
         for (arity, query) in probes {
-            if run_script(db, query, Default::default()).is_ok() {
+            if db.run_script(query, Default::default()).is_ok() {
                 return arity;
             }
         }
     }
 
     let query = format!(":schema {}", relation);
-    run_script(db, &query, Default::default())
+    db.run_script(&query, Default::default())
         .map(|r| r.rows.len())
         .unwrap_or(0)
 }
@@ -800,7 +825,10 @@ pub struct RelationSchema {
 /// list of column names as the relation is currently defined; `canonical`
 /// is true when the live arity matches the current canonical schema
 /// (13 for code_elements, 6 for relationships).
-pub fn get_relation_schema(db: &CozoDb, relation: &str) -> RelationSchema {
+pub fn get_relation_schema(
+    db: &dyn crate::db::backend::DbBackend,
+    relation: &str,
+) -> RelationSchema {
     let arity = get_column_count(db, relation);
     let columns: Vec<String> = match relation {
         "code_elements" => match arity {
@@ -845,12 +873,12 @@ pub fn get_relation_schema(db: &CozoDb, relation: &str) -> RelationSchema {
 }
 
 /// Convenience accessor for the code_elements relation.
-pub fn code_elements_schema(db: &CozoDb) -> RelationSchema {
+pub fn code_elements_schema(db: &dyn crate::db::backend::DbBackend) -> RelationSchema {
     get_relation_schema(db, "code_elements")
 }
 
 /// Convenience accessor for the relationships relation.
-pub fn relationships_schema(db: &CozoDb) -> RelationSchema {
+pub fn relationships_schema(db: &dyn crate::db::backend::DbBackend) -> RelationSchema {
     get_relation_schema(db, "relationships")
 }
 
@@ -862,7 +890,10 @@ fn ensure_canonical_code_elements(
         return Ok(());
     }
     const EXPECTED: usize = 13;
-    let current = get_column_count(db, "code_elements");
+    let current = get_column_count(
+        &crate::db::backend::CozoBackend { db: db.clone() },
+        "code_elements",
+    );
     if current == EXPECTED {
         tracing::info!(
             "code_elements schema already canonical ({} columns), skipping replace",
@@ -926,7 +957,10 @@ fn ensure_canonical_relationships(
         return Ok(());
     }
     const EXPECTED: usize = 6;
-    let current = get_column_count(db, "relationships");
+    let current = get_column_count(
+        &crate::db::backend::CozoBackend { db: db.clone() },
+        "relationships",
+    );
     if current == EXPECTED {
         tracing::info!(
             "relationships schema already canonical ({} columns), skipping replace",
@@ -1060,6 +1094,12 @@ mod tests {
         cozo::DbInstance::new("sqlite", &s, "").unwrap()
     }
 
+    /// Wrap a concrete cozo handle in the migration shim so the schema
+    /// helpers (which now take `&dyn DbBackend`) can be exercised.
+    fn shim(db: &CozoDb) -> crate::db::backend::CozoBackend {
+        crate::db::backend::CozoBackend { db: db.clone() }
+    }
+
     #[test]
     fn code_elements_schema_on_canonical_db() {
         let tmp = TempDir::new().unwrap();
@@ -1071,7 +1111,7 @@ mod tests {
         )
         .unwrap();
 
-        let schema = code_elements_schema(&db);
+        let schema = code_elements_schema(&shim(&db));
         assert_eq!(schema.name, "code_elements");
         assert_eq!(schema.arity, 13);
         assert!(schema.canonical, "fresh 13-col DB must report canonical");
@@ -1099,7 +1139,7 @@ mod tests {
         )
         .unwrap();
 
-        let schema = relationships_schema(&db);
+        let schema = relationships_schema(&shim(&db));
         assert_eq!(schema.name, "relationships");
         assert_eq!(schema.arity, 6);
         assert!(schema.canonical);
@@ -1123,7 +1163,7 @@ mod tests {
         )
         .unwrap();
 
-        let schema = code_elements_schema(&db);
+        let schema = code_elements_schema(&shim(&db));
         assert_eq!(schema.arity, 11);
         assert!(!schema.canonical, "11-col schema must not be canonical");
         assert_eq!(
@@ -1148,7 +1188,7 @@ mod tests {
         )
         .unwrap();
 
-        let schema = relationships_schema(&db);
+        let schema = relationships_schema(&shim(&db));
         assert_eq!(schema.arity, 5);
         assert!(!schema.canonical);
         assert_eq!(
@@ -1166,7 +1206,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("unknown.db");
         let db = make_db(&db_path);
-        let schema = get_relation_schema(&db, "no_such_relation");
+        let schema = get_relation_schema(&shim(&db), "no_such_relation");
         assert_eq!(schema.name, "no_such_relation");
         assert_eq!(schema.arity, 0);
         assert!(schema.columns.is_empty());
@@ -1422,7 +1462,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("init.db");
         let db = init_db(&db_path).expect("init_db");
-        let schema = code_elements_schema(&db);
+        let schema = code_elements_schema(&shim(&db));
         assert_eq!(schema.name, "code_elements");
         assert_eq!(schema.arity, 13);
         assert!(schema.canonical);
@@ -1435,7 +1475,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("rel_init.db");
         let db = init_db(&db_path).expect("init_db");
-        let schema = relationships_schema(&db);
+        let schema = relationships_schema(&shim(&db));
         assert_eq!(schema.name, "relationships");
         assert_eq!(schema.arity, 6);
         assert!(schema.canonical);

@@ -40,8 +40,8 @@ pub fn execute_query_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::backend::init_db;
     use crate::db::models::{CodeElement, Relationship};
-    use crate::db::schema::init_db;
     use crate::graph::query::GraphEngine;
     use tempfile::TempDir;
 

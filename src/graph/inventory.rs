@@ -1,6 +1,5 @@
 //! CozoDB-persisted index inventory (FR-INDEX-INV-*).
 
-use crate::db::schema::CozoDb;
 use crate::graph::GraphEngine;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -43,15 +42,17 @@ pub struct IndexInventory {
     pub notes: String,
 }
 
-pub fn ensure_index_inventory_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
-    let existing: std::collections::HashSet<String> =
-        crate::db::schema::run_script(db, "::relations", Default::default())?
-            .rows
-            .iter()
-            .filter_map(|r| r.first().and_then(|v| v.get_str()).map(String::from))
-            .collect();
+pub fn ensure_index_inventory_table(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let existing: std::collections::HashSet<String> = db
+        .run_script("::relations", Default::default())?
+        .rows
+        .iter()
+        .filter_map(|r| r.first().and_then(|v| v.get_str()).map(String::from))
+        .collect();
     if !existing.contains("index_inventory") {
-        crate::db::schema::run_script(db, CREATE_INDEX_INVENTORY, Default::default())?;
+        db.run_script(CREATE_INDEX_INVENTORY, Default::default())?;
     }
     Ok(())
 }
@@ -86,12 +87,16 @@ fn type_count_maps(graph: &GraphEngine) -> Result<ElementRelCounts, Box<dyn std:
 }
 
 #[cfg(feature = "embeddings")]
-fn count_vectors(db: &CozoDb) -> Result<i64, Box<dyn std::error::Error>> {
+fn count_vectors(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<i64, Box<dyn std::error::Error>> {
     Ok(crate::embeddings::control::count_embedding_vectors(db)? as i64)
 }
 
 #[cfg(not(feature = "embeddings"))]
-fn count_vectors(_db: &CozoDb) -> Result<i64, Box<dyn std::error::Error>> {
+fn count_vectors(
+    _db: &dyn crate::db::backend::DbBackend,
+) -> Result<i64, Box<dyn std::error::Error>> {
     Ok(0)
 }
 
@@ -130,7 +135,10 @@ pub fn refresh_index_inventory(
     Ok(inv)
 }
 
-fn upsert_inventory(db: &CozoDb, inv: &IndexInventory) -> Result<(), Box<dyn std::error::Error>> {
+fn upsert_inventory(
+    db: &dyn crate::db::backend::DbBackend,
+    inv: &IndexInventory,
+) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#"?[key, computed_at, total_elements, total_relationships, total_vectors, total_documents, total_doc_sections, elements_by_type_json, relationships_by_type_json, vectors_by_type_json, estimated_vector_bytes, estimated_hnsw_bytes, notes] <- [[$key, $computed_at, $total_elements, $total_relationships, $total_vectors, $total_documents, $total_doc_sections, $elements_by_type_json, $relationships_by_type_json, $vectors_by_type_json, $estimated_vector_bytes, $estimated_hnsw_bytes, $notes]]
         :put index_inventory {key => computed_at, total_elements, total_relationships, total_vectors, total_documents, total_doc_sections, elements_by_type_json, relationships_by_type_json, vectors_by_type_json, estimated_vector_bytes, estimated_hnsw_bytes, notes}"#;
     let mut params = std::collections::BTreeMap::new();
@@ -180,7 +188,7 @@ fn upsert_inventory(db: &CozoDb, inv: &IndexInventory) -> Result<(), Box<dyn std
         serde_json::Value::Number(inv.estimated_hnsw_bytes.into()),
     );
     params.insert("notes".into(), serde_json::Value::String(inv.notes.clone()));
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
@@ -194,13 +202,13 @@ fn now_iso() -> String {
 }
 
 pub fn load_latest_inventory(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Option<IndexInventory>, Box<dyn std::error::Error>> {
     ensure_index_inventory_table(db)?;
     let query = r#"?[key, computed_at, total_elements, total_relationships, total_vectors, total_documents, total_doc_sections, elements_by_type_json, relationships_by_type_json, vectors_by_type_json, estimated_vector_bytes, estimated_hnsw_bytes, notes] :=
         *index_inventory[key, computed_at, total_elements, total_relationships, total_vectors, total_documents, total_doc_sections, elements_by_type_json, relationships_by_type_json, vectors_by_type_json, estimated_vector_bytes, estimated_hnsw_bytes, notes],
         key = "latest""#;
-    let result = crate::db::schema::run_script(db, query, Default::default())?;
+    let result = db.run_script(query, Default::default())?;
     let row = match result.rows.first() {
         Some(r) => r,
         None => return Ok(None),
@@ -242,7 +250,7 @@ pub fn inventory_to_json(inv: &IndexInventory) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema::init_db;
+    use crate::db::backend::init_db;
     use tempfile::TempDir;
 
     #[test]

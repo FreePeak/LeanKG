@@ -346,7 +346,7 @@ pub fn ontology_watch_debounce_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema::init_db;
+    use crate::db::backend::init_db;
     use std::io::Write;
     use tempfile::TempDir;
 
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(stats.workflow_steps, 1);
         assert!(leankg.join("ontology_synced").exists());
 
-        let q = crate::ontology::OntologyQueryEngine::new(graph.db().clone());
+        let q = crate::ontology::OntologyQueryEngine::new(graph.db_arc().clone());
         let steps = q.trace_workflow("Test Flow", "local").unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].name, "Step A");
@@ -423,7 +423,7 @@ mod tests {
         std::fs::write(ontology.join("workflows.yaml"), &yaml_v2).unwrap();
         sync_from_dir(&ontology, &graph, Some(&leankg)).unwrap();
 
-        let q = crate::ontology::OntologyQueryEngine::new(graph.db().clone());
+        let q = crate::ontology::OntologyQueryEngine::new(graph.db_arc().clone());
         let steps = q.trace_workflow("Test Flow", "local").unwrap();
         assert_eq!(
             steps.len(),
@@ -488,7 +488,7 @@ mod tests {
         .unwrap();
         sync_from_dir(&ontology, &graph, Some(&leankg)).unwrap();
 
-        let q = crate::ontology::OntologyQueryEngine::new(graph.db().clone());
+        let q = crate::ontology::OntologyQueryEngine::new(graph.db_arc().clone());
         let steps = q.trace_workflow("Test Flow", "local").unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].name, "Keep Me");

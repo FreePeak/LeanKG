@@ -182,7 +182,7 @@ pub async fn api_v2_incidents(
         .get("limit")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(10);
-    match crate::db::query_incidents(&db, service, pattern, Some(env), limit) {
+    match crate::db::query_incidents(db.as_ref(), service, pattern, Some(env), limit) {
         Ok(incidents) => Json(ApiResponse::success(
             serde_json::to_value(&incidents).unwrap_or_default(),
         )),

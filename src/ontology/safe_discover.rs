@@ -113,7 +113,7 @@ pub fn discover(
     let env = if env.is_empty() { "local" } else { env };
 
     if prefer_ontology {
-        let oq = OntologyQueryEngine::new(engine.db().clone());
+        let oq = OntologyQueryEngine::new(engine.db_arc().clone());
         // Fetch a slightly larger concept page then slice for offset.
         let fetch = limit
             .saturating_add(offset)

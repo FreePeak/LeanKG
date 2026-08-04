@@ -169,7 +169,7 @@ impl QueryCache {
     }
 
     pub fn with_persistence(
-        db: Arc<crate::db::schema::CozoDb>,
+        db: crate::db::backend::SharedDb,
         ttl_secs: u64,
         max_entries: usize,
     ) -> Self {

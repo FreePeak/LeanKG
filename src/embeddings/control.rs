@@ -6,7 +6,6 @@
 // `.clamp(1, 15)`. Silences the newer clippy lint that PR #127 worked around.
 #![allow(clippy::manual_clamp)]
 
-use crate::db::CozoDb;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -151,7 +150,9 @@ pub fn live_progress() -> (u64, u64, u64, u64) {
 }
 
 /// Cheap resume preflight — counts only, no `all_elements`.
-pub fn embed_resume_preflight(db: &CozoDb) -> Result<EmbedResumePreflight, String> {
+pub fn embed_resume_preflight(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<EmbedResumePreflight, String> {
     let vectors_existing = count_embedding_vectors(db).unwrap_or(0) as u64;
     let counts = state::count_by_state(db).map_err(|e| e.to_string())?;
     let has_embed_data = vectors_existing > 0 || counts.fresh + counts.stale + counts.other > 0;
@@ -164,9 +165,10 @@ pub fn embed_resume_preflight(db: &CozoDb) -> Result<EmbedResumePreflight, Strin
     })
 }
 
-pub fn count_embedding_vectors(db: &CozoDb) -> Result<usize, Box<dyn std::error::Error>> {
-    let result = crate::db::schema::run_script(
-        db,
+pub fn count_embedding_vectors(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let result = db.run_script(
         "?[qualified_name] := *embedding_vectors{qualified_name}",
         Default::default(),
     )?;

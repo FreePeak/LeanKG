@@ -1,4 +1,3 @@
-use crate::db::schema::CozoDb;
 use crate::graph::GraphEngine;
 use std::collections::HashMap;
 
@@ -7,9 +6,9 @@ pub struct CommunityDetector {
 }
 
 impl CommunityDetector {
-    pub fn new(db: &CozoDb) -> Self {
+    pub fn new(db: crate::db::backend::SharedDb) -> Self {
         Self {
-            graph_engine: GraphEngine::new(db.clone()),
+            graph_engine: GraphEngine::new(db),
         }
     }
 
@@ -302,8 +301,7 @@ pub fn load_precomputed_clusters(
     let limit = limit.clamp(1, 500);
     let db = engine.db();
     // Probe arity once via a cheap limit-0 script (same pattern as GraphEngine).
-    let tail = if crate::db::schema::run_script(
-        db,
+    let tail = if db.run_script(
         "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
         Default::default(),
     )
@@ -320,7 +318,7 @@ pub fn load_precomputed_clusters(
             cluster_id != ""
             :limit {limit}"#
     );
-    let id_rows = crate::db::schema::run_script(db, &ids_query, Default::default())?;
+    let id_rows = db.run_script(&ids_query, Default::default())?;
 
     let mut by_id: HashMap<String, Cluster> = HashMap::new();
     for row in &id_rows.rows {
@@ -359,7 +357,7 @@ pub fn load_precomputed_clusters(
                 cluster_id = "{safe_cid}"
                 :limit 40"#
         );
-        if let Ok(mem_rows) = crate::db::schema::run_script(db, &mem_q, Default::default()) {
+        if let Ok(mem_rows) = db.run_script(&mem_q, Default::default()) {
             for row in &mem_rows.rows {
                 let qn = row[0].get_str().unwrap_or("").to_string();
                 let fp = row[1].get_str().unwrap_or("").to_string();

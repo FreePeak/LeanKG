@@ -154,7 +154,7 @@ fn index_items_into(
     items: Vec<MinedItem>,
 ) -> Result<MiningResult, Box<dyn std::error::Error>> {
     let db_path = project.join(".leankg");
-    let db = crate::db::schema::init_db(&db_path)?;
+    let db = crate::db::backend::init_db(&db_path)?;
     let graph = GraphEngine::new(db);
     index_items(&graph, project, items)
 }

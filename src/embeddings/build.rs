@@ -2241,7 +2241,7 @@ mod tests {
     fn hnsw_live_writes_are_queryable_via_put() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("hnsw_live.db");
-        let db = crate::db::schema::init_db(&db_path).expect("init_db");
+        let db = crate::db::backend::init_db(&db_path).expect("init_db");
         crate::embeddings::state::ensure_embedding_state_table(&db).expect("ensure tables");
 
         let n = 24usize;
@@ -2271,7 +2271,8 @@ mod tests {
                     bind_distance: dist
                 }}"#
         );
-        let result = crate::db::schema::run_script(&db, &query, Default::default())
+        let result = db
+            .run_script(&query, Default::default())
             .expect("hnsw query over live-index writes");
         let hits: Vec<String> = result
             .rows
@@ -2297,7 +2298,7 @@ mod tests {
     fn bulk_import_then_hnsw_rebuild_is_queryable() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("hnsw_bulk.db");
-        let db = crate::db::schema::init_db(&db_path).expect("init_db");
+        let db = crate::db::backend::init_db(&db_path).expect("init_db");
         crate::embeddings::state::ensure_embedding_state_table(&db).expect("ensure tables");
 
         let n = 24usize;
@@ -2328,7 +2329,8 @@ mod tests {
                     bind_distance: dist
                 }}"#
         );
-        let result = crate::db::schema::run_script(&db, &query, Default::default())
+        let result = db
+            .run_script(&query, Default::default())
             .expect("hnsw query over rebuilt index");
         let hits: Vec<String> = result
             .rows

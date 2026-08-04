@@ -802,8 +802,8 @@ mod tests {
     /// attaches references to the document node, not the sections).
     #[test]
     fn doc_section_seed_traverses_through_document_references() {
+        use crate::db::backend::init_db;
         use crate::db::models::Relationship;
-        use crate::db::schema::init_db;
 
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let db = init_db(&tmp.path().join("traverse.db")).expect("init_db");

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod backend;
 pub mod keys;
 pub mod models;
 pub mod pg;
@@ -7,12 +8,14 @@ pub mod versioning;
 pub mod write_bus;
 
 #[allow(unused_imports)]
+pub use backend::{init_db, init_db_pg, init_db_readonly, DbBackend, PostgresBackend, SharedDb};
+#[allow(unused_imports)]
 pub use models::*;
 #[allow(unused_imports)]
 pub use schema::*;
 
 pub fn create_business_logic(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
     description: &str,
     user_story_id: Option<&str>,
@@ -41,7 +44,7 @@ pub fn create_business_logic(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
 
     Ok(models::BusinessLogic {
         id: None,
@@ -53,7 +56,7 @@ pub fn create_business_logic(
 }
 
 pub fn get_business_logic(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<Option<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], element_qualified = $eq"#;
@@ -63,7 +66,7 @@ pub fn get_business_logic(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     if rows.is_empty() {
@@ -84,7 +87,7 @@ pub fn get_business_logic(
 }
 
 pub fn update_business_logic(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
     description: &str,
     user_story_id: Option<&str>,
@@ -113,7 +116,7 @@ pub fn update_business_logic(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
 
     Ok(Some(models::BusinessLogic {
         id: None,
@@ -126,7 +129,7 @@ pub fn update_business_logic(
 
 #[allow(dead_code)]
 pub fn delete_business_logic(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // cozo 0.7.6 delete-by-predicate: rule derives the full row, then `:rm`
@@ -139,12 +142,12 @@ pub fn delete_business_logic(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
 pub fn get_by_user_story(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     user_story_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = $us"#;
@@ -154,7 +157,7 @@ pub fn get_by_user_story(
         serde_json::Value::String(user_story_id.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
@@ -176,7 +179,7 @@ pub fn get_by_user_story(
 }
 
 pub fn get_by_feature(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     feature_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], feature_id = $feat"#;
@@ -186,7 +189,7 @@ pub fn get_by_feature(
         serde_json::Value::String(feature_id.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
@@ -208,7 +211,7 @@ pub fn get_by_feature(
 }
 
 pub fn search_business_logic(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     query_str: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let regex_pattern = format!(".*{}.*", query_str.to_lowercase());
@@ -217,7 +220,7 @@ pub fn search_business_logic(
         regex_pattern
     );
 
-    let result = crate::db::schema::run_script(db, &query, std::collections::BTreeMap::new())?;
+    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
@@ -239,11 +242,11 @@ pub fn search_business_logic(
 }
 
 pub fn all_business_logic(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id]"#;
 
-    let result = crate::db::schema::run_script(db, query, std::collections::BTreeMap::new())?;
+    let result = db.run_script(query, std::collections::BTreeMap::new())?;
     let rows = result.rows;
 
     let business_logic: Vec<models::BusinessLogic> = rows
@@ -298,7 +301,7 @@ pub struct UserStoryTraceability {
 
 #[allow(dead_code)]
 pub fn get_feature_traceability(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     feature_id: &str,
 ) -> Result<FeatureTraceability, Box<dyn std::error::Error>> {
     let elements = get_by_feature(db, feature_id)?;
@@ -320,7 +323,7 @@ pub fn get_feature_traceability(
 
 #[allow(dead_code)]
 pub fn get_user_story_traceability(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     user_story_id: &str,
 ) -> Result<UserStoryTraceability, Box<dyn std::error::Error>> {
     let elements = get_by_user_story(db, user_story_id)?;
@@ -342,7 +345,7 @@ pub fn get_user_story_traceability(
 
 #[allow(dead_code)]
 pub fn all_feature_traceability(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Vec<FeatureTraceability>, Box<dyn std::error::Error>> {
     let all = all_business_logic(db)?;
     let mut feature_map: std::collections::HashMap<String, Vec<FeatureTraceEntry>> =
@@ -375,7 +378,7 @@ pub fn all_feature_traceability(
 
 #[allow(dead_code)]
 pub fn all_user_story_traceability(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Vec<UserStoryTraceability>, Box<dyn std::error::Error>> {
     let all = all_business_logic(db)?;
     let mut story_map: std::collections::HashMap<String, Vec<UserStoryTraceEntry>> =
@@ -408,7 +411,7 @@ pub fn all_user_story_traceability(
 
 #[allow(dead_code)]
 pub fn find_by_business_domain(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     domain: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     search_business_logic(db, domain)
@@ -416,7 +419,7 @@ pub fn find_by_business_domain(
 
 #[allow(dead_code)]
 pub fn get_documented_by(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
     let query = r#"?[target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified = $sq, rel_type = "documented_by""#;
@@ -426,7 +429,7 @@ pub fn get_documented_by(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let doc_links: Vec<models::DocLink> = rows
@@ -462,7 +465,7 @@ pub fn get_documented_by(
 
 #[allow(dead_code)]
 pub fn get_traceability_report(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<models::TraceabilityReport, Box<dyn std::error::Error>> {
     let bl = get_business_logic(db, element_qualified)?;
@@ -488,7 +491,7 @@ pub fn get_traceability_report(
 
 #[allow(dead_code)]
 pub fn get_code_for_requirement(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     requirement_id: &str,
 ) -> Result<Vec<models::TraceabilityEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = $us"#;
@@ -498,7 +501,7 @@ pub fn get_code_for_requirement(
         serde_json::Value::String(requirement_id.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     let rows = result.rows;
 
     let mut entries = Vec::new();
@@ -523,7 +526,7 @@ pub fn get_code_for_requirement(
 }
 
 pub fn record_metric(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     metric: &models::ContextMetric,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] <- [[ $tool, $ts, $path, $in_tok, $out_tok, $out_elem, $exec_ms, $base_tok, $base_lines, $saved, $sav_pct, $correct, $total, $f1, $qpat, $qfile, $qdepth, $success, false ]] :put context_metrics { tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted }"#;
@@ -629,12 +632,12 @@ pub fn record_metric(
         serde_json::Value::Bool(metric.success),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
 pub fn get_metrics_summary(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     tool_filter: Option<&str>,
     retention_days: i32,
 ) -> Result<models::MetricsSummary, Box<dyn std::error::Error>> {
@@ -660,7 +663,7 @@ pub fn get_metrics_summary(
         r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted], timestamp >= $cutoff, is_deleted = false"#
     };
 
-    let result = crate::db::schema::run_script(db, query, params.clone())?;
+    let result = db.run_script(query, params.clone())?;
 
     let mut summary = models::MetricsSummary {
         total_invocations: 0,
@@ -745,7 +748,7 @@ pub fn get_metrics_summary(
 }
 
 pub fn cleanup_old_metrics(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     retention_days: i32,
 ) -> Result<i64, Box<dyn std::error::Error>> {
     let cutoff_timestamp = std::time::SystemTime::now()
@@ -762,7 +765,7 @@ pub fn cleanup_old_metrics(
         serde_json::Value::Number(cutoff_timestamp.into()),
     );
 
-    let count_result = crate::db::schema::run_script(db, count_query, params)?;
+    let count_result = db.run_script(count_query, params)?;
     let deleted_count = count_result.rows.len() as i64;
 
     if deleted_count > 0 {
@@ -772,7 +775,7 @@ pub fn cleanup_old_metrics(
             serde_json::Value::Number(cutoff_timestamp.into()),
         );
         let delete_query = r#":delete context_metrics where timestamp < $cutoff"#;
-        if let Err(e) = crate::db::schema::run_script(db, delete_query, delete_params) {
+        if let Err(e) = db.run_script(delete_query, delete_params) {
             eprintln!("Warning: cleanup delete failed: {}", e);
         }
     }
@@ -780,15 +783,17 @@ pub fn cleanup_old_metrics(
     Ok(deleted_count)
 }
 
-pub fn reset_metrics(db: &CozoDb) -> Result<i64, Box<dyn std::error::Error>> {
+pub fn reset_metrics(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<i64, Box<dyn std::error::Error>> {
     let count_query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted]"#;
 
-    let count_result = crate::db::schema::run_script(db, count_query, Default::default())?;
+    let count_result = db.run_script(count_query, Default::default())?;
     let deleted_count = count_result.rows.len() as i64;
     if deleted_count > 0 {
         let delete_query =
             r#":delete context_metrics where tool_name != "NON_EXISTENT_TOOL_NAME_123456789""#;
-        if let Err(e) = crate::db::schema::run_script(db, delete_query, Default::default()) {
+        if let Err(e) = db.run_script(delete_query, Default::default()) {
             eprintln!("Warning: reset delete failed: {}", e);
         }
     }
@@ -800,7 +805,7 @@ pub fn reset_metrics(db: &CozoDb) -> Result<i64, Box<dyn std::error::Error>> {
 // ============================================================================
 
 pub fn create_knowledge_entry(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     entry: &models::KnowledgeEntry,
 ) -> Result<models::KnowledgeEntry, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <- [[$id, $kt, $title, $content, $eq, $us, $feat, $tags, $env, $branch, $author, $cat, $uat]] :put knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
@@ -874,19 +879,19 @@ pub fn create_knowledge_entry(
         serde_json::Value::Number(entry.updated_at.into()),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(entry.clone())
 }
 
 pub fn get_knowledge_entry(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     id: &str,
 ) -> Result<Option<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -895,26 +900,29 @@ pub fn get_knowledge_entry(
 }
 
 pub fn update_knowledge_entry(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     entry: &models::KnowledgeEntry,
 ) -> Result<models::KnowledgeEntry, Box<dyn std::error::Error>> {
     // :put acts as upsert in CozoDB
     create_knowledge_entry(db, entry)
 }
 
-pub fn delete_knowledge_entry(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn delete_knowledge_entry(
+    db: &dyn crate::db::backend::DbBackend,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     // CozoDB has no `:delete` operator. Read the matching row(s) by id via
     // head-binding, then `:rm` exactly those rows.
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], id = $id
 :rm knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
 pub fn search_knowledge(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     query_str: &str,
     knowledge_type: Option<&str>,
     environment: Option<&str>,
@@ -945,7 +953,7 @@ pub fn search_knowledge(
         where_clause, limit
     );
 
-    let result = crate::db::schema::run_script(db, &query, params)?;
+    let result = db.run_script(&query, params)?;
     Ok(result
         .rows
         .iter()
@@ -954,7 +962,7 @@ pub fn search_knowledge(
 }
 
 pub fn get_knowledge_by_element(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], element_qualified = $eq"#;
@@ -964,7 +972,7 @@ pub fn get_knowledge_by_element(
         serde_json::Value::String(element_qualified.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     Ok(result
         .rows
         .iter()
@@ -973,7 +981,7 @@ pub fn get_knowledge_by_element(
 }
 
 pub fn get_knowledge_by_feature(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     feature_id: &str,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], feature_id = $feat"#;
@@ -983,7 +991,7 @@ pub fn get_knowledge_by_feature(
         serde_json::Value::String(feature_id.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     Ok(result
         .rows
         .iter()
@@ -992,7 +1000,7 @@ pub fn get_knowledge_by_feature(
 }
 
 pub fn get_knowledge_by_environment(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     environment: &str,
     limit: usize,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
@@ -1006,7 +1014,7 @@ pub fn get_knowledge_by_environment(
         serde_json::Value::String(environment.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, &query, params)?;
+    let result = db.run_script(&query, params)?;
     Ok(result
         .rows
         .iter()
@@ -1037,7 +1045,7 @@ fn row_to_knowledge_entry(row: &[cozo::DataValue]) -> models::KnowledgeEntry {
 // ============================================================================
 
 pub fn link_feature_workflow(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     feature_id: &str,
     workflow_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1051,12 +1059,12 @@ pub fn link_feature_workflow(
         "wf".to_string(),
         serde_json::Value::String(workflow_id.to_string()),
     );
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
 pub fn unlink_feature_workflow(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     feature_id: &str,
     workflow_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1070,7 +1078,7 @@ pub fn unlink_feature_workflow(
         "wf".to_string(),
         serde_json::Value::String(workflow_id.to_string()),
     );
-    let result = crate::db::schema::run_script(db, find_query, params)?;
+    let result = db.run_script(find_query, params)?;
     if !result.rows.is_empty() {
         let del_query =
             r#":delete feature_workflow_links where feature_id = $feat, workflow_id = $wf"#;
@@ -1083,13 +1091,13 @@ pub fn unlink_feature_workflow(
             "wf".to_string(),
             serde_json::Value::String(workflow_id.to_string()),
         );
-        crate::db::schema::run_script(db, del_query, del_params)?;
+        db.run_script(del_query, del_params)?;
     }
     Ok(())
 }
 
 pub fn get_workflows_for_feature(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     feature_id: &str,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let query =
@@ -1099,7 +1107,7 @@ pub fn get_workflows_for_feature(
         "feat".to_string(),
         serde_json::Value::String(feature_id.to_string()),
     );
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     Ok(result
         .rows
         .iter()
@@ -1108,7 +1116,7 @@ pub fn get_workflows_for_feature(
 }
 
 pub fn get_features_for_workflow(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     workflow_id: &str,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let query =
@@ -1118,7 +1126,7 @@ pub fn get_features_for_workflow(
         "wf".to_string(),
         serde_json::Value::String(workflow_id.to_string()),
     );
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     Ok(result
         .rows
         .iter()
@@ -1127,7 +1135,7 @@ pub fn get_features_for_workflow(
 }
 
 pub fn create_incident(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     incident: &models::Incident,
 ) -> Result<models::Incident, Box<dyn std::error::Error>> {
     validate_incident(incident)?;
@@ -1205,7 +1213,7 @@ pub fn create_incident(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(incident.clone())
 }
 
@@ -1255,14 +1263,14 @@ pub fn validate_incident(incident: &models::Incident) -> Result<(), Box<dyn std:
 }
 
 pub fn get_incident(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     id: &str,
 ) -> Result<Option<models::Incident>, Box<dyn std::error::Error>> {
     let query = r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -1271,22 +1279,25 @@ pub fn get_incident(
 }
 
 pub fn update_incident(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     incident: &models::Incident,
 ) -> Result<models::Incident, Box<dyn std::error::Error>> {
     create_incident(db, incident)
 }
 
-pub fn delete_incident(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn delete_incident(
+    db: &dyn crate::db::backend::DbBackend,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#":delete incidents where id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
 pub fn query_incidents(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     service: Option<&str>,
     pattern: Option<&str>,
     env: Option<&str>,
@@ -1326,12 +1337,12 @@ pub fn query_incidents(
         where_clause, limit
     );
 
-    let result = crate::db::schema::run_script(db, &query, params)?;
+    let result = db.run_script(&query, params)?;
     Ok(result.rows.iter().map(|r| row_to_incident(r)).collect())
 }
 
 pub fn get_incidents_by_service(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     service: &str,
     env: Option<&str>,
     limit: usize,
@@ -1368,15 +1379,16 @@ fn row_to_incident(row: &[cozo::DataValue]) -> models::Incident {
 // ============================================================================
 
 pub fn get_elements_by_env(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     env: &str,
     limit: usize,
 ) -> Result<Vec<models::CodeElement>, Box<dyn std::error::Error>> {
-    let tail = if crate::db::schema::run_script(db,
-            "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
-            Default::default(),
-        )
-        .is_ok()
+    let tail = if db
+            .run_script(
+                "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
+                Default::default(),
+            )
+            .is_ok()
     {
         ", env, ontology_layer"
     } else {
@@ -1392,12 +1404,12 @@ pub fn get_elements_by_env(
         serde_json::Value::String(env.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, &query, params)?;
+    let result = db.run_script(&query, params)?;
     Ok(result.rows.iter().map(|r| row_to_code_element(r)).collect())
 }
 
 pub fn get_relationships_by_env(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     env: &str,
     limit: usize,
 ) -> Result<Vec<models::Relationship>, Box<dyn std::error::Error>> {
@@ -1411,12 +1423,12 @@ pub fn get_relationships_by_env(
         serde_json::Value::String(env.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, &query, params)?;
+    let result = db.run_script(&query, params)?;
     Ok(result.rows.iter().map(|r| row_to_relationship(r)).collect())
 }
 
 pub fn get_element_across_envs(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     qualified_name: &str,
 ) -> Result<Vec<(String, models::CodeElement)>, Box<dyn std::error::Error>> {
     let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = $qn"#;
@@ -1426,7 +1438,7 @@ pub fn get_element_across_envs(
         serde_json::Value::String(qualified_name.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     Ok(result
         .rows
         .iter()
@@ -1471,7 +1483,10 @@ fn row_to_relationship(row: &[cozo::DataValue]) -> models::Relationship {
     }
 }
 
-pub fn upsert_service_metadata(db: &CozoDb, svc: &models::ServiceMetadata) -> Result<(), String> {
+pub fn upsert_service_metadata(
+    db: &dyn crate::db::backend::DbBackend,
+    svc: &models::ServiceMetadata,
+) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1526,13 +1541,13 @@ pub fn upsert_service_metadata(db: &CozoDb, svc: &models::ServiceMetadata) -> Re
     );
     params.insert("cat".into(), serde_json::Value::Number(now.into()));
     params.insert("uat".into(), serde_json::Value::Number(now.into()));
-    crate::db::schema::run_script(db, query, params)
+    db.run_script(query, params)
         .map_err(|e| format!("upsert_service_metadata: {}", e))?;
     Ok(())
 }
 
 pub fn get_service_metadata(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     service_name: &str,
     env: &str,
 ) -> Result<Option<models::ServiceMetadata>, String> {
@@ -1543,7 +1558,8 @@ pub fn get_service_metadata(
         serde_json::Value::String(service_name.to_string()),
     );
     params.insert("env".into(), serde_json::Value::String(env.to_string()));
-    let result = crate::db::schema::run_script(db, query, params)
+    let result = db
+        .run_script(query, params)
         .map_err(|e| format!("get_service_metadata: {}", e))?;
     if result.rows.is_empty() {
         return Ok(None);
@@ -1591,7 +1607,7 @@ pub fn get_service_metadata(
 // ============================================================================
 
 pub fn create_team(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     team: &models::Team,
 ) -> Result<models::Team, Box<dyn std::error::Error>> {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] <- [[$id, $name, $desc, $owner, $cat, $uat, $read_users, $write_users, $members]] :put teams {id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members}"#;
@@ -1630,16 +1646,19 @@ pub fn create_team(
         serde_json::Value::String(serde_json::to_string(&team.members)?),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(team.clone())
 }
 
-pub fn get_team(db: &CozoDb, id: &str) -> Result<Option<models::Team>, Box<dyn std::error::Error>> {
+pub fn get_team(
+    db: &dyn crate::db::backend::DbBackend,
+    id: &str,
+) -> Result<Option<models::Team>, Box<dyn std::error::Error>> {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] := *teams[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members], id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -1647,23 +1666,28 @@ pub fn get_team(db: &CozoDb, id: &str) -> Result<Option<models::Team>, Box<dyn s
 }
 
 pub fn update_team(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     team: &models::Team,
 ) -> Result<models::Team, Box<dyn std::error::Error>> {
     create_team(db, team)
 }
 
-pub fn delete_team(db: &CozoDb, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn delete_team(
+    db: &dyn crate::db::backend::DbBackend,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#":delete teams where id = $id"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
-pub fn list_teams(db: &CozoDb) -> Result<Vec<models::Team>, Box<dyn std::error::Error>> {
+pub fn list_teams(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<Vec<models::Team>, Box<dyn std::error::Error>> {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] := *teams[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members]"#;
-    let result = crate::db::schema::run_script(db, query, Default::default())?;
+    let result = db.run_script(query, Default::default())?;
     Ok(result.rows.iter().map(|r| row_to_team(r)).collect())
 }
 
@@ -1693,7 +1717,7 @@ fn row_to_team(row: &[cozo::DataValue]) -> models::Team {
 // ============================================================================
 
 pub fn create_team_invite(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     invite: &models::TeamInvite,
 ) -> Result<models::TeamInvite, Box<dyn std::error::Error>> {
     let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] <- [[$token, $tid, $email, $role, $by, $cat, $exp, $acc, $accept]] :put team_invites {token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by}"#;
@@ -1740,12 +1764,12 @@ pub fn create_team_invite(
             .unwrap_or(serde_json::Value::Null),
     );
 
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(invite.clone())
 }
 
 pub fn get_team_invite(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     token: &str,
 ) -> Result<Option<models::TeamInvite>, Box<dyn std::error::Error>> {
     let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] := *team_invites[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by], token = $token"#;
@@ -1755,7 +1779,7 @@ pub fn get_team_invite(
         serde_json::Value::String(token.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     if result.rows.is_empty() {
         return Ok(None);
     }
@@ -1763,7 +1787,7 @@ pub fn get_team_invite(
 }
 
 pub fn get_team_invites(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     team_id: &str,
 ) -> Result<Vec<models::TeamInvite>, Box<dyn std::error::Error>> {
     let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] := *team_invites[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by], team_id = $tid"#;
@@ -1773,12 +1797,12 @@ pub fn get_team_invites(
         serde_json::Value::String(team_id.to_string()),
     );
 
-    let result = crate::db::schema::run_script(db, query, params)?;
+    let result = db.run_script(query, params)?;
     Ok(result.rows.iter().map(|r| row_to_team_invite(r)).collect())
 }
 
 pub fn accept_team_invite(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     token: &str,
     user_id: &str,
 ) -> Result<models::TeamInvite, Box<dyn std::error::Error>> {
@@ -1804,14 +1828,17 @@ pub fn accept_team_invite(
     create_team_invite(db, &updated_invite)
 }
 
-pub fn delete_team_invite(db: &CozoDb, token: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn delete_team_invite(
+    db: &dyn crate::db::backend::DbBackend,
+    token: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#":delete team_invites where token = $token"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
         "token".to_string(),
         serde_json::Value::String(token.to_string()),
     );
-    crate::db::schema::run_script(db, query, params)?;
+    db.run_script(query, params)?;
     Ok(())
 }
 
@@ -1834,7 +1861,7 @@ fn row_to_team_invite(row: &[cozo::DataValue]) -> models::TeamInvite {
 // ============================================================================
 
 pub fn check_graph_permission(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     team_id: &str,
     user_id: &str,
     require_write: bool,
@@ -1855,7 +1882,7 @@ pub fn check_graph_permission(
 }
 
 pub fn add_team_member(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     team_id: &str,
     user_id: &str,
     role: &str,
@@ -1893,7 +1920,7 @@ pub fn add_team_member(
 }
 
 pub fn remove_team_member(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     team_id: &str,
     user_id: &str,
 ) -> Result<models::Team, Box<dyn std::error::Error>> {

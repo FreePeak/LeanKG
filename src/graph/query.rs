@@ -1,9 +1,9 @@
 #![allow(clippy::needless_borrow)]
+use crate::db::backend::{DbBackend, SharedDb};
 use crate::db::models::{
     BusinessLogic, CodeElement, DependencyInfo, DocLink, Incident, Relationship, TraceabilityEntry,
     TraceabilityReport,
 };
-use crate::db::schema::CozoDb;
 use crate::graph::cache::QueryCache;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -59,7 +59,7 @@ pub struct GraphEngine {
     // DbInstance. Without this, each clone opens a fresh handle and RocksDB
     // rejects with "lock hold by current process" because RocksDB only allows
     // one handle per process per DB path.
-    db: std::sync::Arc<CozoDb>,
+    db: SharedDb,
     cache: QueryCache,
     elements_cache: std::sync::Arc<parking_lot::RwLock<Option<Vec<CodeElement>>>>,
     relationships_cache: std::sync::Arc<parking_lot::RwLock<Option<Vec<Relationship>>>>,
@@ -71,9 +71,9 @@ pub struct GraphEngine {
 }
 
 impl GraphEngine {
-    pub fn new(db: CozoDb) -> Self {
+    pub fn new(db: SharedDb) -> Self {
         Self {
-            db: std::sync::Arc::new(db),
+            db,
             cache: QueryCache::new(300, 1000),
             elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
             relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
@@ -85,9 +85,9 @@ impl GraphEngine {
     }
 
     #[allow(dead_code)]
-    pub fn with_cache(db: CozoDb, cache: QueryCache) -> Self {
+    pub fn with_cache(db: SharedDb, cache: QueryCache) -> Self {
         Self {
-            db: std::sync::Arc::new(db),
+            db,
             cache,
             elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
             relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
@@ -98,11 +98,10 @@ impl GraphEngine {
         }
     }
 
-    pub fn with_persistence(db: CozoDb) -> Self {
-        let db_arc = std::sync::Arc::new(db);
-        let cache = QueryCache::with_persistence(db_arc.clone(), 300, 1000);
+    pub fn with_persistence(db: SharedDb) -> Self {
+        let cache = QueryCache::with_persistence(db.clone(), 300, 1000);
         Self {
-            db: db_arc,
+            db,
             cache,
             elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
             relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
@@ -113,25 +112,25 @@ impl GraphEngine {
         }
     }
 
-    pub fn db(&self) -> &CozoDb {
-        &self.db
+    pub fn db(&self) -> &dyn DbBackend {
+        self.db.as_ref()
     }
 
     /// Expose the shared `Arc` handle so tests can assert that two engines
     /// resolve to the SAME underlying DB (no second RocksDB/SQLite open).
     /// FR-P0-MCP-RC-02: one process-wide handle per DB path.
-    pub fn db_arc(&self) -> &std::sync::Arc<CozoDb> {
+    pub fn db_arc(&self) -> &SharedDb {
         &self.db
     }
 
     /// Open a read-only `GraphEngine` over the given database path.
     ///
-    /// Wraps [`crate::db::schema::init_db_readonly`] so `MCPServer` in
+    /// Wraps [`crate::db::backend::init_db_readonly`] so `MCPServer` in
     /// read-only mode and external tooling can grab a query-only handle
     /// without going through the writer-protect path. Writes still need to be
     /// rejected at the tool layer — see `MCPServer::read_only`.
     pub fn open_readonly(db_path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let db = crate::db::schema::init_db_readonly(db_path)?;
+        let db = crate::db::backend::init_db_readonly(db_path)?;
         Ok(Self::new(db))
     }
 
@@ -140,8 +139,9 @@ impl GraphEngine {
     /// The operation can be expensive (rewrites the entire DB file), so
     /// callers should gate it on a size check first.
     pub fn vacuum(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Err(e) =
-            crate::db::schema::run_script(&self.db, "VACUUM", std::collections::BTreeMap::new())
+        if let Err(e) = self
+            .db
+            .run_script("VACUUM", std::collections::BTreeMap::new())
         {
             return Err(format!("VACUUM failed: {:?}", e).into());
         }
@@ -151,12 +151,10 @@ impl GraphEngine {
 
     pub fn code_elements_tail(&self) -> &'static str {
         let arity_13_probe = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0"#;
-        if crate::db::schema::run_script(
-            &self.db,
-            arity_13_probe,
-            std::collections::BTreeMap::new(),
-        )
-        .is_ok()
+        if self
+            .db
+            .run_script(arity_13_probe, std::collections::BTreeMap::new())
+            .is_ok()
         {
             CODE_ELEMENTS_13_TAIL
         } else {
@@ -191,7 +189,7 @@ impl GraphEngine {
             "qn".to_string(),
             serde_json::Value::String(qualified_name.to_string()),
         );
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         if rows.is_empty() {
@@ -243,7 +241,7 @@ impl GraphEngine {
             }
             let mut params = std::collections::BTreeMap::new();
             params.insert("qn".to_string(), serde_json::Value::String(qn.clone()));
-            let result = crate::db::schema::run_script(&self.db, &query, params)?;
+            let result = self.db.run_script(&query, params)?;
             let Some(row) = result.rows.first() else {
                 continue;
             };
@@ -285,7 +283,7 @@ impl GraphEngine {
             "nm".to_string(),
             serde_json::Value::String(name.to_string()),
         );
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         if rows.is_empty() {
@@ -352,7 +350,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let deps: Vec<DependencyInfo> = rows
@@ -398,7 +396,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -464,7 +462,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -510,7 +508,7 @@ impl GraphEngine {
         query: &str,
         params: std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Result<cozo::NamedRows, Box<dyn std::error::Error + Send + Sync>> {
-        crate::db::schema::run_script(&self.db, &query, params).map_err(|e| {
+        self.db.run_script(&query, params).map_err(|e| {
             let msg = e.to_string();
             Box::new(std::io::Error::other(msg)) as Box<dyn std::error::Error + Send + Sync>
         })
@@ -530,8 +528,9 @@ impl GraphEngine {
             limit, offset
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
 
         let elements: Vec<CodeElement> = result
             .rows
@@ -580,8 +579,9 @@ impl GraphEngine {
                 :limit {}"#,
             cap
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let elements: Vec<CodeElement> = result
             .rows
             .iter()
@@ -607,8 +607,9 @@ impl GraphEngine {
                 *code_elements[n, et, a, b, c, d, e, f, g, h, i, j{tail}],
                 et in ["function", "struct", "class", "module", "interface", "enum", "trait"]"#
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .first()
@@ -629,8 +630,9 @@ impl GraphEngine {
             limit, offset
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
 
         let relationships: Vec<Relationship> = result
             .rows
@@ -704,7 +706,7 @@ impl GraphEngine {
             (q, std::collections::BTreeMap::new())
         };
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
 
         let relationships: Vec<Relationship> = result
             .rows
@@ -742,8 +744,9 @@ impl GraphEngine {
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -809,8 +812,9 @@ impl GraphEngine {
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]"#
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let mut count = 0u64;
         for row in result.rows.iter() {
             let parent_qualified = row[7].get_str().map(String::from);
@@ -846,8 +850,9 @@ impl GraphEngine {
     {
         use crate::db::models::Relationship;
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata, env] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env]"#;
-        let result =
-            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
         let mut count = 0u64;
         for row in result.rows.iter() {
             let metadata_str = row[4].get_str().unwrap_or("{}");
@@ -884,8 +889,9 @@ impl GraphEngine {
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "{}""#,
             safe
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let mut count = 0u64;
         for row in result.rows.iter() {
             let parent_qualified = row[7].get_str().map(String::from);
@@ -934,11 +940,9 @@ impl GraphEngine {
                     limit,
                     offset
                 );
-                let result = crate::db::schema::run_script(
-                    &self.db,
-                    &query_str,
-                    std::collections::BTreeMap::new(),
-                )?;
+                let result = self
+                    .db
+                    .run_script(&query_str, std::collections::BTreeMap::new())?;
 
                 let elements: Vec<CodeElement> = result
                     .rows
@@ -987,7 +991,7 @@ impl GraphEngine {
                             .collect(),
                     ),
                 );
-                let rel_result = crate::db::schema::run_script(&self.db, rel_query, rel_params)?;
+                let rel_result = self.db.run_script(rel_query, rel_params)?;
                 let relationships: Vec<Relationship> = rel_result
                     .rows
                     .iter()
@@ -1022,11 +1026,9 @@ impl GraphEngine {
                 0
             );
 
-            let result = crate::db::schema::run_script(
-                &self.db,
-                &query_str,
-                std::collections::BTreeMap::new(),
-            )?;
+            let result = self
+                .db
+                .run_script(&query_str, std::collections::BTreeMap::new())?;
             let _total_count = result.rows.len();
 
             // Filter to direct children only (paths starting with "./" and containing exactly one "/")
@@ -1087,7 +1089,7 @@ impl GraphEngine {
                         .collect(),
                 ),
             );
-            let rel_result = crate::db::schema::run_script(&self.db, rel_query, rel_params)?;
+            let rel_result = self.db.run_script(rel_query, rel_params)?;
             let relationships: Vec<Relationship> = rel_result
                 .rows
                 .iter()
@@ -1126,7 +1128,7 @@ impl GraphEngine {
         let mut params = std::collections::BTreeMap::new();
         params.insert("pat".to_string(), serde_json::Value::String(pattern));
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let total_count = result.rows.len();
 
         // Filter to direct children only (same logic as search_elements)
@@ -1197,7 +1199,7 @@ impl GraphEngine {
                     .collect(),
             ),
         );
-        let rel_result = crate::db::schema::run_script(&self.db, rel_query, rel_params)?;
+        let rel_result = self.db.run_script(rel_query, rel_params)?;
         let relationships: Vec<Relationship> = rel_result
             .rows
             .iter()
@@ -1313,7 +1315,7 @@ impl GraphEngine {
             (q, std::collections::BTreeMap::new())
         };
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
 
         let relationships: Vec<Relationship> = result
             .rows
@@ -1395,7 +1397,7 @@ impl GraphEngine {
                 :limit 500"#;
             let mut out_params = std::collections::BTreeMap::new();
             out_params.insert("sq".to_string(), serde_json::Value::String(id.clone()));
-            let out_rows = crate::db::schema::run_script(&self.db, out_q, out_params)?;
+            let out_rows = self.db.run_script(out_q, out_params)?;
             push_rows(&mut out, &mut seen, &out_rows);
 
             if mega {
@@ -1408,7 +1410,7 @@ impl GraphEngine {
                 :limit 500"#;
             let mut in_params = std::collections::BTreeMap::new();
             in_params.insert("tq".to_string(), serde_json::Value::String(id.clone()));
-            let in_rows = crate::db::schema::run_script(&self.db, in_q, in_params)?;
+            let in_rows = self.db.run_script(in_q, in_params)?;
             push_rows(&mut out, &mut seen, &in_rows);
         }
 
@@ -1428,8 +1430,9 @@ impl GraphEngine {
 
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _]"#;
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -1497,7 +1500,7 @@ impl GraphEngine {
             serde_json::Value::String(parent_qualified.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -1592,7 +1595,7 @@ impl GraphEngine {
             (query, params)
         };
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let total_count = result.rows.len();
         let rows = result.rows;
 
@@ -1671,7 +1674,7 @@ impl GraphEngine {
                     .collect(),
             ),
         );
-        let rel_result = crate::db::schema::run_script(&self.db, rel_query, rel_params)?;
+        let rel_result = self.db.run_script(rel_query, rel_params)?;
         let relationships: Vec<Relationship> = rel_result
             .rows
             .iter()
@@ -1728,7 +1731,7 @@ impl GraphEngine {
         params.insert("lo".to_string(), serde_json::Value::String(lo));
         params.insert("hi".to_string(), serde_json::Value::String(hi));
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let mut directories: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for row in result.rows.iter() {
@@ -1766,7 +1769,7 @@ impl GraphEngine {
             serde_json::Value::String(element_qualified.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         if rows.is_empty() {
@@ -1794,8 +1797,9 @@ impl GraphEngine {
             safe_pattern = safe_pattern
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let annotations: Vec<BusinessLogic> = rows
@@ -1815,8 +1819,9 @@ impl GraphEngine {
     pub fn all_annotations(&self) -> Result<Vec<BusinessLogic>, Box<dyn std::error::Error>> {
         let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id]"#;
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let annotations: Vec<BusinessLogic> = rows
@@ -1849,7 +1854,7 @@ impl GraphEngine {
             serde_json::Value::String(format!("./{}", normalized)),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let doc_links: Vec<DocLink> = rows
@@ -1939,7 +1944,7 @@ impl GraphEngine {
             serde_json::Value::String(user_story_id.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let business_logic: Vec<BusinessLogic> = rows
@@ -2006,7 +2011,7 @@ impl GraphEngine {
                 "batch_data".to_string(),
                 serde_json::Value::Array(chunk.to_vec()),
             );
-            crate::db::schema::run_script(&self.db, &query, params)?;
+            self.db.run_script(&query, params)?;
         }
 
         if !bulk_index {
@@ -2080,7 +2085,7 @@ impl GraphEngine {
 
         let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- [[ $qn, $et, $nm, $fp, $ls, $le, $lg, $pq, $cid, $cl, $md ]] :put code_elements { qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata }"#;
 
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
 
         let cache = self.cache.clone();
         let fp = element.file_path.clone();
@@ -2112,7 +2117,7 @@ impl GraphEngine {
                 "qn".to_string(),
                 serde_json::Value::String(qualified_name.to_string()),
             );
-            crate::db::schema::run_script(&self.db, &query, params)?;
+            self.db.run_script(&query, params)?;
 
             // Apply new cluster attributes and natively reinsert mapped into caches and DB
             element.cluster_id = cluster_id;
@@ -2147,7 +2152,7 @@ impl GraphEngine {
 
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] <- [[ $sq, $tq, $rt, $cn, $md ]] :put relationships { source_qualified, target_qualified, rel_type, confidence, metadata }"#;
 
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
 
         Ok(())
     }
@@ -2234,7 +2239,7 @@ impl GraphEngine {
                 "batch_data".to_string(),
                 serde_json::Value::Array(chunk.to_vec()),
             );
-            crate::db::schema::run_script(&self.db, &query, params)?;
+            self.db.run_script(&query, params)?;
         }
 
         if !bulk_index {
@@ -2272,7 +2277,7 @@ impl GraphEngine {
             serde_json::Value::String(file_path.to_string()),
         );
 
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
 
         let cache = self.cache.clone();
         let fp = file_path.to_string();
@@ -2300,7 +2305,7 @@ impl GraphEngine {
             "fp".to_string(),
             serde_json::Value::String(file_path.to_string()),
         );
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
         Ok(())
     }
 
@@ -2331,7 +2336,7 @@ impl GraphEngine {
                     .collect(),
             ),
         );
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
         Ok(())
     }
 
@@ -2368,7 +2373,7 @@ impl GraphEngine {
                     .collect(),
             ),
         );
-        crate::db::schema::run_script(&self.db, query, params)?;
+        self.db.run_script(query, params)?;
         Ok(())
     }
 
@@ -2387,7 +2392,7 @@ impl GraphEngine {
             serde_json::Value::String(source.to_string()),
         );
 
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
 
         let cache = self.cache.clone();
         let s = source.to_string();
@@ -2413,7 +2418,7 @@ impl GraphEngine {
             "sq".to_string(),
             serde_json::Value::String(source.to_string()),
         );
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
         Ok(())
     }
 
@@ -2437,7 +2442,7 @@ impl GraphEngine {
             "qn".to_string(),
             serde_json::Value::String(qualified_name.to_string()),
         );
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
         Ok(())
     }
 
@@ -2458,7 +2463,7 @@ impl GraphEngine {
         let query = format!(
             r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")"#
         );
-        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
         let mut names: Vec<String> = result
             .rows
             .iter()
@@ -2475,7 +2480,7 @@ impl GraphEngine {
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")"#
         );
-        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2516,7 +2521,7 @@ impl GraphEngine {
         let count_query = format!(
             r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], regex_matches(file_path, "^ontology://")"#
         );
-        let result = crate::db::schema::run_script(&self.db, &count_query, Default::default())?;
+        let result = self.db.run_script(&count_query, Default::default())?;
         let n = result.rows.len();
         let _ = n;
 
@@ -2530,7 +2535,7 @@ impl GraphEngine {
             :rm relationships {{source_qualified, target_qualified, rel_type, confidence, metadata}}
         "#
         );
-        crate::db::schema::run_script(&self.db, &rel_query, Default::default())?;
+        self.db.run_script(&rel_query, Default::default())?;
 
         // 2) Remove all ontology code_elements (all composite-key variants).
         let elem_query = format!(
@@ -2540,7 +2545,7 @@ impl GraphEngine {
             :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
         "#
         );
-        crate::db::schema::run_script(&self.db, &elem_query, Default::default())?;
+        self.db.run_script(&elem_query, Default::default())?;
         self.invalidate_cache();
         Ok(n)
     }
@@ -2559,7 +2564,7 @@ impl GraphEngine {
             serde_json::Value::String(file_path.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2608,8 +2613,9 @@ impl GraphEngine {
             safe_name = safe_name
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2652,8 +2658,9 @@ impl GraphEngine {
             element_type
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2700,7 +2707,7 @@ impl GraphEngine {
             serde_json::Value::String(pattern.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2758,8 +2765,9 @@ impl GraphEngine {
             pattern = safe_pattern,
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -2800,8 +2808,9 @@ impl GraphEngine {
             escaped
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let relationships: Vec<Relationship> = rows
@@ -2833,8 +2842,9 @@ impl GraphEngine {
             min_lines
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut elements: Vec<CodeElement> = rows
@@ -2881,8 +2891,9 @@ impl GraphEngine {
             language, min_lines
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut elements: Vec<CodeElement> = rows
@@ -2922,7 +2933,7 @@ impl GraphEngine {
         &self,
         query: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
         Ok(result
             .rows
             .iter()
@@ -3071,7 +3082,7 @@ impl GraphEngine {
             target_scope = target_scope,
         );
 
-        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
 
         if result.rows.is_empty() {
             return Ok(vec![]);
@@ -3157,7 +3168,7 @@ impl GraphEngine {
                     filter, max_results,
                 );
 
-                let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+                let result = self.db.run_script(&query, Default::default())?;
                 for row in &result.rows {
                     let tgt = row[1].get_str().unwrap_or("").to_string();
                     let confidence = row[2].get_float().unwrap_or(0.0);
@@ -3200,8 +3211,9 @@ impl GraphEngine {
         let tail = self.code_elements_tail();
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "calls""#;
         debug!("Running resolve_call_edges query (filtered at DB level)");
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
 
         let unresolved_rows: Vec<_> = result
             .rows
@@ -3226,11 +3238,9 @@ impl GraphEngine {
         let functions_query = format!(
             r#"?[qualified_name, name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = "function""#
         );
-        let func_result = crate::db::schema::run_script(
-            &self.db,
-            &functions_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let func_result = self
+            .db
+            .run_script(&functions_query, std::collections::BTreeMap::new())?;
 
         let mut by_name_and_file: std::collections::HashMap<(String, String), (String, f64)> =
             std::collections::HashMap::new();
@@ -3330,7 +3340,7 @@ impl GraphEngine {
                 "batch_data".to_string(),
                 serde_json::Value::Array(batch_data),
             );
-            crate::db::schema::run_script(&self.db, &query, params)?;
+            self.db.run_script(&query, params)?;
         }
         Ok(())
     }
@@ -3347,7 +3357,7 @@ impl GraphEngine {
         if let Some(hint) = file_hint {
             let safe_hint = escape_datalog(hint);
             let query = format!("?[qualified_name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = \"function\", name = \"{}\", file_path = \"{}\" :limit 1", safe_name, safe_hint);
-            let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+            let result = self.db.run_script(&query, Default::default())?;
             if let Some(row) = result.rows.first() {
                 let qn = row[0].get_str().map(String::from);
                 let found_file = row[1].get_str().unwrap_or("");
@@ -3357,7 +3367,7 @@ impl GraphEngine {
         }
 
         let query = format!("?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], element_type = \"function\", name = \"{}\" :limit 1", safe_name);
-        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
         Ok((
             result
                 .rows
@@ -3387,7 +3397,7 @@ impl GraphEngine {
             serde_json::Value::String(target.to_string()),
         );
 
-        crate::db::schema::run_script(&self.db, &query, params)?;
+        self.db.run_script(&query, params)?;
         Ok(())
     }
 
@@ -3396,8 +3406,9 @@ impl GraphEngine {
         current_service: &str,
     ) -> Result<ServiceGraph, Box<dyn std::error::Error>> {
         let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], rel_type = "service_calls""#;
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
 
         let mut service_connections: std::collections::HashMap<
             (String, String),
@@ -3491,8 +3502,9 @@ impl GraphEngine {
         let tail = self.code_elements_tail();
         let query =
             format!(r#"?[count(n)] := *code_elements[n, a, b, c, d, e, f, g, h, i, j{tail}]"#);
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .first()
@@ -3505,8 +3517,9 @@ impl GraphEngine {
         let query = format!(
             r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] :limit 1"#
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(!result.rows.is_empty())
     }
 
@@ -3528,7 +3541,7 @@ impl GraphEngine {
             "et".to_string(),
             serde_json::Value::String(element_type.to_string()),
         );
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         Ok(result
             .rows
             .first()
@@ -3556,7 +3569,7 @@ impl GraphEngine {
             .collect();
         let mut params = std::collections::BTreeMap::new();
         params.insert("ets".to_string(), serde_json::Value::Array(ets_json));
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         Ok(result
             .rows
             .first()
@@ -3581,8 +3594,9 @@ impl GraphEngine {
 
     pub fn count_relationships(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[count(n)] := *relationships[n, a, b, c, d, _]"#;
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .first()
@@ -3592,8 +3606,9 @@ impl GraphEngine {
 
     pub fn count_business_logic(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[count(n)] := *business_logic[n, a, b, c]"#;
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .first()
@@ -3607,8 +3622,9 @@ impl GraphEngine {
             r#"files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j{tail}]
 ?[count(f)] := files[f]"#
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .first()
@@ -3625,8 +3641,9 @@ impl GraphEngine {
             r#"?[count(n)] := *code_elements[n, t, a, b, c, d, e, f, g, h, i{tail}], t = "{}""#,
             element_type
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .first()
@@ -3665,9 +3682,10 @@ impl GraphEngine {
             where_clause, limit
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
-                .map_err(|e| e.to_string())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
 
         let mut incidents: Vec<Incident> = result
             .rows
@@ -3711,9 +3729,10 @@ impl GraphEngine {
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = "{}", env = "{}""#,
             safe_service, safe_env
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
-                .map_err(|e| e.to_string())?;
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
 
         let version = if let Some(row) = result.rows.first() {
             let metadata_str = row[10].get_str().unwrap_or("{}");
@@ -3733,12 +3752,10 @@ impl GraphEngine {
             r#"?[target_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], source_qualified = "{}", env = "{}", (rel_type = "calls" or rel_type = "service_calls")"#,
             safe_service, safe_env
         );
-        let outgoing_result = crate::db::schema::run_script(
-            &self.db,
-            &outgoing_query,
-            std::collections::BTreeMap::new(),
-        )
-        .map_err(|e| e.to_string())?;
+        let outgoing_result = self
+            .db
+            .run_script(&outgoing_query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
         let calls: Vec<String> = outgoing_result
             .rows
             .iter()
@@ -3749,12 +3766,10 @@ impl GraphEngine {
             r#"?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], target_qualified = "{}", env = "{}", (rel_type = "calls" or rel_type = "service_calls")"#,
             safe_service, safe_env
         );
-        let incoming_result = crate::db::schema::run_script(
-            &self.db,
-            &incoming_query,
-            std::collections::BTreeMap::new(),
-        )
-        .map_err(|e| e.to_string())?;
+        let incoming_result = self
+            .db
+            .run_script(&incoming_query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
         let called_by: Vec<String> = incoming_result
             .rows
             .iter()
@@ -3766,30 +3781,26 @@ impl GraphEngine {
             r#"?[name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], starts_with(file_path, "{}"), regex_matches(element_type, "(schema|protobuf|proto|openapi|json_schema|avro|sql_table|event|topic|config)")"#,
             escape_datalog(&service_prefix)
         );
-        let schemas: Vec<String> = crate::db::schema::run_script(
-            &self.db,
-            &schemas_query,
-            std::collections::BTreeMap::new(),
-        )
-        .map(|r| {
-            r.rows
-                .iter()
-                .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
-                .collect()
-        })
-        .unwrap_or_default();
+        let schemas: Vec<String> = self
+            .db
+            .run_script(&schemas_query, std::collections::BTreeMap::new())
+            .map(|r| {
+                r.rows
+                    .iter()
+                    .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let incidents_query = format!(
             r#"?[id, resolved_at, title, occurred_at, prevention, root_cause] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], regex_matches(lowercase(affected_services), "{}"), env = "{}""#,
             escape_datalog(&format!(".*{}.*", regex::escape(&service.to_lowercase()))),
             safe_env
         );
-        let incidents_result = crate::db::schema::run_script(
-            &self.db,
-            &incidents_query,
-            std::collections::BTreeMap::new(),
-        )
-        .map_err(|e| e.to_string())?;
+        let incidents_result = self
+            .db
+            .run_script(&incidents_query, std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
 
         let open_incidents = incidents_result
             .rows
@@ -3859,8 +3870,10 @@ impl GraphEngine {
             escape_datalog(service),
             escape_datalog(env)
         );
-        let result =
-            crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new()).ok();
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())
+            .ok();
         result
             .and_then(|r| {
                 r.rows.first().map(|row| {
@@ -3887,9 +3900,10 @@ impl GraphEngine {
                 escape_datalog(service),
                 escape_datalog(env)
             );
-            let result =
-                crate::db::schema::run_script(&self.db, &query, std::collections::BTreeMap::new())
-                    .map_err(|e| e.to_string())?;
+            let result = self
+                .db
+                .run_script(&query, std::collections::BTreeMap::new())
+                .map_err(|e| e.to_string())?;
 
             let element = result.rows.first().map(|row| {
                 let parent_qualified = row[7].get_str().map(String::from);
@@ -4011,11 +4025,9 @@ impl GraphEngine {
             r#"?[language, count(language)] := *code_elements[_, _, _, _, _, _, language, _, _, _, _{tail}]
 :order -count(language)"#
         );
-        let lang_result = crate::db::schema::run_script(
-            &self.db,
-            &lang_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let lang_result = self
+            .db
+            .run_script(&lang_query, std::collections::BTreeMap::new())?;
         let languages: Vec<serde_json::Value> = lang_result
             .rows
             .iter()
@@ -4032,11 +4044,9 @@ impl GraphEngine {
                 qualified_name, "function", name, file_path, _, _, language, _, _, _, _{tail}
             ], (name = "main" or name = "Main" or name = "start" or name = "serve" or name = "Start")"#
         );
-        let entry_result = crate::db::schema::run_script(
-            &self.db,
-            &entry_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let entry_result = self
+            .db
+            .run_script(&entry_query, std::collections::BTreeMap::new())?;
         let entry_points: Vec<serde_json::Value> = entry_result
             .rows
             .iter()
@@ -4054,11 +4064,9 @@ impl GraphEngine {
                 qn, _, _, _, _, _, _, _, cluster_id, cluster_label, _{tail}
             ], cluster_id != null, cluster_id != """#,
         );
-        let cluster_result = crate::db::schema::run_script(
-            &self.db,
-            &cluster_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let cluster_result = self
+            .db
+            .run_script(&cluster_query, std::collections::BTreeMap::new())?;
         let clusters: Vec<serde_json::Value> = cluster_result
             .rows
             .iter()
@@ -4073,8 +4081,9 @@ impl GraphEngine {
 
         let rel_query =
             r#"?[rel_type, count(rel_type)] := *relationships[_, _, rel_type, _, _, _]"#;
-        let rel_result =
-            crate::db::schema::run_script(&self.db, rel_query, std::collections::BTreeMap::new())?;
+        let rel_result = self
+            .db
+            .run_script(rel_query, std::collections::BTreeMap::new())?;
         let relationship_counts: Vec<serde_json::Value> = rel_result
             .rows
             .iter()
@@ -4093,11 +4102,9 @@ impl GraphEngine {
 :order -count(qualified_name)
 :limit 10"#
         );
-        let hotspot_result = crate::db::schema::run_script(
-            &self.db,
-            &hotspot_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let hotspot_result = self
+            .db
+            .run_script(&hotspot_query, std::collections::BTreeMap::new())?;
         let hotspots: Vec<serde_json::Value> = hotspot_result
             .rows
             .iter()
@@ -4115,11 +4122,9 @@ impl GraphEngine {
                 qualified_name, "route", name, file_path, _, _, language, _, _, _, metadata{tail}
             ]"#
         );
-        let route_result = crate::db::schema::run_script(
-            &self.db,
-            &route_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let route_result = self
+            .db
+            .run_script(&route_query, std::collections::BTreeMap::new())?;
         let routes: Vec<serde_json::Value> = route_result
             .rows
             .iter()
@@ -4174,8 +4179,9 @@ impl GraphEngine {
 
     fn count_knowledge(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let query = r#"?[count(id)] := *knowledge_entries[id, _, _, _, _, _, _, _, _, _, _, _, _]"#;
-        let result =
-            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .first()
@@ -4197,11 +4203,9 @@ impl GraphEngine {
             ]
 :order -count(element_type)"#
         );
-        let type_result = crate::db::schema::run_script(
-            &self.db,
-            &type_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let type_result = self
+            .db
+            .run_script(&type_query, std::collections::BTreeMap::new())?;
         let element_types: Vec<serde_json::Value> = type_result
             .rows
             .iter()
@@ -4215,8 +4219,9 @@ impl GraphEngine {
 
         let rel_query = r#"?[rel_type, count(rel_type)] := *relationships[_, _, rel_type, _, _, _]
 :order -count(rel_type)"#;
-        let rel_result =
-            crate::db::schema::run_script(&self.db, rel_query, std::collections::BTreeMap::new())?;
+        let rel_result = self
+            .db
+            .run_script(rel_query, std::collections::BTreeMap::new())?;
         let relationship_types: Vec<serde_json::Value> = rel_result
             .rows
             .iter()
@@ -4280,11 +4285,9 @@ impl GraphEngine {
             r#"?[qualified_name, file_path, line_end, line_start, language, name, span] := *code_elements[qualified_name, et, name, file_path, line_start, line_end, language, _, _, _, _{tail}], line_end >= 0, line_start >= 0, (line_end - line_start) >= {threshold}, et in ["function", "method", "struct", "class", "enum", "interface", "trait"], name != "main", name != "Main", name != "start", name != "serve", name != "Start", span = line_end - line_start:order -span"#,
             threshold = threshold
         );
-        let candidates = crate::db::schema::run_script(
-            &self.db,
-            &candidate_query,
-            std::collections::BTreeMap::new(),
-        )?;
+        let candidates = self
+            .db
+            .run_script(&candidate_query, std::collections::BTreeMap::new())?;
         let referenced_targets = self.referenced_qualified_names()?;
         // Same bare name across files is treated as a single logical symbol:
         // if any of the QNs is referenced, drop every candidate sharing that
@@ -4335,8 +4338,9 @@ impl GraphEngine {
         &self,
     ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
         let query = r#"?[tgt] := *relationships[_, tgt, rel, _, _, _], (rel = "calls" or rel = "tested_by")"#;
-        let result =
-            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .iter()
@@ -4368,7 +4372,7 @@ impl GraphEngine {
         );
         let mut params = std::collections::BTreeMap::new();
         params.insert("qns".to_string(), serde_json::Value::Array(qn_list));
-        let result = crate::db::schema::run_script(&self.db, &query, params)?;
+        let result = self.db.run_script(&query, params)?;
         Ok(result
             .rows
             .iter()
@@ -4383,8 +4387,9 @@ impl GraphEngine {
         &self,
     ) -> Result<std::collections::HashSet<String>, Box<dyn std::error::Error>> {
         let query = r#"?[src] := *relationships[src, _, r, _, _, _], r = "calls""#;
-        let result =
-            crate::db::schema::run_script(&self.db, query, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
         Ok(result
             .rows
             .iter()
@@ -5280,11 +5285,9 @@ impl GraphEngine {
             r#"?[node, count(node)] := *relationships[node, _, _, _, _, _]"#,
             r#"?[node, count(node)] := *relationships[_, node, _, _, _, _]"#,
         ] {
-            let result = crate::db::schema::run_script(
-                &self.db,
-                pattern,
-                std::collections::BTreeMap::new(),
-            )?;
+            let result = self
+                .db
+                .run_script(pattern, std::collections::BTreeMap::new())?;
             for row in &result.rows {
                 if let (Some(node), Some(cnt)) = (row.first(), row.get(1)) {
                     if let (Some(node_s), Some(cnt_i)) = (node.get_str(), cnt.get_int()) {
@@ -5823,7 +5826,7 @@ impl GraphEngine {
             "env".to_string(),
             serde_json::Value::String(env.to_string()),
         );
-        let result = crate::db::schema::run_script(&self.db, query, params)?;
+        let result = self.db.run_script(query, params)?;
         let mut out = Vec::new();
         for row in &result.rows {
             out.push(crate::db::models::ServiceMetadata {
@@ -5929,7 +5932,7 @@ impl GraphEngine {
                 continue; // skip self
             }
             let db_path = std::path::Path::new(&repo.path).join(".leankg");
-            let Ok(db) = crate::db::schema::init_db(&db_path) else {
+            let Ok(db) = crate::db::backend::init_db(&db_path) else {
                 continue;
             };
             let engine = crate::graph::GraphEngine::new(db);
@@ -6155,8 +6158,8 @@ fn chrono_unix() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::backend::init_db;
     use crate::db::models::CodeElement;
-    use crate::db::schema::init_db;
     use tempfile::TempDir;
 
     fn make_test_engine() -> (GraphEngine, TempDir) {

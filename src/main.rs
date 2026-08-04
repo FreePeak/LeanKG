@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Live A/B benchmark before indexing
             let doc_bench = if benchmark {
                 println!("[benchmark] Running baseline queries...");
-                let db = db::schema::init_db(&db_path)?;
+                let db = db::backend::init_db(&db_path)?;
                 let ge = graph::GraphEngine::new(db);
                 let bench = benchmark::live::DocIndexBenchmark::default();
                 let baseline = bench.run_baseline(&ge);
@@ -153,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Live A/B benchmark after indexing
             if let Some((doc_bench, baseline)) = doc_bench {
                 println!("[benchmark] Running after-index queries...");
-                let db_after = db::schema::init_db(&db_path)?;
+                let db_after = db::backend::init_db(&db_path)?;
                 let ge_after = graph::GraphEngine::new(db_after);
                 let after = doc_bench.run_after(&ge_after);
                 doc_bench.stream_progress(1, 1, "after complete");
@@ -639,7 +639,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             {
                                 Ok(synced) => {
                                     println!("[watch] Running incremental index...");
-                                    let db = match db::schema::init_db(&rs_db_path) {
+                                    let db = match db::backend::init_db(&rs_db_path) {
                                         Ok(d) => d,
                                         Err(e) => {
                                             eprintln!("[watch] DB init failed: {}", e);
@@ -699,7 +699,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Press Ctrl+C to stop.\n");
 
             let (tx, rx) = tokio::sync::mpsc::channel(100);
-            let db = db::schema::init_db(&db_path)?;
+            let db = db::backend::init_db(&db_path)?;
             let graph = graph::GraphEngine::new(db);
             let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let shutdown_flag = shutdown.clone();
@@ -772,7 +772,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             let db_path = base.join(".leankg");
-            let db = db::schema::init_db(&db_path)?;
+            let db = db::backend::init_db(&db_path)?;
             let graph = graph::GraphEngine::new(db);
             let result = doc_indexer::index_docs_directory(&docs_dir, &graph)?;
             println!("Indexed {:?} documents from {}", result, docs_dir.display());
@@ -812,7 +812,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             println!("Indexing code from {}...", index_path);
-            let db = db::schema::init_db(&db_path)?;
+            let db = db::backend::init_db(&db_path)?;
             let graph = graph::GraphEngine::new(db);
             let mut parser = indexer::ParserManager::new();
             parser.init_parsers()?;
@@ -1234,7 +1234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn push_to_remote(remote: &str, _token: &str, env: &str) -> Result<(), Box<dyn std::error::Error>> {
     let project_path = find_project_root()?;
     let db_path = project_path.join(".leankg");
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db);
 
     let elements = graph.all_elements()?;
@@ -1542,7 +1542,7 @@ async fn index_codebase(
     auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = env;
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
@@ -1716,7 +1716,7 @@ async fn incremental_index_codebase(
     auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = env;
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
@@ -1869,7 +1869,7 @@ fn calculate_impact(
     max_affected: usize,
     db_path: &std::path::Path,
 ) -> Result<graph::ImpactResult, Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let analyzer = graph::ImpactAnalyzer::new(&graph_engine);
     let opts = graph::ImpactScanOptions { max_affected };
@@ -1884,7 +1884,7 @@ fn run_shortest_path(
     max_hops: usize,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     match graph_engine.shortest_path(source, target, max_hops)? {
         Some(result) => {
@@ -1919,7 +1919,7 @@ fn run_graph_query(
     max_depth: Option<usize>,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let result = graph_engine.query_graph(question, token_budget, max_depth)?;
     println!("question: {}", result.question);
@@ -1962,7 +1962,7 @@ fn run_explain_node(
     name: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     match graph_engine.explain_node(name)? {
         Some(expl) => {
@@ -1996,7 +1996,7 @@ fn run_god_nodes(
     exclude_hubs_percentile: Option<u8>,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let nodes = graph_engine.get_god_nodes(limit, exclude_hubs_percentile)?;
     println!("Top {} god nodes:", nodes.len());
@@ -2019,7 +2019,7 @@ fn run_graph_report(
     out: Option<&str>,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let name = project_name.map(String::from).unwrap_or_else(|| {
         project_path
@@ -2047,7 +2047,7 @@ fn run_check_consistency(
     limit: usize,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let report = graph_engine.check_consistency()?;
     println!(
@@ -2078,7 +2078,7 @@ fn run_check_consistency(
 }
 
 fn run_tunnels(limit: usize, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut tunnels = graph_engine.find_tunnels()?;
     tunnels.truncate(limit);
@@ -2117,7 +2117,7 @@ fn run_prs(
     files: &[String],
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let report = graph_engine.pr_impact(files, env)?;
     println!(
@@ -2347,7 +2347,7 @@ fn run_install_command(method: &crate::lsp::registry::InstallMethod) -> Result<(
 }
 
 fn generate_docs(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let generator = doc::DocGenerator::new(graph_engine, std::path::PathBuf::from("./docs"));
 
@@ -2536,11 +2536,11 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
     }
 
     let storage = db::schema::resolve_storage_config(db_path);
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
     let elements = graph::GraphEngine::new(db.clone()).all_elements()?;
     let relationships = graph::GraphEngine::new(db.clone()).all_relationships()?;
-    let annotations = db::all_business_logic(&db)?;
+    let annotations = db::all_business_logic(db.as_ref())?;
 
     println!("LeanKG Status:");
     println!("  Database: {}", db_path.display());
@@ -2567,7 +2567,7 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
     println!("  Annotations: {}", annotations.len());
 
     let graph = graph::GraphEngine::new(db.clone());
-    match crate::graph::inventory::load_latest_inventory(&db) {
+    match crate::graph::inventory::load_latest_inventory(db.as_ref()) {
         Ok(Some(inv)) => {
             println!("  Inventory ({}):", inv.computed_at);
             println!("    Vectors: {}", inv.total_vectors);
@@ -2593,15 +2593,15 @@ fn annotate_element(
     feature: Option<&str>,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
-    let existing = db::get_business_logic(&db, element)?;
+    let existing = db::get_business_logic(db.as_ref(), element)?;
 
     if existing.is_some() {
-        db::update_business_logic(&db, element, description, user_story, feature)?;
+        db::update_business_logic(db.as_ref(), element, description, user_story, feature)?;
         println!("Updated annotation for '{}'", element);
     } else {
-        db::create_business_logic(&db, element, description, user_story, feature)?;
+        db::create_business_logic(db.as_ref(), element, description, user_story, feature)?;
         println!("Created annotation for '{}'", element);
     }
 
@@ -2622,9 +2622,9 @@ fn link_element(
     kind: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
-    let existing = db::get_business_logic(&db, element)?;
+    let existing = db::get_business_logic(db.as_ref(), element)?;
 
     match existing {
         Some(bl) => {
@@ -2635,7 +2635,7 @@ fn link_element(
                     format!("{} | Linked to story {}", bl.description, id)
                 };
                 db::update_business_logic(
-                    &db,
+                    db.as_ref(),
                     element,
                     &new_desc,
                     Some(id),
@@ -2648,7 +2648,7 @@ fn link_element(
                     format!("{} | Linked to feature {}", bl.description, id)
                 };
                 db::update_business_logic(
-                    &db,
+                    db.as_ref(),
                     element,
                     &new_desc,
                     bl.user_story_id.as_deref(),
@@ -2659,9 +2659,9 @@ fn link_element(
         None => {
             let description = format!("Linked to {} {}", kind, id);
             if kind == "story" {
-                db::create_business_logic(&db, element, &description, Some(id), None)?;
+                db::create_business_logic(db.as_ref(), element, &description, Some(id), None)?;
             } else {
-                db::create_business_logic(&db, element, &description, None, Some(id))?;
+                db::create_business_logic(db.as_ref(), element, &description, None, Some(id))?;
             }
         }
     }
@@ -2675,9 +2675,9 @@ fn search_annotations(
     query: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
-    let results = db::search_business_logic(&db, query)?;
+    let results = db::search_business_logic(db.as_ref(), query)?;
 
     if results.is_empty() {
         println!("No annotations found matching '{}'", query);
@@ -2702,9 +2702,9 @@ fn show_annotations(
     element: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
-    let result = db::get_business_logic(&db, element)?;
+    let result = db::get_business_logic(db.as_ref(), element)?;
 
     match result {
         Some(bl) => {
@@ -2731,10 +2731,10 @@ fn show_traceability(
     user_story: Option<&str>,
     all: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
     if all {
-        let all_bl = db::all_business_logic(&db)?;
+        let all_bl = db::all_business_logic(db.as_ref())?;
 
         let mut feature_map: std::collections::HashMap<String, Vec<_>> =
             std::collections::HashMap::new();
@@ -2782,7 +2782,7 @@ fn show_traceability(
             }
         }
     } else if let Some(fid) = feature {
-        let elements = db::get_by_feature(&db, fid)?;
+        let elements = db::get_by_feature(db.as_ref(), fid)?;
         println!("Feature-to-Code Traceability for '{}':", fid);
         if elements.is_empty() {
             println!("  No code elements linked to this feature");
@@ -2796,7 +2796,7 @@ fn show_traceability(
             }
         }
     } else if let Some(sid) = user_story {
-        let elements = db::get_by_user_story(&db, sid)?;
+        let elements = db::get_by_user_story(db.as_ref(), sid)?;
         println!("User Story-to-Code Traceability for '{}':", sid);
         if elements.is_empty() {
             println!("  No code elements linked to this user story");
@@ -2820,9 +2820,9 @@ fn find_by_domain(
     domain: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
-    let results = db::search_business_logic(&db, domain)?;
+    let results = db::search_business_logic(db.as_ref(), domain)?;
 
     if results.is_empty() {
         println!("No code elements found matching domain '{}'", domain);
@@ -2852,7 +2852,7 @@ fn run_query(
     kind: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
 
     match kind {
@@ -2956,7 +2956,7 @@ fn run_file_query(
     file_path: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
 
     let results = graph_engine.get_elements_by_file(file_path)?;
@@ -3007,7 +3007,7 @@ fn run_function_query(
     func_name: &str,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
 
     let results = graph_engine.search_by_name_typed(func_name, Some("function"), 50)?;
@@ -3035,7 +3035,7 @@ fn find_oversized_functions(
     lang: Option<&str>,
     db_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
 
     let results = if let Some(language) = lang {
@@ -3122,7 +3122,7 @@ fn status_repo(name: &str) -> Result<(), Box<dyn std::error::Error>> {
 
             let db_path = std::path::Path::new(&entry.path).join(".leankg");
             if db_path.exists() {
-                if let Ok(db) = db::schema::init_db(&db_path) {
+                if let Ok(db) = db::backend::init_db(&db_path) {
                     let graph_engine = graph::GraphEngine::new(db);
                     if let Ok(elements) = graph_engine.all_elements() {
                         println!("  Current elements: {}", elements.len());
@@ -3197,8 +3197,8 @@ fn detect_clusters(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
         return Ok(());
     }
 
-    let db = db::schema::init_db(db_path)?;
-    let detector = graph::clustering::CommunityDetector::new(&db);
+    let db = db::backend::init_db(db_path)?;
+    let detector = graph::clustering::CommunityDetector::new(db);
 
     println!("Running community detection...");
     let clusters = detector.detect_communities()?;
@@ -3479,17 +3479,17 @@ fn show_metrics(
     retention: Option<i32>,
     cleanup: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
     if reset {
-        let count = db::reset_metrics(&db)?;
+        let count = db::reset_metrics(db.as_ref())?;
         println!("Reset {} metric record(s).", count);
         return Ok(());
     }
 
     if cleanup {
         let ret_days = retention.unwrap_or(30);
-        let count = db::cleanup_old_metrics(&db, ret_days)?;
+        let count = db::cleanup_old_metrics(db.as_ref(), ret_days)?;
         println!(
             "Cleaned up {} old metric record(s) (retention: {} days).",
             count, ret_days
@@ -3507,7 +3507,7 @@ fn show_metrics(
         retention.unwrap_or(30)
     };
 
-    let summary = db::get_metrics_summary(&db, tool, ret_days)?;
+    let summary = db::get_metrics_summary(db.as_ref(), tool, ret_days)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -3557,7 +3557,7 @@ fn show_metrics(
 }
 
 fn seed_test_metrics(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3659,7 +3659,7 @@ fn seed_test_metrics(db_path: &std::path::Path) -> Result<(), Box<dyn std::error
             success: *success,
             is_deleted: false,
         };
-        db::record_metric(&db, &metric)?;
+        db::record_metric(db.as_ref(), &metric)?;
         println!("Seeded metric: {} ({})", id, tool);
     }
 
@@ -3769,7 +3769,7 @@ fn export_graph(
         return Err("LeanKG not initialized. Run 'leankg init' and 'leankg index' first.".into());
     }
 
-    let db = db::schema::init_db(db_path)?;
+    let db = db::backend::init_db(db_path)?;
     let engine = graph::GraphEngine::new(db);
 
     // HTML format uses the shared select helper for scoping + truncation.
@@ -4974,8 +4974,8 @@ fn handle_incident_command(
                 author: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
                 linked_ticket: ticket,
             };
-            let db = db::schema::init_db(&db_path)?;
-            db::create_incident(&db, &incident)?;
+            let db = db::backend::init_db(&db_path)?;
+            db::create_incident(db.as_ref(), &incident)?;
             println!("Created incident '{}' ({})", incident.id, incident.title);
             println!("  Severity: {}", incident.severity);
             println!("  Affected: {}", incident.affected_services.join(", "));
@@ -4986,9 +4986,14 @@ fn handle_incident_command(
             pattern,
             limit,
         } => {
-            let db = db::schema::init_db(&db_path)?;
-            let incidents =
-                db::query_incidents(&db, Some(&service), pattern.as_deref(), Some(&env), limit)?;
+            let db = db::backend::init_db(&db_path)?;
+            let incidents = db::query_incidents(
+                db.as_ref(),
+                Some(&service),
+                pattern.as_deref(),
+                Some(&env),
+                limit,
+            )?;
             if incidents.is_empty() {
                 println!(
                     "No incidents found for service '{}' in env '{}'",
@@ -5018,8 +5023,8 @@ fn handle_incident_command(
             }
         }
         cli::IncidentCommand::Show { id } => {
-            let db = db::schema::init_db(&db_path)?;
-            match db::get_incident(&db, &id)? {
+            let db = db::backend::init_db(&db_path)?;
+            match db::get_incident(db.as_ref(), &id)? {
                 Some(inc) => {
                     println!("Incident Details:");
                     println!("  ID:             {}", inc.id);
@@ -5058,7 +5063,7 @@ fn handle_incident_command(
 fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::error::Error>> {
     let project_path = find_project_root()?;
     let db_path = project_path.join(".leankg");
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
 
     match command {
         cli::TeamCommand::Create {
@@ -5081,12 +5086,12 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
                 graph_write_users: vec![],
                 members: vec![],
             };
-            db::create_team(&db, &team)?;
+            db::create_team(db.as_ref(), &team)?;
             println!("Created team '{}' ({})", team.name, team.id);
             println!("  Owner: {}", team.owner_id);
         }
         cli::TeamCommand::List => {
-            let teams = db::list_teams(&db)?;
+            let teams = db::list_teams(db.as_ref())?;
             if teams.is_empty() {
                 println!("No teams found");
             } else {
@@ -5099,7 +5104,7 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
                 }
             }
         }
-        cli::TeamCommand::Show { id } => match db::get_team(&db, &id)? {
+        cli::TeamCommand::Show { id } => match db::get_team(db.as_ref(), &id)? {
             Some(t) => {
                 println!("Team Details:");
                 println!("  ID:          {}", t.id);
@@ -5124,7 +5129,7 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
             name,
             description,
         } => {
-            if let Some(mut t) = db::get_team(&db, &id)? {
+            if let Some(mut t) = db::get_team(db.as_ref(), &id)? {
                 if let Some(n) = name {
                     t.name = n;
                 }
@@ -5135,23 +5140,23 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs() as i64;
-                db::update_team(&db, &t)?;
+                db::update_team(db.as_ref(), &t)?;
                 println!("Updated team '{}'", id);
             } else {
                 println!("Team '{}' not found", id);
             }
         }
         cli::TeamCommand::Delete { id } => {
-            db::delete_team(&db, &id)?;
+            db::delete_team(db.as_ref(), &id)?;
             println!("Deleted team '{}'", id);
         }
         cli::TeamCommand::AddMember { team, user, role } => {
-            let t = db::add_team_member(&db, &team, &user, &role)?;
+            let t = db::add_team_member(db.as_ref(), &team, &user, &role)?;
             println!("Added '{}' to team '{}' as {}", user, team, role);
             println!("  Team now has {} members", t.members.len());
         }
         cli::TeamCommand::RemoveMember { team, user } => {
-            let t = db::remove_team_member(&db, &team, &user)?;
+            let t = db::remove_team_member(db.as_ref(), &team, &user)?;
             println!("Removed '{}' from team '{}'", user, team);
             println!("  Team now has {} members", t.members.len());
         }
@@ -5178,17 +5183,17 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
                 accepted: false,
                 accepted_by: None,
             };
-            db::create_team_invite(&db, &invite)?;
+            db::create_team_invite(db.as_ref(), &invite)?;
             println!("Created invite token: {}", token);
             println!("  Expires in {} hours", expires_hours);
         }
         cli::TeamCommand::Accept { token, user } => {
-            let invite = db::accept_team_invite(&db, &token, &user)?;
+            let invite = db::accept_team_invite(db.as_ref(), &token, &user)?;
             println!("Accepted invite for team '{}'", invite.team_id);
             println!("User '{}' is now a {}", user, invite.role);
         }
         cli::TeamCommand::Invites { team } => {
-            let invites = db::get_team_invites(&db, &team)?;
+            let invites = db::get_team_invites(db.as_ref(), &team)?;
             if invites.is_empty() {
                 println!("No pending invites for team '{}'", team);
             } else {
@@ -5208,17 +5213,17 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
             }
         }
         cli::TeamCommand::RevokeInvite { token } => {
-            db::delete_team_invite(&db, &token)?;
+            db::delete_team_invite(db.as_ref(), &token)?;
             println!("Revoked invite '{}'", token);
         }
         cli::TeamCommand::SetReadUsers { team, users } => {
-            if let Some(mut t) = db::get_team(&db, &team)? {
+            if let Some(mut t) = db::get_team(db.as_ref(), &team)? {
                 t.graph_read_users = users.split(',').map(|s| s.trim().to_string()).collect();
                 t.updated_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs() as i64;
-                db::update_team(&db, &t)?;
+                db::update_team(db.as_ref(), &t)?;
                 println!("Updated graph read users for team '{}'", team);
                 println!("  Users: {:?}", t.graph_read_users);
             } else {
@@ -5226,13 +5231,13 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
             }
         }
         cli::TeamCommand::SetWriteUsers { team, users } => {
-            if let Some(mut t) = db::get_team(&db, &team)? {
+            if let Some(mut t) = db::get_team(db.as_ref(), &team)? {
                 t.graph_write_users = users.split(',').map(|s| s.trim().to_string()).collect();
                 t.updated_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs() as i64;
-                db::update_team(&db, &t)?;
+                db::update_team(db.as_ref(), &t)?;
                 println!("Updated graph write users for team '{}'", team);
                 println!("  Users: {:?}", t.graph_write_users);
             } else {
@@ -5240,7 +5245,7 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
             }
         }
         cli::TeamCommand::CheckPermission { team, user, write } => {
-            let has_perm = db::check_graph_permission(&db, &team, &user, write)?;
+            let has_perm = db::check_graph_permission(db.as_ref(), &team, &user, write)?;
             if has_perm {
                 println!(
                     "User '{}' has {} permission on team '{}'",
@@ -5265,7 +5270,7 @@ fn handle_team_command(command: cli::TeamCommand) -> Result<(), Box<dyn std::err
 fn add_note(target: &str, content: &str, env: &str) -> Result<(), Box<dyn std::error::Error>> {
     let project_path = find_project_root()?;
     let db_path = project_path.join(".leankg");
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -5288,7 +5293,7 @@ fn add_note(target: &str, content: &str, env: &str) -> Result<(), Box<dyn std::e
         updated_at: now,
     };
 
-    db::create_knowledge_entry(&db, &entry)?;
+    db::create_knowledge_entry(db.as_ref(), &entry)?;
     println!("Added note to '{}' (env: {})", target, env);
     println!("  Content: {}", content);
 
@@ -5303,7 +5308,7 @@ fn add_pattern(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let project_path = find_project_root()?;
     let db_path = project_path.join(".leankg");
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -5328,7 +5333,7 @@ fn add_pattern(
         updated_at: now,
     };
 
-    db::create_knowledge_entry(&db, &entry)?;
+    db::create_knowledge_entry(db.as_ref(), &entry)?;
     println!("Added risky pattern '{}' (env: {})", title, env);
     println!("  Context:  {}", context);
     println!("  Solution: {}", solution);
@@ -5345,7 +5350,7 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph_engine = graph::GraphEngine::new(db.clone());
 
     // Find conflicts_with relationships involving this service
@@ -5357,7 +5362,7 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut found = false;
-    match crate::db::schema::run_script(graph_engine.db(), query, params) {
+    match graph_engine.db().run_script(query, params) {
         Ok(result) => {
             if !result.rows.is_empty() {
                 found = true;
@@ -5377,7 +5382,7 @@ fn show_env_conflicts(service: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     // Also check for elements with same qualified_name but different env
     let env_query = r#"?[qualified_name, env, count(n)] := *code_elements[n, a, b, qualified_name, c, d, e, f, g, h, env, _] :group [qualified_name, env] :order count(n) desc"#;
-    match crate::db::schema::run_script(graph_engine.db(), env_query, Default::default()) {
+    match graph_engine.db().run_script(env_query, Default::default()) {
         Ok(result) => {
             let mut env_map: std::collections::HashMap<String, Vec<String>> =
                 std::collections::HashMap::new();
@@ -5421,7 +5426,7 @@ fn handle_ontology_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let project_path = find_project_root()?;
     let db_path = project_path.join(".leankg");
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
     let query_engine = crate::ontology::OntologyQueryEngine::new(db);
 
@@ -5772,7 +5777,7 @@ fn run_embed(
     let embed_bench = if benchmark {
         println!("[benchmark] Running semantic search baseline...");
         let bench = benchmark::live::EmbedBenchmark::default();
-        let db = db::schema::init_db(&leankg_dir)?;
+        let db = db::backend::init_db(&leankg_dir)?;
         let ge = graph::GraphEngine::new(db);
         let baseline = bench.run_semantic_baseline(&ge);
         for r in &baseline {
@@ -5803,7 +5808,7 @@ fn run_embed(
 
         // Run after-benchmark queries and generate report.
         if let Some((bench, baseline)) = embed_bench {
-            let db_after = db::schema::init_db(&leankg_dir)?;
+            let db_after = db::backend::init_db(&leankg_dir)?;
             let ge_after = graph::GraphEngine::new(db_after);
             let count = ge_after.count_elements().unwrap_or(0);
             let throughput = count as f64 / elapsed.max(0.001);
@@ -6050,7 +6055,7 @@ fn run_embed_worker(
             }
         };
 
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
 
     let mode = if full {
@@ -6152,12 +6157,12 @@ fn run_semantic_context(
     let leankg_dir = project_path.join(".leankg");
     let db_path = leankg_dir.join("leankg.db");
 
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
 
     // Vectors live inside CozoDB now (embedding_vectors relation + HNSW index),
     // so the freshness check is a single count query rather than a file stat.
-    let has_vectors = crate::embeddings::state::list_all(&db)
+    let has_vectors = crate::embeddings::state::list_all(db.as_ref())
         .map(|rows| !rows.is_empty())
         .unwrap_or(false);
     if !has_vectors {
@@ -6271,10 +6276,10 @@ fn run_smoke_test(project: &str) -> Result<(), Box<dyn std::error::Error>> {
     let leankg_dir = project_path.join(".leankg");
     let db_path = leankg_dir.join("leankg.db");
 
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
 
-    let has_vectors = crate::embeddings::state::list_all(&db)
+    let has_vectors = crate::embeddings::state::list_all(db.as_ref())
         .map(|rows| !rows.is_empty())
         .unwrap_or(false);
     if !has_vectors {

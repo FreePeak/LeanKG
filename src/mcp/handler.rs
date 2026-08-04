@@ -2083,7 +2083,7 @@ impl ToolHandler {
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
 
         let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
         let result = query_engine
             .concept_search(query, env, limit)
             .map_err(|e| format!("Concept search failed: {}", e))?;
@@ -2718,7 +2718,7 @@ impl ToolHandler {
             }
         }
 
-        let detector = CommunityDetector::new(self.graph_engine.db());
+        let detector = CommunityDetector::new(self.graph_engine.db_arc().clone());
         let clusters = match detector.detect_communities() {
             Ok(c) => c,
             Err(e) => {
@@ -3010,7 +3010,7 @@ impl ToolHandler {
             return Ok(refusal);
         }
 
-        let detector = CommunityDetector::new(self.graph_engine.db());
+        let detector = CommunityDetector::new(self.graph_engine.db_arc().clone());
         let clusters = match detector.detect_communities() {
             Ok(c) => c,
             Err(e) => {
@@ -3115,7 +3115,7 @@ impl ToolHandler {
             return self.get_cluster_skill_precomputed(cluster_id);
         }
 
-        let detector = CommunityDetector::new(self.graph_engine.db());
+        let detector = CommunityDetector::new(self.graph_engine.db_arc().clone());
         let clusters = detector
             .detect_communities()
             .map_err(|e| format!("Failed to detect clusters: {}", e))?;
@@ -3822,9 +3822,7 @@ impl ToolHandler {
                 "gid".to_string(),
                 serde_json::Value::String(gid.to_string()),
             );
-            if let Ok(result) =
-                crate::db::schema::run_script(self.graph_engine.db(), find_steps_query, params)
-            {
+            if let Ok(result) = self.graph_engine.db().run_script(find_steps_query, params) {
                 for row in &result.rows {
                     if let Some(step_gid) = row[0].get_str() {
                         let _ = self
@@ -3916,9 +3914,7 @@ impl ToolHandler {
                     file_part
                 );
                 let wf_params = std::collections::BTreeMap::new();
-                if let Ok(result) =
-                    crate::db::schema::run_script(self.graph_engine.db(), &wf_query, wf_params)
-                {
+                if let Ok(result) = self.graph_engine.db().run_script(&wf_query, wf_params) {
                     for row in &result.rows {
                         if let Some(parent) = row.get(1).and_then(|v| v.get_str()) {
                             if !parent.is_empty() {
@@ -3977,7 +3973,7 @@ impl ToolHandler {
 
         let mut workflows = Vec::new();
         let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
         for wf_id in &workflow_ids {
             // Trace the workflow to get ordered steps
             let env = args["env"].as_str().unwrap_or("local");
@@ -4009,9 +4005,7 @@ impl ToolHandler {
                         wf_id
                     );
                     let wf_params = std::collections::BTreeMap::new();
-                    if let Ok(result) =
-                        crate::db::schema::run_script(self.graph_engine.db(), &query_str, wf_params)
-                    {
+                    if let Ok(result) = self.graph_engine.db().run_script(&query_str, wf_params) {
                         for row in &result.rows {
                             if let Some(gid) = row.first().and_then(|v| v.get_str()) {
                                 if let Ok(steps) = query_engine.trace_workflow(gid, env) {
@@ -4299,7 +4293,7 @@ impl ToolHandler {
         let depth = args["depth"].as_u64().unwrap_or(2) as u32;
 
         let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
 
         let context = query_engine
             .get_ontology_context(query, env, depth)
@@ -4322,7 +4316,7 @@ impl ToolHandler {
         let env = args["env"].as_str().unwrap_or("local");
 
         let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
 
         // Search for matching ontology nodes
         let nodes = query_engine
@@ -4355,7 +4349,7 @@ impl ToolHandler {
         let env = args["env"].as_str().unwrap_or("local");
 
         let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
 
         let steps = query_engine
             .trace_workflow(workflow_query, env)
@@ -4384,7 +4378,7 @@ impl ToolHandler {
 
     fn kg_ontology_status(&self, _args: &Value) -> Result<Value, String> {
         let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
 
         let status = query_engine
             .get_ontology_status()
@@ -4403,7 +4397,7 @@ impl ToolHandler {
 
     fn kg_self_test(&self, _args: &Value) -> Result<Value, String> {
         let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db().clone());
+            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
         let report = query_engine.self_test();
         Ok(serde_json::to_value(report).unwrap_or_else(|e| {
             json!({
@@ -4452,7 +4446,7 @@ impl ToolHandler {
         }
 
         let t0 = std::time::Instant::now();
-        let mut pipeline = SemanticRetrievalPipeline::new(self.graph_engine.db().clone())
+        let mut pipeline = SemanticRetrievalPipeline::new(self.graph_engine.db_arc().clone())
             .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
         let t_pipeline_ms = t0.elapsed().as_millis() as u64;
 
@@ -4858,7 +4852,7 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
 // take the HNSW fast path and run it.
 
 #[cfg(feature = "embeddings")]
-fn embeddings_index_available(db: &crate::db::schema::CozoDb) -> bool {
+fn embeddings_index_available(db: &dyn crate::db::backend::DbBackend) -> bool {
     // FR-SEM-07: :limit 1 probe — never list_all (~147k rows) just to gate HNSW.
     crate::embeddings::state::has_any(db).unwrap_or(false)
 }
@@ -4888,7 +4882,7 @@ fn run_hnsw_semantic_search(
         embeddings_stale: false,
     };
 
-    let mut pipeline = SemanticRetrievalPipeline::new(engine.db().clone())
+    let mut pipeline = SemanticRetrievalPipeline::new(engine.db_arc().clone())
         .map_err(|e| format!("Failed to init HNSW pipeline: {}", e))?;
     let retrieval = pipeline
         .retrieve(query, &opts)

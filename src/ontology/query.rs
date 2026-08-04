@@ -3,7 +3,7 @@
 //! Provides methods for querying ontology nodes and expanding context.
 
 use crate::db::models::{CodeElement, Relationship};
-use crate::db::schema::CozoDb;
+
 use crate::graph::GraphEngine;
 use crate::ontology::procedural::{
     FailureModeMetadata, FailureModeNode, WorkflowMetadata, WorkflowNode, WorkflowStepMetadata,
@@ -88,11 +88,11 @@ pub struct ConceptSearchResult {
 
 /// Query engine for ontology nodes
 pub struct OntologyQueryEngine {
-    db: CozoDb,
+    db: crate::db::backend::SharedDb,
 }
 
 impl OntologyQueryEngine {
-    pub fn new(db: CozoDb) -> Self {
+    pub fn new(db: crate::db::backend::SharedDb) -> Self {
         Self { db }
     }
 
@@ -131,8 +131,9 @@ impl OntologyQueryEngine {
             types_str
         );
 
-        let result =
-            crate::db::schema::run_script(&self.db, &query_str, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(&query_str, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut matches: Vec<OntologyNodeInfo> = Vec::new();
@@ -217,7 +218,7 @@ impl OntologyQueryEngine {
             serde_json::Value::String(node_gid.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, query_str, params)?;
+        let result = self.db.run_script(query_str, params)?;
         let rows = result.rows;
 
         for row in rows {
@@ -610,12 +611,13 @@ impl OntologyQueryEngine {
             target: "leankg::mem",
             "load_indexed_code_elements() is deprecated on mega-graphs — use keyed GraphEngine lookups"
         );
-        let tail = if crate::db::schema::run_script(
-            &self.db,
-            "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
-            Default::default(),
-        )
-        .is_ok()
+        let tail = if self
+            .db
+            .run_script(
+                "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
+                Default::default(),
+            )
+            .is_ok()
         {
             ", env, ontology_layer"
         } else {
@@ -627,7 +629,7 @@ impl OntologyQueryEngine {
             !regex_matches(file_path, "^ontology://")
             :limit 1"#
         );
-        let result = crate::db::schema::run_script(&self.db, &query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
         Ok(result
             .rows
             .iter()
@@ -717,7 +719,7 @@ impl OntologyQueryEngine {
             serde_json::Value::String(qualified_name.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, query, params)?;
+        let result = self.db.run_script(query, params)?;
         let rows = result.rows;
 
         if rows.is_empty() {
@@ -802,7 +804,7 @@ impl OntologyQueryEngine {
             serde_json::Value::String(workflow_gid.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, query_str, params)?;
+        let result = self.db.run_script(query_str, params)?;
         let rows = result.rows;
 
         let mut steps: Vec<WorkflowStepNode> = rows
@@ -839,8 +841,9 @@ impl OntologyQueryEngine {
 
         let query_str = r#"?[qualified_name, element_type, name, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], element_type = "workflow", regex_matches(file_path, "ontology://")"#;
 
-        let result =
-            crate::db::schema::run_script(&self.db, query_str, std::collections::BTreeMap::new())?;
+        let result = self
+            .db
+            .run_script(query_str, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let mut matches: Vec<WorkflowNode> = Vec::new();
@@ -908,8 +911,9 @@ impl OntologyQueryEngine {
         // Get all ontology nodes with metadata
         let all_query = r#"?[qualified_name, element_type, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], regex_matches(file_path, "ontology://")"#;
 
-        if let Ok(result) =
-            crate::db::schema::run_script(&self.db, all_query, std::collections::BTreeMap::new())
+        if let Ok(result) = self
+            .db
+            .run_script(all_query, std::collections::BTreeMap::new())
         {
             for row in &result.rows {
                 let qualified_name = row[0].get_str().unwrap_or("");
@@ -1226,8 +1230,8 @@ impl OntologyQueryEngine {
     /// Datalog engine raises "Arity mismatch for rule application" and
     /// the corresponding entry surfaces the error message here.
     pub fn self_test(&self) -> KgSelfTestReport {
-        let ce_schema = crate::db::schema::code_elements_schema(&self.db);
-        let rel_schema = crate::db::schema::relationships_schema(&self.db);
+        let ce_schema = crate::db::schema::code_elements_schema(self.db.as_ref());
+        let rel_schema = crate::db::schema::relationships_schema(self.db.as_ref());
 
         let probe = "__selftest__";
         let env = "local";

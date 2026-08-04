@@ -39,7 +39,7 @@ impl QueryOrchestrator {
     }
 
     pub fn with_persistence(graph_engine: GraphEngine) -> Self {
-        let db_arc = Arc::new(graph_engine.db().clone());
+        let db_arc = graph_engine.db_arc().clone();
         let persistent_cache = Arc::new(crate::graph::PersistentCache::new(db_arc.clone(), 300));
         Self {
             graph_engine,
@@ -387,7 +387,7 @@ mod tests {
     fn test_resolve_mode() {
         let temp_dir = std::env::temp_dir();
         let db_path = temp_dir.join("leankg_testResolveMode.db");
-        let db = crate::db::schema::init_db(&db_path).unwrap();
+        let db = crate::db::backend::init_db(&db_path).unwrap();
         let graph = GraphEngine::new(db);
         let orchestrator = QueryOrchestrator::new(graph);
 
@@ -407,7 +407,7 @@ mod tests {
     fn test_compute_cache_key() {
         let temp_dir = std::env::temp_dir();
         let db_path = temp_dir.join("leankg_testComputeCacheKey.db");
-        let db = crate::db::schema::init_db(&db_path).unwrap();
+        let db = crate::db::backend::init_db(&db_path).unwrap();
         let graph = GraphEngine::new(db);
         let orchestrator = QueryOrchestrator::new(graph);
         let intent = IntentParser::new().parse("context query");

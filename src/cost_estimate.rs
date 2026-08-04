@@ -170,7 +170,7 @@ pub fn estimate_impact(
     db_path: &Path,
     base_dir: &Path,
 ) -> Result<(crate::graph::ImpactResult, CostEstimate), Box<dyn std::error::Error>> {
-    let db = crate::db::schema::init_db(db_path)?;
+    let db = crate::db::backend::init_db(db_path)?;
     let graph_engine = GraphEngine::new(db);
     let analyzer = crate::graph::ImpactAnalyzer::new(&graph_engine);
     let opts = crate::graph::ImpactScanOptions { max_affected };

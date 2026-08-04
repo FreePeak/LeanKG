@@ -1,4 +1,3 @@
-use crate::db::schema::CozoDb;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +31,7 @@ impl CacheEntry {
 
 #[derive(Clone)]
 pub struct PersistentCache {
-    db: Arc<CozoDb>,
+    db: crate::db::backend::SharedDb,
     memory: Arc<RwLock<HashMap<String, CacheEntry>>>,
     default_ttl: u64,
     /// If true, only use memory storage (no DB persistence)
@@ -43,7 +42,7 @@ pub struct PersistentCache {
 }
 
 impl PersistentCache {
-    pub fn new(db: Arc<CozoDb>, default_ttl: u64) -> Self {
+    pub fn new(db: crate::db::backend::SharedDb, default_ttl: u64) -> Self {
         Self {
             db,
             memory: Arc::new(RwLock::new(HashMap::new())),
@@ -55,7 +54,7 @@ impl PersistentCache {
 
     /// Create a memory-only cache that doesn't duplicate storage in SQLite
     /// Reduces memory footprint by ~50% for transient caches
-    pub fn memory_only(db: Arc<CozoDb>, default_ttl: u64) -> Self {
+    pub fn memory_only(db: crate::db::backend::SharedDb, default_ttl: u64) -> Self {
         Self {
             db,
             memory: Arc::new(RwLock::new(HashMap::new())),
@@ -65,7 +64,7 @@ impl PersistentCache {
         }
     }
 
-    pub fn with_ttl(db: Arc<CozoDb>, ttl_secs: u64) -> Self {
+    pub fn with_ttl(db: crate::db::backend::SharedDb, ttl_secs: u64) -> Self {
         Self::new(db, ttl_secs)
     }
 
@@ -169,10 +168,7 @@ impl PersistentCache {
             .store(memory_count, std::sync::atomic::Ordering::Relaxed);
     }
 
-    async fn evict_from_db(
-        &self,
-        count: usize,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn evict_from_db(&self, count: usize) -> Result<(), Box<dyn std::error::Error>> {
         // Get oldest entries from DB and delete them
         let query = r#"
             :delete query_cache
@@ -184,7 +180,7 @@ impl PersistentCache {
         "#;
         let mut params = std::collections::BTreeMap::new();
         params.insert("count".to_string(), serde_json::Value::Number(count.into()));
-        crate::db::schema::run_script(&self.db, query, params)?;
+        self.db.run_script(query, params)?;
         Ok(())
     }
 
@@ -229,7 +225,7 @@ impl PersistentCache {
             serde_json::Value::String(key.to_string()),
         );
 
-        let result = crate::db::schema::run_script(&self.db, query, params).ok()?;
+        let result = self.db.run_script(query, params).ok()?;
 
         let row = result.rows.first()?;
         let created_at = row.get(1)?.get_int()?;
@@ -254,7 +250,7 @@ impl PersistentCache {
         key: &str,
         value_json: &str,
         created_at: i64,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let query = r#"
             ?[cache_key, value_json, created_at, ttl_seconds, tool_name, project_path, metadata] 
             <- [[ $key, $value_json, $created_at, $ttl_seconds, "unknown", "default", "{}" ]]
@@ -278,21 +274,18 @@ impl PersistentCache {
             serde_json::Value::Number((self.default_ttl as i64).into()),
         );
 
-        crate::db::schema::run_script(&self.db, query, params)?;
+        self.db.run_script(query, params)?;
         Ok(())
     }
 
-    async fn delete_from_db(
-        &self,
-        key: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn delete_from_db(&self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
         let query = r#":delete query_cache where cache_key = $key"#;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "key".to_string(),
             serde_json::Value::String(key.to_string()),
         );
-        crate::db::schema::run_script(&self.db, query, params)?;
+        self.db.run_script(query, params)?;
         Ok(())
     }
 
@@ -319,7 +312,8 @@ impl PersistentCache {
 
     /// Get database size in bytes (approximate, for monitoring)
     pub fn database_size_approx(&self) -> Option<u64> {
-        crate::db::schema::run_script(&self.db, "PRAGMA page_count", Default::default())
+        self.db
+            .run_script("PRAGMA page_count", Default::default())
             .ok()
             .and_then(|result| {
                 result
@@ -338,19 +332,19 @@ mod tests {
 
     static TEST_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    fn create_test_db() -> CozoDb {
+    fn create_test_db() -> crate::db::backend::SharedDb {
         let counter = TEST_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
         let temp_dir = std::env::temp_dir();
         let db_path = temp_dir.join(format!("leankg_test_persistent_cache_{}.db", counter));
-        let db = crate::db::schema::init_db(&db_path).unwrap();
-        drop(db);
+        let db = crate::db::backend::init_db(&db_path).unwrap();
+        drop(db.clone());
         std::fs::remove_file(&db_path).ok();
-        crate::db::schema::init_db(&db_path).unwrap()
+        crate::db::backend::init_db(&db_path).unwrap()
     }
 
     #[tokio::test]
     async fn test_persistent_cache_basic() {
-        let db = Arc::new(create_test_db());
+        let db = create_test_db();
         let cache = PersistentCache::new(db, 300);
 
         cache
@@ -369,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_persistent_cache_expired() {
-        let db = Arc::new(create_test_db());
+        let db = create_test_db();
         let cache = PersistentCache::new(db, 0);
 
         cache
@@ -384,7 +378,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_persistent_cache_invalidate_prefix() {
-        let db = Arc::new(create_test_db());
+        let db = create_test_db();
         let cache = PersistentCache::new(db, 300);
 
         cache
@@ -420,7 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_persistent_cache_invalidate() {
-        let db = Arc::new(create_test_db());
+        let db = create_test_db();
         let cache = PersistentCache::new(db, 300);
 
         cache

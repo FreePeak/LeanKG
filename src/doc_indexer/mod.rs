@@ -4,7 +4,7 @@ mod paths;
 pub use paths::{resolve_code_ref, resolve_doc_key, resolve_file_key};
 
 use crate::db::models::{CodeElement, Relationship};
-use crate::db::schema::CozoDb;
+
 use crate::graph::GraphEngine;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -52,11 +52,11 @@ pub struct DocIndexResult {
 }
 
 pub struct DocIndexer {
-    _db: CozoDb,
+    _db: crate::db::backend::SharedDb,
 }
 
 impl DocIndexer {
-    pub fn new(db: CozoDb) -> Self {
+    pub fn new(db: crate::db::backend::SharedDb) -> Self {
         Self { _db: db }
     }
 
@@ -687,8 +687,8 @@ pub fn index_docs_directory(
     graph: &GraphEngine,
 ) -> Result<DocIndexResult, Box<dyn std::error::Error>> {
     let result = {
-        let db = graph.db();
-        let indexer = DocIndexer::new(db.clone());
+        let db = graph.db_arc().clone();
+        let indexer = DocIndexer::new(db);
         indexer.index_docs_with_graph(docs_path, Some(graph))?
     };
 

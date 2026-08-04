@@ -322,7 +322,7 @@ impl<'a> WikiGenerator<'a> {
 
     fn generate_cluster_pages(&self) -> Result<(usize, usize), WikiError> {
         let db = self.graph.db();
-        let detector = CommunityDetector::new(db);
+        let detector = CommunityDetector::new(db.clone());
         let clusters = detector
             .detect_communities()
             .map_err(|e| WikiError::Cluster(e.to_string()))?;
@@ -756,7 +756,7 @@ graph LR
 
     fn generate_cluster_graph_mermaid(&self) -> String {
         let db = self.graph.db();
-        let detector = CommunityDetector::new(db);
+        let detector = CommunityDetector::new(db.clone());
         let clusters = detector.detect_communities().ok();
 
         let mut mermaid = String::from("graph LR\n");

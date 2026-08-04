@@ -745,8 +745,8 @@ fn prune_orphan_nodes(result: &mut QueryGraphResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::backend::init_db;
     use crate::db::models::{CodeElement, Relationship};
-    use crate::db::schema::init_db;
     use tempfile::TempDir;
 
     fn make_engine() -> (GraphEngine, TempDir) {

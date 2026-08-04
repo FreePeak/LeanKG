@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::db::schema::init_db;
+use crate::db::backend::init_db;
 use crate::graph::l1_cache::CachingGraphEngine;
 use crate::graph::GraphEngine;
 use crate::mcp::auth::AuthManager;
@@ -502,7 +502,7 @@ impl MCPServer {
 
         tracing::debug!("Initializing database at: {}", project_db_path.display());
         let db = if self.read_only {
-            crate::db::schema::init_db_readonly(&project_db_path)
+            crate::db::backend::init_db_readonly(&project_db_path)
                 .map_err(|e| format!("Database error: {}", e))?
         } else {
             init_db(&project_db_path).map_err(|e| format!("Database error: {}", e))?
@@ -543,7 +543,7 @@ impl MCPServer {
                 return;
             }
         };
-        let query_engine = crate::ontology::OntologyQueryEngine::new(ge.db().clone());
+        let query_engine = crate::ontology::OntologyQueryEngine::new(ge.db_arc().clone());
         let report = query_engine.self_test();
 
         if report.all_ok {
@@ -1201,7 +1201,7 @@ impl MCPServer {
             "status" => {
                 let mut status = crate::ontology::ontology_sync_status(&project_root);
                 if let Ok(graph) = self.get_graph_engine() {
-                    let q = crate::ontology::OntologyQueryEngine::new(graph.db().clone());
+                    let q = crate::ontology::OntologyQueryEngine::new(graph.db_arc().clone());
                     if let Ok(ont) = q.get_ontology_status() {
                         status["procedural_counts"] = serde_json::json!(ont.procedural_counts);
                         status["concept_counts"] = serde_json::json!(ont.concept_counts);
@@ -2843,7 +2843,11 @@ impl MCPServer {
     /// underlying `Arc` pointer address so tests can compare two calls.
     pub fn db_handle_ptr(&self) -> usize {
         self.get_graph_engine()
-            .map(|engine| std::sync::Arc::as_ptr(engine.db_arc()) as usize)
+            .map(|engine| {
+                // Trait objects are fat pointers; cast through `*const ()`
+                // to compare the data address across calls.
+                std::sync::Arc::as_ptr(engine.db_arc()) as *const () as usize
+            })
             .unwrap_or(0)
     }
 }
@@ -4054,7 +4058,7 @@ mod tests {
     #[test]
     fn cozo_db_is_send_for_spawn_blocking() {
         fn assert_send<T: Send>() {}
-        assert_send::<crate::db::schema::CozoDb>();
+        assert_send::<crate::db::backend::SharedDb>();
     }
 
     // FR-P0-EMBED-LOCK: serving containers must not auto-arm embed (which
