@@ -1207,6 +1207,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Ontology { command } => {
             handle_ontology_command(command)?;
         }
+        cli::CLICommand::Migrate {} => {
+            let url = db::pg::migrations::pg_url();
+            let mut client = postgres::Client::connect(&url, postgres::NoTls)?;
+            let report = db::pg::migrations::run_migrations(&mut client)?;
+            for id in &report.applied {
+                println!("applied: {id}");
+            }
+            for id in &report.skipped {
+                println!("up to date: {id}");
+            }
+            if report.applied.is_empty() {
+                println!("no pending migrations");
+            }
+        }
     }
 
     Ok(())

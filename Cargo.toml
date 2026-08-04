@@ -161,12 +161,13 @@ moka = { version = "0.12", features = ["future"] }
 # Optional Redis HNSW vector side-store (LEANKG_EMBED_VECTOR_STORE=redis)
 redis = { version = "0.27", features = ["aio", "tokio-comp"] }
 
+# PostgreSQL client for the pg backend (plan D1 nominates sqlx; translator
+# phase picks the client — keeping postgres 0.19 which the Phase 0 spike
+# already uses, so no new dependency is added for Phase 2).
+postgres = "0.19"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-# Phase 0 spike only (tests/pg_phase0_spike.rs). The migration proper uses
-# sqlx (plan D1) — this stays a dev-dependency through the spike, removed in
-# Phase 2 when sqlx lands.
-postgres = "0.19"
 
 [[example]]
 name = "bench_embed_stress"

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub mod keys;
 pub mod models;
+pub mod pg;
 pub mod schema;
 pub mod versioning;
 pub mod write_bus;
