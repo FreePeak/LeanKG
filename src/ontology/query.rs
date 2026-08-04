@@ -1135,7 +1135,7 @@ fn json_str_array(meta: &serde_json::Value, key: &str) -> Vec<String> {
 
 /// Map a CozoDB result row into a `CodeElement`. Mirrors the column order used
 /// by `load_indexed_code_elements` / `find_element_by_qualified`.
-fn row_to_code_element(row: &[cozo::DataValue]) -> CodeElement {
+fn row_to_code_element(row: &[crate::db::backend::DataValue]) -> CodeElement {
     CodeElement {
         qualified_name: row[0].get_str().unwrap_or("").to_string(),
         element_type: row[1].get_str().unwrap_or("").to_string(),

@@ -507,7 +507,7 @@ impl GraphEngine {
         &self,
         query: &str,
         params: std::collections::BTreeMap<String, serde_json::Value>,
-    ) -> Result<cozo::NamedRows, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<crate::db::backend::NamedRows, Box<dyn std::error::Error + Send + Sync>> {
         self.db.run_script(&query, params).map_err(|e| {
             let msg = e.to_string();
             Box::new(std::io::Error::other(msg)) as Box<dyn std::error::Error + Send + Sync>
@@ -1365,7 +1365,7 @@ impl GraphEngine {
 
         let push_rows = |out: &mut Vec<Relationship>,
                          seen: &mut std::collections::HashSet<(String, String, String)>,
-                         rows: &cozo::NamedRows| {
+                         rows: &crate::db::backend::NamedRows| {
             for row in rows.rows.iter() {
                 let rel_type = row[2].get_str().unwrap_or("").to_string();
                 if !rel_types_filter.is_empty() && !rel_types_filter.contains(rel_type.as_str()) {
@@ -3805,7 +3805,12 @@ impl GraphEngine {
         let open_incidents = incidents_result
             .rows
             .iter()
-            .filter(|r| matches!(r[1], cozo::DataValue::Bot | cozo::DataValue::Null))
+            .filter(|r| {
+                matches!(
+                    r[1],
+                    crate::db::backend::DataValue::Bot | crate::db::backend::DataValue::Null
+                )
+            })
             .count() as i64;
 
         let mut recent: Vec<(i64, String)> = incidents_result

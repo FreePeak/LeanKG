@@ -316,7 +316,7 @@ pub fn upsert_fresh(
         // bytes, backslashes, control chars) broke the CozoDB query parser at
         // a fixed byte offset mid-batch. import_relations skips script parsing
         // entirely, matching the safe path already used by upsert_vectors.
-        use cozo::DataValue;
+        use crate::db::backend::DataValue;
         let rows: Vec<Vec<DataValue>> = chunk
             .iter()
             .map(|u| {
@@ -329,7 +329,7 @@ pub fn upsert_fresh(
                 ]
             })
             .collect();
-        let named_rows = cozo::NamedRows::new(
+        let named_rows = crate::db::backend::NamedRows::new(
             vec![
                 "qualified_name".to_string(),
                 "usearch_key".to_string(),
@@ -402,7 +402,7 @@ pub struct FreshRow {
     pub content_hash: String,
 }
 
-fn row_to_state_row(row: &[cozo::DataValue]) -> Option<EmbeddingStateRow> {
+fn row_to_state_row(row: &[crate::db::backend::DataValue]) -> Option<EmbeddingStateRow> {
     let qualified_name = row.first()?.get_str()?.to_string();
     let usearch_key = row.get(1)?.get_int()?;
     let content_hash = row.get(2)?.get_str()?.to_string();
@@ -479,11 +479,11 @@ mod tests {
     #[test]
     fn row_to_state_row_parses_valid_row() {
         let row = vec![
-            cozo::DataValue::Str("qn".into()),
-            cozo::DataValue::Num(cozo::Num::Int(5)),
-            cozo::DataValue::Str("hash".into()),
-            cozo::DataValue::Str("stale".into()),
-            cozo::DataValue::Str("999".into()),
+            crate::db::backend::DataValue::Str("qn".into()),
+            crate::db::backend::DataValue::Num(crate::db::backend::Num::Int(5)),
+            crate::db::backend::DataValue::Str("hash".into()),
+            crate::db::backend::DataValue::Str("stale".into()),
+            crate::db::backend::DataValue::Str("999".into()),
         ];
         let parsed = row_to_state_row(&row).expect("should parse");
         assert_eq!(parsed.qualified_name, "qn");
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn row_to_state_row_returns_none_for_empty_row() {
-        let row: Vec<cozo::DataValue> = vec![];
+        let row: Vec<crate::db::backend::DataValue> = vec![];
         assert!(row_to_state_row(&row).is_none());
     }
 
@@ -503,8 +503,8 @@ mod tests {
     fn row_to_state_row_returns_none_for_short_row() {
         // Only 2 columns instead of 5 — missing fields.
         let row = vec![
-            cozo::DataValue::Str("qn".into()),
-            cozo::DataValue::Num(cozo::Num::Int(5)),
+            crate::db::backend::DataValue::Str("qn".into()),
+            crate::db::backend::DataValue::Num(crate::db::backend::Num::Int(5)),
         ];
         assert!(row_to_state_row(&row).is_none());
     }

@@ -1022,7 +1022,7 @@ pub fn get_knowledge_by_environment(
         .collect())
 }
 
-fn row_to_knowledge_entry(row: &[cozo::DataValue]) -> models::KnowledgeEntry {
+fn row_to_knowledge_entry(row: &[crate::db::backend::DataValue]) -> models::KnowledgeEntry {
     models::KnowledgeEntry {
         id: row[0].get_str().unwrap_or("").to_string(),
         knowledge_type: row[1].get_str().unwrap_or("general").to_string(),
@@ -1350,7 +1350,7 @@ pub fn get_incidents_by_service(
     query_incidents(db, Some(service), None, env, limit)
 }
 
-fn row_to_incident(row: &[cozo::DataValue]) -> models::Incident {
+fn row_to_incident(row: &[crate::db::backend::DataValue]) -> models::Incident {
     let affected_services: Vec<String> =
         serde_json::from_str(row[8].get_str().unwrap_or("[]")).unwrap_or_default();
     let tags: Vec<String> =
@@ -1449,7 +1449,7 @@ pub fn get_element_across_envs(
         .collect())
 }
 
-fn row_to_code_element(row: &[cozo::DataValue]) -> models::CodeElement {
+fn row_to_code_element(row: &[crate::db::backend::DataValue]) -> models::CodeElement {
     let parent_qualified = row[7].get_str().map(String::from);
     let cluster_id = row[8].get_str().map(String::from);
     let cluster_label = row[9].get_str().map(String::from);
@@ -1470,7 +1470,7 @@ fn row_to_code_element(row: &[cozo::DataValue]) -> models::CodeElement {
     }
 }
 
-fn row_to_relationship(row: &[cozo::DataValue]) -> models::Relationship {
+fn row_to_relationship(row: &[crate::db::backend::DataValue]) -> models::Relationship {
     let metadata_str = row[4].get_str().unwrap_or("{}");
     models::Relationship {
         id: None,
@@ -1691,7 +1691,7 @@ pub fn list_teams(
     Ok(result.rows.iter().map(|r| row_to_team(r)).collect())
 }
 
-fn row_to_team(row: &[cozo::DataValue]) -> models::Team {
+fn row_to_team(row: &[crate::db::backend::DataValue]) -> models::Team {
     let graph_read_users: Vec<String> =
         serde_json::from_str(row[6].get_str().unwrap_or("[]")).unwrap_or_default();
     let graph_write_users: Vec<String> =
@@ -1842,7 +1842,7 @@ pub fn delete_team_invite(
     Ok(())
 }
 
-fn row_to_team_invite(row: &[cozo::DataValue]) -> models::TeamInvite {
+fn row_to_team_invite(row: &[crate::db::backend::DataValue]) -> models::TeamInvite {
     models::TeamInvite {
         token: row[0].get_str().unwrap_or("").to_string(),
         team_id: row[1].get_str().unwrap_or("").to_string(),

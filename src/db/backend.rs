@@ -8,10 +8,17 @@
 
 use crate::db::pg::translate;
 use crate::db::schema::mutability_for;
-use cozo::{NamedRows, ScriptMutability};
+use cozo::ScriptMutability;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+/// Re-export the row/result value types the rest of the codebase consumes
+/// positionally (`row[0].get_str()`, `NamedRows::new`, `DataValue::Num`).
+/// Phase 5 keeps non-shim `src/` files free of `cozo::` references; the
+/// concrete re-export disappears with the shim in Phase 8.
+#[allow(unused_imports)]
+pub use cozo::{DataValue, NamedRows, Num};
 
 /// Shared handle used throughout the codebase. `Arc` because clones of
 /// `GraphEngine` must share ONE underlying DB handle (RocksDB allows one
@@ -170,6 +177,30 @@ impl DbBackend for PostgresBackend {
         query: &str,
         params: BTreeMap<String, serde_json::Value>,
     ) -> Result<NamedRows, Box<dyn std::error::Error>> {
+        // D2 (plan): the `query_cache` table was dropped — the moka L1 cache
+        // in `QueryCache` is the only cache. PersistentCache's DB methods
+        // must become no-ops on PG: reads return empty, writes do nothing.
+        if query.contains("query_cache") {
+            if query.trim_start().starts_with("?[") && !query.contains(":put") {
+                // Read: `?[value_json, ...] := *query_cache[...]` → empty
+                // result with the declared head columns.
+                let head: Vec<String> = query
+                    .split_once("?[")
+                    .and_then(|(_, rest)| rest.split_once(']'))
+                    .map(|(inner, _)| {
+                        inner
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Ok(cozo::NamedRows::new(head, Vec::new()));
+            }
+            // `:put query_cache ...` / `:delete query_cache ...` /
+            // `:delete query_cache where ...` → no-op write.
+            return Ok(cozo::NamedRows::new(Vec::new(), Vec::new()));
+        }
         self.connect()?;
         let mut guard = self.conn.lock().unwrap();
         let client = guard
@@ -249,6 +280,18 @@ impl DbBackend for PostgresBackend {
         let mut tx = client.transaction()?;
         for (table, named) in data {
             let cols = named.headers.clone();
+            // Cozo names the vector column `vector`; the PG schema uses
+            // `vec`. Map before emitting SQL / binding values.
+            let cols: Vec<String> = cols
+                .into_iter()
+                .map(|c| {
+                    if table == "embedding_vectors" && c == "vector" {
+                        "vec".to_string()
+                    } else {
+                        c
+                    }
+                })
+                .collect();
             let col_sql = cols
                 .iter()
                 .map(|c| crate::db::pg::translate::quote_ident(c))
@@ -343,7 +386,9 @@ fn cozo_to_pg(v: &cozo::DataValue, col: &str) -> Box<dyn postgres::types::ToSql 
         DataValue::Num(cozo::Num::Float(f)) => Box::new(*f),
         DataValue::Str(s) => Box::new(s.as_str().to_string()),
         DataValue::Json(j) => Box::new(j.0.to_string()),
-        DataValue::List(items) if col == "vec" => {
+        // The caller's NamedRows headers use the cozo name (`vector`); the
+        // PG column is `vec` (schema.sql). Match both.
+        DataValue::List(items) if col == "vec" || col == "vector" => {
             // pgvector literal: `[0.1,0.2,...]`.
             let mut s = String::from("[");
             for (i, item) in items.iter().enumerate() {

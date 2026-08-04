@@ -16,7 +16,7 @@ impl TrackingDb {
         &self,
         script: &str,
         params: BTreeMap<String, serde_json::Value>,
-    ) -> Result<cozo::NamedRows, Box<dyn std::error::Error>> {
+    ) -> Result<crate::db::backend::NamedRows, Box<dyn std::error::Error>> {
         if is_write_operation(script) {
             self.tracker.mark_dirty();
         }

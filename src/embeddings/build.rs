@@ -1344,18 +1344,18 @@ fn upsert_pairs_to_db(
         // recognises DataValue::List / DataValue::Vec and emits the pgvector
         // literal directly. The translator (via `import_relations` →
         // INSERT … ON CONFLICT) keeps the write path single-round-trip.
-        let mut rows: Vec<Vec<cozo::DataValue>> = Vec::with_capacity(chunk.len());
+        let mut rows: Vec<Vec<crate::db::backend::DataValue>> = Vec::with_capacity(chunk.len());
         for (qn, vec) in chunk {
             let mut row = Vec::with_capacity(2);
-            row.push(cozo::DataValue::Str(qn.as_str().into()));
+            row.push(crate::db::backend::DataValue::Str(qn.as_str().into()));
             let mut list = Vec::with_capacity(vec.len());
             for &f in vec.iter() {
-                list.push(cozo::DataValue::from(f as f64));
+                list.push(crate::db::backend::DataValue::from(f as f64));
             }
-            row.push(cozo::DataValue::List(list));
+            row.push(crate::db::backend::DataValue::List(list));
             rows.push(row);
         }
-        let named_rows = cozo::NamedRows::new(
+        let named_rows = crate::db::backend::NamedRows::new(
             vec!["qualified_name".to_string(), "vector".to_string()],
             rows,
         );
@@ -1436,18 +1436,18 @@ where
     }
     let chunk_size = effective_upsert_chunk();
     for chunk in collected.chunks(chunk_size) {
-        let mut rows: Vec<Vec<cozo::DataValue>> = Vec::with_capacity(chunk.len());
+        let mut rows: Vec<Vec<crate::db::backend::DataValue>> = Vec::with_capacity(chunk.len());
         for (qn, vec) in chunk {
             let mut row = Vec::with_capacity(2);
-            row.push(cozo::DataValue::Str(qn.as_str().into()));
+            row.push(crate::db::backend::DataValue::Str(qn.as_str().into()));
             let mut list = Vec::with_capacity(vec.len());
             for &f in vec.iter() {
-                list.push(cozo::DataValue::from(f as f64));
+                list.push(crate::db::backend::DataValue::from(f as f64));
             }
-            row.push(cozo::DataValue::List(list));
+            row.push(crate::db::backend::DataValue::List(list));
             rows.push(row);
         }
-        let named_rows = cozo::NamedRows::new(
+        let named_rows = crate::db::backend::NamedRows::new(
             vec!["qualified_name".to_string(), "vector".to_string()],
             rows,
         );

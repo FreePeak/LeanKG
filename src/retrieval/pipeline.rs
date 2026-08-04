@@ -8,11 +8,11 @@
 //! needs "find similar X by meaning" must construct a
 //! [`SemanticRetrievalPipeline`] and call [`SemanticRetrievalPipeline::retrieve`].
 
+use crate::db::backend::DataValue;
 use crate::db::backend::SharedDb;
 use crate::db::models::CodeElement;
 use crate::embeddings::models::{Embedder, RerankerStatus};
 use crate::retrieval::rerank::RerankStage;
-use cozo::DataValue;
 use std::collections::HashMap;
 
 pub struct SemanticRetrievalPipeline {
