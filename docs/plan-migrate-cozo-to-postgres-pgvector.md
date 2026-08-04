@@ -1,9 +1,11 @@
 # LeanKG: Migrate CozoDB → PostgreSQL + pgvector
 
-**Status:** Draft — decisions D1–D5 resolved (2026-08-04)
+**Status:** In progress — Phase 3 (SQL translator) underway. Decisions D1–D5 resolved (2026-08-04).
 **Target version:** v0.20.0
 **Date:** 2026-08-04
 **Scope:** Replace the CozoDB data layer (graph store + vector HNSW) with PostgreSQL 18+ (relational) + pgvector (ANN), enabling horizontally-scalable server deployments.
+
+> **Progress tracker (2026-08-04):** Phases 0–2 **done + verified** (parity spike, DbBackend trait + Arc threading, schema+migrations; see §9). Phase 3 (translator) **in progress**. Phases 4–8 not started. Work happens on branch `worktree-leankg-pg-migration` (git worktree); do NOT touch the prod containers `leankg-leankg-1` (:9699) / `leankg-enterprise-cozoserver-1`. Dev Postgres runs as container `leankg-pg-phase0` (pgvector pg18, host port 5433).
 
 ---
 
@@ -380,3 +382,38 @@ LIMIT $2;
 4. 2 LeanKG instances serve reads against 1 Postgres; writes serialize via advisory lock
 5. No `cozo` in Cargo.toml; grep `cozo::` = 0; no `LEANKG_DB_ENGINE`
 6. Cold embed ≥ cozo's ~700 v/s via `COPY`
+
+### 8.5 Releasing v0.20.0
+
+The release pipeline is fully automated (release-please, see `docs/workflow-opencode-agent.md`), but the migration is a **breaking change** (Postgres-only, D4 — embedded sqlite/rocksdb path removed) and lives on a **non-`main` worktree branch**, so the hand-off needs two explicit steps that CI cannot do alone.
+
+**How the auto-CI picks the version:** Release Please scans conventional commits on every push to `main` since the last `v*` tag. Bump rules: `feat:` (or `bump-minor-pre-major`) → **minor** (`0.19.32 → 0.20.0`); `fix:`/`perf:`/`refactor:` → patch; `docs:`/`chore:`/`test:`/`style:`/`ci:`/`build:` → **excluded** (no release PR at all if only those land). It reads the base from `manifest.json` (`".": "0.19.32"`), **not** from a manual `Cargo.toml` bump — a self-bump is ignored/overwritten on merge of the release PR. It opens/updates a release PR; merging it pushes the `v0.20.0` tag + GitHub Release, which triggers `release.yml` to build/publish artifacts.
+
+**Required sequence:**
+1. Finish Phases 3–8 in the worktree, all committed; `cargo test --release` green.
+2. Ensure the migration commits are **`feat:` / `fix:` / `refactor:`** conventional types (the `feat(pg):` / `fix(pg):` / `refactor(db):` headers already used qualify). `docs:`/`test:` commits do not move the version.
+3. Merge `worktree-leankg-pg-migration` → `main` (PR or `git merge`), then push. This is the trigger — release-please runs on `main` only.
+4. Push → release-please opens a release PR bumping to `0.20.0` (minor, via `feat:` commits). **Do not** manually bump `Cargo.toml`; it is ignored.
+5. Merge the release PR → `v0.20.0` tag + GitHub Release + artifacts published. Cargo.toml/CHANGELOG are updated by the release PR itself.
+
+**If 0.20.0 must be treated as a breaking MAJOR** (SemVer-correct for removing the embedded engine): release-please **never auto-majors** (config `bump-minor-pre-major: true`). Instead bump `manifest.json` `"."` to the target major by hand (per the documented manual-major procedure) and push — CI then releases from that base.
+
+---
+
+## 9. Progress tracker (2026-08-04)
+
+Worktree: `worktree-leankg-pg-migration` (worktree under `.claude/worktrees/`). Dev Postgres: container `leankg-pg-phase0` (pgvector pg18, host `:5433`, db `leankg`, user/pass `postgres`/`postgres`). Prod containers (`leankg-leankg-1`, `leankg-enterprise-cozoserver-1`) untouched.
+
+| Phase | Status | Evidence |
+|---|---|---|
+| 0. Spike (pgvector parity) | ✅ done | `tests/pg_phase0_spike.rs` (4 unit + 3 container tests); `docs/analysis/pg-phase0-spike.md`. 100% recall, identical order, dist <1e-5; HNSW build 2599ms / query 4ms; REINDEX CONCURRENTLY unblocks reads. Commits `c1b4e013`, `1a8c66e8`. |
+| 1. DbBackend abstraction | ✅ done | `src/db/backend.rs` (trait + `CozoBackend` shim + `PostgresBackend` stub + `Arc<dyn DbBackend>`); `Arc<dyn DbBackend>` threaded through 43 files. 960 lib tests green. Commit `e73c3298`. |
+| 2. Postgres schema + migrations | ✅ done | `src/db/pg/schema.sql` (16 tables, JSONB, pgvector HNSW, vector(384)); `src/db/pg/migrations.rs`; `leankg migrate` subcommand. Live-verified (16 tables, no query_cache). `tests/pg_schema_test.rs` 6/6 container tests pass. Commits `e749cad5`, `92f4b6f7`, `0182575f`, `7b115d42`. |
+| 3. SQL translator | 🚧 in progress | `src/db/pg/translate.rs` (2374 lines, committed `a9d83fc5`); PostgresBackend real impl + `tests/pg_translate_parity_test.rs` in flight. |
+| 4. Vector stack swap | ⬜ pending | — |
+| 5. Remaining modules + grep `cozo::` = 0 | ⬜ pending | — |
+| 6. Read-only + server scaling | ⬜ pending | — |
+| 7. Embedding bulk-load | ⬜ pending | — |
+| 8. Deploy + docs + cleanup | ⬜ pending | — |
+
+Current implementation state is tracked in the task list; the plan's §4 checkboxes are updated as each task completes.
