@@ -1208,9 +1208,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_ontology_command(command)?;
         }
         cli::CLICommand::Migrate {} => {
-            let url = db::pg::migrations::pg_url();
-            let mut client = postgres::Client::connect(&url, postgres::NoTls)?;
-            let report = db::pg::migrations::run_migrations(&mut client)?;
+            // postgres::Client is sync and builds its own tokio runtime; the
+            // whole connect+apply must run off the ambient tokio runtime.
+            let report = tokio::task::spawn_blocking(|| {
+                let url = db::pg::migrations::pg_url();
+                let mut client = postgres::Client::connect(&url, postgres::NoTls)?;
+                db::pg::migrations::run_migrations(&mut client)
+            })
+            .await??;
             for id in &report.applied {
                 println!("applied: {id}");
             }

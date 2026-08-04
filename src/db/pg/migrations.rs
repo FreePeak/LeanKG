@@ -45,7 +45,7 @@ pub fn pg_url() -> String {
 /// Create the `migrations` table if absent, then apply every MIGRATIONS step
 /// not yet recorded, in order, each inside a transaction. Idempotent: a second
 /// run applies nothing.
-pub fn run_migrations(client: &mut Client) -> Result<MigrationReport, Box<dyn std::error::Error>> {
+pub fn run_migrations(client: &mut Client) -> Result<MigrationReport, postgres::Error> {
     client.batch_execute(MIGRATIONS_TABLE)?;
 
     let mut applied = Vec::new();
