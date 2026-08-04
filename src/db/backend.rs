@@ -169,10 +169,10 @@ impl PostgresBackend {
         }
         Ok(())
     }
-}
 
-impl DbBackend for PostgresBackend {
-    fn run_script(
+    /// The sync body behind [`DbBackend::run_script`]. Must only run off a
+    /// tokio runtime (see the `block_in_place` guard in the trait impl).
+    fn run_script_sync(
         &self,
         query: &str,
         params: BTreeMap<String, serde_json::Value>,
@@ -267,8 +267,7 @@ impl DbBackend for PostgresBackend {
         }
         Ok(NamedRows::new(head, rows))
     }
-
-    fn import_relations(
+    fn import_relations_sync(
         &self,
         data: BTreeMap<String, NamedRows>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -350,6 +349,47 @@ impl DbBackend for PostgresBackend {
         }
         tx.commit()?;
         Ok(())
+    }
+}
+
+impl DbBackend for PostgresBackend {
+    /// Execute a script. Phase 5.5 regression finding: the `postgres`
+    /// sync client spins up its own tokio runtime internally, so calling it
+    /// from inside a tokio runtime (the MCP server's async tool dispatch)
+    /// panics with "Cannot start a runtime from within a runtime". CozoDB
+    /// was sync-native, so nothing noticed until PG. `block_in_place`
+    /// yields the worker thread and lets the blocking client run; on
+    /// non-runtime threads (CLI, `leankg migrate`, sync tests) it is a
+    /// no-op.
+    fn run_script(
+        &self,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
+    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.run_script_sync(query, params))
+        } else {
+            self.run_script_sync(query, params)
+        }
+    }
+
+    /// Execute a script. Phase 5.5 regression finding: the `postgres`
+    /// sync client spins up its own tokio runtime internally, so calling it
+    /// from inside a tokio runtime (the MCP server's async tool dispatch)
+    /// panics with "Cannot start a runtime from within a runtime". CozoDB
+    /// was sync-native, so nothing noticed until PG. `block_in_place`
+    /// yields the worker thread and lets the blocking client run; on
+    /// non-runtime threads (CLI, `leankg migrate`, sync tests) it is a
+    /// no-op.
+    fn import_relations(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.import_relations_sync(data))
+        } else {
+            self.import_relations_sync(data)
+        }
     }
 }
 

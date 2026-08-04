@@ -496,6 +496,61 @@ const CODE_ELEMENTS_COLUMNS: &[&str] = &[
     "ontology_layer",
 ];
 
+/// Canonical column order for tables whose aggregates bind positional
+/// aliases (schema.sql). Used by [`aggregate_query`] to resolve head
+/// aliases to real columns.
+fn canonical_columns(relation: &str) -> &'static [&'static str] {
+    match relation {
+        "code_elements" => CODE_ELEMENTS_COLUMNS,
+        "relationships" => &[
+            "source_qualified",
+            "target_qualified",
+            "rel_type",
+            "confidence",
+            "metadata",
+            "env",
+        ],
+        "incidents" => &[
+            "id",
+            "env",
+            "title",
+            "severity",
+            "occurred_at",
+            "resolved_at",
+            "root_cause",
+            "resolution",
+            "affected_services",
+            "trigger_pattern",
+            "prevention",
+            "tags",
+            "author",
+            "linked_ticket",
+        ],
+        "knowledge_entries" => &[
+            "id",
+            "knowledge_type",
+            "title",
+            "content",
+            "element_qualified",
+            "user_story_id",
+            "feature_id",
+            "tags",
+            "environment",
+            "branch",
+            "author",
+            "created_at",
+            "updated_at",
+        ],
+        "business_logic" => &[
+            "element_qualified",
+            "description",
+            "user_story_id",
+            "feature_id",
+        ],
+        _ => CODE_ELEMENTS_COLUMNS,
+    }
+}
+
 /// Split a two-rule script at the boundary between `rule1\nrule2`.
 /// Returns `(first_rule, second_rule)` — used for the H6/G88
 /// `files[f] := ... \n ?[count(f)] := files[f]` shape. The second rule
@@ -692,6 +747,11 @@ fn simple_select(
     // Resolve positional alias tokens in the filters against the relation
     // block (G107 `et in [...]` where `et` is the 2nd column = element_type).
     let filters = resolve_filter_aliases(&filters, rel_cols);
+    // Inline string literals in the relation block (`*code_elements[qn,
+    // "function", ...]`, H6/get_architecture hotspots) act as equality
+    // constraints — absent cozo-side would silently over-count. Cozo treats
+    // them as bound filters; emit `"element_type" = 'function'`.
+    let filters = append_literal_constraints(&filters, rel_cols);
     let (where_sql, where_params) = compile_filters(filters, params)?;
     let (mut mod_sql, mod_params) = compile_modifiers(&modifiers, head, params);
     if order_by_span && !mod_sql.contains("ORDER BY") {
@@ -757,6 +817,80 @@ fn resolve_filter_aliases(filters: &str, rel_cols: &[String]) -> String {
         }
     }
     out
+}
+
+/// Cozo treats inline string literals inside a relation block as bound
+/// equality filters: `*code_elements[qn, "function", _, file_path, ...]`
+/// narrows to element_type = 'function'. PG must emit them as WHERE
+/// predicates or every read silently over-counts (get_architecture
+/// hotspots counted the file rows too). The literal sits at position i of
+/// the relation block = the i-th table column. Returns the literal
+/// predicates as extra filter clauses (comma-joined so
+/// [`split_clauses`] picks them up).
+fn append_literal_constraints(filters: &str, rel_cols: &[String]) -> String {
+    use std::fmt::Write;
+    let mut out = filters.to_string();
+    for (i, token) in rel_cols.iter().enumerate() {
+        let t = token.trim();
+        if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
+            let lit = &t[1..t.len() - 1];
+            // Escape single quotes for the SQL string literal.
+            let lit_esc = lit.replace('\'', "''");
+            // Bound column = the table's i-th column.
+            if let Some(col) = column_at(i) {
+                write!(
+                    out,
+                    "{}{} = '{}'",
+                    if out.trim().is_empty() || out.trim().ends_with(',') {
+                        ""
+                    } else {
+                        ", "
+                    },
+                    quote_ident(col),
+                    lit_esc
+                )
+                .unwrap();
+            }
+        }
+    }
+    out
+}
+
+/// The i-th column of every table aggregates alias `?[...]` over
+/// (aggregates bind positions to columns via [`canonical_columns`]). For
+/// literal-constraint resolution we need the column name for any table,
+/// so this walks the same catalogs.
+fn column_at(i: usize) -> Option<&'static str> {
+    for cols in [
+        &[
+            "qualified_name",
+            "element_type",
+            "name",
+            "file_path",
+            "line_start",
+            "line_end",
+            "language",
+            "parent_qualified",
+            "cluster_id",
+            "cluster_label",
+            "metadata",
+            "env",
+            "ontology_layer",
+        ][..],
+        &[
+            "source_qualified",
+            "target_qualified",
+            "rel_type",
+            "confidence",
+            "metadata",
+            "env",
+        ][..],
+    ] {
+        if let Some(c) = cols.get(i) {
+            return Some(c);
+        }
+    }
+    None
 }
 
 /// Remove top-level `alias = expr` clauses whose alias appears in the head
@@ -828,14 +962,35 @@ fn resolve_positional(expr: &str, rel_cols: &[String]) -> String {
 /// `GROUP BY` + `ORDER BY` from `:group` / `:order count(n) desc`.
 fn aggregate_query(
     relation: &str,
-    _rel_cols: &[String],
+    rel_cols: &[String],
     agg: AggSpec,
     filters: String,
     modifiers: String,
     params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
+    // Positional aliases in filters (`et = $et` where `et` is the 2nd
+    // relation-block alias → element_type) must resolve before the WHERE
+    // compiles — same step the non-aggregate read path takes (G107).
+    let filters = resolve_filter_aliases(&filters, rel_cols);
+    let filters = append_literal_constraints(&filters, rel_cols);
     let (where_sql, where_params) = compile_filters(filters, params)?;
     let (group_sql, order_sql, _group_cols, mut mod_params) = compile_group_order(&modifiers);
+
+    // Resolve a head binding to its real table column. Cozo heads can alias
+    // positions: `?[node, count(node)] := *relationships[node, _, _, _, _, _]`
+    // binds `node` to position 0 → `source_qualified`. Emitting the alias
+    // name verbatim (`SELECT "node", count("node")`) fails with E42703.
+    // `rel_cols` is the relation block's positional alias list; the i-th
+    // alias sits at the i-th table column (canonical column order below).
+    let table_cols = canonical_columns(relation);
+    let resolve_alias = |expr: &str| -> String {
+        if let Some(idx) = rel_cols.iter().position(|c| c == expr) {
+            if let Some(col) = table_cols.get(idx) {
+                return quote_ident(col);
+            }
+        }
+        quote_ident(expr)
+    };
 
     // Resolve `count(expr)` to a SQL expression. `expr` may be a column name
     // (use as-is), `_` (any literal — fall back to `*`), or `DISTINCT col`.
@@ -844,14 +999,14 @@ fn aggregate_query(
     // in the relation block is bound to an alias, but the count is over
     // rows. Render as `count(*)` for these.
     let count_expr = if agg.distinct {
-        format!("DISTINCT {}", quote_ident(&agg.expr))
+        format!("DISTINCT {}", resolve_alias(&agg.expr))
     } else if agg.expr == "_" || agg.expr.is_empty() {
         "*".to_string()
     } else if agg.expr.len() == 1 && agg.expr.chars().next().unwrap().is_ascii_alphabetic() {
         // Single-letter positional alias → count(*).
         "*".to_string()
     } else if is_column_token(&agg.expr) {
-        quote_ident(&agg.expr)
+        resolve_alias(&agg.expr)
     } else {
         // Computed expression (e.g. `count(n)` where `n` is a bound alias);
         // fall back to bare expression.
@@ -864,7 +1019,7 @@ fn aggregate_query(
         let extras = agg
             .extras
             .iter()
-            .map(|c| quote_ident(c))
+            .map(|c| resolve_alias(c))
             .collect::<Vec<_>>()
             .join(", ");
         format!("{extras}, count({count_expr})")
@@ -878,7 +1033,7 @@ fn aggregate_query(
             " GROUP BY {}",
             agg.extras
                 .iter()
-                .map(|c| quote_ident(c))
+                .map(|c| resolve_alias(c))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -961,6 +1116,13 @@ fn compile_group_order(
             "order" => {
                 // `:order -count(n) desc` → `ORDER BY count(n) DESC`
                 let trimmed = after.trim_start();
+                // The value ends at the next `:` operator — `:order -count(x)
+                // :limit 10` must not fold `:limit 10` into the expression.
+                let trimmed = trimmed
+                    .split_once(':')
+                    .map(|(head, _)| head)
+                    .unwrap_or(trimmed)
+                    .trim_end();
                 // Match `count(...) desc` or `count(...) asc` — consume the trailing dir.
                 let (expr, desc) = if let Some(stripped) = trimmed.strip_prefix('-') {
                     (stripped.trim_start(), true)
@@ -1000,9 +1162,18 @@ fn compile_group_order(
                 order_clause = format!("ORDER BY {order_expr} {dir}");
                 // Consume up to the next `:` operator (next :group/:order/:limit)
                 // or end of input — we already produced the order_clause,
-                // nothing more to parse here.
+                // nothing more to parse here. The `:order` value ends at the
+                // first `:` (e.g. `:order -count(x) :limit 10` must NOT fold
+                // `:limit 10` into the ORDER BY expression).
                 let next_colon = after.find(':').unwrap_or(after.len());
-                (next_colon, ())
+                // Skip past the trailing direction word too, so the next
+                // iteration resumes at the next operator.
+                let after_dir = if trailing_dir {
+                    next_colon + 1
+                } else {
+                    next_colon
+                };
+                (after_dir, ())
             }
             _ => (op.len(), ()),
         };
@@ -1979,12 +2150,15 @@ fn infer_table(cols: &[String], pk: Option<&str>) -> String {
         "code_elements".into()
     } else if cols.contains(&"rel_type".to_string()) {
         "relationships".into()
+    } else if cols.contains(&"knowledge_type".to_string()) {
+        // MUST precede `user_story_id` — knowledge_entries also carries
+        // user_story_id/feature_id and would otherwise mis-match to
+        // business_logic (3-col table), corrupting the write target.
+        "knowledge_entries".into()
     } else if cols.contains(&"user_story_id".to_string()) {
         "business_logic".into()
     } else if cols.contains(&"service_name".to_string()) {
         "service_metadata".into()
-    } else if cols.contains(&"knowledge_type".to_string()) {
-        "knowledge_entries".into()
     } else if cols.contains(&"workflow_id".to_string()) {
         "feature_workflow_links".into()
     } else if cols.contains(&"severity".to_string()) {
@@ -2160,6 +2334,14 @@ fn build_insert(
                     | "correct_elements"
                     | "total_expected"
                     | "query_depth"
+                    | "resolved_at"
+                    | "total_elements"
+                    | "total_relationships"
+                    | "total_vectors"
+                    | "total_documents"
+                    | "total_doc_sections"
+                    | "estimated_vector_bytes"
+                    | "estimated_hnsw_bytes"
                     | "usearch_key" => "::bigint",
                     "savings_percent" | "f1_score" | "confidence" => "::float8",
                     "success" | "is_deleted" | "accepted" => "::bool",
@@ -2187,9 +2369,49 @@ fn build_insert(
                     all_params.push(Box::new(parsed));
                 }
             } else if matches!(v, serde_json::Value::Null) {
-                // NULL binding: use a typed Option to avoid client-side type
-                // inference mismatches in the postgres crate.
-                all_params.push(Box::new(Option::<String>::None));
+                // NULL binding: the placeholder carries an explicit
+                // `::type` cast (see null_cast above), so the client-side
+                // value type must match it — otherwise the postgres crate
+                // fails with "error serializing parameter N" and the server
+                // rejects text-typed NULL into bigint columns (E42804).
+                let typed_none: Box<dyn postgres::types::ToSql + Send + Sync> = match pg_cols[j]
+                    .as_str()
+                {
+                    c if JSONB_COLUMNS.contains(&c) => Box::new(Option::<serde_json::Value>::None),
+                    "savings_percent" | "f1_score" | "confidence" => Box::new(Option::<f64>::None),
+                    "success" | "is_deleted" | "accepted" => Box::new(Option::<bool>::None),
+                    "line_start"
+                    | "line_end"
+                    | "timestamp"
+                    | "created_at"
+                    | "updated_at"
+                    | "expires_at"
+                    | "occurred_at"
+                    | "resolved_at"
+                    | "slo_p99_ms"
+                    | "incident_count"
+                    | "last_incident"
+                    | "input_tokens"
+                    | "output_tokens"
+                    | "output_elements"
+                    | "execution_time_ms"
+                    | "baseline_tokens"
+                    | "baseline_lines_scanned"
+                    | "tokens_saved"
+                    | "correct_elements"
+                    | "total_expected"
+                    | "query_depth"
+                    | "total_elements"
+                    | "total_relationships"
+                    | "total_vectors"
+                    | "total_documents"
+                    | "total_doc_sections"
+                    | "estimated_vector_bytes"
+                    | "estimated_hnsw_bytes"
+                    | "usearch_key" => Box::new(Option::<i64>::None),
+                    _ => Box::new(Option::<String>::None),
+                };
+                all_params.push(typed_none);
             } else {
                 all_params.push(json_to_pg(v.clone()));
             }
