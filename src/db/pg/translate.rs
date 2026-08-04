@@ -1670,7 +1670,7 @@ fn build_insert(
 /// stores them with the index but accepts session overrides on insert for
 /// tuning. `LEANKG_HNSW_EF_CONST` (default 20) keeps parity with the cozo
 /// builder; absent, no GUC is emitted (uses the index's stored value).
-fn embedding_gucs_for(table: &str) -> Vec<(String, String)> {
+pub fn embedding_gucs_for(table: &str) -> Vec<(String, String)> {
     if table != "embedding_vectors" {
         return Vec::new();
     }
@@ -2454,5 +2454,81 @@ mod tests {
         let p = json_to_pg(serde_json::json!("hello"));
         // Verify only that it coerces without panic.
         let _ = format!("{:?}", p);
+    }
+
+    // Phase 4 plumbing: ANN translation picks up `ef: N` from the Datalog
+    // body and emits a `hnsw.ef_search` GUC for the PostgresBackend tx.
+    #[test]
+    fn ann_picks_up_ef_into_guc() {
+        let q = r#"?[dist, qualified_name] := ~embedding_vectors:vec_idx { qualified_name | query: vec([0.0, 0.1, 0.2]), k: 5, ef: 73, bind_distance: dist }"#;
+        let t = translate(q, BTreeMap::new()).unwrap();
+        assert_eq!(t.kind, TranslationKind::Read);
+        assert_eq!(
+            t.gucs,
+            vec![("hnsw.ef_search".to_string(), "73".to_string())],
+            "ef must surface as SET LOCAL hnsw.ef_search GUC"
+        );
+    }
+
+    #[test]
+    fn ann_omits_guc_when_ef_missing() {
+        // ef defaults to 50 in the translator but no GUC is emitted unless
+        // the Datalog body explicitly carries `ef:`. Today `pipeline.rs`
+        // always includes `ef:` (FR-HNSW-F), so this shape is unreachable
+        // from real callers — but the translator must stay safe.
+        let q = r#"?[dist, qualified_name] := ~embedding_vectors:vec_idx { qualified_name | query: vec([0.0]), k: 5, bind_distance: dist }"#;
+        let t = translate(q, BTreeMap::new()).unwrap();
+        assert!(t.gucs.is_empty(), "missing ef: must not emit GUC");
+    }
+
+    // Phase 4 plumbing: `embedding_vectors` upsert emits a
+    // `hnsw.ef_construction` GUC when LEANKG_HNSW_EF_CONST is set and
+    // valid; no GUC otherwise (the index's stored value wins).
+    #[test]
+    fn embedding_vectors_upsert_emits_ef_construction_when_set() {
+        // The literal-list `:put embedding_vectors` path bypasses the
+        // translator on the bulk vector literal (`vec(...)` is not JSON,
+        // so `parse_nested_lists` would reject it). Today the writer
+        // reaches the GUC path through `DbBackend::import_relations`,
+        // whose bulk path emits `INSERT ... ON CONFLICT (qualified_name)
+        // DO UPDATE` via `build_insert`. We exercise the same GUC hook
+        // directly by simulating the table/cols/pk the writer hands in.
+        let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
+        std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
+        let gucs = embedding_gucs_for("embedding_vectors");
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_HNSW_EF_CONST", v),
+            None => std::env::remove_var("LEANKG_HNSW_EF_CONST"),
+        }
+        assert_eq!(
+            gucs,
+            vec![("hnsw.ef_construction".to_string(), "100".to_string())]
+        );
+    }
+
+    #[test]
+    fn embedding_vectors_upsert_omits_guc_when_unset() {
+        let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
+        std::env::remove_var("LEANKG_HNSW_EF_CONST");
+        let gucs = embedding_gucs_for("embedding_vectors");
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_HNSW_EF_CONST", v),
+            None => std::env::remove_var("LEANKG_HNSW_EF_CONST"),
+        }
+        assert!(gucs.is_empty(), "unset env must not emit GUC");
+    }
+
+    #[test]
+    fn embedding_state_upsert_does_not_emit_guc() {
+        // Only the embedding_vectors path tunes HNSW; embedding_state is a
+        // plain upsert and must not produce per-statement GUCs.
+        let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
+        std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
+        let gucs = embedding_gucs_for("embedding_state");
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_HNSW_EF_CONST", v),
+            None => std::env::remove_var("LEANKG_HNSW_EF_CONST"),
+        }
+        assert!(gucs.is_empty(), "embedding_state must not surface GUCs");
     }
 }
