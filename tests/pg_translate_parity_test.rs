@@ -59,7 +59,10 @@ impl Scratch {
             .batch_execute(&format!("SET search_path TO {name}, public"))
             .unwrap();
         leankg::db::pg::migrations::run_migrations(&mut admin).unwrap();
-        Scratch { client: admin, name }
+        Scratch {
+            client: admin,
+            name,
+        }
     }
 }
 
@@ -84,12 +87,10 @@ fn cozo_shim() -> std::sync::Arc<CozoBackend> {
 
 fn pg_backend() -> std::sync::Arc<PostgresBackend> {
     let url = pg_url();
-    std::sync::Arc::new(
-        PostgresBackend {
-            pg_url: url,
-            conn: std::sync::Mutex::new(None).into(),
-        },
-    )
+    std::sync::Arc::new(PostgresBackend {
+        pg_url: url,
+        conn: std::sync::Mutex::new(None).into(),
+    })
 }
 
 /// Compare two NamedRows for equality (column-order + value-equality,
@@ -227,9 +228,15 @@ fn parity_null_equality() {
         ":create api_keys {id: String, name: String, key_hash: String, created_at: String, last_used_at: String?, revoked_at: String?}",
         r#"?[id, name, key_hash, created_at, last_used_at, revoked_at] <- [["k1", "n", "h", "now", null, null]] :put api_keys {id, name, key_hash, created_at, last_used_at, revoked_at}"#,
     ];
-    parity(&mut s, &cozo, &pg, &setup,
+    parity(
+        &mut s,
+        &cozo,
+        &pg,
+        &setup,
         "?[id, key_hash] := *api_keys[id, key_hash], revoked_at = null",
-        BTreeMap::new(), "null equality (revoked_at = null)");
+        BTreeMap::new(),
+        "null equality (revoked_at = null)",
+    );
 }
 
 #[test]
@@ -351,17 +358,35 @@ fn parity_keyed_put_upsert() {
         ":create embedding_state {qualified_name: String => usearch_key: Int, content_hash: String, state: String, embedded_at: String}",
     ];
     // Initial insert.
-    parity(&mut s, &cozo, &pg, &setup,
+    parity(
+        &mut s,
+        &cozo,
+        &pg,
+        &setup,
         r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [["a", 0, "h1", "fresh", "t1"]] :put embedding_state {qualified_name => usearch_key, content_hash, state, embedded_at}"#,
-        BTreeMap::new(), "initial keyed put");
+        BTreeMap::new(),
+        "initial keyed put",
+    );
     // Upsert with same key — must UPDATE the row.
-    parity(&mut s, &cozo, &pg, &[],
+    parity(
+        &mut s,
+        &cozo,
+        &pg,
+        &[],
         r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [["a", 0, "h2", "stale", "t2"]] :put embedding_state {qualified_name => usearch_key, content_hash, state, embedded_at}"#,
-        BTreeMap::new(), "keyed put upsert");
+        BTreeMap::new(),
+        "keyed put upsert",
+    );
     // Verify the row was updated, not duplicated.
-    parity(&mut s, &cozo, &pg, &[],
+    parity(
+        &mut s,
+        &cozo,
+        &pg,
+        &[],
         "?[qualified_name, state] := *embedding_state[qualified_name, _, _, state, _]",
-        BTreeMap::new(), "verify upsert");
+        BTreeMap::new(),
+        "verify upsert",
+    );
 }
 
 #[test]
@@ -377,9 +402,15 @@ fn parity_non_keyed_put_allows_duplicates() {
     // Insert same qualified_name twice — cozo non-keyed semantics allow
     // duplicates; PG translator must NOT add a PK for this table.
     for _ in 0..2 {
-        parity(&mut s, &cozo, &pg, &[],
+        parity(
+            &mut s,
+            &cozo,
+            &pg,
+            &[],
             r#"?[element_qualified, description, user_story_id, feature_id] <- [["a::b", "d", null, null]] :put business_logic {element_qualified, description, user_story_id, feature_id}"#,
-            BTreeMap::new(), "non-keyed duplicate insert");
+            BTreeMap::new(),
+            "non-keyed duplicate insert",
+        );
     }
 }
 
@@ -394,13 +425,19 @@ fn parity_delete_where() {
         ":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}",
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- [["a", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}"#,
     ];
-    parity(&mut s, &cozo, &pg, &setup, ":delete code_elements where qualified_name = $qn",
+    parity(
+        &mut s,
+        &cozo,
+        &pg,
+        &setup,
+        ":delete code_elements where qualified_name = $qn",
         {
             let mut p = BTreeMap::new();
             pstr(&mut p, "qn", "a");
             p
         },
-        "delete where");
+        "delete where",
+    );
 }
 
 #[test]
@@ -457,14 +494,8 @@ fn assert_rows_equal_handles_null() {
 #[test]
 fn assert_rows_equal_detects_mismatch() {
     use cozo::{DataValue, NamedRows};
-    let a = NamedRows::new(
-        vec!["x".into()],
-        vec![vec![DataValue::Str("y".into())]],
-    );
-    let b = NamedRows::new(
-        vec!["x".into()],
-        vec![vec![DataValue::Str("z".into())]],
-    );
+    let a = NamedRows::new(vec!["x".into()], vec![vec![DataValue::Str("y".into())]]);
+    let b = NamedRows::new(vec!["x".into()], vec![vec![DataValue::Str("z".into())]]);
     let res = std::panic::catch_unwind(|| assert_rows_equal(&a, &b, "mismatch"));
     assert!(res.is_err(), "expected panic on mismatch");
 }
@@ -473,11 +504,8 @@ fn assert_rows_equal_detects_mismatch() {
 fn translate_unit_pure_no_io() {
     // Smoke: translator works without a backend; verifies the column-order
     // is preserved.
-    let t = leankg::db::pg::translate::translate(
-        "?[a, b, c] := *t[a, b, c]",
-        BTreeMap::new(),
-    )
-    .unwrap();
+    let t =
+        leankg::db::pg::translate::translate("?[a, b, c] := *t[a, b, c]", BTreeMap::new()).unwrap();
     assert_eq!(t.head, vec!["a", "b", "c"]);
     assert!(t.sql.contains("FROM t"));
 }
