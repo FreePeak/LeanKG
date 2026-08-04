@@ -53,7 +53,14 @@ struct ScratchSchema {
 impl ScratchSchema {
     fn new() -> ScratchSchema {
         let url = pg_url();
-        let name = format!("leankg_test_{}", std::process::id());
+        // Unique per test: tests run in parallel with the SAME pid; a shared
+        // schema name would let one test's DROP destroy another's tables.
+        static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let name = format!(
+            "leankg_test_{}_{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let mut admin = postgres::Client::connect(&url, postgres::NoTls)
             .unwrap_or_else(|e| panic!("cannot connect to {url}: {e}"));
         admin
@@ -158,7 +165,7 @@ fn embedding_vectors_shape_and_hnsw_index() {
     let literal = format!("[{}]", vec!["0.0"; VEC_DIM].join(","));
     s.client
         .query_one(
-            "INSERT INTO embedding_vectors (qualified_name, vec) VALUES ($1, $2::vector) RETURNING qualified_name",
+            "INSERT INTO embedding_vectors (qualified_name, vec) VALUES ($1, $2::text::vector) RETURNING qualified_name",
             &[&"qn/unit/probe", &literal],
         )
         .unwrap();
@@ -166,7 +173,7 @@ fn embedding_vectors_shape_and_hnsw_index() {
     assert!(
         s.client
             .query_one(
-                "INSERT INTO embedding_vectors (qualified_name, vec) VALUES ($1, $2::vector) RETURNING qualified_name",
+                "INSERT INTO embedding_vectors (qualified_name, vec) VALUES ($1, $2::text::vector) RETURNING qualified_name",
                 &[&"qn/unit/probe_bad", &bad],
             )
             .is_err(),
@@ -187,8 +194,9 @@ fn embedding_vectors_shape_and_hnsw_index() {
         indexdef.contains("USING hnsw") && indexdef.contains("vector_cosine_ops"),
         "expected HNSW cosine index, got: {indexdef}"
     );
+    // pgvector renders params quoted: WITH (m='16', ef_construction='200')
     assert!(
-        indexdef.contains("m = 16") && indexdef.contains("ef_construction = 200"),
+        indexdef.contains("m='16'") && indexdef.contains("ef_construction='200'"),
         "expected m=16 ef_construction=200, got: {indexdef}"
     );
 }
@@ -322,7 +330,7 @@ fn keyed_tables_have_pk_and_jsonb_columns() {
     s.client
         .query_one(
             "INSERT INTO code_elements (qualified_name, element_type, name, file_path, line_start, line_end, language, metadata)
-             VALUES ($1, 'function', 'f', 'f.rs', 1, 2, 'rust', $2::jsonb) RETURNING qualified_name",
+             VALUES ($1, 'function', 'f', 'f.rs', 1, 2, 'rust', $2::text::jsonb) RETURNING qualified_name",
             &[&"jsonb/probe", &r#"{"lang":"rust","hits":3}"#],
         )
         .unwrap();
@@ -362,8 +370,8 @@ fn migrations_table_records_applied_at() {
     let is_nullable: String = row.get(1);
     assert_eq!(data_type, "timestamp with time zone");
     assert_eq!(
-        is_nullable, "YES",
-        "applied_at must be nullable (DEFAULT now())"
+        is_nullable, "NO",
+        "applied_at is NOT NULL with DEFAULT now()"
     );
 
     let count: i64 = s
