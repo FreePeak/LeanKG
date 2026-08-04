@@ -229,6 +229,17 @@ Since every cozo query is single-relation + equality filters (+`:limit`/`:offset
 - [ ] T8.6 `docs/analysis/` migration report (what was translated, parity results, perf numbers)
 - **Exit:** `docker compose up` runs LeanKG against Postgres; `cargo test` all green; README reflects Postgres-first
 
+### Phase 5.5 — Full regression review: all tools/features before → after (2-3 days)
+
+Beyond translator parity (T3.6/T5.1), verify **every user-facing feature** still works identically on Postgres. A translator bug that returns wrong-but-plausible rows for one tool's query slips past unit tests. Run the SAME feature suite against the cozo shim and against Postgres on identical data, diff outputs.
+
+- [ ] T5.5.1 **MCP tool sweep (all tools)** — use the tool catalog in `docs/mcp-tools.md` + the redundancy matrix in `docs/test-coverage-status.md` §2 (85 tools). For each tool: run against cozo shim and Postgres on the same fixture, diff the JSON responses. Tools to prioritize: `query_file`, `get_dependencies`, `get_dependents`, `get_impact_radius`, `get_review_context`, `find_function`, `get_call_graph`, `search_code`, `generate_doc`, `find_large_functions`, `get_tested_by`, `get_files_for_doc`, `get_doc_tree`, `get_traceability`, `search_by_requirement`, `get_code_tree`, `find_related_docs`, `concept_search`, `semantic_search`, `search_knowledge`, `explain_node`, `shortest_path`, `get_overview_context`, `mcp_status` + every doc/traceability tool. Divergences flagged + fixed; a report records per-tool: cozo output vs PG output, PASS/DIFF/FAIL.
+- [ ] T5.5.2 **CLI feature sweep** — run every CLI subcommand against both backends: `init`, `index`, `impact`, `serve` (smoke), `embed`, `search`/`search_code`, `status`, `migrate`, `mcp-http` (health), doc-index tools, ontology tools, `pack`/`ctags-export` if they touch the DB. Compare exit codes + stdout shape.
+- [ ] T5.5.3 **WebUI integration test (Playwright, with screenshots)** — the `ui-v2/` SPA (Vite+React 19+Three.js+R3F+shadcn, talks JSON-RPC over `POST /mcp` to :9699 — see `docs/` + memory `leankg-ui-v2`). Drive the real UI against Postgres-backed :9699: graph load, node click/detail, search box, semantic search flow, env filter, impact-radius view. Assert DOM state + take screenshots (before/after per feature) into `docs/verification/`. Add `ui-v2/e2e/` Playwright tests committed to the repo so CI can re-run them. Playwright is already the user's UI-testing standard.
+- [ ] T5.5.4 **Performance guard on every feature** — for each tool in T5.5.1, record latency on PG vs cozo (p50). Flag any tool > 2x cozo latency; the Phase 9 report (§4) gets the data. Semantic search + overview + impact must stay at-or-better (they're the hot paths; Phase 0 spike already showed 4ms HNSW).
+- [ ] T5.5.5 **Regression report** — `docs/analysis/pg-regression-report.md`: per-tool table (tool → cozo output → PG output → PASS/DIFF/FAIL), CLI matrix, WebUI screenshots link, latency comparison, list of fixes made.
+- **Exit:** all 85 MCP tools PASS on PG (or documented DIFF with reason); CLI identical; WebUI screenshots show working graph/search; no tool > 2x cozo latency.
+
 ---
 
 ## 5. TODOs (flat list, in order)
@@ -410,11 +421,13 @@ Worktree: `worktree-leankg-pg-migration` (worktree under `.claude/worktrees/`). 
 | 1. DbBackend abstraction | ✅ done | `src/db/backend.rs` (trait + `CozoBackend` shim + `PostgresBackend` stub + `Arc<dyn DbBackend>`); `Arc<dyn DbBackend>` threaded through 43 files. 960 lib tests green. Commit `e73c3298`. |
 | 2. Postgres schema + migrations | ✅ done | `src/db/pg/schema.sql` (16 tables, JSONB, pgvector HNSW, vector(384)); `src/db/pg/migrations.rs`; `leankg migrate` subcommand. Live-verified (16 tables, no query_cache). `tests/pg_schema_test.rs` 6/6 container tests pass. Commits `e749cad5`, `92f4b6f7`, `0182575f`, `7b115d42`. |
 | 3. SQL translator | 🚧 in progress | `src/db/pg/translate.rs` (2374 lines, committed `a9d83fc5`); PostgresBackend real impl + `tests/pg_translate_parity_test.rs` in flight. |
-| 4. Vector stack swap | ⬜ pending | — |
+| 4. Vector stack swap | 🚧 in progress | `src/vector_engine/` deleted (`ef1a9580`); hnsw_retrieve → direct SQL + `SET LOCAL ef_search` (`5fb112dd`); batch upserts landed; commit 4 (tests) in flight. |
 | 5. Remaining modules + grep `cozo::` = 0 | ⬜ pending | — |
+| 5.5. Full regression review (all tools/features before → after) | ⬜ pending | T5.5.1–T5.5.5, §4 Phase 5.5 — full MCP tool sweep (85 tools), CLI sweep, WebUI Playwright test w/ screenshots (`ui-v2/e2e/`), perf guard (no tool >2x cozo), regression report `docs/analysis/pg-regression-report.md`. |
 | 6. Read-only + server scaling | ⬜ pending | — |
 | 7. Embedding bulk-load | ⬜ pending | — |
 | 8. Deploy + docs + cleanup | ⬜ pending | — |
+| 9. Perf verification (index/embed/query on large codebase) | ⬜ pending | T9.1–T9.6, §4 Phase 9 — verify index/embed/query latency vs cozo baselines, review indexes with `EXPLAIN`, autovacuum health, report in `docs/analysis/pg-perf-large-codebase.md`. |
 
 Current implementation state is tracked in the task list; the plan's §4 checkboxes are updated as each task completes.
 
