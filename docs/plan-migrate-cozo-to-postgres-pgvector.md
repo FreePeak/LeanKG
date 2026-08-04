@@ -417,3 +417,18 @@ Worktree: `worktree-leankg-pg-migration` (worktree under `.claude/worktrees/`). 
 | 8. Deploy + docs + cleanup | ⬜ pending | — |
 
 Current implementation state is tracked in the task list; the plan's §4 checkboxes are updated as each task completes.
+
+### Phase 9 — Performance verification: indexing + embed + query on large codebase (1-2 days)
+
+Beyond "it works", prove it scales. Postgres is now the only engine (D4) — a slow index/embed/query path on a real codebase is a release blocker.
+
+- [ ] T9.1 **Cold-index a real large codebase** — index workspace-be (or the largest repo available, ~371k functions per plan §2.4) through the Postgres backend (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`). Measure wall-clock vs the cozo/RocksDB baseline (historical numbers in `docs/verification/leanKG-0.19.32-docker-rebuild-full-spectrum-report.md`). Target: no worse than 2x cozo index time.
+- [ ] T9.2 **Embed with the real model** — run `leankg embed` (fastembed BGE-small-en-v1.5, dim 384) into Postgres. Measure v/s vs cozo's ~700 v/s target (§7.1). If `import_relations` per-row INSERT is slow, switch `embedding_vectors` + `embedding_state` writes to the multi-row INSERT / COPY path (Phase 7 machinery).
+- [ ] T9.3 **Query latency on the large graph** — run the heavy read paths against the big index: `all_elements()`, `get_overview_context`, `get_impact_radius`, `semantic_search` (top-k + rerank), env-filtered queries. Measure p50/p95 via `EXPLAIN ANALYZE` on the translated SQL. Watch for: seq-scan on filter columns, HNSW recall drift, JSONB `metadata` filters lacking GIN indexes, `ORDER BY count(*)` group queries.
+- [ ] T9.4 **Index review** — verify every `::index` from the cozo schema (§2.2) has a Postgres equivalent, and add what's missing for the real query mix: `code_elements(file_path)`, `code_elements(qualified_name)`, `code_elements(element_type)`, `relationships(source_qualified, rel_type)`, `context_metrics(tool_name, timestamp)`, JSONB GIN on `metadata`/`tags`, `embedding_vectors` HNSW (`vector_cosine_ops`) + `qualified_name` PK. Use `EXPLAIN` to prove index use, not assumption.
+- [ ] T9.5 **Autovacuum/ANALYZE health** — after bulk embed, run `ANALYZE` (the Phase 4 seam) and confirm planner estimates; document expected table sizes + autovacuum thresholds for a 371k-function workspace. Verify `REINDEX CONCURRENTLY` works on the live index without blocking reads (Phase 0 proved it; confirm at scale).
+- [ ] T9.6 **Report** — `docs/analysis/pg-perf-large-codebase.md`: index time, embed v/s, query p50/p95 (with the SQL + EXPLAIN output), index inventory with EXPLAIN evidence, any schema changes made (new indexes), and the go/no-go vs cozo baselines.
+
+**Exit:** `semantic_search` and `get_overview_context` on the large codebase are at-or-better than cozo latency; embed ≥ 700 v/s; every hot query in `EXPLAIN` uses an index; numbers in the report.
+
+**Current status:** pending (after Phase 8).
