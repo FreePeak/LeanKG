@@ -45,6 +45,9 @@ bash scripts/install.sh cursor
 | Read hit | `get_context` | Read |
 | Blast radius | `get_impact_radius` | Manual |
 | Tests | `get_tested_by` | Grep |
+| Editor fast edge (vim/Emacs/`readtags`) | `leankg tags --format ctags` | Universal-ctags CLI |
+| Token estimate before rewrite | `leankg cost --file <start> --depth 3` | Manual byte counts |
+| Ship a portable context snapshot | `leankg pack --output ./leankg-pack` | ad-hoc `tar` of `git ls-files` |
 
 **Decision flow:**
 

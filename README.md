@@ -491,6 +491,11 @@ leankg mcp-stdio --watch
 leankg mcp-http --port 9699
 leankg ontology sync                  # concepts + workflows → DB
 leankg ontology trace <workflow>      # ordered procedural steps
+leankg tags --format ctags --output tags         # ctags/GNU Global fast edge
+leankg cost --file src/main.rs --depth 3        # LOCOMO token estimate (in=prompt, out=reply)
+leankg cost --files src/a.rs,src/b.rs --format json
+leankg pack --output ./leankg-pack --revision $(git rev-parse HEAD)
+#   snapshot.json + manifest.json; byte-identical across checkouts; refuses to truncate
 leankg update
 ```
 
