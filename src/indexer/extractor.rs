@@ -1052,6 +1052,165 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+
+    fn extract_unison_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(\w+)\s*:\s*\w+\s*->\s*\w+", "function"),
+            (r"(?m)^\s*unique\s+type\s+(\w+)", "type"),
+            (r"(?m)^\s*(\w+)\s*=\s*", "definition"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_idl_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?im)^\s*pro\s+(\w+)", "function"),
+            (r"(?im)^\s*function\s+(\w+)", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_igor_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*Function\s+(\w+)", "function"),
+            (r"(?m)^\s*Macro\s+(\w+)", "macro"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_scilab_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*function\s+(?:\[[^\]]+\]\s*)?(\w+)", "function"),
+            (r"(?m)^\s*endfunction", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_maxima_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^(\w+)\s*\([^)]*\)\s*:=", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_eviews_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?im)^\s*subroutine\s+(\w+)", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_mplus_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?im)^\s*usevariables\s+(.+)", "variable"),
+            (r"(?im)^\s*define\s*:\s*(\w+)", "function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_qiskit_elements(&self, elements: &mut Vec<CodeElement>) {
+        // Qiskit is Python-based; extract quantum circuit functions and class definitions.
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:def|class)\s+(\w+)", "definition"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_cirq_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*(?:def|class)\s+(\w+)", "definition"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
+    fn extract_silq_elements(&self, elements: &mut Vec<CodeElement>) {
+        let content = std::str::from_utf8(self.source).unwrap_or("");
+        let patterns: &[(&str, &str)] = &[
+            (r"(?m)^\s*def\s+(\w+)", "function"),
+            (r"(?m)^\s*qdef\s+(\w+)", "quantum_function"),
+        ];
+        for (pat, etype) in patterns {
+            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    self.push_regex_element(elements, etype, m.as_str());
+                }
+            }
+        }
+    }
+
     pub fn extract_regex_only(&self) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut elements: Vec<CodeElement> = Vec::new();
         let _relationships: Vec<Relationship> = Vec::new();
@@ -1135,6 +1294,16 @@ impl<'a> EntityExtractor<'a> {
             "toml" => self.extract_toml_sections(&mut elements),
             "dockerfile" => self.extract_dockerfile_directives(&mut elements),
             "javascript" => self.extract_javascript_elements(&mut elements),
+            "unison" => self.extract_unison_elements(&mut elements),
+            "idl" => self.extract_idl_elements(&mut elements),
+            "igor" => self.extract_igor_elements(&mut elements),
+            "scilab" => self.extract_scilab_elements(&mut elements),
+            "maxima" => self.extract_maxima_elements(&mut elements),
+            "eviews" => self.extract_eviews_elements(&mut elements),
+            "mplus" => self.extract_mplus_elements(&mut elements),
+            "qiskit" => self.extract_qiskit_elements(&mut elements),
+            "cirq" => self.extract_cirq_elements(&mut elements),
+            "silq" => self.extract_silq_elements(&mut elements),
             "brainfuck" => self.extract_brainfuck_elements(&mut elements),
             "octave" => self.extract_octave_elements(&mut elements),
             "wat" => self.extract_wat_elements(&mut elements),
