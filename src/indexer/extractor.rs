@@ -989,22 +989,27 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-
     fn extract_toml_sections(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
         let source_path = self.file_path.to_string();
-        let re = match Regex::new(r"(?m)^\s*\[([^\]]+)\]") { Ok(r) => r, Err(_) => return };
+        let re = match Regex::new(r"(?m)^\s*\[([^\]]+)\]") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         for cap in re.captures_iter(content) {
             if let Some(m) = cap.get(1) {
                 let raw = m.as_str().trim();
                 let name = raw.split('.').next().unwrap_or(raw).to_string();
-                if name.is_empty() { continue; }
+                if name.is_empty() {
+                    continue;
+                }
                 elements.push(CodeElement {
                     qualified_name: format!("{}::{}", source_path, name),
                     element_type: "section".to_string(),
                     name,
                     file_path: source_path.clone(),
-                    line_start: 1, line_end: 1,
+                    line_start: 1,
+                    line_end: 1,
                     language: "toml".to_string(),
                     ..Default::default()
                 });
@@ -1015,17 +1020,23 @@ impl<'a> EntityExtractor<'a> {
     fn extract_dockerfile_directives(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
         let source_path = self.file_path.to_string();
-        let re = match Regex::new(r"(?m)^\s*FROM\s+(\S+)") { Ok(r) => r, Err(_) => return };
+        let re = match Regex::new(r"(?m)^\s*FROM\s+(\S+)") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         for cap in re.captures_iter(content) {
             if let Some(m) = cap.get(1) {
                 let name = m.as_str().to_string();
-                if name.is_empty() { continue; }
+                if name.is_empty() {
+                    continue;
+                }
                 elements.push(CodeElement {
                     qualified_name: format!("{}::stage::{}", source_path, name),
                     element_type: "stage".to_string(),
                     name: format!("stage:{}", name),
                     file_path: source_path.clone(),
-                    line_start: 1, line_end: 1,
+                    line_start: 1,
+                    line_end: 1,
                     language: "dockerfile".to_string(),
                     ..Default::default()
                 });
@@ -1033,17 +1044,28 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-
     fn extract_javascript_elements(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
         let patterns: &[(&str, &str)] = &[
-            (r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(", "function"),
-            (r"(?m)^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>", "function"),
+            (
+                r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(",
+                "function",
+            ),
+            (
+                r"(?m)^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>",
+                "function",
+            ),
             (r"(?m)^\s*(?:export\s+)?class\s+(\w+)", "class"),
-            (r#"(?m)^\s*import\s+(?:[^;]*\s+from\s+)?['"]([^'"]+)['"]"#, "import"),
+            (
+                r#"(?m)^\s*import\s+(?:[^;]*\s+from\s+)?['"]([^'"]+)['"]"#,
+                "import",
+            ),
         ];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1051,7 +1073,6 @@ impl<'a> EntityExtractor<'a> {
             }
         }
     }
-
 
     fn extract_unison_elements(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
@@ -1061,7 +1082,10 @@ impl<'a> EntityExtractor<'a> {
             (r"(?m)^\s*(\w+)\s*=\s*", "definition"),
         ];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1077,7 +1101,10 @@ impl<'a> EntityExtractor<'a> {
             (r"(?im)^\s*function\s+(\w+)", "function"),
         ];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1093,7 +1120,10 @@ impl<'a> EntityExtractor<'a> {
             (r"(?m)^\s*Macro\s+(\w+)", "macro"),
         ];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1109,7 +1139,10 @@ impl<'a> EntityExtractor<'a> {
             (r"(?m)^\s*endfunction", "function"),
         ];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1120,11 +1153,12 @@ impl<'a> EntityExtractor<'a> {
 
     fn extract_maxima_elements(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
-        let patterns: &[(&str, &str)] = &[
-            (r"(?m)^(\w+)\s*\([^)]*\)\s*:=", "function"),
-        ];
+        let patterns: &[(&str, &str)] = &[(r"(?m)^(\w+)\s*\([^)]*\)\s*:=", "function")];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1135,11 +1169,12 @@ impl<'a> EntityExtractor<'a> {
 
     fn extract_eviews_elements(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
-        let patterns: &[(&str, &str)] = &[
-            (r"(?im)^\s*subroutine\s+(\w+)", "function"),
-        ];
+        let patterns: &[(&str, &str)] = &[(r"(?im)^\s*subroutine\s+(\w+)", "function")];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1155,7 +1190,10 @@ impl<'a> EntityExtractor<'a> {
             (r"(?im)^\s*define\s*:\s*(\w+)", "function"),
         ];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1167,11 +1205,12 @@ impl<'a> EntityExtractor<'a> {
     fn extract_qiskit_elements(&self, elements: &mut Vec<CodeElement>) {
         // Qiskit is Python-based; extract quantum circuit functions and class definitions.
         let content = std::str::from_utf8(self.source).unwrap_or("");
-        let patterns: &[(&str, &str)] = &[
-            (r"(?m)^\s*(?:def|class)\s+(\w+)", "definition"),
-        ];
+        let patterns: &[(&str, &str)] = &[(r"(?m)^\s*(?:def|class)\s+(\w+)", "definition")];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1182,11 +1221,12 @@ impl<'a> EntityExtractor<'a> {
 
     fn extract_cirq_elements(&self, elements: &mut Vec<CodeElement>) {
         let content = std::str::from_utf8(self.source).unwrap_or("");
-        let patterns: &[(&str, &str)] = &[
-            (r"(?m)^\s*(?:def|class)\s+(\w+)", "definition"),
-        ];
+        let patterns: &[(&str, &str)] = &[(r"(?m)^\s*(?:def|class)\s+(\w+)", "definition")];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
@@ -1202,7 +1242,10 @@ impl<'a> EntityExtractor<'a> {
             (r"(?m)^\s*qdef\s+(\w+)", "quantum_function"),
         ];
         for (pat, etype) in patterns {
-            let re = match Regex::new(pat) { Ok(r) => r, Err(_) => continue };
+            let re = match Regex::new(pat) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
             for cap in re.captures_iter(content) {
                 if let Some(m) = cap.get(1) {
                     self.push_regex_element(elements, etype, m.as_str());
