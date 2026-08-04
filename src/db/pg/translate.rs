@@ -117,8 +117,9 @@ impl Translation {
 /// Box a `serde_json::Value` (the only value type the rest of the codebase
 /// passes) into the trait object the `postgres` crate wants. JSON `Null`
 /// becomes SQL `NULL` (Option::None); numbers become i64/f64; bool stays;
-/// string stays; arrays/objects become the JSON text (callers serialize
-/// before reaching here in practice, but we handle it gracefully).
+/// string stays; arrays/objects bind as `serde_json::Value` (the
+/// `with-serde_json-1` feature makes it accept JSON/JSONB columns — the
+/// JSONB columns in schema.sql receive these directly).
 fn json_to_pg(v: serde_json::Value) -> Box<dyn ToSql + Sync + Send> {
     match v {
         serde_json::Value::Null => Box::new(Option::<String>::None),
@@ -133,9 +134,8 @@ fn json_to_pg(v: serde_json::Value) -> Box<dyn ToSql + Sync + Send> {
             }
         }
         serde_json::Value::String(s) => Box::new(s),
-        // Arrays/objects arrive rarely and only via `run_raw_query`; serialize
-        // so callers see a stable JSON text representation downstream.
-        other => Box::new(other.to_string()),
+        // Arrays/objects → JSONB via the serde_json feature.
+        other => Box::new(other),
     }
 }
 
@@ -193,6 +193,12 @@ pub fn translate(
         return Ok(Translation::ddl_noop(Vec::new()));
     }
     if body.starts_with("?[") {
+        return read_script(body, &params);
+    }
+    // Multi-rule scripts start with an intermediate rule
+    // (`files[f] := *code_elements[...]\n?[count(f)] := files[f]` — H6/G88
+    // `count_files`). Route them to read_script which handles the pair.
+    if split_rule_pair(body).is_some() {
         return read_script(body, &params);
     }
 
@@ -272,6 +278,46 @@ fn read_script(
             "create" => create_ddl(body),
             _ => Err(format!("unsupported trailing operator: {}", op.kind)),
         };
+    }
+
+    // Multi-rule count script (H6/G88 — `count_files`):
+    //   `files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j{tail}]
+    //    ?[count(f)] := files[f]`
+    // The first rule dedupes `f` (file_path); `count(f)` = count(DISTINCT
+    // file_path). Only the last rule's head is the output.
+    if let Some((first_rule, rest_rule)) = split_rule_pair(body) {
+        if let Some(agg) = aggregate_from_head(&parse_head(&rest_rule)?) {
+            let (rel_name, rel_cols, after_rel) = match parse_relation_block(&first_rule) {
+                Some(parts) => parts,
+                None => return Err(format!("cannot parse intermediate rule in: {first_rule}")),
+            };
+            // `f` is a positional alias bound to a real column. Resolve it
+            // through the relation block: the alias sits at index i of
+            // rel_cols, which corresponds to the i-th column of the table.
+            // The only multi-rule count in the codebase is `count_files`
+            // over code_elements; catalog its columns so `count(DISTINCT
+            // "f")` becomes `count(DISTINCT file_path)`.
+            let counted_col = rel_cols
+                .iter()
+                .position(|c| c == &agg.expr)
+                .and_then(|i| CODE_ELEMENTS_COLUMNS.get(i))
+                .map(|c| c.to_string());
+            let expr = counted_col.unwrap_or(agg.expr.clone());
+            return aggregate_query(
+                &rel_name,
+                &rel_cols,
+                AggSpec {
+                    kind: AggKind::Count,
+                    expr,
+                    distinct: true,
+                    extras: Vec::new(),
+                    head_label: Some(format!("count({})", agg.expr)),
+                },
+                after_rel,
+                String::new(),
+                params,
+            );
+        }
     }
 
     // Split head from the rest at `:=` (read), `<-` (literal-as-read — CH1
@@ -356,6 +402,7 @@ fn aggregate_from_head(head: &[String]) -> Option<AggSpec> {
             expr: inner.to_string(),
             distinct: false,
             extras: Vec::new(),
+            head_label: Some(head[0].clone()),
         });
     }
     if head.len() == 1 && head[0].starts_with("count(DISTINCT ") && head[0].ends_with(')') {
@@ -365,6 +412,7 @@ fn aggregate_from_head(head: &[String]) -> Option<AggSpec> {
             expr: inner.to_string(),
             distinct: true,
             extras: Vec::new(),
+            head_label: Some(head[0].clone()),
         });
     }
     // `?[a, count(b)]` — multi-col, only `group by a` is valid; translate to
@@ -382,6 +430,7 @@ fn aggregate_from_head(head: &[String]) -> Option<AggSpec> {
                     expr: inner.to_string(),
                     distinct: false,
                     extras,
+                    head_label: Some(h.clone()),
                 });
             }
             extras.push(h.clone());
@@ -398,6 +447,11 @@ struct AggSpec {
     /// For multi-col heads like `?[language, count(language)]` — the
     /// non-aggregate columns to GROUP BY (here `[language]`).
     extras: Vec<String>,
+    /// Original cozo head text of the count expression (e.g. `count(f)`)
+    /// — the result header must match cozo exactly (H6/G88: the positional
+    /// alias `f` is resolved to `file_path` for SQL but the header stays
+    /// `count(f)`).
+    head_label: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -408,15 +462,57 @@ enum AggKind {
 /// Parse a `?[a, b, c]` head into a list of column names (strings).
 fn parse_head(head: &str) -> Result<Vec<String>, String> {
     let t = head.trim();
-    if !t.starts_with("?[") || !t.ends_with(']') {
-        return Err(format!("bad head: {head}"));
+    if !t.starts_with("?[") {
+        return Err(format!("bad head: {t}"));
     }
-    let inner = &t[2..t.len() - 1];
+    // Take only up to the FIRST `]` — a multi-rule head may be followed by
+    // ` := ...` (`?[count(f)] := files[f]`), which must not leak in.
+    let close = t[2..]
+        .find(']')
+        .ok_or_else(|| format!("bad head (no closing bracket): {t}"))?;
+    let inner = &t[2..2 + close];
     Ok(inner
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect())
+}
+
+/// Canonical `code_elements` column order (schema.sql). Used to resolve
+/// positional alias columns in multi-rule count scripts (H6/G88).
+const CODE_ELEMENTS_COLUMNS: &[&str] = &[
+    "qualified_name",
+    "element_type",
+    "name",
+    "file_path",
+    "line_start",
+    "line_end",
+    "language",
+    "parent_qualified",
+    "cluster_id",
+    "cluster_label",
+    "metadata",
+    "env",
+    "ontology_layer",
+];
+
+/// Split a two-rule script at the boundary between `rule1\nrule2`.
+/// Returns `(first_rule, second_rule)` — used for the H6/G88
+/// `files[f] := ... \n ?[count(f)] := files[f]` shape. The second rule
+/// starts with `?[` at the beginning of a line (or after whitespace).
+fn split_rule_pair(body: &str) -> Option<(String, String)> {
+    let lines: Vec<&str> = body.lines().map(|l| l.trim()).collect();
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        if line.starts_with("?[") {
+            let first = lines[..i].join("\n");
+            let second = lines[i..].join("\n");
+            return Some((first, second));
+        }
+    }
+    None
 }
 
 /// Find the first `*rel[...]` block (or `*rel{...}` attr syntax) and return
@@ -491,9 +587,10 @@ fn extract_not_exists(filters: &str) -> Option<(String, Vec<String>)> {
     if !after_not.starts_with('*') {
         return None;
     }
-    // Reuse the relation parser with the leading `not *` replaced.
-    let synthetic = format!("*{after_not}");
-    let (rel, cols, _) = parse_relation_block(&synthetic)?;
+    // Parse the `*rel[...]` block directly (the leading `*` is already
+    // present in `after_not` — do NOT re-add it, or the relation name
+    // becomes `*code_elements`).
+    let (rel, cols, _) = parse_relation_block(after_not)?;
     Some((rel, cols))
 }
 
@@ -531,23 +628,77 @@ fn not_exists_query(
 /// Single-relation SELECT.
 fn simple_select(
     relation: &str,
-    _rel_cols: &[String],
+    rel_cols: &[String],
     head: &[String],
     filters: String,
     modifiers: String,
     params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
-    let cols_sql = if head.is_empty() {
+    if head.is_empty() {
         return Err("empty head in SELECT".into());
-    } else {
-        head.iter()
-            .map(|c| quote_ident(c))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    }
+    // Find head cols defined by filter clauses (`span = line_end -
+    // line_start` in the filters defines the head col `span` — G107). The
+    // SELECT must emit the expression, not the (nonexistent) column.
+    let mut def_exprs: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    for clause in split_clauses(&filters) {
+        let trimmed = clause.trim();
+        for h in head {
+            // `==` is a cozo equality operator (`service_name == $svc`),
+            // NOT a definition — require `= ` or `=` followed by a
+            // non-`=` char.
+            let prefix = format!("{} =", h);
+            if trimmed.starts_with(&prefix) && !trimmed[prefix.len()..].starts_with('=') {
+                let rhs = trimmed[prefix.len()..].trim();
+                if !(rhs.starts_with('"') || rhs.starts_with('$') || rhs == "null") {
+                    def_exprs.insert(h.as_str(), rhs.to_string());
+                }
+            }
+        }
+    }
+    // Head-alias expressions (G107 `span = line_end - line_start`). A head
+    // entry shaped `name = expr` maps to `expr AS name`; the `expr` uses
+    // positional aliases from the relation block (bound in order).
+    let mut select_parts: Vec<String> = Vec::with_capacity(head.len());
+    let mut order_by_span = false;
+    for c in head {
+        if let Some((alias, expr)) = c.split_once('=') {
+            let alias = alias.trim();
+            let expr = expr.trim();
+            // Resolve positional alias vars against rel_cols.
+            let resolved = resolve_positional(expr, rel_cols);
+            if alias == "span" && expr == "line_end - line_start" {
+                order_by_span = true;
+            }
+            select_parts.push(format!("{resolved} AS {}", quote_ident(alias)));
+        } else if let Some(expr) = def_exprs.get(c.as_str()) {
+            // Head col defined by a filter clause (G107 `span = ...`).
+            let resolved = resolve_positional(expr, rel_cols);
+            if c == "span" {
+                order_by_span = true;
+            }
+            select_parts.push(format!("{resolved} AS {}", quote_ident(c)));
+        } else {
+            select_parts.push(quote_ident(c));
+        }
+    }
+    let cols_sql = select_parts.join(", ");
 
+    // Drop head-alias *definition* clauses from the WHERE list. Cozo rules
+    // bind derived variables with `alias = expr` (G107 `span = line_end -
+    // line_start`); that's a definition, not a constraint — the WHERE must
+    // not reference the alias column (it doesn't exist in the table).
+    let filters = strip_definition_clauses(&filters, head);
+    // Resolve positional alias tokens in the filters against the relation
+    // block (G107 `et in [...]` where `et` is the 2nd column = element_type).
+    let filters = resolve_filter_aliases(&filters, rel_cols);
     let (where_sql, where_params) = compile_filters(filters, params)?;
-    let (mod_sql, mod_params) = compile_modifiers(&modifiers, head, params);
+    let (mut mod_sql, mod_params) = compile_modifiers(&modifiers, head, params);
+    if order_by_span && !mod_sql.contains("ORDER BY") {
+        mod_sql = format!("{mod_sql} ORDER BY \"span\" DESC")
+            .trim()
+            .to_string();
+    }
 
     let sql = if where_sql.is_empty() {
         format!(
@@ -572,6 +723,104 @@ fn simple_select(
     let mut all_params = where_params;
     all_params.extend(mod_params);
     Ok(Translation::read(sql, all_params, head.to_vec()))
+}
+
+/// Resolve cozo positional alias tokens in the filter list against the
+/// relation block's column placeholders. Cozo allows `et in [...]` where
+/// `et` is a positional alias bound to the 2nd column; PG needs the real
+/// column name (`element_type`). Only single-letter-ish aliases that are
+/// NOT real column names are remapped (guarded by the rel_cols lookup).
+fn resolve_filter_aliases(filters: &str, rel_cols: &[String]) -> String {
+    if rel_cols.is_empty() {
+        return filters.to_string();
+    }
+    let mut out = filters.to_string();
+    for (i, alias) in rel_cols.iter().enumerate() {
+        // Only remap short positional aliases (single/double letters) that
+        // don't collide with a real column name of the table.
+        if alias.len() > 2 || alias.starts_with('_') || alias == "env" {
+            continue;
+        }
+        let real = CODE_ELEMENTS_COLUMNS
+            .get(i)
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| alias.clone());
+        if real == *alias {
+            continue;
+        }
+        // Word-boundary replacement (not inside strings).
+        let pat = format!(" {alias} ");
+        let pat2 = format!(" {alias}[");
+        if out.contains(&pat) || out.contains(&pat2) {
+            out = out.replace(&pat, &format!(" {real} "));
+            out = out.replace(&pat2, &format!(" {real}["));
+        }
+    }
+    out
+}
+
+/// Remove top-level `alias = expr` clauses whose alias appears in the head
+/// (a derived-variable *definition*, not a constraint). e.g. G107:
+/// `..., span = line_end - line_start:order -span` — the `span = ...` is a
+/// rule binding (head col `span`, filter clause `span = line_end -
+/// line_start`); the WHERE gets only the real filters. Any head column
+/// bound by a filter clause `col = <non-literal expr>` is a definition.
+fn strip_definition_clauses(filters: &str, head: &[String]) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for clause in split_clauses(filters) {
+        let trimmed = clause.trim();
+        // Definition if the clause is `<head_col> = expr` where expr is not
+        // a quoted literal / $param / null (those are real equality filters).
+        let is_definition = head.iter().any(|col| {
+            let prefix = format!("{} =", col);
+            if !trimmed.starts_with(&prefix) || trimmed[prefix.len()..].starts_with('=') {
+                return false;
+            }
+            let rhs = trimmed[prefix.len()..].trim();
+            !(rhs.starts_with('"') || rhs.starts_with('$') || rhs == "null")
+        });
+        if !is_definition {
+            out.push(trimmed);
+        }
+    }
+    out.join(", ")
+}
+
+/// Resolve positional alias variables inside a head-alias expression
+/// (`span = line_end - line_start`) by looking up each variable in the
+/// relation block's column placeholders (which are bound positionally).
+/// Unknown names fall through unchanged (quoted identifiers / literals).
+fn resolve_positional(expr: &str, rel_cols: &[String]) -> String {
+    let mut out = String::with_capacity(expr.len());
+    let mut rest = expr;
+    while !rest.is_empty() {
+        // Split on whitespace/operators to find bare identifier tokens.
+        let token_end = rest
+            .find(|c: char| {
+                c.is_whitespace()
+                    || c == '-'
+                    || c == '+'
+                    || c == '*'
+                    || c == '/'
+                    || c == '('
+                    || c == ')'
+            })
+            .unwrap_or(rest.len());
+        let token = &rest[..token_end];
+        if !token.is_empty() {
+            if rel_cols.iter().any(|c| c == token) {
+                out.push_str(&quote_ident(token));
+            } else {
+                out.push_str(token);
+            }
+        }
+        if token_end >= rest.len() {
+            break;
+        }
+        out.push_str(&rest[token_end..token_end + 1]);
+        rest = &rest[token_end + 1..];
+    }
+    out
 }
 
 /// Aggregate query (H5, H6, G82, G87, G98, G102, G105, G106). Handles
@@ -621,6 +870,22 @@ fn aggregate_query(
         format!("{extras}, count({count_expr})")
     };
 
+    // Multi-col aggregate heads (`?[element_type, count(element_type)]`)
+    // implicitly group by the non-aggregate columns — cozo semantics.
+    // `:group` may also be explicit; `compile_group_order` covers that.
+    let group_sql = if group_sql.is_empty() && !agg.extras.is_empty() {
+        format!(
+            " GROUP BY {}",
+            agg.extras
+                .iter()
+                .map(|c| quote_ident(c))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        group_sql
+    };
+
     let sql = if where_sql.is_empty() {
         format!(
             "SELECT {select_list} FROM {relation}{group_sql}{order_sql}",
@@ -655,7 +920,11 @@ fn aggregate_query(
     all_params.append(&mut mod_params);
     let mut head = Vec::with_capacity(1 + agg.extras.len());
     head.extend(agg.extras.iter().cloned());
-    head.push(format!("count({})", agg.expr));
+    head.push(
+        agg.head_label
+            .clone()
+            .unwrap_or_else(|| format!("count({})", agg.expr)),
+    );
     Ok(Translation::read(sql, all_params, head))
 }
 
@@ -991,7 +1260,7 @@ fn render_clause<'a>(
 
     // regex_matches(lowercase(col), "literal") or regex_matches(col, $pat)
     if let Some(rest) = trimmed.strip_prefix("regex_matches(") {
-        let body = rest.trim_end_matches(')');
+        let body = rest.strip_suffix(')').unwrap_or(rest);
         let mut parts = body.splitn(2, ',');
         let col = parts
             .next()
@@ -1001,13 +1270,21 @@ fn render_clause<'a>(
             .next()
             .ok_or_else(|| format!("bad regex_matches: {trimmed}"))?
             .trim();
-        let col_sql = scalar_expr(col);
-        let (placeholder, used) = render_value_or_param(pat, params, next_idx)?;
+        let col_sql = string_op_col(col);
+        // `regex_matches(col, lowercase($pat))` — strip the wrapper so the
+        // param binds (`lower($1)`), not interpolated.
+        let (placeholder, used) = match strip_lowercase_wrapper(pat) {
+            Some(inner) => {
+                let (r, u) = render_value_or_param(inner, params, next_idx)?;
+                (format!("lower({r})"), u)
+            }
+            None => render_value_or_param(pat, params, next_idx)?,
+        };
         return Ok((format!("{col_sql} ~ {placeholder}"), used, clause));
     }
     // str_includes(lowercase(a), lowercase(b))
     if let Some(rest) = trimmed.strip_prefix("str_includes(") {
-        let body = rest.trim_end_matches(')');
+        let body = rest.strip_suffix(')').unwrap_or(rest);
         let mut parts = body.splitn(2, ',');
         let hay = parts
             .next()
@@ -1017,17 +1294,29 @@ fn render_clause<'a>(
             .next()
             .ok_or_else(|| format!("bad str_includes: {trimmed}"))?
             .trim();
-        let hay_sql = scalar_expr(hay);
-        let needle_sql = scalar_expr(needle);
+        let hay_sql = string_op_col(hay);
+        // The needle may be `lowercase($pattern)` / `lowercase("lit")` /
+        // `$pattern` / `"lit"` — bind via the value-or-param path so
+        // params stay bound (PG `lower($1)`), not interpolated.
+        let (needle_sql, used) = match strip_lowercase_wrapper(needle) {
+            Some(inner) => {
+                let (rendered, used) = render_value_or_param(inner, params, next_idx)?;
+                (format!("lower({rendered})"), used)
+            }
+            None => {
+                let (rendered, used) = render_value_or_param(needle, params, next_idx)?;
+                (rendered, used)
+            }
+        };
         return Ok((
             format!("{hay_sql} LIKE '%' || {needle_sql} || '%'"),
-            Vec::new(),
+            used,
             clause,
         ));
     }
     // str_contains(a, "literal"|$param)
     if let Some(rest) = trimmed.strip_prefix("str_contains(") {
-        let body = rest.trim_end_matches(')');
+        let body = rest.strip_suffix(')').unwrap_or(rest);
         let mut parts = body.splitn(2, ',');
         let hay = parts
             .next()
@@ -1037,8 +1326,14 @@ fn render_clause<'a>(
             .next()
             .ok_or_else(|| format!("bad str_contains: {trimmed}"))?
             .trim();
-        let hay_sql = scalar_expr(hay);
-        let (placeholder, used) = render_value_or_param(needle, params, next_idx)?;
+        let hay_sql = string_op_col(hay);
+        let (placeholder, used) = match strip_lowercase_wrapper(needle) {
+            Some(inner) => {
+                let (r, u) = render_value_or_param(inner, params, next_idx)?;
+                (format!("lower({r})"), u)
+            }
+            None => render_value_or_param(needle, params, next_idx)?,
+        };
         return Ok((
             format!("{hay_sql} LIKE '%' || {placeholder} || '%'"),
             used,
@@ -1047,7 +1342,7 @@ fn render_clause<'a>(
     }
     // starts_with(a, "literal"|$param)
     if let Some(rest) = trimmed.strip_prefix("starts_with(") {
-        let body = rest.trim_end_matches(')');
+        let body = rest.strip_suffix(')').unwrap_or(rest);
         let mut parts = body.splitn(2, ',');
         let hay = parts
             .next()
@@ -1057,8 +1352,14 @@ fn render_clause<'a>(
             .next()
             .ok_or_else(|| format!("bad starts_with: {trimmed}"))?
             .trim();
-        let hay_sql = scalar_expr(hay);
-        let (placeholder, used) = render_value_or_param(needle, params, next_idx)?;
+        let hay_sql = string_op_col(hay);
+        let (placeholder, used) = match strip_lowercase_wrapper(needle) {
+            Some(inner) => {
+                let (r, u) = render_value_or_param(inner, params, next_idx)?;
+                (format!("lower({r})"), u)
+            }
+            None => render_value_or_param(needle, params, next_idx)?,
+        };
         return Ok((format!("{hay_sql} LIKE {placeholder} || '%'"), used, clause));
     }
 
@@ -1126,19 +1427,24 @@ fn render_clause<'a>(
     }
 
     let op_pos = find_top_level_op(trimmed)?;
-    let op = &trimmed[op_pos..op_pos + 2.min(trimmed.len() - op_pos)];
-    let op = if matches!(op, "==" | "!=" | ">=" | "<=") {
-        op
+    let op_raw = &trimmed[op_pos..op_pos + 2.min(trimmed.len() - op_pos)];
+    let (op, op_len) = if matches!(op_raw, "==" | "!=" | ">=" | "<=") {
+        // Cozo uses `==` for equality (D39 attr syntax); PG wants `=`.
+        if op_raw == "==" {
+            ("=", 2) // consume BOTH `=` chars from the RHS slice
+        } else {
+            (op_raw, 2)
+        }
     } else if let Some(c) = trimmed[op_pos..].chars().next() {
         match c {
-            '=' | '<' | '>' => &trimmed[op_pos..op_pos + 1],
+            '=' | '<' | '>' => (&trimmed[op_pos..op_pos + 1], 1),
             _ => return Err(format!("unknown operator in clause: {trimmed}")),
         }
     } else {
         return Err(format!("unknown operator in clause: {trimmed}"));
     };
     let lhs = trimmed[..op_pos].trim();
-    let rhs = trimmed[op_pos + op.len()..].trim();
+    let rhs = trimmed[op_pos + op_len..].trim();
 
     let lhs_sql = scalar_expr(lhs);
 
@@ -1205,6 +1511,12 @@ fn find_top_level_op(s: &str) -> Result<usize, String> {
     Err(format!("no top-level operator: {s}"))
 }
 
+/// Strip a `lowercase(...)` wrapper, returning the inner token.
+fn strip_lowercase_wrapper(s: &str) -> Option<&str> {
+    let t = s.trim();
+    t.strip_prefix("lowercase(")?.strip_suffix(')')
+}
+
 /// Locate a top-level word operator (`in`, `and`, `or`) surrounded by
 /// whitespace. Returns the byte offset of the operator.
 fn find_word_operator(s: &str, word: &str) -> Option<usize> {
@@ -1222,9 +1534,18 @@ fn find_word_operator(s: &str, word: &str) -> Option<usize> {
             continue;
         }
         match c {
-            '"' => in_string = true,
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
+            '"' => {
+                in_string = true;
+                i += 1;
+            }
+            '(' => {
+                depth += 1;
+                i += 1;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
             c if c.is_ascii_alphabetic() && depth == 0 => {
                 // Scan to end of word.
                 let start = i;
@@ -1262,11 +1583,11 @@ fn scalar_expr(s: &str) -> String {
         return trimmed.to_string();
     }
     if let Some(rest) = trimmed.strip_prefix("lowercase(") {
-        let body = rest.trim_end_matches(')');
+        let body = rest.strip_suffix(')').unwrap_or(rest);
         return format!("lower({})", scalar_expr(body));
     }
     if let Some(rest) = trimmed.strip_prefix("upper(") {
-        let body = rest.trim_end_matches(')');
+        let body = rest.strip_suffix(')').unwrap_or(rest);
         return format!("upper({})", scalar_expr(body));
     }
     // Quoted string literal: emit as a bound param.
@@ -1279,6 +1600,40 @@ fn scalar_expr(s: &str) -> String {
     }
     // Arithmetic on columns/integers: `line_end - line_start + 1`.
     trimmed.to_string()
+}
+
+/// JSONB columns in schema.sql (cozo stored these as JSON *strings*, so
+/// string ops like `str_contains`/`regex_matches` applied to the raw text).
+/// PG needs an explicit `::text` cast for those operators to compile.
+const JSONB_COLUMNS: &[&str] = &[
+    "metadata",
+    "tags",
+    "deploy_envs",
+    "graph_read_users",
+    "graph_write_users",
+    "members",
+    "affected_services",
+    "elements_by_type_json",
+    "relationships_by_type_json",
+    "vectors_by_type_json",
+];
+
+/// Render a column reference for a string operator (`LIKE`/`~`), casting
+/// JSONB columns to text so the operator compiles (H5 — `str_contains(
+/// metadata, "...")` on code_elements.metadata; PG column is JSONB, cozo
+/// stored the JSON as a string).
+fn string_op_col(s: &str) -> String {
+    let trimmed = s.trim();
+    // Handle `lowercase(col)` wrappers.
+    if let Some(inner) = trimmed.strip_prefix("lowercase(") {
+        let inner = inner.strip_suffix(')').unwrap_or(inner);
+        let inner_sql = string_op_col(inner);
+        return format!("lower({inner_sql})");
+    }
+    if JSONB_COLUMNS.contains(&trimmed) {
+        return format!("{}::text", scalar_expr(trimmed));
+    }
+    scalar_expr(trimmed)
 }
 
 fn is_column_token(s: &str) -> bool {
@@ -1428,17 +1783,20 @@ fn put_script(
     // Strip leading `:put ` and split into the data source (everything
     // before `:put`) and the target relation/columns after.
     // Body shape: `?[cols...] <- [data] :put table {cols => pk}` (or `{cols}`).
-    // We look at the part after `:put` to find the target.
-    let idx = body
-        .find(":put")
-        .ok_or_else(|| "no :put in body".to_string())?;
-    let target = body[idx + 4..].trim();
-    let source = body[..idx].trim();
+    // We look at the part after `:put` to find the target. The `translate`
+    // dispatcher strips a leading `:put` prefix before calling here, so the
+    // body may arrive without it (pure target form `table {cols} <- $args`).
+    let (target, source) = match body.find(":put") {
+        Some(idx) => (body[idx + 4..].trim(), body[..idx].trim()),
+        None => (body.trim(), ""),
+    };
 
     // Parse target — the part after `:put` looks like `table { cols => pk }`
     // or just `{ cols }` (no table name when the relation was already on
     // the left side of an arrow in a follow-up clause).
-    // Strip the table-name prefix (everything before the first `{`).
+    // Strip the table-name prefix (everything before the first `{`), and
+    // any trailing `<- $args` arrow (CH2 — `:put table {cols} <- $args`).
+    let target = target.split("<-").next().unwrap_or(target).trim();
     let brace_open = target.find('{').unwrap_or(0);
     let tail = &target[brace_open..];
     let inner = tail.trim_start_matches('{').trim_end_matches('}').trim();
@@ -1458,7 +1816,7 @@ fn put_script(
             .split_once("<-")
             .map(|(_, r)| r.trim())
             .ok_or_else(|| "missing <- in :put".to_string())?;
-        return put_from_literal(after_arrow, &cols, pk.as_deref(), is_keyed);
+        return put_from_literal(after_arrow, &cols, pk.as_deref(), is_keyed, params);
     }
     if let Some(name) = source.strip_prefix('$') {
         // `?[cols] <- $batch_data` — caller passes a Vec<Vec<serde_json::Value>>
@@ -1466,6 +1824,56 @@ fn put_script(
         // (caller-typed), so fail with a clear message.
         let v = params.get(name).cloned();
         return put_from_batch(name, v, &cols, pk.as_deref(), is_keyed);
+    }
+    // `:put table {cols} <- $args` — the source is the whole rule body
+    // (CH2 — content_hash.rs save_hashes: `:put index_hashes {path, hash}
+    // <- $args` with `args = {path, hash}` a JSON object). Cozo binds the
+    // object's keys to the target columns. The `translate` dispatcher may
+    // have stripped the leading `:put`, so accept both forms.
+    if let Some((target_part, arrow_part)) = body.split_once("<-") {
+        let target_part = target_part.trim();
+        let arrow_part = arrow_part.trim();
+        if target_part.starts_with(":put") || source.is_empty() {
+            if let Some(name) = arrow_part.strip_prefix('$') {
+                let v = params.get(name).cloned().unwrap_or(serde_json::Value::Null);
+                // Cozo's `<- $args` binds a NESTED LIST of rows
+                // (`[[path, hash]]`); accept that as the primary form and
+                // a JSON object as a convenience.
+                let rows: Vec<Vec<serde_json::Value>> = match v {
+                    serde_json::Value::Array(outer) => outer
+                        .into_iter()
+                        .filter_map(|r| match r {
+                            serde_json::Value::Array(row) => Some(row),
+                            _ => None,
+                        })
+                        .collect(),
+                    serde_json::Value::Object(obj) => vec![cols
+                        .iter()
+                        .map(|c| obj.get(c).cloned().unwrap_or(serde_json::Value::Null))
+                        .collect()],
+                    _ => Vec::new(),
+                };
+                if rows.is_empty() || rows.iter().any(|r| r.len() != cols.len()) {
+                    return Ok(Translation::write(
+                        "SELECT 1 WHERE false".to_string(),
+                        Vec::new(),
+                    ));
+                }
+                let table = infer_table(&cols, pk.as_deref());
+                // index_hashes is keyed by `path` even though the CH2 put
+                // omits the `=>` marker (the relation is auto-created keyed
+                // in cozo; schema.sql has PRIMARY KEY on path).
+                let pk = pk.or_else(|| {
+                    if table == "index_hashes" {
+                        Some("path".to_string())
+                    } else {
+                        None
+                    }
+                });
+                let keyed = is_keyed || pk.is_some();
+                return build_insert(&table, &cols, pk.as_deref(), &rows, keyed);
+            }
+        }
     }
     Err(format!("unrecognized :put source: {source}"))
 }
@@ -1513,10 +1921,14 @@ fn put_from_literal(
     cols: &[String],
     pk: Option<&str>,
     is_keyed: bool,
+    params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
     // Parse `[[a, b, c], [a, b, c], ...]`. We accept either a Rust-style
-    // literal list (cozo callers use this) or a JSON array literal.
-    let rows = parse_nested_lists(literal)?;
+    // literal list (cozo callers use this) or a JSON array literal. Cozo
+    // literals may reference bound params (`[[ $eq, $desc, ... ]]` — D1
+    // business_logic writes); substitute them from the params map first.
+    let literal = substitute_params(literal, params);
+    let rows = parse_nested_lists(&literal)?;
     if rows.is_empty() {
         // No data → no-op write (preserves cozo's empty-result behaviour).
         return Ok(Translation::write(
@@ -1561,7 +1973,9 @@ fn infer_table(cols: &[String], pk: Option<&str>) -> String {
         }
     }
     // Fallback: guess by column signature.
-    if cols.contains(&"element_type".to_string()) {
+    if cols == ["path", "hash"] || cols == ["hash"] || cols == ["path"] {
+        "index_hashes".into()
+    } else if cols.contains(&"element_type".to_string()) {
         "code_elements".into()
     } else if cols.contains(&"rel_type".to_string()) {
         "relationships".into()
@@ -1590,15 +2004,72 @@ fn infer_table(cols: &[String], pk: Option<&str>) -> String {
     }
 }
 
+/// Resolve a key-only `:rm`/`DELETE` target by its single column.
+/// `:rm embedding_state {qualified_name}` / `:rm embedding_vectors
+/// {qualified_name}` / `:rm index_inventory {key}` / `:rm index_hashes
+/// {path}` are all key-only deletes on keyed tables.
+fn infer_table_by_key(col: &str) -> Option<&'static str> {
+    match col {
+        "qualified_name" => Some("embedding_vectors"),
+        "key" => Some("index_inventory"),
+        "path" => Some("index_hashes"),
+        _ => None,
+    }
+}
+
+/// Replace `$name` tokens inside a cozo literal with their JSON values
+/// from the params map (D1 — `?[cols] <- [[ $eq, $desc, ... ]]`). Unbound
+/// names become JSON null (matching cozo's null-param semantics).
+fn substitute_params(literal: &str, params: &BTreeMap<String, serde_json::Value>) -> String {
+    let mut out = String::with_capacity(literal.len());
+    let mut rest = literal;
+    while let Some(idx) = rest.find('$') {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + 1..];
+        // The token runs to the next non-identifier char.
+        let name_len = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        let name = &after[..name_len];
+        let v = params.get(name).cloned().unwrap_or(serde_json::Value::Null);
+        out.push_str(&v.to_string());
+        rest = &after[name_len..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn parse_nested_lists(s: &str) -> Result<Vec<Vec<serde_json::Value>>, String> {
     // Cozo literals look like `[["a", 1], ["b", 2]]`. Accept either that or
     // JSON `[["a", 1], ["b", 2]]` (they overlap; treat as JSON if parseable).
+    // Also accepts the cozo vector literal `vec([1.0, 2.0])` inside rows
+    // (B1 — put_pairs_to_db_script: `[["qn", vec([...])]]`).
     let trimmed = s.trim();
     if !trimmed.starts_with('[') {
         return Err(format!("expected list literal: {s}"));
     }
-    serde_json::from_str::<Vec<Vec<serde_json::Value>>>(trimmed)
-        .map_err(|e| format!("cannot parse list literal as JSON: {e} (input: {trimmed})"))
+    // Pre-convert `vec([...])` → `[...]` so the JSON parser accepts it.
+    let json_src = convert_cozo_vec_literals(trimmed);
+    serde_json::from_str::<Vec<Vec<serde_json::Value>>>(&json_src)
+        .map_err(|e| format!("cannot parse list literal as JSON: {e} (input: {json_src})"))
+}
+
+/// Replace cozo `vec([1.0, 2.0])` vector literals with bare `[...]` arrays
+/// so the rest of the JSON-based parser handles them (B1).
+fn convert_cozo_vec_literals(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(idx) = rest.find("vec([") {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + 5..];
+        let close = after.find("])").unwrap_or(after.len());
+        out.push('[');
+        out.push_str(&after[..close]);
+        out.push(']');
+        rest = &after[close + 2..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn build_insert(
@@ -1608,7 +2079,19 @@ fn build_insert(
     rows: &[Vec<serde_json::Value>],
     is_keyed: bool,
 ) -> Result<Translation, String> {
-    let col_sql = cols
+    // Cozo names the vector column `vector`; the PG schema.sql uses `vec`.
+    // Map the cozo name to the PG column for the embedding_vectors table.
+    let pg_cols: Vec<String> = cols
+        .iter()
+        .map(|c| {
+            if table == "embedding_vectors" && c == "vector" {
+                "vec".to_string()
+            } else {
+                c.clone()
+            }
+        })
+        .collect();
+    let col_sql = pg_cols
         .iter()
         .map(|c| quote_ident(c))
         .collect::<Vec<_>>()
@@ -1625,16 +2108,83 @@ fn build_insert(
             if j > 0 {
                 values_sql.push_str(", ");
             }
-            let placeholder = format!("${}", all_params.len() + 1);
-            values_sql.push_str(&placeholder);
-            // Vectors are written as pgvector literals — but only when the
-            // column is `vec` (the only pgvector column in the catalog).
-            if cols[j] == "vec" {
+            // Vectors are written as pgvector literals — only for the
+            // `vec` column (the only pgvector column in the catalog). The
+            // placeholder needs the explicit `::text::vector` cast (PG does
+            // not implicitly cast text → vector).
+            if pg_cols[j] == "vec" {
+                let placeholder = format!("${}::text::vector", all_params.len() + 1);
+                values_sql.push_str(&placeholder);
                 if let serde_json::Value::Array(arr) = v {
                     let literal = pgvector_from_json(arr);
                     all_params.push(Box::new(literal));
                 } else {
                     return Err(format!("vec column must be a JSON array, got: {v}"));
+                }
+                continue;
+            }
+            // NULL bindings need an explicit SQL type on the placeholder —
+            // the postgres crate cannot serialize `Option::None` against an
+            // unknown param type ("error serializing parameter N"). Infer
+            // the column type from the schema catalog (text / bigint /
+            // float8 / bool / jsonb) and emit `$N::<type>`.
+            // NOTE: api_keys timestamps are TEXT (schema.sql keeps them as
+            // epoch strings), unlike teams/incidents/etc. where they're
+            // BIGINT — table-aware exception.
+            let is_api_keys_text_ts = table == "api_keys"
+                && matches!(
+                    pg_cols[j].as_str(),
+                    "created_at" | "last_used_at" | "revoked_at"
+                );
+            let null_cast = if is_api_keys_text_ts {
+                "::text"
+            } else {
+                match pg_cols[j].as_str() {
+                    "line_start"
+                    | "line_end"
+                    | "timestamp"
+                    | "created_at"
+                    | "updated_at"
+                    | "expires_at"
+                    | "occurred_at"
+                    | "slo_p99_ms"
+                    | "incident_count"
+                    | "last_incident"
+                    | "input_tokens"
+                    | "output_tokens"
+                    | "output_elements"
+                    | "execution_time_ms"
+                    | "baseline_tokens"
+                    | "baseline_lines_scanned"
+                    | "tokens_saved"
+                    | "correct_elements"
+                    | "total_expected"
+                    | "query_depth"
+                    | "usearch_key" => "::bigint",
+                    "savings_percent" | "f1_score" | "confidence" => "::float8",
+                    "success" | "is_deleted" | "accepted" => "::bool",
+                    c if JSONB_COLUMNS.contains(&c) => "::jsonb",
+                    _ => "::text",
+                }
+            };
+            let placeholder = format!("${}{null_cast}", all_params.len() + 1);
+            values_sql.push_str(&placeholder);
+            if JSONB_COLUMNS.contains(&pg_cols[j].as_str()) {
+                // JSONB columns: cozo stored the JSON as a *string* (e.g.
+                // `"{}"`); parse it and bind as `serde_json::Value` so the
+                // jsonb column receives the object/array, not a JSON
+                // string literal. NULL stays NULL.
+                if matches!(v, serde_json::Value::Null) {
+                    all_params.push(Box::new(Option::<serde_json::Value>::None));
+                } else {
+                    let parsed = match v {
+                        serde_json::Value::String(s) => {
+                            serde_json::from_str::<serde_json::Value>(s)
+                                .unwrap_or_else(|_| serde_json::Value::String(s.clone()))
+                        }
+                        other => other.clone(),
+                    };
+                    all_params.push(Box::new(parsed));
                 }
             } else if matches!(v, serde_json::Value::Null) {
                 // NULL binding: use a typed Option to avoid client-side type
@@ -1651,7 +2201,7 @@ fn build_insert(
             "INSERT INTO {table} ({col_sql}) VALUES {values_sql} \
              ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
             pk = quote_ident(pk_str),
-            update_set = update_set_clause(cols, pk_str),
+            update_set = update_set_clause(&pg_cols, pk_str),
         ),
         _ => format!("INSERT INTO {table} ({col_sql}) VALUES {values_sql}"),
     };
@@ -1757,13 +2307,21 @@ fn put_from_batch(
 
 fn rm_script(
     body: &str,
-    _params: &BTreeMap<String, serde_json::Value>,
+    params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
     // Shape A: rule-based rm — `?[cols] := *rel[cols], filters :rm rel {cols}`.
     // Shape B: literal rm — `?[col] <- [{values}] :rm rel {col}` (key-only).
     let idx = body.find(":rm").ok_or("no :rm in body".to_string())?;
+    // The target may carry the table name (`:rm relationships {cols}`) or
+    // not (`:rm {cols}`). Strip any `name {` prefix so only the column
+    // list remains.
     let target = body[idx + 3..].trim();
-    let inner = target.trim_start_matches('{').trim_end_matches('}').trim();
+    let brace_open = target.find('{').unwrap_or(0);
+    let target_cols = &target[brace_open..];
+    let inner = target_cols
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
     let cols: Vec<String> = inner.split(',').map(|s| s.trim().to_string()).collect();
     if cols.is_empty() {
         return Err("empty :rm target".into());
@@ -1788,7 +2346,7 @@ fn rm_script(
         if n_stars >= 2 {
             return cross_relation_rm(after_assign, &table, filters);
         }
-        let (where_sql, params) = compile_filters(filters, &BTreeMap::new())?;
+        let (where_sql, params) = compile_filters(filters, params)?;
         let sql = if where_sql.is_empty() {
             format!("DELETE FROM {table}")
         } else {
@@ -1801,8 +2359,12 @@ fn rm_script(
     if let Some((_, after_arrow)) = source.split_once("<-") {
         let list_text = after_arrow.trim();
         let arr = parse_nested_lists(list_text)?;
-        let table = infer_table(&cols, None);
-        let pk = cols.first().cloned().unwrap_or_default();
+        let key_col = cols.first().cloned().unwrap_or_default();
+        let table = match infer_table_by_key(&key_col) {
+            Some(t) => t.to_string(),
+            None => infer_table(&cols, None),
+        };
+        let pk = key_col;
         // Flatten the outer array: each row is a single column.
         let strs: Vec<String> = arr
             .into_iter()
@@ -1990,7 +2552,21 @@ pub fn map_row(
     head: &[String],
 ) -> Result<Vec<DataValue>, Box<dyn std::error::Error>> {
     let mut out = Vec::with_capacity(head.len());
-    for (i, _col) in head.iter().enumerate() {
+    for (i, col) in head.iter().enumerate() {
+        // JSONB columns: bind through the serde_json feature so the jsonb
+        // value round-trips (cozo stored the JSON as a string; the value
+        // becomes DataValue::Json / Str of the canonical jsonb text).
+        if JSONB_COLUMNS.contains(&col.as_str()) {
+            // Cozo stored the JSON as a *string*; consumers read it with
+            // `get_str()`. Return the canonical jsonb text (e.g. `{}` for
+            // an empty object) so the DataValue shape matches cozo.
+            let v: DataValue = match row.try_get::<_, Option<serde_json::Value>>(i) {
+                Ok(Some(j)) => DataValue::Str(serde_json::to_string(&j).unwrap_or_default().into()),
+                _ => DataValue::Null,
+            };
+            out.push(v);
+            continue;
+        }
         // Try the most likely postgres types in order, falling back to Null.
         let v: DataValue = if let Ok(s) = row.try_get::<_, Option<String>>(i) {
             match s {
@@ -2015,18 +2591,6 @@ pub fn map_row(
         } else if let Ok(b) = row.try_get::<_, Option<bool>>(i) {
             match b {
                 Some(b) => DataValue::Bool(b),
-                None => DataValue::Null,
-            }
-        } else if let Ok(jt) = row.try_get::<_, Option<String>>(i) {
-            // JSONB round-trips as text here. Try to parse as JSON; fall
-            // back to a Str (the original string) if parsing fails (e.g.
-            // the row was already a plain text column we somehow didn't
-            // match above).
-            match jt {
-                Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
-                    Ok(j) => DataValue::from(j),
-                    Err(_) => DataValue::Str(s.into()),
-                },
                 None => DataValue::Null,
             }
         } else {
@@ -2531,4 +3095,239 @@ mod tests {
         }
         assert!(gucs.is_empty(), "embedding_state must not surface GUCs");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — additional shapes (multi-rule count, head alias, :put $args,
+// key-only rm, attr-binding read).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_rule_count_distinct() {
+    // H6/G88: `files[f] := *code_elements[...]; ?[count(f)] := files[f]`
+    let t = translate(
+        "files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j, k]\n?[count(f)] := files[f]",
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql.contains("count(DISTINCT \"file_path\")"),
+        "got: {}",
+        t.sql
+    );
+    assert!(t.sql.contains("FROM code_elements"), "got: {}", t.sql);
+    assert_eq!(t.head, vec!["count(f)"]);
+}
+
+#[test]
+fn head_alias_span_select() {
+    // G107: `span = line_end - line_start` head alias + `:order -span`.
+    let t = translate(
+        r#"?[qualified_name, file_path, line_end, line_start, language, name, span] := *code_elements[qualified_name, et, name, file_path, line_start, line_end, language, _, _, _, _], line_end >= 0, line_start >= 0, (line_end - line_start) >= 5, et in ["function", "struct"], span = line_end - line_start:order -span"#,
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql.contains("\"line_end\" - \"line_start\" AS \"span\""),
+        "got: {}",
+        t.sql
+    );
+    assert!(t.sql.contains("ORDER BY \"span\" DESC"), "got: {}", t.sql);
+    // The definition clause must NOT appear in WHERE (no alias column).
+    assert!(!t.sql.contains("WHERE \"span\""), "got: {}", t.sql);
+}
+
+#[test]
+fn put_object_args() {
+    // CH2: `:put index_hashes {path, hash} <- $args` with an object param.
+    let mut p = BTreeMap::new();
+    p.insert("path".into(), serde_json::json!("a.rs"));
+    p.insert("hash".into(), serde_json::json!("h1"));
+    let t = translate(
+        r#"?[path, hash] <- [[$path, $hash]] :put index_hashes {path => hash}"#,
+        p,
+    )
+    .unwrap();
+    assert!(t.sql.contains("INSERT INTO index_hashes"), "got: {}", t.sql);
+    assert!(
+        t.sql.contains("ON CONFLICT (\"path\")"),
+        "index_hashes is keyed by path: got: {}",
+        t.sql
+    );
+    assert_eq!(t.params.len(), 2, "path+hash bound, not interpolated");
+}
+
+#[test]
+fn put_object_args_missing_param_is_noop() {
+    // Missing params → the literal row is all-null; still a valid write.
+    let t = translate(
+        r#"?[path, hash] <- [[$path, $hash]] :put index_hashes {path => hash}"#,
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert_eq!(t.kind, TranslationKind::Write);
+    assert!(t.sql.contains("INSERT INTO index_hashes"), "got: {}", t.sql);
+}
+
+#[test]
+fn rm_key_only_infers_table() {
+    // `:rm embedding_vectors {qualified_name}` — key-only delete on a
+    // keyed table; the table name must be inferred from the key column.
+    let t = translate(
+        r#"?[qualified_name] <- [["a"], ["b"]] :rm embedding_vectors {qualified_name}"#,
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql
+            .contains("DELETE FROM embedding_vectors WHERE \"qualified_name\" = ANY($1::text[])"),
+        "got: {}",
+        t.sql
+    );
+}
+
+#[test]
+fn read_attr_binding_syntax() {
+    // Risk note 8: `*relation{col = $x, ...}` attribute-binding sugar.
+    let mut p = BTreeMap::new();
+    p.insert("svc".into(), serde_json::json!("my-service"));
+    p.insert("env".into(), serde_json::json!("prod"));
+    let t = translate(
+        "?[service_name, env] := *service_metadata{service_name, env, team}, service_name == $svc, env == $env",
+        p,
+    )
+    .unwrap();
+    assert!(t.sql.contains("FROM service_metadata"), "got: {}", t.sql);
+    assert!(
+        t.sql.contains("WHERE \"service_name\" = $1"),
+        "got: {}",
+        t.sql
+    );
+    assert_eq!(t.head, vec!["service_name", "env"]);
+}
+
+#[test]
+fn query_cache_attr_binding_read() {
+    // P2: `*query_cache[cache_key = $key, value_json, created_at, ttl_seconds]`.
+    let mut p = BTreeMap::new();
+    p.insert("key".into(), serde_json::json!("k1"));
+    let t = translate(
+        "?[value_json, created_at, ttl_seconds] := *query_cache[cache_key = $key, value_json, created_at, ttl_seconds]",
+        p,
+    )
+    .unwrap();
+    assert!(t.sql.contains("FROM query_cache"), "got: {}", t.sql);
+}
+
+#[test]
+fn rm_rule_based_with_table_prefix_and_params() {
+    // Rule-based :rm with table-prefixed target AND bound params
+    // (remove_relationships_by_source shape).
+    let mut p = BTreeMap::new();
+    p.insert("sq".into(), serde_json::json!("src/a.rs::f"));
+    let t = translate(
+        "?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified = $sq :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}",
+        p,
+    )
+    .unwrap();
+    assert!(
+        t.sql
+            .contains("DELETE FROM relationships WHERE \"source_qualified\" = $1"),
+        "got: {}",
+        t.sql
+    );
+    assert_eq!(t.params.len(), 1, "param must be bound, not lost");
+}
+
+#[test]
+fn rm_rule_based_in_list_params() {
+    // remove_relationships_by_files_bulk shape: `in $sqs`.
+    let mut p = BTreeMap::new();
+    p.insert(
+        "sqs".into(),
+        serde_json::json!(["src/a.rs::f", "src/b.rs::g"]),
+    );
+    let t = translate(
+        "?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified in $sqs :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}",
+        p,
+    )
+    .unwrap();
+    assert!(
+        t.sql
+            .contains("DELETE FROM relationships WHERE \"source_qualified\" = ANY($1::text[])"),
+        "got: {}",
+        t.sql
+    );
+}
+
+#[test]
+fn rm_literal_key_only_with_table_prefix() {
+    // `:rm embedding_vectors {qualified_name}` (build.rs remove_vectors).
+    let t = translate(
+        r#"?[qualified_name] <- [["a"], ["b"]] :rm embedding_vectors {qualified_name}"#,
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql
+            .contains("DELETE FROM embedding_vectors WHERE \"qualified_name\" = ANY($1::text[])"),
+        "got: {}",
+        t.sql
+    );
+}
+
+#[test]
+fn put_embedding_vectors_maps_vector_to_vec() {
+    // B1 — put_pairs_to_db_script shape: cozo `vector` col → PG `vec`.
+    let t = translate(
+        r#"?[qualified_name, vector] <- [["a", vec([1.0, 0.0, 0.0])]] :put embedding_vectors {qualified_name => vector}"#,
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql
+            .contains("INSERT INTO embedding_vectors (\"qualified_name\", \"vec\")"),
+        "got: {}",
+        t.sql
+    );
+    assert!(
+        t.sql.contains("ON CONFLICT (\"qualified_name\")"),
+        "got: {}",
+        t.sql
+    );
+    assert!(
+        t.sql.contains("\"vec\" = EXCLUDED.\"vec\""),
+        "got: {}",
+        t.sql
+    );
+}
+
+#[test]
+fn regex_matches_param_wrapped_in_lowercase_binds() {
+    let mut p = BTreeMap::new();
+    p.insert("pattern".into(), serde_json::json!("^foo"));
+    let t = translate(
+        "?[a] := *t[a, b], regex_matches(lowercase(b), lowercase($pattern))",
+        p,
+    )
+    .unwrap();
+    assert!(
+        t.sql.contains("lower($1)"),
+        "param must bind through the lowercase wrapper: got: {}",
+        t.sql
+    );
+    assert_eq!(t.params.len(), 1, "pattern must be a bound param");
+}
+
+#[test]
+fn str_contains_param_wrapped_in_lowercase_binds() {
+    let mut p = BTreeMap::new();
+    p.insert("pattern".into(), serde_json::json!("needle"));
+    let t = translate(
+        "?[a] := *t[a, b], str_contains(lowercase(b), lowercase($pattern))",
+        p,
+    )
+    .unwrap();
+    assert!(t.sql.contains("lower($1)"), "got: {}", t.sql);
+    assert_eq!(t.params.len(), 1);
 }

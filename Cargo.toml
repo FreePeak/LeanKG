@@ -164,7 +164,9 @@ redis = { version = "0.27", features = ["aio", "tokio-comp"] }
 # PostgreSQL client for the pg backend (plan D1 nominates sqlx; translator
 # phase picks the client — keeping postgres 0.19 which the Phase 0 spike
 # already uses, so no new dependency is added for Phase 2).
-postgres = "0.19"
+# `with-serde_json-1` gives `postgres::types::Json<T>` + `serde_json::Value`
+# ToSql/FromSql for the JSONB columns (metadata/tags/members/...).
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
