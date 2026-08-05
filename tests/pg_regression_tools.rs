@@ -456,6 +456,15 @@ fn normalize(v: &mut Value) {
                     map.insert(k.to_string(), Value::String("<volatile>".into()));
                 }
             }
+            // review_prompt (get_review_context) embeds per-file element
+            // lists in DB row order — cozo store order vs PG planner order
+            // differ run-to-run though the content is identical. Sort its
+            // lines so the comparison is order-independent.
+            if let Some(Value::String(p)) = map.get_mut("review_prompt") {
+                let mut lines: Vec<&str> = p.lines().collect();
+                lines.sort();
+                *p = lines.join("\n");
+            }
             for val in map.values_mut() {
                 normalize(val);
             }
