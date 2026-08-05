@@ -30,7 +30,7 @@ services:
     environment:
       LEANKG_PG_URL: postgresql://postgres:postgres@postgres:5432/leankg
       MCP_HTTP_PORT: "9699"
-      LEANKG_AUTO_INDEX: "1"
+      LEANKG_AUTO_INDEX: "0"
       LEANKG_EMBED_ON_BOOT: "0"
       LEANKG_EMBED_BACKGROUND: "0"
       LEANKG_EMBED_FAST: "1"

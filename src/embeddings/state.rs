@@ -102,6 +102,18 @@ const CREATE_EMBEDDING_VECTORS: &str =
 pub fn drop_hnsw_index(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // LEANKG_EMBED_KEEP_HNSW=1 skips the drop so a bulk embed keeps the index
+    // live. Rationale: dropping the index then letting the PG pool re-create
+    // it on every connection (`ensure_embedding_state_table`) makes N
+    // concurrent `CREATE INDEX IF NOT EXISTS` build the full HNSW graph and
+    // deadlock the writer at ~170k rows. Keeping the index pays per-insert
+    // HNSW maintenance but avoids the rebuild race entirely.
+    if std::env::var("LEANKG_EMBED_KEEP_HNSW")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "on"))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
     let _ = db.run_script("::hnsw drop embedding_vectors:vec_idx", Default::default());
     Ok(())
 }
@@ -480,7 +492,7 @@ mod tests {
     fn row_to_state_row_parses_valid_row() {
         let row = vec![
             crate::db::backend::DataValue::Str("qn".into()),
-            crate::db::backend::DataValue::Num(crate::db::backend::Num::Int(5)),
+            crate::db::backend::DataValue::Num(crate::db::value::Num::Int(5)),
             crate::db::backend::DataValue::Str("hash".into()),
             crate::db::backend::DataValue::Str("stale".into()),
             crate::db::backend::DataValue::Str("999".into()),
@@ -504,7 +516,7 @@ mod tests {
         // Only 2 columns instead of 5 — missing fields.
         let row = vec![
             crate::db::backend::DataValue::Str("qn".into()),
-            crate::db::backend::DataValue::Num(crate::db::backend::Num::Int(5)),
+            crate::db::backend::DataValue::Num(crate::db::value::Num::Int(5)),
         ];
         assert!(row_to_state_row(&row).is_none());
     }

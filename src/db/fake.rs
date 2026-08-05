@@ -67,6 +67,14 @@ fn table_columns(rel: &str) -> Option<&'static [&'static str]> {
             "estimated_hnsw_bytes",
             "notes",
         ],
+        "embedding_state" => &[
+            "qualified_name",
+            "usearch_key",
+            "content_hash",
+            "state",
+            "embedded_at",
+        ],
+        "embedding_vectors" => &["qualified_name", "vector"],
         _ => return None,
     })
 }

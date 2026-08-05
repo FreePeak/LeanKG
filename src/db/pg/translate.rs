@@ -859,8 +859,10 @@ fn resolve_filter_aliases(relation: &str, filters: &str, rel_cols: &[String]) ->
         for b in &boundaries {
             let pat = format!("{b}{alias} ");
             let pat2 = format!("{b}{alias}[");
+            let pat3 = format!("{b}{alias},"); // `regex_matches(tgt, ...)`
             out = out.replace(&pat, &format!("{b}{real} "));
             out = out.replace(&pat2, &format!("{b}{real}["));
+            out = out.replace(&pat3, &format!("{b}{real},"));
         }
         // Start-of-string boundary: `qn in $qns` where `qn` is the first
         // token (leading comma already stripped). Require a word boundary
@@ -2973,10 +2975,20 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
 
 fn relations_introspection() -> Translation {
     // `::relations` returns relation names. Mirror with information_schema.
+    // Also include index names (cozo-style `table:idx` mapping via the known
+    // translator naming: `::hnsw create embedding_vectors:vec_idx` emits
+    // `embedding_vectors_vec_hnsw_idx`). Including them lets
+    // `ensure_embedding_state_table`'s `existing.contains("embedding_vectors:
+    // vec_idx")` check succeed instead of permanently re-running CREATE INDEX.
     Translation::read(
-        "SELECT table_name AS name FROM information_schema.tables \
-         WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' \
-         ORDER BY table_name"
+        "SELECT name FROM ( \
+            SELECT table_name AS name FROM information_schema.tables \
+            WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' \
+            UNION ALL \
+            SELECT CASE WHEN indexname LIKE '%\\_vec\\_hnsw\\_idx' \
+                THEN tablename || ':vec_idx' ELSE indexname END AS name \
+            FROM pg_indexes WHERE schemaname = current_schema() \
+        ) t ORDER BY name"
             .to_string(),
         Vec::new(),
         vec!["name".to_string()],
@@ -3273,6 +3285,29 @@ mod tests {
         p.insert("pat".into(), serde_json::json!("^foo"));
         let t = translate("?[qn] := *t[qn, fp], regex_matches(fp, $pat)", p).unwrap();
         assert!(t.sql.contains("~ $1"), "got: {}", t.sql);
+    }
+
+    #[test]
+    fn relationships_alias_regex_matches_resolves_tgt() {
+        // get_callers uses positional aliases `*relationships[src, tgt, ...]`
+        // and filters on `regex_matches(tgt, ...)`. The `tgt` alias (position
+        // 1) must resolve to `target_qualified` even when followed by `,`
+        // inside the regex_matches call — a `column "tgt" does not exist` bug.
+        let t = translate(
+            "?[src, tgt, rel_type, conf, meta] := *relationships[src, tgt, rel_type, conf, meta, _], regex_matches(tgt, \".*main.*\") :limit 5",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(
+            t.sql.contains("target_qualified"),
+            "tgt alias not resolved to target_qualified: got: {}",
+            t.sql
+        );
+        assert!(
+            !t.sql.contains("\"tgt\""),
+            "raw tgt column leaked: got: {}",
+            t.sql
+        );
     }
 
     #[test]
