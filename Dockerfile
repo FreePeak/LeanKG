@@ -12,10 +12,17 @@ ENV CARGO_BUILD_JOBS=1 \
     RUSTFLAGS="-C debuginfo=0" \
     CARGO_TERM_COLOR=always
 
-# Deb.debian.org is unreachable from some build networks (IPv6 routing);
-# ftp.debian.org is a working mirror. Pin apt to it.
-RUN printf 'Types: deb\nURIs: http://ftp.debian.org/debian\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
+# Deb.debian.org / ftp.debian.org (Fastly CDN) are unreachable from some build
+# networks. ftp.us.debian.org is on a different network and is reachable.
+# Sources file in its own RUN (heredoc must end the instruction).
+RUN cat > /etc/apt/sources.list.d/debian.sources <<'EOF'
+Types: deb
+URIs: http://ftp.us.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         clang \
         libclang-dev \
@@ -41,8 +48,14 @@ FROM debian:bookworm-slim AS runtime
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-RUN printf 'Types: deb\nURIs: http://ftp.debian.org/debian\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
+RUN cat > /etc/apt/sources.list.d/debian.sources <<'EOF'
+Types: deb
+URIs: http://ftp.us.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
