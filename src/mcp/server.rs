@@ -910,6 +910,8 @@ impl MCPServer {
             rss_fraction: 0.0,
             project_path: None,
             write_vectors: crate::embeddings::write_vectors_enabled(),
+            summary_primary_enabled: true,
+            summary_primary_cap: None,
         }
     }
 
@@ -1180,6 +1182,8 @@ impl MCPServer {
                     rss_fraction,
                     project_path: project_path.clone(),
                     write_vectors: crate::embeddings::write_vectors_enabled(),
+                    summary_primary_enabled: true,
+                    summary_primary_cap: None,
                 };
                 crate::embeddings::control::clear_cancel();
                 crate::embeddings::arm_embed(cfg);
@@ -1537,6 +1541,8 @@ impl MCPServer {
             rss_fraction: 0.0,
             project_path: None,
             write_vectors: crate::embeddings::write_vectors_enabled(),
+            summary_primary_enabled: true,
+            summary_primary_cap: None,
         };
         // Optional LEANKG_EMBED_BACKGROUND_PARTIAL override (advanced).
         let cfg = if let Ok(p) = std::env::var("LEANKG_EMBED_BACKGROUND_PARTIAL") {
@@ -4140,6 +4146,8 @@ mod tests {
             rss_fraction: 0.0,
             project_path: None,
             write_vectors: crate::embeddings::write_vectors_enabled(),
+            summary_primary_enabled: true,
+            summary_primary_cap: None,
         };
         assert!(cfg.partial);
         // Override: FULL=1 flips partial=false, then PARTIAL=1 forces it back.

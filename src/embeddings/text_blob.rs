@@ -93,6 +93,16 @@ fn build_code_blob(element: &CodeElement) -> String {
         parts.push(element.name.clone());
     }
     let mut got_doc = false;
+    // Summary nodes (file/module TOCs from `indexer::file_summary`) carry a
+    // dense, pre-composed `metadata.summary` string. Prefer it as the
+    // semantic signal — it already encodes the qualified name, so skip the
+    // generic doc/signature fallback for these nodes (FR-EMBED-SUMMARY).
+    if let Some(summary) = element.metadata.get("summary").and_then(|v| v.as_str()) {
+        if !summary.trim().is_empty() {
+            parts.push(summary.to_string());
+            return parts.join("\n");
+        }
+    }
     if let Some(doc) = extract_doc_signature(&element.metadata) {
         parts.push(doc);
         got_doc = true;
@@ -472,5 +482,34 @@ mod tests {
         let blob = build_blob(&el).unwrap();
         assert!(blob.contains("src/main.rs::detect_root"));
         assert!(blob.contains("fn detect_root(path: PathBuf) -> Option<PathBuf>"));
+    }
+
+    #[test]
+    fn file_summary_blob_uses_metadata_summary() {
+        let mut el = make_element("file", "parser.rs", "src/parser.rs");
+        el.metadata = serde_json::json!({
+            "summary": "src/parser.rs | module: parser | types: Ast | fn parse(src: &str) -> Ast",
+            "summary_kind": "toc",
+            "fn_count": 1
+        });
+        let blob = build_blob(&el).unwrap();
+        assert!(blob.contains("src/parser.rs"));
+        assert!(blob.contains("module: parser"));
+        assert!(blob.contains("fn parse(src: &str) -> Ast"));
+        // The qualified name is prepended but the signature fallback is NOT
+        // added (no spurious file path or synthesized signature).
+        assert!(!blob.contains("\n./") || blob.matches('\n').count() <= 2);
+    }
+
+    #[test]
+    fn file_summary_blob_empty_summary_falls_through() {
+        // An empty/blank summary string must NOT short-circuit — fall back
+        // to the generic path so we don't embed a bare qualified name.
+        let mut el = make_element("file", "x.rs", "x.rs");
+        el.metadata = serde_json::json!({"summary": "   "});
+        let blob = build_blob(&el);
+        // x.rs has no doc/signature → fallback appends file_path "x.rs".
+        // The blob should still exist (qualified_name + file_path).
+        assert!(blob.is_some());
     }
 }

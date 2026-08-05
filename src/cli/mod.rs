@@ -410,6 +410,20 @@ pub enum CLICommand {
         /// touching PG). Equivalent to `LEANKG_EMBED_WRITE_VECTORS=0`.
         #[arg(long)]
         no_vectors: bool,
+        /// FR-EMBED-SUMMARY: GraphRAG-style summary-primary embedding. When
+        /// enabled, per-function vectors are skipped for files above
+        /// `--summary-primary-cap` lines (default 500) — the file-summary
+        /// node carries the signal via its `contains` edges instead. Cuts
+        /// inference ~3–8× on large codebases. Values: `on` | `off` | `auto`
+        /// (auto = enabled when the graph exceeds 50k elements). Default
+        /// `auto`. Env: `LEANKG_EMBED_SUMMARY_PRIMARY`.
+        #[arg(long, default_value = "auto")]
+        summary_primary: String,
+        /// Source-line cap above which a file is summary-only under
+        /// `--summary-primary`. Default 500. Env:
+        /// `LEANKG_EMBED_SUMMARY_PRIMARY_CAP`.
+        #[arg(long)]
+        summary_primary_cap: Option<u32>,
     },
     /// One-shot embedding retrieval for CLI testing (requires
     /// --features embeddings). Useful for validating the retrieve→rerank→

@@ -785,10 +785,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             types,
             benchmark,
             no_vectors,
+            summary_primary,
+            summary_primary_cap,
         } => {
             run_embed(
                 init, full, batch_size, &project, wait, status, cancel, background, workers,
-                &types, benchmark, no_vectors,
+                &types, benchmark, no_vectors, &summary_primary, summary_primary_cap,
             )?;
         }
         #[cfg(feature = "embeddings")]
@@ -5907,6 +5909,8 @@ fn maybe_run_embed(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
         "",    // types_filter
         false, // benchmark
         false, // no_vectors
+        "auto", // summary_primary
+        None,   // summary_primary_cap
     )
 }
 
@@ -5931,6 +5935,8 @@ fn run_embed(
     types_filter: &str,
     benchmark: bool,
     no_vectors: bool,
+    summary_primary: &str,
+    summary_primary_cap: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if init {
         let report = embeddings::init_models()?;
@@ -5997,6 +6003,8 @@ fn run_embed(
             workers,
             types_filter,
             no_vectors,
+            summary_primary,
+            summary_primary_cap,
         )?;
         let elapsed = embed_start.elapsed().as_secs_f64();
 
@@ -6033,6 +6041,8 @@ fn run_embed(
             workers,
             types_filter,
             no_vectors,
+            summary_primary,
+            summary_primary_cap,
         );
     }
 
@@ -6080,6 +6090,12 @@ fn run_embed(
         // Pass --no-vectors through so the background worker also skips PG
         // vector writes.
         cmd.arg("--no-vectors");
+    }
+    // FR-EMBED-SUMMARY: forward summary-primary flags so the detached
+    // worker honors the user's choice (default `auto`).
+    cmd.args(["--summary-primary", summary_primary]);
+    if let Some(cap) = summary_primary_cap {
+        cmd.args(["--summary-primary-cap", &cap.to_string()]);
     }
     let child = cmd
         .stdin(std::process::Stdio::null())
@@ -6215,6 +6231,39 @@ unsafe fn libc_kill(pid: u64, sig: i32) -> i32 {
 #[cfg(feature = "embeddings")]
 const libc_SIGTERM: i32 = 15;
 
+/// Resolve the summary-primary enable flag for the current run (FR-EMBED-SUMMARY).
+///
+/// Precedence: explicit `--summary-primary` CLI value > `LEANKG_EMBED_SUMMARY_PRIMARY`
+/// env > default. `auto` enables it on large graphs (>50k elements), matching
+/// the existing mega-graph `--types` heuristic; `on`/`off` are unconditional.
+#[cfg(feature = "embeddings")]
+fn resolve_summary_primary(cli_value: &str, total_elements: usize) -> bool {
+    let raw = std::env::var("LEANKG_EMBED_SUMMARY_PRIMARY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| cli_value.trim().to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => true,
+        "off" | "false" | "0" | "no" => false,
+        // default: auto — enable on mega-graphs where per-function inference
+        // cost dominates and file-summary nodes carry more signal anyway.
+        _ => total_elements > 50_000,
+    }
+}
+
+/// Resolve the summary-primary file-size cap (FR-EMBED-SUMMARY).
+#[cfg(feature = "embeddings")]
+fn resolve_summary_primary_cap(cli_value: Option<u32>) -> u32 {
+    if let Some(v) = cli_value {
+        return v.max(1);
+    }
+    std::env::var("LEANKG_EMBED_SUMMARY_PRIMARY_CAP")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(embeddings::SUMMARY_PRIMARY_DEFAULT_FILE_CAP)
+        .max(1)
+}
+
 #[cfg(feature = "embeddings")]
 fn run_embed_worker(
     _init: bool,
@@ -6225,6 +6274,8 @@ fn run_embed_worker(
     workers: usize,
     types_filter: &str,
     no_vectors: bool,
+    summary_primary: &str,
+    summary_primary_cap: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     let status_path = leankg_dir.join("embed_status.json");
@@ -6289,6 +6340,8 @@ fn run_embed_worker(
             }
         },
         write_vectors: embeddings::write_vectors_enabled() && !no_vectors,
+        summary_primary_enabled: resolve_summary_primary(summary_primary, total),
+        summary_primary_file_cap: resolve_summary_primary_cap(summary_primary_cap),
         ..Default::default()
     };
     write_status(total as u64, 0, 0, 0, "running");

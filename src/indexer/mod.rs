@@ -37,6 +37,7 @@ pub mod kotlin_utils;
 pub mod lang;
 pub mod maven_extractor;
 pub mod viewmodel_repository;
+pub mod file_summary;
 pub mod xml_generic;
 pub mod xml_layout;
 
@@ -948,6 +949,16 @@ pub fn index_files_parallel_with_typed_resolve(
     all_elements.extend(process_result.process_elements);
     all_relationships.extend(process_result.process_relationships);
 
+    // GraphRAG-style summary nodes: one "file" node per source file (plus a
+    // cross-file "module" node per package) carrying a deterministic
+    // table-of-contents blob. This is the embed granularity for large
+    // codebases (see `file_summary` module docs + FR-EMBED-SUMMARY). Existing
+    // bare "file" nodes (swift/objc/sql) are enriched in place; files without
+    // any "file" node get a new one. Bridge `contains` edges connect the
+    // summary node to its top-level declarations so the retrieval downward
+    // traversal can expand a file hit into its functions.
+    synthesize_summary_nodes(&mut all_elements, &mut all_relationships, verbose);
+
     if verbose {
         eprintln!("Detecting frameworks...");
     }
@@ -1059,6 +1070,153 @@ pub fn index_files_parallel_with_typed_resolve(
     }
 
     Ok(total)
+}
+
+/// Synthesize per-file and per-module summary nodes into the element set.
+///
+/// For each `file_path` group:
+/// 1. If a bare `"file"` node already exists (swift/objc/sql/sfc), it is
+///    enriched in place with a `metadata.summary` table-of-contents blob.
+/// 2. Otherwise a new `"file"` summary node is appended.
+/// 3. Bridge `contains` edges connect the summary node to each top-level
+///    function/type so the retrieval downward traversal can reach them.
+///
+/// Then one cross-file `"module"` summary node is emitted per declared
+/// package (when ≥2 files share it), aggregating their exported-symbol
+/// counts. Files without a declared module are skipped at the module level.
+///
+/// See `src/indexer/file_summary.rs` and `docs/prd.md` FR-EMBED-SUMMARY.
+fn synthesize_summary_nodes(
+    all_elements: &mut Vec<CodeElement>,
+    all_relationships: &mut Vec<Relationship>,
+    verbose: bool,
+) {
+    use std::collections::HashMap;
+
+    if all_elements.is_empty() {
+        return;
+    }
+
+    // --- Phase 1: collect all data needed into owned structures (no borrows
+    // into all_elements survive past this phase). ---
+    //
+    // Per-file bundle: language + the declared module name (if any) + the
+    // index of the existing "file" node (if any) + the owned child elements
+    // we will summarize from. Cloning the child elements is the price of
+    // avoiding a borrow conflict — these are small structs and this is a
+    // one-pass, index-time cost.
+    struct FileBundle {
+        language: String,
+        module_name: Option<String>,
+        existing_file_idx: Option<usize>,
+        children: Vec<CodeElement>,
+    }
+
+    let mut bundles: HashMap<String, FileBundle> = HashMap::new();
+    for (i, el) in all_elements.iter().enumerate() {
+        let entry = bundles
+            .entry(el.file_path.clone())
+            .or_insert_with(|| FileBundle {
+                language: String::new(),
+                module_name: None,
+                existing_file_idx: None,
+                children: Vec::new(),
+            });
+        if entry.language.is_empty() {
+            entry.language = el.language.clone();
+        }
+        if el.element_type == "file" {
+            // Record the existing file node's position; do NOT summarize it.
+            entry.existing_file_idx = Some(i);
+            continue;
+        }
+        if el.element_type == "document" {
+            continue;
+        }
+        if (el.element_type == "module" || el.element_type == "package")
+            && !el.name.is_empty()
+            && entry.module_name.is_none()
+        {
+            entry.module_name = Some(el.name.clone());
+        }
+        entry.children.push(el.clone());
+    }
+
+    // Build file-summary nodes.
+    let mut in_place_updates: Vec<(usize, CodeElement)> = Vec::new();
+    let mut new_file_summaries: Vec<CodeElement> = Vec::new();
+    // Map file_path -> its (now-built) file-summary node, for module aggregation.
+    let mut file_summary_by_path: HashMap<String, CodeElement> = HashMap::new();
+    let mut new_edges: Vec<Relationship> = Vec::new();
+
+    for (file_path, bundle) in &bundles {
+        let refs: Vec<&CodeElement> = bundle.children.iter().collect();
+        let existing = bundle
+            .existing_file_idx
+            .and_then(|_| all_elements.get(bundle.existing_file_idx.unwrap()));
+        let summary = crate::indexer::file_summary::build_file_summary(
+            file_path,
+            &bundle.language,
+            &refs,
+            existing,
+        );
+
+        let edges = crate::indexer::file_summary::file_summary_contains_edges(
+            &summary.qualified_name,
+            &refs,
+        );
+        new_edges.extend(edges);
+
+        if let Some(idx) = bundle.existing_file_idx {
+            in_place_updates.push((idx, summary.clone()));
+        } else {
+            new_file_summaries.push(summary.clone());
+        }
+        file_summary_by_path.insert(file_path.clone(), summary);
+    }
+
+    // Build module-level summaries by grouping file-summary nodes on
+    // (language, module_name).
+    let mut module_groups: HashMap<(String, String), Vec<CodeElement>> = HashMap::new();
+    for (file_path, bundle) in &bundles {
+        if let Some(mod_name) = &bundle.module_name {
+            if let Some(fs) = file_summary_by_path.get(file_path) {
+                module_groups
+                    .entry((bundle.language.clone(), mod_name.clone()))
+                    .or_default()
+                    .push(fs.clone());
+            }
+        }
+    }
+    let mut module_summaries: Vec<CodeElement> = Vec::new();
+    for ((language, mod_name), file_summaries) in &module_groups {
+        if file_summaries.len() < 2 {
+            continue; // single-file module: the file summary already suffices
+        }
+        let refs: Vec<&CodeElement> = file_summaries.iter().collect();
+        if let Some(module_node) =
+            crate::indexer::file_summary::build_module_summary(mod_name, language, &refs)
+        {
+            module_summaries.push(module_node);
+        }
+    }
+
+    let file_count = in_place_updates.len() + new_file_summaries.len();
+    let module_count = module_summaries.len();
+
+    // --- Phase 2: apply all mutations now that phase-1 borrows are gone. ---
+    for (idx, el) in in_place_updates {
+        all_elements[idx] = el;
+    }
+    all_elements.extend(new_file_summaries);
+    all_elements.extend(module_summaries);
+    all_relationships.extend(new_edges);
+
+    if verbose && (file_count > 0 || module_count > 0) {
+        eprintln!(
+            "  Synthesized {file_count} file-summary nodes and {module_count} module-summary nodes"
+        );
+    }
 }
 
 pub fn index_file_sync(
