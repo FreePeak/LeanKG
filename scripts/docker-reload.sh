@@ -32,7 +32,7 @@ fi
 echo ""
 
 # Compose files to merge
-COMPOSE_BASE="docker-compose.rocksdb.yml"
+COMPOSE_BASE="docker-compose.yml"
 COMPOSE_OVERRIDE="docker-compose.override.yml"
 ENV_FILE=".dockerfile"
 

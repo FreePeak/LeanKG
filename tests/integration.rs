@@ -1,7 +1,6 @@
 // Integration tests requiring filesystem, async, or SurrealDB
 
 use leankg::db::backend::init_db;
-use leankg::db::get_elements_by_env;
 use leankg::doc::DocGenerator;
 use leankg::graph::{GraphEngine, ImpactAnalyzer};
 use leankg::indexer::{find_files_sync, index_file_sync, ParserManager};

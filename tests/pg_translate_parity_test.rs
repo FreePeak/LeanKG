@@ -233,7 +233,7 @@ fn parity_aggregate_order_neg() {
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "g.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"], ["c", "struct", "S", "h.rs", 3, 3, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
     ];
-    let res = assert_read(
+    let _res = assert_read(
         &pg,
         &setup,
         "?[element_type, count(element_type)] := *code_elements[_, element_type, _, _, _, _, _, _, _, _, _, _, _] :order -count(element_type)",
@@ -253,7 +253,7 @@ fn parity_not_exists_orphans() {
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["real", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
         r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [["real", 0, "h", "fresh", "now"], ["orphan", 0, "h", "fresh", "now"]] :put embedding_state {qualified_name => usearch_key, content_hash, state, embedded_at}"#,
     ];
-    let res = assert_read(
+    let _res = assert_read(
         &pg,
         &setup,
         "?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at], not *code_elements[qualified_name, _, _, _, _, _, _, _, _, _, _, _, _]",
@@ -358,7 +358,7 @@ fn parity_regex_filter() {
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "ontology://x", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "src/x.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
     ];
-    let res = assert_read(
+    let _res = assert_read(
         &pg,
         &setup,
         "?[qualified_name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], regex_matches(file_path, \"^ontology://\")",
@@ -376,7 +376,7 @@ fn parity_limit_offset() {
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "g.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"], ["c", "function", "f", "h.rs", 3, 3, "rust", null, null, null, "{}", "local", "procedural"], ["d", "function", "f", "i.rs", 4, 4, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
     ];
-    let res = assert_read(
+    let _res = assert_read(
         &pg,
         &setup,
         "?[qualified_name] := *code_elements[qualified_name, _, _, _, _, _, _, _, _, _, _, _, _] :limit 2 :offset 1",

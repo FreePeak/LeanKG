@@ -35,7 +35,6 @@ pub use layout3d::*;
 #[allow(unused_imports)]
 pub use nl_query::{QueryGraphEdge, QueryGraphNode, QueryGraphResult};
 #[allow(unused_imports)]
-#[allow(unused_imports)]
 pub use planner::*;
 #[allow(unused_imports)]
 pub use query::*;

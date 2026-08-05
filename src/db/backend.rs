@@ -12,7 +12,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 /// Re-export the row/result value types the rest of the codebase consumes
 /// positionally (`row[0].get_str()`, `NamedRows::new`, `DataValue::Num`).
-pub use crate::db::value::{DataValue, NamedRows, Num};
+pub use crate::db::value::{DataValue, NamedRows};
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
 /// `GraphEngine` share ONE underlying backend (one PG pool).
@@ -881,13 +881,15 @@ fn redact_url(url: &str) -> String {
 /// schema (see [`test_scratch_schema`]): unit tests call `init_db` with a
 /// temp path and get a real, isolated Postgres schema in the dev container
 /// instead of the pre-migration sqlite shim.
-pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+pub fn init_db(_db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
     #[cfg(test)]
     {
-        return test_init_db(db_path);
+        return test_init_db(_db_path);
     }
-    let _ = db_path;
-    init_db_pg()
+    #[allow(unreachable_code)]
+    {
+        init_db_pg()
+    }
 }
 
 #[cfg(test)]
@@ -972,10 +974,12 @@ fn create_scratch_schema() -> Result<String, Box<dyn std::error::Error>> {
 /// Open a read-only backend (T6.1): `default_transaction_read_only = on` —
 /// writes fail at the Postgres layer instead of the legacy CozoDB RocksDB
 /// same-handle workaround.
-pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+pub fn init_db_readonly(
+    _db_path: &std::path::Path,
+) -> Result<SharedDb, Box<dyn std::error::Error>> {
     #[cfg(test)]
     {
-        let schema = test_scratch_schema(db_path)?;
+        let schema = test_scratch_schema(_db_path)?;
         let url = test_schema_url(&schema)?;
         let mut pg = PostgresBackend::from_env_read_only().unwrap_or_else(|_| PostgresBackend {
             pg_url: test_pg_url(),
@@ -986,13 +990,15 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
         pg.pg_url = url;
         return Ok(Arc::new(pg));
     }
-    let _ = db_path;
-    let pg = PostgresBackend::from_env_read_only()?;
-    tracing::info!(
-        "DB engine = postgres read-only (default_transaction_read_only = on): {}",
-        redact_url(&pg.pg_url)
-    );
-    Ok(Arc::new(pg))
+    #[allow(unreachable_code)]
+    {
+        let pg = PostgresBackend::from_env_read_only()?;
+        tracing::info!(
+            "DB engine = postgres read-only (default_transaction_read_only = on): {}",
+            redact_url(&pg.pg_url)
+        );
+        Ok(Arc::new(pg))
+    }
 }
 
 /// Open a PostgreSQL backend. Fails when `LEANKG_PG_URL` is missing or

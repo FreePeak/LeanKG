@@ -1,4 +1,3 @@
-use leankg::db::backend;
 use leankg::db::{self, backend::init_db, models::Incident};
 use leankg::graph::GraphEngine;
 

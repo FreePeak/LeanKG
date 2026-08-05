@@ -25,7 +25,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use leankg::db::models::CodeElement;
-use leankg::db::schema;
 use leankg::graph::GraphEngine;
 
 fn n_env(name: &str, default: usize) -> usize {

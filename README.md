@@ -102,16 +102,12 @@ curl http://localhost:9699/health
 # Quick-start script (same as above, in one command):
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
 
-# Enterprise (RocksDB in its own `cozoserver` sidecar) — independent scaling,
-# backup orchestration, HA on the storage tier. See docs/enterprise-docker.md.
-docker build -f Dockerfile.cozoserver -t freepeak/cozoserver:latest .
-docker build -f Dockerfile.rocksdb    -t freepeak/leankg:latest     .
-docker compose -f docker-compose.enterprise.yml up -d
+# Postgres is the only storage engine (D4). The lean image runs the HTTP MCP
+# server against a Postgres + pgvector instance:
+docker compose up -d
 ```
 
-Point your MCP client at `http://localhost:9699/mcp`. Multi-project RocksDB mounts: [AGENTS.md](AGENTS.md).
-
-> Published Hub tags currently target `linux/arm64`. On `linux/amd64`, build with `docker compose -f docker-compose.rocksdb.yml up --build`.
+Point your MCP client at `http://localhost:9699/mcp`. See [docs/analysis/pg-migration-report.md](docs/analysis/pg-migration-report.md).
 
 </details>
 
@@ -528,7 +524,7 @@ Full CLI: [docs/cli-reference.md](docs/cli-reference.md)
 | [INSTRUCTION.md](INSTRUCTION.md)                             | Memory tuning & ops playbook                                                               |
 | [docs/roadmap.md](docs/roadmap.md)                           | Roadmap                                                                                    |
 | [AGENTS.md](AGENTS.md)                                       | Agent / Docker deployment notes                                                            |
-| [docs/enterprise-docker.md](docs/enterprise-docker.md)       | Two-container cozoserver + leankg enterprise stack (deploy, sizing, backup, upgrade paths) |
+| [docs/analysis/pg-migration-report.md](docs/analysis/pg-migration-report.md) | Postgres + pgvector migration report (env vars, perf, parity)                    |
 
 ---
 

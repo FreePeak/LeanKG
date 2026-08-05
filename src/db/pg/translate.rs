@@ -751,7 +751,7 @@ fn simple_select(
             let resolved = if is_positional_alias(c, rel_cols) {
                 let idx = rel_cols.iter().position(|x| x == c).unwrap();
                 column_at_for(relation, idx)
-                    .map(|col| quote_ident(col))
+                    .map(quote_ident)
                     .unwrap_or_else(|| quote_ident(c))
             } else {
                 quote_ident(c)
@@ -898,7 +898,7 @@ fn append_literal_constraints(filters: &str, rel_cols: &[String]) -> String {
 /// literal-constraint resolution we need the column name for any table,
 /// so this walks the same catalogs.
 fn column_at(i: usize) -> Option<&'static str> {
-    for cols in [&CODE_ELEMENTS_COLUMNS[..], &RELATIONSHIPS_COLUMNS[..]] {
+    for cols in [CODE_ELEMENTS_COLUMNS, RELATIONSHIPS_COLUMNS] {
         if let Some(c) = cols.get(i) {
             return Some(c);
         }
@@ -2091,7 +2091,7 @@ fn extract_ann_vec_literal(s: &str) -> Result<String, String> {
     let rb = after
         .find("])")
         .ok_or_else(|| "ANN query missing closing ])".to_string())?;
-    Ok(format!("[{}]", after[..rb].to_string()))
+    Ok(format!("[{}]", &after[..rb]))
 }
 
 fn extract_ann_int_field(s: &str, field: &str) -> Option<usize> {
@@ -2980,7 +2980,7 @@ pub fn map_row(
             // Consumers read JSON with `get_str()`. Return the canonical
             // jsonb text (e.g. `{}` for an empty object).
             let v: DataValue = match row.try_get::<_, Option<serde_json::Value>>(i) {
-                Ok(Some(j)) => DataValue::Str(serde_json::to_string(&j).unwrap_or_default().into()),
+                Ok(Some(j)) => DataValue::Str(serde_json::to_string(&j).unwrap_or_default()),
                 _ => DataValue::Null,
             };
             out.push(v);
@@ -2989,7 +2989,7 @@ pub fn map_row(
         // Try the most likely postgres types in order, falling back to Null.
         let v: DataValue = if let Ok(s) = row.try_get::<_, Option<String>>(i) {
             match s {
-                Some(s) => DataValue::Str(s.into()),
+                Some(s) => DataValue::Str(s),
                 None => DataValue::Null,
             }
         } else if let Ok(n) = row.try_get::<_, Option<i64>>(i) {
@@ -3393,10 +3393,7 @@ mod tests {
             t.sql
         );
         assert!(t.sql.contains("source_qualified IN"), "got: {}", t.sql);
-        assert!(
-            t.sql.contains("information_schema") == false,
-            "no info_schema leak"
-        );
+        assert!(!t.sql.contains("information_schema"), "no info_schema leak");
     }
 
     #[test]

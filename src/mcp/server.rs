@@ -2713,22 +2713,24 @@ impl MCPServer {
         // On-demand auto-indexing: if the project has no indexed elements
         // yet (Phase 8 — Postgres holds the data, so "has an index" is a
         // populated-graph check, not a file check).
-        if tool_name != "mcp_index" && tool_name != "mcp_init" && tool_name != "mcp_index_docs" {
-            if !graph_engine.has_elements().unwrap_or(false) {
-                tracing::info!(
-                    "Project at {} has no indexed elements, triggering auto-index",
-                    project_db_path.display()
-                );
-                let _ = self
-                    .ensure_project_indexed(
-                        project_db_path
-                            .parent()
-                            .unwrap_or(&project_db_path)
-                            .to_string_lossy()
-                            .as_ref(),
-                    )
-                    .await;
-            }
+        if tool_name != "mcp_index"
+            && tool_name != "mcp_init"
+            && tool_name != "mcp_index_docs"
+            && !graph_engine.has_elements().unwrap_or(false)
+        {
+            tracing::info!(
+                "Project at {} has no indexed elements, triggering auto-index",
+                project_db_path.display()
+            );
+            let _ = self
+                .ensure_project_indexed(
+                    project_db_path
+                        .parent()
+                        .unwrap_or(&project_db_path)
+                        .to_string_lossy()
+                        .as_ref(),
+                )
+                .await;
         }
 
         let handler = ToolHandler::new(graph_engine, project_db_path);
