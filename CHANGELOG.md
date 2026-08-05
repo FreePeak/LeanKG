@@ -2,6 +2,70 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.1](https://github.com/FreePeak/LeanKG/compare/v0.20.0...v0.20.1) (2026-08-05)
+
+
+### Features
+
+* **doc:** honor LEANKG_DOC_MAX_CODE_REFS=0 to skip doc code-ref resolution; PRD be embed note ([ce97f59](https://github.com/FreePeak/LeanKG/commit/ce97f591ed97f954846d16d5517f9fcf217c51cb))
+* **docjoin:** unique file::symbol upgrade (FR-DOCJOIN-06) ([a21eef1](https://github.com/FreePeak/LeanKG/commit/a21eef1825f9d421d4cbc6080ffb807c94701660))
+* **docjoin:** unique file::symbol upgrade when unique (FR-DOCJOIN-06) ([a90d59c](https://github.com/FreePeak/LeanKG/commit/a90d59cb6352ddeac1e7f1714ace860acd221e08))
+* full Swift and Objective-C language support ([#158](https://github.com/FreePeak/LeanKG/issues/158)) ([d9bbc4c](https://github.com/FreePeak/LeanKG/commit/d9bbc4c9b1b3b3fab6f18d88738d56bc67f0907d))
+* **ge:** cross-alias entity resolution (US-GE-03 / FR-GE-03) ([4869cd1](https://github.com/FreePeak/LeanKG/commit/4869cd12d0e7d33ce9cbe932126b1bffb88533b3))
+* **ge:** cross-alias entity resolution (US-GE-03) ([7975681](https://github.com/FreePeak/LeanKG/commit/797568105e1f335cf9fe8125b3643284e459524d))
+* **ge:** graph-aware planner goal→MCP DAG (US-GE-02) ([ef8c036](https://github.com/FreePeak/LeanKG/commit/ef8c03608d22d7a472208321ce445de7b9a3b26a))
+* **ge:** graph-aware planner goal→MCP DAG (US-GE-02) ([94dd500](https://github.com/FreePeak/LeanKG/commit/94dd500a60251a70994b07cca87990694b4401ff))
+* **graph:** 3D layout API for Track E (FR-E10..E14) ([c2425f4](https://github.com/FreePeak/LeanKG/commit/c2425f43a83a4ebae40aa28e2e31e644f0b29cf9))
+* **graph:** deterministic 3D layout API for Track E (FR-E10..E14) ([0af4e09](https://github.com/FreePeak/LeanKG/commit/0af4e097412ae78fed69a77099a420db8aa76496))
+* **indexer:** index .vue/.svelte/.sql files (REL-032) ([de3a605](https://github.com/FreePeak/LeanKG/commit/de3a605906fa31397465abeb379e28feb86823f8))
+* **indexer:** support 113 programming languages across all ecosystems ([#202](https://github.com/FreePeak/LeanKG/issues/202)) ([4272ffc](https://github.com/FreePeak/LeanKG/commit/4272ffcd0209082195c4e749dbc17e2c76c2968e))
+* **indexer:** wire .vue/.svelte/.sql files into index walk (REL-032 / US-08) ([14ce5c7](https://github.com/FreePeak/LeanKG/commit/14ce5c7602fa885d61b770cdae7c2a6d3e4ed9e3))
+* **mcp:** Wave 1b hard-delete load_layer + get_doc_structure ([4b5d24a](https://github.com/FreePeak/LeanKG/commit/4b5d24aa47de1ebad3246bfd20de044a51e2e8b1))
+* **mining:** mine-conversations CLI for Claude/ChatGPT/Slack (US-MP-03) ([d2cbe05](https://github.com/FreePeak/LeanKG/commit/d2cbe057f068618938fc660622c63f2ef92040a0))
+* **mining:** mine-conversations CLI for Claude/ChatGPT/Slack exports (US-MP-03, FR-MP-09..13) ([51e2290](https://github.com/FreePeak/LeanKG/commit/51e22900859fdf6e27ec0293be774a1ee011f07d))
+* **pg:** migrate CozoDB → PostgreSQL 18 + pgvector (v0.20.0) ([#207](https://github.com/FreePeak/LeanKG/issues/207)) ([f9066b0](https://github.com/FreePeak/LeanKG/commit/f9066b09ed36eb2ed33fee83fe7a588af65586cf))
+* **session:** memory offload to .leankg/sessions + session_recall (US-SM-01 / FR-SM-01..03) ([3d617ac](https://github.com/FreePeak/LeanKG/commit/3d617ac3565819f8fafccbdd2e05d7192f72085b))
+* **session:** memory offload to .leankg/sessions + session_recall (US-SM-01) ([5db3f15](https://github.com/FreePeak/LeanKG/commit/5db3f15cf4c993efa7d87a3f0e58d698c79ecec6))
+* **session:** opt-in auto-recall into get_overview_context (US-SM-02 / FR-SM-04..06, closes US-GE-05) ([a178eff](https://github.com/FreePeak/LeanKG/commit/a178eff05be0499ca279f45d40a2fb22f176a10c))
+* **session:** opt-in auto-recall into overview (US-SM-02 / closes US-GE-05) ([4f14968](https://github.com/FreePeak/LeanKG/commit/4f149689d360cc9ba5f90bfb6c8a1af643d3b676))
+* **ui-v2:** cluster legend filters + incidents/env/conflicts panels (US-UI2-08/09, FR-UI2-10/11) ([185dc4b](https://github.com/FreePeak/LeanKG/commit/185dc4bd7a13e26fcf6247dfa2daefb80afde3bd))
+* **ui-v2:** cluster legend filters + incidents/env/conflicts panels (US-UI2-08/09) ([96d7df3](https://github.com/FreePeak/LeanKG/commit/96d7df333166b8feaf741a7f547f9346aa7ca7f9))
+* **ui-v2:** Wave 3 NL Query FAB + fix OnRender embeddings exit 101 ([#160](https://github.com/FreePeak/LeanKG/issues/160)) ([a9a718a](https://github.com/FreePeak/LeanKG/commit/a9a718a37221f88c787412686d4fe9981212a510))
+* **web:** wave4 single-repo expand closeout — integration tests + live evidence (US-MG-02 / FR-MG-03) ([#164](https://github.com/FreePeak/LeanKG/issues/164)) ([4206184](https://github.com/FreePeak/LeanKG/commit/42061848269c0ae13675358d11bd240d14108c02))
+
+
+### Bug Fixes
+
+* **ci:** revert untracked vendor/cozo patch to crates.io cozo ([3c06b35](https://github.com/FreePeak/LeanKG/commit/3c06b353b8857d7efade1be429c904ec39545da6))
+* **competitive:** review fixes for PR [#197](https://github.com/FreePeak/LeanKG/issues/197) (BLAKE3, pack determinism, LOCOMO, ctags Ex-cmd, stress bench) ([#205](https://github.com/FreePeak/LeanKG/issues/205)) ([c5df69c](https://github.com/FreePeak/LeanKG/commit/c5df69cab523199aad4e43ca5d842aa92196d8c0))
+* **embed:** break resume deadlock when state outlives vectors (P0) ([#155](https://github.com/FreePeak/LeanKG/issues/155)) ([919ea24](https://github.com/FreePeak/LeanKG/commit/919ea2418053d119f81b8a29c4f0b500c74f246e))
+* **embed:** serving containers default LEANKG_EMBED_AUTO_ARM=0 (FR-P0-EMBED-LOCK) ([e3474c4](https://github.com/FreePeak/LeanKG/commit/e3474c4091c8d21229ce91653800ac0454cc97fe))
+* **embed:** serving containers default LEANKG_EMBED_AUTO_ARM=0 (FR-P0-EMBED-LOCK) ([9968f09](https://github.com/FreePeak/LeanKG/commit/9968f099dc53633c2cdb28cbad8e5a3e68dafd2b))
+* **index:** skip symlinks in doc-index walker (FR-INDEX-NO-HANG) ([d013bed](https://github.com/FreePeak/LeanKG/commit/d013bed6d11d7ca2858ad2fa9333a60d36278a16))
+* **index:** skip symlinks to prevent hang on monorepo (FR-INDEX-NO-HANG) ([12d94be](https://github.com/FreePeak/LeanKG/commit/12d94bea724773ad4ff05e65df42c00bc5001b65))
+* **mcp:** mega-guard into unguarded full-scan tools (FR-P0-MCP-RC-04) ([b774fbf](https://github.com/FreePeak/LeanKG/commit/b774fbf03de92736e291a16bc52dcb5ddfe6f489))
+* **mcp:** per-tool timeout + concurrency cap (FR-P0-MCP-RC-03) ([150bcf6](https://github.com/FreePeak/LeanKG/commit/150bcf660b4ea7b3dea3c0f8f709bcd2b5b865d5))
+* **mcp:** per-tool timeout + concurrency cap so a slow tool cannot stall /health (FR-P0-MCP-RC-03) ([66f7701](https://github.com/FreePeak/LeanKG/commit/66f7701d38620552b92a3c0d0445dffbabb3680b))
+* **mcp:** preserve ?project= in SSE endpoint discovery ([#153](https://github.com/FreePeak/LeanKG/issues/153)) ([30a4e4b](https://github.com/FreePeak/LeanKG/commit/30a4e4b4d5938924bc4fffedbbd1bd3faa49a688))
+* **mcp:** project is the authoritative DB-routing key (FR-P0-MCP-RC-01) ([04bf94c](https://github.com/FreePeak/LeanKG/commit/04bf94cbe82c239440a95e28adbf4179bff673d6))
+* **mcp:** project is the authoritative DB-routing key (FR-P0-MCP-RC-01) ([e709b39](https://github.com/FreePeak/LeanKG/commit/e709b39c1793b2ce0663b66caa2873062650a2c4))
+* **mcp:** single GraphEngine per DB path + WriteBus seam (FR-P0-MCP-RC-02) ([945f737](https://github.com/FreePeak/LeanKG/commit/945f737df264189df14f0267abb271ef89dc0e33))
+* **mcp:** single process-wide GraphEngine per DB path; add WriteBus seam (FR-P0-MCP-RC-02) ([287e5d2](https://github.com/FreePeak/LeanKG/commit/287e5d2765cfbab89a1cdfaf9d5bba7926cf291d))
+* **mcp:** wire mega-guard into unguarded full-scan tools (FR-P0-MCP-RC-04) ([8bddd6c](https://github.com/FreePeak/LeanKG/commit/8bddd6c8531c8fd0d847337d06b034905cb14830))
+* **overview:** bound get_god_nodes degree via CozoDB aggregate (mega-graph) ([5290837](https://github.com/FreePeak/LeanKG/commit/52908370629b904995c2e498274deccfc7e97f51))
+* **web+mcp:** annotation DELETE route+handler, cozo :rm syntax, MCP resources HTTP mirror; live-test evidence 2026-08-02 ([b555fdc](https://github.com/FreePeak/LeanKG/commit/b555fdc289f33dfc74e1726ba84e3c1291c36407))
+
+
+### Performance
+
+* **doc:** lower code-ref cap to 25 for mega-graph budgets (FR-DOC-REF-CAP-25) ([c4480b0](https://github.com/FreePeak/LeanKG/commit/c4480b0793d3f99f902c922776e0a8dbdaf68c96))
+* **embed:** 8 workers, 14g mem_limit, 12000MB cap; add chunked-upsert tests ([a4ddc3f](https://github.com/FreePeak/LeanKG/commit/a4ddc3f84fbefa7895eb35a32a85f26317549d0f))
+* **embed:** allow 4x larger upsert chunk on high-memory budgets (FR-EMBED-PERF-1000) ([d4e5324](https://github.com/FreePeak/LeanKG/commit/d4e5324319b101736bf471f94e0c0f6e95387e5c))
+* **embed:** vendor cozo for RocksDB bulk-load mode (FR-EMBED-PERF-1000) ([7d7fff3](https://github.com/FreePeak/LeanKG/commit/7d7fff3f81b0f213f34de8aa517612427f6f2e06))
+* **index+doc:** 10-min index budget on 2-workspace Docker MCP ([8db1cf1](https://github.com/FreePeak/LeanKG/commit/8db1cf12f26cbef174ab9d034108bad7d8d913ac))
+* **index+doc:** batch inserts 5k→20k, cap doc file size + code-refs per doc, memoize ref resolution ([87e9687](https://github.com/FreePeak/LeanKG/commit/87e9687ac6d12a675ae0ed6cb7fad7e54c5b800b))
+* **indexer + embed:** 5-min auto-index SLA + mark_stale bridge + 4x embed throughput ([#151](https://github.com/FreePeak/LeanKG/issues/151)) ([2f6c38e](https://github.com/FreePeak/LeanKG/commit/2f6c38e60ccadb636f3ced4fb351f631adfda723))
+
 ## [0.19.34](https://github.com/FreePeak/LeanKG/compare/v0.19.33...v0.19.34) (2026-08-05)
 
 
