@@ -12,7 +12,10 @@ ENV CARGO_BUILD_JOBS=1 \
     RUSTFLAGS="-C debuginfo=0" \
     CARGO_TERM_COLOR=always
 
-RUN apt-get update \
+# Deb.debian.org is unreachable from some build networks (IPv6 routing);
+# ftp.debian.org is a working mirror. Pin apt to it.
+RUN printf 'Types: deb\nURIs: http://ftp.debian.org/debian\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         clang \
         libclang-dev \
@@ -38,7 +41,8 @@ FROM debian:bookworm-slim AS runtime
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-RUN apt-get update \
+RUN printf 'Types: deb\nURIs: http://ftp.debian.org/debian\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
