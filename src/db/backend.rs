@@ -569,16 +569,9 @@ impl PostgresBackend {
                     }
                 })
                 .collect();
-            let col_sql = cols
-                .iter()
-                .map(|c| crate::db::pg::translate::quote_ident(c))
-                .collect::<Vec<_>>()
-                .join(", ");
-            // Determine whether the table has a PK — keyed tables in
-            // schema.sql are: code_elements (no), relationships (no),
-            // embedding_state (qualified_name), embedding_vectors
-            // (qualified_name), index_inventory (key), index_hashes
-            // (path), migrations (id).
+            // Keyed tables (single PK) get the COPY + ON CONFLICT path;
+            // non-keyed tables (code_elements, relationships, ...) fall back
+            // to multi-row INSERT (they cannot dedupe via a PK).
             let pk_col = match table.as_str() {
                 "embedding_state" | "embedding_vectors" => Some("qualified_name"),
                 "index_inventory" => Some("key"),
@@ -586,46 +579,151 @@ impl PostgresBackend {
                 "migrations" => Some("id"),
                 _ => None,
             };
-            for row in &named.rows {
-                let mut values: Vec<Box<dyn postgres::types::ToSql + Sync + Send>> = Vec::new();
-                for (i, val) in row.iter().enumerate() {
-                    values.push(cozo_to_pg(val, &cols[i]));
+            match pk_col {
+                Some(pk) if bulk_copy_enabled() => {
+                    self.copy_upsert(&mut tx, &table, &cols, pk, &named)?;
                 }
-                let value_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = values
-                    .iter()
-                    .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
-                    .collect();
-                let sql = if let Some(pk) = pk_col {
-                    let update_set = cols
-                        .iter()
-                        .filter(|c| c.as_str() != pk)
-                        .map(|c| {
-                            format!(
-                                "{} = EXCLUDED.{}",
-                                crate::db::pg::translate::quote_ident(c),
-                                crate::db::pg::translate::quote_ident(c)
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!(
-                        "INSERT INTO {table} ({col_sql}) VALUES ({vals}) ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
-                        vals = (1..=values.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", "),
-                        pk = crate::db::pg::translate::quote_ident(pk),
-                    )
-                } else {
-                    format!(
-                        "INSERT INTO {table} ({col_sql}) VALUES ({vals})",
-                        vals = (1..=values.len())
-                            .map(|i| format!("${i}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                };
-                tx.execute(&sql, &value_refs)?;
+                _ => {
+                    self.insert_rows(&mut tx, &table, &cols, pk_col, &named)?;
+                }
             }
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    /// COPY-based upsert (plan T7.1). Writes `rows` into a temporary staging
+    /// table shaped LIKE the target, then one `INSERT ... SELECT ... ON
+    /// CONFLICT (pk) DO UPDATE` folds the batch in. COPY is the fastest bulk
+    /// path in Postgres (no per-row round trip, no WAL-per-row bind); the
+    /// single follow-up INSERT keeps `ON CONFLICT DO UPDATE` semantics that
+    /// the cozo `import_relations` callers rely on (upsert_fresh, vectors).
+    ///
+    /// The temp table is `CREATE TEMP TABLE ... ON COMMIT DROP`, so it is
+    /// scoped to this transaction and vanishes on commit — no schema pollution.
+    fn copy_upsert(
+        &self,
+        tx: &mut postgres::Transaction,
+        table: &str,
+        cols: &[String],
+        pk: &str,
+        named: &crate::db::backend::NamedRows,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+
+        if named.rows.is_empty() {
+            return Ok(());
+        }
+        let q_table = crate::db::pg::translate::quote_ident(table);
+        let q_cols = cols
+            .iter()
+            .map(|c| crate::db::pg::translate::quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Staging name from the unquoted table + suffix (the quote is applied
+        // around the whole identifier, so `"embedding_vectors_staging"` is a
+        // single quoted ident — never `"embedding_vectors"_staging`).
+        let staging = crate::db::pg::translate::quote_ident(&format!("{table}_staging"));
+        // `LIKE` inherits column types; ON COMMIT DROP scopes the table to
+        // this transaction.
+        tx.batch_execute(&format!(
+            "CREATE TEMP TABLE {staging} (LIKE {q_table}) ON COMMIT DROP"
+        ))?;
+        let copy_sql = format!("COPY {staging} ({q_cols}) FROM STDIN");
+        let mut writer = tx.copy_in(&copy_sql)?;
+        for row in &named.rows {
+            let mut line = String::new();
+            for (i, val) in row.iter().enumerate() {
+                if i > 0 {
+                    line.push('\t');
+                }
+                // Escape per COPY text format: tab, newline, carriage return,
+                // backslash.
+                push_copy_text(&mut line, &data_to_copy_text(val, &cols[i]));
+            }
+            line.push('\n');
+            writer.write_all(line.as_bytes())?;
+        }
+        writer.finish()?;
+
+        let update_set = cols
+            .iter()
+            .filter(|c| c.as_str() != pk)
+            .map(|c| {
+                format!(
+                    "{} = EXCLUDED.{}",
+                    crate::db::pg::translate::quote_ident(c),
+                    crate::db::pg::translate::quote_ident(c)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let q_pk = crate::db::pg::translate::quote_ident(pk);
+        tx.execute(
+            &format!(
+                "INSERT INTO {q_table} ({q_cols}) SELECT {q_cols} FROM {staging} \
+                 ON CONFLICT ({q_pk}) DO UPDATE SET {update_set}"
+            ),
+            &[],
+        )?;
+        Ok(())
+    }
+
+    /// Multi-row INSERT path (fallback for non-keyed tables and when the COPY
+    /// env gate is off). Kept from Phase 3/4 — the per-row bound loop the
+    /// plan's Phase 6 hand-off flagged as the bottleneck; the COPY path above
+    /// replaces it for keyed tables.
+    fn insert_rows(
+        &self,
+        tx: &mut postgres::Transaction,
+        table: &str,
+        cols: &[String],
+        pk: Option<&str>,
+        named: &crate::db::backend::NamedRows,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let col_sql = cols
+            .iter()
+            .map(|c| crate::db::pg::translate::quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        for row in &named.rows {
+            let mut values: Vec<Box<dyn postgres::types::ToSql + Sync + Send>> = Vec::new();
+            for (i, val) in row.iter().enumerate() {
+                values.push(cozo_to_pg(val, &cols[i]));
+            }
+            let value_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = values
+                .iter()
+                .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+                .collect();
+            let sql = if let Some(pk) = pk {
+                let update_set = cols
+                    .iter()
+                    .filter(|c| c.as_str() != pk)
+                    .map(|c| {
+                        format!(
+                            "{} = EXCLUDED.{}",
+                            crate::db::pg::translate::quote_ident(c),
+                            crate::db::pg::translate::quote_ident(c)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "INSERT INTO {table} ({col_sql}) VALUES ({vals}) ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
+                    vals = (1..=values.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", "),
+                    pk = crate::db::pg::translate::quote_ident(pk),
+                )
+            } else {
+                format!(
+                    "INSERT INTO {table} ({col_sql}) VALUES ({vals})",
+                    vals = (1..=values.len())
+                        .map(|i| format!("${i}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            tx.execute(&sql, &value_refs)?;
+        }
         Ok(())
     }
 }
@@ -716,6 +814,110 @@ fn apply_gucs(
         tx.batch_execute(&sql)?;
     }
     Ok(())
+}
+
+/// Whether `import_relations` uses the COPY bulk path (T7.1) for keyed
+/// tables. On by default; `LEANKG_EMBED_COPY=0` opts back into the per-row
+/// INSERT loop (parity / debugging).
+fn bulk_copy_enabled() -> bool {
+    std::env::var("LEANKG_EMBED_COPY")
+        .map(|v| !matches!(v.as_str(), "0" | "false" | "off"))
+        .unwrap_or(true)
+}
+
+/// Env gate for the drop-index-during-bulk + reindex strategy (T7.2).
+/// When the total batch exceeds `LEANKG_EMBED_BULK_REINDEX_THRESHOLD`
+/// (default 100k) OR `LEANKG_EMBED_COPY=1` is explicitly set, the HNSW
+/// index is dropped before the COPY batches and recreated after — faster
+/// than incremental index maintenance on very large cold embeds.
+fn bulk_reindex_enabled(total_rows: usize) -> bool {
+    if std::env::var("LEANKG_EMBED_COPY")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "on"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    let threshold = std::env::var("LEANKG_EMBED_BULK_REINDEX_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100_000);
+    total_rows >= threshold
+}
+
+/// Render a `DataValue` into Postgres COPY text (one field). Vectors become
+/// pgvector literals (`[0.1,0.2,...]`); strings/ints/floats/bools/null use
+/// their natural textual form. The caller escapes COPY metacharacters.
+fn data_to_copy_text(v: &cozo::DataValue, col: &str) -> String {
+    use cozo::DataValue;
+    match v {
+        DataValue::Null => String::new(), // COPY: empty field == NULL
+        DataValue::Bool(b) => b.to_string(),
+        DataValue::Num(cozo::Num::Int(i)) => i.to_string(),
+        DataValue::Num(cozo::Num::Float(f)) => f.to_string(),
+        DataValue::Str(s) => s.as_str().to_string(),
+        DataValue::Json(j) => j.0.to_string(),
+        // Cozo names the vector column `vector`; the PG schema uses `vec`.
+        DataValue::List(items) if col == "vec" || col == "vector" => {
+            let mut s = String::from("[");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                match item {
+                    DataValue::Num(cozo::Num::Float(f)) => s.push_str(&format!("{f}")),
+                    DataValue::Num(cozo::Num::Int(i)) => s.push_str(&format!("{i}")),
+                    other => s.push_str(&format!("{other}")),
+                }
+            }
+            s.push(']');
+            s
+        }
+        DataValue::Vec(vec) => {
+            let mut s = String::from("[");
+            match vec {
+                cozo::Vector::F32(arr) => {
+                    for (i, x) in arr.iter().enumerate() {
+                        if i > 0 {
+                            s.push(',');
+                        }
+                        s.push_str(&format!("{x}"));
+                    }
+                }
+                cozo::Vector::F64(arr) => {
+                    for (i, x) in arr.iter().enumerate() {
+                        if i > 0 {
+                            s.push(',');
+                        }
+                        s.push_str(&format!("{x}"));
+                    }
+                }
+            }
+            s.push(']');
+            s
+        }
+        DataValue::Bytes(b) => {
+            let mut s = String::with_capacity(b.len() * 2);
+            for byte in b {
+                s.push_str(&format!("\\{:03o}", byte));
+            }
+            s
+        }
+        other => format!("{other}"),
+    }
+}
+
+/// Append `s` to `out`, escaping Postgres COPY text-format metacharacters
+/// (tab, newline, carriage return, backslash).
+fn push_copy_text(out: &mut String, s: &str) {
+    for ch in s.chars() {
+        match ch {
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(ch),
+        }
+    }
 }
 
 /// Convert a cozo DataValue into a boxed `dyn ToSql` for binding. Vector

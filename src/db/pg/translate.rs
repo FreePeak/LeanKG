@@ -2726,9 +2726,40 @@ fn index_ddl(rest: &str) -> Result<Translation, String> {
     Ok(Translation::ddl_noop(Vec::new()))
 }
 
-fn hnsw_ddl(_rest: &str) -> Result<Translation, String> {
-    // pgvector index is pre-created by schema.sql; no-op for both
-    // `::hnsw create` and `::hnsw drop`.
+fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
+    // Phase 7 (T7.2): the cozo `::hnsw` operators map onto the real
+    // pgvector index created by schema.sql. The bulk-embed path drops the
+    // index before COPY and recreates it after (cold embeds only, gated by
+    // `use_incr_hnsw` in build.rs); the translator emits the actual DDL so
+    // `state::drop_hnsw_index` / `state::create_hnsw_index` work on PG.
+    //
+    // The index name is the schema.sql one (`embedding_vectors_vec_hnsw_idx`),
+    // which differs from cozo's `embedding_vectors:vec_idx` — map the known
+    // pair. `CREATE` is idempotent (IF NOT EXISTS); `DROP` is IF EXISTS so a
+    // missing index (e.g. a prior aborted bulk) is not an error.
+    let trimmed = rest.trim();
+    if let Some(after) = trimmed.strip_prefix("drop") {
+        let target = after.trim();
+        if target.starts_with("embedding_vectors") {
+            return Ok(Translation::write(
+                "DROP INDEX IF EXISTS embedding_vectors_vec_hnsw_idx".to_string(),
+                Vec::new(),
+            ));
+        }
+        return Ok(Translation::ddl_noop(Vec::new()));
+    }
+    if let Some(_after) = trimmed.strip_prefix("create") {
+        if trimmed.contains("embedding_vectors") {
+            return Ok(Translation::write(
+                "CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx \
+                 ON embedding_vectors USING hnsw (vec vector_cosine_ops) \
+                 WITH (m = 16, ef_construction = 200)"
+                    .to_string(),
+                Vec::new(),
+            ));
+        }
+        return Ok(Translation::ddl_noop(Vec::new()));
+    }
     Ok(Translation::ddl_noop(Vec::new()))
 }
 
@@ -3188,9 +3219,47 @@ mod tests {
     }
 
     #[test]
-    fn hnsw_noop() {
+    fn hnsw_create_emits_pg_index_ddl() {
+        // Phase 7 (T7.2): `::hnsw create` on the vectors index emits the
+        // real pgvector CREATE INDEX (idempotent) so the bulk-embed path's
+        // index rebuild works on PG. Previously a DdlNoop.
         let t = translate(
             "::hnsw create embedding_vectors:vec_idx { dim: 384, distance: Cosine }",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(t.kind, TranslationKind::Write);
+        assert!(
+            t.sql.contains("CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx")
+                && t.sql.contains("USING hnsw")
+                && t.sql.contains("vector_cosine_ops"),
+            "got: {}",
+            t.sql
+        );
+    }
+
+    #[test]
+    fn hnsw_drop_emits_pg_index_ddl() {
+        // Phase 7 (T7.2): `::hnsw drop` maps to DROP INDEX IF EXISTS.
+        let t = translate(
+            "::hnsw drop embedding_vectors:vec_idx",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(t.kind, TranslationKind::Write);
+        assert!(
+            t.sql.contains("DROP INDEX IF EXISTS embedding_vectors_vec_hnsw_idx"),
+            "got: {}",
+            t.sql
+        );
+    }
+
+    #[test]
+    fn hnsw_other_targets_stay_noop() {
+        // Non-vector HNSW targets remain no-ops (only the known vectors
+        // index is managed on PG).
+        let t = translate(
+            "::hnsw create other_table:some_idx { dim: 384, distance: Cosine }",
             BTreeMap::new(),
         )
         .unwrap();

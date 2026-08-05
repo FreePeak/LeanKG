@@ -209,11 +209,29 @@ pub fn resolve_partial_embed_budget_mb(rss_fraction: f64) -> u64 {
 }
 
 /// Prefer incremental HNSW `:put` when dirty set is small vs existing index.
+///
+/// Phase 7 (T7.2) env overrides:
+/// - `LEANKG_EMBED_COPY=1` forces the bulk drop-reindex path (COZY copy),
+///   never incremental — the operator's explicit "cold embed" signal.
+/// - `LEANKG_EMBED_BULK_REINDEX_THRESHOLD` raises/lowers the dirty-set size
+///   that triggers the drop-index-during-bulk strategy (default: the existing
+///   adaptive `max(1000, total/20)`).
 pub fn should_use_incremental_hnsw_puts(dirty_count: usize, total_vectors: usize) -> bool {
     if dirty_count == 0 {
         return false;
     }
+    // LEANKG_EMBED_COPY=1: force the bulk path (drop index → COPY → rebuild).
+    if std::env::var("LEANKG_EMBED_COPY")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "on"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
     let threshold = (total_vectors / 20).max(1_000);
+    let threshold = std::env::var("LEANKG_EMBED_BULK_REINDEX_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(threshold);
     dirty_count <= threshold
 }
 
