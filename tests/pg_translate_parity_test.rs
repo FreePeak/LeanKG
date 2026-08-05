@@ -139,7 +139,7 @@ fn assert_read(pg: &PostgresBackend, setup: &[&str], query: &str, min_rows: usiz
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn parity_equality_select() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a::b", "function", "f", "f.rs", 1, 10, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
@@ -161,7 +161,7 @@ fn parity_equality_select() {
 #[ignore = "requires container"]
 fn parity_range_filter() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "src/foo.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "src/bar.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"], ["c", "function", "f", "src/qux.rs", 3, 3, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
@@ -183,7 +183,7 @@ fn parity_range_filter() {
 #[ignore = "requires container"]
 fn parity_or_pair() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[source_qualified, target_qualified, rel_type, confidence, metadata, env] <- [["src", "tgt", "calls", 0.9, "{}", "local"]] :put relationships {source_qualified, target_qualified, rel_type, confidence, metadata, env}"#,
@@ -205,7 +205,7 @@ fn parity_or_pair() {
 #[ignore = "requires container"]
 fn parity_null_equality() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[id, name, key_hash, created_at, last_used_at, revoked_at] <- [["k1", "n", "h", "now", null, null]] :put api_keys {id, name, key_hash, created_at, last_used_at, revoked_at}"#,
@@ -228,12 +228,12 @@ fn parity_null_equality() {
 #[ignore = "requires container"]
 fn parity_aggregate_order_neg() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "g.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"], ["c", "struct", "S", "h.rs", 3, 3, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
     ];
-    let _res = assert_read(
+    let res = assert_read(
         &pg,
         &setup,
         "?[element_type, count(element_type)] := *code_elements[_, element_type, _, _, _, _, _, _, _, _, _, _, _] :order -count(element_type)",
@@ -247,13 +247,13 @@ fn parity_aggregate_order_neg() {
 #[ignore = "requires container"]
 fn parity_not_exists_orphans() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["real", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
         r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [["real", 0, "h", "fresh", "now"], ["orphan", 0, "h", "fresh", "now"]] :put embedding_state {qualified_name => usearch_key, content_hash, state, embedded_at}"#,
     ];
-    let _res = assert_read(
+    let res = assert_read(
         &pg,
         &setup,
         "?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at], not *code_elements[qualified_name, _, _, _, _, _, _, _, _, _, _, _, _]",
@@ -266,7 +266,7 @@ fn parity_not_exists_orphans() {
 #[ignore = "requires container"]
 fn parity_keyed_put_upsert() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     // Initial insert.
     run_pg(
@@ -297,7 +297,7 @@ fn parity_keyed_put_upsert() {
 #[ignore = "requires container"]
 fn parity_non_keyed_put_allows_duplicates() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     // Insert same qualified_name twice — PG translator must NOT add a PK for
     // business_logic, so duplicates are allowed (matching cozo).
@@ -322,7 +322,7 @@ fn parity_non_keyed_put_allows_duplicates() {
 #[ignore = "requires container"]
 fn parity_delete_where() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "g.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
@@ -353,12 +353,12 @@ fn parity_delete_where() {
 #[ignore = "requires container"]
 fn parity_regex_filter() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "ontology://x", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "src/x.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
     ];
-    let _res = assert_read(
+    let res = assert_read(
         &pg,
         &setup,
         "?[qualified_name, file_path] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer], regex_matches(file_path, \"^ontology://\")",
@@ -371,7 +371,7 @@ fn parity_regex_filter() {
 #[ignore = "requires container"]
 fn parity_limit_offset() {
     let _guard = pg_lock();
-    let mut s = Scratch::new();
+    let s = Scratch::new();
     let pg = pg_backend(&s.name);
     let setup = [
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["a", "function", "f", "f.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["b", "function", "f", "g.rs", 2, 2, "rust", null, null, null, "{}", "local", "procedural"], ["c", "function", "f", "h.rs", 3, 3, "rust", null, null, null, "{}", "local", "procedural"], ["d", "function", "f", "i.rs", 4, 4, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
