@@ -59,7 +59,9 @@ impl ScratchSchema {
     fn backend(&self) -> Arc<PostgresBackend> {
         Arc::new(PostgresBackend {
             pg_url: self.url.clone(),
-            conn: std::sync::Mutex::new(None).into(),
+            pool: std::sync::Arc::new(leankg::db::backend::ClientPool::new(5)),
+            ro_pool: std::sync::Arc::new(leankg::db::backend::ClientPool::new(5)),
+            read_only: false,
         })
     }
 }

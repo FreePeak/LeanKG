@@ -9,9 +9,10 @@
 use crate::db::pg::translate;
 use crate::db::schema::mutability_for;
 use cozo::ScriptMutability;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// Re-export the row/result value types the rest of the codebase consumes
 /// positionally (`row[0].get_str()`, `NamedRows::new`, `DataValue::Num`).
@@ -114,12 +115,13 @@ impl DbBackend for CozoBackend {
     }
 }
 
-/// PostgreSQL backend (Phase 3 — plan T1.4, T3.5).
+/// PostgreSQL backend (Phase 3 — plan T1.4, T3.5; pool added Phase 6).
 ///
-/// Holds one validated connection URL and a lazily-initialised
-/// `postgres::Client` behind a `Mutex<Option<_>>`. The first call to
-/// [`Self::run_script`] connects; subsequent calls reuse the handle.
-/// Phase 6 adds a connection pool; today we lock per call.
+/// Holds one validated connection URL and a lazy pool of `postgres::Client`
+/// behind `Mutex<VecDeque>` + Condvar (Phase 6, T6.3). The first call to
+/// [`Self::run_script`] connects; subsequent calls reuse checked-out
+/// clients. Pool size comes from `LEANKG_PG_POOL_SIZE` (default 5) so
+/// concurrent reads on the async MCP path don't serialize on one socket.
 ///
 /// Read classification flows through [`crate::db::schema::mutability_for`].
 /// Writes are wrapped in a single transaction so multi-statement `:put`/
@@ -127,16 +129,165 @@ impl DbBackend for CozoBackend {
 #[derive(Clone)]
 pub struct PostgresBackend {
     pub pg_url: String,
-    /// Lazy connection handle — tests construct an empty `Arc<Mutex<None>>`
-    /// directly; production code goes through [`Self::from_env`].
-    pub conn: Arc<Mutex<Option<postgres::Client>>>,
+    /// Pool of lazy read-write connections (Phase 6). Tests construct an
+    /// `Arc<ClientPool>` directly; production code goes through
+    /// [`Self::from_env`].
+    pub pool: Arc<ClientPool>,
+    /// Pool of lazy read-only connections (`default_transaction_read_only =
+    /// on`, T6.1). Kept separate so RO clients can never be handed to a
+    /// writer (a write through an RO session would fail with a confusing
+    /// "read-only transaction" error).
+    pub ro_pool: Arc<ClientPool>,
+    /// When true (T6.1), ALL run_script calls use the RO pool —
+    /// `init_db_readonly` semantics on PG. Writes through such a backend
+    /// fail at the Postgres layer with a clean error, never silently.
+    pub read_only: bool,
+}
+
+/// RAII checked-out connection: returns its client to the pool on drop.
+pub struct PooledClient {
+    client: Option<postgres::Client>,
+    pool: Arc<ClientPool>,
+}
+
+impl PooledClient {
+    fn new(client: postgres::Client, pool: Arc<ClientPool>) -> Self {
+        Self {
+            client: Some(client),
+            pool,
+        }
+    }
+}
+
+impl Deref for PooledClient {
+    type Target = postgres::Client;
+    fn deref(&self) -> &postgres::Client {
+        self.client.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for PooledClient {
+    fn deref_mut(&mut self) -> &mut postgres::Client {
+        self.client.as_mut().unwrap()
+    }
+}
+
+impl Drop for PooledClient {
+    fn drop(&mut self) {
+        if let Some(c) = self.client.take() {
+            self.pool.release(c);
+        }
+    }
+}
+
+/// The pool itself. `Send + Sync` (all members are), so it survives inside
+/// `Arc<dyn DbBackend>` across threads (the embed writer thread + MCP async
+/// dispatch).
+///
+/// ponytail: a hand-rolled `VecDeque<Client>` pool rather than
+/// deadpool-postgres, because the backend speaks the sync `postgres` crate
+/// and deadpool needs tokio-postgres (async) — switching clients would ripple
+/// through every `DbBackend` impl + the `block_in_place` guard. The sync
+/// pool keeps the same call surface; if async Postgres ever lands (Phase 8),
+/// swap this struct for `deadpool::Pool<Manager>`.
+#[derive(Clone)]
+pub struct ClientPool {
+    inner: Arc<ClientPoolState>,
+}
+
+struct ClientPoolState {
+    max: usize,
+    has_slot: Condvar,
+    state: Mutex<PoolState>,
+}
+
+#[derive(Default)]
+struct PoolState {
+    idle: VecDeque<postgres::Client>,
+    live: usize,
+}
+
+impl Drop for ClientPoolState {
+    fn drop(&mut self) {
+        // The sync postgres Client::drop closes the socket via an internal
+        // runtime; inside tokio::main (the CLI) that panics with "Cannot
+        // start a runtime from within a runtime". Drain idle clients off
+        // the ambient runtime before the VecDeque drops them.
+        let state = std::mem::take(&mut self.state);
+        let mut inner = state.into_inner().unwrap_or_else(|e| e.into_inner());
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(move || inner.idle.clear());
+        } else {
+            inner.idle.clear();
+        }
+    }
+}
+
+impl ClientPool {
+    /// A pool that connects lazily (first checkout). `max` is clamped >= 1.
+    pub fn new(max: usize) -> Self {
+        Self {
+            inner: Arc::new(ClientPoolState {
+                max: max.max(1),
+                has_slot: Condvar::new(),
+                state: Mutex::new(PoolState {
+                    idle: VecDeque::new(),
+                    live: 0,
+                }),
+            }),
+        }
+    }
+
+    /// Read `LEANKG_PG_POOL_SIZE` (default 5, clamped >= 1).
+    pub fn size_from_env() -> usize {
+        std::env::var("LEANKG_PG_POOL_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v >= 1)
+            .unwrap_or(5)
+    }
+
+    /// Total live + idle clients (used by tests to assert pool reuse).
+    pub fn live_count(&self) -> usize {
+        self.inner.state.lock().unwrap().live
+    }
+
+    /// Check out a client, connecting a new one up to `max` live, else
+    /// blocking on a Condvar until one is returned.
+    pub fn checkout(&self, connect_url: &str) -> Result<PooledClient, Box<dyn std::error::Error>> {
+        let mut guard = self.inner.state.lock().unwrap();
+        let pool_arc = Arc::new(self.clone());
+        loop {
+            if let Some(c) = guard.idle.pop_front() {
+                return Ok(PooledClient::new(c, pool_arc.clone()));
+            }
+            if guard.live < self.inner.max {
+                let client = postgres::Client::connect(connect_url, postgres::NoTls)?;
+                guard.live += 1;
+                return Ok(PooledClient::new(client, pool_arc.clone()));
+            }
+            // At capacity — wait for a return.
+            guard = self
+                .inner
+                .has_slot
+                .wait(guard)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    fn release(&self, client: postgres::Client) {
+        let mut guard = self.inner.state.lock().unwrap();
+        guard.idle.push_back(client);
+        self.inner.has_slot.notify_one();
+    }
 }
 
 impl std::fmt::Debug for PostgresBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresBackend")
             .field("pg_url", &redact_url(&self.pg_url))
-            .field("conn", &"<lazy>")
+            .field("pool", &"<lazy>")
+            .field("read_only", &self.read_only)
             .finish()
     }
 }
@@ -155,19 +306,144 @@ impl PostgresBackend {
         }
         Ok(Self {
             pg_url: url,
-            conn: Arc::new(Mutex::new(None)),
+            pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
+            ro_pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
+            read_only: false,
         })
     }
 
-    /// Connect lazily. Returns a guard that releases the mutex when
-    /// dropped.
-    fn connect(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut guard = self.conn.lock().unwrap();
-        if guard.is_none() {
-            let client = postgres::Client::connect(&self.pg_url, postgres::NoTls)?;
-            *guard = Some(client);
+    /// Constructor for the read-only backend (T6.1): `init_db_readonly`
+    /// semantics. All script execution goes through the RO pool
+    /// (`default_transaction_read_only = on`).
+    pub fn from_env_read_only() -> Result<Self, String> {
+        Ok(Self::from_env()?.with_read_only())
+    }
+
+    /// Builder: pin this backend to read-only execution.
+    pub fn with_read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
+    /// URL with `default_transaction_read_only = on` injected via the
+    /// `options` libpq param. If the URL already carries an `options=`
+    /// param (e.g. tests pinning `search_path`), the RO flag is appended
+    /// space-separated to that same param — libpq splits `-c` flags on
+    /// spaces (verified against PG 18); a second `options=` param would be
+    /// dropped. For a read-write backend this is the plain URL (no GUC).
+    pub fn read_only_url(&self) -> String {
+        if !self.read_only {
+            return self.pg_url.clone();
         }
-        Ok(())
+        let base = &self.pg_url;
+        if base.contains("default_transaction_read_only") {
+            return base.clone();
+        }
+        const RO_FLAG: &str = "-cdefault_transaction_read_only%3Don";
+        // Reuse the existing options= value if present.
+        if let Some(pos) = base.find("options=") {
+            let after = &base[pos + "options=".len()..];
+            let end = after.find('&').unwrap_or(after.len());
+            let value = &after[..end];
+            let rest = &after[end..]; // "", or "&sslmode=..." etc.
+            return format!(
+                "{}{}%20{}{}",
+                &base[..pos + "options=".len()],
+                value,
+                RO_FLAG,
+                rest
+            );
+        }
+        let (before, after) = base.split_once('?').unwrap_or((base, ""));
+        let sep = if after.is_empty() { "?" } else { "&" };
+        format!("{before}{sep}{after}options={RO_FLAG}")
+    }
+
+    /// Check out a client from the pool. On the first call this connects
+    /// lazily (the sync `postgres` client spins up its own tokio runtime —
+    /// must run off the ambient runtime, same guard as run_script); with a
+    /// warm pool this is a pure mutex hand-off.
+    fn checkout(&self) -> Result<PooledClient, Box<dyn std::error::Error>> {
+        let url = self.pg_url.clone();
+        let pool = self.pool.clone();
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(move || pool.checkout(&url))
+        } else {
+            pool.checkout(&url)
+        }
+    }
+
+    /// Check out a client pinned to read-only mode (T6.1) from the RO pool.
+    fn checkout_read_only(&self) -> Result<PooledClient, Box<dyn std::error::Error>> {
+        let url = self.read_only_url();
+        let pool = self.ro_pool.clone();
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(move || pool.checkout(&url))
+        } else {
+            pool.checkout(&url)
+        }
+    }
+
+    /// Take the PG advisory lock for exclusive jobs (e.g. `leankg index`,
+    /// T6.4b). Blocks until acquired; the lock lives on the session, so the
+    /// guard must outlive the job. Returns an unlock guard.
+    pub fn advisory_lock(&self, key: i64) -> Result<AdvisoryLock, Box<dyn std::error::Error>> {
+        // The execute + (blocking) wait are sync postgres calls — same
+        // runtime guard as run_script.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.advisory_lock_sync(key))
+        } else {
+            self.advisory_lock_sync(key)
+        }
+    }
+
+    fn advisory_lock_sync(&self, key: i64) -> Result<AdvisoryLock, Box<dyn std::error::Error>> {
+        let mut client = self.checkout()?;
+        client.execute("SELECT pg_advisory_lock($1)", &[&key])?;
+        Ok(AdvisoryLock {
+            client: Some(client),
+            key,
+        })
+    }
+
+    /// Advisory-lock key for exclusive `leankg index` jobs (T6.4b).
+    /// Arbitrary fixed key, database-wide (two-instance serialization).
+    pub const INDEX_LOCK_KEY: i64 = 0x6C65616E6B67; // "leankg"
+
+    /// Non-blocking variant: `pg_try_advisory_lock`. Returns None when the
+    /// lock is held elsewhere (second concurrent index run).
+    pub fn try_advisory_lock(
+        &self,
+        key: i64,
+    ) -> Result<Option<AdvisoryLock>, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.try_advisory_lock_sync(key))
+        } else {
+            self.try_advisory_lock_sync(key)
+        }
+    }
+
+    fn try_advisory_lock_sync(
+        &self,
+        key: i64,
+    ) -> Result<Option<AdvisoryLock>, Box<dyn std::error::Error>> {
+        let mut client = self.checkout()?;
+        let ok: bool = client
+            .query_one("SELECT pg_try_advisory_lock($1)", &[&key])?
+            .get(0);
+        if ok {
+            Ok(Some(AdvisoryLock {
+                client: Some(client),
+                key,
+            }))
+        } else {
+            // Return the client to the pool unused. Do NOT drop it here:
+            // dropping a sync postgres Client closes its socket via an
+            // internal runtime, which panics inside tokio::main.
+            let c = client.client.take().unwrap();
+            client.pool.release(c);
+            Ok(None)
+        }
     }
 
     /// The sync body behind [`DbBackend::run_script`]. Must only run off a
@@ -201,11 +477,13 @@ impl PostgresBackend {
             // `:delete query_cache where ...` → no-op write.
             return Ok(cozo::NamedRows::new(Vec::new(), Vec::new()));
         }
-        self.connect()?;
-        let mut guard = self.conn.lock().unwrap();
-        let client = guard
-            .as_mut()
-            .ok_or("connection not initialised (lazy connect failed)".to_string())?;
+        // T6.1: a read-only backend never touches the RW pool — writes are
+        // rejected by Postgres itself (`default_transaction_read_only = on`).
+        let mut client = if self.read_only {
+            self.checkout_read_only()?
+        } else {
+            self.checkout()?
+        };
 
         let t = translate::translate(query, params).map_err(|e| -> Box<dyn std::error::Error> {
             Box::new(std::io::Error::other(format!(
@@ -271,11 +549,11 @@ impl PostgresBackend {
         &self,
         data: BTreeMap<String, NamedRows>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.connect()?;
-        let mut guard = self.conn.lock().unwrap();
-        let client = guard
-            .as_mut()
-            .ok_or("connection not initialised".to_string())?;
+        let mut client = if self.read_only {
+            self.checkout_read_only()?
+        } else {
+            self.checkout()?
+        };
         let mut tx = client.transaction()?;
         for (table, named) in data {
             let cols = named.headers.clone();
@@ -349,6 +627,31 @@ impl PostgresBackend {
         }
         tx.commit()?;
         Ok(())
+    }
+}
+
+/// Session-scoped advisory lock (T6.4b). `pg_advisory_lock` is held on the
+/// connection until `pg_advisory_unlock` or the session ends; dropping the
+/// guard unlocks explicitly.
+pub struct AdvisoryLock {
+    client: Option<PooledClient>,
+    key: i64,
+}
+
+impl Drop for AdvisoryLock {
+    fn drop(&mut self) {
+        if let Some(mut client) = self.client.take() {
+            let key = self.key;
+            // The unlock is a sync postgres call — off the ambient runtime.
+            if tokio::runtime::Handle::try_current().is_ok() {
+                let _ = tokio::task::block_in_place(move || {
+                    client.execute("SELECT pg_advisory_unlock($1)", &[&key])
+                });
+            } else {
+                let _ = client.execute("SELECT pg_advisory_unlock($1)", &[&key]);
+            }
+            // client returns to the pool here (Drop of PooledClient).
+        }
     }
 }
 
@@ -514,11 +817,11 @@ fn redact_url(url: &str) -> String {
 ///
 /// Selection rules (chosen to keep the embedded path working everywhere):
 /// * `cozo` → `init_db`/`init_db_readonly` → `CozoBackend` shim.
-/// * unset or `postgres` → **path-based init always returns the cozo shim**
-///   so tests, `leankg init`, and CLI flows keep working without a running
-///   Postgres. A Postgres connection is only attempted when the caller
-///   explicitly asks for one (`init_db_pg`) — which is exactly where a
-///   missing `LEANKG_PG_URL` should fail loudly.
+/// * unset → cozo shim (tests / local flows never need a running Postgres).
+/// * `postgres` → **`PostgresBackend` when `LEANKG_PG_URL` is set**, else
+///   cozo shim (Phase 6 CLI routing: explicit engine + URL routes every
+///   path-based init — CLI, web server, MCP — through Postgres). A missing
+///   URL fails loudly only on the explicit `init_db_pg` entry point.
 pub fn resolve_engine() -> &'static str {
     match std::env::var("LEANKG_DB_ENGINE")
         .unwrap_or_default()
@@ -530,30 +833,103 @@ pub fn resolve_engine() -> &'static str {
     }
 }
 
+/// True when the EXPLICIT Postgres engine is selected AND a URL is present —
+/// the Phase 6 gate for routing path-based init through `PostgresBackend`.
+/// `resolve_engine()` defaults an unset var to `"postgres"` (the migration
+/// end-state), but during the migration the engine must be set explicitly
+/// before any code path connects to Postgres — otherwise a stray
+/// `LEANKG_PG_URL` in the environment (dev shell, CI) would silently swap
+/// every cozo-backed test onto Postgres.
+fn postgres_configured() -> bool {
+    std::env::var("LEANKG_DB_ENGINE")
+        .map(|v| v.eq_ignore_ascii_case("postgres"))
+        .unwrap_or(false)
+        && std::env::var("LEANKG_PG_URL").is_ok()
+}
+
 /// Open the default backend for a file/dir database path. See
-/// [`resolve_engine`] for selection semantics.
+/// [`resolve_engine`] for selection semantics. Phase 6 (T6.4c CLI routing):
+/// with `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`, this returns a
+/// `PostgresBackend` — every CLI entry point (`init`/`index`/`serve`/
+/// `status`/…) goes through this function.
 pub fn init_db(db_path: &Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    if postgres_configured() {
+        let pg = PostgresBackend::from_env()?;
+        tracing::info!(
+            "DB engine = postgres (LEANKG_DB_ENGINE=postgres + LEANKG_PG_URL): {}",
+            redact_url(&pg.pg_url)
+        );
+        return Ok(Arc::new(pg));
+    }
     init_cozo(db_path, false)
 }
 
-/// Open a read-only backend for a file/dir database path (sqlite `mode=ro`;
-/// rocksdb uses the same handle as `init_db` — the documented CozoDB 0.7.x
-/// workaround, see `schema::init_db_readonly`).
+/// Open a read-only backend for a file/dir database path. Phase 6 (T6.1):
+/// on the explicit Postgres engine this opens a true read-only connection
+/// (`default_transaction_read_only = on`) — writes fail at the Postgres
+/// layer instead of the CozoDB RocksDB same-handle workaround. Falls back
+/// to the cozo shim (sqlite `mode=ro`) when the engine is unset/cozo.
 pub fn init_db_readonly(db_path: &Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    if postgres_configured() {
+        let pg = PostgresBackend::from_env_read_only()?;
+        tracing::info!(
+            "DB engine = postgres read-only (default_transaction_read_only = on): {}",
+            redact_url(&pg.pg_url)
+        );
+        return Ok(Arc::new(pg));
+    }
     init_cozo(db_path, true)
 }
 
 /// Open a PostgreSQL backend. Fails when `LEANKG_PG_URL` is missing or
-/// malformed. This is the only entry point that produces a
-/// [`PostgresBackend`]; the full connection + schema arrive in Phase 2-3.
+/// malformed. This is the entry point that produces a [`PostgresBackend`]
+/// unconditionally (used by `leankg migrate` and the in-process harness).
 pub fn init_db_pg() -> Result<SharedDb, Box<dyn std::error::Error>> {
     let pg = PostgresBackend::from_env()?;
-    tracing::info!(
-        "DB engine = postgres (stub, Phase 3): {}",
-        redact_url(&pg.pg_url)
-    );
+    tracing::info!("DB engine = postgres: {}", redact_url(&pg.pg_url));
     Ok(Arc::new(pg))
 }
+
+/// Acquire the index advisory lock when the explicit Postgres engine is
+/// configured, else return None (cozo shim — no lock). Blocks until the
+/// lock is free, so a second concurrent `leankg index` waits for the first
+/// to finish. The lock lives on a dedicated session, so it also guards
+/// against a nested `index_codebase` re-entry (incremental → full fallback)
+/// deadlocking itself on a second connection: we return the already-held
+/// lock via a process-level registry.
+///
+/// `LEANKG_PG_LOCK=0` disables the advisory lock (operators who manage
+/// exclusivity externally, e.g. a job queue). Default: on when the engine
+/// is Postgres.
+pub fn index_advisory_lock() -> Result<Option<AdvisoryLock>, Box<dyn std::error::Error>> {
+    if !postgres_configured() {
+        return Ok(None);
+    }
+    if std::env::var("LEANKG_PG_LOCK")
+        .ok()
+        .map(|v| v.eq_ignore_ascii_case("0") || v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false)
+    {
+        tracing::info!("LEANKG_PG_LOCK=0 — index advisory lock disabled");
+        return Ok(None);
+    }
+    let key = PostgresBackend::INDEX_LOCK_KEY;
+    // Reentrant within this process: the same `leankg index` may call
+    // index_codebase twice (incremental fallback). A second PG advisory
+    // lock on a different session would deadlock against the first.
+    let mut held = INDEX_LOCK_HELD.lock().unwrap();
+    if *held {
+        return Ok(None);
+    }
+    let pg = PostgresBackend::from_env()?;
+    let lock = pg.advisory_lock(key)?;
+    *held = true;
+    tracing::info!("index advisory lock held (key {key})");
+    Ok(Some(lock))
+}
+
+/// Process-level flag so nested index invocations skip re-acquiring.
+static INDEX_LOCK_HELD: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
 /// The migration shim: open CozoDB and return it boxed behind `DbBackend`.
 /// Used for both read-write and read-only paths, and always for
@@ -619,7 +995,9 @@ mod tests {
         // rather than silently panicking.
         let pg = PostgresBackend {
             pg_url: "postgres://invalid-host-not-real:1/leankg".into(),
-            conn: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            pool: std::sync::Arc::new(ClientPool::new(1)),
+            ro_pool: std::sync::Arc::new(ClientPool::new(1)),
+            read_only: false,
         };
         let err = pg
             .run_script("?[a] := *x[a]", Default::default())
@@ -632,6 +1010,7 @@ mod tests {
 
     #[test]
     fn postgres_backend_validates_url_and_redacts() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert!(PostgresBackend::from_env().is_err(), "no env -> error");
         std::env::set_var("LEANKG_PG_URL", "not-a-url");
         let err = PostgresBackend::from_env().unwrap_err();
@@ -642,8 +1021,14 @@ mod tests {
         std::env::remove_var("LEANKG_PG_URL");
     }
 
+    /// Serialize tests that mutate process env (LEANKG_DB_ENGINE /
+    /// LEANKG_PG_URL / LEANKG_PG_POOL_SIZE) — Rust runs tests in parallel
+    /// and env is process-global.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn engine_selection_unset_defaults_to_cozo_path_init() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // (d) LEANKG_DB_ENGINE unset -> path-based init still returns the
         // cozo shim (tests / local flows never need a running Postgres).
         std::env::remove_var("LEANKG_DB_ENGINE");
@@ -657,6 +1042,7 @@ mod tests {
 
     #[test]
     fn engine_selection_cozo_explicit() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("LEANKG_DB_ENGINE", "cozo");
         let tmp = TempDir::new().unwrap();
         let db = init_db(&tmp.path().join("sel.db")).unwrap();
@@ -668,11 +1054,14 @@ mod tests {
     }
 
     #[test]
-    fn engine_selection_postgres_explicit_requires_pg_url() {
+    fn engine_selection_postgres_explicit_without_url_keeps_cozo_shim() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Phase 6 CLI routing: explicit `postgres` engine but NO URL must
+        // NOT break existing paths — path init keeps returning the cozo
+        // shim so tests / local dev without PG are unaffected.
         std::env::set_var("LEANKG_DB_ENGINE", "postgres");
+        std::env::remove_var("LEANKG_PG_URL");
         let tmp = TempDir::new().unwrap();
-        // Path-based init still resolves to the cozo shim — a missing PG
-        // only fails on the explicit init_db_pg() entry point.
         let db = init_db(&tmp.path().join("sel.db")).unwrap();
         assert!(
             db.run_script("?[a] <- [[1]]", Default::default()).is_ok(),
@@ -680,5 +1069,98 @@ mod tests {
         );
         assert!(init_db_pg().is_err(), "no LEANKG_PG_URL -> error");
         std::env::remove_var("LEANKG_DB_ENGINE");
+    }
+
+    #[test]
+    fn engine_selection_postgres_with_url_returns_pg_backend() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Phase 6 CLI routing: explicit `postgres` + URL routes path-based
+        // init through PostgresBackend. The connect itself is lazy, so no
+        // live Postgres is required here. Discriminator: the cozo shim
+        // executes `?[a] <- [[1]]`, the PG backend rejects it at translate
+        // time — no `downcast_ref` needed (trait shape unchanged).
+        std::env::set_var("LEANKG_DB_ENGINE", "postgres");
+        std::env::set_var(
+            "LEANKG_PG_URL",
+            "postgresql://postgres:postgres@localhost:5433/leankg",
+        );
+        let tmp = TempDir::new().unwrap();
+        let db = init_db(&tmp.path().join("sel.db")).unwrap();
+        assert!(
+            db.run_script("?[a] <- [[1]]", Default::default()).is_err(),
+            "explicit engine + URL must produce the PG backend (translator rejects bare lists)"
+        );
+        std::env::remove_var("LEANKG_DB_ENGINE");
+        std::env::remove_var("LEANKG_PG_URL");
+    }
+
+    #[test]
+    fn engine_selection_postgres_readonly_uses_ro_url() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // T6.1: the read-only path must inject default_transaction_read_only.
+        // Connect is lazy; assert via the URL builder instead.
+        std::env::set_var("LEANKG_DB_ENGINE", "postgres");
+        std::env::set_var(
+            "LEANKG_PG_URL",
+            "postgresql://postgres:postgres@localhost:5433/leankg",
+        );
+        let pg = PostgresBackend::from_env_read_only().unwrap();
+        assert!(pg.read_only);
+        let ro_url = pg.read_only_url();
+        assert!(
+            ro_url.contains("default_transaction_read_only%3Don"),
+            "RO URL must inject the read-only GUC: {ro_url}"
+        );
+        // The RW URL must NOT contain it.
+        let rw_url = PostgresBackend::from_env().unwrap().read_only_url();
+        assert!(!rw_url.contains("default_transaction_read_only%3Don"));
+        std::env::remove_var("LEANKG_DB_ENGINE");
+        std::env::remove_var("LEANKG_PG_URL");
+    }
+
+    #[test]
+    fn engine_selection_unset_with_url_keeps_cozo_shim() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A stray LEANKG_PG_URL in the env must NOT reroute path init — the
+        // engine var has to be set explicitly (migration guard).
+        std::env::remove_var("LEANKG_DB_ENGINE");
+        std::env::set_var(
+            "LEANKG_PG_URL",
+            "postgresql://postgres:postgres@localhost:5433/leankg",
+        );
+        let tmp = TempDir::new().unwrap();
+        let db = init_db(&tmp.path().join("sel.db")).unwrap();
+        assert!(
+            db.run_script("?[a] <- [[1]]", Default::default()).is_ok(),
+            "unset engine must keep the cozo shim even with LEANKG_PG_URL set"
+        );
+        std::env::remove_var("LEANKG_PG_URL");
+    }
+
+    #[test]
+    fn pool_size_from_env_defaults_and_clamps() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("LEANKG_PG_POOL_SIZE");
+        assert_eq!(ClientPool::size_from_env(), 5);
+        std::env::set_var("LEANKG_PG_POOL_SIZE", "0");
+        assert_eq!(ClientPool::size_from_env(), 5, "0 -> clamp to default");
+        std::env::set_var("LEANKG_PG_POOL_SIZE", "-3");
+        assert_eq!(ClientPool::size_from_env(), 5, "negative -> default");
+        std::env::set_var("LEANKG_PG_POOL_SIZE", "12");
+        assert_eq!(ClientPool::size_from_env(), 12);
+        std::env::set_var("LEANKG_PG_POOL_SIZE", "banana");
+        assert_eq!(ClientPool::size_from_env(), 5, "garbage -> default");
+        std::env::remove_var("LEANKG_PG_POOL_SIZE");
+    }
+
+    #[test]
+    fn pool_new_clamps_max_to_one() {
+        let p = ClientPool::new(0);
+        // checkout with a dead URL still attempts a connection; the clamp is
+        // internal. Verify via a direct connection error only — the max is
+        // exercised by container-gated tests.
+        assert!(p
+            .checkout("postgres://invalid-host-not-real:1/leankg")
+            .is_err());
     }
 }
