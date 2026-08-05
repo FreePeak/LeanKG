@@ -20,6 +20,22 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: leankg
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d leankg"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      LEANKG_PG_URL: postgresql://postgres:postgres@localhost:5433/leankg
     steps:
       - uses: actions/checkout@v4
 
