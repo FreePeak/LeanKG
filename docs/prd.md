@@ -7,6 +7,8 @@
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
 **Codebase Version:** 0.19.31 (`origin/main`)
 
+> **Storage engine (2026-08-05):** LeanKG is now **PostgreSQL + pgvector only** (plan [migrate-cozo-to-postgres-pgvector.md](plan-migrate-cozo-to-postgres-pgvector.md), decisions D1–D5). The CozoDB/SQLite/RocksDB backends, `DbBackend` trait, `CozoBackend` shim, and `LEANKG_DB_ENGINE` were removed in Phase 8. Local dev requires `docker compose up postgres` + `LEANKG_PG_URL`. See [analysis/pg-migration-report.md](analysis/pg-migration-report.md).
+
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
 > - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)

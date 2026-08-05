@@ -48,17 +48,14 @@ echo "  mcp:       memory=$MCP_MEM (Local 2GB survival)"
 echo "=== Pull image ==="
 docker pull "$IMAGE"
 
-docker volume create leankg-rocksdb >/dev/null
 docker volume create leankg-models >/dev/null
 
 VOLUMES=(
   -v "${HOST_DIR}:/workspace"
-  -v leankg-rocksdb:/data/leankg-rocksdb
   -v leankg-models:/root/.cache/leankg
 )
 ENV_COMMON=(
-  -e LEANKG_DB_ENGINE=rocksdb
-  -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb
+  -e LEANKG_PG_URL="${LEANKG_PG_URL:-postgresql://postgres:postgres@localhost:5433/leankg}"
   -e LEANKG_MCP_PROJECT=/workspace
   -e LEANKG_AUTO_INDEX=1
   -e LEANKG_EMBED_ON_BOOT=0

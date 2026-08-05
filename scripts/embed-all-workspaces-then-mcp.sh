@@ -9,7 +9,7 @@ ENV_FILE="${ENV_FILE:-.dockerfile}"
 # Always include embed.yml so override can attach side mounts to leankg-embed
 # (profile keeps the embed service from starting with `up`).
 COMPOSE=(docker compose
-  -f docker-compose.rocksdb.yml
+  -f docker-compose.yml
   -f docker-compose.override.yml
   -f docker-compose.embed.yml
   --env-file "$ENV_FILE")
