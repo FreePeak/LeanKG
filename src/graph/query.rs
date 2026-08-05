@@ -1,5 +1,5 @@
 #![allow(clippy::needless_borrow)]
-use crate::db::backend::{DbBackend, SharedDb};
+use crate::db::backend::{PostgresBackend, SharedDb};
 use crate::db::models::{
     BusinessLogic, CodeElement, DependencyInfo, DocLink, Incident, Relationship, TraceabilityEntry,
     TraceabilityReport,
@@ -99,20 +99,12 @@ impl GraphEngine {
     }
 
     pub fn with_persistence(db: SharedDb) -> Self {
-        let cache = QueryCache::with_persistence(db.clone(), 300, 1000);
-        Self {
-            db,
-            cache,
-            elements_cache: std::sync::Arc::new(parking_lot::RwLock::new(None::<Vec<CodeElement>>)),
-            relationships_cache: std::sync::Arc::new(parking_lot::RwLock::new(
-                None::<Vec<Relationship>>,
-            )),
-            relationships_by_element: std::sync::Arc::new(parking_lot::RwLock::new(None)),
-            mega_graph: std::sync::Arc::new(parking_lot::RwLock::new(None)),
-        }
+        // D2: the persistent cache was dropped — the moka L1 in-memory cache
+        // is the only cache.
+        Self::new(db)
     }
 
-    pub fn db(&self) -> &dyn DbBackend {
+    pub fn db(&self) -> &PostgresBackend {
         self.db.as_ref()
     }
 

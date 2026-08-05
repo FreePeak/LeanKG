@@ -4,18 +4,19 @@ pub mod keys;
 pub mod models;
 pub mod pg;
 pub mod schema;
+pub mod value;
 pub mod versioning;
 pub mod write_bus;
 
 #[allow(unused_imports)]
-pub use backend::{init_db, init_db_pg, init_db_readonly, DbBackend, PostgresBackend, SharedDb};
+pub use backend::{init_db, init_db_pg, init_db_readonly, PostgresBackend, SharedDb};
 #[allow(unused_imports)]
 pub use models::*;
 #[allow(unused_imports)]
 pub use schema::*;
 
 pub fn create_business_logic(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     element_qualified: &str,
     description: &str,
     user_story_id: Option<&str>,
@@ -56,7 +57,7 @@ pub fn create_business_logic(
 }
 
 pub fn get_business_logic(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     element_qualified: &str,
 ) -> Result<Option<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], element_qualified = $eq"#;
@@ -87,7 +88,7 @@ pub fn get_business_logic(
 }
 
 pub fn update_business_logic(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     element_qualified: &str,
     description: &str,
     user_story_id: Option<&str>,
@@ -129,7 +130,7 @@ pub fn update_business_logic(
 
 #[allow(dead_code)]
 pub fn delete_business_logic(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     element_qualified: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // cozo 0.7.6 delete-by-predicate: rule derives the full row, then `:rm`
@@ -147,7 +148,7 @@ pub fn delete_business_logic(
 }
 
 pub fn get_by_user_story(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     user_story_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = $us"#;
@@ -179,7 +180,7 @@ pub fn get_by_user_story(
 }
 
 pub fn get_by_feature(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     feature_id: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], feature_id = $feat"#;
@@ -211,7 +212,7 @@ pub fn get_by_feature(
 }
 
 pub fn search_business_logic(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     query_str: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let regex_pattern = format!(".*{}.*", query_str.to_lowercase());
@@ -242,7 +243,7 @@ pub fn search_business_logic(
 }
 
 pub fn all_business_logic(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id]"#;
 
@@ -301,7 +302,7 @@ pub struct UserStoryTraceability {
 
 #[allow(dead_code)]
 pub fn get_feature_traceability(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     feature_id: &str,
 ) -> Result<FeatureTraceability, Box<dyn std::error::Error>> {
     let elements = get_by_feature(db, feature_id)?;
@@ -323,7 +324,7 @@ pub fn get_feature_traceability(
 
 #[allow(dead_code)]
 pub fn get_user_story_traceability(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     user_story_id: &str,
 ) -> Result<UserStoryTraceability, Box<dyn std::error::Error>> {
     let elements = get_by_user_story(db, user_story_id)?;
@@ -345,7 +346,7 @@ pub fn get_user_story_traceability(
 
 #[allow(dead_code)]
 pub fn all_feature_traceability(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Vec<FeatureTraceability>, Box<dyn std::error::Error>> {
     let all = all_business_logic(db)?;
     let mut feature_map: std::collections::HashMap<String, Vec<FeatureTraceEntry>> =
@@ -378,7 +379,7 @@ pub fn all_feature_traceability(
 
 #[allow(dead_code)]
 pub fn all_user_story_traceability(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Vec<UserStoryTraceability>, Box<dyn std::error::Error>> {
     let all = all_business_logic(db)?;
     let mut story_map: std::collections::HashMap<String, Vec<UserStoryTraceEntry>> =
@@ -411,7 +412,7 @@ pub fn all_user_story_traceability(
 
 #[allow(dead_code)]
 pub fn find_by_business_domain(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     domain: &str,
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     search_business_logic(db, domain)
@@ -419,7 +420,7 @@ pub fn find_by_business_domain(
 
 #[allow(dead_code)]
 pub fn get_documented_by(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     element_qualified: &str,
 ) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
     let query = r#"?[target_qualified, rel_type, metadata, confidence] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified = $sq, rel_type = "documented_by""#;
@@ -465,7 +466,7 @@ pub fn get_documented_by(
 
 #[allow(dead_code)]
 pub fn get_traceability_report(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     element_qualified: &str,
 ) -> Result<models::TraceabilityReport, Box<dyn std::error::Error>> {
     let bl = get_business_logic(db, element_qualified)?;
@@ -491,7 +492,7 @@ pub fn get_traceability_report(
 
 #[allow(dead_code)]
 pub fn get_code_for_requirement(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     requirement_id: &str,
 ) -> Result<Vec<models::TraceabilityEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = $us"#;
@@ -526,7 +527,7 @@ pub fn get_code_for_requirement(
 }
 
 pub fn record_metric(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     metric: &models::ContextMetric,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] <- [[ $tool, $ts, $path, $in_tok, $out_tok, $out_elem, $exec_ms, $base_tok, $base_lines, $saved, $sav_pct, $correct, $total, $f1, $qpat, $qfile, $qdepth, $success, false ]] :put context_metrics { tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted }"#;
@@ -637,7 +638,7 @@ pub fn record_metric(
 }
 
 pub fn get_metrics_summary(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     tool_filter: Option<&str>,
     retention_days: i32,
 ) -> Result<models::MetricsSummary, Box<dyn std::error::Error>> {
@@ -748,7 +749,7 @@ pub fn get_metrics_summary(
 }
 
 pub fn cleanup_old_metrics(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     retention_days: i32,
 ) -> Result<i64, Box<dyn std::error::Error>> {
     let cutoff_timestamp = std::time::SystemTime::now()
@@ -784,7 +785,7 @@ pub fn cleanup_old_metrics(
 }
 
 pub fn reset_metrics(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<i64, Box<dyn std::error::Error>> {
     let count_query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted]"#;
 
@@ -805,7 +806,7 @@ pub fn reset_metrics(
 // ============================================================================
 
 pub fn create_knowledge_entry(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     entry: &models::KnowledgeEntry,
 ) -> Result<models::KnowledgeEntry, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <- [[$id, $kt, $title, $content, $eq, $us, $feat, $tags, $env, $branch, $author, $cat, $uat]] :put knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
@@ -884,7 +885,7 @@ pub fn create_knowledge_entry(
 }
 
 pub fn get_knowledge_entry(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     id: &str,
 ) -> Result<Option<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], id = $id"#;
@@ -900,7 +901,7 @@ pub fn get_knowledge_entry(
 }
 
 pub fn update_knowledge_entry(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     entry: &models::KnowledgeEntry,
 ) -> Result<models::KnowledgeEntry, Box<dyn std::error::Error>> {
     // :put acts as upsert in CozoDB
@@ -908,7 +909,7 @@ pub fn update_knowledge_entry(
 }
 
 pub fn delete_knowledge_entry(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // CozoDB has no `:delete` operator. Read the matching row(s) by id via
@@ -922,7 +923,7 @@ pub fn delete_knowledge_entry(
 }
 
 pub fn search_knowledge(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     query_str: &str,
     knowledge_type: Option<&str>,
     environment: Option<&str>,
@@ -962,7 +963,7 @@ pub fn search_knowledge(
 }
 
 pub fn get_knowledge_by_element(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     element_qualified: &str,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], element_qualified = $eq"#;
@@ -981,7 +982,7 @@ pub fn get_knowledge_by_element(
 }
 
 pub fn get_knowledge_by_feature(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     feature_id: &str,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], feature_id = $feat"#;
@@ -1000,7 +1001,7 @@ pub fn get_knowledge_by_feature(
 }
 
 pub fn get_knowledge_by_environment(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     environment: &str,
     limit: usize,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
@@ -1045,7 +1046,7 @@ fn row_to_knowledge_entry(row: &[crate::db::backend::DataValue]) -> models::Know
 // ============================================================================
 
 pub fn link_feature_workflow(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     feature_id: &str,
     workflow_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1064,7 +1065,7 @@ pub fn link_feature_workflow(
 }
 
 pub fn unlink_feature_workflow(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     feature_id: &str,
     workflow_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1097,7 +1098,7 @@ pub fn unlink_feature_workflow(
 }
 
 pub fn get_workflows_for_feature(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     feature_id: &str,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let query =
@@ -1116,7 +1117,7 @@ pub fn get_workflows_for_feature(
 }
 
 pub fn get_features_for_workflow(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     workflow_id: &str,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let query =
@@ -1135,7 +1136,7 @@ pub fn get_features_for_workflow(
 }
 
 pub fn create_incident(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     incident: &models::Incident,
 ) -> Result<models::Incident, Box<dyn std::error::Error>> {
     validate_incident(incident)?;
@@ -1263,7 +1264,7 @@ pub fn validate_incident(incident: &models::Incident) -> Result<(), Box<dyn std:
 }
 
 pub fn get_incident(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     id: &str,
 ) -> Result<Option<models::Incident>, Box<dyn std::error::Error>> {
     let query = r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] := *incidents[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket], id = $id"#;
@@ -1279,14 +1280,14 @@ pub fn get_incident(
 }
 
 pub fn update_incident(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     incident: &models::Incident,
 ) -> Result<models::Incident, Box<dyn std::error::Error>> {
     create_incident(db, incident)
 }
 
 pub fn delete_incident(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#":delete incidents where id = $id"#;
@@ -1297,7 +1298,7 @@ pub fn delete_incident(
 }
 
 pub fn query_incidents(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     service: Option<&str>,
     pattern: Option<&str>,
     env: Option<&str>,
@@ -1342,7 +1343,7 @@ pub fn query_incidents(
 }
 
 pub fn get_incidents_by_service(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     service: &str,
     env: Option<&str>,
     limit: usize,
@@ -1379,7 +1380,7 @@ fn row_to_incident(row: &[crate::db::backend::DataValue]) -> models::Incident {
 // ============================================================================
 
 pub fn get_elements_by_env(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     env: &str,
     limit: usize,
 ) -> Result<Vec<models::CodeElement>, Box<dyn std::error::Error>> {
@@ -1409,7 +1410,7 @@ pub fn get_elements_by_env(
 }
 
 pub fn get_relationships_by_env(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     env: &str,
     limit: usize,
 ) -> Result<Vec<models::Relationship>, Box<dyn std::error::Error>> {
@@ -1428,7 +1429,7 @@ pub fn get_relationships_by_env(
 }
 
 pub fn get_element_across_envs(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     qualified_name: &str,
 ) -> Result<Vec<(String, models::CodeElement)>, Box<dyn std::error::Error>> {
     let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env], qualified_name = $qn"#;
@@ -1484,7 +1485,7 @@ fn row_to_relationship(row: &[crate::db::backend::DataValue]) -> models::Relatio
 }
 
 pub fn upsert_service_metadata(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     svc: &models::ServiceMetadata,
 ) -> Result<(), String> {
     let now = std::time::SystemTime::now()
@@ -1547,7 +1548,7 @@ pub fn upsert_service_metadata(
 }
 
 pub fn get_service_metadata(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     service_name: &str,
     env: &str,
 ) -> Result<Option<models::ServiceMetadata>, String> {
@@ -1607,7 +1608,7 @@ pub fn get_service_metadata(
 // ============================================================================
 
 pub fn create_team(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     team: &models::Team,
 ) -> Result<models::Team, Box<dyn std::error::Error>> {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] <- [[$id, $name, $desc, $owner, $cat, $uat, $read_users, $write_users, $members]] :put teams {id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members}"#;
@@ -1651,7 +1652,7 @@ pub fn create_team(
 }
 
 pub fn get_team(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     id: &str,
 ) -> Result<Option<models::Team>, Box<dyn std::error::Error>> {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] := *teams[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members], id = $id"#;
@@ -1666,14 +1667,14 @@ pub fn get_team(
 }
 
 pub fn update_team(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     team: &models::Team,
 ) -> Result<models::Team, Box<dyn std::error::Error>> {
     create_team(db, team)
 }
 
 pub fn delete_team(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#":delete teams where id = $id"#;
@@ -1684,7 +1685,7 @@ pub fn delete_team(
 }
 
 pub fn list_teams(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Vec<models::Team>, Box<dyn std::error::Error>> {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] := *teams[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members]"#;
     let result = db.run_script(query, Default::default())?;
@@ -1717,7 +1718,7 @@ fn row_to_team(row: &[crate::db::backend::DataValue]) -> models::Team {
 // ============================================================================
 
 pub fn create_team_invite(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     invite: &models::TeamInvite,
 ) -> Result<models::TeamInvite, Box<dyn std::error::Error>> {
     let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] <- [[$token, $tid, $email, $role, $by, $cat, $exp, $acc, $accept]] :put team_invites {token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by}"#;
@@ -1769,7 +1770,7 @@ pub fn create_team_invite(
 }
 
 pub fn get_team_invite(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     token: &str,
 ) -> Result<Option<models::TeamInvite>, Box<dyn std::error::Error>> {
     let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] := *team_invites[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by], token = $token"#;
@@ -1787,7 +1788,7 @@ pub fn get_team_invite(
 }
 
 pub fn get_team_invites(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     team_id: &str,
 ) -> Result<Vec<models::TeamInvite>, Box<dyn std::error::Error>> {
     let query = r#"?[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by] := *team_invites[token, team_id, email, role, created_by, created_at, expires_at, accepted, accepted_by], team_id = $tid"#;
@@ -1802,7 +1803,7 @@ pub fn get_team_invites(
 }
 
 pub fn accept_team_invite(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     token: &str,
     user_id: &str,
 ) -> Result<models::TeamInvite, Box<dyn std::error::Error>> {
@@ -1829,7 +1830,7 @@ pub fn accept_team_invite(
 }
 
 pub fn delete_team_invite(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     token: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#":delete team_invites where token = $token"#;
@@ -1861,7 +1862,7 @@ fn row_to_team_invite(row: &[crate::db::backend::DataValue]) -> models::TeamInvi
 // ============================================================================
 
 pub fn check_graph_permission(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     team_id: &str,
     user_id: &str,
     require_write: bool,
@@ -1882,7 +1883,7 @@ pub fn check_graph_permission(
 }
 
 pub fn add_team_member(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     team_id: &str,
     user_id: &str,
     role: &str,
@@ -1920,7 +1921,7 @@ pub fn add_team_member(
 }
 
 pub fn remove_team_member(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     team_id: &str,
     user_id: &str,
 ) -> Result<models::Team, Box<dyn std::error::Error>> {

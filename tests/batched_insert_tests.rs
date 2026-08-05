@@ -1,18 +1,17 @@
+use leankg::db::backend::init_db;
 use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use tempfile::TempDir;
 
 fn with_test_db<F>(callback: F)
 where
-    F: FnOnce(leankg::db::backend::CozoBackend, &GraphEngine, &TempDir),
+    F: FnOnce(leankg::db::backend::SharedDb, &GraphEngine, &TempDir),
 {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let backend = leankg::db::backend::CozoBackend::from_concrete(db);
-    let graph = GraphEngine::new(std::sync::Arc::new(backend.clone()));
-    callback(backend, &graph, &tmp);
+    let graph = GraphEngine::new(db.clone());
+    callback(db, &graph, &tmp);
 }
 
 #[cfg(test)]
@@ -442,10 +441,7 @@ mod graph_batched_insert_tests {
             .set_dependencies("file3.rs".to_string(), vec!["dep3".to_string()])
             .await;
 
-        let graph = GraphEngine::with_cache(
-            std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
-            cache.clone(),
-        );
+        let graph = GraphEngine::with_cache(db, cache.clone());
 
         let elements = vec![
             create_code_element("func1", "file1.rs", 1),
@@ -571,10 +567,7 @@ mod graph_batched_insert_tests {
             .set_dependents("src/caller3.rs".to_string(), vec!["dep3".to_string()])
             .await;
 
-        let graph = GraphEngine::with_cache(
-            std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
-            cache.clone(),
-        );
+        let graph = GraphEngine::with_cache(db, cache.clone());
 
         let rels = vec![
             create_relationship("src/caller1.rs", "src/target.rs"),
@@ -617,10 +610,7 @@ mod graph_batched_insert_tests {
             .set_dependencies("src/bystander.rs".to_string(), vec!["dep2".to_string()])
             .await;
 
-        let graph = GraphEngine::with_cache(
-            std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
-            cache.clone(),
-        );
+        let graph = GraphEngine::with_cache(db, cache.clone());
         graph
             .insert_elements(&[create_code_element("func", "src/victim.rs", 1)])
             .unwrap();
@@ -661,10 +651,7 @@ mod graph_batched_insert_tests {
             .set_dependents("src/victim.rs".to_string(), vec!["dep1".to_string()])
             .await;
 
-        let graph = GraphEngine::with_cache(
-            std::sync::Arc::new(leankg::db::backend::CozoBackend::from_concrete(db)),
-            cache.clone(),
-        );
+        let graph = GraphEngine::with_cache(db, cache.clone());
         graph
             .insert_relationships(&[create_relationship("src/victim.rs", "src/dest.rs")])
             .unwrap();

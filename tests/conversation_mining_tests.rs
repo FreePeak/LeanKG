@@ -9,7 +9,7 @@
 use leankg::conversation_indexer::{
     self, ConversationFormat, MinedItem, MinedItemKind, MiningResult,
 };
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -27,9 +27,7 @@ where
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph = GraphEngine::new(db.clone());
     callback(&graph, &tmp);
 }
 
@@ -315,9 +313,7 @@ fn cli_mine_conversations_e2e_with_tempdir() {
         std::fs::create_dir_all(project.join(".leankg")).unwrap();
         let db_path = project.join(".leankg");
         let db = init_db(db_path.as_path()).unwrap();
-        let g2 = GraphEngine::new(std::sync::Arc::new(
-            leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-        ));
+        let g2 = GraphEngine::new(db.clone());
         let _ = graph; // keep with_test_graph signature stable
 
         // Seed one code element the decision can point at

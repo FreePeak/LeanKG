@@ -20,42 +20,18 @@ pub struct ApiKey {
     pub revoked_at: Option<String>,
 }
 
-pub struct ApiKeyStore {
-    db_path: std::path::PathBuf,
-}
+pub struct ApiKeyStore;
 
 impl ApiKeyStore {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let home = dirs::home_dir().ok_or("Cannot find home directory")?;
-        let keys_dir = home.join(".leankg");
-        std::fs::create_dir_all(&keys_dir)?;
-        let db_path = keys_dir.join("keys.db");
-        Ok(Self { db_path })
+        Ok(Self)
     }
 
     pub fn init_db(&self) -> Result<KeysDb, Box<dyn std::error::Error>> {
-        // Separate database file (keys.db) — opened raw WITHOUT the graph
-        // schema, matching the pre-migration behavior (this file only ever
-        // had the api_keys table, created below).
-        let db: KeysDb = std::sync::Arc::new(crate::db::backend::CozoBackend::open_raw(
-            &self.db_path,
-            "sqlite",
-        )?);
-
-        let check_relations = r#"::relations"#;
-        let relations_result = db.run_script(check_relations, Default::default())?;
-        let existing_relations: std::collections::HashSet<String> = relations_result
-            .rows
-            .iter()
-            .filter_map(|row| row.first().and_then(|v| v.get_str().map(String::from)))
-            .collect();
-
-        if !existing_relations.contains("api_keys") {
-            let create_table = r#":create api_keys {id: String, name: String, key_hash: String, created_at: String, last_used_at: String?, revoked_at: String?}"#;
-            db.run_script(create_table, Default::default())?;
-        }
-
-        Ok(db)
+        // Post-migration (Phase 8): api_keys lives in Postgres (schema.sql).
+        // The legacy separate `keys.db` sqlite file and its CozoBackend shim
+        // are gone; the table is created by the schema migrations.
+        crate::db::backend::init_db_pg()
     }
 
     pub fn create_key(&self, name: &str) -> Result<(String, ApiKey), Box<dyn std::error::Error>> {

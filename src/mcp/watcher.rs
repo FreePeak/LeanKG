@@ -275,25 +275,10 @@ pub async fn start_watcher(
 }
 
 /// Check database size and trigger a VACUUM if over the configured limit.
-/// Previously this only logged a warning — which is why the 14 GB `leankg.db`
-/// in the user's workspace kept growing without bound.
-fn check_and_enforce_db_size(db_path: &Path, graph: &GraphEngine, max_size: u64) {
-    let db_file = db_path.join("leankg.db");
-    let size = match std::fs::metadata(&db_file) {
-        Ok(m) => m.len(),
-        Err(_) => return,
-    };
-    if size <= max_size {
-        return;
-    }
-    tracing::warn!(
-        "Database size {} bytes exceeds limit {} bytes; running VACUUM to reclaim space",
-        size,
-        max_size
-    );
-    if let Err(e) = graph.vacuum() {
-        tracing::warn!("VACUUM failed: {}", e);
-    }
+/// Phase 8: Postgres holds the data — the legacy `leankg.db` file no longer
+/// exists, so this is a no-op (Postgres manages its own storage/VACUUM).
+fn check_and_enforce_db_size(_db_path: &Path, _graph: &GraphEngine, _max_size: u64) {
+    let _ = (_db_path, _graph, _max_size);
 }
 
 #[cfg(test)]

@@ -18,16 +18,13 @@ echo "=== cold embed perf live test ==="
 echo "project=$PROJ  timeout=${TIMEOUT_MIN}m  min_rate=${MIN_RATE} v/s"
 
 # 1. Stop MCP (single-writer).
-docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml stop leankg
+docker compose -f docker-compose.yml -f docker-compose.override.yml stop leankg
 
 # 2. Run the offline embed (full mode, throwaway container).
 RESULT=$(docker run --rm \
-  -v leankg_leankg-rocksdb:/data/leankg-rocksdb \
-  -v leankg_leankg_models:/root/.cache/leankg \
+    -v leankg_leankg_models:/root/.cache/leankg \
   -v /Users/linh.doan/work/be:/workspace-be \
-  -e LEANKG_DB_ENGINE=rocksdb \
-  -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
-  -e LEANKG_EMBED_FAST=1 \
+      -e LEANKG_EMBED_FAST=1 \
   -e LEANKG_EMBED_MODEL=bge-q \
   -e LEANKG_EMBED_MAX_SEQ=128 \
   -e LEANKG_EMBED_MAX_BLOB_CHARS=500 \
@@ -47,7 +44,7 @@ ELAPSED=$((WALL_T1 - WALL_T0))
 echo "wall_clock=${ELAPSED}s"
 
 # 3. Restart MCP.
-docker compose -f docker-compose.rocksdb.yml -f docker-compose.override.yml up -d leankg
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d leankg
 
 # 4. Query embed status for the final rate.
 sleep 3

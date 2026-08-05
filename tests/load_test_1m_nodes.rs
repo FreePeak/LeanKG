@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo test --release -- --nocapture load_test
 
+use leankg::db::backend::init_db;
 use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -12,9 +12,7 @@ fn make_test_engine() -> (GraphEngine, TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("loadtest.db");
     let db = init_db(&db_path).unwrap();
-    let engine = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let engine = GraphEngine::new(db.clone());
     (engine, tmp)
 }
 

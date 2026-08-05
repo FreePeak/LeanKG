@@ -1,14 +1,12 @@
 // Debug get_call_graph query
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_check_call_graph_query() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph = GraphEngine::new(db.clone());
 
     // Check what calls exist for main
     let source = "./src/main.rs::main";

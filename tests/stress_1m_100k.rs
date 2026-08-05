@@ -79,10 +79,8 @@ fn stress_1m_elements_100k_embed_rows() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let db_path: PathBuf = tmp.path().join(".leankg");
-    let db = schema::init_db(&db_path).expect("init_db");
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let db = leankg::db::backend::init_db(&db_path).expect("init_db");
+    let graph = GraphEngine::new(db.clone());
     ensure_pending_table(&graph).expect("create pending table");
 
     eprintln!("[stress] indexing {n} elements in batches of {batch}");

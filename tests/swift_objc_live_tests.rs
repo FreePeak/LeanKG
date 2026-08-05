@@ -3,7 +3,7 @@
 //! Indexes real files under `tests/fixtures/{swift,objc}` into a GraphEngine
 //! via `index_file_sync` and asserts entities, heritage, and call edges.
 
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::indexer::{find_files_sync, index_file_sync, ParserManager};
 use leankg::lsp::{apply_typed_resolve, TypeRegistry};
@@ -29,9 +29,7 @@ fn copy_fixtures(src_dir: &str, dest: &Path) {
 fn open_graph(tmp: &TempDir) -> (GraphEngine, ParserManager) {
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph = GraphEngine::new(db.clone());
     let mut parser = ParserManager::new();
     let _ = parser.init_parsers();
     (graph, parser)

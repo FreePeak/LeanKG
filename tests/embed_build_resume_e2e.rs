@@ -23,9 +23,7 @@ where
     let tmp = TempDir::new().expect("tempdir");
     let db_path = tmp.path().join("test.db");
     let db = init_db(db_path.as_path()).expect("init_db");
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph = GraphEngine::new(db.clone());
     callback(&graph, &tmp);
 }
 

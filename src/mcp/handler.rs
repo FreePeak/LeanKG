@@ -146,7 +146,7 @@ used in this repo's docker-compose is `/workspace`.
 ### Registering a New Project Directory
 
 **Option A: Docker volume mount**
-1. Add volume mount to `docker-compose.rocksdb.yml`:
+1. Add volume mount to `docker-compose.yml`:
    ```yaml
    volumes:
      - /host/path/to/project:/workspace-new
@@ -755,17 +755,15 @@ impl ToolHandler {
     fn mcp_status(&self, args: &Value) -> Result<Value, String> {
         let db_path = &self.db_path;
         let include_counts = args["include_counts"].as_bool().unwrap_or(false);
-        let storage = db::schema::resolve_storage_config(db_path);
-        let storage_engine = match storage.engine {
-            db::schema::StorageEngine::Sqlite => "sqlite",
-            db::schema::StorageEngine::RocksDb => "rocksdb",
-        };
+        // Post-migration (Phase 8, D4): Postgres is the only engine.
+        let storage_engine = "postgres";
+        let storage_path = self.graph_engine.db().redacted_url();
 
         if !db_path.exists() {
             return Ok(json!({
                 "initialized": false,
                 "storage_engine": storage_engine,
-                "storage_path": storage.path.to_string_lossy(),
+                "storage_path": storage_path,
                 "message": "LeanKG not initialized. Run mcp_init first."
             }));
         }
@@ -778,7 +776,7 @@ impl ToolHandler {
                 "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
                 "database_exists": false,
                 "storage_engine": storage_engine,
-                "storage_path": storage.path.to_string_lossy(),
+                "storage_path": storage_path.clone(),
                 "counts_included": false
             }));
         }
@@ -790,7 +788,7 @@ impl ToolHandler {
                 "database_exists": true,
                 "database": db_path.to_string_lossy(),
                 "storage_engine": storage_engine,
-                "storage_path": storage.path.to_string_lossy(),
+                "storage_path": storage_path.clone(),
                 "counts_included": false,
                 "message": "Database exists and contains indexed elements. Pass include_counts=true for full counts."
             }));
@@ -802,7 +800,7 @@ impl ToolHandler {
             "database_exists": true,
             "database": db_path.to_string_lossy(),
             "storage_engine": storage_engine,
-            "storage_path": storage.path.to_string_lossy(),
+            "storage_path": storage_path.clone(),
             "counts_included": true,
             "elements": self.graph_engine.count_elements().unwrap_or(0),
             "relationships": self.graph_engine.count_relationships().unwrap_or(0),
@@ -4852,7 +4850,7 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
 // take the HNSW fast path and run it.
 
 #[cfg(feature = "embeddings")]
-fn embeddings_index_available(db: &dyn crate::db::backend::DbBackend) -> bool {
+fn embeddings_index_available(db: &crate::db::backend::PostgresBackend) -> bool {
     // FR-SEM-07: :limit 1 probe — never list_all (~147k rows) just to gate HNSW.
     crate::embeddings::state::has_any(db).unwrap_or(false)
 }

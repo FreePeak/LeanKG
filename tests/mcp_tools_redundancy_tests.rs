@@ -29,7 +29,7 @@
 //! search_knowledge, semantic_search, shortest_path, temporal_query,
 //! timeline, update_knowledge, query_graph
 
-use leankg::db::schema::{init_db, run_script, CozoDb};
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
 use leankg::mcp::tools::ToolRegistry;
@@ -66,9 +66,11 @@ const REL_FIXTURE: &str = r#"
 :put relationships {source_qualified, target_qualified, rel_type, confidence, metadata, env}
 "#;
 
-fn seed_db(db: &CozoDb) {
-    run_script(db, FIXTURE, Default::default()).expect("seed code_elements");
-    run_script(db, REL_FIXTURE, Default::default()).expect("seed relationships");
+fn seed_db(db: &leankg::db::backend::PostgresBackend) {
+    db.run_script(FIXTURE, Default::default())
+        .expect("seed code_elements");
+    db.run_script(REL_FIXTURE, Default::default())
+        .expect("seed relationships");
 }
 
 async fn make_handler() -> (ToolHandler, TempDir) {
@@ -76,9 +78,7 @@ async fn make_handler() -> (ToolHandler, TempDir) {
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(&db_path).expect("init_db");
     seed_db(&db);
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph = GraphEngine::new(db.clone());
     (ToolHandler::new(graph, db_path), tmp)
 }
 

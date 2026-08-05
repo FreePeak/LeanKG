@@ -5,7 +5,7 @@
 //! 2. Returns non-empty data when called with proper parameters
 //! 3. Returns proper error for missing required parameters
 
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
 use serde_json::json;
@@ -17,13 +17,11 @@ async fn create_real_handler() -> (ToolHandler, TempDir) {
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
     seed_test_data(&db);
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph = GraphEngine::new(db.clone());
     (ToolHandler::new(graph, db_path), tmp)
 }
 
-fn seed_test_data(db: &leankg::db::schema::CozoDb) {
+fn seed_test_data(db: &leankg::db::backend::PostgresBackend) {
     let elements = r#"
     ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] <-
     [
@@ -34,7 +32,7 @@ fn seed_test_data(db: &leankg::db::schema::CozoDb) {
     ]
     :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}
     "#;
-    leankg::db::schema::run_script(db, elements, Default::default()).unwrap();
+    db.run_script(elements, Default::default()).unwrap();
 
     let relationships = r#"
     ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] <-
@@ -46,7 +44,7 @@ fn seed_test_data(db: &leankg::db::schema::CozoDb) {
     ]
     :put relationships {source_qualified, target_qualified, rel_type, confidence, metadata, env}
     "#;
-    leankg::db::schema::run_script(db, relationships, Default::default()).unwrap();
+    db.run_script(relationships, Default::default()).unwrap();
 }
 
 // ============================================================================
@@ -911,9 +909,7 @@ mod mega_guard_tests {
         let db_path = tmp.path().join("leankg.db");
         let db = init_db(db_path.as_path()).unwrap();
         seed_test_data(&db);
-        let graph = GraphEngine::new(std::sync::Arc::new(
-            leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-        ));
+        let graph = GraphEngine::new(db.clone());
         (ToolHandler::new(graph, db_path), tmp)
     }
 

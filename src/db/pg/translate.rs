@@ -25,8 +25,8 @@
 #![allow(unused_variables)]
 #![allow(unused_mut)]
 
-use crate::db::schema::mutability_for;
-use cozo::{DataValue, NamedRows};
+use crate::db::pg::mutability::mutability_for;
+use crate::db::value::{DataValue, NamedRows};
 use postgres::types::ToSql;
 use std::collections::BTreeMap;
 
@@ -203,7 +203,7 @@ pub fn translate(
     }
 
     Err(format!(
-        "unrecognized cozo script (no leading operator): {}",
+        "unrecognized script (no leading operator): {}",
         &body[..body.len().min(80)]
     ))
 }
@@ -496,6 +496,15 @@ const CODE_ELEMENTS_COLUMNS: &[&str] = &[
     "ontology_layer",
 ];
 
+const RELATIONSHIPS_COLUMNS: &[&str] = &[
+    "source_qualified",
+    "target_qualified",
+    "rel_type",
+    "confidence",
+    "metadata",
+    "env",
+];
+
 /// Canonical column order for tables whose aggregates bind positional
 /// aliases (schema.sql). Used by [`aggregate_query`] to resolve head
 /// aliases to real columns.
@@ -734,7 +743,20 @@ fn simple_select(
             }
             select_parts.push(format!("{resolved} AS {}", quote_ident(c)));
         } else {
-            select_parts.push(quote_ident(c));
+            // Head var may be a positional alias bound by the relation block
+            // (`?[tgt] := *relationships[_, tgt, rel, _, _, _]` — the head
+            // name `tgt` is the alias, the real column is `target_qualified`
+            // at that position). Map aliases to their real columns, but only
+            // when they are NOT already a real column of the table.
+            let resolved = if is_positional_alias(c, rel_cols) {
+                let idx = rel_cols.iter().position(|x| x == c).unwrap();
+                column_at_for(relation, idx)
+                    .map(|col| quote_ident(col))
+                    .unwrap_or_else(|| quote_ident(c))
+            } else {
+                quote_ident(c)
+            };
+            select_parts.push(resolved);
         }
     }
     let cols_sql = select_parts.join(", ");
@@ -746,7 +768,7 @@ fn simple_select(
     let filters = strip_definition_clauses(&filters, head);
     // Resolve positional alias tokens in the filters against the relation
     // block (G107 `et in [...]` where `et` is the 2nd column = element_type).
-    let filters = resolve_filter_aliases(&filters, rel_cols);
+    let filters = resolve_filter_aliases(relation, &filters, rel_cols);
     // Inline string literals in the relation block (`*code_elements[qn,
     // "function", ...]`, H6/get_architecture hotspots) act as equality
     // constraints — absent cozo-side would silently over-count. Cozo treats
@@ -790,19 +812,21 @@ fn simple_select(
 /// `et` is a positional alias bound to the 2nd column; PG needs the real
 /// column name (`element_type`). Only single-letter-ish aliases that are
 /// NOT real column names are remapped (guarded by the rel_cols lookup).
-fn resolve_filter_aliases(filters: &str, rel_cols: &[String]) -> String {
+fn resolve_filter_aliases(relation: &str, filters: &str, rel_cols: &[String]) -> String {
     if rel_cols.is_empty() {
         return filters.to_string();
     }
     let mut out = filters.to_string();
     for (i, alias) in rel_cols.iter().enumerate() {
         // Only remap short positional aliases (single/double letters) that
-        // don't collide with a real column name of the table.
-        if alias.len() > 2 || alias.starts_with('_') || alias == "env" {
+        // don't collide with a real column name of the table. `rel` (3
+        // chars, relationships) is such an alias; `env` / `name` etc. are
+        // real columns and must be left alone. Underscore `_` is a
+        // wildcard placeholder.
+        if alias.starts_with('_') || alias == "env" {
             continue;
         }
-        let real = CODE_ELEMENTS_COLUMNS
-            .get(i)
+        let real = column_at_for(relation, i)
             .map(|c| c.to_string())
             .unwrap_or_else(|| alias.clone());
         if real == *alias {
@@ -819,6 +843,14 @@ fn resolve_filter_aliases(filters: &str, rel_cols: &[String]) -> String {
             let pat2 = format!("{b}{alias}[");
             out = out.replace(&pat, &format!("{b}{real} "));
             out = out.replace(&pat2, &format!("{b}{real}["));
+        }
+        // Start-of-string boundary: `qn in $qns` where `qn` is the first
+        // token (leading comma already stripped). Require a word boundary
+        // after the alias.
+        for pat3 in [format!("{alias} "), format!("{alias}[")] {
+            if out.starts_with(&pat3) {
+                out = format!("{real}{}", &out[alias.len()..]);
+            }
         }
     }
     out
@@ -866,34 +898,25 @@ fn append_literal_constraints(filters: &str, rel_cols: &[String]) -> String {
 /// literal-constraint resolution we need the column name for any table,
 /// so this walks the same catalogs.
 fn column_at(i: usize) -> Option<&'static str> {
-    for cols in [
-        &[
-            "qualified_name",
-            "element_type",
-            "name",
-            "file_path",
-            "line_start",
-            "line_end",
-            "language",
-            "parent_qualified",
-            "cluster_id",
-            "cluster_label",
-            "metadata",
-            "env",
-            "ontology_layer",
-        ][..],
-        &[
-            "source_qualified",
-            "target_qualified",
-            "rel_type",
-            "confidence",
-            "metadata",
-            "env",
-        ][..],
-    ] {
+    for cols in [&CODE_ELEMENTS_COLUMNS[..], &RELATIONSHIPS_COLUMNS[..]] {
         if let Some(c) = cols.get(i) {
             return Some(c);
         }
+    }
+    None
+}
+
+/// Table-aware variant of [`column_at`]: maps the i-th column of the
+/// relation named `relation` (used for head-alias resolution where the
+/// same index can mean different columns across tables). Unknown relations
+/// return None — their head vars are their own columns (`?[a,b,c] :=
+/// *table[a,b,c]`), not positional aliases to map.
+fn column_at_for(relation: &str, i: usize) -> Option<&'static str> {
+    if relation == "code_elements" {
+        return CODE_ELEMENTS_COLUMNS.get(i).copied();
+    }
+    if relation == "relationships" {
+        return RELATIONSHIPS_COLUMNS.get(i).copied();
     }
     None
 }
@@ -929,6 +952,47 @@ fn strip_definition_clauses(filters: &str, head: &[String]) -> String {
 /// (`span = line_end - line_start`) by looking up each variable in the
 /// relation block's column placeholders (which are bound positionally).
 /// Unknown names fall through unchanged (quoted identifiers / literals).
+/// True when `name` appears in the relation block as a positional alias
+/// (`*rel[s, t, ...]`) and is NOT itself a real column of any known table.
+/// Real columns stay as-is; aliases must be mapped to the column at their
+/// index.
+fn is_positional_alias(name: &str, rel_cols: &[String]) -> bool {
+    if !rel_cols.iter().any(|c| c == name) {
+        return false;
+    }
+    // If the name is a real column of the table, leave it alone.
+    for cols in [
+        &[
+            "qualified_name",
+            "element_type",
+            "name",
+            "file_path",
+            "line_start",
+            "line_end",
+            "language",
+            "parent_qualified",
+            "cluster_id",
+            "cluster_label",
+            "metadata",
+            "env",
+            "ontology_layer",
+        ][..],
+        &[
+            "source_qualified",
+            "target_qualified",
+            "rel_type",
+            "confidence",
+            "metadata",
+            "env",
+        ][..],
+    ] {
+        if cols.contains(&name) {
+            return false;
+        }
+    }
+    true
+}
+
 fn resolve_positional(expr: &str, rel_cols: &[String]) -> String {
     let mut out = String::with_capacity(expr.len());
     let mut rest = expr;
@@ -976,7 +1040,7 @@ fn aggregate_query(
     // Positional aliases in filters (`et = $et` where `et` is the 2nd
     // relation-block alias → element_type) must resolve before the WHERE
     // compiles — same step the non-aggregate read path takes (G107).
-    let filters = resolve_filter_aliases(&filters, rel_cols);
+    let filters = resolve_filter_aliases(relation, &filters, rel_cols);
     let filters = append_literal_constraints(&filters, rel_cols);
     let (where_sql, where_params) = compile_filters(filters, params)?;
     let (group_sql, order_sql, _group_cols, mut mod_params) = compile_group_order(&modifiers);
@@ -1369,11 +1433,19 @@ fn split_clauses(s: &str) -> Vec<&str> {
             '(' | '[' => depth += 1,
             ')' | ']' => depth = depth.saturating_sub(1),
             ',' | '\n' if depth == 0 => {
-                let piece = s[last..i].trim();
-                if !piece.is_empty() {
-                    out.push(piece);
+                // `\n or ...` / `, or ...` continues the previous clause
+                // (top-level OR chain — search_by_content / search_knowledge
+                // write each alternative on its own line). Only split when
+                // the next non-whitespace is NOT `or `.
+                let rest = s[i + 1..].trim_start();
+                if !rest.starts_with("or ") && !rest.starts_with("or\n") && !rest.starts_with("or(")
+                {
+                    let piece = s[last..i].trim();
+                    if !piece.is_empty() {
+                        out.push(piece);
+                    }
+                    last = i + 1;
                 }
-                last = i + 1;
             }
             'a' if depth == 0
                 && i >= 1
@@ -1400,12 +1472,78 @@ fn split_clauses(s: &str) -> Vec<&str> {
     out
 }
 
+/// Split a clause on top-level ` or ` separators (outside parens/brackets).
+fn split_top_level_or(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut last = 0usize;
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            'o' if depth == 0
+                && i >= 1
+                && bytes[i - 1] == b' '
+                && i + 2 <= bytes.len()
+                && &s[i..i + 2] == "or"
+                && (i + 2 == bytes.len() || (bytes[i + 2] as char).is_ascii_whitespace()) =>
+            {
+                let piece = s[last..(i - 1)].trim();
+                if !piece.is_empty() {
+                    out.push(piece);
+                }
+                // Skip "or" plus any following whitespace (last is the start
+                // of the next part).
+                last = i + 3;
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let tail = s[last..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
+fn find_top_level_or(s: &str) -> Option<usize> {
+    let parts = split_top_level_or(s);
+    if parts.len() > 1 {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 fn render_clause<'a>(
     clause: &'a str,
     params: &BTreeMap<String, serde_json::Value>,
     next_idx: &mut usize,
 ) -> Result<(String, Vec<Box<dyn ToSql + Sync + Send>>, &'a str), String> {
     let trimmed = clause.trim();
+
+    // Top-level OR chain (no enclosing parens):
+    //   `str_includes(a, "x") or str_includes(b, "x") or ...`
+    // The `search_by_content` / `search_knowledge` queries write their
+    // alternatives as separate `or ...` lines; `split_clauses` keeps them
+    // attached to the first clause (see the `\n or ` continuation), so a
+    // chain lands here whole. Split on top-level ` or ` and OR-join.
+    if find_top_level_or(trimmed).is_some() {
+        let parts = split_top_level_or(trimmed);
+        let mut rendered = Vec::with_capacity(parts.len());
+        let mut used: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
+        for p in parts {
+            let (r, u, _) = render_clause(p.trim(), params, next_idx)?;
+            rendered.push(r);
+            used.extend(u);
+        }
+        return Ok((format!("({})", rendered.join(" OR ")), used, clause));
+    }
 
     // Parenthesized OR/AND group: `(a = $x or a = $y)`.
     if trimmed.starts_with('(') && trimmed.ends_with(')') {
@@ -1434,6 +1572,28 @@ fn render_clause<'a>(
         }
     }
 
+    // Negated regex: `!regex_matches(col, "literal")` → `col !~ pat`.
+    if let Some(rest) = trimmed.strip_prefix("!regex_matches(") {
+        let body = rest.strip_suffix(')').unwrap_or(rest);
+        let mut parts = body.splitn(2, ',');
+        let col = parts
+            .next()
+            .ok_or_else(|| format!("bad !regex_matches: {trimmed}"))?
+            .trim();
+        let pat = parts
+            .next()
+            .ok_or_else(|| format!("bad !regex_matches: {trimmed}"))?
+            .trim();
+        let col_sql = string_op_col(col);
+        let (placeholder, used) = match strip_lowercase_wrapper(pat) {
+            Some(inner) => {
+                let (r, u) = render_value_or_param(inner, params, next_idx)?;
+                (format!("lower({r})"), u)
+            }
+            None => render_value_or_param(pat, params, next_idx)?,
+        };
+        return Ok((format!("{col_sql} !~ {placeholder}"), used, clause));
+    }
     // regex_matches(lowercase(col), "literal") or regex_matches(col, $pat)
     if let Some(rest) = trimmed.strip_prefix("regex_matches(") {
         let body = rest.strip_suffix(')').unwrap_or(rest);
@@ -1921,7 +2081,9 @@ fn ann_translation(
 }
 
 fn extract_ann_vec_literal(s: &str) -> Result<String, String> {
-    // Look for `vec([...])` and capture the inner.
+    // Look for `vec([...])` and capture the inner, then wrap it in `[...]`
+    // so the pgvector `::text::vector` cast accepts it (pgvector requires
+    // the outer brackets).
     let lb = s
         .find("vec([")
         .ok_or_else(|| "ANN query missing vec([ literal)".to_string())?;
@@ -1929,7 +2091,7 @@ fn extract_ann_vec_literal(s: &str) -> Result<String, String> {
     let rb = after
         .find("])")
         .ok_or_else(|| "ANN query missing closing ])".to_string())?;
-    Ok(after[..rb].to_string())
+    Ok(format!("[{}]", after[..rb].to_string()))
 }
 
 fn extract_ann_int_field(s: &str, field: &str) -> Option<usize> {
@@ -2799,7 +2961,7 @@ fn schema_introspection(_rest: &str) -> Result<Translation, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Row mapping: postgres Row → cozo::DataValue (preserves the downstream
+// Row mapping: postgres Row → [`DataValue`] (preserves the downstream
 // indexing contract — fetch via row[i].get_str() etc. keeps working).
 // ---------------------------------------------------------------------------
 
@@ -2812,12 +2974,11 @@ pub fn map_row(
     let mut out = Vec::with_capacity(head.len());
     for (i, col) in head.iter().enumerate() {
         // JSONB columns: bind through the serde_json feature so the jsonb
-        // value round-trips (cozo stored the JSON as a string; the value
-        // becomes DataValue::Json / Str of the canonical jsonb text).
+        // value round-trips (the legacy cozo storage kept the JSON as a
+        // string; consumers read it with `get_str()`).
         if JSONB_COLUMNS.contains(&col.as_str()) {
-            // Cozo stored the JSON as a *string*; consumers read it with
-            // `get_str()`. Return the canonical jsonb text (e.g. `{}` for
-            // an empty object) so the DataValue shape matches cozo.
+            // Consumers read JSON with `get_str()`. Return the canonical
+            // jsonb text (e.g. `{}` for an empty object).
             let v: DataValue = match row.try_get::<_, Option<serde_json::Value>>(i) {
                 Ok(Some(j)) => DataValue::Str(serde_json::to_string(&j).unwrap_or_default().into()),
                 _ => DataValue::Null,
@@ -2969,6 +3130,67 @@ mod tests {
         let t = translate("?[t] := *r[s, t, _, _, _, _], (s = $a or s = $b)", p).unwrap();
         assert!(t.sql.contains(" OR "), "got: {}", t.sql);
         assert_eq!(t.params.len(), 2);
+    }
+
+    #[test]
+    fn read_top_level_or_chain() {
+        // search_by_content / search_knowledge write alternatives as
+        // `... or ...` without parens, on their own lines.
+        let t = translate(
+            "?[a] := *code_elements[qn, et, name, fp, _, _, _, _, _, _, _, _, _], \
+             str_includes(lowercase(name), \"x\") or \
+             str_includes(lowercase(qn), \"x\") or \
+             str_includes(lowercase(fp), \"x\") :limit 5",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(t.sql.matches(" OR ").count(), 2, "got: {}", t.sql);
+        assert!(t.sql.contains("LIMIT 5"), "got: {}", t.sql);
+    }
+
+    #[test]
+    fn head_alias_resolves_to_real_column() {
+        // find_dead_code candidate query: head `tgt` (positional alias) and
+        // `span` (defined by a filter clause).
+        let t = translate(
+            "?[qualified_name, file_path, line_end, line_start, language, name, span] := \
+             *code_elements[qualified_name, et, name, file_path, line_start, line_end, language, _, _, _, _, env, ontology_layer], \
+             line_end >= 0, line_start >= 0, (line_end - line_start) >= 1, \
+             et in [\"function\", \"method\", \"struct\"], \
+             span = line_end - line_start :order -span",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(t.sql.contains("\"qualified_name\""), "got: {}", t.sql);
+        assert!(t.sql.contains("\"element_type\" = ANY"), "got: {}", t.sql);
+        assert!(t.sql.contains("AS \"span\""), "got: {}", t.sql);
+        assert!(t.sql.contains("ORDER BY \"span\" DESC"), "got: {}", t.sql);
+    }
+
+    #[test]
+    fn head_alias_tgt_resolves_target_qualified() {
+        // referenced_qualified_names: `?[tgt] := *relationships[_, tgt, ...]`.
+        let t = translate(
+            "?[tgt] := *relationships[_, tgt, rel, _, _, _], (rel = \"calls\" or rel = \"tested_by\")",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(t.sql.contains("\"target_qualified\""), "got: {}", t.sql);
+        assert!(t.sql.contains(" OR "), "got: {}", t.sql);
+        assert!(t.sql.contains("\"rel_type\" = $"), "got: {}", t.sql);
+    }
+
+    #[test]
+    fn qn_in_list_filter_resolves_qualified_name() {
+        // referenced_bare_names: `qn in $qns` where qn is a positional alias.
+        let mut p = BTreeMap::new();
+        p.insert("qns".into(), serde_json::json!(["a", "b"]));
+        let t = translate(
+            "?[name] := *code_elements[qn, _, name, _, _, _, _, _, _, _, _, env, ontology_layer], qn in $qns",
+            p,
+        )
+        .unwrap();
+        assert!(t.sql.contains("\"qualified_name\" = ANY"), "got: {}", t.sql);
     }
 
     #[test]
@@ -3230,7 +3452,8 @@ mod tests {
         .unwrap();
         assert_eq!(t.kind, TranslationKind::Write);
         assert!(
-            t.sql.contains("CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx")
+            t.sql
+                .contains("CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx")
                 && t.sql.contains("USING hnsw")
                 && t.sql.contains("vector_cosine_ops"),
             "got: {}",
@@ -3241,14 +3464,11 @@ mod tests {
     #[test]
     fn hnsw_drop_emits_pg_index_ddl() {
         // Phase 7 (T7.2): `::hnsw drop` maps to DROP INDEX IF EXISTS.
-        let t = translate(
-            "::hnsw drop embedding_vectors:vec_idx",
-            BTreeMap::new(),
-        )
-        .unwrap();
+        let t = translate("::hnsw drop embedding_vectors:vec_idx", BTreeMap::new()).unwrap();
         assert_eq!(t.kind, TranslationKind::Write);
         assert!(
-            t.sql.contains("DROP INDEX IF EXISTS embedding_vectors_vec_hnsw_idx"),
+            t.sql
+                .contains("DROP INDEX IF EXISTS embedding_vectors_vec_hnsw_idx"),
             "got: {}",
             t.sql
         );

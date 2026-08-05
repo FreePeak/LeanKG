@@ -1,119 +1,22 @@
-//! Storage-backend abstraction (Phase 1 of the CozoDB → PostgreSQL migration).
+//! PostgreSQL backend — the only storage engine (post-migration, plan D4).
 //!
-//! Everything that touches a database goes through [`DbBackend`]; no code
-//! outside this module holds a concrete `cozo::DbInstance`. The production
-//! backend is PostgreSQL (Phase 3+); [`CozoBackend`] is a temporary
-//! migration shim that delegates to CozoDB unchanged (deleted in Phase 8,
-//! plan D4).
+//! Everything that touches a database goes through [`PostgresBackend`].
+//! The legacy `DbBackend` trait and `CozoBackend` shim were deleted in
+//! Phase 8; `run_script` is now a concrete inherent method.
 
+use crate::db::pg::mutability;
 use crate::db::pg::translate;
-use crate::db::schema::mutability_for;
-use cozo::ScriptMutability;
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
-use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
 
 /// Re-export the row/result value types the rest of the codebase consumes
 /// positionally (`row[0].get_str()`, `NamedRows::new`, `DataValue::Num`).
-/// Phase 5 keeps non-shim `src/` files free of `cozo::` references; the
-/// concrete re-export disappears with the shim in Phase 8.
-#[allow(unused_imports)]
-pub use cozo::{DataValue, NamedRows, Num};
+pub use crate::db::value::{DataValue, NamedRows, Num};
 
-/// Shared handle used throughout the codebase. `Arc` because clones of
-/// `GraphEngine` must share ONE underlying DB handle (RocksDB allows one
-/// handle per process per path).
-pub type SharedDb = Arc<dyn DbBackend>;
-
-/// The database call surface (plan §2.3, inventory §4).
-///
-/// Backends must be `Send + Sync`: `GraphEngine` clones and the embed
-/// writer thread move `SharedDb` across threads.
-pub trait DbBackend: Send + Sync {
-    /// Execute a script (Datalog today, SQL after the translator lands) and
-    /// return named rows. Mirrors the historical `schema::run_script` 2-arg
-    /// convention (`serde_json::Value` params, auto-detected mutability).
-    fn run_script(
-        &self,
-        query: &str,
-        params: BTreeMap<String, serde_json::Value>,
-    ) -> Result<NamedRows, Box<dyn std::error::Error>>;
-
-    /// Classify a script as read or write. Auto-detected from the leading
-    /// operator surface — see [`crate::db::schema::mutability_for`].
-    fn mutability_for(&self, query: &str) -> ScriptMutability {
-        mutability_for(query)
-    }
-
-    /// Bulk-load named rows into a relation. Cozo's `import_relations`
-    /// (skips script parsing — ~8x faster than `:put`, build.rs:1292).
-    /// The Postgres backend replaces this with batched `COPY`/upsert in
-    /// Phase 3; the default is an unsupported error so callers fail loudly
-    /// on a backend that has not implemented the bulk path.
-    fn import_relations(
-        &self,
-        _data: BTreeMap<String, NamedRows>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Err("import_relations: not implemented for this backend (Phase 3: COPY/upsert)".into())
-    }
-}
-
-/// **Migration shim — deleted in Phase 8 (plan D4).**
-///
-/// Wraps the existing CozoDB `DbInstance` and the `schema::run_script`
-/// adapter so the rest of the codebase can switch to [`DbBackend`] without
-/// touching query logic. No behavior change vs the pre-trait code paths.
-#[derive(Clone)]
-pub struct CozoBackend {
-    pub(crate) db: crate::db::schema::CozoDb,
-}
-
-impl CozoBackend {
-    /// Wrap an already-open concrete CozoDB handle. Used by modules that
-    /// manage their own database file (e.g. `ApiKeyStore`'s separate
-    /// `keys.db`, which must NOT run the full graph `init_schema`).
-    pub fn from_concrete(db: crate::db::schema::CozoDb) -> Self {
-        Self { db }
-    }
-
-    /// Open a raw CozoDB file WITHOUT running the graph schema — for
-    /// standalone databases like `keys.db` that own their own tables.
-    pub fn open_raw(path: &Path, engine: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let path_str = path.to_string_lossy().to_string();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        Ok(Self {
-            db: crate::db::schema::CozoDb::new(engine, &path_str, "")?,
-        })
-    }
-}
-
-impl DbBackend for CozoBackend {
-    fn run_script(
-        &self,
-        query: &str,
-        params: BTreeMap<String, serde_json::Value>,
-    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
-        crate::db::schema::run_script_cozo(&self.db, query, params).map_err(|e| {
-            Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
-        })
-    }
-
-    fn mutability_for(&self, query: &str) -> ScriptMutability {
-        mutability_for(query)
-    }
-
-    fn import_relations(
-        &self,
-        data: BTreeMap<String, NamedRows>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.db.import_relations(data).map_err(|e| {
-            Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
-        })
-    }
-}
+/// Shared handle used throughout the codebase. `Arc` so clones of
+/// `GraphEngine` share ONE underlying backend (one PG pool).
+pub type SharedDb = Arc<PostgresBackend>;
 
 /// PostgreSQL backend (Phase 3 — plan T1.4, T3.5; pool added Phase 6).
 ///
@@ -123,7 +26,7 @@ impl DbBackend for CozoBackend {
 /// clients. Pool size comes from `LEANKG_PG_POOL_SIZE` (default 5) so
 /// concurrent reads on the async MCP path don't serialize on one socket.
 ///
-/// Read classification flows through [`crate::db::schema::mutability_for`].
+/// Read classification flows through [`crate::db::pg::mutability::mutability_for`].
 /// Writes are wrapped in a single transaction so multi-statement `:put`/
 /// `:rm` scripts roll back cleanly on the first failure.
 #[derive(Clone)]
@@ -181,14 +84,14 @@ impl Drop for PooledClient {
 }
 
 /// The pool itself. `Send + Sync` (all members are), so it survives inside
-/// `Arc<dyn DbBackend>` across threads (the embed writer thread + MCP async
-/// dispatch).
+/// `Arc<PostgresBackend>` across threads (the embed writer thread + MCP
+/// async dispatch).
 ///
 /// ponytail: a hand-rolled `VecDeque<Client>` pool rather than
 /// deadpool-postgres, because the backend speaks the sync `postgres` crate
-/// and deadpool needs tokio-postgres (async) — switching clients would ripple
-/// through every `DbBackend` impl + the `block_in_place` guard. The sync
-/// pool keeps the same call surface; if async Postgres ever lands (Phase 8),
+/// and deadpool needs tokio-postgres (async) — switching clients would
+/// ripple through every `DbBackend` impl + the `block_in_place` guard. The
+/// sync pool keeps the same call surface; if async Postgres ever lands,
 /// swap this struct for `deadpool::Pool<Manager>`.
 #[derive(Clone)]
 pub struct ClientPool {
@@ -325,6 +228,11 @@ impl PostgresBackend {
         self
     }
 
+    /// The connection URL with the password masked (safe for logs / status).
+    pub fn redacted_url(&self) -> String {
+        redact_url(&self.pg_url)
+    }
+
     /// URL with `default_transaction_read_only = on` injected via the
     /// `options` libpq param. If the URL already carries an `options=`
     /// param (e.g. tests pinning `search_path`), the RO flag is appended
@@ -446,8 +354,48 @@ impl PostgresBackend {
         }
     }
 
-    /// The sync body behind [`DbBackend::run_script`]. Must only run off a
-    /// tokio runtime (see the `block_in_place` guard in the trait impl).
+    /// Execute a script (cozo dialect → SQL via the translator) and return
+    /// named rows. Mirrors the historical 2-arg `run_script` convention
+    /// (`serde_json::Value` params). Phase 5.5 regression finding: the
+    /// `postgres` sync client spins up its own tokio runtime internally, so
+    /// calling it from inside a tokio runtime (the MCP server's async tool
+    /// dispatch) panics with "Cannot start a runtime from within a runtime".
+    /// `block_in_place` yields the worker thread and lets the blocking
+    /// client run; on non-runtime threads (CLI, `leankg migrate`, sync
+    /// tests) it is a no-op.
+    pub fn run_script(
+        &self,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
+    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.run_script_sync(query, params))
+        } else {
+            self.run_script_sync(query, params)
+        }
+    }
+
+    /// Mutability classification, kept for callers that branch on read vs
+    /// write (e.g. RO pools, write-tracking).
+    pub fn mutability_for(&self, query: &str) -> mutability::ScriptMutability {
+        mutability::mutability_for(query)
+    }
+
+    /// Bulk-load named rows into a relation via batched `COPY`/upsert
+    /// (Phase 3 replaced cozo's `import_relations`).
+    pub fn import_relations(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.import_relations_sync(data))
+        } else {
+            self.import_relations_sync(data)
+        }
+    }
+
+    /// The sync body behind [`Self::run_script`]. Must only run off a
+    /// tokio runtime (see the `block_in_place` guard).
     fn run_script_sync(
         &self,
         query: &str,
@@ -471,11 +419,11 @@ impl PostgresBackend {
                             .collect()
                     })
                     .unwrap_or_default();
-                return Ok(cozo::NamedRows::new(head, Vec::new()));
+                return Ok(NamedRows::new(head, Vec::new()));
             }
             // `:put query_cache ...` / `:delete query_cache ...` /
             // `:delete query_cache where ...` → no-op write.
-            return Ok(cozo::NamedRows::new(Vec::new(), Vec::new()));
+            return Ok(NamedRows::new(Vec::new(), Vec::new()));
         }
         // T6.1: a read-only backend never touches the RW pool — writes are
         // rejected by Postgres itself (`default_transaction_read_only = on`).
@@ -493,7 +441,7 @@ impl PostgresBackend {
         })?;
 
         let mut head = t.head.clone();
-        let mut rows: Vec<Vec<cozo::DataValue>> = Vec::new();
+        let mut rows: Vec<Vec<DataValue>> = Vec::new();
         match t.kind {
             translate::TranslationKind::Read => {
                 let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = t
@@ -557,8 +505,8 @@ impl PostgresBackend {
         let mut tx = client.transaction()?;
         for (table, named) in data {
             let cols = named.headers.clone();
-            // Cozo names the vector column `vector`; the PG schema uses
-            // `vec`. Map before emitting SQL / binding values.
+            // The legacy cozo name for the vector column is `vector`; the PG
+            // schema uses `vec`. Map before emitting SQL / binding values.
             let cols: Vec<String> = cols
                 .into_iter()
                 .map(|c| {
@@ -597,7 +545,7 @@ impl PostgresBackend {
     /// CONFLICT (pk) DO UPDATE` folds the batch in. COPY is the fastest bulk
     /// path in Postgres (no per-row round trip, no WAL-per-row bind); the
     /// single follow-up INSERT keeps `ON CONFLICT DO UPDATE` semantics that
-    /// the cozo `import_relations` callers rely on (upsert_fresh, vectors).
+    /// the legacy `import_relations` callers rely on (upsert_fresh, vectors).
     ///
     /// The temp table is `CREATE TEMP TABLE ... ON COMMIT DROP`, so it is
     /// scoped to this transaction and vanishes on commit — no schema pollution.
@@ -607,7 +555,7 @@ impl PostgresBackend {
         table: &str,
         cols: &[String],
         pk: &str,
-        named: &crate::db::backend::NamedRows,
+        named: &NamedRows,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use std::io::Write;
 
@@ -679,7 +627,7 @@ impl PostgresBackend {
         table: &str,
         cols: &[String],
         pk: Option<&str>,
-        named: &crate::db::backend::NamedRows,
+        named: &NamedRows,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let col_sql = cols
             .iter()
@@ -753,47 +701,6 @@ impl Drop for AdvisoryLock {
     }
 }
 
-impl DbBackend for PostgresBackend {
-    /// Execute a script. Phase 5.5 regression finding: the `postgres`
-    /// sync client spins up its own tokio runtime internally, so calling it
-    /// from inside a tokio runtime (the MCP server's async tool dispatch)
-    /// panics with "Cannot start a runtime from within a runtime". CozoDB
-    /// was sync-native, so nothing noticed until PG. `block_in_place`
-    /// yields the worker thread and lets the blocking client run; on
-    /// non-runtime threads (CLI, `leankg migrate`, sync tests) it is a
-    /// no-op.
-    fn run_script(
-        &self,
-        query: &str,
-        params: BTreeMap<String, serde_json::Value>,
-    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| self.run_script_sync(query, params))
-        } else {
-            self.run_script_sync(query, params)
-        }
-    }
-
-    /// Execute a script. Phase 5.5 regression finding: the `postgres`
-    /// sync client spins up its own tokio runtime internally, so calling it
-    /// from inside a tokio runtime (the MCP server's async tool dispatch)
-    /// panics with "Cannot start a runtime from within a runtime". CozoDB
-    /// was sync-native, so nothing noticed until PG. `block_in_place`
-    /// yields the worker thread and lets the blocking client run; on
-    /// non-runtime threads (CLI, `leankg migrate`, sync tests) it is a
-    /// no-op.
-    fn import_relations(
-        &self,
-        data: BTreeMap<String, NamedRows>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| self.import_relations_sync(data))
-        } else {
-            self.import_relations_sync(data)
-        }
-    }
-}
-
 /// Apply a list of `SET LOCAL name = value` statements on an open
 /// transaction. Used to carry per-query pgvector knobs (currently
 /// `hnsw.ef_search` for reads, `hnsw.ef_construction` for writes) through
@@ -847,16 +754,16 @@ fn bulk_reindex_enabled(total_rows: usize) -> bool {
 /// Render a `DataValue` into Postgres COPY text (one field). Vectors become
 /// pgvector literals (`[0.1,0.2,...]`); strings/ints/floats/bools/null use
 /// their natural textual form. The caller escapes COPY metacharacters.
-fn data_to_copy_text(v: &cozo::DataValue, col: &str) -> String {
-    use cozo::DataValue;
+fn data_to_copy_text(v: &DataValue, col: &str) -> String {
     match v {
         DataValue::Null => String::new(), // COPY: empty field == NULL
         DataValue::Bool(b) => b.to_string(),
-        DataValue::Num(cozo::Num::Int(i)) => i.to_string(),
-        DataValue::Num(cozo::Num::Float(f)) => f.to_string(),
+        DataValue::Num(crate::db::value::Num::Int(i)) => i.to_string(),
+        DataValue::Num(crate::db::value::Num::Float(f)) => f.to_string(),
         DataValue::Str(s) => s.as_str().to_string(),
-        DataValue::Json(j) => j.0.to_string(),
-        // Cozo names the vector column `vector`; the PG schema uses `vec`.
+        DataValue::Json(j) => j.clone(),
+        // The legacy cozo name for the vector column is `vector`; the PG
+        // schema uses `vec`.
         DataValue::List(items) if col == "vec" || col == "vector" => {
             let mut s = String::from("[");
             for (i, item) in items.iter().enumerate() {
@@ -864,32 +771,9 @@ fn data_to_copy_text(v: &cozo::DataValue, col: &str) -> String {
                     s.push(',');
                 }
                 match item {
-                    DataValue::Num(cozo::Num::Float(f)) => s.push_str(&format!("{f}")),
-                    DataValue::Num(cozo::Num::Int(i)) => s.push_str(&format!("{i}")),
+                    DataValue::Num(crate::db::value::Num::Float(f)) => s.push_str(&format!("{f}")),
+                    DataValue::Num(crate::db::value::Num::Int(i)) => s.push_str(&format!("{i}")),
                     other => s.push_str(&format!("{other}")),
-                }
-            }
-            s.push(']');
-            s
-        }
-        DataValue::Vec(vec) => {
-            let mut s = String::from("[");
-            match vec {
-                cozo::Vector::F32(arr) => {
-                    for (i, x) in arr.iter().enumerate() {
-                        if i > 0 {
-                            s.push(',');
-                        }
-                        s.push_str(&format!("{x}"));
-                    }
-                }
-                cozo::Vector::F64(arr) => {
-                    for (i, x) in arr.iter().enumerate() {
-                        if i > 0 {
-                            s.push(',');
-                        }
-                        s.push_str(&format!("{x}"));
-                    }
                 }
             }
             s.push(']');
@@ -920,19 +804,18 @@ fn push_copy_text(out: &mut String, s: &str) {
     }
 }
 
-/// Convert a cozo DataValue into a boxed `dyn ToSql` for binding. Vector
+/// Convert a `DataValue` into a boxed `dyn ToSql` for binding. Vector
 /// values are emitted as pgvector text literals (e.g. `[0.1, 0.2]`).
-fn cozo_to_pg(v: &cozo::DataValue, col: &str) -> Box<dyn postgres::types::ToSql + Sync + Send> {
-    use cozo::DataValue;
+fn cozo_to_pg(v: &DataValue, col: &str) -> Box<dyn postgres::types::ToSql + Sync + Send> {
     match v {
         DataValue::Null => Box::new(Option::<String>::None),
         DataValue::Bool(b) => Box::new(*b),
-        DataValue::Num(cozo::Num::Int(i)) => Box::new(*i),
-        DataValue::Num(cozo::Num::Float(f)) => Box::new(*f),
-        DataValue::Str(s) => Box::new(s.as_str().to_string()),
-        DataValue::Json(j) => Box::new(j.0.to_string()),
-        // The caller's NamedRows headers use the cozo name (`vector`); the
-        // PG column is `vec` (schema.sql). Match both.
+        DataValue::Num(crate::db::value::Num::Int(i)) => Box::new(*i),
+        DataValue::Num(crate::db::value::Num::Float(f)) => Box::new(*f),
+        DataValue::Str(s) => Box::new(s.clone()),
+        DataValue::Json(j) => Box::new(j.clone()),
+        // The caller's NamedRows headers use the legacy cozo name (`vector`);
+        // the PG column is `vec` (schema.sql). Match both.
         DataValue::List(items) if col == "vec" || col == "vector" => {
             // pgvector literal: `[0.1,0.2,...]`.
             let mut s = String::from("[");
@@ -941,33 +824,9 @@ fn cozo_to_pg(v: &cozo::DataValue, col: &str) -> Box<dyn postgres::types::ToSql 
                     s.push(',');
                 }
                 match item {
-                    DataValue::Num(cozo::Num::Float(f)) => s.push_str(&format!("{f}")),
-                    DataValue::Num(cozo::Num::Int(i)) => s.push_str(&format!("{i}")),
+                    DataValue::Num(crate::db::value::Num::Float(f)) => s.push_str(&format!("{f}")),
+                    DataValue::Num(crate::db::value::Num::Int(i)) => s.push_str(&format!("{i}")),
                     other => s.push_str(&format!("{other}")),
-                }
-            }
-            s.push(']');
-            Box::new(s)
-        }
-        DataValue::Vec(vec) => {
-            // F32 or F64 ndarray.
-            let mut s = String::from("[");
-            match vec {
-                cozo::Vector::F32(arr) => {
-                    for (i, x) in arr.iter().enumerate() {
-                        if i > 0 {
-                            s.push(',');
-                        }
-                        s.push_str(&format!("{x}"));
-                    }
-                }
-                cozo::Vector::F64(arr) => {
-                    for (i, x) in arr.iter().enumerate() {
-                        if i > 0 {
-                            s.push(',');
-                        }
-                        s.push_str(&format!("{x}"));
-                    }
                 }
             }
             s.push(']');
@@ -1014,99 +873,147 @@ fn redact_url(url: &str) -> String {
     out
 }
 
-/// Engine selection: `LEANKG_DB_ENGINE` = `postgres` (default) | `cozo`
-/// (migration shim). Both values are removed after Phase 8 (plan D4).
+/// Open the Postgres backend from `LEANKG_PG_URL`. Fails loudly when the
+/// env var is missing or malformed — Postgres is the only engine (D4), so
+/// there is no fallback.
 ///
-/// Selection rules (chosen to keep the embedded path working everywhere):
-/// * `cozo` → `init_db`/`init_db_readonly` → `CozoBackend` shim.
-/// * unset → cozo shim (tests / local flows never need a running Postgres).
-/// * `postgres` → **`PostgresBackend` when `LEANKG_PG_URL` is set**, else
-///   cozo shim (Phase 6 CLI routing: explicit engine + URL routes every
-///   path-based init — CLI, web server, MCP — through Postgres). A missing
-///   URL fails loudly only on the explicit `init_db_pg` entry point.
-pub fn resolve_engine() -> &'static str {
-    match std::env::var("LEANKG_DB_ENGINE")
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
+/// Under `#[cfg(test)]` the `db_path` is used to select a per-path scratch
+/// schema (see [`test_scratch_schema`]): unit tests call `init_db` with a
+/// temp path and get a real, isolated Postgres schema in the dev container
+/// instead of the pre-migration sqlite shim.
+pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    #[cfg(test)]
     {
-        "cozo" => "cozo",
-        _ => "postgres",
+        return test_init_db(db_path);
     }
+    let _ = db_path;
+    init_db_pg()
 }
 
-/// True when the EXPLICIT Postgres engine is selected AND a URL is present —
-/// the Phase 6 gate for routing path-based init through `PostgresBackend`.
-/// `resolve_engine()` defaults an unset var to `"postgres"` (the migration
-/// end-state), but during the migration the engine must be set explicitly
-/// before any code path connects to Postgres — otherwise a stray
-/// `LEANKG_PG_URL` in the environment (dev shell, CI) would silently swap
-/// every cozo-backed test onto Postgres.
-fn postgres_configured() -> bool {
-    std::env::var("LEANKG_DB_ENGINE")
-        .map(|v| v.eq_ignore_ascii_case("postgres"))
-        .unwrap_or(false)
-        && std::env::var("LEANKG_PG_URL").is_ok()
+#[cfg(test)]
+fn test_init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    let schema = test_scratch_schema(db_path)?;
+    let url = test_schema_url(&schema)?;
+    let mut pg = PostgresBackend::from_env().unwrap_or_else(|_| {
+        // Test fallback default (dev container) when LEANKG_PG_URL is unset.
+        PostgresBackend {
+            pg_url: test_pg_url(),
+            pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
+            ro_pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
+            read_only: false,
+        }
+    });
+    pg.pg_url = url;
+    Ok(Arc::new(pg))
 }
 
-/// Open the default backend for a file/dir database path. See
-/// [`resolve_engine`] for selection semantics. Phase 6 (T6.4c CLI routing):
-/// with `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`, this returns a
-/// `PostgresBackend` — every CLI entry point (`init`/`index`/`serve`/
-/// `status`/…) goes through this function.
-pub fn init_db(db_path: &Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
-    if postgres_configured() {
-        let pg = PostgresBackend::from_env()?;
-        tracing::info!(
-            "DB engine = postgres (LEANKG_DB_ENGINE=postgres + LEANKG_PG_URL): {}",
-            redact_url(&pg.pg_url)
-        );
+/// The dev-Postgres URL used by unit tests when `LEANKG_PG_URL` is unset.
+/// Matches the container-gated integration tests' default (`leankg-pg-phase0`
+/// on :5433). Override with `LEANKG_PG_URL` for a different instance.
+#[cfg(test)]
+pub(crate) fn test_pg_url() -> String {
+    std::env::var("LEANKG_PG_URL")
+        .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5433/leankg".to_string())
+}
+
+#[cfg(test)]
+fn test_schema_url(schema: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let base = test_pg_url();
+    let sep = if base.contains('?') { '&' } else { '?' };
+    Ok(format!(
+        "{base}{sep}options=-csearch_path%3D{schema}%2Cpublic"
+    ))
+}
+
+/// Test-only: map a temp `db_path` to a unique scratch schema in the dev
+/// Postgres, run migrations on first use, and return the schema name. A
+/// `static Mutex<HashMap>` keeps the mapping process-stable so a test that
+/// calls `init_db(path)` twice (e.g. seed + readonly) reuses the schema.
+#[cfg(test)]
+fn test_scratch_schema(db_path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
+    use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
+    use std::sync::OnceLock;
+
+    static MAP: OnceLock<StdMutex<HashMap<std::path::PathBuf, String>>> = OnceLock::new();
+    let map = MAP.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+
+    let key = db_path.to_path_buf();
+    if let Some(schema) = guard.get(&key) {
+        return Ok(schema.clone());
+    }
+
+    let schema = create_scratch_schema()?;
+    guard.insert(key, schema.clone());
+    Ok(schema)
+}
+
+/// Create a fresh schema, run migrations, and drop it on process exit.
+#[cfg(test)]
+fn create_scratch_schema() -> Result<String, Box<dyn std::error::Error>> {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let base = test_pg_url();
+    let name = format!(
+        "leankg_libtest_{}_{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let mut client = postgres::Client::connect(&base, postgres::NoTls)?;
+    client.batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))?;
+    client.batch_execute(&format!("CREATE SCHEMA {name}"))?;
+    client.batch_execute(&format!("SET search_path TO {name}, public"))?;
+    crate::db::pg::migrations::run_migrations(&mut client)?;
+    // Keep the admin connection alive so the schema is dropped on exit.
+    std::mem::forget(client);
+    Ok(name)
+}
+
+/// Open a read-only backend (T6.1): `default_transaction_read_only = on` —
+/// writes fail at the Postgres layer instead of the legacy CozoDB RocksDB
+/// same-handle workaround.
+pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    #[cfg(test)]
+    {
+        let schema = test_scratch_schema(db_path)?;
+        let url = test_schema_url(&schema)?;
+        let mut pg = PostgresBackend::from_env_read_only().unwrap_or_else(|_| PostgresBackend {
+            pg_url: test_pg_url(),
+            pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
+            ro_pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
+            read_only: true,
+        });
+        pg.pg_url = url;
         return Ok(Arc::new(pg));
     }
-    init_cozo(db_path, false)
-}
-
-/// Open a read-only backend for a file/dir database path. Phase 6 (T6.1):
-/// on the explicit Postgres engine this opens a true read-only connection
-/// (`default_transaction_read_only = on`) — writes fail at the Postgres
-/// layer instead of the CozoDB RocksDB same-handle workaround. Falls back
-/// to the cozo shim (sqlite `mode=ro`) when the engine is unset/cozo.
-pub fn init_db_readonly(db_path: &Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
-    if postgres_configured() {
-        let pg = PostgresBackend::from_env_read_only()?;
-        tracing::info!(
-            "DB engine = postgres read-only (default_transaction_read_only = on): {}",
-            redact_url(&pg.pg_url)
-        );
-        return Ok(Arc::new(pg));
-    }
-    init_cozo(db_path, true)
+    let _ = db_path;
+    let pg = PostgresBackend::from_env_read_only()?;
+    tracing::info!(
+        "DB engine = postgres read-only (default_transaction_read_only = on): {}",
+        redact_url(&pg.pg_url)
+    );
+    Ok(Arc::new(pg))
 }
 
 /// Open a PostgreSQL backend. Fails when `LEANKG_PG_URL` is missing or
-/// malformed. This is the entry point that produces a [`PostgresBackend`]
-/// unconditionally (used by `leankg migrate` and the in-process harness).
+/// malformed. This is the single entry point for every path-based init
+/// (CLI, web server, MCP).
 pub fn init_db_pg() -> Result<SharedDb, Box<dyn std::error::Error>> {
     let pg = PostgresBackend::from_env()?;
     tracing::info!("DB engine = postgres: {}", redact_url(&pg.pg_url));
     Ok(Arc::new(pg))
 }
 
-/// Acquire the index advisory lock when the explicit Postgres engine is
-/// configured, else return None (cozo shim — no lock). Blocks until the
-/// lock is free, so a second concurrent `leankg index` waits for the first
-/// to finish. The lock lives on a dedicated session, so it also guards
-/// against a nested `index_codebase` re-entry (incremental → full fallback)
-/// deadlocking itself on a second connection: we return the already-held
-/// lock via a process-level registry.
+/// Acquire the index advisory lock for exclusive `leankg index` jobs (T6.4b).
+/// Blocks until the lock is free, so a second concurrent `leankg index`
+/// waits for the first to finish. The lock lives on a dedicated session, so
+/// it also guards against a nested `index_codebase` re-entry (incremental →
+/// full fallback) deadlocking itself on a second connection: we return the
+/// already-held lock via a process-level registry.
 ///
 /// `LEANKG_PG_LOCK=0` disables the advisory lock (operators who manage
-/// exclusivity externally, e.g. a job queue). Default: on when the engine
-/// is Postgres.
+/// exclusivity externally, e.g. a job queue). Default: on.
 pub fn index_advisory_lock() -> Result<Option<AdvisoryLock>, Box<dyn std::error::Error>> {
-    if !postgres_configured() {
-        return Ok(None);
-    }
     if std::env::var("LEANKG_PG_LOCK")
         .ok()
         .map(|v| v.eq_ignore_ascii_case("0") || v.eq_ignore_ascii_case("false"))
@@ -1133,67 +1040,19 @@ pub fn index_advisory_lock() -> Result<Option<AdvisoryLock>, Box<dyn std::error:
 /// Process-level flag so nested index invocations skip re-acquiring.
 static INDEX_LOCK_HELD: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
-/// The migration shim: open CozoDB and return it boxed behind `DbBackend`.
-/// Used for both read-write and read-only paths, and always for
-/// path-based init (see [`resolve_engine`]).
-pub fn init_cozo(db_path: &Path, read_only: bool) -> Result<SharedDb, Box<dyn std::error::Error>> {
-    let cozo = if read_only {
-        crate::db::schema::init_db_readonly_cozo(db_path)?
-    } else {
-        crate::db::schema::init_db_cozo(db_path)?
-    };
-    Ok(Arc::new(CozoBackend { db: cozo }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn cozo_backend_run_script_roundtrip_via_trait_object() {
-        // (a) dyn dispatch + (b) shim still returns expected rows.
-        let tmp = TempDir::new().unwrap();
-        let db: SharedDb = init_db(&tmp.path().join("t.db")).unwrap();
-        db.run_script(":create kv {k: String => v: String}", Default::default())
-            .unwrap();
-        let mut params = BTreeMap::new();
-        params.insert("k".into(), serde_json::json!("a"));
-        params.insert("v".into(), serde_json::json!("b"));
-        db.run_script("?[k, v] <- [[$k, $v]] :put kv {k => v}", params)
-            .unwrap();
-        let mut qp = BTreeMap::new();
-        qp.insert("k".into(), serde_json::json!("a"));
-        let res = db.run_script("?[v] := *kv[k, v], k = $k", qp).unwrap();
-        assert_eq!(res.rows.len(), 1);
-        assert_eq!(res.rows[0][0].get_str(), Some("b"));
-    }
-
-    #[test]
-    fn cozo_backend_import_relations_works() {
-        let tmp = TempDir::new().unwrap();
-        let db: SharedDb = init_db(&tmp.path().join("t.db")).unwrap();
-        db.run_script(":create t {k: String => v: String}", Default::default())
-            .unwrap();
-        let rows = cozo::NamedRows::new(
-            vec!["k".into(), "v".into()],
-            vec![vec![
-                cozo::DataValue::Str("x".into()),
-                cozo::DataValue::Str("y".into()),
-            ]],
-        );
-        let mut map = BTreeMap::new();
-        map.insert("t".to_string(), rows);
-        db.import_relations(map).unwrap();
-        let res = db
-            .run_script("?[v] := *t[k, v]", Default::default())
-            .unwrap();
-        assert_eq!(res.rows.len(), 1);
-    }
+    /// Serialize tests that mutate process env (LEANKG_PG_URL /
+    /// LEANKG_PG_POOL_SIZE / LEANKG_PG_LOCK) — Rust runs tests in parallel
+    /// and env is process-global.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn postgres_backend_stub_returns_documented_error() {
-        // (c) when the URL is bogus, run_script fails at connection time
+        // when the URL is bogus, run_script fails at connection time
         // rather than silently panicking.
         let pg = PostgresBackend {
             pg_url: "postgres://invalid-host-not-real:1/leankg".into(),
@@ -1223,118 +1082,53 @@ mod tests {
         std::env::remove_var("LEANKG_PG_URL");
     }
 
-    /// Serialize tests that mutate process env (LEANKG_DB_ENGINE /
-    /// LEANKG_PG_URL / LEANKG_PG_POOL_SIZE) — Rust runs tests in parallel
-    /// and env is process-global.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
-    fn engine_selection_unset_defaults_to_cozo_path_init() {
+    fn postgres_backend_requires_url() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // (d) LEANKG_DB_ENGINE unset -> path-based init still returns the
-        // cozo shim (tests / local flows never need a running Postgres).
-        std::env::remove_var("LEANKG_DB_ENGINE");
-        let tmp = TempDir::new().unwrap();
-        let db = init_db(&tmp.path().join("sel.db")).unwrap();
-        assert!(
-            db.run_script("?[a] <- [[1]]", Default::default()).is_ok(),
-            "path-init must return the cozo shim (runs scripts), not the PG stub"
-        );
-    }
-
-    #[test]
-    fn engine_selection_cozo_explicit() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("LEANKG_DB_ENGINE", "cozo");
-        let tmp = TempDir::new().unwrap();
-        let db = init_db(&tmp.path().join("sel.db")).unwrap();
-        assert!(
-            db.run_script("?[a] <- [[1]]", Default::default()).is_ok(),
-            "path-init must return the cozo shim (runs scripts), not the PG stub"
-        );
-        std::env::remove_var("LEANKG_DB_ENGINE");
-    }
-
-    #[test]
-    fn engine_selection_postgres_explicit_without_url_keeps_cozo_shim() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // Phase 6 CLI routing: explicit `postgres` engine but NO URL must
-        // NOT break existing paths — path init keeps returning the cozo
-        // shim so tests / local dev without PG are unaffected.
-        std::env::set_var("LEANKG_DB_ENGINE", "postgres");
         std::env::remove_var("LEANKG_PG_URL");
-        let tmp = TempDir::new().unwrap();
-        let db = init_db(&tmp.path().join("sel.db")).unwrap();
-        assert!(
-            db.run_script("?[a] <- [[1]]", Default::default()).is_ok(),
-            "path-init must return the cozo shim (runs scripts), not the PG stub"
-        );
+        // Production path: no URL -> hard error.
         assert!(init_db_pg().is_err(), "no LEANKG_PG_URL -> error");
-        std::env::remove_var("LEANKG_DB_ENGINE");
+        // Test-mode init falls back to the dev-container default (a real,
+        // lazily-connected PostgresBackend is still produced).
+        assert!(init_db(std::path::Path::new("/tmp/none.db")).is_ok());
     }
 
     #[test]
-    fn engine_selection_postgres_with_url_returns_pg_backend() {
+    fn init_db_accepts_pg_url() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // Phase 6 CLI routing: explicit `postgres` + URL routes path-based
-        // init through PostgresBackend. The connect itself is lazy, so no
-        // live Postgres is required here. Discriminator: the cozo shim
-        // executes `?[a] <- [[1]]`, the PG backend rejects it at translate
-        // time — no `downcast_ref` needed (trait shape unchanged).
-        std::env::set_var("LEANKG_DB_ENGINE", "postgres");
+        std::env::set_var(
+            "LEANKG_PG_URL",
+            "postgresql://postgres:postgres@localhost:5433/leankg",
+        );
+        let db = init_db(std::path::Path::new("/tmp/none.db")).unwrap();
+        // Connect is lazy — the URL is validated at construction. The
+        // backend must be a PostgresBackend (concrete type, no trait).
+        assert!(db.pg_url.contains("postgresql://"));
+        assert!(!db.read_only);
+        let ro = init_db_readonly(std::path::Path::new("/tmp/none.db")).unwrap();
+        assert!(ro.read_only);
+        assert!(ro
+            .read_only_url()
+            .contains("default_transaction_read_only%3Don"));
+        let rw_url = db.read_only_url();
+        assert!(!rw_url.contains("default_transaction_read_only%3Don"));
+        std::env::remove_var("LEANKG_PG_URL");
+    }
+
+    #[test]
+    fn init_db_with_url_produces_pg_backend() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(
             "LEANKG_PG_URL",
             "postgresql://postgres:postgres@localhost:5433/leankg",
         );
         let tmp = TempDir::new().unwrap();
         let db = init_db(&tmp.path().join("sel.db")).unwrap();
+        // The PG backend rejects bare list literals at translate time (no
+        // live Postgres needed — connect is lazy).
         assert!(
             db.run_script("?[a] <- [[1]]", Default::default()).is_err(),
-            "explicit engine + URL must produce the PG backend (translator rejects bare lists)"
-        );
-        std::env::remove_var("LEANKG_DB_ENGINE");
-        std::env::remove_var("LEANKG_PG_URL");
-    }
-
-    #[test]
-    fn engine_selection_postgres_readonly_uses_ro_url() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // T6.1: the read-only path must inject default_transaction_read_only.
-        // Connect is lazy; assert via the URL builder instead.
-        std::env::set_var("LEANKG_DB_ENGINE", "postgres");
-        std::env::set_var(
-            "LEANKG_PG_URL",
-            "postgresql://postgres:postgres@localhost:5433/leankg",
-        );
-        let pg = PostgresBackend::from_env_read_only().unwrap();
-        assert!(pg.read_only);
-        let ro_url = pg.read_only_url();
-        assert!(
-            ro_url.contains("default_transaction_read_only%3Don"),
-            "RO URL must inject the read-only GUC: {ro_url}"
-        );
-        // The RW URL must NOT contain it.
-        let rw_url = PostgresBackend::from_env().unwrap().read_only_url();
-        assert!(!rw_url.contains("default_transaction_read_only%3Don"));
-        std::env::remove_var("LEANKG_DB_ENGINE");
-        std::env::remove_var("LEANKG_PG_URL");
-    }
-
-    #[test]
-    fn engine_selection_unset_with_url_keeps_cozo_shim() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // A stray LEANKG_PG_URL in the env must NOT reroute path init — the
-        // engine var has to be set explicitly (migration guard).
-        std::env::remove_var("LEANKG_DB_ENGINE");
-        std::env::set_var(
-            "LEANKG_PG_URL",
-            "postgresql://postgres:postgres@localhost:5433/leankg",
-        );
-        let tmp = TempDir::new().unwrap();
-        let db = init_db(&tmp.path().join("sel.db")).unwrap();
-        assert!(
-            db.run_script("?[a] <- [[1]]", Default::default()).is_ok(),
-            "unset engine must keep the cozo shim even with LEANKG_PG_URL set"
+            "path-init must produce the PG backend (translator rejects bare lists)"
         );
         std::env::remove_var("LEANKG_PG_URL");
     }
@@ -1364,5 +1158,19 @@ mod tests {
         assert!(p
             .checkout("postgres://invalid-host-not-real:1/leankg")
             .is_err());
+    }
+
+    #[test]
+    fn data_value_roundtrips() {
+        // The legacy cozo `DataValue` accessors survive on the new type.
+        use crate::db::value::DataValue;
+        let v = DataValue::from(42i64);
+        assert_eq!(v.get_int(), Some(42));
+        let f = DataValue::from(3.5f64);
+        assert_eq!(f.get_float(), Some(3.5));
+        let s = DataValue::from("hi");
+        assert_eq!(s.get_str(), Some("hi"));
+        let b = DataValue::Bool(true);
+        assert_eq!(b.get_bool(), Some(true));
     }
 }

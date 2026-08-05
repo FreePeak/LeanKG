@@ -433,15 +433,8 @@ impl MCPServer {
             return None;
         }
         let candidate = project_root.join(".leankg");
-        let rocksdb = std::env::var("LEANKG_DB_ENGINE")
-            .unwrap_or_else(|_| "sqlite".to_string())
-            .eq_ignore_ascii_case("rocksdb");
-        if rocksdb {
-            let central = crate::db::schema::central_project_storage_path(&candidate);
-            if central.join("data/CURRENT").exists() || central.join("manifest").exists() {
-                return Some(candidate);
-            }
-        }
+        // Phase 8 (D4): Postgres is the only engine — no central RocksDB
+        // path to probe.
         if candidate.is_dir() {
             return Some(candidate);
         }
@@ -475,17 +468,9 @@ impl MCPServer {
                 .map_err(|e| format!("Failed to resolve db path: {}", e))?,
         };
 
-        let rocksdb_central_ok = {
-            let rocksdb = std::env::var("LEANKG_DB_ENGINE")
-                .unwrap_or_else(|_| "sqlite".to_string())
-                .eq_ignore_ascii_case("rocksdb");
-            rocksdb && {
-                let central = crate::db::schema::central_project_storage_path(&project_db_path);
-                central.join("data/CURRENT").exists() || central.join("manifest").exists()
-            }
-        };
-
-        if !project_db_path.exists() && !rocksdb_central_ok {
+        // Phase 8 (D4): Postgres is the only engine — no central RocksDB
+        // index to probe.
+        if !project_db_path.exists() {
             return Err(
                 "LeanKG not initialized. No .leankg directory found. Run 'leankg init' first."
                     .to_string(),
@@ -2197,12 +2182,7 @@ impl MCPServer {
         }
 
         let db_path = self.get_db_path();
-        let db_file = db_path.join("leankg.db");
-
-        if !db_file.exists() {
-            tracing::info!("Database file does not exist, skipping auto-index");
-            return Ok(());
-        }
+        let _db_file = db_path.join("leankg.db"); // Phase 8: Postgres holds the data — no DB file
 
         let is_git = crate::indexer::git_workspace::has_git_context(&project_root);
         if config.mcp.require_git_for_auto_index && !is_git {
@@ -2236,14 +2216,9 @@ impl MCPServer {
             }
         };
 
-        let db_modified = std::fs::metadata(&db_file)
-            .and_then(|m| m.modified())
-            .map(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0);
+        // Phase 8: Postgres holds the data — no DB file mtime to compare.
+        // Freshness is decided by git commit time alone.
+        let db_modified = 0i64;
 
         let threshold_seconds = (config.mcp.auto_index_threshold_minutes * 60) as i64;
 
@@ -2354,15 +2329,7 @@ impl MCPServer {
         }
 
         let db_path = project_root.join(".leankg");
-        let db_file = db_path.join("leankg.db");
-
-        if !db_file.exists() {
-            tracing::debug!(
-                "Database file does not exist at {}, skipping auto-index",
-                db_file.display()
-            );
-            return Ok(());
-        }
+        let _db_file = db_path.join("leankg.db"); // Phase 8: Postgres holds the data — no DB file
 
         // Check git status to determine if indexing is needed (supports nested multi-repo roots)
         let last_commit_time = if config.mcp.require_git_for_auto_index {
@@ -2392,14 +2359,9 @@ impl MCPServer {
             i64::MAX
         };
 
-        let db_modified = std::fs::metadata(&db_file)
-            .and_then(|m| m.modified())
-            .map(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0);
+        // Phase 8: Postgres holds the data — no DB file mtime to compare.
+        // Freshness is decided by git commit time alone.
+        let db_modified = 0i64;
 
         let threshold_seconds = (config.mcp.auto_index_threshold_minutes * 60) as i64;
 
@@ -2748,14 +2710,13 @@ impl MCPServer {
 
         let graph_engine = self.get_graph_engine_for_path(routing_key.as_ref())?;
 
-        // On-demand auto-indexing: if project has .leankg but no RocksDB index, index it
+        // On-demand auto-indexing: if the project has no indexed elements
+        // yet (Phase 8 — Postgres holds the data, so "has an index" is a
+        // populated-graph check, not a file check).
         if tool_name != "mcp_index" && tool_name != "mcp_init" && tool_name != "mcp_index_docs" {
-            let rocksdb_path = crate::db::schema::central_project_storage_path(&project_db_path);
-            let has_index = rocksdb_path.join("manifest").exists()
-                || rocksdb_path.join("data/CURRENT").exists();
-            if !has_index {
+            if !graph_engine.has_elements().unwrap_or(false) {
                 tracing::info!(
-                    "Project at {} has no RocksDB index, triggering auto-index",
+                    "Project at {} has no indexed elements, triggering auto-index",
                     project_db_path.display()
                 );
                 let _ = self
@@ -4056,7 +4017,7 @@ mod tests {
     }
 
     #[test]
-    fn cozo_db_is_send_for_spawn_blocking() {
+    fn pg_backend_is_send_for_spawn_blocking() {
         fn assert_send<T: Send>() {}
         assert_send::<crate::db::backend::SharedDb>();
     }
@@ -4082,13 +4043,13 @@ mod tests {
 
     #[test]
     fn dockerfile_sets_embed_auto_arm_zero_default() {
-        // Serving image default must be 0 so the RocksDB LOCK is never taken
-        // by an embed scheduler on boot.
-        let dockerfile = std::fs::read_to_string("Dockerfile.rocksdb")
-            .expect("Dockerfile.rocksdb must exist at repo root");
+        // Serving image default must be 0 so an embed scheduler never arms
+        // itself on boot.
+        let dockerfile =
+            std::fs::read_to_string("Dockerfile").expect("Dockerfile must exist at repo root");
         assert!(
             dockerfile.contains("LEANKG_EMBED_AUTO_ARM=0"),
-            "Dockerfile.rocksdb must set LEANKG_EMBED_AUTO_ARM=0"
+            "Dockerfile must set LEANKG_EMBED_AUTO_ARM=0"
         );
     }
 }

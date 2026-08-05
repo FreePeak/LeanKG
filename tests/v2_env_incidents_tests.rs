@@ -1,15 +1,21 @@
-use leankg::db::backend::{CozoBackend, DbBackend};
-use leankg::db::{self, models::Incident, schema::init_db};
+use leankg::db::backend;
+use leankg::db::{self, backend::init_db, models::Incident};
 use leankg::graph::GraphEngine;
 
-fn test_db() -> (tempfile::TempDir, CozoBackend) {
+fn test_db() -> (tempfile::TempDir, leankg::db::backend::SharedDb) {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(&db_path).unwrap();
-    (tmp, CozoBackend::from_concrete(db))
+    (tmp, db)
 }
 
-fn insert_service(db: &CozoBackend, qualified_name: &str, name: &str, env: &str, version: &str) {
+fn insert_service(
+    db: &leankg::db::backend::PostgresBackend,
+    qualified_name: &str,
+    name: &str,
+    env: &str,
+    version: &str,
+) {
     let query = r#"
     ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] <-
     [[$qualified_name, "service", $name, "service.yaml", 1, 1, "yaml", null, null, null, $metadata, $env]]
@@ -35,7 +41,7 @@ fn insert_service(db: &CozoBackend, qualified_name: &str, name: &str, env: &str,
     db.run_script(query, params).unwrap();
 }
 
-fn insert_call(db: &CozoBackend, source: &str, target: &str, env: &str) {
+fn insert_call(db: &leankg::db::backend::PostgresBackend, source: &str, target: &str, env: &str) {
     let query = r#"
     ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] <-
     [[$source, $target, "calls", 1.0, "{}", $env]]
@@ -131,7 +137,7 @@ fn graph_service_context_reads_env_scoped_data() {
     )
     .unwrap();
 
-    let graph = GraphEngine::new(std::sync::Arc::new(db));
+    let graph = GraphEngine::new(db);
     let context = graph.get_service_context("api", "production").unwrap();
 
     assert_eq!(context.version.as_deref(), Some("abc123"));

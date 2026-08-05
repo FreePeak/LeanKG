@@ -44,7 +44,7 @@ pub struct EmbeddingStateRow {
 /// relation + HNSW index. Called from `init_schema` on every DB open, so it
 /// must be cheap when both already exist.
 pub fn ensure_embedding_state_table(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let existing: std::collections::HashSet<String> = db
         .run_script("::relations", Default::default())
@@ -100,7 +100,7 @@ const CREATE_EMBEDDING_VECTORS: &str =
 /// `::hnsw` operator is idempotent for `drop` — if the index is missing
 /// the call is a no-op, which is the only error path we swallow here.
 pub fn drop_hnsw_index(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = db.run_script("::hnsw drop embedding_vectors:vec_idx", Default::default());
     Ok(())
@@ -110,7 +110,7 @@ pub fn drop_hnsw_index(
 /// insert. Reads `LEANKG_HNSW_M` / `LEANKG_HNSW_EF_CONST` (see
 /// `build_hnsw_create_stmt`) and returns the index to a queryable state.
 pub fn create_hnsw_index(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let stmt = build_hnsw_create_stmt();
     db.run_script(&stmt, Default::default())?;
@@ -162,7 +162,7 @@ fn build_hnsw_create_stmt() -> String {
 ///
 /// Returns `(marked, skipped_unchanged)`.
 pub fn mark_stale_if_changed(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     items: &[(String, String)],
 ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     if items.is_empty() {
@@ -202,7 +202,7 @@ pub fn mark_stale_if_changed(
 /// stored even on first insert, so the embed step can lookup the key without
 /// recomputing.
 pub fn mark_stale_for_qualified_names(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     qualified_names: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     if qualified_names.is_empty() {
@@ -241,7 +241,7 @@ pub fn mark_stale_for_qualified_names(
 /// placeholders (state="stale", content_hash="") and existing rows that were
 /// re-touched by the indexer.
 pub fn list_stale(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
     let query = r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at], state != "fresh""#;
     let result = db.run_script(query, Default::default())?;
@@ -256,7 +256,7 @@ pub fn list_stale(
 /// `code_elements`. The embed step reaps these (removes the vector from
 /// usearch and deletes the state row).
 pub fn list_orphans(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
     let query = r#"
         ?[qualified_name, usearch_key, content_hash, state, embedded_at] :=
@@ -274,7 +274,7 @@ pub fn list_orphans(
 /// Return all state rows. Used by `embed --full` to re-embed every existing
 /// vector.
 pub fn list_all(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
     let query = r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at]"#;
     let result = db.run_script(query, Default::default())?;
@@ -287,7 +287,9 @@ pub fn list_all(
 
 /// Cheap non-empty probe for MCP HNSW gating (FR-SEM-07).
 /// Avoids loading every `embedding_state` row via [`list_all`].
-pub fn has_any(db: &dyn crate::db::backend::DbBackend) -> Result<bool, Box<dyn std::error::Error>> {
+pub fn has_any(
+    db: &crate::db::backend::PostgresBackend,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let query = r#"?[qualified_name] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at] :limit 1"#;
     let result = db.run_script(query, Default::default())?;
     Ok(!result.rows.is_empty())
@@ -302,7 +304,7 @@ const UPSERT_CHUNK: usize = 500;
 /// Batch upsert: mark rows fresh and stamp their content_hash + embedded_at.
 /// Called by the embed step after vectors land in usearch.
 pub fn upsert_fresh(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     updates: &[FreshRow],
 ) -> Result<(), Box<dyn std::error::Error>> {
     if updates.is_empty() {
@@ -350,7 +352,7 @@ pub fn upsert_fresh(
 /// embed step removes orphan vectors. With the CozoDB 0.7.x schema
 /// (`qualified_name: String => ...`), only the key column is needed for `:rm`.
 pub fn delete_state_rows(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     rows: &[EmbeddingStateRow],
 ) -> Result<(), Box<dyn std::error::Error>> {
     if rows.is_empty() {
@@ -372,7 +374,7 @@ pub fn delete_state_rows(
 
 /// Count of fresh vs stale rows, for diagnostics.
 pub fn count_by_state(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<StateCounts, Box<dyn std::error::Error>> {
     // Aggregate in Rust — CozoDB 0.7.x has stricter handling of underscore
     // bindings and `count()` placement that makes the inline aggregation fragile.

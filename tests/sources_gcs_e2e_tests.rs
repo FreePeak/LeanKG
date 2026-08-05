@@ -438,10 +438,8 @@ async fn gcs_index_from_bucket_populates_graph() {
     std::fs::create_dir_all(db_path.parent().unwrap()).expect("create .leankg");
 
     // Initialize DB schema
-    let db = leankg::db::schema::init_db(&db_path).expect("init_db");
-    let graph_engine = leankg::graph::GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let db = leankg::db::backend::init_db(&db_path).expect("init_db");
+    let graph_engine = leankg::graph::GraphEngine::new(db.clone());
 
     // Sync GCS source to staging dir
     let staging_root = tmp_dir.path().join(".leankg/sources");
@@ -569,10 +567,8 @@ async fn cli_index_gcs_source_populates_graph() {
         "index --source did not create {}",
         db_path.display()
     );
-    let db = leankg::db::schema::init_db(&db_path).expect("init_db");
-    let graph_engine = leankg::graph::GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let db = leankg::db::backend::init_db(&db_path).expect("init_db");
+    let graph_engine = leankg::graph::GraphEngine::new(db.clone());
 
     // Functions from both uploaded files must be findable.
     let mains = graph_engine
@@ -740,10 +736,8 @@ async fn cli_watch_gcs_source_reindexes_on_change() {
 
     // The re-index must have added the new element to the graph.
     let db_path = tmp_dir.path().join(".leankg/leankg.db");
-    let db = leankg::db::schema::init_db(&db_path).expect("init_db");
-    let graph_engine = leankg::graph::GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let db = leankg::db::backend::init_db(&db_path).expect("init_db");
+    let graph_engine = leankg::graph::GraphEngine::new(db.clone());
     let extras = graph_engine
         .search_by_name_typed("Extra", Some("function"), 10)
         .expect("search Extra");

@@ -10,7 +10,7 @@
 //! Every test is #[ignore]-gated by default so `cargo test` skips them
 //! (the container is not required on dev machines).
 
-use leankg::db::backend::{ClientPool, DbBackend, PostgresBackend};
+use leankg::db::backend::{ClientPool, PostgresBackend};
 use std::collections::BTreeMap;
 use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -107,7 +107,7 @@ impl Drop for Scratch {
 /// Seed one row into an EXISTING schema.sql table (index_hashes: path PK,
 /// hash) via the RW backend so RO/visibility tests have data. `:create` is
 /// a DdlNoop on PG — the table must pre-exist in schema.sql.
-fn seed_probe(db: &dyn DbBackend) {
+fn seed_probe(db: &leankg::db::backend::PostgresBackend) {
     // Params must be plain strings: index_hashes.path / .hash are TEXT
     // columns — serde_json::Value params type as jsonb and the TEXT column
     // rejects them at bind time.

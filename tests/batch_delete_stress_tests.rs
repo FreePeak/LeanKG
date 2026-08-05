@@ -3,10 +3,8 @@ use std::time::Instant;
 fn make_test_engine() -> (leankg::graph::GraphEngine, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("stress.db");
-    let db = leankg::db::schema::init_db(&db_path).unwrap();
-    let engine = leankg::graph::GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let db = leankg::db::backend::init_db(&db_path).unwrap();
+    let engine = leankg::graph::GraphEngine::new(db.clone());
     (engine, tmp)
 }
 

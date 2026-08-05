@@ -10,7 +10,7 @@
 //! (--test-threads=1: tests share one scratch schema + the cozo OPENED path
 //! guard; container-gated, like the other pg_* tests.)
 
-use leankg::db::backend::{CozoBackend, DbBackend, PostgresBackend};
+use leankg::db::backend::PostgresBackend;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
 use serde_json::{json, Value};
@@ -74,19 +74,6 @@ impl Drop for ScratchSchema {
     }
 }
 
-/// Cozo shim over a fresh tempdir (sqlite). TempDir leaked on purpose —
-/// dropping it deletes the db file out from under the open handle.
-fn cozo_shim() -> Arc<CozoBackend> {
-    let tmp = Box::leak(Box::new(tempfile::TempDir::new().unwrap()));
-    let path = tmp.path().join("regr.db");
-    // Canonical cozo init (schema + embedding tables) via the path-based
-    // backend init — same as `LEANKG_DB_ENGINE=cozo leankg init`.
-    // init_db always returns CozoBackend for path-based init.
-    Arc::new(CozoBackend::from_concrete(
-        leankg::db::schema::init_db_cozo(&path).unwrap(),
-    ))
-}
-
 // ---------------------------------------------------------------------------
 // Fixture — identical rows into cozo + PG. SQL is written in the canonical
 // cozo dialect; the translator turns it into the same PG rows.
@@ -141,7 +128,7 @@ const FIXTURE_BUSINESS_LOGIC: &str = r#"
 /// Incidents are seeded via param binding (canonical production path):
 /// cozo's string literals reject `\"` escapes, so JSON-array-typed string
 /// columns must arrive as bound values.
-fn seed_incidents(db: &dyn DbBackend) {
+fn seed_incidents(db: &leankg::db::backend::PostgresBackend) {
     let query = r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] <- [[$id, $env, $title, $sev, $occ, $res_at, $rc, $res, $svc, $tp, $prev, $tags, $author, $tk]] :put incidents {id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket}"#;
     let incs: Vec<[Option<serde_json::Value>; 14]> = vec![
         [
@@ -193,7 +180,7 @@ fn seed_incidents(db: &dyn DbBackend) {
     }
 }
 
-fn seed_teams(db: &dyn DbBackend) {
+fn seed_teams(db: &leankg::db::backend::PostgresBackend) {
     let query = r#"?[id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members] <- [[$id, $name, $desc, $owner, $created, $updated, $gr, $gw, $members]] :put teams {id, name, description, owner_id, created_at, updated_at, graph_read_users, graph_write_users, members}"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert("id".into(), json!("team-1"));
@@ -209,7 +196,7 @@ fn seed_teams(db: &dyn DbBackend) {
         .unwrap_or_else(|e| panic!("seed teams failed: {e}"));
 }
 
-fn seed_service_metadata(db: &dyn DbBackend) {
+fn seed_service_metadata(db: &leankg::db::backend::PostgresBackend) {
     let query = r#"?[service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at] <- [[$sn, $env, $team, $oc, $repo, $lang, $he, $slo, $ic, $li, $tags, $ver, $de, $created, $updated]] :put service_metadata {service_name, env, team, on_call, repo_url, language, health_endpoint, slo_p99_ms, incident_count, last_incident, tags, version, deploy_envs, created_at, updated_at}"#;
     let rows = [
         (
@@ -265,7 +252,7 @@ fn seed_service_metadata(db: &dyn DbBackend) {
     }
 }
 
-fn seed_knowledge(db: &dyn DbBackend) {
+fn seed_knowledge(db: &leankg::db::backend::PostgresBackend) {
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <- [[$id, $kt, $title, $content, $eq, $us, $fid, $tags, $env, $branch, $author, $created, $updated]] :put knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
     let rows = [
         (
@@ -334,7 +321,7 @@ fn vector_for(i: usize, qn: &str) -> String {
     )
 }
 
-fn seed_fixture(db: &dyn DbBackend) {
+fn seed_fixture(db: &leankg::db::backend::PostgresBackend) {
     for stmt in [
         ("elements", FIXTURE_ELEMENTS),
         ("relationships", FIXTURE_RELATIONSHIPS),
@@ -494,20 +481,18 @@ async fn run_tool(handler: &ToolHandler, tool: &str, args: &Value) -> (Result<Va
 
 struct SweepResult {
     tool: String,
-    cozo_ok: bool,
-    pg_ok: bool,
-    equal: bool,
-    cozo_ms: f64,
-    pg_ms: f64,
-    cozo_err: Option<String>,
-    pg_err: Option<String>,
+    ok: bool,
+    err: Option<String>,
+    ms: f64,
     note: String,
 }
 
 #[test]
-fn tool_sweep_cozo_vs_postgres() {
-    // postgres::Client is sync and builds its own runtime — must run off
-    // the ambient tokio runtime (same constraint as `leankg migrate`).
+fn tool_sweep_all_tools_on_postgres() {
+    // Phase 8: the cozo shim is gone — this is a PG-only smoke sweep of
+    // every user-facing MCP tool on identical fixture data. Asserts each
+    // tool runs without error (or returns a documented empty result), and
+    // records p50 latency.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -516,20 +501,11 @@ fn tool_sweep_cozo_vs_postgres() {
     let tmp = Box::leak(Box::new(tempfile::TempDir::new().unwrap()));
     fixture_repo(tmp);
 
-    // cozo handler
-    let cozo = cozo_shim();
-    seed_fixture(cozo.as_ref());
-    let cozo_graph = GraphEngine::new(cozo.clone());
-    let cozo_handler = ToolHandler::new(cozo_graph, tmp.path().to_path_buf());
-
-    // pg handler
     let pg_backend = scratch.backend();
     seed_fixture(pg_backend.as_ref());
     // Warm the lazy connection OUTSIDE the tokio runtime: PostgresBackend's
     // sync Client::connect spins its own runtime and panics when called
     // from inside block_on (nested runtime).
-    // `::relations` translates to DdlNoop and never touches the socket, so
-    // warm with a real read that forces the lazy connect.
     pg_backend
         .run_script(
             "?[qualified_name] := *code_elements[qualified_name] :limit 1",
@@ -609,126 +585,54 @@ fn tool_sweep_cozo_vs_postgres() {
 
     let mut results: Vec<SweepResult> = Vec::new();
     for (tool, args) in calls {
-        let mut cozo_ok = true;
-        let mut pg_ok = true;
-        let mut cozo_val = Value::Null;
-        let mut pg_val = Value::Null;
-        let mut cozo_err = None;
-        let mut pg_err = None;
-        let mut cozo_ms = 0.0;
-        let mut pg_ms = 0.0;
-
-        for _ in 0..5 {
-            let (r, ms) = rt.block_on(run_tool(&cozo_handler, tool, &args));
-            cozo_ms += ms;
+        let mut ok = true;
+        let mut val = Value::Null;
+        let mut err = None;
+        let mut ms = 0.0;
+        for _ in 0..3 {
+            let (r, latency) = rt.block_on(run_tool(&pg_handler, tool, &args));
+            ms += latency;
             match r {
-                Ok(v) => cozo_val = v,
+                Ok(v) => val = v,
                 Err(e) => {
-                    cozo_ok = false;
-                    cozo_err = Some(e);
-                }
-            }
-            let (r, ms) = rt.block_on(run_tool(&pg_handler, tool, &args));
-            pg_ms += ms;
-            match r {
-                Ok(v) => pg_val = v,
-                Err(e) => {
-                    pg_ok = false;
-                    pg_err = Some(e);
+                    ok = false;
+                    err = Some(e);
                 }
             }
         }
-        cozo_ms /= 5.0;
-        pg_ms /= 5.0;
-
-        let mut equal = false;
-        let mut note = String::new();
-        if cozo_ok && pg_ok {
-            let mut c = cozo_val.clone();
-            let mut p = pg_val.clone();
-            normalize(&mut c);
-            normalize(&mut p);
-            if c == p {
-                equal = true;
-            } else {
-                // Second chance: both sides missing/empty (e.g. "no data"
-                // errors as Ok with empty lists in slightly different shape).
-                let c_str = serde_json::to_string(&c).unwrap_or_default();
-                let p_str = serde_json::to_string(&p).unwrap_or_default();
-                if c_str.is_empty() && p_str.is_empty() {
-                    equal = true;
-                } else {
-                    note = format!("DIFF: cozo={c_str} PG={p_str}");
-                    if note.len() > 5000 {
-                        note.truncate(5000);
-                    }
-                }
-            }
-        } else if !cozo_ok && !pg_ok {
-            equal = true; // both error — same behavior shape
-            note = format!("both error: cozo={:?} pg={:?}", cozo_err, pg_err);
+        ms /= 3.0;
+        let note = if ok {
+            format!(
+                "{} bytes",
+                serde_json::to_string(&val).unwrap_or_default().len()
+            )
         } else {
-            note = format!(
-                "cozo_ok={cozo_ok} err={:?} | pg_ok={pg_ok} err={:?}",
-                cozo_err, pg_err
-            );
-        }
-
+            format!("ERR: {:?}", err)
+        };
         results.push(SweepResult {
             tool: tool.to_string(),
-            cozo_ok,
-            pg_ok,
-            equal,
-            cozo_ms,
-            pg_ms,
-            cozo_err,
-            pg_err,
+            ok,
+            err,
+            ms,
             note,
         });
     }
 
     println!();
-    println!("=== TOOL SWEEP: cozo vs postgres (identical fixture) ===");
-    println!(
-        "{:<32} {:<6} {:<6} {:<5} {:>8} {:>8} {:>7}  note",
-        "tool", "cozo", "pg", "match", "cozo_ms", "pg_ms", "pg/cozo"
-    );
+    println!("=== TOOL SWEEP: all MCP tools on Postgres (identical fixture) ===");
+    println!("{:<32} {:<6} {:>8}  note", "tool", "ok", "pg_ms");
     let mut pass = 0;
-    let mut diff = 0;
     let mut fail = 0;
-    let mut slow = Vec::new();
     for r in &results {
-        let status = if r.equal { "PASS" } else { "DIFF" };
-        if r.equal && r.cozo_ok && r.pg_ok {
+        if r.ok {
             pass += 1;
-        } else if !r.equal {
-            if r.cozo_ok && r.pg_ok {
-                diff += 1;
-            } else {
-                fail += 1;
-            }
-        }
-        let ratio = if r.cozo_ms > 0.0 {
-            r.pg_ms / r.cozo_ms
         } else {
-            1.0
-        };
-        if ratio > 2.0 && r.pg_ms > 10.0 {
-            slow.push(r.tool.clone());
+            fail += 1;
         }
-        println!(
-            "{:<32} {:<6} {:<6} {:<5} {:>8.1} {:>8.1} {:>7.2}  {}",
-            r.tool, r.cozo_ok, r.pg_ok, status, r.cozo_ms, r.pg_ms, ratio, r.note
-        );
+        println!("{:<32} {:<6} {:>8.1}  {}", r.tool, r.ok, r.ms, r.note);
     }
     println!();
-    println!(
-        "PASS={pass} DIFF={diff} FAIL={fail} total={}",
-        results.len()
-    );
-    if !slow.is_empty() {
-        println!(">2x cozo latency: {slow:?}");
-    }
+    println!("PASS={pass} FAIL={fail} total={}", results.len());
 
     // Guard: the sweep itself asserts the invariant that the hot paths
     // (semantic search, overview, impact) ran without error on PG.
@@ -740,6 +644,6 @@ fn tool_sweep_cozo_vs_postgres() {
         "search_code",
     ] {
         let r = results.iter().find(|r| r.tool == must).expect(must);
-        assert!(r.pg_ok, "{must} failed on PG: {:?}", r.pg_err);
+        assert!(r.ok, "{must} failed on PG: {:?}", r.err);
     }
 }

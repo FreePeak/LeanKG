@@ -2,8 +2,8 @@
 // Tests using LeanKG codebase patterns as fixtures.
 // Run with: cargo test --release -- phase1_integration_test
 
+use leankg::db::backend::init_db;
 use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use tempfile::TempDir;
 
@@ -11,12 +11,7 @@ fn make_engine() -> (GraphEngine, TempDir) {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(&db_path).unwrap();
-    (
-        GraphEngine::new(std::sync::Arc::new(
-            leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-        )),
-        tmp,
-    )
+    (GraphEngine::new(db.clone()), tmp)
 }
 
 fn populate_with_leankg_patterns(engine: &GraphEngine) {

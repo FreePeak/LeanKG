@@ -1,5 +1,5 @@
+use leankg::db::backend::init_db;
 use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use tempfile::TempDir;
 
@@ -10,9 +10,7 @@ where
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph = GraphEngine::new(db.clone());
     callback(&graph, &tmp);
 }
 

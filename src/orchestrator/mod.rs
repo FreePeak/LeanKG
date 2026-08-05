@@ -39,17 +39,8 @@ impl QueryOrchestrator {
     }
 
     pub fn with_persistence(graph_engine: GraphEngine) -> Self {
-        let db_arc = graph_engine.db_arc().clone();
-        let persistent_cache = Arc::new(crate::graph::PersistentCache::new(db_arc.clone(), 300));
-        Self {
-            graph_engine,
-            cache: Arc::new(Mutex::new(OrchestratorCache::with_persistence(
-                300,
-                1000,
-                persistent_cache,
-            ))),
-            intent_parser: IntentParser::new(),
-        }
+        // D2: the persistent cache was dropped — in-memory only.
+        Self::new(graph_engine)
     }
 
     pub fn orchestrate(

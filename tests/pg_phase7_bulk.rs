@@ -16,7 +16,7 @@
 //!
 //! Every test is `#[ignore]`-gated; flip with `--include-ignored`.
 
-use leankg::db::backend::{ClientPool, DbBackend, PostgresBackend};
+use leankg::db::backend::{ClientPool, PostgresBackend};
 use std::collections::BTreeMap;
 use std::env;
 use std::io::Write;
@@ -177,7 +177,9 @@ fn named_vectors(pairs: &[(String, Vec<f32>)]) -> BTreeMap<String, leankg::db::b
 
 /// Build the NamedRows map for `embedding_state` (mirrors state.rs
 /// `upsert_fresh`).
-fn named_state(updates: &[(String, u64, String)]) -> BTreeMap<String, leankg::db::backend::NamedRows> {
+fn named_state(
+    updates: &[(String, u64, String)],
+) -> BTreeMap<String, leankg::db::backend::NamedRows> {
     use leankg::db::backend::DataValue;
     let now = "2026-08-05T00:00:00Z".to_string();
     let mut rows: Vec<Vec<DataValue>> = Vec::with_capacity(updates.len());
@@ -233,9 +235,7 @@ fn copy_bulk_load_10k_vectors_row_count() {
     } else {
         f64::INFINITY
     };
-    println!(
-        "[phase7] COPY 10k (index dropped): {cold_ms} ms -> {cold_v_per_s:.0} v/s"
-    );
+    println!("[phase7] COPY 10k (index dropped): {cold_ms} ms -> {cold_v_per_s:.0} v/s");
 
     // Index-live COPY: recreate, then re-COPY the SAME 10k (upsert). This
     // pays per-row HNSW maintenance and is the incremental-embed case.
@@ -252,9 +252,7 @@ fn copy_bulk_load_10k_vectors_row_count() {
     } else {
         f64::INFINITY
     };
-    println!(
-        "[phase7] COPY 10k (index live): {live_ms} ms -> {live_v_per_s:.0} v/s"
-    );
+    println!("[phase7] COPY 10k (index live): {live_ms} ms -> {live_v_per_s:.0} v/s");
 
     let count: i64 = s
         .admin
@@ -355,7 +353,12 @@ fn drop_index_copy_reindex_restores_recall() {
     let k = 50usize;
     let mut rng = Rng::new(0xD07AB7);
     let pairs: Vec<(String, Vec<f32>)> = (0..n)
-        .map(|i| (format!("recall{i:05}"), random_unit_vector(&mut rng, VEC_DIM)))
+        .map(|i| {
+            (
+                format!("recall{i:05}"),
+                random_unit_vector(&mut rng, VEC_DIM),
+            )
+        })
         .collect();
     let q = random_unit_vector(&mut rng, VEC_DIM);
 
@@ -377,9 +380,7 @@ fn drop_index_copy_reindex_restores_recall() {
     )
     .unwrap();
     let reidx_ms = reidx_started.elapsed().as_millis();
-    println!(
-        "[phase7] drop={drop_ms}ms copy={copy_ms}ms reindex={reidx_ms}ms"
-    );
+    println!("[phase7] drop={drop_ms}ms copy={copy_ms}ms reindex={reidx_ms}ms");
 
     // Verify the index exists.
     let idx: i64 = s
@@ -401,7 +402,11 @@ fn drop_index_copy_reindex_restores_recall() {
             .map(|(n, v)| (n.as_str(), cosine_dist(v, &q)))
             .collect();
         scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(b.0)));
-        scored.into_iter().take(k).map(|(n, _)| n.to_string()).collect()
+        scored
+            .into_iter()
+            .take(k)
+            .map(|(n, _)| n.to_string())
+            .collect()
     };
 
     let hnsw_rows = {
@@ -411,7 +416,16 @@ fn drop_index_copy_reindex_restores_recall() {
             .query(
                 "SELECT qualified_name FROM embedding_vectors \
                  ORDER BY vec <-> $1::text::vector LIMIT $2::int8",
-                &[&format!("[{}]", q.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",")), &(k as i64)],
+                &[
+                    &format!(
+                        "[{}]",
+                        q.iter()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
+                    &(k as i64),
+                ],
             )
             .unwrap();
         let names: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
@@ -479,11 +493,19 @@ fn direct_copy_in_via_transaction() {
     let _g = pg_lock();
     let mut s = Scratch::new();
     let v = random_unit_vector(&mut Rng::new(42), VEC_DIM);
-    let literal = format!("[{}]", v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","));
+    let literal = format!(
+        "[{}]",
+        v.iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
 
     let mut tx = s.admin.transaction().unwrap();
-    tx.batch_execute("CREATE TEMP TABLE copy_probe (qn TEXT PRIMARY KEY, vec vector(384)) ON COMMIT DROP")
-        .unwrap();
+    tx.batch_execute(
+        "CREATE TEMP TABLE copy_probe (qn TEXT PRIMARY KEY, vec vector(384)) ON COMMIT DROP",
+    )
+    .unwrap();
     let mut writer = tx.copy_in("COPY copy_probe (qn, vec) FROM STDIN").unwrap();
     writer
         .write_all(format!("probe-1\t{literal}\n").as_bytes())

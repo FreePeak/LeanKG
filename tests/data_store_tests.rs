@@ -1,4 +1,4 @@
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use std::fs;
 use std::path::Path;
@@ -20,9 +20,7 @@ pub fn check_indexed_elements_exist(
     source_root: &Path,
 ) -> Result<DataStoreCheckResult, Box<dyn std::error::Error>> {
     let db = init_db(db_path)?;
-    let graph_engine = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph_engine = GraphEngine::new(db.clone());
 
     let elements = graph_engine.all_elements()?;
     let mut elements_valid = 0;
@@ -70,9 +68,7 @@ pub fn check_no_duplicate_elements(
     db_path: &Path,
 ) -> Result<DataStoreCheckResult, Box<dyn std::error::Error>> {
     let db = init_db(db_path)?;
-    let graph_engine = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph_engine = GraphEngine::new(db.clone());
 
     let elements = graph_engine.all_elements()?;
     let mut name_counts: std::collections::HashMap<String, usize> =
@@ -105,9 +101,7 @@ pub fn check_relationship_validity(
     source_root: &Path,
 ) -> Result<DataStoreCheckResult, Box<dyn std::error::Error>> {
     let db = init_db(db_path)?;
-    let graph_engine = GraphEngine::new(std::sync::Arc::new(
-        leankg::db::backend::CozoBackend::from_concrete(db.clone()),
-    ));
+    let graph_engine = GraphEngine::new(db.clone());
 
     let relationships = graph_engine.all_relationships()?;
     let mut relationships_valid = 0;

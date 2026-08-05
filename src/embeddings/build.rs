@@ -567,7 +567,7 @@ pub(crate) fn orphan_rows_from_work(
 
 fn nothing_to_embed_report(
     graph: &GraphEngine,
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     considered: usize,
     skipped_fresh: usize,
 ) -> Result<BuildReport, Box<dyn std::error::Error>> {
@@ -1304,30 +1304,12 @@ pub fn build_index_parallel(
 /// `:put`) to ~700 vec/sec with `import_relations` — about 8× — which
 /// brings cold embed from ~73 min to ~9 min on the same workspace.
 fn upsert_pairs_to_db(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     pairs: &[(String, Vec<f32>)],
     hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Redis HNSW side-store: skip Cozo import_relations when enabled.
-    if crate::embeddings::redis_store::redis_vector_store_enabled() {
-        // One connection per flush is acceptable for cold load; for
-        // long runs the writer holds state via thread_local below.
-        thread_local! {
-            static REDIS: std::cell::RefCell<Option<crate::embeddings::redis_store::RedisVectorStore>> =
-                const { std::cell::RefCell::new(None) };
-        }
-        return REDIS.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(crate::embeddings::redis_store::RedisVectorStore::connect()?);
-                tracing::info!("embed writer: LEANKG_EMBED_VECTOR_STORE=redis");
-            }
-            slot.as_ref()
-                .unwrap()
-                .upsert_pairs(pairs)
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
-        });
-    }
+    // Phase 8: the Redis HNSW side-store (LEANKG_EMBED_VECTOR_STORE=redis)
+    // was deleted — Postgres pgvector is the only vector store.
 
     if hnsw_live {
         // The HNSW index stays live during incremental puts, and CozoDB
@@ -1382,7 +1364,7 @@ fn upsert_pairs_to_db(
 /// with the optional `hnsw.ef_construction` GUC applied inside the same
 /// tx (Phase 4: `embedding_gucs_for` table hook).
 fn put_pairs_to_db_script(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     pairs: &[(String, Vec<f32>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chunk_size = effective_upsert_chunk();
@@ -1421,7 +1403,7 @@ fn put_pairs_to_db_script(
 /// index not dropped), writes go through `:put` instead because CozoDB
 /// 0.7.6 skips HNSW index maintenance on `import_relations`.
 fn upsert_vectors<'a, I>(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     items: I,
     hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>>
@@ -1465,7 +1447,7 @@ where
 /// Routes through the trait so the translator handles the `:rm` shape on
 /// Postgres (Phase 4: `DELETE FROM embedding_vectors WHERE qualified_name = ANY(...)`).
 fn remove_vectors(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     qns: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     if qns.is_empty() {
@@ -1487,7 +1469,7 @@ fn remove_vectors(
 }
 
 fn count_vectors(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // ponytail: the attribute syntax `*embedding_vectors{qualified_name}` is
     // not yet handled by the translator (Phase 5 inventory risk 8). On

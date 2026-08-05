@@ -13,8 +13,8 @@
 
 #![cfg(feature = "embeddings")]
 
+use leankg::db::backend::init_db;
 use leankg::db::models::CodeElement;
-use leankg::db::schema::{init_db, run_script, CozoDb};
 use leankg::embeddings::state::{
     delete_state_rows, ensure_embedding_state_table, list_all, list_orphans, list_stale,
     mark_stale_for_qualified_names, mark_stale_if_changed, upsert_fresh, EmbeddingStateRow,
@@ -25,7 +25,7 @@ use leankg::embeddings::{parse_type_filter, BuildMode, BuildOptions};
 use std::collections::HashSet;
 use tempfile::TempDir;
 
-fn fixture_db() -> (TempDir, CozoDb) {
+fn fixture_db() -> (TempDir, leankg::db::backend::SharedDb) {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(&db_path).expect("init_db");
@@ -46,14 +46,15 @@ fn make_function(name: &str, file: &str) -> CodeElement {
     }
 }
 
-fn insert_code_element(db: &CozoDb, qn: &str, name: &str) {
+fn insert_code_element(db: &leankg::db::backend::PostgresBackend, qn: &str, name: &str) {
     let q = format!(
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
 [["{}", "function", "{}", "./src/{}.rs", 1, 10, "rust", "", "", "", "{{}}", "local", "procedural"]]
 :put code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}}"#,
         qn, name, name
     );
-    run_script(db, &q, Default::default()).expect("insert code_element");
+    db.run_script(&q, Default::default())
+        .expect("insert code_element");
 }
 
 // ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@ pub struct IndexInventory {
 }
 
 pub fn ensure_index_inventory_table(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let existing: std::collections::HashSet<String> = db
         .run_script("::relations", Default::default())?
@@ -88,14 +88,14 @@ fn type_count_maps(graph: &GraphEngine) -> Result<ElementRelCounts, Box<dyn std:
 
 #[cfg(feature = "embeddings")]
 fn count_vectors(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<i64, Box<dyn std::error::Error>> {
     Ok(crate::embeddings::control::count_embedding_vectors(db)? as i64)
 }
 
 #[cfg(not(feature = "embeddings"))]
 fn count_vectors(
-    _db: &dyn crate::db::backend::DbBackend,
+    _db: &crate::db::backend::PostgresBackend,
 ) -> Result<i64, Box<dyn std::error::Error>> {
     Ok(0)
 }
@@ -136,7 +136,7 @@ pub fn refresh_index_inventory(
 }
 
 fn upsert_inventory(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
     inv: &IndexInventory,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let query = r#"?[key, computed_at, total_elements, total_relationships, total_vectors, total_documents, total_doc_sections, elements_by_type_json, relationships_by_type_json, vectors_by_type_json, estimated_vector_bytes, estimated_hnsw_bytes, notes] <- [[$key, $computed_at, $total_elements, $total_relationships, $total_vectors, $total_documents, $total_doc_sections, $elements_by_type_json, $relationships_by_type_json, $vectors_by_type_json, $estimated_vector_bytes, $estimated_hnsw_bytes, $notes]]
@@ -202,7 +202,7 @@ fn now_iso() -> String {
 }
 
 pub fn load_latest_inventory(
-    db: &dyn crate::db::backend::DbBackend,
+    db: &crate::db::backend::PostgresBackend,
 ) -> Result<Option<IndexInventory>, Box<dyn std::error::Error>> {
     ensure_index_inventory_table(db)?;
     let query = r#"?[key, computed_at, total_elements, total_relationships, total_vectors, total_documents, total_doc_sections, elements_by_type_json, relationships_by_type_json, vectors_by_type_json, estimated_vector_bytes, estimated_hnsw_bytes, notes] :=
