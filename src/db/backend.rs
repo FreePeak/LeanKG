@@ -14,9 +14,34 @@ use std::sync::{Arc, Condvar, Mutex};
 /// positionally (`row[0].get_str()`, `NamedRows::new`, `DataValue::Num`).
 pub use crate::db::value::{DataValue, NamedRows};
 
+/// Storage-backend abstraction. Production uses [`PostgresBackend`];
+/// tests use an in-memory [`crate::db::fake::FakeBackend`] so unit tests
+/// never need a live Postgres.
+pub trait DbBackend: Send + Sync {
+    /// Run a Cozo-script query (translated to SQL by the PG backend, or
+    /// interpreted in-memory by the fake). Returns named rows.
+    fn run_script(
+        &self,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
+    ) -> Result<NamedRows, Box<dyn std::error::Error>>;
+
+    /// Bulk-load named rows into a relation.
+    fn import_relations(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Safe-to-log connection URL (password masked).
+    fn redacted_url(&self) -> String;
+
+    /// Classify a script as read/write/DDL.
+    fn mutability_for(&self, query: &str) -> mutability::ScriptMutability;
+}
+
 /// Shared handle used throughout the codebase. `Arc` so clones of
-/// `GraphEngine` share ONE underlying backend (one PG pool).
-pub type SharedDb = Arc<PostgresBackend>;
+/// `GraphEngine` share ONE underlying backend (one PG pool / one fake store).
+pub type SharedDb = Arc<dyn DbBackend>;
 
 /// PostgreSQL backend (Phase 3 — plan T1.4, T3.5; pool added Phase 6).
 ///
@@ -562,6 +587,23 @@ impl PostgresBackend {
         if named.rows.is_empty() {
             return Ok(());
         }
+        // Dedupe by PK before COPY: `INSERT ... SELECT ... ON CONFLICT (pk)
+        // DO UPDATE` fails with "ON CONFLICT DO UPDATE command cannot affect
+        // row a second time" when the staging batch contains the same PK
+        // twice (real graphs have duplicate qualified_names across files —
+        // see plan §9 qualified_name-collision finding). Keep the last row
+        // per PK, matching last-write-wins ON CONFLICT semantics.
+        let pk_idx = cols.iter().position(|c| c.as_str() == pk);
+        let rows: Vec<&Vec<DataValue>> = if let Some(idx) = pk_idx {
+            let mut seen: std::collections::HashMap<String, &Vec<DataValue>> =
+                std::collections::HashMap::with_capacity(named.rows.len());
+            for row in &named.rows {
+                seen.insert(row.get(idx).map(|v| v.to_string()).unwrap_or_default(), row);
+            }
+            seen.into_values().collect()
+        } else {
+            named.rows.iter().collect()
+        };
         let q_table = crate::db::pg::translate::quote_ident(table);
         let q_cols = cols
             .iter()
@@ -579,7 +621,7 @@ impl PostgresBackend {
         ))?;
         let copy_sql = format!("COPY {staging} ({q_cols}) FROM STDIN");
         let mut writer = tx.copy_in(&copy_sql)?;
-        for row in &named.rows {
+        for row in rows {
             let mut line = String::new();
             for (i, val) in row.iter().enumerate() {
                 if i > 0 {
@@ -673,6 +715,31 @@ impl PostgresBackend {
             tx.execute(&sql, &value_refs)?;
         }
         Ok(())
+    }
+}
+
+impl DbBackend for PostgresBackend {
+    fn run_script(
+        &self,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
+    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
+        PostgresBackend::run_script(self, query, params)
+    }
+
+    fn import_relations(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        PostgresBackend::import_relations(self, data)
+    }
+
+    fn redacted_url(&self) -> String {
+        PostgresBackend::redacted_url(self)
+    }
+
+    fn mutability_for(&self, query: &str) -> mutability::ScriptMutability {
+        PostgresBackend::mutability_for(self, query)
     }
 }
 
@@ -894,19 +961,7 @@ pub fn init_db(_db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::erro
 
 #[cfg(test)]
 fn test_init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
-    let schema = test_scratch_schema(db_path)?;
-    let url = test_schema_url(&schema)?;
-    let mut pg = PostgresBackend::from_env().unwrap_or_else(|_| {
-        // Test fallback default (dev container) when LEANKG_PG_URL is unset.
-        PostgresBackend {
-            pg_url: test_pg_url(),
-            pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
-            ro_pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
-            read_only: false,
-        }
-    });
-    pg.pg_url = url;
-    Ok(Arc::new(pg))
+    Ok(Arc::new(crate::db::fake::FakeBackend::for_path(db_path)))
 }
 
 /// The dev-Postgres URL used by unit tests when `LEANKG_PG_URL` is unset.
@@ -979,16 +1034,7 @@ pub fn init_db_readonly(
 ) -> Result<SharedDb, Box<dyn std::error::Error>> {
     #[cfg(test)]
     {
-        let schema = test_scratch_schema(_db_path)?;
-        let url = test_schema_url(&schema)?;
-        let mut pg = PostgresBackend::from_env_read_only().unwrap_or_else(|_| PostgresBackend {
-            pg_url: test_pg_url(),
-            pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
-            ro_pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
-            read_only: true,
-        });
-        pg.pg_url = url;
-        return Ok(Arc::new(pg));
+        return test_init_db(_db_path);
     }
     #[allow(unreachable_code)]
     {
@@ -1106,12 +1152,10 @@ mod tests {
             "LEANKG_PG_URL",
             "postgresql://postgres:postgres@localhost:5433/leankg",
         );
-        let db = init_db(std::path::Path::new("/tmp/none.db")).unwrap();
-        // Connect is lazy — the URL is validated at construction. The
-        // backend must be a PostgresBackend (concrete type, no trait).
+        let db = PostgresBackend::from_env().unwrap();
         assert!(db.pg_url.contains("postgresql://"));
         assert!(!db.read_only);
-        let ro = init_db_readonly(std::path::Path::new("/tmp/none.db")).unwrap();
+        let ro = db.clone().with_read_only();
         assert!(ro.read_only);
         assert!(ro
             .read_only_url()
@@ -1128,8 +1172,7 @@ mod tests {
             "LEANKG_PG_URL",
             "postgresql://postgres:postgres@localhost:5433/leankg",
         );
-        let tmp = TempDir::new().unwrap();
-        let db = init_db(&tmp.path().join("sel.db")).unwrap();
+        let db = PostgresBackend::from_env().unwrap();
         // The PG backend rejects bare list literals at translate time (no
         // live Postgres needed — connect is lazy).
         assert!(

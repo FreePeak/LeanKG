@@ -66,7 +66,7 @@ const REL_FIXTURE: &str = r#"
 :put relationships {source_qualified, target_qualified, rel_type, confidence, metadata, env}
 "#;
 
-fn seed_db(db: &leankg::db::backend::PostgresBackend) {
+fn seed_db(db: &dyn leankg::db::backend::DbBackend) {
     db.run_script(FIXTURE, Default::default())
         .expect("seed code_elements");
     db.run_script(REL_FIXTURE, Default::default())
@@ -77,7 +77,7 @@ async fn make_handler() -> (ToolHandler, TempDir) {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(&db_path).expect("init_db");
-    seed_db(&db);
+    seed_db(db.as_ref());
     let graph = GraphEngine::new(db.clone());
     (ToolHandler::new(graph, db_path), tmp)
 }

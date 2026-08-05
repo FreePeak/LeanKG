@@ -1,5 +1,5 @@
 #![allow(clippy::needless_borrow)]
-use crate::db::backend::{PostgresBackend, SharedDb};
+use crate::db::backend::{DbBackend, SharedDb};
 use crate::db::models::{
     BusinessLogic, CodeElement, DependencyInfo, DocLink, Incident, Relationship, TraceabilityEntry,
     TraceabilityReport,
@@ -104,7 +104,7 @@ impl GraphEngine {
         Self::new(db)
     }
 
-    pub fn db(&self) -> &PostgresBackend {
+    pub fn db(&self) -> &dyn DbBackend {
         self.db.as_ref()
     }
 

@@ -483,6 +483,12 @@ fn collect_work_items(
     let mega = total > 50_000;
     let mut work = Vec::new();
     if mega {
+        // Duplicate qualified_names across files (52% on workspace-be) mean
+        // the same QN appears many times in code_elements. Embedding each
+        // occurrence wastes ~2x inference. Dedupe by qualified_name so each
+        // distinct symbol is embedded once (the COPY upsert already dedupes
+        // writes; this dedupes the expensive inference).
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut offset = 0usize;
         let page_size = 5_000usize;
         loop {
@@ -497,6 +503,9 @@ fn collect_work_items(
             for el in page {
                 if !element_passes_type_filter(&el, opts) {
                     continue;
+                }
+                if !seen.insert(el.qualified_name.clone()) {
+                    continue; // already queued
                 }
                 if let Some(item) = work_item_from_element(&el) {
                     work.push(item);
@@ -516,9 +525,13 @@ fn collect_work_items(
         }
     } else {
         let elements = graph.all_elements()?;
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for el in elements {
             if !element_passes_type_filter(&el, opts) {
                 continue;
+            }
+            if !seen.insert(el.qualified_name.clone()) {
+                continue; // dup qualified_name — embed once
             }
             if let Some(item) = work_item_from_element(&el) {
                 work.push(item);
@@ -567,7 +580,7 @@ pub(crate) fn orphan_rows_from_work(
 
 fn nothing_to_embed_report(
     graph: &GraphEngine,
-    db: &crate::db::backend::PostgresBackend,
+    db: &dyn crate::db::backend::DbBackend,
     considered: usize,
     skipped_fresh: usize,
 ) -> Result<BuildReport, Box<dyn std::error::Error>> {
@@ -1304,7 +1317,7 @@ pub fn build_index_parallel(
 /// `:put`) to ~700 vec/sec with `import_relations` — about 8× — which
 /// brings cold embed from ~73 min to ~9 min on the same workspace.
 fn upsert_pairs_to_db(
-    db: &crate::db::backend::PostgresBackend,
+    db: &dyn crate::db::backend::DbBackend,
     pairs: &[(String, Vec<f32>)],
     hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1364,7 +1377,7 @@ fn upsert_pairs_to_db(
 /// with the optional `hnsw.ef_construction` GUC applied inside the same
 /// tx (Phase 4: `embedding_gucs_for` table hook).
 fn put_pairs_to_db_script(
-    db: &crate::db::backend::PostgresBackend,
+    db: &dyn crate::db::backend::DbBackend,
     pairs: &[(String, Vec<f32>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chunk_size = effective_upsert_chunk();
@@ -1403,7 +1416,7 @@ fn put_pairs_to_db_script(
 /// index not dropped), writes go through `:put` instead because CozoDB
 /// 0.7.6 skips HNSW index maintenance on `import_relations`.
 fn upsert_vectors<'a, I>(
-    db: &crate::db::backend::PostgresBackend,
+    db: &dyn crate::db::backend::DbBackend,
     items: I,
     hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>>
@@ -1447,7 +1460,7 @@ where
 /// Routes through the trait so the translator handles the `:rm` shape on
 /// Postgres (Phase 4: `DELETE FROM embedding_vectors WHERE qualified_name = ANY(...)`).
 fn remove_vectors(
-    db: &crate::db::backend::PostgresBackend,
+    db: &dyn crate::db::backend::DbBackend,
     qns: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     if qns.is_empty() {
@@ -1469,7 +1482,7 @@ fn remove_vectors(
 }
 
 fn count_vectors(
-    db: &crate::db::backend::PostgresBackend,
+    db: &dyn crate::db::backend::DbBackend,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // ponytail: the attribute syntax `*embedding_vectors{qualified_name}` is
     // not yet handled by the translator (Phase 5 inventory risk 8). On

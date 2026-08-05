@@ -4850,7 +4850,7 @@ fn generate_documentation(file_path: &str, elements: &[CodeElement]) -> String {
 // take the HNSW fast path and run it.
 
 #[cfg(feature = "embeddings")]
-fn embeddings_index_available(db: &crate::db::backend::PostgresBackend) -> bool {
+fn embeddings_index_available(db: &dyn crate::db::backend::DbBackend) -> bool {
     // FR-SEM-07: :limit 1 probe — never list_all (~147k rows) just to gate HNSW.
     crate::embeddings::state::has_any(db).unwrap_or(false)
 }

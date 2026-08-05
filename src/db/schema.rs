@@ -5,7 +5,7 @@
 //! describe the `code_elements` / `relationships` relations, and the
 //! project-root resolution for legacy RocksDB path layouts.
 
-use crate::db::backend::PostgresBackend;
+use crate::db::backend::DbBackend;
 
 /// Schema snapshot for one relation. Returned by `get_relation_schema`
 /// and consumed by callers that need arity-correct rules (e.g. the
@@ -18,7 +18,7 @@ pub struct RelationSchema {
     pub canonical: bool,
 }
 
-fn get_column_count(db: &PostgresBackend, relation: &str) -> usize {
+fn get_column_count(db: &dyn DbBackend, relation: &str) -> usize {
     let arity_probe = match relation {
         "code_elements" => Some(vec![
             (
@@ -130,7 +130,7 @@ const RELATIONSHIPS_5_COLUMNS: &[&str] = &[
 /// list of column names as the relation is currently defined; `canonical`
 /// is true when the live arity matches the current canonical schema
 /// (13 for code_elements, 6 for relationships).
-pub fn get_relation_schema(db: &PostgresBackend, relation: &str) -> RelationSchema {
+pub fn get_relation_schema(db: &dyn DbBackend, relation: &str) -> RelationSchema {
     let arity = get_column_count(db, relation);
     let columns: Vec<String> = match relation {
         "code_elements" => match arity {
@@ -175,18 +175,19 @@ pub fn get_relation_schema(db: &PostgresBackend, relation: &str) -> RelationSche
 }
 
 /// Convenience accessor for the code_elements relation.
-pub fn code_elements_schema(db: &PostgresBackend) -> RelationSchema {
+pub fn code_elements_schema(db: &dyn DbBackend) -> RelationSchema {
     get_relation_schema(db, "code_elements")
 }
 
 /// Convenience accessor for the relationships relation.
-pub fn relationships_schema(db: &PostgresBackend) -> RelationSchema {
+pub fn relationships_schema(db: &dyn DbBackend) -> RelationSchema {
     get_relation_schema(db, "relationships")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::backend::PostgresBackend;
     use tempfile::TempDir;
 
     /// A PostgresBackend pinned at a dead URL — connect is lazy, so

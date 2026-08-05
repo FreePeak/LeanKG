@@ -677,6 +677,19 @@ fn not_exists_query(
         .cloned()
         .unwrap_or_else(|| "qualified_name".to_string());
 
+    // The inner `relationships` relation has no `qualified_name` column — it
+    // keys by `source_qualified` / `target_qualified`. An orphan query
+    // (`not *relationships[...]`) must join the outer's qualified_name to
+    // `relationships.source_qualified` (elements never used as a relationship
+    // source). Emitting `relationships.qualified_name` errors, and emitting a
+    // cartesian join hangs. Special-case the join key for relationships.
+    let (inner_join_col, outer_join_col) =
+        if inner_rel == "relationships" && !inner_cols.iter().any(|c| c == &outer_join_col) {
+            ("source_qualified".to_string(), outer_join_col)
+        } else {
+            (outer_join_col.clone(), outer_join_col)
+        };
+
     let cols_sql = head
         .iter()
         .map(|c| quote_ident(c))
@@ -684,7 +697,7 @@ fn not_exists_query(
         .join(", ");
     let sql = format!(
         "SELECT {cols_sql} FROM {relation} WHERE NOT EXISTS (SELECT 1 FROM {inner_rel} \
-         WHERE {inner_rel}.{outer_join_col} = {relation}.{outer_join_col})"
+         WHERE {inner_rel}.{inner_join_col} = {relation}.{outer_join_col})"
     );
     Ok(Translation::read(sql, Vec::new(), head.to_vec()))
 }
@@ -766,6 +779,11 @@ fn simple_select(
     // line_start`); that's a definition, not a constraint — the WHERE must
     // not reference the alias column (it doesn't exist in the table).
     let filters = strip_definition_clauses(&filters, head);
+    // Remaining filter clauses can still *use* a head alias defined by a
+    // filter clause (`lines > 200` where `lines = line_end - line_start` is a
+    // definition). The alias isn't a real column — inline its definition
+    // expression so the WHERE references `line_end - line_start > 200`.
+    let filters = inline_def_aliases(&filters, &def_exprs);
     // Resolve positional alias tokens in the filters against the relation
     // block (G107 `et in [...]` where `et` is the 2nd column = element_type).
     let filters = resolve_filter_aliases(relation, &filters, rel_cols);
@@ -946,6 +964,34 @@ fn strip_definition_clauses(filters: &str, head: &[String]) -> String {
         }
     }
     out.join(", ")
+}
+
+/// Replace references to head aliases defined by filter clauses with their
+/// definition expression. `longest_functions`-style queries do
+/// `?[q, n, le, lines] := *code_elements{...}, lines = line_end - line_start,
+/// lines > 200` — `strip_definition_clauses` removes the definition, leaving
+/// `lines > 200` which references a nonexistent column. Inline the RHS so the
+/// WHERE becomes `(line_end - line_start) > 200`. Matches whole alias tokens
+/// only (not `my_lines`, `lines_foo`, quoted strings, or `$` params).
+fn inline_def_aliases(
+    filters: &str,
+    def_exprs: &std::collections::HashMap<&str, String>,
+) -> String {
+    if def_exprs.is_empty() || filters.is_empty() {
+        return filters.to_string();
+    }
+    let mut out = filters.to_string();
+    for (alias, expr) in def_exprs {
+        // Match whole alias tokens via explicit boundary captures — the
+        // `regex` crate (default features) has no look-around. The alias
+        // must not be preceded by `[A-Za-z0-9_$]` or followed by `[A-Za-z0-9_]`.
+        let re = format!(r"(^|[^\w$])({})([^\w]|$)", regex::escape(alias));
+        // Replace bare alias tokens with `(<expr>)`. Handle the common
+        // `lines > N` and `lines = expr` forms.
+        let rx = regex::Regex::new(&re).unwrap();
+        out = rx.replace_all(&out, format!("$1({})$3", expr)).to_string();
+    }
+    out
 }
 
 /// Resolve positional alias variables inside a head-alias expression
