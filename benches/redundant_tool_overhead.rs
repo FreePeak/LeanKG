@@ -16,7 +16,7 @@
 //! hermetic (no MCP HTTP, no embedder). The headline number is wall time.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use leankg::db::schema::{init_db, run_script};
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
 use serde_json::json;
@@ -35,7 +35,7 @@ fn fixture_db() -> (ToolHandler, TempDir) {
         ]
         :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}
     "#;
-    run_script(&db, seed, Default::default()).unwrap();
+    db.run_script(seed, Default::default()).unwrap();
     let graph = GraphEngine::new(db);
     (ToolHandler::new(graph, db_path), tmp)
 }

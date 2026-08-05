@@ -4,10 +4,10 @@
 # stopped. CozoDB RocksDB is single-writer per process per path, so the
 # canonical "safe" sequence is:
 #
-#   docker compose -f docker-compose.rocksdb.yml stop leankg
-#   docker compose -f docker-compose.rocksdb.yml -f docker-compose.embed.yml \
+#   docker compose -f docker-compose.yml stop leankg
+#   docker compose -f docker-compose.yml -f docker-compose.embed.yml \
 #     --profile embed run --rm leankg-embed
-#   docker compose -f docker-compose.rocksdb.yml start leankg
+#   docker compose -f docker-compose.yml start leankg
 #
 # Cold offline job: INT8 fast path. Needs ≥6g so batch 128 fits.
 # Default: cpus="6", mem_reservation=3g, mem_limit=10g (multi-project /
@@ -17,7 +17,7 @@
 services:
   leankg-embed:
     profiles: ["embed"]
-    # Same default as docker-compose.rocksdb.yml. Override via LEANKG_IMAGE
+    # Same default as docker-compose.yml. Override via LEANKG_IMAGE
     # or docker-compose.override.yml (gitignored) for a local/custom tag.
     image: ${LEANKG_IMAGE:-freepeak/leankg:latest}
     pull_policy: ${LEANKG_PULL_POLICY:-missing}
@@ -44,8 +44,7 @@ services:
         "function,method",
       ]
     environment:
-      LEANKG_DB_ENGINE: rocksdb
-      LEANKG_ROCKSDB_ROOT: /data/leankg-rocksdb
+      LEANKG_PG_URL: postgresql://postgres:postgres@postgres:5432/leankg
       LEANKG_MCP_PROJECT: ${LEANKG_MCP_PROJECT:-/workspace}
       LEANKG_MMAP_SIZE: "67108864"
       LEANKG_EMBED_FAST: "1"
@@ -58,7 +57,7 @@ services:
       OMP_NUM_THREADS: "1"
       RUST_LOG: leankg=info
     volumes:
-      - leankg-rocksdb:/data/leankg-rocksdb
+      - leankg-pgdata:/var/lib/postgresql/data
       - leankg_models:/root/.cache/leankg
       # Primary project mount. Extra repos: docker-compose.override.yml →
       # services.leankg-embed.volumes (mirror services.leankg.volumes).
