@@ -195,3 +195,36 @@ pre-Phase-5.5 base.
 5. **Two more coroutine-style gaps for phase 9 docs:** `smoke` (embeddings
    feature) and remote-cozoserver init (`LEANKG_COZO_ENDPOINT`) are
    unimplemented; both are pre-existing, not PG-related.
+
+## 6. Phase 6 status (implemented 2026-08-05)
+
+All four T6 items landed in `tests/pg_phase6_scaling.rs` (6/6 container
+tests, `--include-ignored --test-threads=1`):
+
+1. **T6.1 RO backend** — `PostgresBackend::with_read_only()` +
+   `init_db_readonly` routes through `default_transaction_read_only = on`
+   (SQLSTATE 25006 on writes). Verified: `:put` on an RO backend errors
+   "cannot execute ... in a read-only transaction", reads work, row never
+   lands. The RO pool is separate from the RW pool so RO sessions can never
+   leak into writer slots.
+2. **T6.2** — unchanged; `readonly_mode_test.rs` 8/8 green (tool-layer
+   enforcement is backend-independent).
+3. **T6.3 pool** — hand-rolled `ClientPool` (sync `postgres::Client`
+   behind `Mutex<VecDeque>` + Condvar), `LEANKG_PG_POOL_SIZE` default 5.
+   Chosen over deadpool-postgres because the backend speaks the sync
+   `postgres` crate; deadpool needs tokio-postgres (async) which would
+   ripple through every `DbBackend` impl + the `block_in_place` guard.
+   Runtime-safety follow-up discovered live: the sync client's `Drop`
+   closes via an internal runtime, so pool teardown and `AdvisoryLock::drop`
+   drain off-runtime via `block_in_place` (a `leankg status` under
+   `tokio::main` panicked without this).
+4. **T6.4** — advisory lock (fixed key `0x6C65616E6B67`, `LEANKG_PG_LOCK=0`
+   disables) live-verified: `leankg index` blocks (exit 124) while another
+   session holds the lock, completes after release. Two-backend-instance
+   write visibility test passes (write via A, read via B).
+5. **CLI routing** — `init_db`/`init_db_readonly` route through
+   `PostgresBackend` when `LEANKG_DB_ENGINE=postgres` AND `LEANKG_PG_URL`
+   are both set (a stray URL alone never reroutes; engine must be explicit).
+   Live-verified: `leankg status` reads PG (55 elements from `code_elements`).
+   Cosmetic: the status "Storage Engine: Sqlite" line still prints the
+   path-based storage config label (Phase 8 cleanup).

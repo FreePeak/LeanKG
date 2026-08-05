@@ -381,8 +381,9 @@ LIMIT $2;
 | Var | Purpose |
 |---|---|
 | `LEANKG_PG_URL` | Postgres connection string (required — only engine, D4) |
-| `LEANKG_PG_POOL_SIZE` | Pool size (default 5) |
-| `LEANKG_PG_URL_RO` | Optional read-replica URL |
+| `LEANKG_PG_POOL_SIZE` | Pool size (default 5, Phase 6 implemented) |
+| `LEANKG_PG_LOCK` | Set `0`/`false` to disable the index advisory lock (Phase 6 T6.4b; default on when engine is Postgres) |
+| `LEANKG_PG_URL_RO` | Optional read-replica URL (not yet implemented — Phase 6 uses the same URL for RO sessions via `default_transaction_read_only`) |
 | `LEANKG_DB_ENGINE` | `postgres` (default, only engine) / `cozo` (migration shim, parity tests only) — **removed in Phase 8** |
 
 ### 8.4 Success criteria
@@ -424,7 +425,7 @@ Worktree: `worktree-leankg-pg-migration` (worktree under `.claude/worktrees/`). 
 | 4. Vector stack swap | ✅ done | `src/vector_engine/` deleted (3,363 LOC, `ef1a9580`); hnsw_retrieve → direct SQL + `SET LOCAL ef_search` (`5fb112dd`); batched upserts 3,831–4,016 v/s (5.7× the 700 target, `e277054b`); round-trip + golden fixture tests 6/6 (`163055a1`). Lib tests 941 (1,078 w/ embeddings). |
 | 5. Remaining modules + grep `cozo::` = 0 | ✅ done | grep `cozo::` 33 → **0 non-shim hits**; translator gaps closed (multi-rule count, attr binding, JSONB/null/vector casts, head-alias span, `:rm` params); 8 modules → `&dyn DbBackend` (`e6facfc9`, `beb300cb`, `9b908ce1`); parity 15/19 (4 cozo-0.7.x rejects documented); lib 954. Known: 13 pre-existing test-compile breakages (integration tests use old `init_db`→`CozoDb`; fix in 5.5). |
 | 5.5. Full regression review (all tools/features before → after) | ✅ done | MCP tool sweep **26/0/0** (32 cases), CLI **14/14**, WebUI **4/4** Playwright + 4 screenshots; **7 real bugs fixed** (data-corruption `:put` table-inference, tokio nested-runtime panic → `block_in_place`, null BIGINT params, aggregate alias leaks); 13 test-compile breakages fixed. Report `docs/analysis/pg-regression-report.md`. Commits `8d4a4467`…`d12665df`. |
-| 6. Read-only + server scaling | ⬜ pending | — |
+| 6. Read-only + server scaling | ✅ done | `tests/pg_phase6_scaling.rs` 6/6 container tests. T6.1 RO backend (`default_transaction_read_only=on`, rejects `:put` with SQLSTATE 25006); T6.2 MCPServer tool-layer RO (8/8 readonly tests, unchanged); T6.3 hand-rolled sync-client pool (`LEANKG_PG_POOL_SIZE` default 5, no new dep); T6.4 advisory lock serializes index (live-verified: held lock blocks `leankg index`, exit 124; released → completes) + two-instance write visibility. CLI routed through `LEANKG_DB_ENGINE=postgres`+`LEANKG_PG_URL` via `resolve_engine` (live-verified `leankg status` reads PG: 55 elements). Commits below. |
 | 7. Embedding bulk-load | ⬜ pending | — |
 | 8. Deploy + docs + cleanup | ⬜ pending | — |
 | 9. Perf verification (index/embed/query on large codebase) | ⬜ pending | T9.1–T9.6, §4 Phase 9 — verify index/embed/query latency vs cozo baselines, review indexes with `EXPLAIN`, autovacuum health, report in `docs/analysis/pg-perf-large-codebase.md`. |
