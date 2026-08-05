@@ -6,7 +6,6 @@
 // `.clamp(1, 15)`. Silences the newer clippy lint that PR #127 worked around.
 #![allow(clippy::manual_clamp)]
 
-use crate::db::CozoDb;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -151,7 +150,9 @@ pub fn live_progress() -> (u64, u64, u64, u64) {
 }
 
 /// Cheap resume preflight — counts only, no `all_elements`.
-pub fn embed_resume_preflight(db: &CozoDb) -> Result<EmbedResumePreflight, String> {
+pub fn embed_resume_preflight(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<EmbedResumePreflight, String> {
     let vectors_existing = count_embedding_vectors(db).unwrap_or(0) as u64;
     let counts = state::count_by_state(db).map_err(|e| e.to_string())?;
     let has_embed_data = vectors_existing > 0 || counts.fresh + counts.stale + counts.other > 0;
@@ -164,9 +165,10 @@ pub fn embed_resume_preflight(db: &CozoDb) -> Result<EmbedResumePreflight, Strin
     })
 }
 
-pub fn count_embedding_vectors(db: &CozoDb) -> Result<usize, Box<dyn std::error::Error>> {
-    let result = crate::db::schema::run_script(
-        db,
+pub fn count_embedding_vectors(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let result = db.run_script(
         "?[qualified_name] := *embedding_vectors{qualified_name}",
         Default::default(),
     )?;
@@ -207,11 +209,29 @@ pub fn resolve_partial_embed_budget_mb(rss_fraction: f64) -> u64 {
 }
 
 /// Prefer incremental HNSW `:put` when dirty set is small vs existing index.
+///
+/// Phase 7 (T7.2) env overrides:
+/// - `LEANKG_EMBED_COPY=1` forces the bulk drop-reindex path (COZY copy),
+///   never incremental — the operator's explicit "cold embed" signal.
+/// - `LEANKG_EMBED_BULK_REINDEX_THRESHOLD` raises/lowers the dirty-set size
+///   that triggers the drop-index-during-bulk strategy (default: the existing
+///   adaptive `max(1000, total/20)`).
 pub fn should_use_incremental_hnsw_puts(dirty_count: usize, total_vectors: usize) -> bool {
     if dirty_count == 0 {
         return false;
     }
+    // LEANKG_EMBED_COPY=1: force the bulk path (drop index → COPY → rebuild).
+    if std::env::var("LEANKG_EMBED_COPY")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "on"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
     let threshold = (total_vectors / 20).max(1_000);
+    let threshold = std::env::var("LEANKG_EMBED_BULK_REINDEX_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(threshold);
     dirty_count <= threshold
 }
 

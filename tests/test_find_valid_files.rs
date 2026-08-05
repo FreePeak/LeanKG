@@ -1,12 +1,12 @@
 // Find files that have valid indexed relationships
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_find_valid_files_for_relationships() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let relationships = graph.all_relationships().unwrap();
     let all_elements = graph.all_elements().unwrap();

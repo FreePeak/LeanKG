@@ -1,11 +1,11 @@
+use leankg::db::backend::init_db;
 use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use tempfile::TempDir;
 
 fn with_test_db<F>(callback: F)
 where
-    F: FnOnce(leankg::db::CozoDb, &GraphEngine, &TempDir),
+    F: FnOnce(leankg::db::backend::SharedDb, &GraphEngine, &TempDir),
 {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
@@ -22,7 +22,7 @@ mod db_parameterized_queries_tests {
     fn test_create_business_logic_basic() {
         with_test_db(|db, _graph, _tmp| {
             let result = leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Test description",
                 Some("US-001"),
@@ -41,7 +41,7 @@ mod db_parameterized_queries_tests {
     fn test_create_business_logic_with_special_chars() {
         with_test_db(|db, _graph, _tmp| {
             let result = leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 r#"Description with "quotes" and 'apostrophes' and \ backslash"#,
                 Some(r#"User"Story::Id"#),
@@ -67,7 +67,7 @@ mod db_parameterized_queries_tests {
         with_test_db(|db, _graph, _tmp| {
             let injection_attempt = r#""; DROP TABLE code_elements; --"#;
             let result = leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Normal description",
                 Some(injection_attempt),
@@ -83,7 +83,7 @@ mod db_parameterized_queries_tests {
     fn test_create_business_logic_with_null_user_story() {
         with_test_db(|db, _graph, _tmp| {
             let result = leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Test description",
                 None,
@@ -100,7 +100,7 @@ mod db_parameterized_queries_tests {
     fn test_create_business_logic_with_null_feature() {
         with_test_db(|db, _graph, _tmp| {
             let result = leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Test description",
                 Some("US-001"),
@@ -117,7 +117,7 @@ mod db_parameterized_queries_tests {
     fn test_create_business_logic_with_both_null() {
         with_test_db(|db, _graph, _tmp| {
             let result = leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Test description",
                 None,
@@ -134,14 +134,14 @@ mod db_parameterized_queries_tests {
     fn test_get_business_logic_existing() {
         with_test_db(|db, _graph, _tmp| {
             leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Test description",
                 Some("US-001"),
                 Some("F-001"),
             )
             .unwrap();
-            let result = leankg::db::get_business_logic(&db, "test::func");
+            let result = leankg::db::get_business_logic(db.as_ref(), "test::func");
             assert!(result.is_ok());
             let bl = result.unwrap().unwrap();
             assert_eq!(bl.element_qualified, "test::func");
@@ -152,7 +152,7 @@ mod db_parameterized_queries_tests {
     #[test]
     fn test_get_business_logic_nonexistent() {
         with_test_db(|db, _graph, _tmp| {
-            let result = leankg::db::get_business_logic(&db, "nonexistent::func");
+            let result = leankg::db::get_business_logic(db.as_ref(), "nonexistent::func");
             assert!(result.is_ok());
             assert!(result.unwrap().is_none());
         });
@@ -163,14 +163,14 @@ mod db_parameterized_queries_tests {
         with_test_db(|db, _graph, _tmp| {
             let special_name = r#"test::func::with "quotes""#;
             leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 special_name,
                 "Test description",
                 Some("US-001"),
                 None,
             )
             .unwrap();
-            let result = leankg::db::get_business_logic(&db, special_name);
+            let result = leankg::db::get_business_logic(db.as_ref(), special_name);
             assert!(result.is_ok());
             assert!(result.unwrap().is_some());
         });
@@ -180,7 +180,7 @@ mod db_parameterized_queries_tests {
     fn test_update_business_logic_existing() {
         with_test_db(|db, _graph, _tmp| {
             leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Original description",
                 Some("US-001"),
@@ -188,7 +188,7 @@ mod db_parameterized_queries_tests {
             )
             .unwrap();
             let result = leankg::db::update_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 "Updated description",
                 Some("US-002"),
@@ -205,11 +205,17 @@ mod db_parameterized_queries_tests {
     #[test]
     fn test_update_business_logic_with_special_chars() {
         with_test_db(|db, _graph, _tmp| {
-            leankg::db::create_business_logic(&db, "test::func", "Original", Some("US-001"), None)
-                .unwrap();
+            leankg::db::create_business_logic(
+                db.as_ref(),
+                "test::func",
+                "Original",
+                Some("US-001"),
+                None,
+            )
+            .unwrap();
             let special_chars = r#"New "description" with 'quotes' and \ backslash"#;
             let result = leankg::db::update_business_logic(
-                &db,
+                db.as_ref(),
                 "test::func",
                 special_chars,
                 Some(r#"User"Story"#),
@@ -224,12 +230,25 @@ mod db_parameterized_queries_tests {
     #[test]
     fn test_get_by_user_story() {
         with_test_db(|db, _graph, _tmp| {
-            leankg::db::create_business_logic(&db, "func1", "Desc1", Some("US-001"), Some("F-001"))
+            leankg::db::create_business_logic(
+                db.as_ref(),
+                "func1",
+                "Desc1",
+                Some("US-001"),
+                Some("F-001"),
+            )
+            .unwrap();
+            leankg::db::create_business_logic(
+                db.as_ref(),
+                "func2",
+                "Desc2",
+                Some("US-001"),
+                Some("F-001"),
+            )
+            .unwrap();
+            leankg::db::create_business_logic(db.as_ref(), "func3", "Desc3", Some("US-002"), None)
                 .unwrap();
-            leankg::db::create_business_logic(&db, "func2", "Desc2", Some("US-001"), Some("F-001"))
-                .unwrap();
-            leankg::db::create_business_logic(&db, "func3", "Desc3", Some("US-002"), None).unwrap();
-            let result = leankg::db::get_by_user_story(&db, "US-001");
+            let result = leankg::db::get_by_user_story(db.as_ref(), "US-001");
             assert!(result.is_ok());
             assert_eq!(result.unwrap().len(), 2);
         });
@@ -239,9 +258,9 @@ mod db_parameterized_queries_tests {
     fn test_get_by_user_story_with_special_chars() {
         with_test_db(|db, _graph, _tmp| {
             let special_us = r#"User"Story::Id"#;
-            leankg::db::create_business_logic(&db, "func1", "Desc", Some(special_us), None)
+            leankg::db::create_business_logic(db.as_ref(), "func1", "Desc", Some(special_us), None)
                 .unwrap();
-            let result = leankg::db::get_by_user_story(&db, special_us);
+            let result = leankg::db::get_by_user_story(db.as_ref(), special_us);
             assert!(result.is_ok());
             assert_eq!(result.unwrap().len(), 1);
         });
@@ -250,13 +269,31 @@ mod db_parameterized_queries_tests {
     #[test]
     fn test_get_by_feature() {
         with_test_db(|db, _graph, _tmp| {
-            leankg::db::create_business_logic(&db, "func1", "Desc1", Some("US-001"), Some("F-001"))
-                .unwrap();
-            leankg::db::create_business_logic(&db, "func2", "Desc2", Some("US-002"), Some("F-001"))
-                .unwrap();
-            leankg::db::create_business_logic(&db, "func3", "Desc3", Some("US-003"), Some("F-002"))
-                .unwrap();
-            let result = leankg::db::get_by_feature(&db, "F-001");
+            leankg::db::create_business_logic(
+                db.as_ref(),
+                "func1",
+                "Desc1",
+                Some("US-001"),
+                Some("F-001"),
+            )
+            .unwrap();
+            leankg::db::create_business_logic(
+                db.as_ref(),
+                "func2",
+                "Desc2",
+                Some("US-002"),
+                Some("F-001"),
+            )
+            .unwrap();
+            leankg::db::create_business_logic(
+                db.as_ref(),
+                "func3",
+                "Desc3",
+                Some("US-003"),
+                Some("F-002"),
+            )
+            .unwrap();
+            let result = leankg::db::get_by_feature(db.as_ref(), "F-001");
             assert!(result.is_ok());
             assert_eq!(result.unwrap().len(), 2);
         });
@@ -266,9 +303,15 @@ mod db_parameterized_queries_tests {
     fn test_get_by_feature_with_special_chars() {
         with_test_db(|db, _graph, _tmp| {
             let special_feat = r#"Feature::"With"::Colons"#;
-            leankg::db::create_business_logic(&db, "func1", "Desc", None, Some(special_feat))
-                .unwrap();
-            let result = leankg::db::get_by_feature(&db, special_feat);
+            leankg::db::create_business_logic(
+                db.as_ref(),
+                "func1",
+                "Desc",
+                None,
+                Some(special_feat),
+            )
+            .unwrap();
+            let result = leankg::db::get_by_feature(db.as_ref(), special_feat);
             assert!(result.is_ok());
             assert_eq!(result.unwrap().len(), 1);
         });
@@ -278,7 +321,7 @@ mod db_parameterized_queries_tests {
     fn test_search_business_logic_basic() {
         with_test_db(|db, _graph, _tmp| {
             leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "func1",
                 "Handle user authentication",
                 Some("US-001"),
@@ -286,14 +329,14 @@ mod db_parameterized_queries_tests {
             )
             .unwrap();
             leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "func2",
                 "Process payment transactions",
                 Some("US-002"),
                 None,
             )
             .unwrap();
-            let result = leankg::db::search_business_logic(&db, "authentication");
+            let result = leankg::db::search_business_logic(db.as_ref(), "authentication");
             assert!(result.is_ok());
             let items = result.unwrap();
             assert_eq!(items.len(), 1);
@@ -305,14 +348,14 @@ mod db_parameterized_queries_tests {
     fn test_search_business_logic_case_insensitive() {
         with_test_db(|db, _graph, _tmp| {
             leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "func1",
                 "Handle USER Authentication",
                 Some("US-001"),
                 None,
             )
             .unwrap();
-            let result = leankg::db::search_business_logic(&db, "authentication");
+            let result = leankg::db::search_business_logic(db.as_ref(), "authentication");
             assert!(result.is_ok());
             assert_eq!(result.unwrap().len(), 1);
         });
@@ -322,14 +365,14 @@ mod db_parameterized_queries_tests {
     fn test_search_business_logic_with_special_chars() {
         with_test_db(|db, _graph, _tmp| {
             leankg::db::create_business_logic(
-                &db,
+                db.as_ref(),
                 "func1",
                 r#"Process "quote" and 'apostrophe' data"#,
                 Some("US-001"),
                 None,
             )
             .unwrap();
-            let result = leankg::db::search_business_logic(&db, "quote");
+            let result = leankg::db::search_business_logic(db.as_ref(), "quote");
             assert!(result.is_ok());
             assert_eq!(result.unwrap().len(), 1);
         });
@@ -338,9 +381,11 @@ mod db_parameterized_queries_tests {
     #[test]
     fn test_all_business_logic() {
         with_test_db(|db, _graph, _tmp| {
-            leankg::db::create_business_logic(&db, "func1", "Desc1", Some("US-001"), None).unwrap();
-            leankg::db::create_business_logic(&db, "func2", "Desc2", Some("US-002"), None).unwrap();
-            let result = leankg::db::all_business_logic(&db);
+            leankg::db::create_business_logic(db.as_ref(), "func1", "Desc1", Some("US-001"), None)
+                .unwrap();
+            leankg::db::create_business_logic(db.as_ref(), "func2", "Desc2", Some("US-002"), None)
+                .unwrap();
+            let result = leankg::db::all_business_logic(db.as_ref());
             assert!(result.is_ok());
             assert_eq!(result.unwrap().len(), 2);
         });

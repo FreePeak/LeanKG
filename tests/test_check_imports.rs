@@ -1,12 +1,12 @@
 // Check if import targets exist in code_elements
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_check_import_targets() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     // Get all relationships that are imports
     let relationships = graph.all_relationships().unwrap();

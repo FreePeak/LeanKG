@@ -1,5 +1,5 @@
+use leankg::db::backend::init_db;
 use leankg::db::models::{BusinessLogic, CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::doc::{DocGenerator, DocSyncResult, DocTrackingInfo, TemplateEngine};
 use leankg::graph::GraphEngine;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ async fn test_doc_generator_comprehensive_agents_md() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
 
     let content = doc_gen.generate_agents_md().unwrap();
@@ -31,7 +31,7 @@ async fn test_doc_generator_comprehensive_claude_md() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
 
     let content = doc_gen.generate_claude_md().unwrap();
@@ -166,7 +166,7 @@ async fn test_doc_generator_with_elements() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let element = CodeElement {
         qualified_name: "src/main.rs::main".to_string(),
@@ -198,7 +198,7 @@ async fn test_doc_generator_regenerate_for_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let element = CodeElement {
         qualified_name: "src/main.rs::main".to_string(),
@@ -227,7 +227,7 @@ async fn test_doc_generator_tracking_info() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let element = CodeElement {
         qualified_name: "src/main.rs::main".to_string(),
@@ -257,7 +257,7 @@ async fn test_doc_generator_tracking_info_not_found() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
 
     let tracking = doc_gen.get_doc_tracking_info("nonexistent::foo").unwrap();

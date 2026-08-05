@@ -1,5 +1,5 @@
 // Diagnostic test to understand why tools return empty
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
 use serde_json::json;
@@ -8,7 +8,7 @@ use serde_json::json;
 async fn test_diagnose_empty_tools() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let handler = ToolHandler::new(graph, db_path);
 
     // First, let's see what data exists

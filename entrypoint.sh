@@ -1,31 +1,12 @@
 #!/bin/bash
 set -e
 
-# Source the health-gate helper so unit tests can exercise it in isolation.
-# Path is resolved relative to this script's location (works under `docker run`
-# where $0 is `/usr/local/bin/entrypoint.sh` and scripts/ sits next to it).
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "${SCRIPT_DIR}/scripts/cozo_health_gate.sh" ]; then
-    # shellcheck source=scripts/cozo_health_gate.sh
-    . "${SCRIPT_DIR}/scripts/cozo_health_gate.sh"
-fi
-
-ROCKSDB_ROOT="${LEANKG_ROCKSDB_ROOT:-$HOME/.leankg-rocksdb}"
-PROJECTS_DIR="$ROCKSDB_ROOT/projects"
-MCP_PORT="${MCP_HTTP_PORT:-9699}"
-
-echo "=== LeanKG Entrypoint ==="
-echo "RocksDB root: $ROCKSDB_ROOT"
-
 # Determine which project to serve via MCP
 # LEANKG_MCP_PROJECT takes precedence; fall back to /workspace
 MCP_PROJECT="${LEANKG_MCP_PROJECT:-/workspace}"
+MCP_PORT="${MCP_HTTP_PORT:-9699}"
 
-# Enterprise mode: when a remote cozoserver is configured, wait for it to
-# accept /text-query before continuing. Compose already gates startup on
-# the cozoserver healthcheck, but operators may run `docker run` ad-hoc
-# without `depends_on`, in which case this loop prevents a hard failure.
-cozo_health_gate
+echo "=== LeanKG Entrypoint (Postgres backend, D4) ==="
 
 # Plan §"Part B Option 3" defaults: never block MCP on embed. Operators
 # can opt-in to in-process background embed by setting
@@ -40,14 +21,6 @@ export LEANKG_EMBED_MODEL="${LEANKG_EMBED_MODEL:-bge-q}"
 export LEANKG_EMBED_MAX_SEQ="${LEANKG_EMBED_MAX_SEQ:-128}"
 export LEANKG_EMBED_MAX_BLOB_CHARS="${LEANKG_EMBED_MAX_BLOB_CHARS:-500}"
 export LEANKG_EMBED_MAX_MB="${LEANKG_EMBED_MAX_MB:-3072}"
-
-rocksdb_dir_for() {
-    local project_dir="$1"
-    local canonical=$(realpath "$project_dir" 2>/dev/null || readlink -f "$project_dir" 2>/dev/null || echo "$project_dir")
-    local name=$(basename "$canonical" | sed 's/[^a-zA-Z0-9_-]/-/g')
-    local hash=$(echo -n "$canonical" | sha256sum | cut -c1-12)
-    echo "$PROJECTS_DIR/${name}-${hash}"
-}
 
 index_if_needed() {
     local project_dir="$1"
@@ -91,21 +64,17 @@ indexer:
 YAML
     fi
 
-    local rdb_dir=$(rocksdb_dir_for "$project_dir")
-
-    # Force re-index if LEANKG_FORCE_REINDEX is set
-    if [ "${LEANKG_FORCE_REINDEX:-0}" = "1" ]; then
-        echo "  LEANKG_FORCE_REINDEX=1, removing old RocksDB data at $rdb_dir..."
-        rm -rf "$rdb_dir"
+    # Phase 8: Postgres holds the graph. Skip re-index unless forced or the
+    # project has no .leankg config yet. The "is it indexed?" check is a PG
+    # populated-graph query, not a file check.
+    if [ "${LEANKG_FORCE_REINDEX:-0}" != "1" ] && [ -f "$leankg_dir/leankg.yaml" ]; then
+        if ( cd "$project_dir" && leankg status >/dev/null 2>&1 ); then
+            echo "  Postgres graph already indexed for $project_dir, skip index."
+            return
+        fi
     fi
 
-    # Skip index if RocksDB data already exists (unless forced above)
-    if [ -f "$rdb_dir/manifest" ] || [ -f "$rdb_dir/data/CURRENT" ]; then
-        echo "  RocksDB data exists at $rdb_dir, skip index."
-        return
-    fi
-
-    echo "  Indexing $project_dir (RocksDB: $rdb_dir)..."
+    echo "  Indexing $project_dir (Postgres)..."
     ( cd "$project_dir" && leankg index . --verbose )
     echo "  Index done."
 }
@@ -184,7 +153,7 @@ export LEANKG_MMAP_SIZE="${LEANKG_MMAP_SIZE:-67108864}"
 # The sync target is always $MCP_PROJECT so the served DB has the ontology.
 #
 # CRITICAL (search availability): never block mcp-http forever on sync.
-# On mega-graphs, opening RocksDB + sync has been observed to hang for
+# On mega-graphs, opening the graph + sync has been observed to hang for
 # minutes with /health failing (empty reply / connection reset) so
 # search_code / find_function appear completely broken.
 #
@@ -314,7 +283,7 @@ case "${LEANKG_SERVE_HTTP:-1}" in
         ;;
     *)
         echo "=== Starting web REST API (leankg serve) on port $SERVE_PORT (project=$SERVE_PROJECT) ==="
-        # Explicit --project so UI opens LeanKG RocksDB, not the MCP multi-repo cwd.
+        # Explicit --project so the UI opens the right project (Postgres), not the MCP multi-repo cwd.
         leankg serve --port "$SERVE_PORT" --project "$SERVE_PROJECT" &
         SERVE_PID=$!
         sleep 0.5

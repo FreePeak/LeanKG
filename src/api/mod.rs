@@ -13,13 +13,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::db::schema::{init_db, CozoDb};
+use crate::db::backend::init_db;
 use crate::graph::GraphEngine;
 
 #[derive(Clone)]
 pub struct ApiState {
     pub db_path: std::path::PathBuf,
-    db: Arc<RwLock<Option<CozoDb>>>,
+    db: Arc<RwLock<Option<crate::db::backend::SharedDb>>>,
     graph_engine: Arc<RwLock<Option<GraphEngine>>>, // Cache GraphEngine
 }
 
@@ -42,7 +42,9 @@ impl ApiState {
         Ok(())
     }
 
-    pub fn get_db(&self) -> Result<CozoDb, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_db(
+        &self,
+    ) -> Result<crate::db::backend::SharedDb, Box<dyn std::error::Error + Send + Sync>> {
         crate::runtime::run_blocking(async {
             let lock = self.db.read().await;
             lock.clone()

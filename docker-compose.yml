@@ -1,0 +1,48 @@
+# LeanKG Postgres deployment (Phase 8, plan D4): PostgreSQL + pgvector is the
+# only storage engine. `docker compose up` brings up the postgres service; the
+# leankg service mounts your project and connects via LEANKG_PG_URL.
+#
+# The legacy embedded-RocksDB / cozoserver compose files were removed in Phase 8.
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: leankg-pg-phase0
+    environment:
+      POSTGRES_DB: leankg
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - leankg-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d leankg"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  leankg:
+    image: ${LEANKG_IMAGE:-freepeak/leankg:latest}
+    pull_policy: ${LEANKG_PULL_POLICY:-missing}
+    env_file:
+      - path: ./.dockerfile
+        required: false
+    environment:
+      LEANKG_PG_URL: postgresql://postgres:postgres@postgres:5432/leankg
+      MCP_HTTP_PORT: "9699"
+      LEANKG_AUTO_INDEX: "0"
+      LEANKG_EMBED_ON_BOOT: "0"
+      LEANKG_EMBED_BACKGROUND: "0"
+      LEANKG_EMBED_FAST: "1"
+      LEANKG_EMBED_MODEL: "bge-q"
+      LEANKG_EMBED_MAX_SEQ: "128"
+    ports:
+      - "9699:9699"
+    volumes:
+      - ${LEANKG_PROJECT_DIR:-.}:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  leankg-pgdata:

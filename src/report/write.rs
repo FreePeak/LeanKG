@@ -13,7 +13,7 @@ pub async fn write_graph_report_after_index(
     project_path: &Path,
     db_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = match db::schema::init_db(db_path) {
+    let db = match db::backend::init_db(db_path) {
         Ok(db) => db,
         Err(e) => {
             warn!("GRAPH_REPORT auto-write skipped (db init): {}", e);

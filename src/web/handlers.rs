@@ -2486,7 +2486,7 @@ pub async fn api_create_annotation(
         }
     };
     let result = db::create_business_logic(
-        &db,
+        db.as_ref(),
         &req.element_qualified,
         &req.description,
         req.user_story_id.as_deref(),
@@ -2546,7 +2546,7 @@ pub async fn api_update_annotation(
         }
     };
     let result = db::update_business_logic(
-        &db,
+        db.as_ref(),
         &req.element_qualified,
         &req.description,
         req.user_story_id.as_deref(),
@@ -2581,7 +2581,7 @@ pub async fn api_delete_annotation(
             }
         }
     };
-    let result = db::delete_business_logic(&db, &element);
+    let result = db::delete_business_logic(db.as_ref(), &element);
     match result {
         Ok(()) => ApiResponse {
             success: true,
@@ -3328,7 +3328,7 @@ pub async fn api_graph_layout(
 
     match state.get_db() {
         Ok(db) => {
-            let engine = LayoutEngine::new(&db);
+            let engine = LayoutEngine::new(db);
             match engine.calculate_layout(iterations, width, height) {
                 Ok(layout) => ApiResponse {
                     success: true,
@@ -4508,7 +4508,7 @@ pub struct CheckPermissionRequest {
 
 pub async fn api_teams(State(state): State<AppState>) -> impl IntoResponse {
     match state.get_db() {
-        Ok(db) => match db::list_teams(&db) {
+        Ok(db) => match db::list_teams(db.as_ref()) {
             Ok(teams) => ApiResponse::success(serde_json::json!({ "teams": teams })),
             Err(e) => ApiResponse::error(&e.to_string()),
         },
@@ -4537,7 +4537,7 @@ pub async fn api_create_team(
                 graph_write_users: vec![],
                 members: vec![],
             };
-            match db::create_team(&db, &team) {
+            match db::create_team(db.as_ref(), &team) {
                 Ok(created) => ApiResponse::success(serde_json::json!({ "team": created })),
                 Err(e) => ApiResponse::error(&e.to_string()),
             }
@@ -4551,7 +4551,7 @@ pub async fn api_get_team(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.get_db() {
-        Ok(db) => match db::get_team(&db, &id) {
+        Ok(db) => match db::get_team(db.as_ref(), &id) {
             Ok(Some(team)) => ApiResponse::success(serde_json::json!({ "team": team })),
             Ok(None) => ApiResponse::error("Team not found"),
             Err(e) => ApiResponse::error(&e.to_string()),
@@ -4566,7 +4566,7 @@ pub async fn api_update_team(
     Json(req): Json<UpdateTeamRequest>,
 ) -> impl IntoResponse {
     match state.get_db() {
-        Ok(db) => match db::get_team(&db, &id) {
+        Ok(db) => match db::get_team(db.as_ref(), &id) {
             Ok(Some(mut team)) => {
                 if let Some(name) = req.name {
                     team.name = name;
@@ -4578,7 +4578,7 @@ pub async fn api_update_team(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs() as i64;
-                match db::update_team(&db, &team) {
+                match db::update_team(db.as_ref(), &team) {
                     Ok(updated) => ApiResponse::success(serde_json::json!({ "team": updated })),
                     Err(e) => ApiResponse::error(&e.to_string()),
                 }
@@ -4596,7 +4596,7 @@ pub async fn api_delete_team(
 ) -> impl IntoResponse {
     match state.get_db() {
         Ok(db) => {
-            if let Err(e) = db::delete_team(&db, &id) {
+            if let Err(e) = db::delete_team(db.as_ref(), &id) {
                 return ApiResponse::error(&e.to_string());
             }
             ApiResponse::success(serde_json::json!({ "deleted": true }))
@@ -4611,7 +4611,7 @@ pub async fn api_add_team_member(
     Json(req): Json<AddMemberRequest>,
 ) -> impl IntoResponse {
     match state.get_db() {
-        Ok(db) => match db::add_team_member(&db, &team_id, &user_id, &req.role) {
+        Ok(db) => match db::add_team_member(db.as_ref(), &team_id, &user_id, &req.role) {
             Ok(team) => ApiResponse::success(serde_json::json!({ "team": team })),
             Err(e) => ApiResponse::error(&e.to_string()),
         },
@@ -4624,7 +4624,7 @@ pub async fn api_remove_team_member(
     Path((team_id, user_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     match state.get_db() {
-        Ok(db) => match db::remove_team_member(&db, &team_id, &user_id) {
+        Ok(db) => match db::remove_team_member(db.as_ref(), &team_id, &user_id) {
             Ok(team) => ApiResponse::success(serde_json::json!({ "team": team })),
             Err(e) => ApiResponse::error(&e.to_string()),
         },
@@ -4637,7 +4637,7 @@ pub async fn api_team_invites(
     Path(team_id): Path<String>,
 ) -> impl IntoResponse {
     match state.get_db() {
-        Ok(db) => match db::get_team_invites(&db, &team_id) {
+        Ok(db) => match db::get_team_invites(db.as_ref(), &team_id) {
             Ok(invites) => ApiResponse::success(serde_json::json!({ "invites": invites })),
             Err(e) => ApiResponse::error(&e.to_string()),
         },
@@ -4670,7 +4670,7 @@ pub async fn api_create_team_invite(
                 accepted: false,
                 accepted_by: None,
             };
-            match db::create_team_invite(&db, &invite) {
+            match db::create_team_invite(db.as_ref(), &invite) {
                 Ok(created) => ApiResponse::success(serde_json::json!({ "invite": created })),
                 Err(e) => ApiResponse::error(&e.to_string()),
             }
@@ -4685,7 +4685,7 @@ pub async fn api_accept_team_invite(
     Json(req): Json<AcceptInviteRequest>,
 ) -> impl IntoResponse {
     match state.get_db() {
-        Ok(db) => match db::accept_team_invite(&db, &token, &req.user_id) {
+        Ok(db) => match db::accept_team_invite(db.as_ref(), &token, &req.user_id) {
             Ok(invite) => ApiResponse::success(serde_json::json!({ "invite": invite })),
             Err(e) => ApiResponse::error(&e.to_string()),
         },
@@ -4699,7 +4699,7 @@ pub async fn api_revoke_team_invite(
 ) -> impl IntoResponse {
     match state.get_db() {
         Ok(db) => {
-            if let Err(e) = db::delete_team_invite(&db, &token) {
+            if let Err(e) = db::delete_team_invite(db.as_ref(), &token) {
                 return ApiResponse::error(&e.to_string());
             }
             ApiResponse::success(serde_json::json!({ "revoked": true }))
@@ -4720,14 +4720,16 @@ pub async fn api_team_permissions(
         .unwrap_or(false);
 
     match state.get_db() {
-        Ok(db) => match db::check_graph_permission(&db, &team_id, &user_id, require_write) {
-            Ok(has_permission) => ApiResponse::success(serde_json::json!({
-                "has_permission": has_permission,
-                "user_id": user_id,
-                "require_write": require_write
-            })),
-            Err(e) => ApiResponse::error(&e.to_string()),
-        },
+        Ok(db) => {
+            match db::check_graph_permission(db.as_ref(), &team_id, &user_id, require_write) {
+                Ok(has_permission) => ApiResponse::success(serde_json::json!({
+                    "has_permission": has_permission,
+                    "user_id": user_id,
+                    "require_write": require_write
+                })),
+                Err(e) => ApiResponse::error(&e.to_string()),
+            }
+        }
         Err(e) => ApiResponse::error(&e.to_string()),
     }
 }

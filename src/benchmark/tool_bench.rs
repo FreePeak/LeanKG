@@ -89,7 +89,7 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
     let yaml_path = Path::new("benchmark/prompts/ontology-tools.yaml");
     let yaml: OntologyToolsYaml = serde_yaml::from_str(&std::fs::read_to_string(yaml_path)?)?;
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph_engine = graph::GraphEngine::new(db.clone());
     if graph_engine.all_elements().unwrap_or_default().is_empty() {
         return Err("Empty DB. Run index first.".into());

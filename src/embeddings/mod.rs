@@ -17,7 +17,6 @@
 pub mod build;
 pub mod control;
 pub mod models;
-pub mod redis_store;
 pub mod runtime;
 pub mod state;
 pub mod text_blob;

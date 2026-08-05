@@ -139,6 +139,8 @@ pub enum CLICommand {
         #[arg(long, default_value_t = false)]
         read_only: bool,
     },
+    /// Apply pending PostgreSQL schema migrations (LEANKG_PG_URL, default localhost:5433)
+    Migrate {},
     /// Start MCP server with HTTP transport (for remote clients)
     McpHttp {
         /// Port to listen on (default: 9699)

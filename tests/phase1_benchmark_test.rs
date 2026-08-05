@@ -2,8 +2,8 @@
 // Tests all Phase 1 tools against actual indexed leankg source.
 // Run: cargo test --release -- phase1_benchmark_test
 
+use leankg::db::backend::init_db;
 use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use leankg::indexer::route_extractor::RouteExtractor;
 
@@ -15,7 +15,7 @@ fn make_engine() -> (GraphEngine, TempDir) {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(&db_path).unwrap();
-    (GraphEngine::new(db), tmp)
+    (GraphEngine::new(db.clone()), tmp)
 }
 
 /// Index patterns from the real leankg codebase

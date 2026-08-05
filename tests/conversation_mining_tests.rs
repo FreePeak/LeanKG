@@ -9,7 +9,7 @@
 use leankg::conversation_indexer::{
     self, ConversationFormat, MinedItem, MinedItemKind, MiningResult,
 };
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use std::path::PathBuf;
 use tempfile::TempDir;

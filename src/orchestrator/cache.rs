@@ -1,6 +1,4 @@
-use crate::graph::persistent_cache::PersistentCache;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -23,7 +21,6 @@ pub struct OrchestratorCache {
     data: HashMap<String, OrchestratorCacheEntry>,
     ttl: Duration,
     max_entries: usize,
-    persistent: Option<Arc<PersistentCache>>,
 }
 
 impl OrchestratorCache {
@@ -32,20 +29,6 @@ impl OrchestratorCache {
             data: HashMap::new(),
             ttl: Duration::from_secs(ttl_secs),
             max_entries,
-            persistent: None,
-        }
-    }
-
-    pub fn with_persistence(
-        ttl_secs: u64,
-        max_entries: usize,
-        persistent: Arc<PersistentCache>,
-    ) -> Self {
-        Self {
-            data: HashMap::new(),
-            ttl: Duration::from_secs(ttl_secs),
-            max_entries,
-            persistent: Some(persistent),
         }
     }
 
@@ -53,14 +36,6 @@ impl OrchestratorCache {
         if let Some(entry) = self.data.get(key) {
             if entry.created_at.elapsed() < self.ttl {
                 return Some(entry.value.clone());
-            }
-        }
-        if let Some(ref p) = self.persistent {
-            let key_full = format!("orch:{}", key);
-            // IMPORTANT: Never use Runtime::new() here - it creates a new runtime per call (~100ms overhead).
-            // Always use crate::runtime::run_blocking() which reuses the static OnceLock runtime.
-            if let Some(v) = crate::runtime::run_blocking(p.get::<CachedContent>(&key_full)) {
-                return Some(v);
             }
         }
         None
@@ -80,33 +55,21 @@ impl OrchestratorCache {
                 }
             }
         }
-        let value_clone = value.clone();
         self.data.insert(
-            key.clone(),
+            key,
             OrchestratorCacheEntry {
                 value,
                 created_at: Instant::now(),
             },
         );
-        if let Some(ref p) = self.persistent {
-            let key_full = format!("orch:{}", key);
-            crate::runtime::run_blocking(p.insert::<String, CachedContent>(key_full, value_clone));
-        }
     }
 
     pub fn invalidate(&mut self, key: &str) {
         self.data.remove(key);
-        if let Some(ref p) = self.persistent {
-            let key_full = format!("orch:{}", key);
-            crate::runtime::run_blocking(p.invalidate(&key_full));
-        }
     }
 
     pub fn invalidate_prefix(&mut self, prefix: &str) {
         self.data.retain(|k, _| !k.starts_with(prefix));
-        if let Some(ref p) = self.persistent {
-            crate::runtime::run_blocking(p.invalidate_prefix(&format!("orch:{}", prefix)));
-        }
     }
 
     fn evict_expired(&mut self) {

@@ -21,6 +21,10 @@ export default defineConfig({
       url: FRONTEND_URL,
       reuseExistingServer: false,
       timeout: 120_000,
+      env: {
+        ...process.env,
+        BACKEND_TARGET: process.env.BACKEND_TARGET ?? 'http://127.0.0.1:8080',
+      },
     },
   ],
   metadata: { BACKEND_URL, FRONTEND_URL },

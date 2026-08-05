@@ -4,7 +4,7 @@
 //! This proves document indexing adds searchable graph elements without
 //! changing code fixture or database setup.
 
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::doc_indexer::index_docs_directory;
 use leankg::graph::GraphEngine;
 use leankg::indexer::{index_file_sync, ParserManager};
@@ -42,7 +42,7 @@ fn build_fixture(root: &Path) {
 
 fn index_code(root: &Path, database_name: &str) -> (GraphEngine, ParserManager) {
     let db = init_db(&root.join(database_name)).expect("initialize database");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let mut parser = ParserManager::new();
     parser.init_parsers().expect("initialize parsers");
     index_file_sync(&graph, &mut parser, "src/lib.rs").expect("index code fixture");

@@ -618,7 +618,7 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
-    let db = db::schema::init_db(&db_path)?;
+    let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
     let oq = ontology::OntologyQueryEngine::new(db);
     let ts = std::time::SystemTime::now()

@@ -367,7 +367,7 @@ fn resolve_basename_file(graph: &GraphEngine, basename: &str) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema::init_db;
+    use crate::db::backend::init_db;
     use crate::graph::GraphEngine;
     use tempfile::TempDir;
 
@@ -382,7 +382,7 @@ mod tests {
         ]
         :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}
         "#;
-        crate::db::schema::run_script(&db, elements, Default::default()).unwrap();
+        db.run_script(elements, Default::default()).unwrap();
         (GraphEngine::new(db), tmp)
     }
 
@@ -460,7 +460,7 @@ mod tests {
         ]
         :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}
         "#;
-        crate::db::schema::run_script(&db, elements, Default::default()).unwrap();
+        db.run_script(elements, Default::default()).unwrap();
         (GraphEngine::new(db), tmp)
     }
 

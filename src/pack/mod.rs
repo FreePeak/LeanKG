@@ -65,7 +65,7 @@ pub fn write_pack(
     opts: &PackOptions,
 ) -> Result<PackManifest, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(out_dir)?;
-    let db = crate::db::schema::init_db_readonly(db_path)?;
+    let db = crate::db::backend::init_db_readonly(db_path)?;
     let graph = crate::graph::GraphEngine::new(db);
 
     let (elements, relationships) = select_slice(&graph, opts)?;
@@ -223,7 +223,7 @@ mod tests {
         write(&proj, "src/a.rs", "fn a() {}\n");
         let db_path = proj.join(".leankg");
         // Seed schema so readonly open has tables to query.
-        crate::db::schema::init_db(&db_path).expect("seed db");
+        crate::db::backend::init_db(&db_path).expect("seed db");
         let out = tmp.path().join("pack");
         let m = write_pack(&proj, &db_path, &out, &PackOptions::default()).expect("pack");
         assert!(out.join("manifest.json").exists());
@@ -239,7 +239,7 @@ mod tests {
         let proj = tmp.path().join("proj");
         write(&proj, "src/a.rs", "fn a() {}\n");
         let db_path = proj.join(".leankg");
-        crate::db::schema::init_db(&db_path).expect("seed db");
+        crate::db::backend::init_db(&db_path).expect("seed db");
         let out1 = tmp.path().join("p1");
         let out2 = tmp.path().join("p2");
         let m1 = write_pack(&proj, &db_path, &out1, &PackOptions::default()).expect("p1");
@@ -260,7 +260,7 @@ mod tests {
         write(&proj, "src/a.rs", "fn a() {}\n");
         write(&proj, "tests/t.rs", "mod t;\n");
         let db_path = proj.join(".leankg");
-        crate::db::schema::init_db(&db_path).expect("seed db");
+        crate::db::backend::init_db(&db_path).expect("seed db");
         let out = tmp.path().join("pack");
         let opts = PackOptions {
             path: Some("src".to_string()),
@@ -280,7 +280,7 @@ mod tests {
         let proj = tmp.path().join("proj");
         write(&proj, "src/a.rs", "fn a() {}\n");
         let db_path = proj.join(".leankg");
-        crate::db::schema::init_db(&db_path).expect("seed db");
+        crate::db::backend::init_db(&db_path).expect("seed db");
         let out1 = tmp.path().join("p1");
         let out2 = tmp.path().join("p2");
         write_pack(&proj, &db_path, &out1, &PackOptions::default()).expect("p1");
@@ -305,7 +305,7 @@ mod tests {
         let proj = tmp.path().join("proj");
         write(&proj, "src/a.rs", "fn a() {}\n");
         let db_path = proj.join(".leankg");
-        let db = crate::db::schema::init_db(&db_path).expect("seed db");
+        let db = crate::db::backend::init_db(&db_path).expect("seed db");
         let graph = crate::graph::GraphEngine::new(db);
         graph
             .insert_element(&crate::db::models::CodeElement {

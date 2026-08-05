@@ -12,7 +12,7 @@
 
 use std::collections::HashSet;
 
-use leankg::db::schema::{init_db, run_script, CozoDb};
+use leankg::db::backend::init_db;
 use leankg::embeddings::state::ensure_embedding_state_table;
 
 const DIM: usize = 384;
@@ -22,7 +22,7 @@ const K: usize = 10;
 /// smoke. The golden cluster membership assert below is the hard gate.
 const RECALL_THRESHOLD: f32 = 0.8;
 
-fn fresh_db() -> CozoDb {
+fn fresh_db() -> leankg::db::backend::SharedDb {
     // Pin HNSW knobs before index create (m / ef_construction are bake-time).
     std::env::set_var("LEANKG_HNSW_M", "16");
     std::env::set_var("LEANKG_HNSW_EF_CONST", "40");
@@ -32,7 +32,7 @@ fn fresh_db() -> CozoDb {
     let db_path = tmp.path().join("hnsw_recall.db");
     std::mem::forget(tmp);
     let db = init_db(&db_path).expect("init_db");
-    ensure_embedding_state_table(&db).expect("ensure_embedding_state_table");
+    ensure_embedding_state_table(db.as_ref()).expect("ensure_embedding_state_table");
     db
 }
 
@@ -74,7 +74,7 @@ fn vec_literal(v: &[f32]) -> String {
         .join(", ")
 }
 
-fn put_vectors(db: &CozoDb, items: &[(String, Vec<f32>)]) {
+fn put_vectors(db: &leankg::db::backend::PostgresBackend, items: &[(String, Vec<f32>)]) {
     let rows: Vec<String> = items
         .iter()
         .map(|(qn, vector)| {
@@ -90,10 +90,11 @@ fn put_vectors(db: &CozoDb, items: &[(String, Vec<f32>)]) {
         r#"?[qualified_name, vector] <- [{values_clause}]
            :put embedding_vectors {{qualified_name => vector}}"#
     );
-    run_script(db, &query, Default::default()).expect("put embedding_vectors");
+    db.run_script(&query, Default::default())
+        .expect("put embedding_vectors");
 }
 
-fn hnsw_query(db: &CozoDb, qvec: &[f32], k: usize) -> Vec<String> {
+fn hnsw_query(db: &leankg::db::backend::PostgresBackend, qvec: &[f32], k: usize) -> Vec<String> {
     let ef: usize = std::env::var("LEANKG_HNSW_EF")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -108,7 +109,9 @@ fn hnsw_query(db: &CozoDb, qvec: &[f32], k: usize) -> Vec<String> {
             }}"#,
         vec = vec_literal(qvec),
     );
-    let result = run_script(db, &query, Default::default()).expect("hnsw query");
+    let result = db
+        .run_script(&query, Default::default())
+        .expect("hnsw query");
     result
         .rows
         .iter()

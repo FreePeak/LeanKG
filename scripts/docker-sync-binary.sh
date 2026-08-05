@@ -66,6 +66,13 @@ else
     -e CARGO_TERM_COLOR=always \
     "$BUILDER" \
     bash -c "
+      cat > /etc/apt/sources.list.d/debian.sources <<'EOF'
+Types: deb
+URIs: http://ftp.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
       apt-get update -qq && apt-get install -y -qq clang libclang-dev && rm -rf /var/lib/apt/lists/* && \
       cargo build --release --features embeddings && \
       strip target/release/leankg
@@ -89,7 +96,7 @@ file "$BINARY_HOST" 2>/dev/null | head -1
 echo ""
 echo "=== Recreating MCP with bind-mounted binary ==="
 
-COMPOSE_BASE="docker-compose.rocksdb.yml"
+COMPOSE_BASE="docker-compose.yml"
 COMPOSE_OVERRIDE="docker-compose.override.yml"
 ENV_FILE=".dockerfile"
 

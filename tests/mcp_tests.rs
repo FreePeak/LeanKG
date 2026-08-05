@@ -1,4 +1,4 @@
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::auth::{hash_token, LegacyAuthConfig};
 use leankg::mcp::handler::ToolHandler;
@@ -189,7 +189,7 @@ mod handler_tests {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("leankg.db");
         let db = init_db(db_path.as_path()).unwrap();
-        let graph = GraphEngine::new(db);
+        let graph = GraphEngine::new(db.clone());
         (ToolHandler::new(graph, db_path), tmp)
     }
 

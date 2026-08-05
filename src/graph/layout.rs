@@ -1,4 +1,3 @@
-use crate::db::schema::CozoDb;
 use crate::graph::GraphEngine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -42,9 +41,9 @@ pub struct LayoutEngine {
 }
 
 impl LayoutEngine {
-    pub fn new(db: &CozoDb) -> Self {
+    pub fn new(db: crate::db::backend::SharedDb) -> Self {
         Self {
-            graph_engine: GraphEngine::new(db.clone()),
+            graph_engine: GraphEngine::new(db),
         }
     }
 

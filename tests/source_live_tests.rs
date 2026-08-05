@@ -7,7 +7,7 @@
 //! `GITLAB_TOKEN`/`GIT_TOKEN` without storing either.
 //! GCS tests require `LEANKG_LIVE_GCS_URI` and a configured access token.
 
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::indexer::{find_files_sync, index_files_parallel};
 use leankg::sources::gcs::GcsSource;
@@ -69,7 +69,7 @@ async fn public_or_internal_gitlab_fingerprint_and_index_contract() {
     );
 
     let db = init_db(&tmp.path().join("graph.db")).expect("initialize graph");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let indexed = index_files_parallel(&graph, &files, false).expect("index live files");
     assert!(indexed > 0, "live repository produced no graph elements");
 }

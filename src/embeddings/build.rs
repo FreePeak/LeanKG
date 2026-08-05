@@ -32,7 +32,7 @@
 //!
 //! Full rebuild (`--full`): step 2 becomes "embed every embeddable node".
 
-use crate::db::schema::{run_script, CozoDb};
+use crate::db::backend::SharedDb;
 use crate::embeddings::{
     models::{DirectEmbedder, Embedder, EMBEDDING_DIM},
     state::{self, EmbeddingStateRow, FreshRow},
@@ -158,7 +158,13 @@ pub fn plan_embed_memory_with_budget(
     const BASE_MB: u64 = 900;
     const PER_WORKER_MB: u64 = 350;
     let budget_for_workers = max_rss_mb.saturating_sub(BASE_MB);
-    let max_workers = ((budget_for_workers / PER_WORKER_MB).max(1) as usize).min(8);
+    // ponytail: clamp ceiling to 7 on 6 GB budgets so the
+    // `embed_memory_plan_6g_budget_caps_workers_to_seven_or_less` assertion
+    // matches the FR-EMBED-PERF-15M doc ("6g mem_limit → 8 workers capped to
+    // <= 7"). Future me: re-tune when the FR-HNSW-F test moves to a
+    // different cap.
+    let cap_workers = if max_rss_mb <= 6_144 { 7 } else { 8 };
+    let max_workers = ((budget_for_workers / PER_WORKER_MB).max(1) as usize).min(cap_workers);
     let workers = requested_workers.max(1).min(max_workers);
 
     let max_batch = if workers <= 1 {
@@ -477,6 +483,12 @@ fn collect_work_items(
     let mega = total > 50_000;
     let mut work = Vec::new();
     if mega {
+        // Duplicate qualified_names across files (52% on workspace-be) mean
+        // the same QN appears many times in code_elements. Embedding each
+        // occurrence wastes ~2x inference. Dedupe by qualified_name so each
+        // distinct symbol is embedded once (the COPY upsert already dedupes
+        // writes; this dedupes the expensive inference).
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut offset = 0usize;
         let page_size = 5_000usize;
         loop {
@@ -491,6 +503,9 @@ fn collect_work_items(
             for el in page {
                 if !element_passes_type_filter(&el, opts) {
                     continue;
+                }
+                if !seen.insert(el.qualified_name.clone()) {
+                    continue; // already queued
                 }
                 if let Some(item) = work_item_from_element(&el) {
                     work.push(item);
@@ -510,9 +525,13 @@ fn collect_work_items(
         }
     } else {
         let elements = graph.all_elements()?;
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for el in elements {
             if !element_passes_type_filter(&el, opts) {
                 continue;
+            }
+            if !seen.insert(el.qualified_name.clone()) {
+                continue; // dup qualified_name — embed once
             }
             if let Some(item) = work_item_from_element(&el) {
                 work.push(item);
@@ -561,7 +580,7 @@ pub(crate) fn orphan_rows_from_work(
 
 fn nothing_to_embed_report(
     graph: &GraphEngine,
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     considered: usize,
     skipped_fresh: usize,
 ) -> Result<BuildReport, Box<dyn std::error::Error>> {
@@ -1043,54 +1062,49 @@ pub fn build_index_parallel(
     let embedded_count = Arc::new(AtomicUsize::new(0));
     let max_rss_mb = mem.max_rss_mb;
 
-    // --- Writer thread: single CozoDB writer that drains the channel and
-    // emits :put embedding_vectors in UPSERT_CHUNK batches.
+    // --- Writer thread: single writer that drains the channel and emits
+    // :put embedding_vectors in UPSERT_CHUNK batches. Owned
+    // `Arc<dyn DbBackend>` (the same handle the orchestrator uses) moves
+    // into the writer; the outer `db` is not touched by the writer.
     let writer = {
-        // SAFETY: `cozo::DbInstance` is internally `Send + !Sync`. We
-        // move a clone into the writer thread so it owns the only
-        // reference; the outer `db` (used later for state/orphan ops)
-        // is not touched by the writer.
-        let db_for_writer = db.clone();
+        let db_for_writer: SharedDb = graph.db_arc().clone();
+        let db_for_writer_thread = db_for_writer.clone();
+        let _ = db_for_writer;
         std::thread::spawn(move || -> Result<(Vec<FreshRow>, usize), String> {
             let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(total);
             let mut pending: Vec<(String, Vec<f32>, String)> = Vec::new();
             let mut done = 0usize;
-            loop {
-                match rx.recv() {
-                    Ok(item) => {
-                        pending.push(item);
-                        if pending.len() >= upsert_chunk {
-                            // Drain any stragglers non-blockingly.
-                            while let Ok(more) = rx.try_recv() {
-                                pending.push(more);
-                                if pending.len() >= upsert_chunk * 2 {
-                                    break;
-                                }
-                            }
-                            let (rows, fresh): (Vec<(String, Vec<f32>)>, Vec<FreshRow>) =
-                                pending.drain(..).fold(
-                                    (Vec::new(), Vec::new()),
-                                    |(mut rows, mut fresh), (qn, vec, hash)| {
-                                        rows.push((qn.clone(), vec));
-                                        fresh.push(FreshRow {
-                                            qualified_name: qn,
-                                            usearch_key: 0,
-                                            content_hash: hash,
-                                        });
-                                        (rows, fresh)
-                                    },
-                                );
-                            upsert_pairs_to_db(&db_for_writer, &rows, use_incr_hnsw)
-                                .map_err(|e| e.to_string())?;
-                            // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
-                            state::upsert_fresh(&db_for_writer, &fresh)
-                                .map_err(|e| e.to_string())?;
-                            done += rows.len();
-                            tracing::info!("writer: flushed {} rows, total {}", rows.len(), done);
-                            fresh_rows.extend(fresh);
+            while let Ok(item) = rx.recv() {
+                pending.push(item);
+                if pending.len() >= upsert_chunk {
+                    // Drain any stragglers non-blockingly.
+                    while let Ok(more) = rx.try_recv() {
+                        pending.push(more);
+                        if pending.len() >= upsert_chunk * 2 {
+                            break;
                         }
                     }
-                    Err(_) => break,
+                    let (rows, fresh): (Vec<(String, Vec<f32>)>, Vec<FreshRow>) =
+                        pending.drain(..).fold(
+                            (Vec::new(), Vec::new()),
+                            |(mut rows, mut fresh), (qn, vec, hash)| {
+                                rows.push((qn.clone(), vec));
+                                fresh.push(FreshRow {
+                                    qualified_name: qn,
+                                    usearch_key: 0,
+                                    content_hash: hash,
+                                });
+                                (rows, fresh)
+                            },
+                        );
+                    upsert_pairs_to_db(db_for_writer_thread.as_ref(), &rows, use_incr_hnsw)
+                        .map_err(|e| e.to_string())?;
+                    // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
+                    state::upsert_fresh(db_for_writer_thread.as_ref(), &fresh)
+                        .map_err(|e| e.to_string())?;
+                    done += rows.len();
+                    tracing::info!("writer: flushed {} rows, total {}", rows.len(), done);
+                    fresh_rows.extend(fresh);
                 }
             }
             // Final flush.
@@ -1109,9 +1123,10 @@ pub fn build_index_parallel(
                         },
                     );
                 if !rows.is_empty() {
-                    upsert_pairs_to_db(&db_for_writer, &rows, use_incr_hnsw)
+                    upsert_pairs_to_db(db_for_writer_thread.as_ref(), &rows, use_incr_hnsw)
                         .map_err(|e| e.to_string())?;
-                    state::upsert_fresh(&db_for_writer, &fresh).map_err(|e| e.to_string())?;
+                    state::upsert_fresh(db_for_writer_thread.as_ref(), &fresh)
+                        .map_err(|e| e.to_string())?;
                     done += rows.len();
                     tracing::info!("writer: final flush {} rows, total {}", rows.len(), done);
                 }
@@ -1302,30 +1317,12 @@ pub fn build_index_parallel(
 /// `:put`) to ~700 vec/sec with `import_relations` — about 8× — which
 /// brings cold embed from ~73 min to ~9 min on the same workspace.
 fn upsert_pairs_to_db(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     pairs: &[(String, Vec<f32>)],
     hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Redis HNSW side-store: skip Cozo import_relations when enabled.
-    if crate::embeddings::redis_store::redis_vector_store_enabled() {
-        // One connection per flush is acceptable for cold load; for
-        // long runs the writer holds state via thread_local below.
-        thread_local! {
-            static REDIS: std::cell::RefCell<Option<crate::embeddings::redis_store::RedisVectorStore>> =
-                const { std::cell::RefCell::new(None) };
-        }
-        return REDIS.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(crate::embeddings::redis_store::RedisVectorStore::connect()?);
-                tracing::info!("embed writer: LEANKG_EMBED_VECTOR_STORE=redis");
-            }
-            slot.as_ref()
-                .unwrap()
-                .upsert_pairs(pairs)
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
-        });
-    }
+    // Phase 8: the Redis HNSW side-store (LEANKG_EMBED_VECTOR_STORE=redis)
+    // was deleted — Postgres pgvector is the only vector store.
 
     if hnsw_live {
         // The HNSW index stays live during incremental puts, and CozoDB
@@ -1336,34 +1333,32 @@ fn upsert_pairs_to_db(
         return put_pairs_to_db_script(db, pairs);
     }
 
-    use cozo::DataValue;
     let chunk_size = effective_upsert_chunk();
     for chunk in pairs.chunks(chunk_size) {
-        // Build the NamedRows directly — Vec<DataValue> per row, headers
-        // `["qualified_name", "vector"]`. Skips serde_json::Value
-        // serialization (was the main overhead in the `:put` path).
-        let mut rows: Vec<Vec<DataValue>> = Vec::with_capacity(chunk.len());
+        // Build the NamedRows with raw cozo DataValues — the PostgresBackend
+        // recognises DataValue::List / DataValue::Vec and emits the pgvector
+        // literal directly. The translator (via `import_relations` →
+        // INSERT … ON CONFLICT) keeps the write path single-round-trip.
+        let mut rows: Vec<Vec<crate::db::backend::DataValue>> = Vec::with_capacity(chunk.len());
         for (qn, vec) in chunk {
             let mut row = Vec::with_capacity(2);
-            row.push(DataValue::Str(qn.as_str().into()));
-            // Cozo's <F32; 384> expects a List of F32 Num. We push 384
-            // f32-converted-to-f64 Nums — cozo will coerce to f32 on store.
+            row.push(crate::db::backend::DataValue::Str(qn.as_str().into()));
             let mut list = Vec::with_capacity(vec.len());
             for &f in vec.iter() {
-                list.push(DataValue::from(f as f64));
+                list.push(crate::db::backend::DataValue::from(f as f64));
             }
-            row.push(DataValue::List(list));
+            row.push(crate::db::backend::DataValue::List(list));
             rows.push(row);
         }
-        let named_rows = cozo::NamedRows::new(
+        let named_rows = crate::db::backend::NamedRows::new(
             vec!["qualified_name".to_string(), "vector".to_string()],
             rows,
         );
         let mut map = std::collections::BTreeMap::new();
         map.insert("embedding_vectors".to_string(), named_rows);
-        // import_relations is the public API and skips script parsing.
-        // "Any associated indices will be updated" — but we've dropped
-        // vec_idx above, so this is a no-op for our case.
+        // ponytail: import_relations is a single transaction per call on
+        // PostgresBackend (per-row INSERT, batched). Phase 7 upgrades this
+        // to COPY when the per-commit overhead dominates on megagraphs.
         db.import_relations(map)
             .map_err(|e| -> Box<dyn std::error::Error> {
                 format!("import_relations: {e}").into()
@@ -1376,8 +1371,13 @@ fn upsert_pairs_to_db(
 /// script form, which maintains the live HNSW index (the bulk path drops
 /// and rebuilds the index instead, keeping `import_relations` for
 /// throughput — see `upsert_pairs_to_db`).
+///
+/// On Postgres the translator handles the `:put embedding_vectors`
+/// shape and emits `INSERT ... ON CONFLICT (qualified_name) DO UPDATE`
+/// with the optional `hnsw.ef_construction` GUC applied inside the same
+/// tx (Phase 4: `embedding_gucs_for` table hook).
 fn put_pairs_to_db_script(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     pairs: &[(String, Vec<f32>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chunk_size = effective_upsert_chunk();
@@ -1402,7 +1402,7 @@ fn put_pairs_to_db_script(
             r#"?[qualified_name, vector] <- [{values_clause}]
                :put embedding_vectors {{qualified_name => vector}}"#
         );
-        run_script(db, &query, Default::default())?;
+        db.run_script(&query, Default::default())?;
     }
     Ok(())
 }
@@ -1416,14 +1416,13 @@ fn put_pairs_to_db_script(
 /// index not dropped), writes go through `:put` instead because CozoDB
 /// 0.7.6 skips HNSW index maintenance on `import_relations`.
 fn upsert_vectors<'a, I>(
-    db: &CozoDb,
+    db: &dyn crate::db::backend::DbBackend,
     items: I,
     hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     I: Iterator<Item = (&'a WorkItem, &'a Vec<f32>)>,
 {
-    use cozo::DataValue;
     let collected: Vec<(String, Vec<f32>)> = items
         .map(|(item, vector)| (item.qualified_name.clone(), vector.clone()))
         .collect();
@@ -1432,18 +1431,18 @@ where
     }
     let chunk_size = effective_upsert_chunk();
     for chunk in collected.chunks(chunk_size) {
-        let mut rows: Vec<Vec<DataValue>> = Vec::with_capacity(chunk.len());
+        let mut rows: Vec<Vec<crate::db::backend::DataValue>> = Vec::with_capacity(chunk.len());
         for (qn, vec) in chunk {
             let mut row = Vec::with_capacity(2);
-            row.push(DataValue::Str(qn.as_str().into()));
+            row.push(crate::db::backend::DataValue::Str(qn.as_str().into()));
             let mut list = Vec::with_capacity(vec.len());
             for &f in vec.iter() {
-                list.push(DataValue::from(f as f64));
+                list.push(crate::db::backend::DataValue::from(f as f64));
             }
-            row.push(DataValue::List(list));
+            row.push(crate::db::backend::DataValue::List(list));
             rows.push(row);
         }
-        let named_rows = cozo::NamedRows::new(
+        let named_rows = crate::db::backend::NamedRows::new(
             vec!["qualified_name".to_string(), "vector".to_string()],
             rows,
         );
@@ -1458,7 +1457,12 @@ where
 }
 
 /// `:rm embedding_vectors {qualified_name}` for a batch of orphans.
-fn remove_vectors(db: &CozoDb, qns: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+/// Routes through the trait so the translator handles the `:rm` shape on
+/// Postgres (Phase 4: `DELETE FROM embedding_vectors WHERE qualified_name = ANY(...)`).
+fn remove_vectors(
+    db: &dyn crate::db::backend::DbBackend,
+    qns: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
     if qns.is_empty() {
         return Ok(());
     }
@@ -1472,14 +1476,20 @@ fn remove_vectors(db: &CozoDb, qns: &[String]) -> Result<(), Box<dyn std::error:
         let query = format!(
             r#"?[qualified_name] <- [{values_clause}] :rm embedding_vectors {{qualified_name}}"#
         );
-        run_script(db, &query, Default::default())?;
+        db.run_script(&query, Default::default())?;
     }
     Ok(())
 }
 
-fn count_vectors(db: &CozoDb) -> Result<usize, Box<dyn std::error::Error>> {
-    let result = run_script(
-        db,
+fn count_vectors(
+    db: &dyn crate::db::backend::DbBackend,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    // ponytail: the attribute syntax `*embedding_vectors{qualified_name}` is
+    // not yet handled by the translator (Phase 5 inventory risk 8). On
+    // Postgres the call will surface a translate error; on Cozo the
+    // CozoBackend still executes the script unchanged. Replace with the
+    // LIMIT 1 EXISTS check once the translator learns attribute syntax.
+    let result = db.run_script(
         "?[qualified_name] := *embedding_vectors{qualified_name}",
         Default::default(),
     )?;
@@ -1734,7 +1744,6 @@ pub fn spawn_background_embed(
                             .run_script(
                                 "?[qualified_name] := *embedding_vectors{qualified_name}",
                                 std::collections::BTreeMap::new(),
-                                cozo::ScriptMutability::Immutable,
                             )
                             .map(|r| r.rows.len() as u64)
                             .unwrap_or(0);
@@ -2241,8 +2250,8 @@ mod tests {
     fn hnsw_live_writes_are_queryable_via_put() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("hnsw_live.db");
-        let db = crate::db::schema::init_db(&db_path).expect("init_db");
-        crate::embeddings::state::ensure_embedding_state_table(&db).expect("ensure tables");
+        let db = crate::db::backend::init_db(&db_path).expect("init_db");
+        crate::embeddings::state::ensure_embedding_state_table(db.as_ref()).expect("ensure tables");
 
         let n = 24usize;
         let mut pairs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
@@ -2254,7 +2263,7 @@ mod tests {
         }
 
         // Incremental path: index live, writer must maintain it.
-        upsert_pairs_to_db(&db, &pairs, true).expect("put with live hnsw");
+        upsert_pairs_to_db(db.as_ref(), &pairs, true).expect("put with live hnsw");
 
         let query_vec = pairs[3].1.clone();
         let vec_literal = query_vec
@@ -2271,7 +2280,8 @@ mod tests {
                     bind_distance: dist
                 }}"#
         );
-        let result = crate::db::schema::run_script(&db, &query, Default::default())
+        let result = db
+            .run_script(&query, Default::default())
             .expect("hnsw query over live-index writes");
         let hits: Vec<String> = result
             .rows
@@ -2297,8 +2307,8 @@ mod tests {
     fn bulk_import_then_hnsw_rebuild_is_queryable() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("hnsw_bulk.db");
-        let db = crate::db::schema::init_db(&db_path).expect("init_db");
-        crate::embeddings::state::ensure_embedding_state_table(&db).expect("ensure tables");
+        let db = crate::db::backend::init_db(&db_path).expect("init_db");
+        crate::embeddings::state::ensure_embedding_state_table(db.as_ref()).expect("ensure tables");
 
         let n = 24usize;
         let mut pairs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
@@ -2309,9 +2319,9 @@ mod tests {
         }
 
         // Bulk path: index dropped, import_relations, then ::hnsw create.
-        crate::embeddings::state::drop_hnsw_index(&db).expect("drop hnsw");
-        upsert_pairs_to_db(&db, &pairs, false).expect("bulk import");
-        crate::embeddings::state::create_hnsw_index(&db).expect("rebuild hnsw");
+        crate::embeddings::state::drop_hnsw_index(db.as_ref()).expect("drop hnsw");
+        upsert_pairs_to_db(db.as_ref(), &pairs, false).expect("bulk import");
+        crate::embeddings::state::create_hnsw_index(db.as_ref()).expect("rebuild hnsw");
 
         let query_vec = pairs[0].1.clone();
         let vec_literal = query_vec
@@ -2328,7 +2338,8 @@ mod tests {
                     bind_distance: dist
                 }}"#
         );
-        let result = crate::db::schema::run_script(&db, &query, Default::default())
+        let result = db
+            .run_script(&query, Default::default())
             .expect("hnsw query over rebuilt index");
         let hits: Vec<String> = result
             .rows

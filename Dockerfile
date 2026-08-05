@@ -1,19 +1,10 @@
-# Render / onrender production image (leankg.onrender.com).
-# Multi-stage: UI (node) → Rust builder (+ demo index) → slim runtime.
-# Starter Render pipeline = 2 CPU / 8 GB RAM — single-stage + parallel rustc OOMs.
-FROM node:20-bookworm AS ui
-WORKDIR /ui
-COPY ui-v2/package.json ui-v2/package-lock.json ./
-RUN npm ci
-COPY ui-v2/ ./
-ARG UI_EMBED_REV=2026-08-01-onrender-emb101
-RUN echo "UI_EMBED_REV=${UI_EMBED_REV}" && npm run build
-
+# LeanKG — lean Postgres-only image: Rust binary + HTTP MCP server.
+# No UI build, no source indexing bake. Postgres (pgvector) is the only
+# storage engine (D4); the container connects via LEANKG_PG_URL.
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 
-# Render Starter build pipeline: 2 CPU, 8 GB RAM (docs.render.com/build-pipeline).
-# ort + rocksdb + thin LTO can exceed 8 GB with default parallel codegen.
+# Starter Render build pipeline: 2 CPU, 8 GB RAM (docs.render.com/build-pipeline).
 # embeddings → fastembed → hf-hub → native-tls → openssl-sys needs libssl-dev.
 ENV CARGO_BUILD_JOBS=1 \
     CARGO_PROFILE_RELEASE_LTO=false \
@@ -21,6 +12,16 @@ ENV CARGO_BUILD_JOBS=1 \
     RUSTFLAGS="-C debuginfo=0" \
     CARGO_TERM_COLOR=always
 
+# Deb.debian.org / ftp.debian.org (Fastly CDN) are unreachable from some build
+# networks. ftp.us.debian.org is on a different network and is reachable.
+# Sources file in its own RUN (heredoc must end the instruction).
+RUN cat > /etc/apt/sources.list.d/debian.sources <<'EOF'
+Types: deb
+URIs: http://ftp.us.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         clang \
@@ -34,30 +35,26 @@ COPY src ./src
 # benches/ required — Cargo.toml [[bench]] targets fail manifest parse if missing.
 COPY benches ./benches
 # examples/ required — Cargo.toml [[example]] targets (embeddings feature) fail
-# manifest parse if missing. This was the silent exit-101 cause on Render.
+# manifest parse if missing.
 COPY examples ./examples
 COPY ontology/ ./ontology/
-COPY --from=ui /ui/dist/ ./src/embed/
-ARG UI_EMBED_REV=2026-08-01-onrender-emb101
-RUN test -f src/embed/index.html \
-    && grep -q '<title>LeanKG</title>' src/embed/index.html \
-    && printf '{"ui":"ui-v2","rev":"%s","source":"Dockerfile"}\n' "${UI_EMBED_REV}" > src/embed/ui-build.json
+COPY leankg.yaml ./leankg.yaml
 
-# US-CBM-C1 / FR-HNSW-C: embeddings feature for semantic_search on hosted demo.
-# See docs/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md
-RUN cargo build --release --features embeddings \
+RUN cargo build --release \
     && strip target/release/leankg \
     && cp target/release/leankg /usr/local/bin/leankg
-
-# Bake LeanKG source graph for leankg.onrender.com (regression: multi-stage shipped binary-only).
-RUN leankg init --path .leankg \
-    && leankg index src \
-    && test -f .leankg/leankg.db
 
 FROM debian:bookworm-slim AS runtime
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
+RUN cat > /etc/apt/sources.list.d/debian.sources <<'EOF'
+Types: deb
+URIs: http://ftp.us.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -68,17 +65,16 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /usr/local/bin/leankg /usr/local/bin/leankg
-COPY --from=builder /app/src ./src
 COPY --from=builder /app/ontology ./ontology
-COPY --from=builder /app/.leankg ./.leankg
 COPY --from=builder /app/leankg.yaml ./leankg.yaml
 
-ENV LEANKG_SERVE_PROJECT=/app \
-    PORT=8080
-EXPOSE 8080 9699
+ENV LEANKG_PG_URL="" \
+    MCP_HTTP_PORT=9699 \
+    LEANKG_EMBED_AUTO_ARM=0
+EXPOSE 9699
 
-# Render health checks hit this path (index status is always available).
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-    CMD curl -fsS "http://127.0.0.1:${PORT}/api/index/status" || exit 1
+# Health: the HTTP MCP server exposes /health.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${MCP_HTTP_PORT}/health" || exit 1
 
-CMD ["leankg", "web"]
+CMD ["leankg", "mcp-http"]

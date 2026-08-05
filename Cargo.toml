@@ -18,7 +18,7 @@ crate-type = ["rlib"]
 default = []
 # Enable vector retrieval + cross-encoder rerank + adaptive KG traversal.
 # Adds fastembed (embedding + reranker inference via ONNX). Vectors are stored
-# in CozoDB's native HNSW index on `embedding_vectors` (no extra deps).
+# in Postgres pgvector (HNSW index on `embedding_vectors`).
 # Off by default to keep the default binary slim.
 embeddings = ["dep:fastembed", "dep:ort", "dep:tokenizers", "dep:ndarray"]
 
@@ -44,9 +44,13 @@ once_cell = "1"
 schemars = "0.8"
 async-trait = "0.1"
 dirs = "5"
-# FR-LCACHE: L1 read cache in front of CozoDB for hot read paths.
+# FR-LCACHE: L1 read cache in front of the Postgres backend for hot read paths.
 moka = { version = "0.12", features = ["future"] }
-argon2 = "0.5"
+argon2 = { version = "0.5", features = ["rand"] }
+# OsRng for argon2 salt generation — password-hash re-exports rand_core 0.6,
+# but OsRng needs the `getrandom` feature (the legacy embedded-db dep used to
+# enable it).
+rand_core = { version = "0.6", features = ["getrandom"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tree-sitter-kotlin-ng = "1.1.0"
@@ -136,7 +140,6 @@ libc = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = "0.7"
-cozo = { version = "0.7.6", features = ["storage-rocksdb"] }
 notify = "7"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
@@ -152,14 +155,18 @@ tree-sitter-swift = "0.7"
 tree-sitter-objc = "3.0"
 
 # Bounded MPMC channel used by the embed pipeline to keep N inference
-# workers and a single CozoDB writer decoupled. Without this, N workers
-# contending for the CozoDB write Mutex serialized the Datalog :put
+# workers and a single Postgres writer decoupled. Without this, N workers
+# contending for the write lock serialized the Datalog :put
 # path and throughput collapsed to ~40 vectors/sec.
 crossbeam-channel = "0.5"
 moka = { version = "0.12", features = ["future"] }
 
-# Optional Redis HNSW vector side-store (LEANKG_EMBED_VECTOR_STORE=redis)
-redis = { version = "0.27", features = ["aio", "tokio-comp"] }
+# PostgreSQL client for the pg backend (plan D1 nominates sqlx; translator
+# phase picks the client — keeping postgres 0.19 which the Phase 0 spike
+# already uses, so no new dependency is added for Phase 2).
+# `with-serde_json-1` gives `postgres::types::Json<T>` + `serde_json::Value`
+# ToSql/FromSql for the JSONB columns (metadata/tags/members/...).
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -175,14 +182,6 @@ required-features = ["embeddings"]
 [[example]]
 name = "bench_embed_infer"
 required-features = ["embeddings"]
-
-[[example]]
-name = "bench_redis_writer"
-required-features = ["embeddings"]
-
-[[bench]]
-name = "vector_engine_ab"
-harness = false
 
 [[bench]]
 name = "orchestrator_bench"

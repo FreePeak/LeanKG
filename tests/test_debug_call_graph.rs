@@ -1,12 +1,12 @@
 // Debug get_call_graph issue
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_call_graph() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     // Test get_call_graph_bounded with depth 1
     println!("=== Testing get_call_graph_bounded('./src/main.rs::main', 1, 10) ===");

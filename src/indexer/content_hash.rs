@@ -64,8 +64,10 @@ pub struct IndexHashRow {
 pub fn load_hashes(
     db: &crate::graph::GraphEngine,
 ) -> Result<Vec<IndexHashRow>, Box<dyn std::error::Error + Send + Sync>> {
+    // The `<-` read form (`?[path, hash] <- index_hashes[...]`) is invalid
+    // cozo — use the canonical `:=` rule form (inventory CH1).
     db.run_raw_query(
-        "?[path, hash] <- index_hashes[path, hash]",
+        "?[path, hash] := *index_hashes[path, hash]",
         std::collections::BTreeMap::new(),
     )
     .map(|rows| {
@@ -85,12 +87,18 @@ pub fn save_hashes(
     rows: &[IndexHashRow],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Cozo `:put` on a 2-column relation keyed by `path` gives upsert.
+    // The `:put table {cols} <- $args` short form is NOT valid cozo — the
+    // rule form `?[cols] <- [[...]] :put table {cols => key}` is canonical
+    // (inventory CH2; the translator maps it to INSERT ... ON CONFLICT).
     for row in rows {
         let params = std::collections::BTreeMap::from([
             ("path".to_string(), row.path.clone().into()),
             ("hash".to_string(), row.hash.clone().into()),
         ]);
-        db.run_raw_query(":put index_hashes {path, hash} <- $args", params)?;
+        db.run_raw_query(
+            r#"?[path, hash] <- [[$path, $hash]] :put index_hashes {path => hash}"#,
+            params,
+        )?;
     }
     Ok(())
 }

@@ -643,7 +643,7 @@ fn run_real_semantic(
     use crate::retrieval::pipeline::{RetrieveOptions, SemanticRetrievalPipeline};
 
     let start = Instant::now();
-    let mut pipeline = SemanticRetrievalPipeline::new(engine.db().clone())?;
+    let mut pipeline = SemanticRetrievalPipeline::new(engine.db_arc().clone())?;
     let opts = RetrieveOptions {
         env: None,
         ann_top_k: Some(ann_top_k),

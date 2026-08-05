@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::db::schema::{init_db, CozoDb};
+use crate::db::backend::init_db;
 use crate::embed;
 use crate::graph::GraphEngine;
 
@@ -22,7 +22,7 @@ use crate::graph::GraphEngine;
 pub struct AppState {
     pub db_path: Arc<RwLock<std::path::PathBuf>>,
     pub current_project_path: Arc<RwLock<std::path::PathBuf>>,
-    db: Arc<RwLock<Option<CozoDb>>>,
+    db: Arc<RwLock<Option<crate::db::backend::SharedDb>>>,
     graph_engine: Arc<RwLock<Option<GraphEngine>>>,
     pub indexing_state: Arc<RwLock<IndexingState>>,
 }
@@ -225,7 +225,9 @@ impl AppState {
         Ok(())
     }
 
-    pub fn get_db(&self) -> Result<CozoDb, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_db(
+        &self,
+    ) -> Result<crate::db::backend::SharedDb, Box<dyn std::error::Error + Send + Sync>> {
         crate::runtime::run_blocking(async {
             let lock = self.db.read().await;
             lock.clone()

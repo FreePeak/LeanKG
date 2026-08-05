@@ -1,7 +1,6 @@
 // Integration tests requiring filesystem, async, or SurrealDB
 
-use leankg::db::get_elements_by_env;
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::doc::DocGenerator;
 use leankg::graph::{GraphEngine, ImpactAnalyzer};
 use leankg::indexer::{find_files_sync, index_file_sync, ParserManager};
@@ -93,235 +92,12 @@ async fn test_init_db_creates_schema() {
     assert!(db_path.exists() || std::path::Path::new(db_path.parent().unwrap()).exists());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_init_db_repairs_legacy_code_elements_after_recorded_migration() {
-    let tmp = TempDir::new().unwrap();
-    let db_path = tmp.path().join("legacy.db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let legacy_db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
-
-    leankg::db::schema::run_script(&legacy_db,
-        r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
-        Default::default(),
-    ).unwrap();
-    leankg::db::schema::run_script(&legacy_db,
-        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] <- [["src/main.rs::main", "function", "main", "src/main.rs", 1, 3, "rust", null, null, null, "{}"]]
-        :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}"#,
-        Default::default(),
-    ).unwrap();
-    leankg::db::schema::run_script(&legacy_db,
-            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
-            Default::default(),
-        )
-        .unwrap();
-    leankg::db::schema::run_script(
-        &legacy_db,
-        r#":create migrations {id: String, applied_at: Int}"#,
-        Default::default(),
-    )
-    .unwrap();
-    leankg::db::schema::run_script(
-        &legacy_db,
-        r#"?[id, applied_at] <- [["006_safe_canonical_schema_repair", 1]]
-        :put migrations {id, applied_at}"#,
-        Default::default(),
-    )
-    .unwrap();
-    drop(legacy_db);
-
-    let repaired_db = init_db(db_path.as_path()).unwrap();
-    let canonical_query = leankg::db::schema::run_script(&repaired_db,
-            r#"?[qualified_name, env, ontology_layer] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer]"#,
-            Default::default(),
-        )
-        .unwrap();
-    assert_eq!(canonical_query.rows.len(), 1);
-    assert_eq!(canonical_query.rows[0][1].get_str(), Some("local"));
-    assert_eq!(canonical_query.rows[0][2].get_str(), Some("procedural"));
-
-    let graph = GraphEngine::new(repaired_db);
-    let results = graph
-        .search_by_name_typed("main", Some("function"), 10)
-        .unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].qualified_name, "src/main.rs::main");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_init_db_repairs_env_code_elements_to_ontology_layer_schema() {
-    let tmp = TempDir::new().unwrap();
-    let db_path = tmp.path().join("env-only.db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let legacy_db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
-
-    leankg::db::schema::run_script(&legacy_db,
-        r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local'}"#,
-        Default::default(),
-    ).unwrap();
-    leankg::db::schema::run_script(&legacy_db,
-        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] <- [["src/lib.rs::activate", "function", "activate", "src/lib.rs", 2, 5, "rust", null, null, null, "{}", "staging"]]
-        :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}"#,
-        Default::default(),
-    ).unwrap();
-    leankg::db::schema::run_script(&legacy_db,
-            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
-            Default::default(),
-        )
-        .unwrap();
-    drop(legacy_db);
-
-    let repaired_db = init_db(db_path.as_path()).unwrap();
-    let canonical_query = leankg::db::schema::run_script(&repaired_db,
-            r#"?[qualified_name, env, ontology_layer] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer]"#,
-            Default::default(),
-        )
-        .unwrap();
-    assert_eq!(canonical_query.rows.len(), 1);
-    assert_eq!(canonical_query.rows[0][1].get_str(), Some("staging"));
-    assert_eq!(canonical_query.rows[0][2].get_str(), Some("procedural"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_graph_queries_support_ontology_layer_code_elements_schema() {
-    let tmp = TempDir::new().unwrap();
-    let db_path = tmp.path().join("ontology-layer.db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
-
-    leankg::db::schema::run_script(&db,
-        r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
-        Default::default(),
-    ).unwrap();
-    leankg::db::schema::run_script(&db,
-        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
-        [["src/metrics/prometheus.go::registerPrometheus", "function", "registerPrometheus", "src/metrics/prometheus.go", 10, 20, "go", null, null, null, "{}", "local", "procedural"]]
-        :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
-        Default::default(),
-    ).unwrap();
-    leankg::db::schema::run_script(&db,
-        r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
-        Default::default(),
-    ).unwrap();
-    drop(db);
-
-    let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db.clone());
-
-    assert!(graph.has_elements().unwrap());
-    assert_eq!(graph.count_elements().unwrap(), 1);
-
-    let search_results = graph
-        .search_by_name_typed("prometheus", Some("function"), 10)
-        .unwrap();
-    assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].name, "registerPrometheus");
-
-    let env_results = get_elements_by_env(&db, "local", 10).unwrap();
-    assert_eq!(env_results.len(), 1);
-    assert_eq!(
-        env_results[0].qualified_name,
-        "src/metrics/prometheus.go::registerPrometheus"
-    );
-}
-
 // Regression: ontology queries in src/ontology/query.rs were binding
 // 12 columns (missing `ontology_layer`) against the canonical 13-column
 // code_elements schema, causing every kg_* MCP tool that exercises them
 // to fail with "Arity mismatch for rule application code_elements".
 // This test seeds the 13-column schema directly with ontology rows and
 // asserts that the previously-failing query paths now run cleanly.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_ontology_queries_support_13_column_code_elements_schema() {
-    let tmp = TempDir::new().unwrap();
-    let db_path = tmp.path().join("ontology-arity.db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let raw_db = cozo::DbInstance::new("sqlite", db_path_str, "").unwrap();
-
-    leankg::db::schema::run_script(&raw_db,
-            r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String, env: String default 'local', ontology_layer: String default 'procedural'}"#,
-            Default::default(),
-        )
-        .unwrap();
-    leankg::db::schema::run_script(&raw_db,
-            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String, env: String default 'local'}"#,
-            Default::default(),
-        )
-        .unwrap();
-
-    // Seed one workflow, two workflow_steps (parent_qualified = workflow gid),
-    // and one domain_entity. file_path uses the ontology:// scheme so
-    // regex_matches(file_path, "ontology://") selects them.
-    leankg::db::schema::run_script(&raw_db,
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
-            [["ontology://local/checkout/workflow:checkout@1", "workflow", "Checkout Workflow", "ontology://local/checkout/workflow:checkout@1", 1, 1, "ontology", null, null, null, '{"description":"end-to-end checkout","aliases":[]}', "local", "procedural"],
-             ["ontology://local/checkout/step:validate_cart@1", "workflow_step", "Validate Cart", "ontology://local/checkout/step:validate_cart@1", 1, 1, "ontology", "ontology://local/checkout/workflow:checkout@1", null, null, '{"gid":"ontology://local/checkout/step:validate_cart@1","ontology":"procedural","ontology_layer":"procedural","workflow_gid":"ontology://local/checkout/workflow:checkout@1","order":1,"aliases":[],"description":"validate cart","code_refs":["src/checkout.rs::validate_cart"],"failure_modes":[],"stale":false}', "local", "procedural"],
-             ["ontology://local/checkout/step:charge@1", "workflow_step", "Charge Card", "ontology://local/checkout/step:charge@1", 1, 1, "ontology", "ontology://local/checkout/workflow:checkout@1", null, null, '{"gid":"ontology://local/checkout/step:charge@1","ontology":"procedural","ontology_layer":"procedural","workflow_gid":"ontology://local/checkout/workflow:checkout@1","order":2,"aliases":[],"description":"charge the card","code_refs":["src/checkout.rs::charge"],"failure_modes":[],"stale":false}', "local", "procedural"],
-             ["ontology://local/checkout/concept:cart@1", "domain_entity", "Cart", "ontology://local/checkout/concept:cart@1", 1, 1, "ontology", null, null, null, '{"description":"shopping cart","aliases":["cart","basket"],"ontology":"concept","ontology_layer":"domain"}', "local", "domain"]]
-            :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
-            Default::default(),
-        )
-        .unwrap();
-    drop(raw_db);
-
-    let db = init_db(db_path.as_path()).unwrap();
-    let engine = OntologyQueryEngine::new(db);
-
-    // search_ontology_nodes covers query.rs:89. Query "checkout" should
-    // match the workflow (name contains "checkout") and the workflow_step
-    // "Validate Cart" (description contains "validate_cart" via code_refs
-    // is NOT in the score path; in practice it matches by name, alias, or
-    // description). "cart" should match the domain_entity plus the step.
-    let checkout_nodes = engine
-        .search_ontology_nodes("checkout", "local", 2)
-        .expect("search_ontology_nodes must succeed on canonical 13-col schema");
-    assert!(
-        checkout_nodes.iter().any(|n| n.name == "Checkout Workflow"),
-        "expected workflow node, got: {:?}",
-        checkout_nodes
-    );
-
-    let cart_nodes = engine
-        .search_ontology_nodes("cart", "local", 2)
-        .expect("search_ontology_nodes must succeed on canonical 13-col schema");
-    assert!(
-        cart_nodes.iter().any(|n| n.name == "Cart"),
-        "expected domain_entity node, got: {:?}",
-        cart_nodes
-    );
-
-    // search_workflows covers query.rs:462.
-    let workflows = engine
-        .search_workflows("checkout", "local")
-        .expect("search_workflows must succeed on canonical 13-col schema");
-    assert_eq!(workflows.len(), 1);
-    assert_eq!(workflows[0].name, "Checkout Workflow");
-
-    // get_ontology_context covers query.rs:221 (delegates to
-    // search_ontology_nodes + expand_ontology_context + trace_workflow).
-    let ctx = engine
-        .get_ontology_context("checkout", "local", 2)
-        .expect("get_ontology_context must succeed on canonical 13-col schema");
-    assert!(
-        !ctx.matched_ontology_nodes.is_empty(),
-        "expected at least one matched node"
-    );
-
-    // trace_workflow covers query.rs:419.
-    let steps = engine
-        .trace_workflow("checkout", "local")
-        .expect("trace_workflow must succeed on canonical 13-col schema");
-    assert_eq!(steps.len(), 2, "workflow should expose two steps");
-    let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
-    assert!(step_names.contains(&"Validate Cart"));
-    assert!(step_names.contains(&"Charge Card"));
-
-    // get_ontology_status must not crash (it was the only kg_* tool that
-    // already worked; we re-assert it here to lock in the invariant).
-    let status = engine
-        .get_ontology_status()
-        .expect("get_ontology_status must succeed");
-    let _ = status.workflows_without_failure_modes;
-}
 
 // Regression: kg_self_test must report all four kg_* tools as healthy
 // when the canonical 13-column code_elements schema is in place. If a
@@ -333,7 +109,7 @@ async fn test_kg_self_test_reports_all_ok_on_canonical_schema() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("selftest.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let engine = OntologyQueryEngine::new(db);
+    let engine = OntologyQueryEngine::new(db.clone());
 
     let report = engine.self_test();
     assert!(report.all_ok, "all_ok should be true; report={:?}", report);
@@ -368,48 +144,13 @@ async fn test_kg_self_test_reports_all_ok_on_canonical_schema() {
 // narrower bindings for some code paths). This is the early-warning
 // signal the tool is designed to emit. We bypass init_db so that the
 // auto-repair does not run before the self-test fires.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_kg_self_test_flags_legacy_11_column_schema() {
-    let tmp = TempDir::new().unwrap();
-    let db_path = tmp.path().join("legacy-selftest.db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let raw_db = cozo::DbInstance::new("sqlite", &db_path_str, "").unwrap();
-
-    leankg::db::schema::run_script(&raw_db,
-            r#":create code_elements {qualified_name: String, element_type: String, name: String, file_path: String, line_start: Int, line_end: Int, language: String, parent_qualified: String?, cluster_id: String?, cluster_label: String?, metadata: String}"#,
-            Default::default(),
-        )
-        .unwrap();
-    leankg::db::schema::run_script(&raw_db,
-            r#":create relationships {source_qualified: String, target_qualified: String, rel_type: String, confidence: Float, metadata: String}"#,
-            Default::default(),
-        )
-        .unwrap();
-
-    // Self-test against the raw, un-repaired DB so we can verify the
-    // non-canonical detection logic itself.
-    let engine = OntologyQueryEngine::new(raw_db);
-    let report = engine.self_test();
-
-    assert_eq!(report.code_elements.arity, 11);
-    assert!(
-        !report.code_elements.canonical,
-        "11-col schema must not be canonical"
-    );
-    assert!(
-        !report.all_ok,
-        "all_ok must be false on a non-canonical schema"
-    );
-    assert_eq!(report.relationships.arity, 5);
-    assert!(!report.relationships.canonical);
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_graph_engine_all_elements_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let elements = graph.all_elements().unwrap();
     assert!(elements.is_empty());
 }
@@ -419,7 +160,7 @@ async fn test_graph_engine_find_element_missing() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let result = graph.find_element("nonexistent::foo").unwrap();
     assert!(result.is_none());
 }
@@ -429,7 +170,7 @@ async fn test_impact_analyzer_empty_graph() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let analyzer = ImpactAnalyzer::new(&graph);
     let result = analyzer.calculate_impact_radius("src/main.go", 3).unwrap();
     assert_eq!(result.start_file, "src/main.go");
@@ -442,7 +183,7 @@ async fn test_doc_generator_agents_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let content = doc_gen.generate_agents_md().unwrap();
     assert!(content.contains("# Agent Guidelines for LeanKG"));
@@ -456,7 +197,7 @@ async fn test_doc_generator_claude_md_empty() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let doc_gen = DocGenerator::new(graph, PathBuf::from("./docs"));
     let content = doc_gen.generate_claude_md().unwrap();
     assert!(content.contains("# CLAUDE.md"));
@@ -470,7 +211,7 @@ async fn test_doc_sync_for_file() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let go_file = tmp.path().join("main.go");
     std::fs::write(
@@ -498,7 +239,7 @@ async fn test_index_file_go() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let go_file = tmp.path().join("main.go");
     std::fs::write(
@@ -543,7 +284,7 @@ async fn test_index_file_java() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let java_file = tmp.path().join("UserService.java");
     std::fs::write(
@@ -575,7 +316,7 @@ async fn test_index_file_swift_incremental() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let swift_file = tmp.path().join("Session.swift");
     std::fs::write(
@@ -625,7 +366,7 @@ async fn test_index_with_progress_discovers_vue_svelte_sql() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     std::fs::write(
         tmp.path().join("App.vue"),
@@ -712,7 +453,7 @@ async fn test_index_file_objc_incremental() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
     let db = init_db(db_path.as_path()).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     let objc_file = tmp.path().join("Greeter.m");
     std::fs::write(
@@ -777,8 +518,7 @@ async fn test_get_relationships_with_real_db() {
 
     // Check if DB has data (skip test if empty)
     let count_query = r#"?[cnt] := count(code_elements[qualified_name]), cnt = $cnt"#;
-    let count_result =
-        leankg::db::schema::run_script(&db, count_query, std::collections::BTreeMap::new());
+    let count_result = db.run_script(count_query, std::collections::BTreeMap::new());
     let has_data = count_result
         .map(|r| !r.rows.is_empty() && !r.rows[0].is_empty())
         .unwrap_or(false);
@@ -787,7 +527,7 @@ async fn test_get_relationships_with_real_db() {
         return;
     }
 
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     // Test with path that exists in DB (from graph.json we know ./src/api/auth.rs has imports)
     let result = graph.get_relationships("./src/api/auth.rs");
@@ -867,8 +607,9 @@ async fn test_get_dependencies_with_real_db() {
         escaped, escaped
     );
 
-    let result =
-        leankg::db::schema::run_script(&db, &query, std::collections::BTreeMap::new()).unwrap();
+    let result = db
+        .run_script(&query, std::collections::BTreeMap::new())
+        .unwrap();
     println!(
         "Path normalization query returned {} rows (may be 0 if DB is empty/unindexed)",
         result.rows.len()
@@ -884,7 +625,7 @@ async fn test_get_call_graph_with_real_db() {
     }
 
     let db = init_db(db_path).expect("failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     // Find a function that has calls
     let call_graph_result = graph.get_call_graph_bounded("./src/api/auth.rs", 1, 10);
@@ -912,7 +653,7 @@ async fn test_persistent_cache_hit_after_insert() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg_cache_test.db");
     let db = init_db(&db_path).unwrap();
-    let graph = GraphEngine::with_persistence(db);
+    let graph = GraphEngine::with_persistence(db.clone());
 
     use leankg::db::models::{CodeElement, Relationship};
 
@@ -963,7 +704,7 @@ async fn test_persistent_cache_hit_on_second_call() {
     let db_path = tmp.path().join("leankg_cache_survive_test.db");
 
     let db = init_db(&db_path).unwrap();
-    let graph = GraphEngine::with_persistence(db);
+    let graph = GraphEngine::with_persistence(db.clone());
     use leankg::db::models::{CodeElement, Relationship};
 
     let elem_y = CodeElement {

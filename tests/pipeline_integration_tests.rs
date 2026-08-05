@@ -1,4 +1,4 @@
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::cache::QueryCache;
 use leankg::graph::GraphEngine;
 use leankg::indexer::extractor::EntityExtractor;

@@ -1,12 +1,12 @@
 // Debug get_call_graph query
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_check_call_graph_query() {
     let db_path = std::path::PathBuf::from(".leankg");
     let db = init_db(db_path.as_path()).expect("Failed to init db");
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
 
     // Check what calls exist for main
     let source = "./src/main.rs::main";
@@ -23,7 +23,7 @@ async fn test_check_call_graph_query() {
 
     println!("Query: {}", query);
 
-    let result = leankg::db::schema::run_script(graph.db(), &query, Default::default()).unwrap();
+    let result = graph.db().run_script(&query, Default::default()).unwrap();
     println!("\nResults: {} rows", result.rows.len());
     for row in result.rows.iter().take(5) {
         println!("  {:?} -> {:?} (depth={})", row[0], row[1], row[2]);
@@ -31,8 +31,10 @@ async fn test_check_call_graph_query() {
 
     // Also check if the function exists in relationships at all
     let all_calls_query = r#"?[src, tgt] := *relationships[src, tgt, "calls", _, _, _] :limit 10"#;
-    let all_result =
-        leankg::db::schema::run_script(graph.db(), all_calls_query, Default::default()).unwrap();
+    let all_result = graph
+        .db()
+        .run_script(all_calls_query, Default::default())
+        .unwrap();
     println!("\nSample calls (first 10):");
     for row in all_result.rows.iter() {
         println!("  {:?} -> {:?}", row[0], row[1]);
@@ -43,7 +45,9 @@ async fn test_check_call_graph_query() {
         r#"?[tgt] := *relationships[src, tgt, "calls", _, _, _], src = "{}""#,
         safe_src
     );
-    let main_result =
-        leankg::db::schema::run_script(graph.db(), &main_check, Default::default()).unwrap();
+    let main_result = graph
+        .db()
+        .run_script(&main_check, Default::default())
+        .unwrap();
     println!("\nCalls FROM {}: {} rows", source, main_result.rows.len());
 }

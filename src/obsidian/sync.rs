@@ -1,5 +1,5 @@
 use crate::db;
-use crate::db::schema::CozoDb;
+use crate::db::backend::SharedDb;
 use crate::graph::GraphEngine;
 use crate::obsidian::note_generator::{NoteGenerator, ObsidianError};
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 
 pub struct SyncEngine {
     generator: NoteGenerator,
-    db: CozoDb,
+    db: SharedDb,
     changes: Arc<RwLock<SyncChanges>>,
 }
 
@@ -48,8 +48,8 @@ impl SyncEngine {
             .all_relationships()
             .map_err(|e| ObsidianError::IoError(e.to_string()))?;
 
-        let annotations =
-            db::all_business_logic(&self.db).map_err(|e| ObsidianError::IoError(e.to_string()))?;
+        let annotations = db::all_business_logic(self.db.as_ref())
+            .map_err(|e| ObsidianError::IoError(e.to_string()))?;
 
         let annotation_map: HashMap<_, _> = annotations
             .iter()
@@ -129,7 +129,7 @@ impl SyncEngine {
                     continue;
                 }
 
-                if let Some(existing) = db::get_business_logic(&self.db, &element_id)
+                if let Some(existing) = db::get_business_logic(self.db.as_ref(), &element_id)
                     .map_err(|e| ObsidianError::IoError(e.to_string()))?
                 {
                     if existing.description != annotation && !annotation.is_empty() {
@@ -140,8 +140,14 @@ impl SyncEngine {
                         });
                     }
                 } else {
-                    db::create_business_logic(&self.db, &element_id, &annotation, None, None)
-                        .map_err(|e| ObsidianError::IoError(e.to_string()))?;
+                    db::create_business_logic(
+                        self.db.as_ref(),
+                        &element_id,
+                        &annotation,
+                        None,
+                        None,
+                    )
+                    .map_err(|e| ObsidianError::IoError(e.to_string()))?;
                     pulled.push(element_id);
                 }
             }

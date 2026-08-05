@@ -2,8 +2,8 @@
 
 #![cfg(feature = "embeddings")]
 
+use leankg::db::backend::init_db;
 use leankg::db::models::CodeElement;
-use leankg::db::schema::init_db;
 use leankg::doc_indexer::index_docs_directory;
 use leankg::embeddings::{parse_type_filter, state, text_blob, PERF_TYPE_PRESET};
 use leankg::graph::inventory::{load_latest_inventory, refresh_index_inventory};
@@ -54,7 +54,7 @@ fn doc_indexer_enriches_metadata() {
     .unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let _guard = ProjectRootGuard::change_to(root);
     let result = index_docs_directory(Path::new("docs"), &graph).unwrap();
 

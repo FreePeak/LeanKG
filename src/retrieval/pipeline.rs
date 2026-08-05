@@ -8,17 +8,17 @@
 //! needs "find similar X by meaning" must construct a
 //! [`SemanticRetrievalPipeline`] and call [`SemanticRetrievalPipeline::retrieve`].
 
+use crate::db::backend::DataValue;
+use crate::db::backend::SharedDb;
 use crate::db::models::CodeElement;
-use crate::db::schema::{run_script, CozoDb};
 use crate::embeddings::models::{Embedder, RerankerStatus};
 use crate::retrieval::rerank::RerankStage;
-use cozo::DataValue;
 use std::collections::HashMap;
 
 pub struct SemanticRetrievalPipeline {
     embedder: Embedder,
     rerank_stage: RerankStage,
-    db: CozoDb,
+    db: SharedDb,
     /// Most recent query embedding from [`Self::retrieve`], stashed so
     /// downstream stages (e.g. ontology-guided composite scoring in
     /// `retrieval::ontology_traversal`) can reuse it instead of
@@ -208,7 +208,7 @@ mod adaptive_k_tests {
 }
 
 impl SemanticRetrievalPipeline {
-    pub fn new(db: CozoDb) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(db: SharedDb) -> Result<Self, Box<dyn std::error::Error>> {
         let embedder = Embedder::new()?;
         let rerank_stage = RerankStage::try_new();
         Ok(Self {
@@ -342,7 +342,7 @@ impl SemanticRetrievalPipeline {
     /// size adaptive k. Reuses the existing count_by_state aggregator
     /// because CozoDB 0.7.x is picky about inline count() placement.
     fn index_size(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let counts = crate::embeddings::state::count_by_state(&self.db)?;
+        let counts = crate::embeddings::state::count_by_state(self.db.as_ref())?;
         Ok(counts.fresh + counts.stale + counts.other)
     }
 
@@ -369,7 +369,7 @@ impl SemanticRetrievalPipeline {
             // FR-HNSW-F: ef is tunable via LEANKG_HNSW_EF. See `resolve_ef`.
             ef = resolve_ef(k)
         );
-        let result = run_script(&self.db, &query, Default::default())?;
+        let result = self.db.run_script(&query, Default::default())?;
         let mut out = Vec::with_capacity(result.rows.len());
         for row in &result.rows {
             let dist = row

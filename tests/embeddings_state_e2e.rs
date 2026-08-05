@@ -12,13 +12,13 @@
 
 #![cfg(feature = "embeddings")]
 
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::embeddings::state::{
     count_by_state, delete_state_rows, ensure_embedding_state_table, list_all, list_orphans,
     list_stale, mark_stale_for_qualified_names, mark_stale_if_changed, upsert_fresh, FreshRow,
 };
 
-fn fresh_db() -> leankg::db::schema::CozoDb {
+fn fresh_db() -> leankg::db::backend::SharedDb {
     let tmp = tempfile::tempdir().expect("tempdir");
     let db_path = tmp.path().join("test.db");
     // init_db runs init_schema, which creates embedding_state when the

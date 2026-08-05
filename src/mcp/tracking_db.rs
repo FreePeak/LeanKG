@@ -1,15 +1,14 @@
-use crate::db::schema::CozoDb;
 use crate::mcp::tracker::WriteTracker;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub struct TrackingDb {
-    inner: CozoDb,
+    inner: crate::db::backend::SharedDb,
     tracker: Arc<WriteTracker>,
 }
 
 impl TrackingDb {
-    pub fn new(inner: CozoDb, tracker: Arc<WriteTracker>) -> Self {
+    pub fn new(inner: crate::db::backend::SharedDb, tracker: Arc<WriteTracker>) -> Self {
         Self { inner, tracker }
     }
 
@@ -17,14 +16,14 @@ impl TrackingDb {
         &self,
         script: &str,
         params: BTreeMap<String, serde_json::Value>,
-    ) -> Result<cozo::NamedRows, cozo::Error> {
+    ) -> Result<crate::db::backend::NamedRows, Box<dyn std::error::Error>> {
         if is_write_operation(script) {
             self.tracker.mark_dirty();
         }
-        crate::db::schema::run_script(&self.inner, script, params)
+        self.inner.run_script(script, params)
     }
 
-    pub fn into_inner(self) -> CozoDb {
+    pub fn into_inner(self) -> crate::db::backend::SharedDb {
         self.inner
     }
 }

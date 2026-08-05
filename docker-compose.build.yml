@@ -10,6 +10,6 @@ services:
   leankg:
     build:
       context: .
-      dockerfile: Dockerfile.rocksdb
+      dockerfile: Dockerfile
     # No image: pin here — the build file is for publish workflows;
-    # the base docker-compose.rocksdb.yml already selects the Hub image.
+    # the base docker-compose.yml already selects the Hub image.

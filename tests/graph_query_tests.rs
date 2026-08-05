@@ -1,5 +1,5 @@
+use leankg::db::backend::init_db;
 use leankg::db::models::{CodeElement, Relationship};
-use leankg::db::schema::init_db;
 use leankg::graph::GraphEngine;
 use tempfile::TempDir;
 

@@ -1,6 +1,6 @@
 //! Integration tests for doc↔code join quality (FR-DOCJOIN-04).
 
-use leankg::db::schema::init_db;
+use leankg::db::backend::init_db;
 use leankg::doc_indexer::index_docs_directory;
 use leankg::graph::GraphEngine;
 use leankg::indexer::index_file_sync;
@@ -54,7 +54,7 @@ fn doc_join_round_trip_via_graph() {
     fs::write(docs.join("guide.md"), "# Guide\n\nSee `src/widget.rs`.\n").unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let mut parser = ParserManager::new();
     parser.init_parsers().unwrap();
     let _root = ProjectRootGuard::change_to(root);
@@ -104,7 +104,7 @@ async fn doc_join_mcp_tools_with_aliases() {
 
     let db_path = root.join("leankg.db");
     let db = init_db(&db_path).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let mut parser = ParserManager::new();
     parser.init_parsers().unwrap();
     let _root = ProjectRootGuard::change_to(root);
@@ -158,7 +158,7 @@ fn doc_join_skips_unresolved_refs() {
     .unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     index_docs_directory(&docs, &graph).unwrap();
 
     let rels = graph.get_relationships("docs/orphan.md").unwrap();
@@ -186,7 +186,7 @@ fn doc_join_file_symbol_unique_upgrades_to_symbol_edges() {
     .unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let mut parser = ParserManager::new();
     parser.init_parsers().unwrap();
     let _root = ProjectRootGuard::change_to(root);
@@ -231,7 +231,7 @@ fn doc_join_file_symbol_ambiguous_keeps_file_level_edges() {
     .unwrap();
 
     let db = init_db(&root.join("leankg.db")).unwrap();
-    let graph = GraphEngine::new(db);
+    let graph = GraphEngine::new(db.clone());
     let mut parser = ParserManager::new();
     parser.init_parsers().unwrap();
     let _root = ProjectRootGuard::change_to(root);

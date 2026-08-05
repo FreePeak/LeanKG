@@ -130,7 +130,7 @@ pub fn run(project_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let db_path = Path::new(project_path).join(".leankg");
     let has_db = db_path.exists();
     let db = if has_db {
-        Some(db::schema::init_db(&db_path)?)
+        Some(db::backend::init_db(&db_path)?)
     } else {
         None
     };

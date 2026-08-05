@@ -25,7 +25,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use leankg::db::models::CodeElement;
-use leankg::db::schema;
 use leankg::graph::GraphEngine;
 
 fn n_env(name: &str, default: usize) -> usize {
@@ -79,8 +78,8 @@ fn stress_1m_elements_100k_embed_rows() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let db_path: PathBuf = tmp.path().join(".leankg");
-    let db = schema::init_db(&db_path).expect("init_db");
-    let graph = GraphEngine::new(db);
+    let db = leankg::db::backend::init_db(&db_path).expect("init_db");
+    let graph = GraphEngine::new(db.clone());
     ensure_pending_table(&graph).expect("create pending table");
 
     eprintln!("[stress] indexing {n} elements in batches of {batch}");

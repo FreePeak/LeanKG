@@ -1,7 +1,7 @@
-use leankg::db::{self, models::Incident, schema::init_db};
+use leankg::db::{self, backend::init_db, models::Incident};
 use leankg::graph::GraphEngine;
 
-fn test_db() -> (tempfile::TempDir, leankg::db::schema::CozoDb) {
+fn test_db() -> (tempfile::TempDir, leankg::db::backend::SharedDb) {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(&db_path).unwrap();
@@ -9,7 +9,7 @@ fn test_db() -> (tempfile::TempDir, leankg::db::schema::CozoDb) {
 }
 
 fn insert_service(
-    db: &leankg::db::schema::CozoDb,
+    db: &dyn leankg::db::backend::DbBackend,
     qualified_name: &str,
     name: &str,
     env: &str,
@@ -37,10 +37,10 @@ fn insert_service(
         "env".to_string(),
         serde_json::Value::String(env.to_string()),
     );
-    leankg::db::schema::run_script(db, query, params).unwrap();
+    db.run_script(query, params).unwrap();
 }
 
-fn insert_call(db: &leankg::db::schema::CozoDb, source: &str, target: &str, env: &str) {
+fn insert_call(db: &dyn leankg::db::backend::DbBackend, source: &str, target: &str, env: &str) {
     let query = r#"
     ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] <-
     [[$source, $target, "calls", 1.0, "{}", $env]]
@@ -59,19 +59,19 @@ fn insert_call(db: &leankg::db::schema::CozoDb, source: &str, target: &str, env:
         "env".to_string(),
         serde_json::Value::String(env.to_string()),
     );
-    leankg::db::schema::run_script(db, query, params).unwrap();
+    db.run_script(query, params).unwrap();
 }
 
 #[test]
 fn v2_schema_uses_canonical_env_arity() {
     let (_tmp, db) = test_db();
 
-    leankg::db::schema::run_script(&db,
+    db.run_script(
         "?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] :limit 0",
         Default::default(),
     )
     .unwrap();
-    leankg::db::schema::run_script(&db,
+    db.run_script(
         "?[source_qualified] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env] :limit 0",
         Default::default(),
     )
@@ -97,11 +97,18 @@ fn incidents_filter_by_service_pattern_and_env() {
         author: "oncall".to_string(),
         linked_ticket: None,
     };
-    db::create_incident(&db, &incident).unwrap();
+    db::create_incident(db.as_ref(), &incident).unwrap();
 
-    let by_service =
-        db::query_incidents(&db, Some("api"), Some("connection"), Some("production"), 10).unwrap();
-    let wrong_env = db::query_incidents(&db, Some("api"), None, Some("staging"), 10).unwrap();
+    let by_service = db::query_incidents(
+        db.as_ref(),
+        Some("api"),
+        Some("connection"),
+        Some("production"),
+        10,
+    )
+    .unwrap();
+    let wrong_env =
+        db::query_incidents(db.as_ref(), Some("api"), None, Some("staging"), 10).unwrap();
 
     assert_eq!(by_service.len(), 1);
     assert_eq!(by_service[0].id, "inc-1");
@@ -111,12 +118,12 @@ fn incidents_filter_by_service_pattern_and_env() {
 #[test]
 fn graph_service_context_reads_env_scoped_data() {
     let (_tmp, db) = test_db();
-    insert_service(&db, "api", "api", "production", "abc123");
-    insert_service(&db, "database", "database", "production", "def456");
-    insert_call(&db, "api", "database", "production");
+    insert_service(db.as_ref(), "api", "api", "production", "abc123");
+    insert_service(db.as_ref(), "database", "database", "production", "def456");
+    insert_call(db.as_ref(), "api", "database", "production");
 
     db::create_incident(
-        &db,
+        db.as_ref(),
         &Incident {
             id: "inc-2".to_string(),
             env: "production".to_string(),
