@@ -648,8 +648,8 @@ fn tool_sweep_cozo_vs_postgres() {
                     equal = true;
                 } else {
                     note = format!("DIFF: cozo={c_str} PG={p_str}");
-                    if note.len() > 2000 {
-                        note.truncate(2000);
+                    if note.len() > 5000 {
+                        note.truncate(5000);
                     }
                 }
             }

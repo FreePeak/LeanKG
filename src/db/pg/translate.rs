@@ -808,12 +808,17 @@ fn resolve_filter_aliases(filters: &str, rel_cols: &[String]) -> String {
         if real == *alias {
             continue;
         }
-        // Word-boundary replacement (not inside strings).
-        let pat = format!(" {alias} ");
-        let pat2 = format!(" {alias}[");
-        if out.contains(&pat) || out.contains(&pat2) {
-            out = out.replace(&pat, &format!(" {real} "));
-            out = out.replace(&pat2, &format!(" {real}["));
+        // Word-boundary replacement (not inside strings). The alias can be
+        // preceded by a space, a comma, an open paren, or the start of the
+        // filter text (` ,fp >= $lo and fp < $hi` — the first `fp` after
+        // the relation block comma has no leading space). Match any of
+        // those boundaries and a following space / `[`.
+        let boundaries = [" ", ",", "("];
+        for b in &boundaries {
+            let pat = format!("{b}{alias} ");
+            let pat2 = format!("{b}{alias}[");
+            out = out.replace(&pat, &format!("{b}{real} "));
+            out = out.replace(&pat2, &format!("{b}{real}["));
         }
     }
     out
