@@ -304,22 +304,6 @@ fn seed_knowledge(db: &leankg::db::backend::PostgresBackend) {
 
 /// 384-dim unit vectors for the fixture elements (dim must match the
 /// schema's vector(384) + the embedder dimension).
-fn vector_for(i: usize, qn: &str) -> String {
-    let mut v: Vec<f32> = vec![0.0; 384];
-    v[i % 384] = 1.0;
-    // Fold the name in so cosine similarity is not identical for all rows.
-    let seed = qn
-        .bytes()
-        .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
-    v[(seed % 384) as usize] = 1.0;
-    format!(
-        "[{}]",
-        v.iter()
-            .map(|x| x.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    )
-}
 
 fn seed_fixture(db: &leankg::db::backend::PostgresBackend) {
     for stmt in [
@@ -415,61 +399,6 @@ fn fixture_repo(tmp: &tempfile::TempDir) {
 }
 
 /// Normalise volatile fields before comparing cozo vs PG JSON.
-fn normalize(v: &mut Value) {
-    let volatile = [
-        "database",
-        "storage_path",
-        "storage_engine",
-        "counts_included",
-        "initialized",
-        "index_populated",
-        "database_exists",
-        "execution_time_ms",
-        "elapsed",
-        "started_at",
-        "total_execution_ms",
-        "took_ms",
-        "cache_hit",
-        "source",
-        "created_at",
-        "updated_at",
-        "occurred_at",
-        "embedded_at",
-        "project_path",
-        "timestamp",
-    ];
-    match v {
-        Value::Object(map) => {
-            for k in volatile {
-                if map.contains_key(k) {
-                    map.insert(k.to_string(), Value::String("<volatile>".into()));
-                }
-            }
-            // review_prompt (get_review_context) embeds per-file element
-            // lists in DB row order — cozo store order vs PG planner order
-            // differ run-to-run though the content is identical. Sort its
-            // lines so the comparison is order-independent.
-            if let Some(Value::String(p)) = map.get_mut("review_prompt") {
-                let mut lines: Vec<&str> = p.lines().collect();
-                lines.sort();
-                *p = lines.join("\n");
-            }
-            for val in map.values_mut() {
-                normalize(val);
-            }
-        }
-        Value::Array(arr) => {
-            for val in arr.iter_mut() {
-                normalize(val);
-            }
-            // Order-independent comparison: cozo returns rows in store order,
-            // PG in planner order — for identical content the arrays must be
-            // treated as multisets unless the tool's contract pins order.
-            arr.sort_by_key(|v| serde_json::to_string(v).unwrap_or_default());
-        }
-        _ => {}
-    }
-}
 
 /// Run one tool against one handler, return (ok, latency ms).
 async fn run_tool(handler: &ToolHandler, tool: &str, args: &Value) -> (Result<Value, String>, f64) {
