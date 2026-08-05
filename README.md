@@ -139,6 +139,17 @@ Point your MCP client at `http://localhost:9699/mcp`. Multi-project RocksDB moun
 
 ## Get Started
 
+### 0. Start Postgres
+
+LeanKG stores everything in PostgreSQL + pgvector (the only storage engine). Local dev:
+
+```bash
+docker compose up postgres
+export LEANKG_PG_URL=postgresql://postgres:postgres@localhost:5432/leankg
+```
+
+See [docs/analysis/pg-migration-report.md](docs/analysis/pg-migration-report.md) for the migration details and env-var reference.
+
 ### 1. Wire up your agent(s)
 
 Installing the binary alone does **not** connect your agent. Run setup (or use an install target above) so MCP is registered:
@@ -248,9 +259,9 @@ Full methodology: [docs/benchmark.md](docs/benchmark.md)
 - **Procedural ontology auto-update** — edit `ontology/workflows.yaml` while serving; watcher re-syncs so `kg_trace_workflow` returns corrected steps without restart
 - **Impact radius** — blast radius before you change code, with confidence and severity
 - **Dependency graph** — `imports`, `calls`, `tested_by`, `http_calls`, `service_calls`, tunnels, and more
-- **Semantic search** — CozoDB HNSW over dense embeddings (`--features embeddings`; included in Docker)
+- **Semantic search** — Postgres pgvector HNSW over dense embeddings (`--features embeddings`; included in Docker)
 - **Community detection** — Leiden clusters with per-cluster skill context
-- **Local-first storage** — SQLite by default; RocksDB for multi-project / team deploy
+- **Postgres storage** — PostgreSQL + pgvector (D4); the only storage engine (local dev via `docker compose up postgres`)
 - **Token-aware payloads** — targeted subgraphs + TOON responses (~40% smaller MCP payloads)
 - **Team knowledge** — incidents, env conflicts, service topology, Obsidian vault sync
 - **Graph export** — Mermaid, DOT, HTML, SVG, GraphML, Neo4j, portable snapshots
@@ -315,7 +326,7 @@ Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs
 ## How It Works
 
 1. **Extract** — tree-sitter (and language-specific extractors) turn source into `CodeElement` nodes and typed relationships.
-2. **Store** — CozoDB over SQLite (local), embedded RocksDB (Docker, single container), or a remote `cozoserver` (enterprise two-container mode — see [docs/enterprise-docker.md](docs/enterprise-docker.md)) holds the graph + optional HNSW vectors.
+2. **Store** — PostgreSQL + pgvector (see [docs/analysis/pg-migration-report.md](docs/analysis/pg-migration-report.md)) holds the graph + HNSW vectors. Local dev: `docker compose up postgres` then set `LEANKG_PG_URL`.
 3. **Serve** — MCP stdio (editor agents) or HTTP/SSE (Docker / remote) answers tools like `get_impact_radius`, `search_code`, `semantic_search`, `get_architecture`.
 4. **Refresh** — `--watch` and incremental index keep code edges fresh; ontology YAML watch keeps procedural workflows aligned.
 
