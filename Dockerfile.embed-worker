@@ -1,0 +1,21 @@
+# Embedder worker image. Uses the locally-built embed-enabled binary
+# (target/release/leankg with --features=embeddings). Built in two stages:
+# the binary is copied into a non-`target/` path so .dockerignore doesn't
+# exclude it, then copied into the runtime image.
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY .docker-build/leankg /usr/local/bin/leankg
+
+ENV LEANKG_EMBED_FAST=1 \
+    LEANKG_EMBED_MODEL=bge-q \
+    LEANKG_EMBED_MAX_SEQ=128 \
+    LEANKG_EMBED_MAX_BLOB_CHARS=500 \
+    LEANKG_INSERT_BATCH_SIZE=20000
+
+CMD ["leankg", "embed", "--wait", "--project", "/workspace"]
