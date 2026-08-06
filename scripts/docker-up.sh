@@ -38,6 +38,19 @@ if [[ ! -d "$HOST_DIR" ]]; then
   exit 1
 fi
 
+# PG pre-flight: catch missing/closed Postgres early so the user doesn't get an
+# opaque "connection refused" from inside the container on first index.
+PG_URL="${LEANKG_PG_URL:-postgresql://postgres:postgres@localhost:5433/leankg}"
+PG_HOST=$(echo "$PG_URL" | sed -E 's#.*@([^:/]+).*#\1#')
+PG_PORT=$(echo "$PG_URL" | sed -E 's#.*@[^:/]+:([0-9]+).*#\1#')
+if command -v nc >/dev/null 2>&1; then
+  if ! nc -z -G 2 "$PG_HOST" "$PG_PORT" 2>/dev/null && ! nc -z -w 2 "$PG_HOST" "$PG_PORT" 2>/dev/null; then
+    echo "ERROR: PostgreSQL unreachable at $PG_HOST:$PG_PORT (from LEANKG_PG_URL)." >&2
+    echo "  Start Postgres (or override LEANKG_PG_URL) before running again." >&2
+    exit 1
+  fi
+fi
+
 echo "=== LeanKG Docker setup ==="
 echo "  image:     $IMAGE"
 echo "  host dir:  $HOST_DIR → /workspace"
@@ -55,7 +68,7 @@ VOLUMES=(
   -v leankg-models:/root/.cache/leankg
 )
 ENV_COMMON=(
-  -e LEANKG_PG_URL="${LEANKG_PG_URL:-postgresql://postgres:postgres@localhost:5433/leankg}"
+  -e LEANKG_PG_URL="${PG_URL}"
   -e LEANKG_MCP_PROJECT=/workspace
   -e LEANKG_AUTO_INDEX=1
   -e LEANKG_EMBED_ON_BOOT=0
