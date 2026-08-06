@@ -198,6 +198,7 @@ mod tests {
             pool: std::sync::Arc::new(crate::db::backend::ClientPool::new(1)),
             ro_pool: std::sync::Arc::new(crate::db::backend::ClientPool::new(1)),
             read_only: false,
+            write_bus: None,
         }
     }
 

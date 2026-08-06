@@ -219,6 +219,13 @@ CREATE INDEX IF NOT EXISTS knowledge_entries_type_index ON knowledge_entries (kn
 CREATE INDEX IF NOT EXISTS knowledge_entries_element_index ON knowledge_entries (element_qualified);
 CREATE INDEX IF NOT EXISTS knowledge_entries_env_index ON knowledge_entries (environment);
 CREATE INDEX IF NOT EXISTS knowledge_entries_author_index ON knowledge_entries (author);
+-- Slice 7 audit (2026-08-06): the only `knowledge_entries` exact-match
+-- path is `id = $id` (update_knowledge / delete_knowledge at db/mod.rs:894
+-- and :rm at 921). Without this index every update/delete is a sequential
+-- scan. The cozo comment notes `id` is "unique per writer" — promote that
+-- intent to a real constraint; it also makes ON CONFLICT (id) DO UPDATE
+-- viable if a future writer ever double-puts.
+CREATE UNIQUE INDEX IF NOT EXISTS knowledge_entries_id_uniq ON knowledge_entries (id);
 
 -- ---------------------------------------------------------------------------
 -- feature_workflow_links — no PK in cozo (composite tuple key), none here.

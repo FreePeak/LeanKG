@@ -26,11 +26,40 @@ pub trait DbBackend: Send + Sync {
         params: BTreeMap<String, serde_json::Value>,
     ) -> Result<NamedRows, Box<dyn std::error::Error>>;
 
+    /// Submit a write through the priority write bus (Slice 4 seam).
+    ///
+    /// Default impl runs inline (same as `run_script`). The PG backend
+    /// overrides to route via [`crate::db::write_bus::WriteBus`] when the
+    /// backend carries one, so tool writes jump embed writes without
+    /// callers having to know which backend they hold. Callers use this
+    /// for tool writes (add_knowledge, add_annotation, ...); reads and
+    /// embed bulk writes keep using `run_script` / `import_relations`.
+    fn submit_write(
+        &self,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
+        _priority: crate::db::write_bus::Priority,
+    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
+        self.run_script(query, params)
+    }
+
     /// Bulk-load named rows into a relation.
     fn import_relations(
         &self,
         data: BTreeMap<String, NamedRows>,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Priority variant of `import_relations` for embed bulk writes
+    /// (Slice 5). Default impl runs inline; PG backend overrides to route
+    /// through the bus as `Priority::EmbedWrite` so tool writes can jump
+    /// embed batches.
+    fn submit_import(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+        _priority: crate::db::write_bus::Priority,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.import_relations(data)
+    }
 
     /// Safe-to-log connection URL (password masked).
     fn redacted_url(&self) -> String;
@@ -70,6 +99,11 @@ pub struct PostgresBackend {
     /// `init_db_readonly` semantics on PG. Writes through such a backend
     /// fail at the Postgres layer with a clean error, never silently.
     pub read_only: bool,
+    /// Optional priority write bus (Slice 3). When `Some`, write-classified
+    /// scripts are submitted to the bus (so tool writes jump embed writes).
+    /// When `None` — the current default — writes run inline as before.
+    /// Opt-in to avoid touching every test backend constructor today.
+    pub write_bus: Option<Arc<dyn crate::db::write_bus::WriteBus>>,
 }
 
 /// RAII checked-out connection: returns its client to the pool on drop.
@@ -278,6 +312,7 @@ impl PostgresBackend {
             pool: Arc::new(ClientPool::new(pool_size)),
             ro_pool: Arc::new(ClientPool::new(pool_size)),
             read_only: false,
+            write_bus: None,
         })
     }
 
@@ -768,11 +803,67 @@ impl DbBackend for PostgresBackend {
         PostgresBackend::run_script(self, query, params)
     }
 
+    fn submit_write(
+        &self,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
+        priority: crate::db::write_bus::Priority,
+    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
+        // Route through the priority bus when attached. The bus worker
+        // already runs in a tokio task; `block_in_place` on the sync
+        // `postgres::Client` inside the closure is safe.
+        match &self.write_bus {
+            Some(bus) => {
+                let query = query.to_string();
+                let me = self.clone();
+                let params_clone = params.clone();
+                bus.submit(crate::db::write_bus::WriteJob {
+                    priority,
+                    kind: "tool_write",
+                    run: Box::new(move || {
+                        me.run_script(&query, params_clone)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    }),
+                })
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+                // Writes are fire-and-forget on the bus; the caller cannot
+                // observe per-row results. Reads still go through run_script.
+                Ok(NamedRows::new(Vec::new(), Vec::new()))
+            }
+            None => self.run_script(query, params),
+        }
+    }
+
     fn import_relations(
         &self,
         data: BTreeMap<String, NamedRows>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         PostgresBackend::import_relations(self, data)
+    }
+
+    fn submit_import(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+        priority: crate::db::write_bus::Priority,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match &self.write_bus {
+            Some(bus) => {
+                let me = self.clone();
+                let kind = match priority {
+                    crate::db::write_bus::Priority::EmbedWrite => "embed_import",
+                    crate::db::write_bus::Priority::ToolWrite => "tool_import",
+                };
+                bus.submit(crate::db::write_bus::WriteJob {
+                    priority,
+                    kind,
+                    run: Box::new(move || me.import_relations(data).map_err(|e| e.to_string())),
+                })
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+                Ok(())
+            }
+            None => self.import_relations(data),
+        }
     }
 
     fn redacted_url(&self) -> String {
@@ -1164,6 +1255,7 @@ mod tests {
             pool: std::sync::Arc::new(ClientPool::new(1)),
             ro_pool: std::sync::Arc::new(ClientPool::new(1)),
             read_only: false,
+            write_bus: None,
         };
         let err = pg
             .run_script("?[a] := *x[a]", Default::default())
@@ -1329,5 +1421,105 @@ mod tests {
         assert_eq!(s.get_str(), Some("hi"));
         let b = DataValue::Bool(true);
         assert_eq!(b.get_bool(), Some(true));
+    }
+
+    // ------------------------------------------------------------------
+    // Slice 3 — write_bus=None keeps the current direct path (no
+    // regression). With Some(bus), writes route through the bus (Slice 4
+    // wires callers). This test exercises the seam on the bus side: the
+    // closure submitted from a write site runs on the worker.
+    // ------------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn write_bus_some_routes_writes_through_worker() {
+        use crate::db::backend::DbBackend;
+        use crate::db::fake::FakeBackend;
+        use crate::db::write_bus::{InProcessWriteBus, Priority, WriteBus, WriteJob};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let backend: Arc<dyn DbBackend> = Arc::new(FakeBackend::new());
+        let bus = Arc::new(InProcessWriteBus::default());
+        let executed = Arc::new(AtomicUsize::new(0));
+
+        // The closure body mirrors what Slice 4 will execute from the MCP
+        // tool handlers: translate() + checkout + execute() on the shared
+        // backend. For this RED test, the FakeBackend's run_script on a
+        // `:put` query is what counts.
+        let backend_for_job = backend.clone();
+        let executed_for_job = executed.clone();
+        bus.submit(WriteJob {
+            priority: Priority::ToolWrite,
+            kind: "tool_write",
+            run: Box::new(move || {
+                let q = "?[a] <- [[$a]] :put business_logic { element_qualified: $a }";
+                let mut params = std::collections::BTreeMap::new();
+                params.insert(
+                    "a".to_string(),
+                    serde_json::Value::String("src/lib.rs::foo".to_string()),
+                );
+                backend_for_job
+                    .run_script(q, params)
+                    .map_err(|e| e.to_string())?;
+                executed_for_job.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+        })
+        .unwrap();
+
+        // Poll until the worker drains.
+        let mut tries = 0;
+        while executed.load(Ordering::SeqCst) == 0 && tries < 200 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            tries += 1;
+        }
+        assert_eq!(
+            executed.load(Ordering::SeqCst),
+            1,
+            "bus-routed write must execute the closure once"
+        );
+        bus.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // Slice 4 — trait `submit_write` on PostgresBackend routes via the
+    // bus when one is attached, and falls back to inline `run_script`
+    // when not. We exercise the override path with a dead URL: the bus
+    // path is fire-and-forget so the call returns Ok even though the
+    // inner closure would fail at connect time. The smoke test confirms
+    // the bus is consulted (the override does not short-circuit to
+    // inline run_script, which would surface a connection error).
+    // ------------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn submit_write_with_bus_does_not_connect_inline() {
+        use crate::db::backend::DbBackend;
+        use crate::db::write_bus::{InProcessWriteBus, Priority};
+        use std::sync::Arc;
+
+        let mut pg = PostgresBackend {
+            pg_url: "postgres://invalid-host-not-real:1/leankg".into(),
+            pool: std::sync::Arc::new(ClientPool::new(1)),
+            ro_pool: std::sync::Arc::new(ClientPool::new(1)),
+            read_only: false,
+            write_bus: None,
+        };
+        // Same backend with a write bus attached.
+        let bus = Arc::new(InProcessWriteBus::default());
+        pg.write_bus = Some(bus.clone());
+        // Bus path is fire-and-forget → returns Ok without ever touching
+        // the network. Inline run_script on the same backend would fail
+        // with a connection error. This confirms the override routed via
+        // the bus.
+        let q = "?[a] <- [[$a]] :put business_logic { element_qualified: $a }";
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("a".to_string(), serde_json::Value::String("x".into()));
+        let res = pg.submit_write(q, params, Priority::ToolWrite);
+        assert!(
+            res.is_ok(),
+            "submit_write with bus must not error on dead URL (bus is async), got {:?}",
+            res.err()
+        );
+        bus.shutdown();
     }
 }

@@ -359,4 +359,124 @@ mod tests {
         assert!(res.is_ok(), "fresh bus must accept a job");
         bus.shutdown();
     }
+
+    // ------------------------------------------------------------------
+    // Slice 1 — closure runs the backend write on the bus worker.
+    // The integration under test: a caller submits a WriteJob whose
+    // closure executes a write against a shared backend (FakeBackend in
+    // tests, PostgresBackend in prod). After submit returns, the worker
+    // must execute the closure exactly once. We assert via a recorder
+    // shared between the closure and the test, mirroring the contract
+    // the MCP tool handlers will rely on once they call submit().
+    // ------------------------------------------------------------------
+
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct Recorder(Arc<AtomicUsize>);
+
+    impl Recorder {
+        fn bump(&self) {
+            self.0.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        fn count(&self) -> usize {
+            self.0.load(AtomicOrdering::SeqCst)
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn closure_runs_against_shared_backend() {
+        let bus = InProcessWriteBus::default();
+        let recorder = Recorder::default();
+        let recorder_for_job = Recorder(recorder.0.clone());
+
+        // The "backend write" here is just a counter bump; the real backend
+        // call (run_script on PostgresBackend / FakeBackend) is what callers
+        // put inside the closure. We're testing that the bus executes the
+        // closure on its worker thread exactly once.
+        bus.submit(WriteJob {
+            priority: Priority::ToolWrite,
+            kind: "tool_write",
+            run: Box::new(move || {
+                recorder_for_job.bump();
+                Ok(())
+            }),
+        })
+        .unwrap();
+
+        // Poll until the worker has run the job (avoid fixed sleeps).
+        let mut tries = 0;
+        while recorder.count() == 0 && tries < 100 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            tries += 1;
+        }
+        assert_eq!(
+            recorder.count(),
+            1,
+            "closure must run exactly once after submit() returns, got {} after {} polls",
+            recorder.count(),
+            tries
+        );
+        bus.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // Slice 2 — priority ordering across queued jobs (the contract MCP
+    // tool writers rely on: an in-flight embed batch cannot starve a
+    // tool write that arrives after). When all jobs are queued ahead of
+    // execution, the highest-priority job runs first.
+    // ------------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tool_write_runs_before_buffered_embed_writes() {
+        // The bus worker is single-threaded and serial. Submit several
+        // embed jobs (Priority::EmbedWrite) followed by a tool job
+        // (Priority::ToolWrite). Because all submissions happen before
+        // any closure runs, the worker should pick the tool job first
+        // per the priority heap.
+        let bus = InProcessWriteBus::default();
+        let order: Arc<std::sync::Mutex<Vec<&'static str>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        for _ in 0..3 {
+            let order = order.clone();
+            bus.submit(WriteJob {
+                priority: Priority::EmbedWrite,
+                kind: "embed",
+                run: Box::new(move || {
+                    order.lock().unwrap().push("embed");
+                    Ok(())
+                }),
+            })
+            .unwrap();
+        }
+        let order_tool = order.clone();
+        bus.submit(WriteJob {
+            priority: Priority::ToolWrite,
+            kind: "tool",
+            run: Box::new(move || {
+                order_tool.lock().unwrap().push("tool");
+                Ok(())
+            }),
+        })
+        .unwrap();
+
+        // Poll until the worker drains.
+        let mut tries = 0;
+        while order.lock().unwrap().len() < 4 && tries < 200 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            tries += 1;
+        }
+        let got = order.lock().unwrap().clone();
+        assert_eq!(got.len(), 4, "all jobs must run, got {got:?}");
+        // The tool write is the only ToolWrite; it must be dequeued first
+        // by the heap even though it was submitted last (FIFO-within-tier
+        // is overridden by priority across tiers).
+        assert_eq!(
+            got[0], "tool",
+            "tool write must run before any buffered embed write, got {got:?}"
+        );
+        bus.shutdown();
+    }
 }
