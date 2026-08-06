@@ -56,7 +56,7 @@
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <opencode|cursor|claude|gemini|kilo|antigravity|docker|update|version>
 ```
 
 | Target                            | What you get                                                              |
@@ -213,7 +213,7 @@ graph LR
 
 ### Company ROI vs grep and Graphify
 
-For engineering managers choosing a team-wide stack: [LeanKG vs Graphify — Company ROI Brief](docs/reports/leankg-vs-graphify-company-roi-2026-07-21.md) (token/tool-call floors, multi-repo Docker TCO, mega-graph safety, ops/traceability). The primary adoption lever is always-on graph-first install (`curl …/install.sh | bash -s -- cursor` or `claude`) so agents query the graph before grep.
+For engineering managers choosing a team-wide stack: [LeanKG vs Graphify — Company ROI Brief](docs/reports/leankg-vs-graphify-company-roi-2026-07-21.md) (token/tool-call floors, multi-repo Docker TCO, mega-graph safety, ops/traceability). The primary adoption lever is always-on graph-first install (`curl …/install.sh | bash -s -- claude` or `cursor`) so agents query the graph before grep. Note: the PreToolUse "use LeanKG before grep" hook is wired for `claude` and `cursor` targets only — `opencode`/`gemini`/`kilo`/`antigravity` install the MCP server but rely on agent-side instruction following rather than a hard block.
 
 ---
 

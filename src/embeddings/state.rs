@@ -220,10 +220,16 @@ pub fn mark_stale_for_qualified_names(
     if qualified_names.is_empty() {
         return Ok(());
     }
+    // Dedupe: a single `:put` with two rows for the same PK fails with
+    // E21000 ("ON CONFLICT DO UPDATE command cannot affect row a second
+    // time"). The indexer can hand us the same qualified_name twice (e.g.
+    // host-path + workspace-path copies of the same file).
     let now = now_iso();
+    let mut seen = std::collections::HashSet::with_capacity(qualified_names.len());
     for chunk in qualified_names.chunks(UPSERT_CHUNK) {
         let rows: Vec<String> = chunk
             .iter()
+            .filter(|qn| seen.insert(qn.to_string()))
             .map(|qn| {
                 // usearch_key column is now legacy (CozoDB HNSW keys on
                 // qualified_name directly). Stored as 0 for schema-compat.
@@ -539,5 +545,48 @@ mod tests {
         )
         .unwrap();
         assert!(has_any(db.as_ref()).unwrap());
+    }
+
+    #[test]
+    fn mark_stale_dedupes_duplicate_qualified_names() {
+        // Regression: duplicate qualified_names in one call must not emit a
+        // `:put` with two rows for the same PK (E21000 on PG).
+        use crate::db::backend::PostgresBackend;
+        let Ok(db) = PostgresBackend::from_env() else {
+            eprintln!("skipping: LEANKG_PG_URL not set");
+            return;
+        };
+        let boxed: Box<dyn crate::db::backend::DbBackend> = Box::new(db);
+        let dupes: Vec<String> = vec![
+            "/dup/qn".to_string(),
+            "/dup/qn".to_string(),
+            "/dup/qn".to_string(),
+            "/other/qn".to_string(),
+        ];
+        // Should not error (no E21000) even though /dup/qn appears 3x.
+        mark_stale_for_qualified_names(boxed.as_ref(), &dupes).expect("dedupe must prevent E21000");
+        // Clean up the rows we inserted.
+        let clean = r#"?[qualified_name] <- [["/dup/qn"], ["/other/qn"]]
+:rm embedding_state {qualified_name}"#;
+        let _ = boxed.run_script(clean, std::collections::BTreeMap::new());
+    }
+
+    #[test]
+    fn mark_stale_many_identical_qns_no_e21000() {
+        // Reproduces the indexer on a real codebase: vis-network.min.js
+        // yields 171 identical qualified_names. A single `:put` with all of
+        // them must not E21000 (dedupe collapses to one row).
+        use crate::db::backend::PostgresBackend;
+        let Ok(db) = PostgresBackend::from_env() else {
+            eprintln!("skipping: LEANKG_PG_URL not set");
+            return;
+        };
+        let boxed: Box<dyn crate::db::backend::DbBackend> = Box::new(db);
+        let dupes: Vec<String> = (0..171).map(|_| "/vis/constructor".to_string()).collect();
+        mark_stale_for_qualified_names(boxed.as_ref(), &dupes)
+            .expect("171 identical qns must not E21000");
+        let clean = r#"?[qualified_name] <- [["/vis/constructor"]]
+:rm embedding_state {qualified_name}"#;
+        let _ = boxed.run_script(clean, std::collections::BTreeMap::new());
     }
 }

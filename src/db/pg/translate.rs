@@ -1861,6 +1861,17 @@ fn render_clause<'a>(
         return Ok((format!("{lhs_sql} {op} {placeholder}"), used, clause));
     }
 
+    // Boolean literal `true` / `false` — bind as a bool param. A bare
+    // `false` must not fall through to scalar_expr, which would emit
+    // `"is_deleted" = false` and Postgres would read `false` as a column
+    // name (E42703).
+    if rhs == "true" || rhs == "false" {
+        let placeholder = format!("${}", *next_idx);
+        *next_idx += 1;
+        let used = vec![json_to_pg(serde_json::Value::Bool(rhs == "true"))];
+        return Ok((format!("{lhs_sql} {op} {placeholder}"), used, clause));
+    }
+
     // Computed RHS expression (e.g. `span = line_end - line_start`,
     // `(line_end - line_start + 1) >= 50`).
     let rhs_sql = scalar_expr(rhs);
@@ -2332,7 +2343,45 @@ fn put_from_literal(
             ));
         }
     }
-    build_insert(&infer_table(cols, pk), cols, pk, &rows, is_keyed)
+    let table = infer_table(cols, pk);
+    // Resolve the effective PK from the known table catalog when the caller
+    // omitted the `=>` marker (Cozo allows `:put t {cols}` on a keyed table
+    // — the PK is implied by the table). Without this, a re-`put` of an
+    // existing row hits `embedding_state_pkey` (duplicate key).
+    let (pk, keyed) = resolve_effective_pk(&table, pk, is_keyed);
+    build_insert(&table, cols, pk.as_deref(), &rows, keyed)
+}
+
+/// Known primary-key columns per table (schema.sql). Used to turn a
+/// `:put t {cols}` (no `=>`) on a keyed table into an `INSERT ... ON
+/// CONFLICT (pk) DO UPDATE` instead of a plain INSERT.
+fn pk_for_table(table: &str) -> Option<&'static str> {
+    match table {
+        "embedding_state" => Some("qualified_name"),
+        "embedding_vectors" => Some("qualified_name"),
+        "index_inventory" => Some("key"),
+        "index_hashes" => Some("path"),
+        "migrations" => Some("id"),
+        "api_keys" => Some("key_hash"),
+        _ => None,
+    }
+}
+
+/// Effective (pk, is_keyed) for a `:put`. The explicit `=>` marker wins;
+/// otherwise fall back to the table's known PK so keyed tables still
+/// upsert. Unknown tables stay non-keyed (plain INSERT).
+fn resolve_effective_pk(
+    table: &str,
+    explicit_pk: Option<&str>,
+    is_keyed: bool,
+) -> (Option<String>, bool) {
+    match explicit_pk {
+        Some(pk) => (Some(pk.to_string()), is_keyed),
+        None => match pk_for_table(table) {
+            Some(pk) => (Some(pk.to_string()), true),
+            None => (None, is_keyed),
+        },
+    }
 }
 
 /// Find the table name for a `:put` target by matching its columns to known
@@ -2361,6 +2410,12 @@ fn infer_table(cols: &[String], pk: Option<&str>) -> String {
     // Fallback: guess by column signature.
     if cols == ["path", "hash"] || cols == ["hash"] || cols == ["path"] {
         "index_hashes".into()
+    } else if cols.contains(&"usearch_key".to_string()) {
+        // embedding_state — 5-col shape `[qualified_name, usearch_key,
+        // content_hash, state, embedded_at]`. Must precede the generic
+        // element_type/qualified_name checks below (qualified_name alone
+        // would otherwise mis-resolve to code_elements).
+        "embedding_state".into()
     } else if cols.contains(&"element_type".to_string()) {
         "code_elements".into()
     } else if cols.contains(&"rel_type".to_string()) {
@@ -2739,7 +2794,8 @@ fn put_from_batch(
         }
     }
     let _ = name;
-    build_insert(&table, cols, pk, &rows, is_keyed)
+    let (pk, keyed) = resolve_effective_pk(&table, pk, is_keyed);
+    build_insert(&table, cols, pk.as_deref(), &rows, keyed)
 }
 
 fn rm_script(
@@ -2750,10 +2806,13 @@ fn rm_script(
     // Shape B: literal rm — `?[col] <- [{values}] :rm rel {col}` (key-only).
     let idx = body.find(":rm").ok_or("no :rm in body".to_string())?;
     // The target may carry the table name (`:rm relationships {cols}`) or
-    // not (`:rm {cols}`). Strip any `name {` prefix so only the column
-    // list remains.
+    // not (`:rm {cols}`). Keep the explicit table name (the prefix before
+    // `{`) so ambiguous key columns (e.g. `qualified_name` on both
+    // embedding_state and embedding_vectors) resolve to the caller's table,
+    // not a best-guess from the key column alone.
     let target = body[idx + 3..].trim();
     let brace_open = target.find('{').unwrap_or(0);
+    let explicit_table = target[..brace_open].trim();
     let target_cols = &target[brace_open..];
     let inner = target_cols
         .trim_start_matches('{')
@@ -2797,9 +2856,15 @@ fn rm_script(
         let list_text = after_arrow.trim();
         let arr = parse_nested_lists(list_text)?;
         let key_col = cols.first().cloned().unwrap_or_default();
-        let table = match infer_table_by_key(&key_col) {
-            Some(t) => t.to_string(),
-            None => infer_table(&cols, None),
+        // Explicit table name wins over key-column inference — `qualified_name`
+        // is the PK of both embedding_state and embedding_vectors.
+        let table = if !explicit_table.is_empty() {
+            explicit_table.to_string()
+        } else {
+            match infer_table_by_key(&key_col) {
+                Some(t) => t.to_string(),
+                None => infer_table(&cols, None),
+            }
         };
         let pk = key_col;
         // Flatten the outer array: each row is a single column.
@@ -2960,11 +3025,29 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
     }
     if let Some(_after) = trimmed.strip_prefix("create") {
         if trimmed.contains("embedding_vectors") {
+            // Respect the caller's `m` / `ef_construction` (from
+            // LEANKG_HNSW_M / LEANKG_HNSW_EF_CONST, see
+            // build_hnsw_create_stmt) instead of silently hardcoding.
+            let mut m = 16usize;
+            let mut ef = 200usize;
+            for line in trimmed.lines() {
+                let l = line.trim().trim_end_matches(',');
+                if let Some(v) = l.strip_prefix("m:") {
+                    if let Ok(p) = v.trim().parse::<usize>() {
+                        m = p;
+                    }
+                } else if let Some(v) = l.strip_prefix("ef_construction:") {
+                    if let Ok(p) = v.trim().parse::<usize>() {
+                        ef = p;
+                    }
+                }
+            }
             return Ok(Translation::write(
-                "CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx \
-                 ON embedding_vectors USING hnsw (vec vector_cosine_ops) \
-                 WITH (m = 16, ef_construction = 200)"
-                    .to_string(),
+                format!(
+                    "CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx \
+                     ON embedding_vectors USING hnsw (vec vector_cosine_ops) \
+                     WITH (m = {m}, ef_construction = {ef})"
+                ),
                 Vec::new(),
             ));
         }
@@ -3871,6 +3954,24 @@ fn rm_literal_key_only_with_table_prefix() {
 }
 
 #[test]
+fn rm_embedding_state_with_table_prefix() {
+    // delete_state_rows targets `embedding_state`, whose PK `qualified_name`
+    // is shared with embedding_vectors. The explicit table prefix must win
+    // over key-column inference, else this deletes from the wrong table.
+    let t = translate(
+        r#"?[qualified_name] <- [["a"], ["b"]] :rm embedding_state {qualified_name}"#,
+        std::collections::BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql
+            .contains("DELETE FROM embedding_state WHERE \"qualified_name\" = ANY($1::text[])"),
+        "got: {}",
+        t.sql
+    );
+}
+
+#[test]
 fn put_embedding_vectors_maps_vector_to_vec() {
     // B1 — put_pairs_to_db_script shape: cozo `vector` col → PG `vec`.
     let t = translate(
@@ -3924,4 +4025,75 @@ fn str_contains_param_wrapped_in_lowercase_binds() {
     .unwrap();
     assert!(t.sql.contains("lower($1)"), "got: {}", t.sql);
     assert_eq!(t.params.len(), 1);
+}
+
+#[test]
+fn boolean_literal_filter_binds_param() {
+    // `is_deleted = false` must bind `false` as a bool param, not emit a
+    // bare `false` token (Postgres would read it as a column name → E42703).
+    let t = translate(
+        "?[tool_name, timestamp] := *context_metrics[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted], is_deleted = false",
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql.contains("\"is_deleted\" = $1"),
+        "bool literal must bind as param, got: {}",
+        t.sql
+    );
+    assert_eq!(t.params.len(), 1, "one bool param");
+}
+
+#[test]
+fn hnsw_create_respects_m_and_ef_from_stmt() {
+    // ::hnsw create with explicit m / ef_construction values must be
+    // honored, not silently replaced with hardcoded defaults.
+    let t = translate(
+        "::hnsw create embedding_vectors:vec_idx {\n    dim: 384,\n    dtype: F32,\n    fields: [vector],\n    distance: Cosine,\n    ef_construction: 40,\n    m: 32,\n    extend_candidates: false,\n    keep_pruned_connections: false\n}",
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        t.sql.contains("m = 32"),
+        "m=32 must be honored, got: {}",
+        t.sql
+    );
+    assert!(
+        t.sql.contains("ef_construction = 40"),
+        "ef_construction=40 must be honored, got: {}",
+        t.sql
+    );
+}
+
+#[test]
+fn put_embedding_state_literal_rows() {
+    // Exact shape from embeddings::state::mark_stale_for_qualified_names:
+    // `?[cols] <- [[literal rows]]\n:put embedding_state {cols}`
+    let t = translate(
+        "?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [[\"test/qn\", 0, \"\", \"stale\", \"2026-08-06T03:00:00Z\"]]\n:put embedding_state {qualified_name, usearch_key, content_hash, state, embedded_at}",
+        std::collections::BTreeMap::new(),
+    );
+    match t {
+        Ok(t) => {
+            assert!(t.sql.contains("embedding_state"), "got: {}", t.sql);
+            // Keyed table, no `=>` marker → must upsert, not plain INSERT.
+            assert!(
+                t.sql.contains("ON CONFLICT (\"qualified_name\")"),
+                "expected upsert, got: {}",
+                t.sql
+            );
+        }
+        Err(e) => panic!("translate failed: {}", e),
+    }
+}
+
+#[test]
+fn put_embedding_state_reput_existing_row_upserts() {
+    // The regression this guards: a second `:put` of the same qualified_name
+    // on a keyed table must not hit embedding_state_pkey (duplicate key).
+    let q = "?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [[\"same/qn\", 0, \"\", \"stale\", \"2026-08-06T03:00:00Z\"]]\n:put embedding_state {qualified_name, usearch_key, content_hash, state, embedded_at}";
+    let t1 = translate(q, std::collections::BTreeMap::new()).unwrap();
+    let t2 = translate(q, std::collections::BTreeMap::new()).unwrap();
+    assert!(t1.sql.contains("ON CONFLICT"));
+    assert_eq!(t1.sql, t2.sql);
 }

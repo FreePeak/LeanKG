@@ -296,6 +296,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 CREATE INDEX IF NOT EXISTS api_keys_id_index ON api_keys (id);
+-- The translator's `pk_for_table("api_keys") = key_hash` drives `:put
+-- api_keys` → `ON CONFLICT ("key_hash")`. That needs a UNIQUE index on
+-- key_hash or every api_keys write fails ("no unique or exclusion
+-- constraint matching the ON CONFLICT specification").
+CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_hash_uniq ON api_keys (key_hash);
 
 -- ---------------------------------------------------------------------------
 -- embedding_state — KEYED in cozo (qualified_name => usearch_key), single row
