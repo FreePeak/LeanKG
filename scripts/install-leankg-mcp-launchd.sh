@@ -7,7 +7,7 @@ set -e
 LABEL="com.leankg.mcp-http"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
-LEANKG_DIR="/Users/linh.doan/work/harvey/freepeak/leankg"
+LEANKG_DIR="${LEANKG_DIR:-$HOME/work/freepeak/leankg}"
 
 echo "=== LeanKG MCP HTTP LaunchAgent Setup ==="
 echo ""
@@ -29,7 +29,7 @@ if [ ! -f "$BINARY_PATH" ]; then
 fi
 
 # Create the launchd plist
-cat > "$PLIST_PATH" << 'EOF'
+cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -39,14 +39,14 @@ cat > "$PLIST_PATH" << 'EOF'
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/linh.doan/work/harvey/freepeak/leankg/target/release/leankg</string>
+        <string>${BINARY_PATH}</string>
         <string>mcp-http</string>
         <string>--watch</string>
         <string>--reuse</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/linh.doan/work/harvey/freepeak/leankg</string>
+    <string>${LEANKG_DIR}</string>
 
     <key>RunAtLoad</key>
     <true/>
