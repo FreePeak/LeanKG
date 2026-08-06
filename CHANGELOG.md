@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.3](https://github.com/FreePeak/LeanKG/compare/v0.20.2...v0.20.3) (2026-08-06)
+
+
+### Features
+
+* **config:** add db: block to leankg.yaml for Postgres defaults ([#212](https://github.com/FreePeak/LeanKG/issues/212)) ([730b232](https://github.com/FreePeak/LeanKG/commit/730b2327aad70c47d6c8057028fb73f605fd5b53))
+
+
+### Performance
+
+* **docker:** build only core languages, drop dead grammar deps ([#213](https://github.com/FreePeak/LeanKG/issues/213)) ([289e8e7](https://github.com/FreePeak/LeanKG/commit/289e8e7d8452cf0644fa79a676f3a6ecceadc831))
+
 ## [0.20.2](https://github.com/FreePeak/LeanKG/compare/v0.20.1...v0.20.2) (2026-08-06)
 
 
