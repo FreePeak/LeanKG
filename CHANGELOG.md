@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.5](https://github.com/FreePeak/LeanKG/compare/v0.20.4...v0.20.5) (2026-08-06)
+
+
+### Bug Fixes
+
+* **pg:** parameterized embedding writes + cozo→SQL hardening ([#217](https://github.com/FreePeak/LeanKG/issues/217)) ([ea005bf](https://github.com/FreePeak/LeanKG/commit/ea005bf65625b1471d6dec63af4d8b3d2a80ea25))
+
 ## [0.20.4](https://github.com/FreePeak/LeanKG/compare/v0.20.3...v0.20.4) (2026-08-06)
 
 
