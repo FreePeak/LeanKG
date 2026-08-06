@@ -4,6 +4,12 @@ project:
   languages:
   - javascript
   - rust
+# Postgres connection defaults. Env LEANKG_PG_URL / LEANKG_PG_POOL_SIZE /
+# LEANKG_PG_LOCK override these; unset fields fall back to built-in defaults.
+db:
+  url: postgresql://postgres:postgres@localhost:5433/leankg
+  pool_size: 5
+  lock: true
 indexer:
   exclude:
   - '**/node_modules/**'
