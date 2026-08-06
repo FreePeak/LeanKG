@@ -19,6 +19,43 @@ pub struct ProjectConfig {
     /// and `--ref-name` take precedence over config values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceConfig>,
+    /// Optional Postgres connection settings. When unset, the backend uses
+    /// `LEANKG_PG_URL` or its built-in dev default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db: Option<DbConfig>,
+}
+
+/// Optional Postgres settings that override the compiled-in defaults.
+/// Read by the DB backend as `env LEANKG_PG_URL / LEANKG_PG_POOL_SIZE /
+/// LEANKG_PG_LOCK` > `db:` yaml block > built-in default. Every field is
+/// optional so a minimal `db: {}` or a partial block is valid.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct DbConfig {
+    /// Connection URL, e.g. `postgresql://postgres:postgres@localhost:5433/leankg`.
+    pub url: Option<String>,
+    /// Lazy connection pool size (default 5, clamped >= 1).
+    pub pool_size: Option<usize>,
+    /// `false` disables the index advisory lock (default true).
+    pub lock: Option<bool>,
+}
+
+/// Load the `db:` block from the nearest `leankg.yaml` walking up from the
+/// current directory (same resolution as [`crate::find_project_root`] in
+/// `main.rs`). Returns `None` when no config file or `db:` block exists.
+/// The backend uses this as the middle precedence tier:
+/// `LEANKG_PG_URL` env > `db:` yaml > built-in default.
+pub fn db_config_from_cwd() -> Option<DbConfig> {
+    let cwd = std::env::current_dir().ok()?;
+    for dir in cwd.ancestors() {
+        let cfg_path = dir.join("leankg.yaml");
+        if cfg_path.is_file() {
+            let content = std::fs::read_to_string(cfg_path).ok()?;
+            let config: ProjectConfig = serde_yaml::from_str(&content).ok()?;
+            return config.db;
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,6 +305,7 @@ impl Default for ProjectConfig {
             auth: AuthSettings::default(),
             lsp: None,
             source: None,
+            db: None,
         }
     }
 }
@@ -336,6 +374,41 @@ mod tests {
         let config = ProjectConfig::default();
         assert_eq!(config.documentation.output, PathBuf::from("./docs"));
         assert_eq!(config.documentation.templates, vec!["agents", "claude"]);
+    }
+
+    #[test]
+    fn db_block_parses_from_yaml() {
+        let yaml = r#"
+db:
+  url: postgresql://u:p@host:9999/bar
+  pool_size: 12
+  lock: false
+"#;
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        let db = config.db.expect("db block parsed");
+        assert_eq!(db.url.as_deref(), Some("postgresql://u:p@host:9999/bar"));
+        assert_eq!(db.pool_size, Some(12));
+        assert_eq!(db.lock, Some(false));
+    }
+
+    #[test]
+    fn db_defaults_to_none_when_absent() {
+        let config = ProjectConfig::default();
+        assert!(config.db.is_none());
+        // Serializing a default config must not emit a db: block.
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(
+            !yaml.contains("db:"),
+            "default config serializes without db:\n{yaml}"
+        );
+    }
+
+    #[test]
+    fn db_empty_block_is_valid() {
+        let yaml = "db: {}\n";
+        let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+        let db = config.db.expect("empty db block parsed");
+        assert!(db.url.is_none() && db.pool_size.is_none() && db.lock.is_none());
     }
 
     // US-CBM-B10: typed_resolve flag

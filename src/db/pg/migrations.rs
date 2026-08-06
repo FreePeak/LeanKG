@@ -36,10 +36,17 @@ pub struct MigrationReport {
     pub skipped: Vec<String>,
 }
 
-/// Connect string for the Postgres backend (`LEANKG_PG_URL`, default local).
+/// Connect string for the Postgres backend. Precedence: `LEANKG_PG_URL`
+/// env > `db:` block in `leankg.yaml` > dev default (local).
 pub fn pg_url() -> String {
     std::env::var("LEANKG_PG_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5433/leankg".to_string())
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            crate::config::db_config_from_cwd()
+                .and_then(|db| db.url.filter(|u| !u.trim().is_empty()))
+        })
+        .unwrap_or_else(|| "postgresql://postgres:postgres@localhost:5433/leankg".to_string())
 }
 
 /// Create the `migrations` table if absent, then apply every MIGRATIONS step
@@ -76,6 +83,30 @@ pub fn run_migrations(client: &mut Client) -> Result<MigrationReport, postgres::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serialize tests that mutate LEANKG_PG_URL (process-global env).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn pg_url_prefers_env_then_yaml_then_default() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("LEANKG_PG_URL");
+        // No env, no leankg.yaml at cwd -> dev default.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("leankg.yaml"),
+            "db:\n  url: postgresql://u:p@yaml-host:7777/mydb\n",
+        )
+        .unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        assert_eq!(pg_url(), "postgresql://u:p@yaml-host:7777/mydb");
+        // Env wins over yaml.
+        std::env::set_var("LEANKG_PG_URL", "postgresql://u:p@env-host:1111/envdb");
+        assert_eq!(pg_url(), "postgresql://u:p@env-host:1111/envdb");
+        std::env::remove_var("LEANKG_PG_URL");
+        std::env::set_current_dir(prev).unwrap();
+    }
 
     /// Migration IDs are unique and in strictly ascending order (no
     /// framework here — this is the ordering guarantee).
