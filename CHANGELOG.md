@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.2](https://github.com/FreePeak/LeanKG/compare/v0.20.1...v0.20.2) (2026-08-06)
+
+
+### Features
+
+* **mcp:** add mcp_embed tool for one-call index + embed chain ([ce168be](https://github.com/FreePeak/LeanKG/commit/ce168be1fe2182c90742b57f40d103d128618c6a))
+
 ## [0.20.1](https://github.com/FreePeak/LeanKG/compare/v0.20.0...v0.20.1) (2026-08-05)
 
 
