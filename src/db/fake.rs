@@ -861,7 +861,6 @@ fn apply_filters(
         // `or` group: `(a = $x or b = $y)` / `str_includes(...) or ...` /
         // `(file_path = "x" or regex_matches(...) or regex_matches(...))`.
         if c.contains(" or ") {
-            let inner = c.trim_start_matches('(').trim_end_matches(')');
             // Only trim the outer parens when the WHOLE clause is parenthesized.
             let inner = if c.starts_with('(') && c.ends_with(')') {
                 c[1..c.len().saturating_sub(1)].trim()

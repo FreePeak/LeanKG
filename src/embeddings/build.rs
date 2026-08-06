@@ -350,6 +350,20 @@ pub(crate) fn vector_state_inconsistent(vectors_existing: usize, fresh_state_row
     vectors_existing == 0 && fresh_state_rows > 0
 }
 
+/// Incremental-mode guard: escalate to a Full walk when Incremental would
+/// do nothing, either because the state table lies about existing vectors
+/// ([`vector_state_inconsistent`]) or because nothing was ever embedded
+/// (0 vectors AND 0 state rows — a fresh project's first `leankg embed`).
+/// Without this, `list_stale` on an empty state table returns nothing and
+/// the first embed reports a silent "nothing to embed".
+pub(crate) fn should_escalate_incremental_to_full(
+    vectors_existing: usize,
+    fresh_state_rows: u64,
+) -> bool {
+    let cold_first_run = vectors_existing == 0 && fresh_state_rows == 0;
+    vector_state_inconsistent(vectors_existing, fresh_state_rows) || cold_first_run
+}
+
 /// FR-EMBED-RESUME-02: when nothing needs embedding and there are no
 /// orphans to reap, skip HNSW drop+rebuild (day-2 no-op must stay cheap).
 ///
@@ -404,13 +418,24 @@ fn collect_incremental_dirty_work(
         .unwrap_or(0);
     let mut work = Vec::with_capacity(stale_rows.len().min(65_536));
     if stale_rows.len() > INCREMENTAL_POINT_LOOKUP_CAP {
-        let stale_qns: std::collections::HashSet<&str> = stale_rows
+        // Dirty = stale OR never state'd. `list_stale` only returns rows
+        // already present in `embedding_state`; elements that the indexer
+        // added to `code_elements` but never flagged (e.g. be's 274k
+        // functions after a storage-migration partial embed) have NO state
+        // row and are invisible to a stale-only scan. Build the full fresh
+        // QN set and treat "absent" as dirty, so a partially-embedded
+        // project converges instead of skipping its tail forever.
+        let all_state = state::list_all(graph.db())?;
+        let fresh_qns: std::collections::HashSet<&str> = all_state
             .iter()
+            .filter(|r| r.state == "fresh")
             .map(|r| r.qualified_name.as_str())
             .collect();
+        let fresh_count = fresh_qns.len();
         tracing::info!(
-            "incremental dirty collect: bulk scan (stale_rows={} > cap={})",
+            "incremental dirty collect: bulk scan (stale_rows={} fresh_state={} > cap={})",
             stale_rows.len(),
+            fresh_count,
             INCREMENTAL_POINT_LOOKUP_CAP
         );
         let total = graph.count_elements().unwrap_or(0);
@@ -426,8 +451,8 @@ fn collect_incremental_dirty_work(
             }
             offset += page.len();
             for el in page {
-                if !stale_qns.contains(el.qualified_name.as_str()) {
-                    continue;
+                if fresh_qns.contains(el.qualified_name.as_str()) {
+                    continue; // already embedded, still matching
                 }
                 if !element_passes_type_filter(&el, opts) {
                     continue;
@@ -644,16 +669,15 @@ pub fn run(
     // forever. Escalate to a Full walk — with zero vectors that is also exactly
     // the right amount of work.
     let fresh_state_rows = preflight.as_ref().map(|p| p.fresh).unwrap_or(0);
+    let vectors_existing = preflight.as_ref().map(|p| p.vectors_existing).unwrap_or(0) as usize;
     if matches!(opts.mode, BuildMode::Incremental)
-        && vector_state_inconsistent(
-            preflight.as_ref().map(|p| p.vectors_existing).unwrap_or(0) as usize,
-            fresh_state_rows,
-        )
+        && should_escalate_incremental_to_full(vectors_existing, fresh_state_rows)
     {
         tracing::warn!(
-            "embedding_state reports {} fresh rows but 0 vectors exist; \
-             escalating Incremental -> Full to break the resume deadlock",
-            fresh_state_rows
+            "embedding_state has {} fresh rows and {} vectors; \
+             escalating Incremental -> Full so the first embed does real work",
+            fresh_state_rows,
+            vectors_existing,
         );
         opts.mode = BuildMode::Full;
     }
@@ -881,13 +905,15 @@ pub fn build_index_parallel(
         .ok()
         .map(|p| p.fresh)
         .unwrap_or(0);
+    let vectors_existing = count_vectors(db).unwrap_or(0);
     if matches!(opts.mode, BuildMode::Incremental)
-        && vector_state_inconsistent(count_vectors(db).unwrap_or(0), fresh_state_rows)
+        && should_escalate_incremental_to_full(vectors_existing, fresh_state_rows)
     {
         tracing::warn!(
-            "embedding_state reports {} fresh rows but 0 vectors exist; \
-             escalating Incremental -> Full to break the resume deadlock",
-            fresh_state_rows
+            "embedding_state has {} fresh rows and {} vectors; \
+             escalating Incremental -> Full so the first embed does real work",
+            fresh_state_rows,
+            vectors_existing,
         );
         opts.mode = BuildMode::Full;
     }
@@ -2114,6 +2140,20 @@ mod tests {
         assert!(!vector_state_inconsistent(23_645, 23_645)); // healthy
         assert!(!vector_state_inconsistent(0, 0)); // never embedded
         assert!(!vector_state_inconsistent(100, 0)); // vectors, nothing fresh
+    }
+
+    #[test]
+    fn should_escalate_incremental_to_full_on_cold_first_run() {
+        // A freshly-indexed project has 0 vectors AND 0 state rows (nothing
+        // ever embedded). A plain Incremental's `list_stale` is empty, so it
+        // would report "nothing to embed" — a silent no-op on the very first
+        // `leankg embed`. It must escalate to a Full walk.
+        assert!(should_escalate_incremental_to_full(0, 0), "cold first run");
+        // State-lies recovery (vectors gone, state fresh) must also escalate.
+        assert!(should_escalate_incremental_to_full(0, 628_259));
+        // Healthy / partially-embedded graphs must NOT escalate.
+        assert!(!should_escalate_incremental_to_full(23_645, 23_645));
+        assert!(!should_escalate_incremental_to_full(100, 0));
     }
 
     #[test]
