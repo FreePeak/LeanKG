@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.6](https://github.com/FreePeak/LeanKG/compare/v0.20.5...v0.20.6) (2026-08-06)
+
+
+### Features
+
+* **db:** route Postgres writes through priority write bus ([#219](https://github.com/FreePeak/LeanKG/issues/219)) ([6345dc0](https://github.com/FreePeak/LeanKG/commit/6345dc0078a7ce171879bb9bcf534f2eb2f873ee))
+
+
+### Bug Fixes
+
+* **index:** wipe project rows before full reindex to stop duplicate accumulation ([#221](https://github.com/FreePeak/LeanKG/issues/221)) ([56a0a86](https://github.com/FreePeak/LeanKG/commit/56a0a86b7bfbad231ebaa7227eb0c6d15b314891))
+
 ## [0.20.5](https://github.com/FreePeak/LeanKG/compare/v0.20.4...v0.20.5) (2026-08-06)
 
 
