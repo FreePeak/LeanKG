@@ -168,16 +168,27 @@ impl ClientPool {
 
     /// Read `LEANKG_PG_POOL_SIZE` (default 5, clamped >= 1).
     pub fn size_from_env() -> usize {
+        Self::size_from_env_or(None)
+    }
+
+    /// Pool size: `LEANKG_PG_POOL_SIZE` env > `db.pool_size` yaml > 5.
+    pub fn size_from_env_or(yaml: Option<usize>) -> usize {
         std::env::var("LEANKG_PG_POOL_SIZE")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|v| *v >= 1)
+            .or(yaml.filter(|v| *v >= 1))
             .unwrap_or(5)
     }
 
     /// Total live + idle clients (used by tests to assert pool reuse).
     pub fn live_count(&self) -> usize {
         self.inner.state.lock().unwrap().live
+    }
+
+    /// Configured pool cap (used by tests to assert pool sizing).
+    pub fn max_size(&self) -> usize {
+        self.inner.max
     }
 
     /// Check out a client, connecting a new one up to `max` live, else
@@ -221,21 +232,33 @@ impl std::fmt::Debug for PostgresBackend {
 }
 
 impl PostgresBackend {
-    /// Format-check `LEANKG_PG_URL`. Returns Err with a clear message when
-    /// the env var is missing or does not look like a Postgres URL.
+    /// Format-check the resolved Postgres URL. Precedence:
+    /// `LEANKG_PG_URL` env > `db:` block in `leankg.yaml` > built-in dev
+    /// default (`postgresql://postgres:postgres@localhost:5433/leankg`,
+    /// matches the container-gated dev Postgres). Returns Err when the
+    /// resolved URL does not look like a Postgres URL.
     pub fn from_env() -> Result<Self, String> {
         let url = std::env::var("LEANKG_PG_URL")
-            .map_err(|_| "LEANKG_PG_URL is not set; the Postgres backend requires it (run `docker compose up postgres`)")?;
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                crate::config::db_config_from_cwd()
+                    .and_then(|db| db.url.filter(|u| !u.trim().is_empty()))
+            })
+            .unwrap_or_else(|| "postgresql://postgres:postgres@localhost:5433/leankg".to_string());
         if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
             return Err(format!(
                 "LEANKG_PG_URL must be a postgres:// URL, got: {}",
                 redact_url(&url)
             ));
         }
+        let pool_size = ClientPool::size_from_env_or(
+            crate::config::db_config_from_cwd().and_then(|db| db.pool_size),
+        );
         Ok(Self {
             pg_url: url,
-            pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
-            ro_pool: Arc::new(ClientPool::new(ClientPool::size_from_env())),
+            pool: Arc::new(ClientPool::new(pool_size)),
+            ro_pool: Arc::new(ClientPool::new(pool_size)),
             read_only: false,
         })
     }
@@ -1066,12 +1089,17 @@ pub fn init_db_pg() -> Result<SharedDb, Box<dyn std::error::Error>> {
 /// `LEANKG_PG_LOCK=0` disables the advisory lock (operators who manage
 /// exclusivity externally, e.g. a job queue). Default: on.
 pub fn index_advisory_lock() -> Result<Option<AdvisoryLock>, Box<dyn std::error::Error>> {
-    if std::env::var("LEANKG_PG_LOCK")
+    // Disable when `LEANKG_PG_LOCK=0` env, or `db.lock: false` in leankg.yaml.
+    let env_disables = std::env::var("LEANKG_PG_LOCK")
         .ok()
         .map(|v| v.eq_ignore_ascii_case("0") || v.eq_ignore_ascii_case("false"))
-        .unwrap_or(false)
-    {
-        tracing::info!("LEANKG_PG_LOCK=0 — index advisory lock disabled");
+        .unwrap_or(false);
+    let yaml_disables = crate::config::db_config_from_cwd()
+        .and_then(|db| db.lock)
+        .map(|v| !v)
+        .unwrap_or(false);
+    if env_disables || yaml_disables {
+        tracing::info!("PG index advisory lock disabled (LEANKG_PG_LOCK=0 or db.lock: false)");
         return Ok(None);
     }
     let key = PostgresBackend::INDEX_LOCK_KEY;
@@ -1124,7 +1152,10 @@ mod tests {
     #[test]
     fn postgres_backend_validates_url_and_redacts() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        assert!(PostgresBackend::from_env().is_err(), "no env -> error");
+        // No env + no db: block -> built-in dev default (not an error).
+        std::env::remove_var("LEANKG_PG_URL");
+        let ok = PostgresBackend::from_env().expect("no env -> dev default");
+        assert!(ok.pg_url.starts_with("postgresql://"));
         std::env::set_var("LEANKG_PG_URL", "not-a-url");
         let err = PostgresBackend::from_env().unwrap_err();
         assert!(err.contains("not-a-url"));
@@ -1138,11 +1169,63 @@ mod tests {
     fn postgres_backend_requires_url() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("LEANKG_PG_URL");
-        // Production path: no URL -> hard error.
-        assert!(init_db_pg().is_err(), "no LEANKG_PG_URL -> error");
+        // Production path: no env and no leankg.yaml -> built-in dev default.
+        let pg = init_db_pg().expect("built-in default URL applies");
+        assert!(pg.redacted_url().starts_with("postgresql://"));
         // Test-mode init falls back to the dev-container default (a real,
         // lazily-connected PostgresBackend is still produced).
         assert!(init_db(std::path::Path::new("/tmp/none.db")).is_ok());
+    }
+
+    #[test]
+    fn pg_url_from_leankg_yaml_db_block() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("LEANKG_PG_URL");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("leankg.yaml"),
+            "db:\n  url: postgresql://u:p@yaml-host:7777/mydb\n",
+        )
+        .unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let pg = PostgresBackend::from_env();
+        std::env::set_current_dir(prev).unwrap();
+        let pg = pg.expect("yaml db.url applies");
+        assert!(pg.pg_url.contains("yaml-host:7777/mydb"));
+    }
+
+    #[test]
+    fn pg_url_env_wins_over_yaml() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("LEANKG_PG_URL", "postgresql://u:p@env-host:1111/envdb");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("leankg.yaml"),
+            "db:\n  url: postgresql://u:p@yaml-host:7777/mydb\n",
+        )
+        .unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let pg = PostgresBackend::from_env();
+        std::env::set_current_dir(prev).unwrap();
+        std::env::remove_var("LEANKG_PG_URL");
+        let pg = pg.expect("env URL wins");
+        assert!(pg.pg_url.contains("env-host:1111"));
+    }
+
+    #[test]
+    fn pg_pool_size_from_yaml() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("LEANKG_PG_POOL_SIZE");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("leankg.yaml"), "db:\n  pool_size: 12\n").unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let pg = PostgresBackend::from_env();
+        std::env::set_current_dir(prev).unwrap();
+        let pg = pg.expect("yaml pool_size applies");
+        assert_eq!(pg.pool.max_size(), 12);
     }
 
     #[test]

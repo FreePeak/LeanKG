@@ -141,7 +141,15 @@ LeanKG stores everything in PostgreSQL + pgvector (the only storage engine). Loc
 
 ```bash
 docker compose up postgres
-export LEANKG_PG_URL=postgresql://postgres:postgres@localhost:5432/leankg
+```
+
+The connection defaults to the dev Postgres (`postgresql://postgres:postgres@localhost:5433/leankg`). Override it via the `db:` block in `leankg.yaml` (env vars `LEANKG_PG_URL` / `LEANKG_PG_POOL_SIZE` / `LEANKG_PG_LOCK` take precedence over the file):
+
+```yaml
+db:
+  url: postgresql://postgres:postgres@localhost:5432/leankg
+  pool_size: 10
+  lock: true
 ```
 
 See [docs/analysis/pg-migration-report.md](docs/analysis/pg-migration-report.md) for the migration details and env-var reference.
