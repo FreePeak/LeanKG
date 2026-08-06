@@ -1551,7 +1551,6 @@ async fn index_codebase(
     ref_name: Option<&str>,
     auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = env;
     // T6.4b: serialize `leankg index` across instances — PG advisory lock
     // (fixed key). No-op on the cozo shim; reentrant within this process
     // (incremental → full fallback calls index_codebase again).
@@ -1560,6 +1559,20 @@ async fn index_codebase(
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
     parser_manager.init_parsers()?;
+
+    // Full index is delete-then-insert, mirroring the incremental path.
+    // Without this, reindexing a project accumulates duplicate code_elements /
+    // relationships rows (both tables are unkeyed by design — schema.sql:25-57).
+    // Scoped to the current env so other projects on the shared PG schema are
+    // untouched. Disable with LEANKG_INDEX_WIPE=0 (regression escape hatch).
+    if std::env::var("LEANKG_INDEX_WIPE")
+        .map(|v| v != "0" && v != "false")
+        .unwrap_or(true)
+    {
+        graph_engine.wipe_elements_for_env(env)?;
+        graph_engine.wipe_relationships_for_env(env)?;
+        graph_engine.invalidate_cache();
+    }
 
     let config_path = db_path
         .parent()
