@@ -1123,6 +1123,28 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
+                name: "mcp_embed".to_string(),
+                description: "US-EMBED-INDEX-01: One-call index + embed workflow. Default runs `mcp_index` against the path (full reindex when index=true, incremental otherwise), then arms in-process background embed via `embed_control{action=on}`. Use this to chain index→embed via a single MCP tool. Requires the binary to be built with --features=embeddings; otherwise returns a clear error pointing to the rebuild."
+                    .to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to index (default: .). Used as the embed project root too."},
+                        "incremental": {"type": "boolean", "default": false, "description": "Pass through to mcp_index. true = git-based incremental (faster), false = full reindex."},
+                        "index": {"type": "boolean", "default": true, "description": "Run mcp_index first. Set false to skip when the index is already current."},
+                        "resolve_calls": {"type": "boolean", "default": false},
+                        "full": {"type": "boolean", "default": false, "description": "Force full rebuild of vectors (ignored on mega-graphs unless force_full)."},
+                        "force_full": {"type": "boolean", "default": false},
+                        "mode": {"type": "string", "enum": ["partial", "continuous"], "default": "partial"},
+                        "workers": {"type": "integer", "default": 2},
+                        "batch_size": {"type": "integer", "default": 128},
+                        "types": {"type": "string", "description": "Optional element type filter, e.g. function,method"},
+                        "project": {"type": "string", "description": "Optional: project path (defaults to MCP-served project)"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
                 name: "get_architecture".to_string(),
                 description: "Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries. Supports max_items to cap each section for token budget control.".to_string(),
                 input_schema: json!({
