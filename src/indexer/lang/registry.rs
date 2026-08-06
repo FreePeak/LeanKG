@@ -4,12 +4,86 @@
 //! extractor.rs / call_graph.rs.
 
 use tree_sitter::{Language, Parser};
+#[cfg(feature = "lang-extras")]
 use tree_sitter_cuda;
+#[cfg(feature = "lang-extras")]
 use tree_sitter_glsl;
+#[cfg(feature = "lang-extras")]
 use tree_sitter_hlsl;
+#[cfg(feature = "lang-extras")]
 use tree_sitter_qsharp;
+#[cfg(feature = "lang-extras")]
 use tree_sitter_systemverilog;
+#[cfg(feature = "lang-extras")]
 use tree_sitter_verilog;
+
+/// Grammar for a `lang-extras` language. Compiles to `Some(producer)` when the
+/// feature is on, `None` when off (--no-default-features, the slim Docker core
+/// build). The spec row stays in LANG_SPECS either way; only the grammar is
+/// dropped, so `language_for_path` still maps the extension but no parser loads.
+///
+/// `$prod` is a plain fn turning the crate's `LANGUAGE` const into a
+/// `tree_sitter::Language`; `$wrap` is the const fn referenced from the static
+/// LANG_SPECS `grammar:` field (statics only allow const calls, hence the
+/// `const fn` — a closure would also fail here).
+macro_rules! lang_extras_grammar {
+    ($prod:ident, $wrap:ident, $lang_expr:path) => {
+        #[cfg(feature = "lang-extras")]
+        fn $prod() -> Language {
+            $lang_expr.into()
+        }
+        #[cfg(feature = "lang-extras")]
+        const fn $wrap() -> Option<fn() -> Language> {
+            Some($prod)
+        }
+        #[cfg(not(feature = "lang-extras"))]
+        const fn $wrap() -> Option<fn() -> Language> {
+            None
+        }
+    };
+}
+
+lang_extras_grammar!(scala_lang, scala_grammar, tree_sitter_scala::LANGUAGE);
+lang_extras_grammar!(zig_lang, zig_grammar, tree_sitter_zig::LANGUAGE);
+lang_extras_grammar!(
+    solidity_lang,
+    solidity_grammar,
+    tree_sitter_solidity::LANGUAGE
+);
+lang_extras_grammar!(lua_lang, lua_grammar, tree_sitter_lua::LANGUAGE);
+lang_extras_grammar!(json_lang, json_grammar, tree_sitter_json::LANGUAGE);
+lang_extras_grammar!(yaml_lang, yaml_grammar, tree_sitter_yaml::LANGUAGE);
+lang_extras_grammar!(css_lang, css_grammar, tree_sitter_css::LANGUAGE);
+lang_extras_grammar!(html_lang, html_grammar, tree_sitter_html::LANGUAGE);
+lang_extras_grammar!(graphql_lang, graphql_grammar, tree_sitter_graphql::LANGUAGE);
+lang_extras_grammar!(proto_lang, proto_grammar, tree_sitter_proto::LANGUAGE);
+lang_extras_grammar!(csharp_lang, csharp_grammar, tree_sitter_c_sharp::LANGUAGE);
+lang_extras_grammar!(haskell_lang, haskell_grammar, tree_sitter_haskell::LANGUAGE);
+lang_extras_grammar!(elm_lang, elm_grammar, tree_sitter_elm::LANGUAGE);
+lang_extras_grammar!(ocaml_lang, ocaml_grammar, tree_sitter_ocaml::LANGUAGE_OCAML);
+lang_extras_grammar!(
+    fsharp_lang,
+    fsharp_grammar,
+    tree_sitter_fsharp::LANGUAGE_FSHARP
+);
+lang_extras_grammar!(erlang_lang, erlang_grammar, tree_sitter_erlang::LANGUAGE);
+lang_extras_grammar!(nim_lang, nim_grammar, tree_sitter_nim::LANGUAGE);
+lang_extras_grammar!(
+    powershell_lang,
+    powershell_grammar,
+    tree_sitter_powershell::LANGUAGE
+);
+lang_extras_grammar!(crystal_lang, crystal_grammar, tree_sitter_crystal::LANGUAGE);
+lang_extras_grammar!(cuda_lang, cuda_grammar, tree_sitter_cuda::LANGUAGE);
+lang_extras_grammar!(hlsl_lang, hlsl_grammar, tree_sitter_hlsl::LANGUAGE_HLSL);
+lang_extras_grammar!(glsl_lang, glsl_grammar, tree_sitter_glsl::LANGUAGE_GLSL);
+lang_extras_grammar!(verilog_lang, verilog_grammar, tree_sitter_verilog::LANGUAGE);
+lang_extras_grammar!(
+    systemverilog_lang,
+    systemverilog_grammar,
+    tree_sitter_systemverilog::LANGUAGE
+);
+lang_extras_grammar!(qsharp_lang, qsharp_grammar, tree_sitter_qsharp::LANGUAGE);
 
 /// Extraction fidelity tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +309,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["import_declaration", "import"],
             calls: &["generic_function", "function_definition"],
         },
-        grammar: Some(|| tree_sitter_scala::LANGUAGE.into()),
+        grammar: scala_grammar(),
     },
     LanguageSpec {
         name: "zig",
@@ -255,7 +329,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["using_namespace_declaration", "usingnamespace"],
             calls: &["builtin_function", "function_call"],
         },
-        grammar: Some(|| tree_sitter_zig::LANGUAGE.into()),
+        grammar: zig_grammar(),
     },
     LanguageSpec {
         name: "solidity",
@@ -280,7 +354,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["import_directive", "import"],
             calls: &["function_call_expression", "call"],
         },
-        grammar: Some(|| tree_sitter_solidity::LANGUAGE.into()),
+        grammar: solidity_grammar(),
     },
     LanguageSpec {
         name: "lua",
@@ -295,7 +369,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["require"],
             calls: &["function_call", "function"],
         },
-        grammar: Some(|| tree_sitter_lua::LANGUAGE.into()),
+        grammar: lua_grammar(),
     },
     LanguageSpec {
         name: "json",
@@ -310,7 +384,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_json::LANGUAGE.into()),
+        grammar: json_grammar(),
     },
     LanguageSpec {
         name: "toml",
@@ -341,7 +415,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_yaml::LANGUAGE.into()),
+        grammar: yaml_grammar(),
     },
     LanguageSpec {
         name: "css",
@@ -356,7 +430,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_css::LANGUAGE.into()),
+        grammar: css_grammar(),
     },
     LanguageSpec {
         name: "html",
@@ -371,7 +445,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_html::LANGUAGE.into()),
+        grammar: html_grammar(),
     },
     LanguageSpec {
         name: "graphql",
@@ -386,7 +460,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_graphql::LANGUAGE.into()),
+        grammar: graphql_grammar(),
     },
     LanguageSpec {
         name: "protobuf",
@@ -401,7 +475,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_proto::LANGUAGE.into()),
+        grammar: proto_grammar(),
     },
     LanguageSpec {
         name: "dockerfile",
@@ -437,7 +511,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["using_directive"],
             calls: &["invocation_expression", "object_creation_expression"],
         },
-        grammar: Some(|| tree_sitter_c_sharp::LANGUAGE.into()),
+        grammar: csharp_grammar(),
     },
     LanguageSpec {
         name: "haskell",
@@ -452,7 +526,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["import"],
             calls: &["function_call_expression"],
         },
-        grammar: Some(|| tree_sitter_haskell::LANGUAGE.into()),
+        grammar: haskell_grammar(),
     },
     LanguageSpec {
         name: "elm",
@@ -471,7 +545,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["import_clause", "import"],
             calls: &["function_call_expr"],
         },
-        grammar: Some(|| tree_sitter_elm::LANGUAGE.into()),
+        grammar: elm_grammar(),
     },
     LanguageSpec {
         name: "ocaml",
@@ -491,7 +565,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["open", "include", "module_binding"],
             calls: &["application_expression", "call_expression"],
         },
-        grammar: Some(|| tree_sitter_ocaml::LANGUAGE_OCAML.into()),
+        grammar: ocaml_grammar(),
     },
     LanguageSpec {
         name: "fsharp",
@@ -511,7 +585,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["open", "open_declaration", "import"],
             calls: &["function_call_expression"],
         },
-        grammar: Some(|| tree_sitter_fsharp::LANGUAGE_FSHARP.into()),
+        grammar: fsharp_grammar(),
     },
     LanguageSpec {
         name: "erlang",
@@ -531,7 +605,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             ],
             calls: &["call", "external_fun"],
         },
-        grammar: Some(|| tree_sitter_erlang::LANGUAGE.into()),
+        grammar: erlang_grammar(),
     },
     LanguageSpec {
         name: "nim",
@@ -546,7 +620,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["import_declaration", "import"],
             calls: &["call"],
         },
-        grammar: Some(|| tree_sitter_nim::LANGUAGE.into()),
+        grammar: nim_grammar(),
     },
     LanguageSpec {
         name: "powershell",
@@ -561,7 +635,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["using_statement", "import_module"],
             calls: &["command", "call_expression"],
         },
-        grammar: Some(|| tree_sitter_powershell::LANGUAGE.into()),
+        grammar: powershell_grammar(),
     },
     LanguageSpec {
         name: "crystal",
@@ -576,7 +650,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["require", "import"],
             calls: &["call"],
         },
-        grammar: Some(|| tree_sitter_crystal::LANGUAGE.into()),
+        grammar: crystal_grammar(),
     },
     LanguageSpec {
         name: "toml",
@@ -843,96 +917,6 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
         config_files: EMPTY,
         tier: Tier::Full,
         kinds: NodeKinds {
-            functions: EMPTY,
-            classes: EMPTY,
-            interfaces: EMPTY,
-            properties: EMPTY,
-            imports: EMPTY,
-            calls: EMPTY,
-        },
-        grammar: None,
-    },
-    LanguageSpec {
-        name: "hlsl",
-        extensions: &["hlsl", "fx", "fxh", "hlsli"],
-        config_files: EMPTY,
-        tier: Tier::Full,
-        kinds: NodeKinds {
-            functions: EMPTY,
-            classes: EMPTY,
-            interfaces: EMPTY,
-            properties: EMPTY,
-            imports: EMPTY,
-            calls: EMPTY,
-        },
-        grammar: None,
-    },
-    LanguageSpec {
-        name: "glsl",
-        extensions: &["glsl", "vert", "frag", "geom", "tesc", "tese", "comp"],
-        config_files: EMPTY,
-        tier: Tier::Full,
-        kinds: NodeKinds {
-            functions: EMPTY,
-            classes: EMPTY,
-            interfaces: EMPTY,
-            properties: EMPTY,
-            imports: EMPTY,
-            calls: EMPTY,
-        },
-        grammar: None,
-    },
-    LanguageSpec {
-        name: "verilog",
-        extensions: &["v", "vh"],
-        config_files: EMPTY,
-        tier: Tier::Full,
-        kinds: NodeKinds {
-            functions: EMPTY,
-            classes: EMPTY,
-            interfaces: EMPTY,
-            properties: EMPTY,
-            imports: EMPTY,
-            calls: EMPTY,
-        },
-        grammar: None,
-    },
-    LanguageSpec {
-        name: "systemverilog",
-        extensions: &["sv", "svh"],
-        config_files: EMPTY,
-        tier: Tier::Full,
-        kinds: NodeKinds {
-            functions: EMPTY,
-            classes: EMPTY,
-            interfaces: EMPTY,
-            properties: EMPTY,
-            imports: EMPTY,
-            calls: EMPTY,
-        },
-        grammar: None,
-    },
-    LanguageSpec {
-        name: "qsharp",
-        extensions: &["qs"],
-        config_files: EMPTY,
-        tier: Tier::Full,
-        kinds: NodeKinds {
-            functions: EMPTY,
-            classes: EMPTY,
-            interfaces: EMPTY,
-            properties: EMPTY,
-            imports: EMPTY,
-            calls: EMPTY,
-        },
-        grammar: None,
-    },
-    LanguageSpec {
-        name: "cuda",
-        extensions: &["cu", "cuh"],
-        config_files: EMPTY,
-        tier: Tier::Full,
-        kinds: NodeKinds {
             functions: &["function_definition"],
             classes: EMPTY,
             interfaces: EMPTY,
@@ -940,7 +924,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["preproc_include", "using_declaration"],
             calls: &["call_expression"],
         },
-        grammar: Some(|| tree_sitter_cuda::LANGUAGE.into()),
+        grammar: cuda_grammar(),
     },
     LanguageSpec {
         name: "hlsl",
@@ -955,7 +939,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: &["preproc_include"],
             calls: &["call_expression"],
         },
-        grammar: Some(|| tree_sitter_hlsl::LANGUAGE_HLSL.into()),
+        grammar: hlsl_grammar(),
     },
     LanguageSpec {
         name: "glsl",
@@ -970,7 +954,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: &["call_expression"],
         },
-        grammar: Some(|| tree_sitter_glsl::LANGUAGE_GLSL.into()),
+        grammar: glsl_grammar(),
     },
     LanguageSpec {
         name: "verilog",
@@ -985,7 +969,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_verilog::LANGUAGE.into()),
+        grammar: verilog_grammar(),
     },
     LanguageSpec {
         name: "systemverilog",
@@ -1000,7 +984,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_systemverilog::LANGUAGE.into()),
+        grammar: systemverilog_grammar(),
     },
     LanguageSpec {
         name: "qsharp",
@@ -1015,7 +999,7 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
             imports: EMPTY,
             calls: EMPTY,
         },
-        grammar: Some(|| tree_sitter_qsharp::LANGUAGE.into()),
+        grammar: qsharp_grammar(),
     },
     LanguageSpec {
         name: "vyper",
@@ -2424,10 +2408,33 @@ mod tests {
         assert!(parsers.contains_key("c"));
     }
 
-    /// Every grammar-backed language must parse a representative snippet without
-    /// a parse error — guards against grammars that fail to load at runtime.
+    /// lang-extras feature gates the 25 non-core grammars. When disabled
+    /// (--no-default-features, the Docker core build), those languages keep
+    /// their LANG_SPECS row but report no grammar; core grammars stay loaded.
+    #[cfg(not(feature = "lang-extras"))]
     #[test]
-    fn all_grammar_languages_parse_snippet() {
+    fn lang_extras_grammars_absent_when_disabled() {
+        assert!(language_spec("scala").unwrap().grammar.is_none());
+        assert!(language_spec("cuda").unwrap().grammar.is_none());
+        assert!(language_spec("qsharp").unwrap().grammar.is_none());
+        // Core languages still carry a grammar in the slim build.
+        assert!(language_spec("rust").unwrap().grammar.is_some());
+        assert!(language_spec("go").unwrap().grammar.is_some());
+        assert!(language_spec("objc").unwrap().grammar.is_some());
+        assert!(language_spec("dart").unwrap().grammar.is_some());
+    }
+
+    #[cfg(feature = "lang-extras")]
+    #[test]
+    fn lang_extras_grammars_present_when_enabled() {
+        assert!(language_spec("scala").unwrap().grammar.is_some());
+        assert!(language_spec("cuda").unwrap().grammar.is_some());
+    }
+
+    /// Every core grammar-backed language must parse a representative snippet
+    /// without a parse error — guards against grammars that fail to load.
+    #[test]
+    fn all_core_grammar_languages_parse_snippet() {
         let samples: &[(&str, &str)] = &[
             ("c", "int main(void) { return 0; }"),
             ("cpp", "class Foo {}; int main() { return 0; }"),
@@ -2437,6 +2444,23 @@ mod tests {
             ("perl", "package Foo;\nsub bar { return 1; }"),
             ("r", "square <- function(x) x * x\n"),
             ("elixir", "defmodule M do\n  def f, do: 1\nend"),
+        ];
+        for (lang, src) in samples {
+            let spec = language_spec(lang).expect("spec");
+            assert!(spec.grammar.is_some(), "{} missing grammar", lang);
+            let mut parser = parser_for(lang).expect("parser");
+            let tree = parser
+                .parse(src, None)
+                .unwrap_or_else(|| panic!("{} parse failed", lang));
+            assert!(!tree.root_node().has_error(), "{} parse has errors", lang);
+        }
+    }
+
+    /// lang-extras grammar-backed languages (only present when the feature is on).
+    #[cfg(feature = "lang-extras")]
+    #[test]
+    fn lang_extras_grammar_languages_parse_snippet() {
+        let samples: &[(&str, &str)] = &[
             ("scala", "class User\nobject Main { def main() = () }"),
             ("zig", "fn add(a: i32) i32 { return a; }"),
             ("solidity", "contract C { function f() public {} }"),

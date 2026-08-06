@@ -4477,6 +4477,10 @@ mod tests {
         parser.parse(source, None)
     }
 
+    // lang-extras grammars: only compiled when the feature is on. In the slim
+    // Docker core build (--no-default-features) these test helpers and their
+    // tests are compiled out.
+    #[cfg(feature = "lang-extras")]
     fn parse_scala(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_scala::LANGUAGE.into();
@@ -4484,6 +4488,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_zig(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_zig::LANGUAGE.into();
@@ -4491,6 +4496,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_solidity(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_solidity::LANGUAGE.into();
@@ -4498,6 +4504,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_lua(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_lua::LANGUAGE.into();
@@ -4505,6 +4512,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_json(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_json::LANGUAGE.into();
@@ -4512,6 +4520,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_yaml(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
@@ -4519,6 +4528,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_csharp(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_c_sharp::LANGUAGE.into();
@@ -4526,6 +4536,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_haskell(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_haskell::LANGUAGE.into();
@@ -4533,6 +4544,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_elm(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_elm::LANGUAGE.into();
@@ -4540,6 +4552,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_ocaml(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_ocaml::LANGUAGE_OCAML.into();
@@ -4547,6 +4560,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_fsharp(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_fsharp::LANGUAGE_FSHARP.into();
@@ -4554,6 +4568,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_erlang(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_erlang::LANGUAGE.into();
@@ -4561,6 +4576,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_nim(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_nim::LANGUAGE.into();
@@ -4568,6 +4584,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_powershell(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_powershell::LANGUAGE.into();
@@ -4575,6 +4592,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_crystal(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_crystal::LANGUAGE.into();
@@ -4582,6 +4600,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_cuda(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_cuda::LANGUAGE.into();
@@ -4589,6 +4608,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_hlsl(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_hlsl::LANGUAGE_HLSL.into();
@@ -4596,6 +4616,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_glsl(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_glsl::LANGUAGE_GLSL.into();
@@ -4603,6 +4624,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_verilog(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_verilog::LANGUAGE.into();
@@ -4610,6 +4632,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_systemverilog(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_systemverilog::LANGUAGE.into();
@@ -4617,6 +4640,7 @@ mod tests {
         parser.parse(source, None)
     }
 
+    #[cfg(feature = "lang-extras")]
     fn parse_qsharp(source: &[u8]) -> Option<tree_sitter::Tree> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_qsharp::LANGUAGE.into();
@@ -4870,6 +4894,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_scala_class_and_function() {
         let source = b"package com.example\nimport scala.collection.mutable\nclass User(name: String) {\n  def greet: String = s\"hi $name\"\n}\ntrait Greetable {\n  def hello: String\n}\ndef helper(x: Int): Int = x + 1";
         if let Some(tree) = parse_scala(source) {
@@ -4903,6 +4928,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_zig_functions() {
         let source = b"const std = @import(\"std\");\nfn add(a: i32, b: i32) i32 {\n    return a + b;\n}\nconst Point = struct { x: i32, y: i32 };\ntest \"basic\" {\n    try std.testing.expect(add(1, 2) == 3);\n}";
         if let Some(tree) = parse_zig(source) {
@@ -4921,6 +4947,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_solidity_contract_and_function() {
         let source = b"pragma solidity ^0.8.0;\nimport \"./Helper.sol\";\ncontract Counter {\n    uint256 private count;\n    function increment() public {\n        count += 1;\n    }\n}";
         if let Some(tree) = parse_solidity(source) {
@@ -4957,6 +4984,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_lua_functions() {
         let source = b"local m = require(\"math\")\nfunction add(a, b)\n  return a + b\nend\nlocal function square(x)\n  return x * x\nend";
         if let Some(tree) = parse_lua(source) {
@@ -4980,6 +5008,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_json_minimal_document() {
         let source = b"{\"name\": \"test\", \"count\": 3}";
         if let Some(tree) = parse_json(source) {
@@ -4995,6 +5024,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_yaml_minimal_document() {
         let source = b"name: test\nversion: 1.0\n";
         if let Some(tree) = parse_yaml(source) {
@@ -5009,6 +5039,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_csharp_class_and_method() {
         let source = b"using System;\nnamespace Demo {\n  public class User {\n    public string Greet(string name) {\n      return \"hi \" + name;\n    }\n  }\n}";
         if let Some(tree) = parse_csharp(source) {
@@ -5042,6 +5073,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_haskell_function_and_import() {
         let source = b"module Main where\nimport Data.List (sort)\ndouble :: Int -> Int\ndouble x = x * 2\nmain :: IO ()\nmain = putStrLn \"hi\"";
         if let Some(tree) = parse_haskell(source) {
@@ -5069,6 +5101,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_elm_function_and_type() {
         let source = b"module Main exposing (main)\nimport Html exposing (text)\ntype Msg = Increment | Decrement\ndouble : Int -> Int\ndouble x = x * 2";
         if let Some(tree) = parse_elm(source) {
@@ -5089,6 +5122,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_ocaml_module_and_function() {
         let source =
             b"open List\nlet double x = x * 2\nmodule Math = struct\n  let add a b = a + b\nend";
@@ -5117,6 +5151,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_fsharp_module_and_function() {
         let source = b"module Math\nlet double x = x * 2\nlet add a b = a + b";
         if let Some(tree) = parse_fsharp(source) {
@@ -5135,6 +5170,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_erlang_function_and_module() {
         let source = b"-module(math).\n-export([double/1]).\ndouble(X) -> X * 2.";
         if let Some(tree) = parse_erlang(source) {
@@ -5153,6 +5189,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_nim_function_and_type() {
         let source = b"import std/strutils\nproc double(x: int): int =\n  x * 2\nfunc add(a, b: int): int = a + b";
         if let Some(tree) = parse_nim(source) {
@@ -5176,6 +5213,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_powershell_function() {
         let source = b"function Get-User {\n  param($id)\n  return $id\n}\nfunction Test-Helper { Write-Host 'hi' }";
         if let Some(tree) = parse_powershell(source) {
@@ -5194,6 +5232,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_crystal_class_and_method() {
         let source = b"require \"json\"\nclass User\n  def initialize(name)\n    @name = name\n  end\n  def greet\n    \"hi #{@name}\"\n  end\nend";
         if let Some(tree) = parse_crystal(source) {
@@ -6178,6 +6217,7 @@ class OldService {
     // ── GPU / HDL / Quantum tests (cluster A) ─────────────────────────────
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_cuda_function() {
         let source = b"__global__ void add(int a, int b) { return a + b; }\n";
         if let Some(tree) = parse_cuda(source) {
@@ -6192,6 +6232,7 @@ class OldService {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_hlsl_function() {
         let source = b"float4 main_ps(float4 pos : SV_POSITION) : SV_Target { return pos; }\n";
         if let Some(tree) = parse_hlsl(source) {
@@ -6206,6 +6247,7 @@ class OldService {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_glsl_function() {
         let source = b"void main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }\n";
         if let Some(tree) = parse_glsl(source) {
@@ -6220,6 +6262,7 @@ class OldService {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_verilog_module() {
         let source = b"module top; endmodule\n";
         let tree = parse_verilog(source).expect("verilog parse");
@@ -6230,6 +6273,7 @@ class OldService {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_systemverilog_class() {
         let source = b"class packet; int length; function int get_length(); return length; endfunction endclass\n";
         if let Some(tree) = parse_systemverilog(source) {
@@ -6244,6 +6288,7 @@ class OldService {
     }
 
     #[test]
+    #[cfg(feature = "lang-extras")]
     fn test_extract_qsharp_operation() {
         let source = b"operation BellPair() : (Qubit, Qubit) { use qs = Qubit[2]; H(qs[0]); CNOT(qs[0], qs[1]); return (qs[0], qs[1]); }\n";
         if let Some(tree) = parse_qsharp(source) {
