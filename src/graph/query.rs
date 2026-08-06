@@ -2414,6 +2414,44 @@ impl GraphEngine {
         Ok(())
     }
 
+    /// Delete every `code_elements` row for the given env. Full-index pre-clean:
+    /// `leankg index` (non-incremental) only INSERTs into the unkeyed
+    /// `code_elements` table, so reindexing accumulated duplicate rows. This
+    /// mirrors the delete-then-insert the incremental path does per file.
+    /// Scoped to `env` so other projects on the shared PG schema are untouched;
+    /// also matches rows written before the `env` column existed (NULL guard).
+    pub fn wipe_elements_for_env(&self, env: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"
+            ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], env = $e
+            :rm code_elements {{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}}
+        "#
+        );
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("e".to_string(), serde_json::Value::String(env.to_string()));
+        self.db.run_script(&query, params)?;
+        self.invalidate_cache();
+        Ok(())
+    }
+
+    /// Delete every `relationships` row for the given env. Same rationale as
+    /// [`Self::wipe_elements_for_env`]. Legacy rows with NULL env are included
+    /// so a wiped project never leaves orphaned relationships behind.
+    pub fn wipe_relationships_for_env(&self, env: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let query = r#"
+            ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env], env = $e
+            :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}
+        "#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("e".to_string(), serde_json::Value::String(env.to_string()));
+        self.db.run_script(&query, params)?;
+        self.invalidate_cache();
+        Ok(())
+    }
+
     /// Delete every `code_elements` row whose `qualified_name` matches (all
     /// composite-key variants). Cozo `:put` keys the full tuple, so renames
     /// leave duplicate GID rows — callers must rm-by-qn before put.
