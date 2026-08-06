@@ -173,6 +173,10 @@ leankg index ./src
 leankg status
 ```
 
+`leankg index` is delete-then-insert per env: re-indexing a project replaces its
+`code_elements` / `relationships` rows instead of accumulating duplicates. Set
+`LEANKG_INDEX_WIPE=0` to restore insert-only behavior.
+
 Optional: enable watch mode so the graph stays fresh while you and your agent edit code:
 
 ```bash
