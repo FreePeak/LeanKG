@@ -1,8 +1,16 @@
 # LeanKG — lean Postgres-only image: Rust binary + HTTP MCP server.
 # No UI build, no source indexing bake. Postgres (pgvector) is the only
 # storage engine (D4); the container connects via LEANKG_PG_URL.
+#
+# Embeddings are opt-in via --build-arg LEANKG_FEATURES=embeddings (the
+# fastembed/ONNX stack adds ~hundreds of MB and several minutes to the build).
+# The MCP HTTP server's in-process background embed + embed_control tool only
+# exist when this feature is compiled in — build with it if you want live
+# embedding without a separate worker container.
 FROM rust:1-bookworm AS builder
 WORKDIR /app
+
+ARG LEANKG_FEATURES=""
 
 # Starter Render build pipeline: 2 CPU, 8 GB RAM (docs.render.com/build-pipeline).
 # Default build has no embeddings → no fastembed/openssl in the dep graph, so
@@ -14,12 +22,12 @@ ENV CARGO_BUILD_JOBS=1 \
     RUSTFLAGS="-C debuginfo=0" \
     CARGO_TERM_COLOR=always
 
-# Deb.debian.org / ftp.debian.org (Fastly CDN) are unreachable from some build
-# networks. ftp.us.debian.org is on a different network and is reachable.
+# HTTPS apt mirror. Plain HTTP mirrors (ftp.us.debian.org) are unreachable
+# from sandboxed build networks; deb.debian.org (Fastly CDN) over HTTPS works.
 # Sources file in its own RUN (heredoc must end the instruction).
 RUN cat > /etc/apt/sources.list.d/debian.sources <<'EOF'
 Types: deb
-URIs: http://ftp.us.debian.org/debian
+URIs: https://deb.debian.org/debian
 Suites: bookworm bookworm-updates
 Components: main
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
@@ -27,6 +35,7 @@ EOF
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         pkg-config \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
@@ -39,7 +48,8 @@ COPY leankg.yaml ./leankg.yaml
 # --no-default-features: build only core languages (go/ts/py/rust/java/kotlin/
 # bash/ruby/php/perl/r/elixir/swift/c/cpp/objc/dart). The lang-extras grammars
 # (scala, csharp, cuda, …) are compiled out, cutting build time substantially.
-RUN cargo build --release --no-default-features \
+# Embeddings opt-in via --build-arg LEANKG_FEATURES=embeddings (fastembed/ONNX).
+RUN cargo build --release --no-default-features --features "$LEANKG_FEATURES" \
     && strip target/release/leankg \
     && cp target/release/leankg /usr/local/bin/leankg
 
@@ -49,7 +59,7 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 
 RUN cat > /etc/apt/sources.list.d/debian.sources <<'EOF'
 Types: deb
-URIs: http://ftp.us.debian.org/debian
+URIs: https://deb.debian.org/debian
 Suites: bookworm bookworm-updates
 Components: main
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg

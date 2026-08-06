@@ -198,6 +198,16 @@ impl ClientPool {
         let pool_arc = Arc::new(self.clone());
         loop {
             if let Some(c) = guard.idle.pop_front() {
+                if c.is_closed() {
+                    // Stale connection (server closed it — idle timeout,
+                    // network blip, OrbStack host.docker.internal flap).
+                    // Drop it and open a fresh one; never hand a dead
+                    // client to a caller (that surfaces as opaque
+                    // `Error::Closed` from every subsequent query).
+                    guard.live -= 1;
+                    tracing::warn!("pg pool: dropped closed idle client; live={}", guard.live);
+                    continue;
+                }
                 return Ok(PooledClient::new(c, pool_arc.clone()));
             }
             if guard.live < self.inner.max {
@@ -216,7 +226,15 @@ impl ClientPool {
 
     fn release(&self, client: postgres::Client) {
         let mut guard = self.inner.state.lock().unwrap();
-        guard.idle.push_back(client);
+        if client.is_closed() {
+            guard.live -= 1;
+            tracing::warn!(
+                "pg pool: dropped closed client on release; live={}",
+                guard.live
+            );
+        } else {
+            guard.idle.push_back(client);
+        }
         self.inner.has_slot.notify_one();
     }
 }
@@ -1129,6 +1147,13 @@ mod tests {
     /// LEANKG_PG_POOL_SIZE / LEANKG_PG_LOCK) — Rust runs tests in parallel
     /// and env is process-global.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // Pool self-heal for stale/closed idle clients is exercised end-to-end by
+    // tests/tmp_pool_isolation.rs against a live PG (LEANKG_PG_URL): before
+    // the fix, the second sequential query failed with `connection closed`;
+    // after it, `count_elements` returns the real 804k. The `postgres::Client`
+    // API (`close(self)` consumes) makes a focused unit test awkward, so the
+    // integration test is the coverage.
 
     #[test]
     fn postgres_backend_stub_returns_documented_error() {
