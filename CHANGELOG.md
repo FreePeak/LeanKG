@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.4](https://github.com/FreePeak/LeanKG/compare/v0.20.3...v0.20.4) (2026-08-06)
+
+
+### Bug Fixes
+
+* **embed:** PG pool reconnect, incremental dirty-collect, cold-first-run ([#215](https://github.com/FreePeak/LeanKG/issues/215)) ([d93f634](https://github.com/FreePeak/LeanKG/commit/d93f63443caf565ceba858379b4c516a328ec241))
+
 ## [0.20.3](https://github.com/FreePeak/LeanKG/compare/v0.20.2...v0.20.3) (2026-08-06)
 
 
