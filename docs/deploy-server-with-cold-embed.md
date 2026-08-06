@@ -23,19 +23,23 @@ embed runs in a one-shot worker before the long-lived MCP server starts.
 Two containers, one shared DB volume. The embed worker runs once per index
 cycle (cold start or `--force-reindex`); the MCP server runs continuously.
 
-## 1. Build the embed-enabled image
+## 1. Build the embed-enabled binary + worker image
 
 The Hub image `freepeak/leankg:latest` is built without `--features=embeddings`
-(slim). Cold embed requires the embeddings feature. Build it locally:
+(slim). Cold embed requires the embeddings feature. Build the binary
+locally with the feature on, then assemble the slim worker image that
+ships it:
 
 ```bash
-docker build -f Dockerfile.embed -t freepeak/leankg:embeddings .
+cargo build --release --features=embeddings
+mkdir -p .docker-build && cp target/release/leankg .docker-build/leankg
+docker build -f Dockerfile.embed-worker -t freepeak/leankg:embed-worker .
 ```
 
-> **Build network note:** Docker build must reach `deb.debian.org` to fetch
-> `clang`, `libclang-dev`, `libssl-dev`. If your build environment blocks
-> these mirrors (e.g. air-gapped, sandboxed), pre-stage the apt cache on
-> the host or use an internal Debian mirror.
+> **Build network note:** the cargo build must reach `deb.debian.org` to
+> fetch `clang`, `libclang-dev`, `libssl-dev` for fastembed. If your build
+> environment blocks these mirrors (e.g. air-gapped, sandboxed), pre-stage
+> the apt cache on the host or use an internal Debian mirror.
 
 ## 2. Compose stack
 

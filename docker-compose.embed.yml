@@ -1,13 +1,11 @@
-# Plan §"Part B Option 1" — dedicated offline embed job.
+# Offline cold-embed job (Phase 8, plan D4): PostgreSQL is the only storage
+# engine, so the MCP service can stay up while a one-shot full rebuild
+# runs against PG. The single-writer dance (stop / run / start) is gone —
+# PG handles concurrent connections.
 #
-# Use this when you want to force a one-shot full rebuild while MCP is
-# stopped. CozoDB RocksDB is single-writer per process per path, so the
-# canonical "safe" sequence is:
-#
-#   docker compose -f docker-compose.yml stop leankg
+# Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.embed.yml \
 #     --profile embed run --rm leankg-embed
-#   docker compose -f docker-compose.yml start leankg
 #
 # Cold offline job: INT8 fast path. Needs ≥6g so batch 128 fits.
 # Default: cpus="6", mem_reservation=3g, mem_limit=10g (multi-project /
