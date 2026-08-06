@@ -441,6 +441,7 @@ fn collect_incremental_dirty_work(
         let total = graph.count_elements().unwrap_or(0);
         let mut offset = 0usize;
         let page_size = 5_000usize;
+        let mut seen_qns: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             if crate::embeddings::control::is_cancel_requested() {
                 return Err("embed cancelled".into());
@@ -455,6 +456,14 @@ fn collect_incremental_dirty_work(
                     continue; // already embedded, still matching
                 }
                 if !element_passes_type_filter(&el, opts) {
+                    continue;
+                }
+                // code_elements can carry the same QN many times (e.g. 171
+                // copies of a minified `vis-network.min.js::constructor`).
+                // The live-HNSW `:put embedding_vectors` emits ONE statement
+                // per batch; duplicate QNs in one VALUES list fail with PG
+                // E21000. Mirror the Full-path dedupe (build.rs:507).
+                if !seen_qns.insert(el.qualified_name.clone()) {
                     continue;
                 }
                 if let Some(item) = work_item_from_element(&el) {
@@ -1494,15 +1503,16 @@ fn remove_vectors(
     }
     let chunk_size = effective_upsert_chunk();
     for chunk in qns.chunks(chunk_size) {
-        let literals: Vec<String> = chunk
+        // Parameterized `:rm` — avoids the inline-literal escaping bug for
+        // QNs with `"`/`\`/control chars (see delete_state_rows).
+        let rows: Vec<serde_json::Value> = chunk
             .iter()
-            .map(|qn| format!("[{}]", serde_json::Value::String(qn.clone())))
+            .map(|qn| serde_json::Value::Array(vec![serde_json::Value::String(qn.clone())]))
             .collect();
-        let values_clause = literals.join(", ");
-        let query = format!(
-            r#"?[qualified_name] <- [{values_clause}] :rm embedding_vectors {{qualified_name}}"#
-        );
-        db.run_script(&query, Default::default())?;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("qns".to_string(), serde_json::Value::Array(rows));
+        let query = r#"?[qualified_name] <- $qns :rm embedding_vectors {qualified_name}"#;
+        db.run_script(query, params)?;
     }
     Ok(())
 }
@@ -1510,16 +1520,15 @@ fn remove_vectors(
 fn count_vectors(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    // ponytail: the attribute syntax `*embedding_vectors{qualified_name}` is
-    // not yet handled by the translator (Phase 5 inventory risk 8). On
-    // Postgres the call will surface a translate error; on Cozo the
-    // CozoBackend still executes the script unchanged. Replace with the
-    // LIMIT 1 EXISTS check once the translator learns attribute syntax.
-    let result = db.run_script(
-        "?[qualified_name] := *embedding_vectors{qualified_name}",
-        Default::default(),
-    )?;
-    Ok(result.rows.len())
+    // Aggregate COUNT instead of pulling every QN row (628k+ on workspace-be)
+    // into memory just to count. Attribute syntax `*embedding_vectors{qn}`
+    // is handled by the translator, but COUNT is far cheaper here.
+    let result = db.run_script("?[count(qn)] := *embedding_vectors[qn]", Default::default())?;
+    Ok(result
+        .rows
+        .first()
+        .and_then(|r| r.first().and_then(|v| v.get_int()))
+        .unwrap_or(0) as usize)
 }
 
 /// Configuration for the in-process background embed used by mcp-http

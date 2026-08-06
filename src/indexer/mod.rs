@@ -1009,7 +1009,7 @@ pub fn index_files_parallel_with_typed_resolve(
                         skipped
                     );
                 }
-                Err(e) => tracing::warn!("embedding_state stale-mark failed: {}", e),
+                Err(e) => tracing::warn!("embedding_state stale-mark failed: {:?}", e),
             }
         }
     }
