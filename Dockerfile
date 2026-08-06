@@ -5,7 +5,9 @@ FROM rust:1-bookworm AS builder
 WORKDIR /app
 
 # Starter Render build pipeline: 2 CPU, 8 GB RAM (docs.render.com/build-pipeline).
-# embeddings → fastembed → hf-hub → native-tls → openssl-sys needs libssl-dev.
+# Default build has no embeddings → no fastembed/openssl in the dep graph, so
+# clang/libclang-dev/libssl-dev are unnecessary (they were for an old bindgen
+# path). pkg-config is still needed by some tree-sitter C build scripts.
 ENV CARGO_BUILD_JOBS=1 \
     CARGO_PROFILE_RELEASE_LTO=false \
     CARGO_INCREMENTAL=0 \
@@ -24,23 +26,20 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        clang \
-        libclang-dev \
         pkg-config \
-        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-# benches/ required — Cargo.toml [[bench]] targets fail manifest parse if missing.
-COPY benches ./benches
-# examples/ required — Cargo.toml [[example]] targets (embeddings feature) fail
-# manifest parse if missing.
-COPY examples ./examples
+# examples/ + benches/ are not copied: their [[example]]/[[bench]] manifest
+# targets were removed, so Cargo no longer needs the source files present.
 COPY ontology/ ./ontology/
 COPY leankg.yaml ./leankg.yaml
 
-RUN cargo build --release \
+# --no-default-features: build only core languages (go/ts/py/rust/java/kotlin/
+# bash/ruby/php/perl/r/elixir/swift/c/cpp/objc/dart). The lang-extras grammars
+# (scala, csharp, cuda, …) are compiled out, cutting build time substantially.
+RUN cargo build --release --no-default-features \
     && strip target/release/leankg \
     && cp target/release/leankg /usr/local/bin/leankg
 

@@ -2510,20 +2510,15 @@ include("web-app")"#;
     }
 
     // Bulk path (extract_elements_for_file) must index registry languages.
+    // scala/solidity are lang-extras grammars: only assert them when enabled.
     #[test]
     fn test_bulk_path_indexes_registry_languages() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let files = [
-            "main.c",
-            "main.rb",
-            "main.php",
-            "math.R",
-            "User.scala",
-            "Counter.sol",
-            "config.json",
-        ];
-        for f in files {
-            let content = match f {
+        let mut files: Vec<&str> = vec!["main.c", "main.rb", "main.php", "math.R"];
+        #[cfg(feature = "lang-extras")]
+        files.extend(["User.scala", "Counter.sol", "config.json"]);
+        for f in &files {
+            let content = match *f {
                 "main.c" => "int add(int a, int b) { return a + b; }\nstruct Point { int x; };",
                 "main.rb" => "class User\n  def greet\n    'hi'\n  end\nend",
                 "main.php" => "<?php\nclass Foo {\n  public function bar() { return 1; }\n}",
@@ -2536,7 +2531,7 @@ include("web-app")"#;
             std::fs::write(dir.path().join(f), content).expect("write");
         }
 
-        for f in files {
+        for f in &files {
             let path = dir.path().join(f);
             let parsed = extract_elements_for_file(path.to_str().unwrap()).expect("extract");
             assert!(
