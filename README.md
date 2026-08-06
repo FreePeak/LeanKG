@@ -325,7 +325,10 @@ Architecture: [docs/architecture.md](docs/architecture.md) · MCP catalog: [docs
   <em>Mega-graph skip gate with “Load graph anyway”.</em>
 </p>
 
-## Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-screenshots-2026-07-20.md) · App notes: [ui-v2/README.md](ui-v2/README.md) · Live demo: **https://leankg.onrender.com** · Shell provenance: [GitNexus](https://github.com/abhigyanpatwari/GitNexus)
+#### Full set: [docs/reports/ui-v2-screenshots-2026-07-20.md](docs/reports/ui-v2-screenshots-2026-07-20.md) 
+· App notes: [ui-v2/README.md](ui-v2/README.md) 
+· Live demo: **https://leankg.onrender.com** 
+· Shell provenance: [GitNexus](https://github.com/abhigyanpatwari/GitNexus)
 
 ## How It Works
 
