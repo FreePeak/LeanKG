@@ -2854,7 +2854,6 @@ fn rm_script(
     // `DELETE FROM table WHERE col = ANY('{...}')`.
     if let Some((_, after_arrow)) = source.split_once("<-") {
         let list_text = after_arrow.trim();
-        let arr = parse_nested_lists(list_text)?;
         let key_col = cols.first().cloned().unwrap_or_default();
         // Explicit table name wins over key-column inference — `qualified_name`
         // is the PK of both embedding_state and embedding_vectors.
@@ -2867,16 +2866,38 @@ fn rm_script(
             }
         };
         let pk = key_col;
-        // Flatten the outer array: each row is a single column.
-        let strs: Vec<String> = arr
-            .into_iter()
-            .filter_map(|row| {
-                row.into_iter().next().map(|v| match v {
-                    serde_json::Value::String(s) => s,
-                    other => other.to_string(),
+        let strs: Vec<String> = if let Some(name) = list_text.strip_prefix('$') {
+            // `?[col] <- $qns :rm table {col}` — caller passes a Vec<String>
+            // under `$qns`. Parameterized: avoids the literal-escaping bug
+            // (a QN containing `"` or `\` breaks the inline `[[...]]` literal
+            // and can merge rows → E21000 / wrong deletes).
+            let v = params.get(name).cloned().unwrap_or(serde_json::Value::Null);
+            match v {
+                serde_json::Value::Array(outer) => outer
+                    .into_iter()
+                    .filter_map(|r| match r {
+                        serde_json::Value::Array(row) => row.first().map(|f| match f {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        }),
+                        serde_json::Value::String(s) => Some(s),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        } else {
+            let arr = parse_nested_lists(list_text)?;
+            // Flatten the outer array: each row is a single column.
+            arr.into_iter()
+                .filter_map(|row| {
+                    row.into_iter().next().map(|v| match v {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        };
         let sql = format!(
             "DELETE FROM {table} WHERE {pk} = ANY($1::text[])",
             table = table,
@@ -4085,6 +4106,54 @@ fn put_embedding_state_literal_rows() {
         }
         Err(e) => panic!("translate failed: {}", e),
     }
+}
+
+#[test]
+fn rm_embedding_state_param_batch() {
+    // `?[qn] <- $qns :rm embedding_state {qualified_name}` — parameterized
+    // delete for QNs that may contain quotes/backslashes.
+    let mut p = BTreeMap::new();
+    p.insert(
+        "qns".into(),
+        serde_json::json!([["qn/a"], ["qn\"with\"quote"], ["qn\\backslash"]]),
+    );
+    let t = translate(
+        r#"?[qualified_name] <- $qns :rm embedding_state {qualified_name}"#,
+        p,
+    )
+    .unwrap();
+    assert!(
+        t.sql
+            .contains("DELETE FROM embedding_state WHERE \"qualified_name\" = ANY($1::text[])"),
+        "got: {}",
+        t.sql
+    );
+}
+
+#[test]
+fn put_embedding_state_large_batch_preserves_row_count() {
+    // The indexer marks up to UPSERT_CHUNK (500) qualified_names per `:put`.
+    // A translator bug that drops or duplicates a row in a large VALUES list
+    // would surface as PG E21000 (duplicate PK) or a wrong row count. Build
+    // 500 distinct QNs and assert the SQL keeps all 500.
+    let rows: Vec<String> = (0..500)
+        .map(|i| format!("[\"qn_{i}\", 0, \"\", \"stale\", \"0\"]"))
+        .collect();
+    let values = rows.join(", ");
+    let query = format!(
+        "?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values}]\n:put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"
+    );
+    let t = translate(&query, BTreeMap::new()).unwrap();
+    // 500 rows × 5 cols = 2500 params. If the translator dropped or merged
+    // a row, this count would be off and a re-write would E21000.
+    assert_eq!(
+        t.params.len(),
+        2500,
+        "500-row :put must yield 2500 params, got: {}",
+        t.params.len()
+    );
+    let row_count = t.params.len() / 5;
+    assert_eq!(row_count, 500, "500 rows expected, got {}", row_count);
 }
 
 #[test]

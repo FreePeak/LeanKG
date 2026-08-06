@@ -1477,15 +1477,16 @@ fn remove_vectors(
     }
     let chunk_size = effective_upsert_chunk();
     for chunk in qns.chunks(chunk_size) {
-        let literals: Vec<String> = chunk
+        // Parameterized `:rm` — avoids the inline-literal escaping bug for
+        // QNs with `"`/`\`/control chars (see delete_state_rows).
+        let rows: Vec<serde_json::Value> = chunk
             .iter()
-            .map(|qn| format!("[{}]", serde_json::Value::String(qn.clone())))
+            .map(|qn| serde_json::Value::Array(vec![serde_json::Value::String(qn.clone())]))
             .collect();
-        let values_clause = literals.join(", ");
-        let query = format!(
-            r#"?[qualified_name] <- [{values_clause}] :rm embedding_vectors {{qualified_name}}"#
-        );
-        db.run_script(&query, Default::default())?;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("qns".to_string(), serde_json::Value::Array(rows));
+        let query = r#"?[qualified_name] <- $qns :rm embedding_vectors {qualified_name}"#;
+        db.run_script(query, params)?;
     }
     Ok(())
 }

@@ -220,37 +220,51 @@ pub fn mark_stale_for_qualified_names(
     if qualified_names.is_empty() {
         return Ok(());
     }
-    // Dedupe: a single `:put` with two rows for the same PK fails with
+    // Dedupe: a single import with two rows for the same PK fails with
     // E21000 ("ON CONFLICT DO UPDATE command cannot affect row a second
     // time"). The indexer can hand us the same qualified_name twice (e.g.
     // host-path + workspace-path copies of the same file).
     let now = now_iso();
     let mut seen = std::collections::HashSet::with_capacity(qualified_names.len());
     for chunk in qualified_names.chunks(UPSERT_CHUNK) {
-        let rows: Vec<String> = chunk
+        // Parameterized import (DataValue) instead of string-interpolating
+        // qualified_names into a Datalog literal. A QN can contain a
+        // double-quote / backslash / control char (e.g. the minified JS
+        // `vis-network.min.js` extractor or a markdown heading with
+        // `"..."`); a string literal `["qn", ...]` with an unescaped quote
+        // breaks the literal parser, which mis-parses rows and can merge two
+        // distinct QNs into one duplicate PK → E21000. import_relations skips
+        // script parsing entirely (same safe path as upsert_fresh).
+        use crate::db::backend::DataValue;
+        let rows: Vec<Vec<DataValue>> = chunk
             .iter()
             .filter(|qn| seen.insert(qn.to_string()))
             .map(|qn| {
-                // usearch_key column is now legacy (CozoDB HNSW keys on
-                // qualified_name directly). Stored as 0 for schema-compat.
-                let key_i64: i64 = 0;
-                format!(
-                    "[{}, {}, {}, {}, {}]",
-                    serde_json::Value::String(qn.clone()),
-                    serde_json::Value::Number(key_i64.into()),
-                    serde_json::Value::String("".to_string()),
-                    serde_json::Value::String("stale".to_string()),
-                    serde_json::Value::String(now.clone()),
-                )
+                vec![
+                    DataValue::Str(qn.as_str().into()),
+                    DataValue::from(0i64),
+                    DataValue::Str("".into()),
+                    DataValue::Str("stale".into()),
+                    DataValue::Str(now.as_str().into()),
+                ]
             })
             .collect();
-        let values_clause = rows.join(", ");
-
-        let query = format!(
-            r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{values_clause}]
-               :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}"#
+        if rows.is_empty() {
+            continue;
+        }
+        let named_rows = crate::db::backend::NamedRows::new(
+            vec![
+                "qualified_name".to_string(),
+                "usearch_key".to_string(),
+                "content_hash".to_string(),
+                "state".to_string(),
+                "embedded_at".to_string(),
+            ],
+            rows,
         );
-        db.run_script(&query, Default::default())?;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("embedding_state".to_string(), named_rows);
+        db.import_relations(map)?;
     }
     Ok(())
 }
@@ -375,15 +389,25 @@ pub fn delete_state_rows(
         return Ok(());
     }
     for chunk in rows.chunks(UPSERT_CHUNK) {
-        let literals: Vec<String> = chunk
+        // Parameterized `:rm` (`?[qn] <- $qns :rm embedding_state {qualified_name}`)
+        // — a QN with `"`/`\`/control chars breaks the inline `[[...]]`
+        // literal (mis-parses → E21000 or wrong deletes), same as the
+        // stale-mark path.
+        let qns: Vec<serde_json::Value> = chunk
             .iter()
-            .map(|r| format!("[{}]", serde_json::Value::String(r.qualified_name.clone())))
+            .map(|r| serde_json::Value::String(r.qualified_name.clone()))
             .collect();
-        let values_clause = literals.join(", ");
-        let query = format!(
-            r#"?[qualified_name] <- [{values_clause}] :rm embedding_state {{qualified_name}}"#
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "qns".to_string(),
+            serde_json::Value::Array(
+                qns.into_iter()
+                    .map(|q| serde_json::Value::Array(vec![q]))
+                    .collect(),
+            ),
         );
-        db.run_script(&query, Default::default())?;
+        let query = r#"?[qualified_name] <- $qns :rm embedding_state {qualified_name}"#;
+        db.run_script(query, params)?;
     }
     Ok(())
 }
@@ -565,6 +589,21 @@ mod tests {
         ];
         // Should not error (no E21000) even though /dup/qn appears 3x.
         mark_stale_for_qualified_names(boxed.as_ref(), &dupes).expect("dedupe must prevent E21000");
+        // Real indexer shape: UPSERT_CHUNK=500 long-path QNs, all distinct.
+        let big: Vec<String> = (0..500)
+            .map(|i| format!("/Users/linh.doan/work/harvey/freepeak/leankg/tests/load_test_1m_nodes.rs::load_test_fn_{i}"))
+            .collect();
+        mark_stale_for_qualified_names(boxed.as_ref(), &big).expect("500 distinct must not E21000");
+        // Clean up.
+        let clean_qns: Vec<String> = (0..500)
+            .map(|i| format!("/Users/linh.doan/work/harvey/freepeak/leankg/tests/load_test_1m_nodes.rs::load_test_fn_{i}"))
+            .collect();
+        let literals: Vec<String> = clean_qns.iter().map(|q| format!("[\"{}\"]", q)).collect();
+        let clean = format!(
+            "?[qualified_name] <- [{}] :rm embedding_state {{qualified_name}}",
+            literals.join(", ")
+        );
+        let _ = boxed.run_script(&clean, std::collections::BTreeMap::new());
         // Clean up the rows we inserted.
         let clean = r#"?[qualified_name] <- [["/dup/qn"], ["/other/qn"]]
 :rm embedding_state {qualified_name}"#;
