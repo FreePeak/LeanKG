@@ -1,0 +1,60 @@
+name: Semantic Release
+
+# Custom semantic-version release pipeline. Replaces release-please.
+#
+# Bump rules (highest present wins), computed from conventional commits since
+# the last v* tag:
+#   chore commit -> major (X)     e.g. 0.20.5 -> 1.0.0
+#   feat  commit -> minor (Y)     e.g. 0.20.5 -> 0.21.0
+#   fix   commit -> patch (Z)     e.g. 0.20.5 -> 0.20.6
+#
+# Two entry points, one job, one composite action (.github/actions/semver-release):
+#   - push to main  -> create-pr mode: bump Cargo.toml / Cargo.lock /
+#     manifest.json / CHANGELOG.md on a release/vX.Y.Z branch and open a
+#     release PR. Merging that PR is the human gate before anything is
+#     published.
+#   - release PR merged -> release mode: create the annotated vX.Y.Z tag and
+#     the GitHub Release. The pushed tag fires .github/workflows/release.yml
+#     (on.push.tags), which builds the cross-platform binaries and publishes
+#     crates.io.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+# One release flow at a time; cancel duplicate runs racing on the same ref.
+concurrency:
+  group: semantic-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semver:
+    runs-on: ubuntu-latest
+    # Run on:
+    #   - every push to main (may open/update a release PR)
+    #   - manual dispatch
+    #   - a merged release PR (publish)
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On release-PR merge, checkout the merge commit so Cargo.toml
+          # carries the bumped version. On push, HEAD is already main.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.ref }}
+
+      - uses: ./.github/actions/semver-release
+        with:
+          mode: ${{ github.event_name == 'push' && 'create-pr' || 'release' }}

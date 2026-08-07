@@ -1,0 +1,24 @@
+name: Semantic version release
+description: >-
+  Compute the next LeanKG version from conventional commits
+  (chore -> major, feat -> minor, fix -> patch), bump version metadata and open
+  a release PR (create-pr), or tag + release + dispatch the binary job
+  (release). No external dependencies; runs on the Node 20 + gh preinstalled on
+  ubuntu-latest.
+
+inputs:
+  mode:
+    description: 'create-pr (bump + open PR) or release (tag + dispatch)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run semantic version release
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_SHA: ${{ github.sha }}
+      run: node "${{ github.action_path }}/action.js"
