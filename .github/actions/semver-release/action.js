@@ -227,7 +227,7 @@ function release() {
   if (tagExists) {
     console.log(`Tag ${tag} already on origin — skipping tag push.`);
   } else {
-    run(`git tag -a ${tag} -m 'Release ${tag}'`);
+    run(`git -c user.name='leankg-release[bot]' -c user.email='noreply@github.com' tag -a ${tag} -m 'Release ${tag}'`);
     run(`git push origin ${tag}`);
     console.log(`Pushed tag ${tag}`);
   }
