@@ -47,6 +47,7 @@ vendor/cozo/Cargo.toml.orig
 # volume mounts, ports, etc.). Created locally by the user; never
 # committed.
 docker-compose.override.yml
+docker-compose.rebuild.yml
 vendor/
 actionlint/
 docker-compose.enterprise.local.yml
