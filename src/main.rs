@@ -39,6 +39,7 @@ mod report;
 mod retrieval;
 mod runtime;
 mod session;
+mod setup;
 mod sources;
 mod watcher;
 mod web;
@@ -322,6 +323,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("[READ-ONLY] write tools will be rejected");
             }
             println!();
+
+            // LEANKG_SETUP=1: after the server binds, run the setup pipeline
+            // (clone -> index -> embed) once per boot. Spawned as a background
+            // task so the server stays healthy; the pipeline re-invokes the
+            // `leankg` binary, so this process isn't blocked.
+            let spawn_setup = std::env::var("LEANKG_SETUP")
+                .map(|v| v != "0" && v != "false")
+                .unwrap_or(false);
+            if spawn_setup {
+                let setup_port = port;
+                if crate::setup::setup_done() {
+                    println!("LEANKG_SETUP=1 but setup already done (marker exists), skipping.");
+                } else {
+                    println!("LEANKG_SETUP=1 — scheduling setup after MCP binds...");
+                    tokio::spawn(async move {
+                        // Poll /health until the server is up, then run setup.
+                        for _ in 0..60 {
+                            if reqwest::blocking::Client::new()
+                                .get(format!("http://127.0.0.1:{setup_port}/health"))
+                                .timeout(std::time::Duration::from_secs(2))
+                                .send()
+                                .map(|r| r.status().is_success())
+                                .unwrap_or(false)
+                            {
+                                break;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                        println!("LEANKG_SETUP: MCP up — running setup pipeline...");
+                        if let Err(e) = crate::setup::run_setup(true, true, true, false) {
+                            eprintln!("LEANKG_SETUP: pipeline failed: {e}");
+                        } else {
+                            println!("LEANKG_SETUP: pipeline complete.");
+                        }
+                    });
+                }
+            }
 
             if let Err(e) = mcp_server.serve_http(port, auth_token, reuse).await {
                 eprintln!("MCP HTTP server error: {}", e);
@@ -1089,9 +1127,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::StatusRepo { name } => {
             status_repo(&name)?;
         }
-        cli::CLICommand::Setup {} => {
-            setup_global()?;
-            install_claude_hooks()?;
+        cli::CLICommand::Setup {
+            clone,
+            index,
+            embed,
+            status,
+        } => {
+            if clone || index || embed || status {
+                crate::setup::run_setup(clone, index, embed, status)?;
+            } else {
+                // Legacy client-side behavior: register MCP servers + hooks.
+                setup_global()?;
+                install_claude_hooks()?;
+            }
         }
         cli::CLICommand::Run { command, compress } => {
             run_shell_command(&command, compress)?;
