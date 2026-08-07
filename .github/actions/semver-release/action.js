@@ -2,10 +2,14 @@
 /*
  * Semantic version release for LeanKG.
  *
- * Bump rules (highest present wins):
- *   chore commit -> major (X)
- *   feat  commit -> minor (Y)
- *   fix   commit -> patch (Z)
+ * Bump rules (highest present wins), Conventional Commits:
+ *   BREAKING CHANGE / type!:  -> major (X)
+ *   feat                      -> minor (Y)
+ *   fix                       -> patch (Z)
+ *   docs / chore / ci / …     -> no bump
+ *
+ * Release metadata commits (`release: vX.Y.Z`, `chore(main): release …`)
+ * are ignored so they never re-trigger a bump.
  *
  * Modes:
  *   create-pr  — compute next version from commits since last v* tag, bump
@@ -38,12 +42,10 @@ function sh(cmd, opts = {}) {
   }
 }
 function gh(args, opts = {}) {
-  // --repo is a global gh flag: it must precede the subcommand, and only when
-  // REPO differs from the current repo (CI checks out the same repo, so skip
-  // it there; passing it also confuses `gh pr create` inside a composite
-  // action context).
-  const prefix = REPO ? `--repo ${REPO}` : '';
-  return sh(`gh ${prefix} ${args}`.trim(), opts);
+  // Do not pass `gh --repo …` before `api` — some gh versions reject it
+  // ("unknown flag: --repo"). Endpoints already include owner/repo; PR
+  // commands run against the checked-out repository.
+  return sh(`gh ${args}`.trim(), opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -71,31 +73,54 @@ function currentVersion() {
   return v;
 }
 
+function isReleaseMetaSubject(s) {
+  // Ignore version-bump / release-PR commits so they never recurse.
+  return (
+    /^release:/i.test(s) ||
+    /^chore(\([^)]*\))?: release\b/i.test(s) ||
+    /^chore\(main\): release\b/i.test(s)
+  );
+}
+
+function isBreakingSubject(s) {
+  return /^(?:[a-zA-Z]+)(?:\([^)]*\))?!:/.test(s) || /BREAKING CHANGE/i.test(s);
+}
+
+// Prefer the latest SemVer vX.Y.Z tag (ignore date-style tags like
+// v2026.03.25-…). Fall back to git-describe if none exist.
+function lastSemverTag() {
+  const tags = sh(`git tag -l 'v*' --sort=-v:refname`)
+    .split('\n')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const semver = tags.find((t) => /^v\d+\.\d+\.\d+$/.test(t));
+  if (semver) return semver;
+  return sh(`git describe --tags --abbrev=0 --match 'v*' 2>/dev/null`);
+}
+
 // Commits to consider: those reachable from HEAD but not from the last v* tag.
-// The release branch merge itself (only Cargo.toml/Cargo.lock/CHANGELOG/
-// manifest.json touched) must NOT trigger a new bump.
 function bumpWorthyCommits() {
-  const lastTag = sh(`git describe --tags --abbrev=0 --match 'v*' 2>/dev/null`);
+  const lastTag = lastSemverTag();
   const range = lastTag ? `${lastTag}..HEAD` : '';
   const subjects = range
     ? run(`git log --format=%s ${range}`).split('\n')
     : run('git log --format=%s').split('\n');
   const out = [];
   for (const s of subjects) {
-    const m = s.match(/^([a-zA-Z]+)(?:\([^)]*\))?:?/);
+    if (!s || isReleaseMetaSubject(s)) continue;
+    const m = s.match(/^([a-zA-Z]+)(?:\([^)]*\))?(!)?:/);
     if (!m) continue;
     const type = m[1];
-    if (!['chore', 'feat', 'fix'].includes(type)) continue;
-    // Ignore the release PR's own commits: bumping only version metadata must
-    // not recurse. Match by subject (release commits are "release: vX.Y.Z").
-    if (/^release:/i.test(s)) continue;
-    out.push({ subject: s, type });
+    const breaking = !!m[2] || isBreakingSubject(s);
+    // Conventional: only feat/fix (and explicit breaking) move the version.
+    if (!breaking && !['feat', 'fix'].includes(type)) continue;
+    out.push({ subject: s, type, breaking });
   }
   return out;
 }
 
 function classify(commits) {
-  if (commits.some((c) => c.type === 'chore')) return 'major';
+  if (commits.some((c) => c.breaking)) return 'major';
   if (commits.some((c) => c.type === 'feat')) return 'minor';
   if (commits.some((c) => c.type === 'fix')) return 'patch';
   return null;
@@ -113,12 +138,14 @@ function createPr() {
   const commits = bumpWorthyCommits();
   const level = classify(commits);
   if (!level) {
-    console.log('No chore/feat/fix commits since last tag — no release needed.');
+    console.log('No feat/fix/breaking commits since last tag — no release needed.');
     process.exit(0);
   }
   const prev = currentVersion();
   const next = bump(prev, level);
-  console.log(`commits: ${commits.map((c) => c.type).join(', ')} -> ${level}: ${prev} -> ${next}`);
+  console.log(
+    `commits: ${commits.map((c) => (c.breaking ? `${c.type}!` : c.type)).join(', ')} -> ${level}: ${prev} -> ${next}`,
+  );
 
   // Refresh a release branch if one already exists for `next` (idempotent:
   // subsequent pushes to main update the open PR instead of opening a new one).
@@ -145,7 +172,9 @@ function createPr() {
   if (pr) {
     console.log(`Updated release PR: ${pr}`);
   } else {
-    gh(`pr create --base main --head ${branch} --title 'release: v${next}' --body 'Semantic release v${next} (${level} bump).'`);
+    gh(
+      `pr create --base main --head ${branch} --title 'release: v${next}' --body 'Semantic release v${next} (${level} bump).'`,
+    );
     console.log(`Opened release PR for ${branch}`);
   }
 }
