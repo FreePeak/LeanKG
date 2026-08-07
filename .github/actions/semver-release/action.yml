@@ -1,7 +1,7 @@
 name: Semantic version release
 description: >-
   Compute the next LeanKG version from conventional commits
-  (chore -> major, feat -> minor, fix -> patch), bump version metadata and open
+  (breaking -> major, feat -> minor, fix -> patch), bump version metadata and open
   a release PR (create-pr), or tag + release + dispatch the binary job
   (release). No external dependencies; runs on the Node 20 + gh preinstalled on
   ubuntu-latest.
