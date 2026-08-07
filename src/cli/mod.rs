@@ -654,8 +654,23 @@ pub enum CLICommand {
         /// Name of the repository
         name: String,
     },
-    /// Global setup: configure MCP for all registered repos at once, install Claude hooks and register plugin
-    Setup {},
+    /// Global setup: clone repos -> index -> embed (server-side pipeline),
+    /// or legacy client-side setup (register MCP + Claude hooks) when no
+    /// pipeline flags are given.
+    Setup {
+        /// Clone the repo list (LEANKG_REPOS) into LEANKG_CLONE_ROOT before indexing.
+        #[arg(long)]
+        clone: bool,
+        /// Run the full index per repo dir.
+        #[arg(long)]
+        index: bool,
+        /// Run the embedding build (embed --wait) per repo dir.
+        #[arg(long)]
+        embed: bool,
+        /// Print resolved repo list + registry state without running.
+        #[arg(long)]
+        status: bool,
+    },
     /// Run a shell command with optional RTK-style compression
     Run {
         /// Command to run (e.g., "git status", "cargo test")

@@ -94,6 +94,39 @@ leankg mcp-http --port 9699  # HTTP / Docker
 
 Docker MCP: pass **container** paths as `project=` (e.g. `/workspace`), never the host Mac path.
 
+### Server-side setup pipeline (clone -> index -> embed)
+
+`leankg setup` with no flags keeps the legacy client-side behavior (register
+MCP + hooks). Pass pipeline flags to instead clone a list of repos and index
+each one server-side:
+
+```bash
+# Status: print the resolved repo list without running anything
+LEANKG_REPOS="github.com/org/repo-a,github.com/org/repo-b" leankg setup --status
+
+# Clone + index + embed each repo under LEANKG_CLONE_ROOT (default: cwd)
+LEANKG_REPOS="github.com/org/repo-a,github.com/org/repo-b" \
+  LEANKG_GIT_REF=main \
+  LEANKG_CLONE_ROOT=/srv/repos \
+  leankg setup --clone --index --embed
+```
+
+Repo sources:
+
+- `LEANKG_REPOS` — comma-separated `host/namespace` paths to clone.
+- `LEANKG_PROJECT_DIRS` — comma-separated dirs already mounted on disk
+  (skips clone; falls back to indexing what exists when no git token is set).
+
+Env knobs: `LEANKG_GIT_HOST` (default `github.com`), `LEANKG_GIT_REF`
+(default `main`), `LEANKG_CLONE_ROOT` / `CLONE_ROOT`, `LEANKG_ENV` (default
+`local`), git token via `GITLAB_TOKEN` / `GIT_TOKEN` / `GITHUB_TOKEN`.
+Each cloned repo gets a minimal `.leankg/leankg.yaml`, then `leankg index`
+and `leankg embed --wait` run inside it. A `setup.done` marker prevents
+re-runs.
+
+Set `LEANKG_SETUP=1` on `leankg mcp-http` to run the same pipeline once after
+the server binds (spawned as a background task; the server stays healthy).
+
 ### Web UI
 
 UI talks REST (`:8080`), not MCP (`:9699`). Start the API, then the Vite app in `ui-v2/`:
