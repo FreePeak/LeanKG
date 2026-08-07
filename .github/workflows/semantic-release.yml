@@ -2,12 +2,13 @@ name: Semantic Release
 
 # Custom semantic-version release pipeline. Replaces release-please.
 #
-# Bump rules (highest present wins), computed from conventional commits since
-# the last v* tag:
-#   chore commit -> major (X)     e.g. 0.20.5 -> 1.0.0
-#   feat  commit -> minor (Y)     e.g. 0.20.5 -> 0.21.0
-#   fix   commit -> patch (Z)     e.g. 0.20.5 -> 0.20.6
+# Bump rules (highest present wins), Conventional Commits since last vX.Y.Z tag:
+#   BREAKING CHANGE / type!:  -> major (X)   e.g. 0.20.6 -> 1.0.0
+#   feat                      -> minor (Y)   e.g. 0.20.6 -> 0.21.0
+#   fix                       -> patch (Z)   e.g. 0.20.6 -> 0.20.7
+#   docs / chore / ci / …     -> no bump
 #
+# Release metadata commits (`release: v…`, `chore(main): release …`) are ignored.
 # Two entry points, one job, one composite action (.github/actions/semver-release):
 #   - push to main  -> create-pr mode: bump Cargo.toml / Cargo.lock /
 #     manifest.json / CHANGELOG.md on a release/vX.Y.Z branch and open a
