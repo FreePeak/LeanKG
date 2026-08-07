@@ -11,12 +11,14 @@
 use crate::db::backend::DataValue;
 use crate::db::backend::SharedDb;
 use crate::db::models::CodeElement;
-use crate::embeddings::models::{Embedder, RerankerStatus};
+use crate::embeddings::models::RerankerStatus;
+use crate::embeddings::provider::{create_provider_from_env, embed_query, EmbedProvider};
 use crate::retrieval::rerank::RerankStage;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct SemanticRetrievalPipeline {
-    embedder: Embedder,
+    provider: Arc<dyn EmbedProvider>,
     rerank_stage: RerankStage,
     db: SharedDb,
     /// Most recent query embedding from [`Self::retrieve`], stashed so
@@ -209,14 +211,26 @@ mod adaptive_k_tests {
 
 impl SemanticRetrievalPipeline {
     pub fn new(db: SharedDb) -> Result<Self, Box<dyn std::error::Error>> {
-        let embedder = Embedder::new()?;
+        let provider = create_provider_from_env()?;
+        Self::with_provider(db, provider)
+    }
+
+    /// Inject a provider (tests / custom wiring). Prefer [`Self::new`] in prod.
+    pub fn with_provider(
+        db: SharedDb,
+        provider: Arc<dyn EmbedProvider>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let rerank_stage = RerankStage::try_new();
         Ok(Self {
-            embedder,
+            provider,
             rerank_stage,
             db,
             last_query_vec: Vec::new(),
         })
+    }
+
+    pub fn provider(&self) -> &dyn EmbedProvider {
+        self.provider.as_ref()
     }
 
     pub fn reranker_active(&self) -> bool {
@@ -247,11 +261,11 @@ impl SemanticRetrievalPipeline {
         };
 
         // Stage 2: embed query, run CozoDB HNSW search.
-        let qvec = self.embedder.embed(&[query.to_string()])?;
+        let q = embed_query(self.provider.as_ref(), query)?;
         // Stash for downstream composite scoring (ontology-guided
         // traversal) so the query is embedded exactly once per request.
-        self.last_query_vec = qvec[0].clone();
-        let raw = self.hnsw_retrieve(&qvec[0], effective_k)?;
+        self.last_query_vec = q.clone();
+        let raw = self.hnsw_retrieve(&q, effective_k)?;
         let ann_candidate_count = raw.len();
 
         // HNSW returns qualified_name directly — no key→QN map needed.
@@ -498,5 +512,19 @@ mod tests {
     fn retrieve_options_default_embeddings_stale_false() {
         let opts = RetrieveOptions::default();
         assert!(!opts.embeddings_stale);
+    }
+
+    #[test]
+    fn query_embed_uses_provider_from_factory() {
+        use crate::db::fake::FakeBackend;
+        use crate::embeddings::provider::{embed_query, FakeEmbedProvider, VEC_DIM};
+        use std::sync::Arc;
+
+        let db: SharedDb = Arc::new(FakeBackend::new());
+        let fake: Arc<dyn EmbedProvider> = Arc::new(FakeEmbedProvider::new(VEC_DIM));
+        let pipeline = SemanticRetrievalPipeline::with_provider(db, fake).expect("pipeline");
+        assert_eq!(pipeline.provider().name(), "fake");
+        let v = embed_query(pipeline.provider(), "nl intent").expect("embed");
+        assert_eq!(v.len(), VEC_DIM);
     }
 }

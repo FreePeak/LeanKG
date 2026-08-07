@@ -36,14 +36,19 @@ use tokio::signal;
 use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock};
 use tower_http::cors::{Any, CorsLayer};
 
-/// Tools that mutate the underlying DB or state. Everything else is treated
-/// as a read at the dispatch layer (it may still go to the DB internally,
-/// but its lock semantics differ).
+/// Tools that mutate the underlying DB or filesystem / pipeline state.
+/// Single source of truth for `is_write_tool`, the RO execute gate, and
+/// RO `list_tools` filtering. Everything else is treated as a read at the
+/// dispatch layer (it may still go to the DB internally, but its lock
+/// semantics differ).
 static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         "mcp_init",
         "mcp_index",
         "mcp_index_docs",
+        "mcp_install",
+        "mcp_embed",
+        "index_prd",
         "add_knowledge",
         "update_knowledge",
         "delete_knowledge",
@@ -58,6 +63,12 @@ static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "add_ontology_concept",
         "add_ontology_workflow",
         "delete_ontology_concept",
+        // Agent / export / doc mutators (filesystem or graph side effects).
+        "agent_diary_write",
+        "report_query_outcome",
+        "export_graph_snapshot",
+        "export_html",
+        "generate_doc",
     ]
     .into_iter()
     .collect()
@@ -225,6 +236,22 @@ impl Clone for MCPServer {
     }
 }
 
+/// Outcome of MCP auto-index / ensure-indexed freshness checks.
+/// Public so RO side-effect tests can assert pipeline paths are skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoIndexDecision {
+    /// Server is read-only — never index or take advisory locks.
+    SkippedReadOnly,
+    /// Config / env disabled auto-index.
+    SkippedDisabled,
+    /// Index considered fresh relative to git / threshold.
+    SkippedFresh,
+    /// No git context and require_git_for_auto_index is set.
+    SkippedNoGit,
+    /// Incremental (or fallback full) index ran.
+    Indexed,
+}
+
 impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
@@ -272,14 +299,60 @@ impl MCPServer {
 
     /// Toggle the read-only flag. Builder-style; returns `self` so callers
     /// can chain `MCPServer::new(db_path).with_read_only(read_only)`.
+    /// When enabling read-only, clears any configured watch path so file-watch
+    /// reindex cannot run on a query-only server.
     pub fn with_read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
+        if read_only {
+            self.watch_path = None;
+        }
         self
     }
 
     /// Returns true if this server is currently running in read-only mode.
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// Whether a filesystem watcher would be spawned (false in RO mode).
+    pub fn file_watcher_enabled(&self) -> bool {
+        !self.read_only && self.watch_path.is_some()
+    }
+
+    /// Whether background / auto-arm embed is allowed (false in RO mode).
+    pub fn background_embed_allowed(&self) -> bool {
+        !self.read_only
+    }
+
+    /// Canonical write-tool names (sorted). Shared by classification tests,
+    /// the RO execute gate, and RO `list_tools` filtering.
+    pub fn write_tool_names() -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = WRITE_TOOLS.iter().copied().collect();
+        names.sort_unstable();
+        names
+    }
+
+    /// Tool names exposed to MCP clients. In read-only mode, mutators from
+    /// [`Self::write_tool_names`] are omitted.
+    pub fn list_tool_names(&self) -> Vec<String> {
+        ToolRegistry::list_tools()
+            .into_iter()
+            .map(|t| t.name)
+            .filter(|name| !(self.read_only && Self::is_write_tool(name)))
+            .collect()
+    }
+
+    /// Public seam for RO side-effect tests: run the startup auto-index path.
+    pub async fn auto_index_if_needed_pub(&self) -> Result<AutoIndexDecision, String> {
+        self.auto_index_if_needed().await
+    }
+
+    /// Public seam for RO side-effect tests: run on-demand ensure-indexed.
+    pub async fn ensure_project_indexed_pub(
+        &self,
+        project_path: &str,
+    ) -> Result<AutoIndexDecision, String> {
+        self.ensure_project_indexed(project_path).await
     }
 
     /// Read leankg.yaml and resolve project root with fallback chain:
@@ -715,6 +788,10 @@ impl MCPServer {
     /// - `LEANKG_EMBED_AUTO_ARM=1` arms the idle scheduler on first idle pass
     #[cfg(feature = "embeddings")]
     fn spawn_embed_idle_scheduler(&self) {
+        if !self.background_embed_allowed() {
+            tracing::info!("Read-only mode: skipping embed idle scheduler");
+            return;
+        }
         let shutdown_flag = self.shutdown_flag.clone();
         let server = self.clone();
         tokio::spawn(async move {
@@ -780,7 +857,8 @@ impl MCPServer {
 
     /// FR-P0-EMBED-LOCK: whether the embed idle scheduler auto-arms. Default
     /// `false` (serving containers must not take the RocksDB LOCK for a
-    /// background embed). `LEANKG_EMBED_AUTO_ARM=1` opts in.
+    /// background embed). `LEANKG_EMBED_AUTO_ARM=1` opts in. Callers must
+    /// also check `background_embed_allowed()` / `!read_only`.
     #[cfg(feature = "embeddings")]
     fn auto_arm_enabled() -> bool {
         std::env::var("LEANKG_EMBED_AUTO_ARM")
@@ -899,6 +977,10 @@ impl MCPServer {
 
     #[cfg(feature = "embeddings")]
     fn spawn_background_embed_with_config(&self, cfg: crate::embeddings::BackgroundEmbedConfig) {
+        if !self.background_embed_allowed() {
+            tracing::info!("Read-only mode: skipping background embed spawn");
+            return;
+        }
         // Resolve project-aware graph + .leankg dir before opening.
         let (graph, leankg_dir, project_label) = if let Some(ref proj) = cfg.project_path {
             match self.get_graph_engine_for_path(Some(proj)) {
@@ -1377,6 +1459,10 @@ impl MCPServer {
 
     #[cfg(feature = "embeddings")]
     fn spawn_background_embed_in_process(&self) {
+        if !self.background_embed_allowed() {
+            tracing::info!("Read-only mode: skipping in-process background embed");
+            return;
+        }
         // Read tuning env once (default-friendly fallbacks).
         let workers: usize = std::env::var("LEANKG_EMBED_BACKGROUND_WORKERS")
             .ok()
@@ -1499,29 +1585,33 @@ impl MCPServer {
             }
         }
 
-        if let Some(ref watch_path) = self.watch_path {
-            let db_path = self.get_db_path();
-            let watch_path = watch_path.clone();
-            let shutdown = self.shutdown_flag.clone();
-            match self.get_graph_engine() {
-                Ok(ge) => {
-                    tokio::spawn(async move {
-                        let (tx, rx) = tokio::sync::mpsc::channel(100);
-                        start_watcher(ge, db_path, watch_path, shutdown, rx).await;
-                        let _ = tx; // silence unused warning
-                    });
-                    tracing::info!(
-                        "Auto-indexing enabled for {}",
-                        self.watch_path
-                            .as_ref()
-                            .unwrap_or(&std::path::PathBuf::from("?"))
-                            .display()
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("Watcher skipped: {}", e);
+        if self.file_watcher_enabled() {
+            if let Some(ref watch_path) = self.watch_path {
+                let db_path = self.get_db_path();
+                let watch_path = watch_path.clone();
+                let shutdown = self.shutdown_flag.clone();
+                match self.get_graph_engine() {
+                    Ok(ge) => {
+                        tokio::spawn(async move {
+                            let (tx, rx) = tokio::sync::mpsc::channel(100);
+                            start_watcher(ge, db_path, watch_path, shutdown, rx).await;
+                            let _ = tx; // silence unused warning
+                        });
+                        tracing::info!(
+                            "Auto-indexing enabled for {}",
+                            self.watch_path
+                                .as_ref()
+                                .unwrap_or(&std::path::PathBuf::from("?"))
+                                .display()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Watcher skipped: {}", e);
+                    }
                 }
             }
+        } else if self.read_only {
+            tracing::info!("Read-only mode: file watcher disabled");
         }
 
         self.spawn_ontology_yaml_watcher_if_present();
@@ -1925,29 +2015,33 @@ impl MCPServer {
             );
         }
 
-        if let Some(ref watch_path) = self.watch_path {
-            let db_path = self.get_db_path();
-            let watch_path = watch_path.clone();
-            let shutdown = self.shutdown_flag.clone();
-            match self.get_graph_engine() {
-                Ok(ge) => {
-                    tokio::spawn(async move {
-                        let (tx, rx) = tokio::sync::mpsc::channel(100);
-                        start_watcher(ge, db_path, watch_path, shutdown, rx).await;
-                        let _ = tx; // silence unused warning
-                    });
-                    tracing::info!(
-                        "Auto-indexing enabled for {}",
-                        self.watch_path
-                            .as_ref()
-                            .unwrap_or(&std::path::PathBuf::from("?"))
-                            .display()
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("Watcher skipped: {}", e);
+        if self.file_watcher_enabled() {
+            if let Some(ref watch_path) = self.watch_path {
+                let db_path = self.get_db_path();
+                let watch_path = watch_path.clone();
+                let shutdown = self.shutdown_flag.clone();
+                match self.get_graph_engine() {
+                    Ok(ge) => {
+                        tokio::spawn(async move {
+                            let (tx, rx) = tokio::sync::mpsc::channel(100);
+                            start_watcher(ge, db_path, watch_path, shutdown, rx).await;
+                            let _ = tx; // silence unused warning
+                        });
+                        tracing::info!(
+                            "Auto-indexing enabled for {}",
+                            self.watch_path
+                                .as_ref()
+                                .unwrap_or(&std::path::PathBuf::from("?"))
+                                .display()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Watcher skipped: {}", e);
+                    }
                 }
             }
+        } else if self.read_only {
+            tracing::info!("Read-only mode: file watcher disabled");
         }
 
         self.spawn_ontology_yaml_watcher_if_present();
@@ -1965,10 +2059,11 @@ impl MCPServer {
         // budget while HNSW catches up. Progress is written to
         // `<leankg_dir>/embed_status.json` — agents polling
         // `leankg embed --status` see live numbers.
-        if std::env::var("LEANKG_EMBED_BACKGROUND")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
+        if self.background_embed_allowed()
+            && std::env::var("LEANKG_EMBED_BACKGROUND")
+                .ok()
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
         {
             self.spawn_background_embed_in_process();
         }
@@ -1979,10 +2074,11 @@ impl MCPServer {
         // log a hint and rely on the offline embed job.
         #[cfg(feature = "embeddings")]
         {
-            let auto_arm = std::env::var("LEANKG_EMBED_AUTO_ARM")
-                .ok()
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
+            let auto_arm = self.background_embed_allowed()
+                && std::env::var("LEANKG_EMBED_AUTO_ARM")
+                    .ok()
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
             if auto_arm {
                 let shutdown_for_arm = self.shutdown_flag.clone();
                 Self::schedule_multi_project_arm(shutdown_for_arm);
@@ -2191,6 +2287,11 @@ impl MCPServer {
     }
 
     async fn auto_init_if_needed(&self) -> Result<(), String> {
+        if self.read_only {
+            tracing::info!("Read-only mode: skipping auto-init / auto-index on start");
+            return Ok(());
+        }
+
         let project_root = self.find_project_root()?;
 
         let leankg_path = project_root.join(".leankg");
@@ -2309,7 +2410,12 @@ impl MCPServer {
         Ok(())
     }
 
-    async fn auto_index_if_needed(&self) -> Result<(), String> {
+    async fn auto_index_if_needed(&self) -> Result<AutoIndexDecision, String> {
+        if self.read_only {
+            tracing::info!("Read-only mode: skipping auto-index on start");
+            return Ok(AutoIndexDecision::SkippedReadOnly);
+        }
+
         let project_root = self.find_project_root()?;
         let config_path = project_root.join(".leankg/leankg.yaml");
 
@@ -2324,7 +2430,7 @@ impl MCPServer {
 
         if !config.mcp.auto_index_on_start {
             tracing::info!("Auto-indexing on start is disabled in config");
-            return Ok(());
+            return Ok(AutoIndexDecision::SkippedDisabled);
         }
 
         // FR-MG-AUTO-01: operators can skip freshness reindex without wiping
@@ -2335,7 +2441,7 @@ impl MCPServer {
             .unwrap_or(false)
         {
             tracing::info!("LEANKG_SKIP_FRESHNESS_CHECK set, skipping MCP auto-index on start");
-            return Ok(());
+            return Ok(AutoIndexDecision::SkippedDisabled);
         }
 
         let db_path = self.get_db_path();
@@ -2347,7 +2453,7 @@ impl MCPServer {
                 "No git repo (or nested repos) under {}, skipping auto-index",
                 project_root.display()
             );
-            return Ok(());
+            return Ok(AutoIndexDecision::SkippedNoGit);
         }
 
         let last_commit_time = if !is_git {
@@ -2368,7 +2474,7 @@ impl MCPServer {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to get last commit time: {}", e);
-                    return Ok(());
+                    return Ok(AutoIndexDecision::SkippedNoGit);
                 }
             }
         };
@@ -2385,7 +2491,7 @@ impl MCPServer {
                 last_commit_time,
                 db_modified
             );
-            return Ok(());
+            return Ok(AutoIndexDecision::SkippedFresh);
         }
 
         tracing::info!(
@@ -2458,11 +2564,19 @@ impl MCPServer {
             *guard = None;
         }
 
-        Ok(())
+        Ok(AutoIndexDecision::Indexed)
     }
 
     /// Ensure a specific project is indexed if needed (used for per-request auto-indexing)
-    async fn ensure_project_indexed(&self, project_path: &str) -> Result<(), String> {
+    async fn ensure_project_indexed(
+        &self,
+        project_path: &str,
+    ) -> Result<AutoIndexDecision, String> {
+        if self.read_only {
+            tracing::debug!("Read-only mode: skipping ensure_project_indexed");
+            return Ok(AutoIndexDecision::SkippedReadOnly);
+        }
+
         let project_root = if project_path.starts_with('/') {
             PathBuf::from(project_path)
         } else {
@@ -2482,7 +2596,7 @@ impl MCPServer {
         };
 
         if !config.mcp.auto_index_on_start {
-            return Ok(());
+            return Ok(AutoIndexDecision::SkippedDisabled);
         }
 
         let db_path = project_root.join(".leankg");
@@ -2495,7 +2609,7 @@ impl MCPServer {
                     "No git context under {}, skipping auto-index",
                     project_root.display()
                 );
-                return Ok(());
+                return Ok(AutoIndexDecision::SkippedNoGit);
             }
             match crate::indexer::git_workspace::workspace_last_commit_time(&project_root) {
                 Ok(t) => t,
@@ -2505,7 +2619,7 @@ impl MCPServer {
                         project_root.display(),
                         e
                     );
-                    return Ok(());
+                    return Ok(AutoIndexDecision::SkippedNoGit);
                 }
             }
         } else {
@@ -2529,7 +2643,7 @@ impl MCPServer {
                 last_commit_time,
                 db_modified
             );
-            return Ok(());
+            return Ok(AutoIndexDecision::SkippedFresh);
         }
 
         tracing::info!(
@@ -2568,7 +2682,7 @@ impl MCPServer {
         }
 
         tracing::debug!("Auto-index complete for {}", project_root.display());
-        Ok(())
+        Ok(AutoIndexDecision::Indexed)
     }
 
     async fn trigger_reindex(&self) -> Result<(), String> {
@@ -2838,7 +2952,7 @@ impl MCPServer {
             }
         }
 
-        if self.write_tracker.is_dirty() {
+        if !self.read_only && self.write_tracker.is_dirty() {
             let config = self.load_config(&project_root)?;
             if config.mcp.auto_index_on_db_write {
                 tracing::info!("External write detected, triggering incremental reindex...");
@@ -2878,8 +2992,10 @@ impl MCPServer {
 
         // On-demand auto-indexing: if the project has no indexed elements
         // yet (Phase 8 — Postgres holds the data, so "has an index" is a
-        // populated-graph check, not a file check).
-        if tool_name != "mcp_index"
+        // populated-graph check, not a file check). Read-only MCP never
+        // indexes — worker owns that pipeline.
+        if !self.read_only
+            && tool_name != "mcp_index"
             && tool_name != "mcp_init"
             && tool_name != "mcp_index_docs"
             && !graph_engine.has_elements().unwrap_or(false)
@@ -3005,6 +3121,7 @@ impl ServerHandler for MCPServer {
         let tools = ToolRegistry::list_tools();
         let rmcp_tools: Vec<Tool> = tools
             .into_iter()
+            .filter(|t| !(self.read_only && Self::is_write_tool(&t.name)))
             .map(|t| {
                 Tool::new(
                     t.name,
@@ -3425,6 +3542,7 @@ async fn process_jsonrpc_request(
             let tools = ToolRegistry::list_tools();
             let rmcp_tools: Vec<serde_json::Value> = tools
                 .into_iter()
+                .filter(|t| !(mcp_server.is_read_only() && MCPServer::is_write_tool(&t.name)))
                 .map(|t| {
                     serde_json::json!({
                         "name": t.name,

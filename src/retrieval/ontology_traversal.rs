@@ -34,7 +34,8 @@
 #![cfg(feature = "embeddings")]
 
 use crate::db::models::CodeElement;
-use crate::embeddings::{build_blob, Embedder};
+use crate::embeddings::build_blob;
+use crate::embeddings::provider::EmbedProvider;
 use crate::graph::traversal::is_indexer_noise;
 use crate::graph::GraphEngine;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -622,7 +623,7 @@ pub fn composite_text(upper_name: &str, func_blob: &str) -> String {
 
 /// Score every discovered function against `query_vec` using a composite
 /// embedding of `"{upper_name}\n{function_blob}"`. Batches all embed
-/// calls into one [`Embedder::embed`] for throughput. Sets
+/// calls into one [`EmbedProvider::embed_batch`] for throughput. Sets
 /// [`DiscoveredFunction::composite_score`] in place; returns the same
 /// vector sorted by score descending.
 ///
@@ -633,7 +634,7 @@ pub fn score_functions(
     graph: &GraphEngine,
     query_vec: &[f32],
     functions: Vec<DiscoveredFunction>,
-    embedder: &Embedder,
+    provider: &dyn EmbedProvider,
 ) -> Result<Vec<DiscoveredFunction>, Box<dyn std::error::Error>> {
     if functions.is_empty() {
         return Ok(functions);
@@ -671,7 +672,7 @@ pub fn score_functions(
         .collect();
 
     let borrowed: Vec<String> = composite_texts; // already owned
-    let vectors = embedder.embed(&borrowed)?;
+    let vectors = provider.embed_batch(&borrowed)?;
 
     let mut scored = functions;
     for (func, vec) in scored.iter_mut().zip(vectors.iter()) {

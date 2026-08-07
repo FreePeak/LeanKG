@@ -2,6 +2,31 @@
 
 Complete reference for all LeanKG CLI commands.
 
+## Binaries (MCP / worker split)
+
+Same crate, three entrypoints:
+
+| Binary | Surface | Notes |
+|--------|---------|-------|
+| `leankg-mcp` | `mcp-http`, `mcp-stdio` only | **Read-only by default** (`--read-only` forced). Rejects `index` / `embed` / `watch` at parse time. No auto-index or bulk embed. |
+| `leankg-worker` | `index`, `embed`, `watch`, `status` | Pipeline process. Rejects `mcp-http` / `mcp-stdio`. Owns writes + advisory lock. |
+| `leankg` | Full CLI (compat) | Thin facade; prefer split bins in production. |
+
+```bash
+# Query-only MCP (stays up during indexing)
+leankg-mcp mcp-http --port 9699 --project .
+
+# Pipeline (separate process / cron)
+leankg-worker index .
+leankg-worker embed --wait --project .
+leankg-worker watch --path .
+leankg-worker status
+```
+
+Embed provider (worker bulk + MCP query-time): `LEANKG_EMBED_PROVIDER=local|openai`,
+`LEANKG_EMBED_API_BASE_URL`, `LEANKG_EMBED_API_KEY`, `LEANKG_EMBED_API_MODEL`,
+`LEANKG_EMBED_API_DIM` (must be 384). See [deploy-server-with-cold-embed.md](deploy-server-with-cold-embed.md).
+
 ## CLI Commands
 
 | Command | Description |
@@ -65,33 +90,39 @@ leankg init
 # Optional: prefab LSP servers + typed_resolve=go,ts (FR-LSP-B / REL-039)
 leankg init --with-lsp
 
-# 2. Index your codebase
-leankg index ./src
+# 2. Index your codebase (worker or compat)
+leankg-worker index ./src
+# or: leankg index ./src
 
-# 3. Start the MCP server (for AI tools)
-leankg serve
+# 3. Start query-only MCP (for AI tools)
+leankg-mcp mcp-http --port 9699
+# or compat: leankg mcp-http --read-only / leankg serve
 
 # 4. Compute impact radius for a file
 leankg impact src/main.rs --depth 3
 
 # 5. Check index status
-leankg status
+leankg-worker status
+# or: leankg status
 ```
 
 ## Auto-Indexing
 
+Prefer a dedicated worker so MCP can stay query-only:
+
 ```bash
-# Start file watcher -- indexes changes automatically in background
-leankg watch
+# File watcher on the worker (not on leankg-mcp)
+leankg-worker watch
 
 # Incremental indexing -- only re-index changed files (git-based)
-leankg index --incremental
+leankg-worker index --incremental
+# or: leankg index --incremental
 
 # Filter by language
-leankg index --lang go,ts,py,rs,java,kotlin
+leankg-worker index --lang go,ts,py,rs,java,kotlin
 
 # Exclude patterns
-leankg index --exclude vendor,node_modules,dist
+leankg-worker index --exclude vendor,node_modules,dist
 ```
 
 ## Multi-Project Setup (Docker Compose)

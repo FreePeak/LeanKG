@@ -90,6 +90,7 @@ fn pg_backend(schema: &str) -> std::sync::Arc<PostgresBackend> {
         pool: std::sync::Arc::new(ClientPool::new(5)),
         ro_pool: std::sync::Arc::new(ClientPool::new(5)),
         read_only: false,
+        write_bus: None,
     })
 }
 

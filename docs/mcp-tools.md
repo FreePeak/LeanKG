@@ -2,6 +2,18 @@
 
 LeanKG exposes a comprehensive set of MCP tools for AI tools to query the knowledge graph.
 
+## Query-only MCP vs pipeline worker
+
+Production runs **two binaries** from the same crate (see [deploy-server-with-cold-embed.md](deploy-server-with-cold-embed.md)):
+
+| Binary | Role |
+|--------|------|
+| `leankg-mcp` | HTTP/stdio MCP, **read-only by default**. Serves query tools only. No auto-index, no file-watch reindex, no bulk/background corpus embed. Mutators are rejected / omitted from `tools/list`. |
+| `leankg-worker` | Owns `index` / `watch` / `embed` (and related pipeline). Writes into shared Postgres + pgvector while MCP stays up. |
+| `leankg` | Compat facade over the same library (all subcommands). Prefer the split bins in production. |
+
+For corpus refresh, invoke the worker separately — do not rely on MCP auto-index or `LEANKG_EMBED_BACKGROUND` on the serving process.
+
 Live registry size is **~81** tools with embeddings (`tools/list`; ~79 without). Prefer-order and redundancy status:
 
 | Prefer-order | Tools |
@@ -117,7 +129,9 @@ Use `get_architecture` to inspect how many calls fall into each bucket once Phas
 
 ## Auto-Initialization
 
-When the MCP server starts without an existing LeanKG project, it automatically initializes and indexes the current directory. This provides a "plug and play" experience for AI tools.
+**Compat / non-RO `leankg mcp-*`:** When the MCP server starts without an existing LeanKG project, it may automatically initialize and index the current directory.
+
+**`leankg-mcp` (query-only / read-only):** Does **not** auto-init or auto-index. Initialize and index with `leankg-worker` (or compat `leankg init` / `leankg index`) before pointing clients at MCP.
 
 ## Procedural ontology (auto-update)
 
@@ -133,8 +147,8 @@ Procedural workflows live in `ontology/workflows.yaml` (plus `concepts.yaml`). F
 
 1. YAML watch during `mcp-http` / `mcp-stdio` / `leankg serve` (debounce `LEANKG_ONTOLOGY_WATCH_DEBOUNCE_MS`, default 1500ms, min 1000)
 2. Docker/boot when `.leankg/ontology_synced` is older than `concepts.yaml` **or** `workflows.yaml` (`LEANKG_ONTOLOGY_SYNC_ON_BOOT`)
-3. After successful index (CLI / MCP / auto-index / UI)
-4. Explicit `ontology_control(action=sync)`
+3. After successful index (`leankg-worker` / compat CLI / non-RO MCP / UI)
+4. Explicit `ontology_control(action=sync)` (write tool — blocked on RO `leankg-mcp`)
 
 **Sync semantics:** YAML is source of truth. Each sync **clears** the `ontology://` layer then batch-inserts, so renames/removals do not leave duplicate workflow steps. Live correction path (wrong steps → edit YAML → watcher → next `kg_trace_workflow`): [`docs/reports/ontology-proc-auto-smoke-2026-07-21.md`](reports/ontology-proc-auto-smoke-2026-07-21.md).
 
@@ -148,14 +162,17 @@ These tools ship only when LeanKG is built with `--features embeddings`. They ad
 |------|-------------|
 | `semantic_search` | Natural-language → functions. HNSW vector retrieve → cross-encoder rerank → **ontology-guided top-down traversal**: high-level seeds (class / doc / workflow / concept) walk *down* to the function nodes that implement the intent, re-ranked by a composite embedding of `"{upper_name}\n{function_blob}"`. Returns a merged, deduplicated function list. Each result carries `source: "direct"` (HNSW + cross-encoder) or `source: "traversed"` (composite-scored), plus `via_upper` / `via_edge` / `hop` for traversed hits. |
 | `kg_semantic_context` | Vector retrieve → rerank → traverse. Best for natural-language questions where keyword search misses (e.g., 'where do we validate access rights'). Returns ranked seed nodes, 1-2 hop additive `traversed[]` neighborhood, **and a `functions[]` array** of composite-scored functions discovered by the same ontology-guided top-down traversal as `semantic_search`. |
-| `embed_control` | US-EMBED-05: arm/disarm in-process day-2 embed when boot FG is off. Actions: `on` (idle-gated Incremental resume, default `mode=partial`), `off` (cooperative cancel), `status` (`mode`, `vectors_existing`, `skipped_fresh`, `armed`/`waiting_idle`/`running`/`paused_yield`). Does not wipe existing RocksDB vectors. |
+| `embed_control` | US-EMBED-05: arm/disarm in-process day-2 embed when boot FG is off (compat / non-RO MCP only). Rejected on query-only `leankg-mcp`. Prefer `leankg-worker embed` for corpus refresh. Actions: `on` / `off` / `status`. |
 
-Setup (one-time):
+Setup (one-time) — run on the **worker**, not inside query-only MCP:
 
 ```bash
-cargo run --release --features embeddings -- embed --init        # pre-download models (~700MB)
-cargo run --release --features embeddings -- embed               # build the embedding index
+cargo run --release --features embeddings --bin leankg-worker -- embed --init   # pre-download models (~700MB)
+cargo run --release --features embeddings --bin leankg-worker -- embed --wait  # build the embedding index
+# or: leankg-worker embed --init / leankg-worker embed --wait
 ```
+
+Provider: `LEANKG_EMBED_PROVIDER=local|openai` plus `LEANKG_EMBED_API_*` when using the HTTP provider (dim must be 384).
 
 Then call from any MCP client:
 
@@ -179,11 +196,20 @@ Behavior notes:
 
 ## Auto-Indexing
 
-When the MCP server starts with an existing LeanKG project, it checks if the index is stale (by comparing git HEAD commit time vs database file modification time). If stale, it automatically runs incremental indexing to ensure AI tools have up-to-date context.
+**Compat / non-RO MCP:** On start with an existing project, the server may check freshness (git HEAD vs DB) and run incremental indexing when `LEANKG_AUTO_INDEX` is enabled.
+
+**`leankg-mcp` (query-only):** Never auto-indexes. Keep `LEANKG_AUTO_INDEX=0` on the MCP process and refresh with:
+
+```bash
+leankg-worker index /path/to/project
+leankg-worker embed --wait --project /path/to/project   # when vectors need refresh
+```
+
+Write tools (`mcp_index`, `mcp_embed`, `embed_control`, ontology mutators, …) are rejected in read-only mode with `"server is in read-only mode"`.
 
 ## Fallback
 
-If the MCP server reports "LeanKG not initialized", manually run `leankg init` in your project directory, then restart the AI tool.
+If the MCP server reports "LeanKG not initialized", run `leankg init` / `leankg-worker index` in your project directory, then restart the AI tool (or reconnect MCP).
 
 ## Path Normalization
 

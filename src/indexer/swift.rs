@@ -87,7 +87,7 @@ impl<'a> SwiftExtractor<'a> {
         });
 
         for cap in CLASS_RE.captures_iter(self.source) {
-            let line = self.line_of(&cap[0]);
+            let line = self.line_of(cap.get(0).unwrap().start());
             let qn = self.push_decl(&mut elements, &mut relationships, "class", &cap[1], line);
             self.push_heritage(
                 &mut relationships,
@@ -97,7 +97,7 @@ impl<'a> SwiftExtractor<'a> {
             );
         }
         for cap in STRUCT_RE.captures_iter(self.source) {
-            let line = self.line_of(&cap[0]);
+            let line = self.line_of(cap.get(0).unwrap().start());
             let qn = self.push_decl(&mut elements, &mut relationships, "struct", &cap[1], line);
             self.push_heritage(
                 &mut relationships,
@@ -107,7 +107,7 @@ impl<'a> SwiftExtractor<'a> {
             );
         }
         for cap in ENUM_RE.captures_iter(self.source) {
-            let line = self.line_of(&cap[0]);
+            let line = self.line_of(cap.get(0).unwrap().start());
             let qn = self.push_decl(&mut elements, &mut relationships, "enum", &cap[1], line);
             self.push_heritage(
                 &mut relationships,
@@ -117,7 +117,7 @@ impl<'a> SwiftExtractor<'a> {
             );
         }
         for cap in PROTOCOL_RE.captures_iter(self.source) {
-            let line = self.line_of(&cap[0]);
+            let line = self.line_of(cap.get(0).unwrap().start());
             let qn = self.push_decl(
                 &mut elements,
                 &mut relationships,
@@ -133,7 +133,7 @@ impl<'a> SwiftExtractor<'a> {
             );
         }
         for cap in EXTENSION_RE.captures_iter(self.source) {
-            let line = self.line_of(&cap[0]);
+            let line = self.line_of(cap.get(0).unwrap().start());
             self.push_decl(
                 &mut elements,
                 &mut relationships,
@@ -395,13 +395,9 @@ impl<'a> SwiftExtractor<'a> {
         }
     }
 
-    fn line_of(&self, matched: &str) -> u32 {
-        let prefix = &self.source[..self.source.len() - matched.len().min(self.source.len())];
-        // Find the line of the start of the match by counting \n in the
-        // original source up to the same offset prefix length.
-        let offset = self.source.len() - prefix.len() - matched.len();
-        let count = self.source[..offset].matches('\n').count() as u32;
-        count + 1
+    fn line_of(&self, offset: usize) -> u32 {
+        // Regex Match::start() is a UTF-8 char boundary, so this slice is safe.
+        self.source[..offset].matches('\n').count() as u32 + 1
     }
 }
 
@@ -457,6 +453,35 @@ fn parse_swift(source: &[u8]) -> Option<tree_sitter::Tree> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_swift_with_multibyte_utf8_in_comments() {
+        // Regression: line_of used `source.len() - matched.len()` as a slice end,
+        // which panics when that byte index falls inside a multi-byte char ('•' is
+        // 3 bytes). Padding after the bullet is chosen so the bad cut lands mid-char.
+        // Also asserts real line numbers (old logic always reported line 1).
+        let src =
+            "protocol ListCancelFeeViewModelActions {}\n// •xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n";
+        let (elems, _) =
+            SwiftExtractor::new(src.as_bytes(), "ListCancelFeeViewModel.swift").extract();
+        let proto = elems
+            .iter()
+            .find(|e| e.name == "ListCancelFeeViewModelActions")
+            .expect("protocol extracted");
+        assert_eq!(proto.line_start, 1);
+        assert_eq!(proto.line_end, 1);
+    }
+
+    #[test]
+    fn line_of_uses_match_byte_offset_not_suffix_length() {
+        let src = "// header\npublic class Greeter {}\n";
+        let (elems, _) = SwiftExtractor::new(src.as_bytes(), "test.swift").extract();
+        let class = elems
+            .iter()
+            .find(|e| e.name == "Greeter")
+            .expect("class extracted");
+        assert_eq!(class.line_start, 2);
+    }
 
     #[test]
     fn extracts_swift_class_struct_enum_protocol() {
