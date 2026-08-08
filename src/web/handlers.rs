@@ -4389,7 +4389,7 @@ pub async fn api_element(
             };
         }
     };
-    let cap = query.neighbor_cap.min(100).max(1);
+    let cap = query.neighbor_cap.clamp(1, 100);
 
     match state.get_graph_engine().await {
         Ok(engine) => match crate::graph::element_detail::fetch_element_detail(&engine, &qn, cap) {
