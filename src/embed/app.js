@@ -71,7 +71,9 @@
   function nodeFromApi(n) {
     var props = n.properties || {};
     var id = n.id || props.qualified_name || props.name;
-    var et = props.element_type || props.elementType || (n.label || 'unknown').toLowerCase();
+    var et = String(
+      props.element_type || props.elementType || n.label || 'unknown',
+    ).toLowerCase();
     var name = props.name || String(id).split('::').pop();
     var file = props.file_path || props.filePath || '';
     return {
@@ -100,20 +102,23 @@
 
   function graphOptions() {
     return {
+      autoResize: true,
       nodes: {
         shape: 'dot',
-        size: 14,
-        font: { color: '#e8eaed', size: 12, face: 'Helvetica' },
+        size: 18,
+        font: { color: '#e8eaed', size: 14, face: 'Helvetica', strokeWidth: 0 },
         borderWidth: 2,
+        color: { background: '#5b9fd4', border: '#3d7eb0', highlight: { background: '#7eb6e0', border: '#5b9fd4' } },
       },
       edges: {
-        width: 1.2,
-        color: { color: '#555', highlight: '#5b9fd4' },
-        arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-        font: { color: '#888', size: 10, align: 'middle' },
+        width: 1.5,
+        color: { color: '#8899aa', highlight: '#5b9fd4' },
+        arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+        font: { color: '#9aa3b2', size: 11, align: 'middle', strokeWidth: 0 },
         smooth: { type: 'continuous' },
       },
       physics: {
+        enabled: true,
         forceAtlas2Based: {
           gravitationalConstant: -45,
           centralGravity: 0.01,
@@ -122,7 +127,7 @@
           damping: 0.4,
         },
         solver: 'forceAtlas2Based',
-        stabilization: { iterations: 80 },
+        stabilization: { enabled: true, iterations: 120, fit: true },
       },
       interaction: { hover: true, tooltipDelay: 180, zoomView: true, dragView: true },
       groups: {
@@ -139,19 +144,46 @@
     };
   }
 
+  function resizeNetwork() {
+    if (!network) return;
+    var box = $('mynetwork');
+    if (!box) return;
+    var w = box.clientWidth;
+    var h = box.clientHeight;
+    if (w < 10 || h < 10) return false;
+    network.setSize(w + 'px', h + 'px');
+    network.redraw();
+    return true;
+  }
+
+  function fitNetwork() {
+    if (!network) return;
+    resizeNetwork();
+    try {
+      network.fit({ animation: false, padding: 40 });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
   function ensureNetwork() {
-    if (network) return;
+    if (network) {
+      resizeNetwork();
+      return;
+    }
     var V = window.vis;
     if (!V || typeof V.DataSet !== 'function') {
       setStatus('vis-network failed to load');
       return;
     }
+    var container = $('mynetwork');
+    if (!container) return;
     nodesDS = new V.DataSet([]);
     edgesDS = new V.DataSet([]);
-    network = new V.Network($('mynetwork'), { nodes: nodesDS, edges: edgesDS }, graphOptions());
+    network = new V.Network(container, { nodes: nodesDS, edges: edgesDS }, graphOptions());
     network.on('stabilizationIterationsDone', function () {
       network.setOptions({ physics: { enabled: false } });
-      network.fit({ animation: false });
+      fitNetwork();
     });
     network.on('click', function (params) {
       if (params.nodes && params.nodes.length) {
@@ -163,10 +195,35 @@
         expandNode(params.nodes[0]);
       }
     });
+    if (typeof ResizeObserver !== 'undefined') {
+      var ro = new ResizeObserver(function () {
+        fitNetwork();
+      });
+      ro.observe(container);
+    }
+    window.addEventListener('resize', function () {
+      fitNetwork();
+    });
+    resizeNetwork();
+  }
+
+  function seedPositions(mappedNodes) {
+    var n = mappedNodes.length;
+    if (!n) return;
+    // Give vis-network real coordinates so fit() is not a no-op on a blank canvas.
+    var cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+    for (var i = 0; i < n; i++) {
+      mappedNodes[i].x = (i % cols) * 160;
+      mappedNodes[i].y = Math.floor(i / cols) * 120;
+    }
   }
 
   function replaceGraph(payload) {
     ensureNetwork();
+    if (!network || !nodesDS) {
+      setStatus('Graph canvas not ready');
+      return;
+    }
     var rawNodes = payload.nodes || [];
     var rawEdges = payload.relationships || payload.edges || [];
     var mappedNodes = rawNodes.map(nodeFromApi).filter(function (n) { return n.id; });
@@ -175,6 +232,7 @@
       var e = edgeFromApi(rawEdges[i], i);
       if (e) mappedEdges.push(e);
     }
+    seedPositions(mappedNodes);
     nodesDS.clear();
     edgesDS.clear();
     nodesDS.add(mappedNodes);
@@ -182,7 +240,12 @@
     $('node-count').textContent = String(mappedNodes.length);
     $('edge-count').textContent = String(mappedEdges.length);
     network.setOptions({ physics: { enabled: true } });
-    network.fit({ animation: false });
+    // Defer fit until layout has non-zero size (fixes empty canvas after first paint).
+    requestAnimationFrame(function () {
+      fitNetwork();
+      setTimeout(fitNetwork, 50);
+      setTimeout(fitNetwork, 250);
+    });
   }
 
   function mergeGraph(payload) {
@@ -227,7 +290,12 @@
       });
       var data = await fetchJson('/api/graph/expand-service?' + q.toString());
       replaceGraph(data);
-      setStatus('Loaded ' + path);
+      var n = (data.nodes && data.nodes.length) || 0;
+      setStatus(
+        n
+          ? 'Loaded ' + path + ' (' + n + ' nodes)'
+          : 'Loaded ' + path + ' — no nodes (index empty or path miss)',
+      );
     } catch (err) {
       setStatus(String(err.message || err));
     }
