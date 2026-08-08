@@ -1,10 +1,12 @@
 # LeanKG UI v2 — README
 
-LeanKG’s graph explorer **uses the [GitNexus](https://github.com/abhigyanpatwari/GitNexus) UI shell** (`gitnexus-web`: 3-pane layout, Force / Tree / Circles, Sigma, mega-graph skip).  
+> **Note (2026-08-08):** `leankg serve` defaults to **ui-lite** (vis-network shell in `src/embed/`). This Vite+React+Sigma app remains available for local experiments (`npm run dev`) but is **not** the production embed path anymore.
+
+LeanKG’s optional graph explorer shell uses the [GitNexus](https://github.com/abhigyanpatwari/GitNexus) layout (`gitnexus-web`: 3-pane layout, Force / Tree / Circles, Sigma, mega-graph skip).  
 The data plane is rewritten for LeanKG `leankg serve` REST (`/api/graph/*`, `/api/file`, `/api/search`) — not GitNexus APIs.  
 Phase 1: exploring shell only — no browser LLM agent.
 
-**Production path:** `npm run build` → copy `dist/*` into `src/embed/` → `leankg serve` / onrender / Docker `:8080` serve the embedded UI. Dev still uses Vite on `:5173`.
+**Optional Vite path:** `npm run build` → optionally point `LEANKG_UI_DIST` at `ui-v2/dist`. Default serve uses rust_embed **ui-lite**. Dev still uses Vite on `:5173`.
 
 ## Quick start
 

@@ -1,17 +1,46 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LeanKG</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="/assets/index-CwcVR9A7.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BN6mYsjm.css">
-  </head>
-  <body class="bg-void">
-    <div id="root"></div>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <title>LeanKG</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header id="header">
+    <div class="brand">
+      <h1>LeanKG</h1>
+      <span class="badge">ui-lite</span>
+    </div>
+    <form id="path-form" class="toolbar">
+      <label for="path-input">Path</label>
+      <input id="path-input" type="text" placeholder="src" autocomplete="off" />
+      <button type="submit">Load</button>
+      <label for="search-input">Search</label>
+      <input id="search-input" type="search" placeholder="name…" autocomplete="off" />
+      <button type="button" id="search-btn">Find</button>
+    </form>
+    <div id="status" class="status">Ready</div>
+  </header>
+  <main id="layout">
+    <div id="mynetwork" aria-label="Knowledge graph"></div>
+    <aside id="detail" hidden>
+      <div class="detail-head">
+        <div>
+          <div id="detail-name" class="detail-name"></div>
+          <div id="detail-meta" class="detail-meta"></div>
+        </div>
+        <button type="button" id="detail-close" aria-label="Close">×</button>
+      </div>
+      <div id="detail-body" class="detail-body"></div>
+    </aside>
+  </main>
+  <div id="stats">
+    <span>Nodes: <strong id="node-count">0</strong></span>
+    <span>Edges: <strong id="edge-count">0</strong></span>
+  </div>
+  <script src="/vis-network.min.js"></script>
+  <script src="/app.js"></script>
+</body>
 </html>

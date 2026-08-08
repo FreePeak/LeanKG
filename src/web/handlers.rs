@@ -3719,23 +3719,25 @@ pub async fn api_index_status(State(state): State<AppState>) -> impl IntoRespons
 #[allow(dead_code)]
 pub async fn api_ui_build() -> impl IntoResponse {
     let mut payload = serde_json::json!({
-        "ui": "ui-v2",
+        "ui": "ui-lite",
         "source": "rust_embed",
     });
     if let Some(bytes) = crate::embed::get("ui-build.json") {
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
             payload = v;
             if payload.get("ui").is_none() {
-                payload["ui"] = serde_json::json!("ui-v2");
+                payload["ui"] = serde_json::json!("ui-lite");
             }
         }
     }
-    // Always advertise whether the HTML shell is LeanKG (ui-v2) vs legacy title "ui".
+    // Always advertise whether the HTML shell is LeanKG (ui-lite) vs legacy title "ui".
     if let Some(html) = crate::embed::get("index.html") {
         let s = String::from_utf8_lossy(&html);
         payload["index_title_leankg"] = serde_json::json!(s.contains("<title>LeanKG</title>"));
         payload["index_title_legacy_ui"] = serde_json::json!(s.contains("<title>ui</title>"));
-        if let Some(cap) = s
+        if s.contains("/app.js") {
+            payload["index_js"] = serde_json::json!("app.js");
+        } else if let Some(cap) = s
             .split("src=\"/assets/")
             .nth(1)
             .and_then(|rest| rest.split('"').next())
@@ -4361,6 +4363,60 @@ pub async fn api_graph_expand_node(
     }
 }
 
+#[derive(Deserialize)]
+pub struct ElementQuery {
+    pub qn: Option<String>,
+    #[serde(default = "default_neighbor_cap")]
+    pub neighbor_cap: usize,
+}
+
+fn default_neighbor_cap() -> usize {
+    crate::graph::element_detail::DEFAULT_NEIGHBOR_CAP
+}
+
+/// US-UI-LITE: keyed element detail for the lightweight Graph View panel.
+pub async fn api_element(
+    State(state): State<AppState>,
+    Query(query): Query<ElementQuery>,
+) -> impl IntoResponse {
+    let qn = match query.qn.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(qn) => qn.to_string(),
+        None => {
+            return ApiResponse::<crate::graph::element_detail::ElementDetail> {
+                success: false,
+                data: None,
+                error: Some("Missing required parameter: qn".to_string()),
+            };
+        }
+    };
+    let cap = query.neighbor_cap.min(100).max(1);
+
+    match state.get_graph_engine().await {
+        Ok(engine) => match crate::graph::element_detail::fetch_element_detail(&engine, &qn, cap) {
+            Ok(Some(detail)) => ApiResponse {
+                success: true,
+                data: Some(detail),
+                error: None,
+            },
+            Ok(None) => ApiResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Element not found: {qn}")),
+            },
+            Err(e) => ApiResponse {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            },
+        },
+        Err(e) => ApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
 #[derive(Serialize)]
 pub struct FileResponse {
     pub content: String,
@@ -4731,6 +4787,49 @@ pub async fn api_team_permissions(
             }
         }
         Err(e) => ApiResponse::error(&e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod ui_lite_embed_tests {
+    #[test]
+    fn ui_build_json_advertises_ui_lite() {
+        let bytes = crate::embed::get("ui-build.json").expect("ui-build.json embedded");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(
+            v.get("ui").and_then(|x| x.as_str()),
+            Some("ui-lite"),
+            "serve default UI must be ui-lite"
+        );
+    }
+
+    #[test]
+    fn index_html_loads_app_js_not_vite_bundle() {
+        let bytes = crate::embed::get("index.html").expect("index.html embedded");
+        let html = String::from_utf8_lossy(&bytes);
+        assert!(
+            html.contains("src=\"/app.js\"")
+                || html.contains("src='app.js'")
+                || html.contains("/app.js"),
+            "index.html should load /app.js"
+        );
+        assert!(
+            !html.contains("/assets/index-"),
+            "Vite hashed assets must not be the default shell"
+        );
+        assert!(html.contains("LeanKG"), "title/brand should mention LeanKG");
+    }
+
+    #[test]
+    fn app_js_and_vis_network_are_embedded() {
+        assert!(
+            crate::embed::get("app.js").is_some(),
+            "app.js must be embedded"
+        );
+        assert!(
+            crate::embed::get("vis-network.min.js").is_some(),
+            "vis-network.min.js must remain embedded"
+        );
     }
 }
 
