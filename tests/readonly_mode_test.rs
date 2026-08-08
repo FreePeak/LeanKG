@@ -34,18 +34,16 @@ fn init_db_readonly_can_read_after_init_db_writes() {
 
     {
         let db = init_db(&db_path).expect("init_db must succeed");
-        db.run_script(r#":create probe {name: String}"#, Default::default())
-            .expect("probe relation create must succeed");
         db.run_script(
-            r#"?[name] <- [['alpha'], ['beta']] :put probe {name}"#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["probe::alpha", "symbol", "alpha", "probe.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["probe::beta", "symbol", "beta", "probe.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
             Default::default(),
         )
-        .expect("probe put must succeed");
+        .expect("code_elements put must succeed");
     }
 
     let ro_db = init_db_readonly(&db_path).expect("init_db_readonly must succeed on populated DB");
     let rows = ro_db
-        .run_script(r#"?[name] := *probe[name]"#, Default::default())
+        .run_script(r#"?[name] := *code_elements[name]"#, Default::default())
         .expect("probe read must succeed in RO mode");
     let names: Vec<String> = rows
         .rows
