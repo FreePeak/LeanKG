@@ -151,7 +151,9 @@ fn build_hnsw_create_stmt() -> String {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|v| (1..=2000).contains(v))
-        .unwrap_or(20);
+        .unwrap_or(20)
+        // pgvector requires ef_construction >= 2*m (CozoDB accepted any pair).
+        .max(2 * m);
     format!(
         r#"::hnsw create embedding_vectors:vec_idx {{
     dim: 384,
