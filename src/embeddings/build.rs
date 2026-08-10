@@ -55,10 +55,22 @@ use crate::embeddings::build_index;
 // FR-EMBED-FAST: per-worker enum wrapping either the fastembed Embedder
 // (legacy path, hardcoded intra_threads = available_parallelism()) or
 // the DirectEmbedder (ort + tokenizers with controlled intra_threads).
+// OpenAI-compatible / injected providers use `Remote`.
 // The pipeline calls `.embed(&texts)` uniformly through the enum.
 enum EmbedderBackend {
     Direct(DirectEmbedder),
     Fast(Embedder),
+    Remote(std::sync::Arc<dyn crate::embeddings::provider::EmbedProvider>),
+}
+
+impl EmbedderBackend {
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        match self {
+            EmbedderBackend::Direct(e) => e.embed(texts).map_err(|e| e.to_string()),
+            EmbedderBackend::Fast(e) => e.embed(texts).map_err(|e| e.to_string()),
+            EmbedderBackend::Remote(p) => p.embed_batch(texts).map_err(|e| e.to_string()),
+        }
+    }
 }
 
 /// CozoDB pest parser has stack-depth limits on inline `<~ [...]` literals
@@ -1192,45 +1204,63 @@ pub fn build_index_parallel(
         let work_items = work_items.clone();
         let embedded_count = embedded_count.clone();
         let handle = std::thread::spawn(move || -> Result<(), String> {
-            // Try DirectEmbedder first (no fastembed intra_threads overhead).
-            // Fall back to Embedder if the model cache is missing.
-            // `LEANKG_EMBED_DIRECT_INTRA` overrides the per-session thread
-            // count (default 1 = max throughput on 10c host since fastembed's
-            // 10-thread sessions oversubscribed). Set higher on hosts with
-            // many cores per session.
-            let direct_intra = std::env::var("LEANKG_EMBED_DIRECT_INTRA")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|n| (1..=128).contains(n))
-                .unwrap_or(1);
-            let backend = if use_direct_embedder {
-                match DirectEmbedder::with_intra_threads(direct_intra) {
-                    Ok(e) => {
-                        tracing::info!(
-                            "worker {}: using DirectEmbedder (intra_threads={})",
-                            w_id,
-                            e.intra_threads()
+            use crate::embeddings::provider::{
+                create_provider_from_env, provider_kind_from_env, ProviderKind,
+            };
+            // Prefer OpenAI-compatible (or other factory) provider when
+            // LEANKG_EMBED_PROVIDER requests it; otherwise keep local ONNX.
+            let backend = match provider_kind_from_env().map_err(|e| e.to_string())? {
+                ProviderKind::OpenAi => {
+                    let p = create_provider_from_env().map_err(|e| e.to_string())?;
+                    tracing::info!(
+                        "worker {}: using remote embed provider ({})",
+                        w_id,
+                        p.name()
+                    );
+                    EmbedderBackend::Remote(p)
+                }
+                ProviderKind::Local => {
+                    // Try DirectEmbedder first (no fastembed intra_threads overhead).
+                    // Fall back to Embedder if the model cache is missing.
+                    // `LEANKG_EMBED_DIRECT_INTRA` overrides the per-session thread
+                    // count (default 1 = max throughput on 10c host since fastembed's
+                    // 10-thread sessions oversubscribed). Set higher on hosts with
+                    // many cores per session.
+                    let direct_intra = std::env::var("LEANKG_EMBED_DIRECT_INTRA")
+                        .ok()
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .filter(|n| (1..=128).contains(n))
+                        .unwrap_or(1);
+                    if use_direct_embedder {
+                        match DirectEmbedder::with_intra_threads(direct_intra) {
+                            Ok(e) => {
+                                tracing::info!(
+                                    "worker {}: using DirectEmbedder (intra_threads={})",
+                                    w_id,
+                                    e.intra_threads()
+                                );
+                                EmbedderBackend::Direct(e)
+                            }
+                            Err(e) => {
+                                // Do not silently fall back — FastEmbedder has historically
+                                // hit ORT "512 by 800" on long code blobs. Surface the
+                                // DirectEmbedder error so ops can `embed --init` / fix cache.
+                                return Err(format!(
+                                    "worker {w_id}: DirectEmbedder init failed ({e}); \
+                                     refusing FastEmbedder fallback (ORT seq_len risk). \
+                                     Run `leankg embed --init` or set LEANKG_EMBED_DIRECT=0 \
+                                     only if you accept that risk."
+                                ));
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            "worker {}: LEANKG_EMBED_DIRECT=0 — using FastEmbedder",
+                            w_id
                         );
-                        EmbedderBackend::Direct(e)
-                    }
-                    Err(e) => {
-                        // Do not silently fall back — FastEmbedder has historically
-                        // hit ORT "512 by 800" on long code blobs. Surface the
-                        // DirectEmbedder error so ops can `embed --init` / fix cache.
-                        return Err(format!(
-                            "worker {w_id}: DirectEmbedder init failed ({e}); \
-                             refusing FastEmbedder fallback (ORT seq_len risk). \
-                             Run `leankg embed --init` or set LEANKG_EMBED_DIRECT=0 \
-                             only if you accept that risk."
-                        ));
+                        EmbedderBackend::Fast(Embedder::new().map_err(|e| e.to_string())?)
                     }
                 }
-            } else {
-                tracing::warn!(
-                    "worker {}: LEANKG_EMBED_DIRECT=0 — using FastEmbedder",
-                    w_id
-                );
-                EmbedderBackend::Fast(Embedder::new().map_err(|e| e.to_string())?)
             };
             // Round-robin shards: this worker takes every Nth shard.
             let shards: Vec<&[WorkItem]> = work_items.chunks(batch_size * n_workers).collect();
@@ -1238,10 +1268,7 @@ pub fn build_index_parallel(
                 for chunk in shard.chunks(batch_size) {
                     wait_for_embed_rss_headroom(max_rss_mb);
                     let texts: Vec<String> = chunk.iter().map(|w| w.blob.clone()).collect();
-                    let vectors = match &backend {
-                        EmbedderBackend::Direct(e) => e.embed(&texts).map_err(|e| e.to_string())?,
-                        EmbedderBackend::Fast(e) => e.embed(&texts).map_err(|e| e.to_string())?,
-                    };
+                    let vectors = backend.embed(&texts)?;
                     for (item, vec) in chunk.iter().zip(vectors.iter()) {
                         let qn = item.qualified_name.clone();
                         let hash = item.current_hash.clone();
@@ -1967,6 +1994,19 @@ pub const EMBEDDING_DIM_CONST: usize = EMBEDDING_DIM;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bulk_embed_remote_backend_uses_injected_provider() {
+        use crate::embeddings::provider::{FakeEmbedProvider, VEC_DIM};
+        use std::sync::Arc;
+
+        let backend = EmbedderBackend::Remote(Arc::new(FakeEmbedProvider::new(VEC_DIM)));
+        let texts = vec!["a".into(), "b".into()];
+        let vecs = backend.embed(&texts).expect("remote embed");
+        assert_eq!(vecs.len(), 2);
+        assert_eq!(vecs[0].len(), VEC_DIM);
+        assert_ne!(vecs[0][0], vecs[1][0]);
+    }
 
     #[test]
     fn default_options_batch_size_32() {

@@ -4549,16 +4549,14 @@ impl ToolHandler {
                     let query_vec: Vec<f32> = {
                         let cached = pipeline.last_query_vector();
                         if cached.is_empty() {
-                            emb::Embedder::new()
-                                .and_then(|em| em.embed(&[query.to_string()]).map(|v| v[0].clone()))
-                                .unwrap_or_else(|e| {
-                                    tracing::warn!(
-                                        target: "leankg::mcp",
-                                        error = %e,
-                                        "kg_semantic_context embedder init/embed failed; returning empty query vec"
-                                    );
-                                    Vec::new()
-                                })
+                            emb::embed_query(pipeline.provider(), query).unwrap_or_else(|e| {
+                                tracing::warn!(
+                                    target: "leankg::mcp",
+                                    error = %e,
+                                    "kg_semantic_context embedder init/embed failed; returning empty query vec"
+                                );
+                                Vec::new()
+                            })
                         } else {
                             cached.to_vec()
                         }
@@ -4566,9 +4564,12 @@ impl ToolHandler {
                     let scored = if query_vec.is_empty() {
                         discovered
                     } else {
-                        match emb::Embedder::new().and_then(|embedder| {
-                            score_functions(&self.graph_engine, &query_vec, discovered, &embedder)
-                        }) {
+                        match score_functions(
+                            &self.graph_engine,
+                            &query_vec,
+                            discovered,
+                            pipeline.provider(),
+                        ) {
                             Ok(s) => s,
                             Err(e) => {
                                 tracing::warn!(
@@ -4960,31 +4961,27 @@ fn run_hnsw_semantic_search(
                     cached.to_vec()
                 } else {
                     // Defensive fallback — should not happen after retrieve().
-                    use crate::embeddings::Embedder;
-                    Embedder::new()
-                        .and_then(|em| em.embed(&[query.to_string()]).map(|v| v[0].clone()))
+                    crate::embeddings::embed_query(pipeline.provider(), query).unwrap_or_else(|e| {
+                        tracing::warn!(
+                            target: "leankg::mcp",
+                            error = %e,
+                            "semantic_search embedder init/embed failed (cache empty); returning empty query vec"
+                        );
+                        Vec::new()
+                    })
+                }
+            };
+            if !query_vec.is_empty() {
+                scored_functions =
+                    score_functions(engine, &query_vec, discovered, pipeline.provider())
                         .unwrap_or_else(|e| {
                             tracing::warn!(
                                 target: "leankg::mcp",
                                 error = %e,
-                                "semantic_search embedder init/embed failed (cache empty); returning empty query vec"
+                                "semantic_search composite scoring failed; keeping traversal order"
                             );
                             Vec::new()
-                        })
-                }
-            };
-            if !query_vec.is_empty() {
-                use crate::embeddings::Embedder;
-                let embedder = Embedder::new().map_err(|e| format!("Embedder init failed: {e}"))?;
-                scored_functions = score_functions(engine, &query_vec, discovered, &embedder)
-                    .unwrap_or_else(|e| {
-                        tracing::warn!(
-                            target: "leankg::mcp",
-                            error = %e,
-                            "semantic_search composite scoring failed; keeping traversal order"
-                        );
-                        Vec::new()
-                    });
+                        });
             }
             traversed_after_dedup = scored_functions.len();
         }

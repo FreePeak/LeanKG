@@ -14,6 +14,16 @@ categories = ["command-line-utilities", "data-structures"]
 [lib]
 crate-type = ["rlib"]
 
+# Query-only MCP (RO) — thin wrapper over leankg mcp-http/mcp-stdio
+[[bin]]
+name = "leankg-mcp"
+path = "src/bin/leankg_mcp.rs"
+
+# Pipeline worker (index / embed / watch / status)
+[[bin]]
+name = "leankg-worker"
+path = "src/bin/leankg_worker.rs"
+
 [features]
 default = ["lang-extras"]
 # Enable vector retrieval + cross-encoder rerank + adaptive KG traversal.

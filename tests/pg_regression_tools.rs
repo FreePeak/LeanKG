@@ -62,6 +62,7 @@ impl ScratchSchema {
             pool: std::sync::Arc::new(leankg::db::backend::ClientPool::new(5)),
             ro_pool: std::sync::Arc::new(leankg::db::backend::ClientPool::new(5)),
             read_only: false,
+            write_bus: None,
         })
     }
 }

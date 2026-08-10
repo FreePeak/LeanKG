@@ -12,7 +12,6 @@ pub mod ctags_export;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;
-#[cfg(feature = "embeddings")]
 pub mod embeddings;
 pub mod gc;
 pub mod graph;

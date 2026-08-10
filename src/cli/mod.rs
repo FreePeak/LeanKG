@@ -1,6 +1,9 @@
 use clap::{Subcommand, ValueEnum};
 
+pub mod mcp;
+pub mod reexec;
 pub mod shell_runner;
+pub mod worker;
 
 /// Output format for `leankg tags` (currently only `ctags`).
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]

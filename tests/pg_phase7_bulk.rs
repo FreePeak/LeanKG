@@ -88,6 +88,7 @@ impl Scratch {
             pool: std::sync::Arc::new(ClientPool::new(2)),
             ro_pool: std::sync::Arc::new(ClientPool::new(2)),
             read_only: false,
+            write_bus: None,
         })
     }
 }

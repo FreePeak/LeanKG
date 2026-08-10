@@ -34,18 +34,16 @@ fn init_db_readonly_can_read_after_init_db_writes() {
 
     {
         let db = init_db(&db_path).expect("init_db must succeed");
-        db.run_script(r#":create probe {name: String}"#, Default::default())
-            .expect("probe relation create must succeed");
         db.run_script(
-            r#"?[name] <- [['alpha'], ['beta']] :put probe {name}"#,
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [["probe::alpha", "symbol", "alpha", "probe.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"], ["probe::beta", "symbol", "beta", "probe.rs", 1, 1, "rust", null, null, null, "{}", "local", "procedural"]] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
             Default::default(),
         )
-        .expect("probe put must succeed");
+        .expect("code_elements put must succeed");
     }
 
     let ro_db = init_db_readonly(&db_path).expect("init_db_readonly must succeed on populated DB");
     let rows = ro_db
-        .run_script(r#"?[name] := *probe[name]"#, Default::default())
+        .run_script(r#"?[name] := *code_elements[name]"#, Default::default())
         .expect("probe read must succeed in RO mode");
     let names: Vec<String> = rows
         .rows
@@ -92,6 +90,18 @@ fn mcpserver_is_write_tool_classifies_correctly() {
         "promote_environment",
         "embed_control",
         "ontology_control",
+        // Completeness audit — mutators previously missing from WRITE_TOOLS.
+        "mcp_embed",
+        "index_prd",
+        "agent_diary_write",
+        "report_query_outcome",
+        "export_graph_snapshot",
+        "export_html",
+        "generate_doc",
+        "mcp_install",
+        "add_ontology_concept",
+        "add_ontology_workflow",
+        "delete_ontology_concept",
     ] {
         assert!(
             MCPServer::is_write_tool(name),
@@ -121,23 +131,76 @@ fn mcpserver_is_write_tool_classifies_correctly() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcpserver_rejects_all_write_tools_in_read_only_mode() {
+    use leankg::db::backend::init_db;
+    use leankg::mcp::server::MCPServer;
+    use serde_json::Map;
+
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg");
+    std::fs::create_dir_all(&db_path).unwrap();
+    let db = init_db(&db_path).expect("init_db must succeed");
+    drop(db);
+
+    let server = MCPServer::new(db_path).with_read_only(true);
+
+    for name in MCPServer::write_tool_names() {
+        let err = server
+            .execute_tool_pub(name, Map::new())
+            .await
+            .expect_err(&format!(
+                "write tool '{}' must be rejected in read-only mode",
+                name
+            ));
+        assert!(
+            err.contains("read-only mode"),
+            "expected read-only error for '{}', got: {}",
+            name,
+            err
+        );
+    }
+}
+
+#[test]
+fn mcpserver_list_tools_omits_writes_when_read_only() {
+    use leankg::mcp::server::MCPServer;
+    use std::collections::HashSet;
+
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("leankg");
+    std::fs::create_dir_all(&db_path).unwrap();
+
+    let server = MCPServer::new(db_path).with_read_only(true);
+    let listed: HashSet<String> = server.list_tool_names().into_iter().collect();
+    let writes: HashSet<&str> = MCPServer::write_tool_names().iter().copied().collect();
+
+    let overlap: Vec<&String> = listed
+        .iter()
+        .filter(|n| writes.contains(n.as_str()))
+        .collect();
+    assert!(
+        overlap.is_empty(),
+        "RO list_tools must omit all write tools; found: {:?}",
+        overlap
+    );
+    assert!(
+        listed.contains("search_code") && listed.contains("mcp_status"),
+        "RO list_tools must still include read tools"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcpserver_rejects_write_tools_in_read_only_mode() {
     use leankg::db::backend::init_db;
     use leankg::mcp::server::MCPServer;
     use serde_json::Map;
 
-    // Seed an index so the server has a real .leankg to point at.
+    // Seed schema only — RO gate short-circuits before tool dispatch/DB writes.
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg");
     std::fs::create_dir_all(&db_path).unwrap();
     let db = init_db(&db_path).expect("init_db must succeed");
-    // init_db already creates code_elements via init_schema; insert one row.
-    db.run_script(
-        r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <- [['src/main.rs::main', 'function', 'main', 'src/main.rs', 1, 10, 'rust', null, null, null, '{}', 'local', 'procedural']] :put code_elements {qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer}"#,
-        Default::default(),
-    )
-    .expect("code_elements put must succeed");
     drop(db);
 
     let server = MCPServer::new(db_path.clone()).with_read_only(true);
@@ -159,7 +222,7 @@ async fn mcpserver_rejects_write_tools_in_read_only_mode() {
     assert!(MCPServer::is_write_tool("add_annotation"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcpserver_allows_read_tools_in_read_only_mode() {
     use leankg::db::backend::init_db;
     use leankg::mcp::server::MCPServer;

@@ -83,6 +83,7 @@ impl Scratch {
             pool: Arc::new(ClientPool::new(5)),
             ro_pool: Arc::new(ClientPool::new(5)),
             read_only: false,
+            write_bus: None,
         })
     }
 
@@ -92,6 +93,7 @@ impl Scratch {
             pool: Arc::new(ClientPool::new(5)),
             ro_pool: Arc::new(ClientPool::new(5)),
             read_only: true,
+            write_bus: None,
         })
     }
 }
