@@ -2870,8 +2870,14 @@ impl MCPServer {
             ));
         }
         let project_root = self.find_project_root()?;
+        let project_arg = arguments
+            .get("project")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         tracing::info!(
-            "execute_tool called. project_root={}, db_path={}",
+            "execute_tool called. tool={}, project={}, project_root={}, db_path={}",
+            tool_name,
+            project_arg,
             project_root.display(),
             self.get_db_path().display()
         );
@@ -3358,6 +3364,12 @@ async fn handle_mcp_request(
                 .unwrap();
         }
     };
+
+    tracing::info!(
+        project = ?project_param.as_deref(),
+        method = %request.method,
+        "mcp http request"
+    );
 
     // Check if this is a notification (no id) - notifications must not receive a response
     let is_notification = request.id.is_none();

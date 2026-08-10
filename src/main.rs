@@ -102,7 +102,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let _service_name = service_name;
             let _version = version;
-            let project_path = find_project_root()?;
+            // Prefer the explicit `leankg index <path>` positional arg so
+            // multi-project workspaces can index a specific project into its
+            // own PG schema. Falls back to cwd discovery for `leankg index`
+            // with no arg (legacy behavior).
+            let project_path = match &path {
+                Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+                _ => find_project_root()?,
+            };
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await?;
             let exclude_patterns: Vec<String> = exclude
@@ -4482,7 +4489,19 @@ async fn download_file(
     dest: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resp = reqwest::get(url).await?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "download failed: HTTP {} from {} (asset missing on the release? \
+             run the Release workflow for this tag to attach binaries)",
+            resp.status(),
+            url
+        )
+        .into());
+    }
     let bytes = resp.bytes().await?;
+    if bytes.is_empty() {
+        return Err(format!("download failed: empty body from {url}").into());
+    }
 
     std::fs::write(dest, bytes)?;
     Ok(())

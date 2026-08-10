@@ -66,6 +66,13 @@ pub trait DbBackend: Send + Sync {
 
     /// Classify a script as read/write/DDL.
     fn mutability_for(&self, query: &str) -> mutability::ScriptMutability;
+
+    /// Whether this backend rejects writes (read-only MCP/query process).
+    /// Callers that best-effort writes (metrics, stats) no-op on RO backends
+    /// instead of surfacing an opaque `db error` on every query.
+    fn is_read_only(&self) -> bool {
+        false
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -86,6 +93,12 @@ pub type SharedDb = Arc<dyn DbBackend>;
 #[derive(Clone)]
 pub struct PostgresBackend {
     pub pg_url: String,
+    /// Per-project PG schema (multi-project on one shared Postgres, Phase 8
+    /// D4). When `Some`, the connection URL carries
+    /// `options=-csearch_path=<schema>,public` so every query is scoped to
+    /// that project's tables. Derived from the project `.leankg` path by
+    /// [`schema_for_path`]; None keeps the default `public` search_path.
+    pub schema: Option<String>,
     /// Pool of lazy read-write connections (Phase 6). Tests construct an
     /// `Arc<ClientPool>` directly; production code goes through
     /// [`Self::from_env`].
@@ -309,11 +322,23 @@ impl PostgresBackend {
         );
         Ok(Self {
             pg_url: url,
+            schema: None,
             pool: Arc::new(ClientPool::new(pool_size)),
             ro_pool: Arc::new(ClientPool::new(pool_size)),
             read_only: false,
             write_bus: None,
         })
+    }
+
+    /// Pin this backend to a per-project PG schema. Injects
+    /// `options=-csearch_path=<schema>,public` into the connection URL (the
+    /// `read_only_url` merge in [`Self::read_only_url`] appends the RO flag
+    /// to the same `options=` value). The schema must already exist — the
+    /// caller (`init_db` / `init_db_readonly`) creates + migrates it.
+    pub fn with_schema(mut self, schema: &str) -> Self {
+        self.schema = Some(schema.to_string());
+        self.pg_url = inject_search_path(&self.pg_url, schema);
+        self
     }
 
     /// Constructor for the read-only backend (T6.1): `init_db_readonly`
@@ -336,10 +361,11 @@ impl PostgresBackend {
 
     /// URL with `default_transaction_read_only = on` injected via the
     /// `options` libpq param. If the URL already carries an `options=`
-    /// param (e.g. tests pinning `search_path`), the RO flag is appended
-    /// space-separated to that same param — libpq splits `-c` flags on
-    /// spaces (verified against PG 18); a second `options=` param would be
-    /// dropped. For a read-write backend this is the plain URL (no GUC).
+    /// param (e.g. a per-project `search_path` from [`Self::with_schema`]),
+    /// the RO flag is appended space-separated to that same param — libpq
+    /// splits `-c` flags on spaces (verified against PG 18); a second
+    /// `options=` param would be dropped. For a read-write backend this is
+    /// the plain URL (no GUC).
     pub fn read_only_url(&self) -> String {
         if !self.read_only {
             return self.pg_url.clone();
@@ -795,6 +821,10 @@ impl PostgresBackend {
 }
 
 impl DbBackend for PostgresBackend {
+    fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
     fn run_script(
         &self,
         query: &str,
@@ -1037,6 +1067,107 @@ fn cozo_to_pg(v: &DataValue, col: &str) -> Box<dyn postgres::types::ToSql + Sync
 }
 
 /// Never echo credentials back in errors/logs.
+/// Inject `options=-csearch_path=<schema>,public` into a PG connection URL.
+/// Appends to an existing `options=` param (space-separated `-c` flags) or
+/// adds a new one — libpq splits multiple `-c` GUCs on spaces.
+fn inject_search_path(url: &str, schema: &str) -> String {
+    const SP_FLAG: &str = "-csearch_path%3D";
+    // `,public` appended so unqualified references to shared tables still
+    // resolve; matches `test_schema_url` and the doc comment above. The comma
+    // is `%2C` (URL-safe) so a raw `,` never breaks the query string.
+    let encoded = format!("{}%2Cpublic", percent_encode(schema));
+    let base = url;
+    let sp_flag = format!("{SP_FLAG}{encoded}");
+    // Already carrying a search_path — replace it to avoid duplicate GUCs.
+    if let Some(pos) = base.find("search_path") {
+        let start = base[..pos].rfind('=').unwrap_or(pos);
+        let end = base[pos..]
+            .find(|c: char| ['&', '%'].contains(&c))
+            .map(|i| pos + i)
+            .unwrap_or(base.len());
+        return format!("{}{}{}", &base[..start + 1], sp_flag, &base[end..]);
+    }
+    if let Some(pos) = base.find("options=") {
+        let after = &base[pos + "options=".len()..];
+        let end = after.find('&').unwrap_or(after.len());
+        let value = &after[..end];
+        let rest = &after[end..];
+        return format!(
+            "{}{}%20{}{}",
+            &base[..pos + "options=".len()],
+            value,
+            sp_flag,
+            rest
+        );
+    }
+    let (before, after) = base.split_once('?').unwrap_or((base, ""));
+    let sep = if after.is_empty() { "?" } else { "&" };
+    format!("{before}{sep}{after}options={sp_flag}")
+}
+
+/// Percent-encode a schema name for a libpq `options=-csearch_path=<v>`
+/// param: `%` → `%25`, `/` → `%2F`, space → `%20`.
+fn percent_encode(s: &str) -> String {
+    s.replace('%', "%25")
+        .replace('/', "%2F")
+        .replace(' ', "%20")
+}
+
+/// Derive a stable, valid Postgres schema identifier for a project.
+///
+/// The key must be the **same for reader and writer even when they see the
+/// project at different mount paths** (reader `/app/.leankg` vs writer
+/// `/Users/.../.leankg`). We use the project's `project_path` from its
+/// `leankg.yaml` when present (a host-absolute path, identical from every
+/// mount); otherwise fall back to `db_path` itself. The result is
+/// `leankg_p_` + hex bytes (short paths) or a 16-hex SipHash (long paths) —
+/// always a valid, lowercase PG identifier (≤ 63 bytes).
+pub fn schema_for_path(db_path: &std::path::Path) -> String {
+    let key = project_identity_key(db_path);
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(key.len() * 2);
+    for b in key.as_bytes() {
+        let _ = write!(hex, "{:02x}", b);
+    }
+    // Cap length: PG identifiers are ≤ 63 bytes. Hash long paths.
+    const MAX: usize = 32;
+    if hex.len() > MAX {
+        use std::hash::{DefaultHasher, Hasher};
+        let mut h = DefaultHasher::new();
+        h.write(key.as_bytes());
+        hex = format!("{:016x}", h.finish());
+    }
+    format!("leankg_p_{hex}")
+}
+
+/// Resolve the schema key for a project: prefer `project_path` from the
+/// project's `leankg.yaml` (stable across mounts), else the `.leankg` dir
+/// path itself. `db_path` may be a `.leankg` dir or a project root.
+fn project_identity_key(db_path: &std::path::Path) -> String {
+    // db_path is either `<root>/.leankg` (reader/MCP) or
+    // `<root>/.leankg/leankg.db` (writer index/embed). Normalize both to the
+    // project root so reader and writer derive the SAME schema even when the
+    // project's leankg.yaml lacks an explicit `project_path`.
+    let mut root = db_path.to_path_buf();
+    // Strip a trailing `<root>/.leankg/leankg.db` → `<root>/.leankg`.
+    if root.ends_with("leankg.db") {
+        root = root.parent().unwrap_or(&root).to_path_buf();
+    }
+    // Strip a trailing `<root>/.leankg` → `<root>`.
+    if root.ends_with(".leankg") {
+        root = root.parent().unwrap_or(&root).to_path_buf();
+    }
+    if let Ok(content) = std::fs::read_to_string(root.join("leankg.yaml")) {
+        if let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) {
+            if let Some(pp) = config.project.project_path {
+                return pp.to_string_lossy().to_string();
+            }
+        }
+    }
+    // No yaml/project_path: key on the normalized project root path.
+    root.to_string_lossy().to_string()
+}
+
 fn redact_url(url: &str) -> String {
     let mut out = String::with_capacity(url.len());
     let mut in_userinfo = false;
@@ -1076,19 +1207,84 @@ fn redact_url(url: &str) -> String {
 /// env var is missing or malformed — Postgres is the only engine (D4), so
 /// there is no fallback.
 ///
+/// Open a PostgreSQL backend for a project path. Multi-project (Phase 8 D4):
+/// the schema is derived from `db_path` and **created + migrated if missing**
+/// (writer path — `leankg index` / `leankg embed`). The returned backend is
+/// pinned to that schema so every write lands in the right project's tables.
+///
 /// Under `#[cfg(test)]` the `db_path` is used to select a per-path scratch
 /// schema (see [`test_scratch_schema`]): unit tests call `init_db` with a
 /// temp path and get a real, isolated Postgres schema in the dev container
 /// instead of the pre-migration sqlite shim.
-pub fn init_db(_db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
+pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
     #[cfg(test)]
     {
-        return test_init_db(_db_path);
+        return test_init_db(db_path);
     }
     #[allow(unreachable_code)]
     {
-        init_db_pg()
+        let schema = schema_for_path(db_path);
+        // Writer path: ALWAYS create + pin to the per-project schema. The
+        // writer owns schema creation; it never falls back to `public` (that
+        // fallback is reader-only, so a pre-schema index stays visible).
+        create_schema_if_missing(&schema)?;
+        let pg = PostgresBackend::from_env()?.with_schema(&schema);
+        tracing::info!("DB engine = postgres: {}", redact_url(&pg.pg_url));
+        Ok(Arc::new(pg))
     }
+}
+
+/// Create + migrate a per-project schema if it doesn't exist yet. Safe to
+/// call on every writer init — `CREATE SCHEMA IF NOT EXISTS` + idempotent
+/// migrations make it a cheap no-op on warm paths. May be called from async
+/// contexts (embed `--wait` on a tokio runtime), so the sync PG body runs
+/// under the same `block_in_place` guard as `run_script`.
+pub fn create_schema_if_missing(schema: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| create_schema_if_missing_sync(schema))
+    } else {
+        create_schema_if_missing_sync(schema)
+    }
+}
+
+/// Whether a per-project schema is **populated** (has at least one
+/// `code_elements` row). Used to fall back to `public` when a per-project
+/// schema exists but is empty (e.g. a re-index that created tables but wrote
+/// no elements), so existing shared-layout local indexes stay queryable.
+fn schema_exists(schema: &str) -> bool {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| schema_exists_sync(schema))
+    } else {
+        schema_exists_sync(schema)
+    }
+}
+
+fn schema_exists_sync(schema: &str) -> bool {
+    let base = match PostgresBackend::from_env() {
+        Ok(pg) => pg.pg_url,
+        Err(_) => return false,
+    };
+    let Ok(mut client) = postgres::Client::connect(&base, postgres::NoTls) else {
+        return false;
+    };
+    // Schema names come from schema_for_path (hex/hash, always a safe
+    // identifier), so qualifying the table directly is injection-safe.
+    let q = format!("SELECT EXISTS (SELECT 1 FROM {schema}.code_elements LIMIT 1)");
+    client
+        .query_one(&q, &[])
+        .map(|row| row.get(0))
+        .unwrap_or(false)
+}
+
+fn create_schema_if_missing_sync(schema: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let base = PostgresBackend::from_env()?.pg_url;
+    let mut client = postgres::Client::connect(&base, postgres::NoTls)?;
+    client.batch_execute(&format!(
+        "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public"
+    ))?;
+    crate::db::pg::migrations::run_migrations(&mut client)?;
+    client.batch_execute(&format!("SET search_path TO {schema}, public"))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1161,16 +1357,28 @@ fn create_scratch_schema() -> Result<String, Box<dyn std::error::Error>> {
 /// Open a read-only backend (T6.1): `default_transaction_read_only = on` —
 /// writes fail at the Postgres layer instead of the legacy CozoDB RocksDB
 /// same-handle workaround.
-pub fn init_db_readonly(
-    _db_path: &std::path::Path,
-) -> Result<SharedDb, Box<dyn std::error::Error>> {
+///
+/// Multi-project: when `db_path` resolves to a `.leankg` dir, the backend is
+/// pinned to that project's PG schema ([`schema_for_path`]) so `?project=`
+/// queries only its own tables. The schema must already exist (created +
+/// migrated by the writer `leankg index`/`leankg embed`); a read-only process
+/// never creates schemas.
+pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
     #[cfg(test)]
     {
-        return test_init_db(_db_path);
+        return test_init_db(db_path);
     }
     #[allow(unreachable_code)]
     {
-        let pg = PostgresBackend::from_env_read_only()?;
+        let schema = schema_for_path(db_path);
+        let pg = if schema_exists(&schema) {
+            PostgresBackend::from_env_read_only()?.with_schema(&schema)
+        } else {
+            // Fall back to `public` (single-shared layout) so existing local
+            // indexes stay visible when no per-project schema has been
+            // indexed yet.
+            PostgresBackend::from_env_read_only()?
+        };
         tracing::info!(
             "DB engine = postgres read-only (default_transaction_read_only = on): {}",
             redact_url(&pg.pg_url)
@@ -1252,6 +1460,7 @@ mod tests {
         // rather than silently panicking.
         let pg = PostgresBackend {
             pg_url: "postgres://invalid-host-not-real:1/leankg".into(),
+            schema: None,
             pool: std::sync::Arc::new(ClientPool::new(1)),
             ro_pool: std::sync::Arc::new(ClientPool::new(1)),
             read_only: false,
@@ -1499,6 +1708,7 @@ mod tests {
 
         let mut pg = PostgresBackend {
             pg_url: "postgres://invalid-host-not-real:1/leankg".into(),
+            schema: None,
             pool: std::sync::Arc::new(ClientPool::new(1)),
             ro_pool: std::sync::Arc::new(ClientPool::new(1)),
             read_only: false,
@@ -1521,5 +1731,71 @@ mod tests {
             res.err()
         );
         bus.shutdown();
+    }
+
+    #[test]
+    fn reader_and_writer_derive_same_schema_without_project_path() {
+        // Reader (MCP) passes `<root>/.leankg`; writer embed passes
+        // `<root>/.leankg/leankg.db`. Both must normalize to the SAME schema
+        // even when leankg.yaml has no `project_path`.
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        // No leankg.yaml at all → fallback path key.
+        let reader = std::path::Path::new(root).join(".leankg");
+        let writer = std::path::Path::new(root).join(".leankg").join("leankg.db");
+        assert_eq!(
+            schema_for_path(&reader),
+            schema_for_path(&writer),
+            "reader/writer schema must agree without project_path"
+        );
+    }
+
+    #[test]
+    fn reader_and_writer_derive_same_schema_with_project_path() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("leankg.yaml"),
+            "project:\n  name: demo\n  root: .\n  languages:\n  - rust\n  project_path: /host/demo\n",
+        )
+        .unwrap();
+        let reader = root.join(".leankg");
+        let writer = root.join(".leankg").join("leankg.db");
+        let rs = schema_for_path(&reader);
+        let ws = schema_for_path(&writer);
+        assert_eq!(rs, ws, "reader/writer schema must agree with project_path");
+        assert_eq!(
+            rs,
+            schema_for_path(std::path::Path::new("/host/demo/.leankg")),
+            "schema must key on the host project_path, not the mount path"
+        );
+    }
+
+    #[test]
+    fn inject_search_path_emits_public_and_merges_with_ro() {
+        let base = "postgresql://postgres:postgres@localhost:5433/leankg";
+        let pinned = inject_search_path(base, "leankg_p_abc");
+        assert!(
+            pinned.contains("-csearch_path%3Dleankg_p_abc%2Cpublic"),
+            "search_path must include ,public: {pinned}"
+        );
+        // RO flag merges into the same options= param (space-separated).
+        let ro = PostgresBackend {
+            pg_url: pinned.clone(),
+            schema: Some("leankg_p_abc".into()),
+            pool: std::sync::Arc::new(ClientPool::new(1)),
+            ro_pool: std::sync::Arc::new(ClientPool::new(1)),
+            read_only: true,
+            write_bus: None,
+        }
+        .read_only_url();
+        assert!(
+            ro.contains("-cdefault_transaction_read_only%3Don"),
+            "RO flag must merge into options: {ro}"
+        );
+        assert!(
+            ro.contains("search_path"),
+            "search_path must survive RO merge: {ro}"
+        );
     }
 }

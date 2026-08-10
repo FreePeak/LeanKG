@@ -533,6 +533,12 @@ pub fn record_metric(
     db: &dyn crate::db::backend::DbBackend,
     metric: &models::ContextMetric,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Read-only MCP (query process) must not attempt the `:put` — the RO PG
+    // session rejects it, surfacing a bogus `db error` on every tool call.
+    if db.is_read_only() {
+        return Ok(());
+    }
+
     let query = r#"?[tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted] <- [[ $tool, $ts, $path, $in_tok, $out_tok, $out_elem, $exec_ms, $base_tok, $base_lines, $saved, $sav_pct, $correct, $total, $f1, $qpat, $qfile, $qdepth, $success, false ]] :put context_metrics { tool_name, timestamp, project_path, input_tokens, output_tokens, output_elements, execution_time_ms, baseline_tokens, baseline_lines_scanned, tokens_saved, savings_percent, correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted }"#;
 
     let mut params = std::collections::BTreeMap::new();

@@ -10,7 +10,7 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 
-ARG LEANKG_FEATURES=""
+ARG LEANKG_FEATURES="embeddings"
 
 # Starter Render build pipeline: 2 CPU, 8 GB RAM (docs.render.com/build-pipeline).
 # Default build has no embeddings → no fastembed/openssl in the dep graph, so
@@ -50,8 +50,8 @@ COPY leankg.yaml ./leankg.yaml
 # (scala, csharp, cuda, …) are compiled out, cutting build time substantially.
 # Embeddings opt-in via --build-arg LEANKG_FEATURES=embeddings (fastembed/ONNX).
 RUN cargo build --release --no-default-features --features "$LEANKG_FEATURES" \
-    && strip target/release/leankg \
-    && cp target/release/leankg /usr/local/bin/leankg
+    && strip target/release/leankg target/release/leankg-worker \
+    && cp target/release/leankg target/release/leankg-worker /usr/local/bin/
 
 FROM debian:bookworm-slim AS runtime
 
@@ -74,6 +74,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /usr/local/bin/leankg /usr/local/bin/leankg
+COPY --from=builder /usr/local/bin/leankg-worker /usr/local/bin/leankg-worker
 COPY --from=builder /app/ontology ./ontology
 COPY --from=builder /app/leankg.yaml ./leankg.yaml
 
