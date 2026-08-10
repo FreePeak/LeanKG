@@ -4482,7 +4482,19 @@ async fn download_file(
     dest: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resp = reqwest::get(url).await?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "download failed: HTTP {} from {} (asset missing on the release? \
+             run the Release workflow for this tag to attach binaries)",
+            resp.status(),
+            url
+        )
+        .into());
+    }
     let bytes = resp.bytes().await?;
+    if bytes.is_empty() {
+        return Err(format!("download failed: empty body from {url}").into());
+    }
 
     std::fs::write(dest, bytes)?;
     Ok(())
