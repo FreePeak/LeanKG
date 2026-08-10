@@ -195,6 +195,7 @@ mod tests {
     fn dead_backend() -> PostgresBackend {
         PostgresBackend {
             pg_url: "postgres://invalid-host-not-real:1/leankg".into(),
+            schema: None,
             pool: std::sync::Arc::new(crate::db::backend::ClientPool::new(1)),
             ro_pool: std::sync::Arc::new(crate::db::backend::ClientPool::new(1)),
             read_only: false,
