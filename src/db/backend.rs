@@ -66,6 +66,13 @@ pub trait DbBackend: Send + Sync {
 
     /// Classify a script as read/write/DDL.
     fn mutability_for(&self, query: &str) -> mutability::ScriptMutability;
+
+    /// Whether this backend rejects writes (read-only MCP/query process).
+    /// Callers that best-effort writes (metrics, stats) no-op on RO backends
+    /// instead of surfacing an opaque `db error` on every query.
+    fn is_read_only(&self) -> bool {
+        false
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -795,6 +802,10 @@ impl PostgresBackend {
 }
 
 impl DbBackend for PostgresBackend {
+    fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
     fn run_script(
         &self,
         query: &str,
