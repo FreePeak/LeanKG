@@ -87,6 +87,7 @@ fn pg_backend(schema: &str) -> std::sync::Arc<PostgresBackend> {
     let url = format!("{base}{sep}options=-csearch_path%3D{schema}%2Cpublic");
     std::sync::Arc::new(PostgresBackend {
         pg_url: url,
+        schema: Some(schema.to_string()),
         pool: std::sync::Arc::new(ClientPool::new(5)),
         ro_pool: std::sync::Arc::new(ClientPool::new(5)),
         read_only: false,

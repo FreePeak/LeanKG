@@ -10,6 +10,7 @@
 #![allow(clippy::len_zero)]
 #![allow(clippy::absurd_extreme_comparisons)]
 mod api;
+mod auth;
 mod benchmark;
 mod budget;
 mod cli;
@@ -1179,6 +1180,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             cli::ApiKeyCommand::Revoke { id } => {
                 api_key_revoke(&id)?;
+            }
+        },
+        cli::CLICommand::Auth { command } => match command {
+            cli::AuthCommand::Register {
+                email,
+                password,
+                name,
+            } => {
+                auth_register(&email, &password, &name)?;
+            }
+            cli::AuthCommand::Token {
+                account_id,
+                name,
+                role,
+                org_id,
+            } => {
+                auth_issue_token(&account_id, &name, &role, org_id.as_deref())?;
+            }
+            cli::AuthCommand::ListTokens { account_id } => {
+                auth_list_tokens(&account_id)?;
+            }
+            cli::AuthCommand::Revoke { token_id } => {
+                auth_revoke_token(&token_id)?;
             }
         },
         cli::CLICommand::Obsidian { command } => {
@@ -3373,6 +3397,73 @@ fn api_key_revoke(id: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!("API key '{}' not found or already revoked.", id);
     }
 
+    Ok(())
+}
+
+fn auth_register(
+    email: &str,
+    password: &str,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::accounts::AccountStore::new(db);
+    let account = store.register(email, password, name)?;
+    println!("Account registered:");
+    println!("  ID:    {}", account.id);
+    println!("  Email: {}", account.email);
+    println!("  Name:  {}", account.name);
+    Ok(())
+}
+
+fn auth_issue_token(
+    account_id: &str,
+    name: &str,
+    role: &str,
+    org_id: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::tokens::AccessTokenStore::new(db);
+    let role = crate::db::models::Role::from_str(role)
+        .ok_or_else(|| format!("invalid role {role:?}; expected admin|contributor|viewer"))?;
+    let (token, row) = store.create_access_token(account_id, org_id, role, name, None)?;
+    println!("Access token issued:");
+    println!("  ID:    {}", row.id);
+    println!("  Role:  {}", row.role);
+    println!("\nIMPORTANT: Save this token - it will not be shown again:");
+    println!("  {}", token);
+    Ok(())
+}
+
+fn auth_list_tokens(account_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::tokens::AccessTokenStore::new(db);
+    let tokens = store.list_tokens(account_id)?;
+    if tokens.is_empty() {
+        println!("No access tokens for account {account_id}.");
+        return Ok(());
+    }
+    println!("Access tokens for {account_id}:");
+    for t in tokens {
+        println!(
+            "  ID: {}  Name: {}  Role: {}  revoked: {}",
+            t.id,
+            t.name,
+            t.role,
+            t.revoked_at.is_some()
+        );
+    }
+    Ok(())
+}
+
+fn auth_revoke_token(token_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::tokens::AccessTokenStore::new(db);
+    let revoked = store.revoke_token(token_id)?;
+    if revoked {
+        println!("Access token '{token_id}' revoked.");
+    } else {
+        println!("Access token '{token_id}' not found or already revoked.");
+    }
     Ok(())
 }
 

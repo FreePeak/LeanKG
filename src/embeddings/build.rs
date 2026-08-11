@@ -329,7 +329,12 @@ impl Default for BuildOptions {
 /// `false`/`off` run inference-only (benchmark/smoke) without touching PG.
 pub fn write_vectors_enabled() -> bool {
     std::env::var("LEANKG_EMBED_WRITE_VECTORS")
-        .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off"))
+        .map(|v| {
+            !matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off"
+            )
+        })
         .unwrap_or(true)
 }
 
@@ -926,7 +931,11 @@ pub fn run(
     tracing::info!(
         "orphan reap: {} orphans{}",
         orphan_rows.len(),
-        if opts.write_vectors { "" } else { " (skipped: no vector writes)" }
+        if opts.write_vectors {
+            ""
+        } else {
+            " (skipped: no vector writes)"
+        }
     );
     if opts.write_vectors && !orphan_rows.is_empty() {
         // Remove vectors from HNSW index first, then state rows.
@@ -1438,7 +1447,11 @@ pub fn build_index_parallel(
     tracing::info!(
         "orphan reap: {} orphans{}",
         orphan_rows.len(),
-        if opts.write_vectors { "" } else { " (skipped: no vector writes)" }
+        if opts.write_vectors {
+            ""
+        } else {
+            " (skipped: no vector writes)"
+        }
     );
     if opts.write_vectors && !orphan_rows.is_empty() {
         let orphan_qns: Vec<String> = orphan_rows
@@ -2606,10 +2619,7 @@ mod tests {
         }
         for v in ["0", "false", "off", "FALSE", "OFF"] {
             std::env::set_var("LEANKG_EMBED_WRITE_VECTORS", v);
-            assert!(
-                !write_vectors_enabled(),
-                "value {v:?} must disable writes"
-            );
+            assert!(!write_vectors_enabled(), "value {v:?} must disable writes");
         }
         // Anything else is treated as default-on (lenient parse).
         for v in ["no", "maybe", "garbage"] {

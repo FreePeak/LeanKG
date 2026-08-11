@@ -2012,6 +2012,8 @@ const JSONB_COLUMNS: &[&str] = &[
     "elements_by_type_json",
     "relationships_by_type_json",
     "vectors_by_type_json",
+    // Auth tables (004_auth): access_tokens.scopes is JSONB.
+    "scopes",
 ];
 
 /// Render a column reference for a string operator (`LIKE`/`~`), casting
@@ -2404,6 +2406,14 @@ fn pk_for_table(table: &str) -> Option<&'static str> {
         "index_hashes" => Some("path"),
         "migrations" => Some("id"),
         "api_keys" => Some("key_hash"),
+        // Auth tables (004_auth): keyed by id for Cozo `:put` upsert.
+        "accounts" => Some("id"),
+        "orgs" => Some("id"),
+        "access_tokens" => Some("id"),
+        // Composite keys: two members of one org/team are distinct rows, so
+        // the conflict target must cover both columns.
+        "org_memberships" => Some("org_id, account_id"),
+        "team_members" => Some("team_id, account_id"),
         // Per-model embed collections (`embedding_vectors_<model_id>`,
         // `embedding_state_<model_id>`) share the legacy keyed shape.
         t if t.starts_with("embedding_state_") || t.starts_with("embedding_vectors_") => {
@@ -2662,7 +2672,11 @@ fn build_insert(
                     | "total_doc_sections"
                     | "estimated_vector_bytes"
                     | "estimated_hnsw_bytes"
-                    | "usearch_key" => "::bigint",
+                    | "usearch_key"
+                    // Auth tables (004_auth): epoch columns are BIGINT.
+                    | "joined_at"
+                    | "revoked_at"
+                    | "last_used_at" => "::bigint",
                     "savings_percent" | "f1_score" | "confidence" => "::float8",
                     "success" | "is_deleted" | "accepted" => "::bool",
                     c if JSONB_COLUMNS.contains(&c) => "::jsonb",
@@ -2694,9 +2708,14 @@ fn build_insert(
                 // value type must match it — otherwise the postgres crate
                 // fails with "error serializing parameter N" and the server
                 // rejects text-typed NULL into bigint columns (E42804).
-                let typed_none: Box<dyn postgres::types::ToSql + Send + Sync> = match pg_cols[j]
-                    .as_str()
-                {
+                let typed_none: Box<dyn postgres::types::ToSql + Send + Sync> =
+                    if is_api_keys_text_ts {
+                        // api_keys timestamps are TEXT columns (schema.sql keeps
+                        // epoch strings) — NULL must bind as Option::<String> to
+                        // match the `::text` placeholder cast (mirrors null_cast).
+                        Box::new(Option::<String>::None)
+                    } else {
+                        match pg_cols[j].as_str() {
                     c if JSONB_COLUMNS.contains(&c) => Box::new(Option::<serde_json::Value>::None),
                     "savings_percent" | "f1_score" | "confidence" => Box::new(Option::<f64>::None),
                     "success" | "is_deleted" | "accepted" => Box::new(Option::<bool>::None),
@@ -2728,9 +2747,14 @@ fn build_insert(
                     | "total_doc_sections"
                     | "estimated_vector_bytes"
                     | "estimated_hnsw_bytes"
-                    | "usearch_key" => Box::new(Option::<i64>::None),
+                    | "usearch_key"
+                    // Auth tables (004_auth): epoch columns are BIGINT.
+                    | "joined_at"
+                    | "revoked_at"
+                    | "last_used_at" => Box::new(Option::<i64>::None),
                     _ => Box::new(Option::<String>::None),
-                };
+                    }
+                    };
                 all_params.push(typed_none);
             } else {
                 all_params.push(json_to_pg(v.clone()));
@@ -2739,12 +2763,22 @@ fn build_insert(
         values_sql.push(')');
     }
     let sql = match (is_keyed, pk) {
-        (true, Some(pk_str)) => format!(
-            "INSERT INTO {table} ({col_sql}) VALUES {values_sql} \
-             ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
-            pk = quote_ident(pk_str),
-            update_set = update_set_clause(&pg_cols, pk_str),
-        ),
+        (true, Some(pk_str)) => {
+            // Composite PKs come in as `org_id, account_id` — quote each
+            // column separately (a single quote_ident would make it one
+            // literal identifier `"org_id, account_id"`).
+            let pk_sql = pk_str
+                .split(", ")
+                .map(quote_ident)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "INSERT INTO {table} ({col_sql}) VALUES {values_sql} \
+                 ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
+                pk = pk_sql,
+                update_set = update_set_clause(&pg_cols, pk_str),
+            )
+        }
         _ => format!("INSERT INTO {table} ({col_sql}) VALUES {values_sql}"),
     };
     let gucs = embedding_gucs_for(table);
@@ -2777,8 +2811,11 @@ pub fn embedding_gucs_for(table: &str) -> Vec<(String, String)> {
 }
 
 fn update_set_clause(cols: &[String], pk: &str) -> String {
+    // Composite PKs (`org_id, account_id`) name several columns; none of them
+    // belong in the SET list.
+    let pk_cols: Vec<&str> = pk.split(", ").collect();
     cols.iter()
-        .filter(|c| c.as_str() != pk)
+        .filter(|c| !pk_cols.contains(&c.as_str()))
         .map(|c| format!("{} = EXCLUDED.{}", quote_ident(c), quote_ident(c)))
         .collect::<Vec<_>>()
         .join(", ")

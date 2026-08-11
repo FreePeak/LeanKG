@@ -15,9 +15,18 @@ CREATE TABLE IF NOT EXISTS embedding_vectors_gemini_embedding_2_3072 (
     vec            vector(3072) NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS embedding_vectors_gemini_embedding_2_3072_vec_hnsw_idx
-    ON embedding_vectors_gemini_embedding_2_3072 USING hnsw (vec vector_cosine_ops)
-    WITH (m = 16, ef_construction = 200);
+-- pgvector < 0.9 hard-caps HNSW at 2000 dims, so the 3072-d index only builds
+-- on pgvector >= 0.9 (the collection itself always stores fine). The runtime
+-- ANN path (`ensure_model_collections`) tolerates a missing index, so swallow
+-- the build error on older pgvector and note the skip (mirrors 002).
+DO $$
+BEGIN
+    CREATE INDEX IF NOT EXISTS embedding_vectors_gemini_embedding_2_3072_vec_hnsw_idx
+        ON embedding_vectors_gemini_embedding_2_3072 USING hnsw (vec vector_cosine_ops)
+        WITH (m = 16, ef_construction = 200);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'gemini-embedding-2 3072-d HNSW index skipped (pgvector dim cap): %', SQLERRM;
+END $$;
 
 CREATE TABLE IF NOT EXISTS embedding_state_gemini_embedding_2_3072 (
     qualified_name TEXT PRIMARY KEY,
@@ -32,9 +41,14 @@ CREATE TABLE IF NOT EXISTS embedding_vectors_gemini_embedding_001_3072 (
     vec            vector(3072) NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS embedding_vectors_gemini_embedding_001_3072_vec_hnsw_idx
-    ON embedding_vectors_gemini_embedding_001_3072 USING hnsw (vec vector_cosine_ops)
-    WITH (m = 16, ef_construction = 200);
+DO $$
+BEGIN
+    CREATE INDEX IF NOT EXISTS embedding_vectors_gemini_embedding_001_3072_vec_hnsw_idx
+        ON embedding_vectors_gemini_embedding_001_3072 USING hnsw (vec vector_cosine_ops)
+        WITH (m = 16, ef_construction = 200);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'gemini-embedding-001 3072-d HNSW index skipped (pgvector dim cap): %', SQLERRM;
+END $$;
 
 CREATE TABLE IF NOT EXISTS embedding_state_gemini_embedding_001_3072 (
     qualified_name TEXT PRIMARY KEY,

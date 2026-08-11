@@ -213,6 +213,22 @@ impl std::fmt::Debug for MCPServer {
     }
 }
 
+/// Read the `auth:` block from the nearest `leankg.yaml` at `db_path`
+/// (walking up), defaulting to disabled when absent.
+fn load_auth_settings(db_path: &std::path::Path) -> crate::config::AuthSettings {
+    let mut dir = Some(db_path);
+    while let Some(d) = dir {
+        let cfg = d.join("leankg.yaml");
+        if let Ok(content) = std::fs::read_to_string(&cfg) {
+            if let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) {
+                return config.auth;
+            }
+        }
+        dir = d.parent();
+    }
+    crate::config::AuthSettings::default()
+}
+
 impl Clone for MCPServer {
     fn clone(&self) -> Self {
         Self {
@@ -255,8 +271,12 @@ pub enum AutoIndexDecision {
 impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
+        // Wire leankg.yaml `auth.tokens` into the static AuthManager when
+        // present; otherwise the default admin token. (The DB-backed
+        // access-token store is the authoritative auth when it exists.)
+        let auth_manager = AuthManager::from_config(&load_auth_settings(&effective_db_path));
         Self {
-            auth_manager: Arc::new(TokioRwLock::new(AuthManager::with_default_token())),
+            auth_manager: Arc::new(TokioRwLock::new(auth_manager)),
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
@@ -2088,10 +2108,21 @@ impl MCPServer {
             }
         }
 
+        // Unified auth: the MCP HTTP server shares the DB-backed access-token
+        // store (same Postgres pool via the server's backend). Resolve the
+        // engine the request handlers actually use (the path-keyed cache) —
+        // the singular `graph_engine` field may still be None when the project
+        // was already initialized and auto-init only spawned a background
+        // index. Built lazily; the store only talks to PG on first validate.
+        let token_store = self
+            .get_graph_engine()
+            .ok()
+            .map(|ge| crate::auth::AccessTokenStore::new(ge.db_arc().clone()));
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),
             auth_token,
             auth_manager: AuthManager::with_default_token(),
+            token_store,
         });
 
         let cors = CorsLayer::new()
@@ -3185,6 +3216,10 @@ struct HttpMcpServer {
     mcp_server: MCPServer,
     auth_token: Option<String>,
     auth_manager: AuthManager,
+    /// DB-backed access-token store (unified auth). When present, Bearer
+    /// tokens are validated against access_tokens first, falling back to the
+    /// static auth_token compare only when DB auth yields no match.
+    token_store: Option<crate::auth::AccessTokenStore>,
 }
 
 /// Query parameters extracted from MCP HTTP requests
@@ -3260,12 +3295,32 @@ fn should_resolve_tool_paths(tool_name: &str) -> bool {
     )
 }
 
-/// Extract bearer token from Authorization header using constant-time comparison
-/// to prevent timing attacks on bearer tokens. Returns an AuthContext with role.
+/// Extract bearer token from Authorization header. Validates against the
+/// DB-backed access-token store first (unified OAuth2-style auth); falls back
+/// to the static `auth_token` constant-time compare when DB auth is
+/// unavailable (no backend yet) or the token is not a DB token. Returns an
+/// [`AuthContext`] with the account id + role.
 fn extract_auth_context(
     auth_header: Option<&str>,
     server: &HttpMcpServer,
 ) -> Result<crate::db::models::AuthContext, StatusCode> {
+    // If the server has a DB-backed token store, try it first: an issued
+    // access token (Bearer) resolves to a real account + role.
+    if let Some(store) = &server.token_store {
+        if let Some(auth) = auth_header {
+            if let Some(token) = auth.strip_prefix("Bearer ") {
+                match store.validate_token(token) {
+                    Ok(ctx) => return Ok(ctx),
+                    Err(e) => {
+                        tracing::debug!("db access-token validate failed: {e}");
+                    }
+                }
+                // Fall through to the static token path (a static token is not a
+                // DB token — it just fails the DB lookup).
+            }
+        }
+    }
+
     if server.auth_token.is_none() {
         // No auth configured — grant admin
         return Ok(crate::db::models::AuthContext {

@@ -39,6 +39,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "003_gemini_embed",
         include_str!("migrations/003_gemini_embed.sql"),
     ),
+    ("004_auth", include_str!("migrations/004_auth.sql")),
 ];
 
 pub struct MigrationReport {
