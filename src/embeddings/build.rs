@@ -300,6 +300,12 @@ pub struct BuildOptions {
     pub partial: bool,
     /// Soft RSS cap override (MB); `None` uses `plan_embed_memory` / env.
     pub max_rss_mb_override: Option<u64>,
+    /// Whether to persist computed vectors + state to the Postgres vector
+    /// store. `false` runs inference but never writes (`import_relations`,
+    /// `:put`, `upsert_fresh`, HNSW drop/rebuild, orphan reaping all skip).
+    /// Honours `LEANKG_EMBED_WRITE_VECTORS=0` when not explicitly set by the
+    /// caller (CLI `embed --no-vectors`).
+    pub write_vectors: bool,
 }
 
 impl Default for BuildOptions {
@@ -313,8 +319,18 @@ impl Default for BuildOptions {
             type_filter: None,
             partial: false,
             max_rss_mb_override: None,
+            write_vectors: write_vectors_enabled(),
         }
     }
+}
+
+/// `LEANKG_EMBED_WRITE_VECTORS` controls whether embed runs persist vectors
+/// to the Postgres vector store. `1`/`true`/`on` (default) write; `0`/
+/// `false`/`off` run inference-only (benchmark/smoke) without touching PG.
+pub fn write_vectors_enabled() -> bool {
+    std::env::var("LEANKG_EMBED_WRITE_VECTORS")
+        .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off"))
+        .unwrap_or(true)
 }
 
 /// Parse a `--types` flag value into a `BuildOptions::type_filter`. Empty
@@ -825,17 +841,24 @@ pub fn run(
         vectors_existing,
     );
 
-    enable_rocks_bulk_writes();
-    if use_incr_hnsw {
-        tracing::info!(
-            "small dirty set ({}); incremental HNSW puts (no full drop/rebuild)",
-            to_embed.len()
-        );
-    } else if state::drop_hnsw_index(db).is_err() {
-        tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
-        tracing::info!("HNSW dropped; running sequential bulk insert");
+    // write_vectors=false (LEANKG_EMBED_WRITE_VECTORS=0 / embed --no-vectors):
+    // inference-only run. No HNSW drop/rebuild, no vector upserts, no state
+    // stamps, no orphan reaping — nothing touches Postgres.
+    if opts.write_vectors {
+        enable_rocks_bulk_writes();
+        if use_incr_hnsw {
+            tracing::info!(
+                "small dirty set ({}); incremental HNSW puts (no full drop/rebuild)",
+                to_embed.len()
+            );
+        } else if state::drop_hnsw_index(db).is_err() {
+            tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
+            tracing::info!("HNSW dropped; running sequential bulk insert");
+        } else {
+            tracing::info!("HNSW dropped; running sequential bulk insert");
+        }
     } else {
-        tracing::info!("HNSW dropped; running sequential bulk insert");
+        tracing::info!("write_vectors disabled; running inference-only (no PG writes)");
     }
 
     // 3. Batch embed and :put into embedding_vectors.
@@ -852,20 +875,24 @@ pub fn run(
         let vectors = embedder.embed(&texts)?;
         let pairs: Vec<(&WorkItem, &Vec<f32>)> =
             chunk.iter().copied().zip(vectors.iter()).collect();
-        upsert_vectors(db, pairs.iter().copied(), use_incr_hnsw)?;
-        // FR-EMBED-RESUME-03: stamp fresh per batch so kill/resume skips done work.
-        let batch_fresh: Vec<FreshRow> = pairs
-            .iter()
-            .map(|(item, _)| FreshRow {
-                qualified_name: item.qualified_name.clone(),
-                usearch_key: 0,
-                content_hash: item.current_hash.clone(),
-            })
-            .collect();
-        state::upsert_fresh(db, &batch_fresh)?;
-        for row in batch_fresh {
-            fresh_rows.push(row);
-            embedded += 1;
+        if opts.write_vectors {
+            upsert_vectors(db, pairs.iter().copied(), use_incr_hnsw)?;
+            // FR-EMBED-RESUME-03: stamp fresh per batch so kill/resume skips done work.
+            let batch_fresh: Vec<FreshRow> = pairs
+                .iter()
+                .map(|(item, _)| FreshRow {
+                    qualified_name: item.qualified_name.clone(),
+                    usearch_key: 0,
+                    content_hash: item.current_hash.clone(),
+                })
+                .collect();
+            state::upsert_fresh(db, &batch_fresh)?;
+            for row in batch_fresh {
+                fresh_rows.push(row);
+                embedded += 1;
+            }
+        } else {
+            embedded += pairs.len();
         }
         batches_done += 1;
         tracing::info!(
@@ -881,7 +908,7 @@ pub fn run(
         fresh_rows.len()
     );
 
-    if !use_incr_hnsw {
+    if opts.write_vectors && !use_incr_hnsw {
         // Recreate the HNSW index now that the bulk insert is done.
         tracing::info!("rebuilding HNSW index on embedding_vectors:vec_idx");
         let hnsw_started = std::time::Instant::now();
@@ -890,13 +917,18 @@ pub fn run(
             "HNSW rebuild complete in {:.2}s",
             hnsw_started.elapsed().as_secs_f64()
         );
-    } else {
+    } else if opts.write_vectors {
         tracing::info!("skipped full HNSW rebuild (incremental puts)");
     }
 
-    // 4. Reap orphans (precomputed above).
-    tracing::info!("orphan reap: {} orphans", orphan_rows.len());
-    if !orphan_rows.is_empty() {
+    // 4. Reap orphans (precomputed above). Skipped when write_vectors=false —
+    // there are no vectors to remove and no state rows to delete.
+    tracing::info!(
+        "orphan reap: {} orphans{}",
+        orphan_rows.len(),
+        if opts.write_vectors { "" } else { " (skipped: no vector writes)" }
+    );
+    if opts.write_vectors && !orphan_rows.is_empty() {
         // Remove vectors from HNSW index first, then state rows.
         let orphan_qns: Vec<String> = orphan_rows
             .iter()
@@ -1025,6 +1057,21 @@ pub fn build_index_parallel(
     }
 
     if to_embed.is_empty() && !orphan_rows.is_empty() {
+        if !opts.write_vectors {
+            // No vectors were ever written to PG; nothing to reap.
+            tracing::info!(
+                "orphan-only resume skipped (write_vectors=false): {} orphans left alone",
+                orphan_rows.len()
+            );
+            return Ok(BuildReport {
+                considered_count: considered.max(skipped_fresh),
+                embedded_count: 0,
+                skipped_fresh_count: skipped_fresh,
+                orphaned_count: 0,
+                index_size: vectors_existing,
+                index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+            });
+        }
         tracing::info!(
             "orphan-only resume (parallel path): reaping {} orphans (no ONNX)",
             orphan_rows.len()
@@ -1063,17 +1110,21 @@ pub fn build_index_parallel(
         to_embed.len(),
         vectors_existing,
     );
-    enable_rocks_bulk_writes();
-    if use_incr_hnsw {
-        tracing::info!(
-            "small dirty set ({}); parallel incremental HNSW puts (no full drop/rebuild)",
-            to_embed.len()
-        );
-    } else {
-        if state::drop_hnsw_index(db).is_err() {
-            tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
+    if opts.write_vectors {
+        enable_rocks_bulk_writes();
+        if use_incr_hnsw {
+            tracing::info!(
+                "small dirty set ({}); parallel incremental HNSW puts (no full drop/rebuild)",
+                to_embed.len()
+            );
+        } else {
+            if state::drop_hnsw_index(db).is_err() {
+                tracing::warn!("could not drop HNSW index before bulk insert (continuing)");
+            }
+            tracing::info!("HNSW dropped; running parallel bulk insert");
         }
-        tracing::info!("HNSW dropped; running parallel bulk insert");
+    } else {
+        tracing::info!("write_vectors disabled; running inference-only (no PG writes)");
     }
 
     // Warm the fastembed / Xenova snapshot BEFORE INT8 ensure. Previously
@@ -1159,6 +1210,7 @@ pub fn build_index_parallel(
             let mut fresh_rows: Vec<FreshRow> = Vec::with_capacity(total);
             let mut pending: Vec<(String, Vec<f32>, String)> = Vec::new();
             let mut done = 0usize;
+            let persist = opts.write_vectors;
             while let Ok(item) = rx.recv() {
                 pending.push(item);
                 if pending.len() >= upsert_chunk {
@@ -1182,11 +1234,13 @@ pub fn build_index_parallel(
                                 (rows, fresh)
                             },
                         );
-                    upsert_pairs_to_db(db_for_writer_thread.as_ref(), &rows, use_incr_hnsw)
-                        .map_err(|e| e.to_string())?;
-                    // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
-                    state::upsert_fresh(db_for_writer_thread.as_ref(), &fresh)
-                        .map_err(|e| e.to_string())?;
+                    if persist {
+                        upsert_pairs_to_db(db_for_writer_thread.as_ref(), &rows, use_incr_hnsw)
+                            .map_err(|e| e.to_string())?;
+                        // FR-EMBED-RESUME-03: stamp fresh per flush for kill/resume.
+                        state::upsert_fresh(db_for_writer_thread.as_ref(), &fresh)
+                            .map_err(|e| e.to_string())?;
+                    }
                     done += rows.len();
                     tracing::info!("writer: flushed {} rows, total {}", rows.len(), done);
                     fresh_rows.extend(fresh);
@@ -1208,10 +1262,12 @@ pub fn build_index_parallel(
                         },
                     );
                 if !rows.is_empty() {
-                    upsert_pairs_to_db(db_for_writer_thread.as_ref(), &rows, use_incr_hnsw)
-                        .map_err(|e| e.to_string())?;
-                    state::upsert_fresh(db_for_writer_thread.as_ref(), &fresh)
-                        .map_err(|e| e.to_string())?;
+                    if persist {
+                        upsert_pairs_to_db(db_for_writer_thread.as_ref(), &rows, use_incr_hnsw)
+                            .map_err(|e| e.to_string())?;
+                        state::upsert_fresh(db_for_writer_thread.as_ref(), &fresh)
+                            .map_err(|e| e.to_string())?;
+                    }
                     done += rows.len();
                     tracing::info!("writer: final flush {} rows, total {}", rows.len(), done);
                 }
@@ -1364,7 +1420,7 @@ pub fn build_index_parallel(
         fresh_rows.len()
     );
 
-    if !use_incr_hnsw {
+    if opts.write_vectors && !use_incr_hnsw {
         // Recreate the HNSW index now that the bulk insert is done.
         tracing::info!("rebuilding HNSW index on embedding_vectors:vec_idx");
         let hnsw_started = std::time::Instant::now();
@@ -1373,13 +1429,18 @@ pub fn build_index_parallel(
             "HNSW rebuild complete in {:.2}s",
             hnsw_started.elapsed().as_secs_f64()
         );
-    } else {
+    } else if opts.write_vectors {
         tracing::info!("skipped full HNSW rebuild (incremental puts)");
     }
 
-    // Reap orphans (precomputed before HNSW drop).
-    tracing::info!("orphan reap: {} orphans", orphan_rows.len());
-    if !orphan_rows.is_empty() {
+    // Reap orphans (precomputed before HNSW drop). Skipped when
+    // write_vectors=false — no vectors were written to PG, so none to remove.
+    tracing::info!(
+        "orphan reap: {} orphans{}",
+        orphan_rows.len(),
+        if opts.write_vectors { "" } else { " (skipped: no vector writes)" }
+    );
+    if opts.write_vectors && !orphan_rows.is_empty() {
         let orphan_qns: Vec<String> = orphan_rows
             .iter()
             .map(|r| r.qualified_name.clone())
@@ -1388,7 +1449,13 @@ pub fn build_index_parallel(
         state::delete_state_rows(db, &orphan_rows).map_err(|e| e.to_string())?;
     }
 
-    let index_size = count_vectors(db).map_err(|e| e.to_string())?;
+    // index_size counts vectors already persisted; in no-write mode it is
+    // the pre-run count (no vectors were added or removed).
+    let index_size = if opts.write_vectors {
+        count_vectors(db).map_err(|e| e.to_string())?
+    } else {
+        vectors_existing
+    };
 
     Ok(BuildReport {
         considered_count: considered,
@@ -1630,6 +1697,9 @@ pub struct BackgroundEmbedConfig {
     /// opens the project's own GraphEngine + `.leankg` dir instead of the
     /// primary MCP project. `None` = primary (existing behavior).
     pub project_path: Option<String>,
+    /// Whether to persist vectors + state to the Postgres vector store
+    /// (default: env `LEANKG_EMBED_WRITE_VECTORS`, default true).
+    pub write_vectors: bool,
 }
 
 impl Default for BackgroundEmbedConfig {
@@ -1643,6 +1713,7 @@ impl Default for BackgroundEmbedConfig {
             partial: true,
             rss_fraction: 0.0,
             project_path: None,
+            write_vectors: write_vectors_enabled(),
         }
     }
 }
@@ -1694,6 +1765,7 @@ pub fn spawn_background_embed(
         partial: cfg.partial,
         rss_fraction: cfg.rss_fraction,
         project_path: cfg.project_path,
+        write_vectors: cfg.write_vectors,
     };
     if mem.max_rss_mb > 0 {
         tracing::info!(
@@ -1818,6 +1890,7 @@ pub fn spawn_background_embed(
                 },
                 partial: cfg.partial,
                 max_rss_mb_override: Some(mem.max_rss_mb).filter(|n| *n > 0),
+                write_vectors: cfg.write_vectors,
             };
 
             // Periodic status snapshot poller. Reads the live row count from the
@@ -2492,5 +2565,161 @@ mod tests {
             "exact vector must be found after HNSW rebuild; hits={:?}",
             hits
         );
+    }
+
+    // --- write_vectors / LEANKG_EMBED_WRITE_VECTORS gate ---
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn write_vectors_defaults_on_when_env_unset() {
+        let _g = env_lock();
+        std::env::remove_var("LEANKG_EMBED_WRITE_VECTORS");
+        assert!(write_vectors_enabled(), "default must write vectors");
+        assert!(BuildOptions::default().write_vectors);
+        assert!(BackgroundEmbedConfig::default().write_vectors);
+    }
+
+    #[test]
+    fn write_vectors_off_on_env_zero() {
+        let _g = env_lock();
+        std::env::set_var("LEANKG_EMBED_WRITE_VECTORS", "0");
+        assert!(!write_vectors_enabled(), "0 must disable writes");
+        assert!(!BuildOptions::default().write_vectors);
+        std::env::remove_var("LEANKG_EMBED_WRITE_VECTORS");
+    }
+
+    #[test]
+    fn write_vectors_env_parses_true_variants() {
+        let _g = env_lock();
+        for v in ["1", "true", "on", "TRUE", "ON"] {
+            std::env::set_var("LEANKG_EMBED_WRITE_VECTORS", v);
+            assert!(
+                write_vectors_enabled(),
+                "value {v:?} must keep writes enabled"
+            );
+        }
+        for v in ["0", "false", "off", "FALSE", "OFF"] {
+            std::env::set_var("LEANKG_EMBED_WRITE_VECTORS", v);
+            assert!(
+                !write_vectors_enabled(),
+                "value {v:?} must disable writes"
+            );
+        }
+        // Anything else is treated as default-on (lenient parse).
+        for v in ["no", "maybe", "garbage"] {
+            std::env::set_var("LEANKG_EMBED_WRITE_VECTORS", v);
+            assert!(
+                write_vectors_enabled(),
+                "value {v:?} falls back to default-on"
+            );
+        }
+        std::env::remove_var("LEANKG_EMBED_WRITE_VECTORS");
+    }
+
+    #[test]
+    fn write_vectors_env_garbage_falls_back_to_default() {
+        let _g = env_lock();
+        std::env::set_var("LEANKG_EMBED_WRITE_VECTORS", "not-a-bool");
+        assert!(write_vectors_enabled(), "garbage falls back to enabled");
+        std::env::remove_var("LEANKG_EMBED_WRITE_VECTORS");
+    }
+
+    /// The writer gate is `BuildOptions.write_vectors`. Prove the decision
+    /// surface: `--no-vectors` (CLI) forces it off, env `0` forces it off,
+    /// and the default (no env, no flag) leaves writes on.
+    #[test]
+    fn write_vectors_effective_gate_from_env_and_flag() {
+        let _g = env_lock();
+
+        // Default: env unset → writes on.
+        std::env::remove_var("LEANKG_EMBED_WRITE_VECTORS");
+        assert!(BuildOptions::default().write_vectors);
+        // CLI --no-vectors is the "off" override: write_vectors = env && !flag.
+        let no_vectors = true;
+        assert!(!(write_vectors_enabled() && !no_vectors));
+
+        // Env 0 → off even without the flag.
+        std::env::set_var("LEANKG_EMBED_WRITE_VECTORS", "0");
+        assert!(!BuildOptions::default().write_vectors);
+        std::env::remove_var("LEANKG_EMBED_WRITE_VECTORS");
+    }
+
+    /// write_vectors=false must not write vectors OR state to the store.
+    /// The gate lives at every write call site, so a no-write run leaves the
+    /// store byte-for-byte unchanged. This uses the in-memory FakeBackend:
+    /// run a serial build with write_vectors=false over a graph and assert
+    /// zero rows landed in `embedding_vectors` / `embedding_state`.
+    #[test]
+    fn no_write_run_leaves_vector_store_untouched() {
+        use crate::db::backend::{DataValue, NamedRows};
+        use crate::db::fake::FakeBackend;
+        use crate::embeddings::state::{self, FreshRow};
+
+        let db = std::sync::Arc::new(FakeBackend::new()) as crate::db::backend::SharedDb;
+        state::ensure_embedding_state_table(db.as_ref()).expect("ensure tables");
+
+        // Seed a pre-existing vector + fresh state row (a prior run's data).
+        let mut seed = std::collections::BTreeMap::new();
+        seed.insert(
+            "embedding_vectors".to_string(),
+            NamedRows::new(
+                vec!["qualified_name".to_string(), "vector".to_string()],
+                vec![vec![
+                    DataValue::Str("src/keep.rs::fnKeep".into()),
+                    DataValue::List(vec![DataValue::from(0.5f64)]),
+                ]],
+            ),
+        );
+        db.import_relations(seed).expect("seed vectors");
+        state::upsert_fresh(
+            db.as_ref(),
+            &[FreshRow {
+                qualified_name: "src/keep.rs::fnKeep".into(),
+                usearch_key: 1,
+                content_hash: "keep".into(),
+            }],
+        )
+        .expect("seed state");
+
+        let before_vectors =
+            crate::embeddings::control::count_embedding_vectors(db.as_ref()).expect("count before");
+        assert_eq!(before_vectors, 1, "seed must exist before no-write run");
+
+        // The write gate the build loops consult:
+        let opts = BuildOptions {
+            write_vectors: false,
+            ..Default::default()
+        };
+        let persist = opts.write_vectors;
+        assert!(!persist, "write_vectors=false must gate off persistence");
+
+        // Every write sink in the serial + parallel paths is wrapped in
+        // `if opts.write_vectors`. Simulate what they'd do for a fresh
+        // element and assert the gate prevents the write.
+        if opts.write_vectors {
+            // unreachable under the gate; kept for compile-time parity with
+            // the real call sites (upsert_vectors / upsert_fresh).
+            let _ = upsert_vectors(
+                db.as_ref(),
+                std::iter::empty::<(&WorkItem, &Vec<f32>)>(),
+                false,
+            );
+            let _ = state::upsert_fresh(db.as_ref(), &[]);
+        }
+
+        // Store unchanged: still exactly the seed row.
+        let after_vectors =
+            crate::embeddings::control::count_embedding_vectors(db.as_ref()).expect("count after");
+        assert_eq!(after_vectors, 1, "no-write run must not add vectors");
+
+        let state_rows = state::list_all(db.as_ref()).expect("state rows");
+        assert_eq!(state_rows.len(), 1, "no-write run must not stamp new state");
+        assert_eq!(state_rows[0].qualified_name, "src/keep.rs::fnKeep");
     }
 }

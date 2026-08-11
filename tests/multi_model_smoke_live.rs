@@ -144,6 +144,7 @@ fn run_embed(graph: &GraphEngine, types: &str) -> embeddings::BuildReport {
         type_filter: parse_type_filter(types),
         partial: false,
         max_rss_mb_override: Some(2048),
+        write_vectors: true,
     };
     build_index(graph, std::path::Path::new(""), &opts).expect("build_index")
 }

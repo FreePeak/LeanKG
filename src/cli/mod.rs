@@ -405,6 +405,11 @@ pub enum CLICommand {
         /// Run live A/B benchmark measuring semantic search quality before and after embedding.
         #[arg(long)]
         benchmark: bool,
+        /// Do NOT write embedding vectors to the Postgres vector store.
+        /// Runs inference only (useful for benchmarking/smoke tests without
+        /// touching PG). Equivalent to `LEANKG_EMBED_WRITE_VECTORS=0`.
+        #[arg(long)]
+        no_vectors: bool,
     },
     /// One-shot embedding retrieval for CLI testing (requires
     /// --features embeddings). Useful for validating the retrieve→rerank→

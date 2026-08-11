@@ -783,10 +783,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             workers,
             types,
             benchmark,
+            no_vectors,
         } => {
             run_embed(
                 init, full, batch_size, &project, wait, status, cancel, background, workers,
-                &types, benchmark,
+                &types, benchmark, no_vectors,
             )?;
         }
         #[cfg(feature = "embeddings")]
@@ -5812,6 +5813,7 @@ fn maybe_run_embed(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
         4,     // workers
         "",    // types_filter
         false, // benchmark
+        false, // no_vectors
     )
 }
 
@@ -5835,6 +5837,7 @@ fn run_embed(
     workers: usize,
     types_filter: &str,
     benchmark: bool,
+    no_vectors: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if init {
         let report = embeddings::init_models()?;
@@ -5900,6 +5903,7 @@ fn run_embed(
             &leankg_dir,
             workers,
             types_filter,
+            no_vectors,
         )?;
         let elapsed = embed_start.elapsed().as_secs_f64();
 
@@ -5935,6 +5939,7 @@ fn run_embed(
             &leankg_dir,
             workers,
             types_filter,
+            no_vectors,
         );
     }
 
@@ -5977,6 +5982,11 @@ fn run_embed(
         // background worker honors it (otherwise the mega-graph heuristic
         // re-derives a default that ignores the user's intent).
         cmd.args(["--types", types_filter]);
+    }
+    if no_vectors {
+        // Pass --no-vectors through so the background worker also skips PG
+        // vector writes.
+        cmd.arg("--no-vectors");
     }
     let child = cmd
         .stdin(std::process::Stdio::null())
@@ -6121,6 +6131,7 @@ fn run_embed_worker(
     leankg_dir: &std::path::Path,
     workers: usize,
     types_filter: &str,
+    no_vectors: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     let status_path = leankg_dir.join("embed_status.json");
@@ -6184,6 +6195,7 @@ fn run_embed_worker(
                 }
             }
         },
+        write_vectors: embeddings::write_vectors_enabled() && !no_vectors,
         ..Default::default()
     };
     write_status(total as u64, 0, 0, 0, "running");

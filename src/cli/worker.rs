@@ -194,6 +194,7 @@ impl WorkerCommand {
                         workers,
                         types,
                         benchmark,
+                        no_vectors: false,
                     })
                 }
                 #[cfg(not(feature = "embeddings"))]

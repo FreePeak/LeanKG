@@ -36,8 +36,8 @@ pub mod text_blob;
 pub use build::{
     build_index_parallel, embed_max_rss_mb, parse_type_filter, plan_embed_memory,
     plan_embed_memory_with_budget, run as build_index, spawn_background_embed,
-    BackgroundEmbedConfig, BackgroundEmbedHandle, BuildMode, BuildOptions, BuildReport,
-    EmbedMemoryPlan,
+    write_vectors_enabled, BackgroundEmbedConfig, BackgroundEmbedHandle, BuildMode, BuildOptions,
+    BuildReport, EmbedMemoryPlan,
 };
 #[cfg(feature = "embeddings")]
 #[allow(unused_imports)]
