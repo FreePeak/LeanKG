@@ -27,28 +27,22 @@ INSERT INTO embedding_active (scope, model_id)
 VALUES ('default', 'bge-small-en-v1.5-384')
 ON CONFLICT (scope) DO NOTHING;
 
--- Qwen 2560-d collection (table-per-model when dims differ)
+-- Qwen 2560-d collection (table-per-model when dims differ).
+--
+-- No vector index here: pgvector (0.8.x) rejects both HNSW and ivfflat above
+-- 2000 dimensions, so a 2560-d index cannot be created — and it is never
+-- queried locally (Qwen is a remote openai provider, not the default bge-384
+-- collection). Keeping a CREATE INDEX on this table would break fresh-DB
+-- `leankg migrate` with "column cannot have more than 2000 dimensions".
+-- A local scan is the correct access path for this collection.
 CREATE TABLE IF NOT EXISTS embedding_vectors_qwen3_emb_4b_2560 (
     qualified_name TEXT PRIMARY KEY,
     vec            vector(2560) NOT NULL
 );
 
--- pgvector < 0.9 hard-caps HNSW at 2000 dims, so the 2560-d index only builds
--- on pgvector >= 0.9 (the qwen collection itself always stores fine). The
--- runtime ANN path (`ensure_model_collections`) tolerates a missing index, so
--- swallow the build error on older pgvector and note the skip.
-DO $$
-BEGIN
-    CREATE INDEX IF NOT EXISTS embedding_vectors_qwen3_emb_4b_2560_vec_hnsw_idx
-        ON embedding_vectors_qwen3_emb_4b_2560 USING hnsw (vec vector_cosine_ops)
-        WITH (m = 16, ef_construction = 200);
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'qwen 2560-d HNSW index skipped (pgvector dim cap): %', SQLERRM;
-END $$;
-
 CREATE TABLE IF NOT EXISTS embedding_state_qwen3_emb_4b_2560 (
     qualified_name TEXT PRIMARY KEY,
-    usearch_key    BIGINT NOT NULL DEFAULT 0,
+    usearch_key    BIGINT NOT NULL,
     content_hash   TEXT NOT NULL,
     state          TEXT NOT NULL,
     embedded_at    TEXT

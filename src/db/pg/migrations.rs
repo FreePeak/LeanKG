@@ -40,6 +40,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("migrations/003_gemini_embed.sql"),
     ),
     ("004_auth", include_str!("migrations/004_auth.sql")),
+    (
+        "005_hnsw_dims_cleanup",
+        include_str!("migrations/005_hnsw_dims_cleanup.sql"),
+    ),
 ];
 
 pub struct MigrationReport {
@@ -157,5 +161,31 @@ mod tests {
                 panic!("query_cache dropped per D2 — schema.sql creates it: {t}");
             }
         }
+    }
+
+    /// 005 drops the never-buildable qwen 2560-d HNSW index and the cosmetic
+    /// usearch_key DEFAULT. The strings below must survive in the SQL.
+    #[test]
+    fn migration_005_drops_qwen_hnsw_index_and_default() {
+        let sql = include_str!("migrations/005_hnsw_dims_cleanup.sql");
+        assert!(
+            sql.contains("DROP INDEX IF EXISTS embedding_vectors_qwen3_emb_4b_2560_vec_hnsw_idx"),
+            "005 must drop the qwen HNSW index"
+        );
+        assert!(
+            sql.contains("ALTER COLUMN usearch_key DROP DEFAULT"),
+            "005 must drop the qwen usearch_key DEFAULT"
+        );
+    }
+
+    /// 002 must not create the qwen HNSW index (pgvector 2000-d cap makes it
+    /// dead weight on fresh DBs).
+    #[test]
+    fn migration_002_has_no_qwen_hnsw_index() {
+        let sql = include_str!("migrations/002_multi_model_embed.sql");
+        assert!(
+            !sql.contains("embedding_vectors_qwen3_emb_4b_2560_vec_hnsw_idx"),
+            "002 must not create the qwen HNSW index"
+        );
     }
 }
