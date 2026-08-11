@@ -1150,7 +1150,7 @@ pub fn build_index_parallel(
     if runtime.kind == crate::embeddings::models::EmbedModelKind::BgeInt8 {
         if let Err(e) = crate::embeddings::runtime::ensure_quantized_onnx() {
             tracing::warn!(
-                "INT8 ONNX unavailable ({e}); falling back to FP32 — set LEANKG_EMBED_FAST=0 to silence"
+                "INT8 ONNX unavailable ({e}); falling back to FP32 — set LEANKG_EMBED_FAST=1 to opt out of the INT8 fast profile"
             );
             std::env::set_var("LEANKG_EMBED_MODEL", "bge");
             // Re-resolve so workers/batch match FP32 (no silent Int8 label).
@@ -2230,11 +2230,18 @@ mod tests {
 
     #[test]
     fn embed_max_rss_mb_env_invalid_falls_back_to_default() {
+        // Default (LEANKG_EMBED_FAST off): fast path is OFF, so the RSS cap is
+        // the non-fast value — 2048 on macOS, 3072 elsewhere. The old test
+        // assumed fast defaulted ON (4096); that default flipped.
+        std::env::remove_var("LEANKG_EMBED_FAST");
         std::env::set_var("LEANKG_EMBED_MAX_MB", "not_a_number");
         let n = embed_max_rss_mb();
         std::env::remove_var("LEANKG_EMBED_MAX_MB");
-        // Default is 4096 (macOS, fast) or 4096 (linux, fast) — both 4096.
-        assert_eq!(n, 4096, "fallback default must be 4096");
+        #[cfg(target_os = "macos")]
+        let expect = 2_048;
+        #[cfg(not(target_os = "macos"))]
+        let expect = 3_072;
+        assert_eq!(n, expect, "fallback default must match non-fast mode");
     }
 
     #[test]
@@ -2475,9 +2482,14 @@ mod tests {
     /// maintained.
     #[test]
     fn hnsw_live_writes_are_queryable_via_put() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let db_path = tmp.path().join("hnsw_live.db");
-        let db = crate::db::backend::init_db(&db_path).expect("init_db");
+        // Live-PG only: the HNSW index DDL + `~vec_idx` query go through
+        // Postgres pgvector. FakeBackend has no HNSW support, so this skips
+        // when the dev Postgres is down.
+        if !crate::db::backend::test_pg_available() {
+            eprintln!("skipping: no Postgres on :5433 (start leankg-pg-phase0)");
+            return;
+        }
+        let db = crate::db::backend::init_db_pg().expect("init_db_pg");
         crate::embeddings::state::ensure_embedding_state_table(db.as_ref()).expect("ensure tables");
 
         let n = 24usize;
@@ -2532,9 +2544,12 @@ mod tests {
     /// queryable — guards the fast-path writer against the same bug.
     #[test]
     fn bulk_import_then_hnsw_rebuild_is_queryable() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let db_path = tmp.path().join("hnsw_bulk.db");
-        let db = crate::db::backend::init_db(&db_path).expect("init_db");
+        // Live-PG only (same HNSW/pgvector requirement as the :put variant).
+        if !crate::db::backend::test_pg_available() {
+            eprintln!("skipping: no Postgres on :5433 (start leankg-pg-phase0)");
+            return;
+        }
+        let db = crate::db::backend::init_db_pg().expect("init_db_pg");
         crate::embeddings::state::ensure_embedding_state_table(db.as_ref()).expect("ensure tables");
 
         let n = 24usize;

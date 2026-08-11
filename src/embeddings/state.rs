@@ -662,13 +662,14 @@ mod tests {
     #[test]
     fn mark_stale_dedupes_duplicate_qualified_names() {
         // Regression: duplicate qualified_names in one call must not emit a
-        // `:put` with two rows for the same PK (E21000 on PG).
-        use crate::db::backend::PostgresBackend;
-        let Ok(db) = PostgresBackend::from_env() else {
-            eprintln!("skipping: LEANKG_PG_URL not set");
+        // `:put` with two rows for the same PK (E21000 on PG). Live-PG only:
+        // FakeBackend's import_relations appends without PK-dedupe, so the
+        // E21000 path can only be exercised against a real database.
+        if !crate::db::backend::test_pg_available() {
+            eprintln!("skipping: no Postgres on :5433 (start leankg-pg-phase0)");
             return;
-        };
-        let boxed: Box<dyn crate::db::backend::DbBackend> = Box::new(db);
+        }
+        let db = crate::db::backend::init_db_pg().expect("init_db_pg");
         let dupes: Vec<String> = vec![
             "/dup/qn".to_string(),
             "/dup/qn".to_string(),
@@ -676,12 +677,12 @@ mod tests {
             "/other/qn".to_string(),
         ];
         // Should not error (no E21000) even though /dup/qn appears 3x.
-        mark_stale_for_qualified_names(boxed.as_ref(), &dupes).expect("dedupe must prevent E21000");
+        mark_stale_for_qualified_names(db.as_ref(), &dupes).expect("dedupe must prevent E21000");
         // Real indexer shape: UPSERT_CHUNK=500 long-path QNs, all distinct.
         let big: Vec<String> = (0..500)
             .map(|i| format!("/Users/linh.doan/work/harvey/freepeak/leankg/tests/load_test_1m_nodes.rs::load_test_fn_{i}"))
             .collect();
-        mark_stale_for_qualified_names(boxed.as_ref(), &big).expect("500 distinct must not E21000");
+        mark_stale_for_qualified_names(db.as_ref(), &big).expect("500 distinct must not E21000");
         // Clean up.
         let clean_qns: Vec<String> = (0..500)
             .map(|i| format!("/Users/linh.doan/work/harvey/freepeak/leankg/tests/load_test_1m_nodes.rs::load_test_fn_{i}"))
@@ -691,29 +692,29 @@ mod tests {
             "?[qualified_name] <- [{}] :rm embedding_state {{qualified_name}}",
             literals.join(", ")
         );
-        let _ = boxed.run_script(&clean, std::collections::BTreeMap::new());
+        let _ = db.run_script(&clean, std::collections::BTreeMap::new());
         // Clean up the rows we inserted.
         let clean = r#"?[qualified_name] <- [["/dup/qn"], ["/other/qn"]]
 :rm embedding_state {qualified_name}"#;
-        let _ = boxed.run_script(clean, std::collections::BTreeMap::new());
+        let _ = db.run_script(clean, std::collections::BTreeMap::new());
     }
 
     #[test]
     fn mark_stale_many_identical_qns_no_e21000() {
         // Reproduces the indexer on a real codebase: vis-network.min.js
         // yields 171 identical qualified_names. A single `:put` with all of
-        // them must not E21000 (dedupe collapses to one row).
-        use crate::db::backend::PostgresBackend;
-        let Ok(db) = PostgresBackend::from_env() else {
-            eprintln!("skipping: LEANKG_PG_URL not set");
+        // them must not E21000 (dedupe collapses to one row). Live-PG only
+        // (same FakeBackend limitation as `mark_stale_dedupes_...`).
+        if !crate::db::backend::test_pg_available() {
+            eprintln!("skipping: no Postgres on :5433 (start leankg-pg-phase0)");
             return;
-        };
-        let boxed: Box<dyn crate::db::backend::DbBackend> = Box::new(db);
+        }
+        let db = crate::db::backend::init_db_pg().expect("init_db_pg");
         let dupes: Vec<String> = (0..171).map(|_| "/vis/constructor".to_string()).collect();
-        mark_stale_for_qualified_names(boxed.as_ref(), &dupes)
+        mark_stale_for_qualified_names(db.as_ref(), &dupes)
             .expect("171 identical qns must not E21000");
         let clean = r#"?[qualified_name] <- [["/vis/constructor"]]
 :rm embedding_state {qualified_name}"#;
-        let _ = boxed.run_script(clean, std::collections::BTreeMap::new());
+        let _ = db.run_script(clean, std::collections::BTreeMap::new());
     }
 }
