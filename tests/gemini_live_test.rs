@@ -5,13 +5,16 @@
 //!   https://generativelanguage.googleapis.com/v1beta/openai/embeddings
 //! It is gated on the `GOOGLE_EMBEDING` env var (set in the user's ~/.zshrc);
 //! when the var is absent the test skips, so normal CI / `cargo test` runs are
-//! unaffected.
+//! unaffected. Compile-gated on the `embeddings` feature like the rest of the
+//! embed integration tests.
 //!
 //! Run:
 //! ```bash
 //! GOOGLE_EMBEDING="$(grep GOOGLE_EMBEDING ~/.zshrc | sed 's/^[^=]*=//')" \
 //!   cargo test --features embeddings --test gemini_live_test -- --nocapture
 //! ```
+
+#![cfg(feature = "embeddings")]
 
 use leankg::embeddings::provider::{embed_query, EmbedProvider};
 use leankg::embeddings::registry::{create_provider_for_active_model, resolve_active_model};
