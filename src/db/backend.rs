@@ -560,12 +560,30 @@ impl PostgresBackend {
             self.checkout()?
         };
 
+        let named_params_log = if pg_sql_log_enabled() {
+            format_named_params_for_log(&params)
+        } else {
+            String::new()
+        };
         let t = translate::translate(query, params).map_err(|e| -> Box<dyn std::error::Error> {
             Box::new(std::io::Error::other(format!(
                 "translate({}): {e}",
                 &query[..query.len().min(60)]
             )))
         })?;
+
+        let started = std::time::Instant::now();
+        log_pg_run_script(
+            "start",
+            t.kind,
+            query,
+            &t.sql,
+            &named_params_log,
+            t.params.len(),
+            &t.gucs,
+            None,
+            None,
+        );
 
         let mut head = t.head.clone();
         let mut rows: Vec<Vec<DataValue>> = Vec::new();
@@ -618,6 +636,17 @@ impl PostgresBackend {
                 // emitted (the schema.sql already pre-created everything).
             }
         }
+        log_pg_run_script(
+            "done",
+            t.kind,
+            query,
+            &t.sql,
+            &named_params_log,
+            t.params.len(),
+            &t.gucs,
+            Some(rows.len()),
+            Some(started.elapsed().as_millis()),
+        );
         Ok(NamedRows::new(head, rows))
     }
     fn import_relations_sync(
@@ -659,8 +688,11 @@ impl PostgresBackend {
                 _ => None,
             };
             match pk_col {
-                Some(pk) if bulk_copy_enabled() => {
+                Some(pk) if use_copy_path(&table) => {
                     self.copy_upsert(&mut tx, &table, &cols, pk, &named)?;
+                }
+                Some(pk) => {
+                    self.upsert_values(&mut tx, &table, &cols, pk, &named)?;
                 }
                 _ => {
                     self.insert_rows(&mut tx, &table, &cols, pk_col, &named)?;
@@ -726,6 +758,19 @@ impl PostgresBackend {
             "CREATE TEMP TABLE {staging} (LIKE {q_table}) ON COMMIT DROP"
         ))?;
         let copy_sql = format!("COPY {staging} ({q_cols}) FROM STDIN");
+        log_pg_import(
+            table,
+            "copy_upsert",
+            cols,
+            rows.len(),
+            &format!(
+                "CREATE TEMP TABLE {staging} (LIKE {q_table}) ON COMMIT DROP; \
+                 {copy_sql}; \
+                 INSERT INTO {q_table} ({q_cols}) SELECT {q_cols} FROM {staging} \
+                 ON CONFLICT ({}) DO UPDATE SET …",
+                crate::db::pg::translate::quote_ident(pk)
+            ),
+        );
         let mut writer = tx.copy_in(&copy_sql)?;
         for row in rows {
             let mut line = String::new();
@@ -819,6 +864,97 @@ impl PostgresBackend {
                 )
             };
             tx.execute(&sql, &value_refs)?;
+        }
+        Ok(())
+    }
+
+    /// Multi-row VALUES upsert for keyed tables — the default bulk path
+    /// (COPY FROM STDIN is unsafe through the pgcat pooler, see
+    /// `import_relations_sync`). One `INSERT ... VALUES (...),(...) ON
+    /// CONFLICT (pk) DO UPDATE` per chunk, parameterized; mirrors the SQL
+    /// shape the `:put` translator (`translate::build_insert`) emits.
+    ///
+    /// Rows are deduped by PK first — duplicate PKs in one VALUES list fail
+    /// with "ON CONFLICT DO UPDATE command cannot affect row a second time"
+    /// (the same reason `copy_upsert` dedupes before COPY). Chunks are
+    /// bounded by a param budget (PG's 65535 limit) and the ~5k-row ceiling
+    /// proven for multi-row statements through the pooler.
+    fn upsert_values(
+        &self,
+        tx: &mut postgres::Transaction,
+        table: &str,
+        cols: &[String],
+        pk: &str,
+        named: &NamedRows,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if named.rows.is_empty() {
+            return Ok(());
+        }
+        // Dedupe by PK, last row wins (matches ON CONFLICT semantics).
+        let pk_idx = cols.iter().position(|c| c.as_str() == pk);
+        let rows: Vec<&Vec<DataValue>> = if let Some(idx) = pk_idx {
+            let mut seen: std::collections::HashMap<String, &Vec<DataValue>> =
+                std::collections::HashMap::with_capacity(named.rows.len());
+            for row in &named.rows {
+                seen.insert(row.get(idx).map(|v| v.to_string()).unwrap_or_default(), row);
+            }
+            seen.into_values().collect()
+        } else {
+            named.rows.iter().collect()
+        };
+        let col_sql = cols
+            .iter()
+            .map(|c| crate::db::pg::translate::quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let update_set = cols
+            .iter()
+            .filter(|c| c.as_str() != pk)
+            .map(|c| {
+                format!(
+                    "{} = EXCLUDED.{}",
+                    crate::db::pg::translate::quote_ident(c),
+                    crate::db::pg::translate::quote_ident(c)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let q_pk = crate::db::pg::translate::quote_ident(pk);
+        let max_batch = (60_000usize / cols.len().max(1)).clamp(1, 5000);
+        for chunk in rows.chunks(max_batch) {
+            let mut values_sql = String::new();
+            let mut params: Vec<Box<dyn postgres::types::ToSql + Sync + Send>> = Vec::new();
+            for (i, row) in chunk.iter().enumerate() {
+                if i > 0 {
+                    values_sql.push_str(", ");
+                }
+                values_sql.push('(');
+                for (j, val) in row.iter().enumerate() {
+                    if j > 0 {
+                        values_sql.push_str(", ");
+                    }
+                    // pgvector column: the text literal `[0.1,0.2,...]` needs
+                    // the explicit cast (PG has no implicit text -> vector),
+                    // same as the `:put` translator.
+                    if cols[j] == "vec" || cols[j] == "vector" {
+                        values_sql.push_str(&format!("${}::text::vector", params.len() + 1));
+                    } else {
+                        values_sql.push_str(&format!("${}", params.len() + 1));
+                    }
+                    params.push(cozo_to_pg(val, &cols[j]));
+                }
+                values_sql.push(')');
+            }
+            let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = params
+                .iter()
+                .map(|p| p.as_ref() as &(dyn postgres::types::ToSql + Sync))
+                .collect();
+            let sql = format!(
+                "INSERT INTO {table} ({col_sql}) VALUES {values_sql} \
+                 ON CONFLICT ({q_pk}) DO UPDATE SET {update_set}"
+            );
+            log_pg_import(table, "upsert_values", cols, chunk.len(), &sql);
+            tx.execute(&sql, &param_refs)?;
         }
         Ok(())
     }
@@ -963,6 +1099,93 @@ fn bulk_copy_enabled() -> bool {
     std::env::var("LEANKG_EMBED_COPY")
         .map(|v| !matches!(v.as_str(), "0" | "false" | "off"))
         .unwrap_or(true)
+}
+
+/// Whether a table routes through the COPY staging path (vs the multi-row
+/// VALUES upsert). EXACT `embedding_vectors` only: per-model embed tables
+/// (`embedding_vectors_<model_id>`) and all `embedding_state*` tables are
+/// written through the pgcat pooler mid-embed, where COPY FROM STDIN
+/// deadlocks (the long-lived statement reads as "idle" to the pooler, which
+/// idle-timeouts and kills the socket mid-CopyIn). They fall through to
+/// `upsert_values`.
+fn use_copy_path(table: &str) -> bool {
+    bulk_copy_enabled() && table == "embedding_vectors"
+}
+
+/// Whether the `leankg::pg_sql` tracing target is enabled (`LEANKG_PG_SQL_LOG`).
+/// Emits SQL + params at `tracing::info!` for every run_script / import. Off
+/// by default to avoid log spam on hot paths.
+pub(crate) fn pg_sql_log_enabled() -> bool {
+    std::env::var("LEANKG_PG_SQL_LOG")
+        .ok()
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            matches!(v.as_str(), "1" | "true" | "on")
+        })
+        .unwrap_or(false)
+}
+
+/// Render a JSON value for the SQL log, truncating to `limit` chars.
+fn truncate_json_for_log(v: &serde_json::Value, limit: usize) -> String {
+    let s = v.to_string();
+    if s.len() <= limit {
+        return s;
+    }
+    format!("{}…(+{} bytes)", &s[..limit], s.len() - limit)
+}
+
+/// Render named params for the SQL log: `{k=v, ...}` with values truncated.
+fn format_named_params_for_log(params: &BTreeMap<String, serde_json::Value>) -> String {
+    if params.is_empty() {
+        return "{}".to_string();
+    }
+    let mut parts: Vec<String> = Vec::with_capacity(params.len());
+    for (k, v) in params {
+        parts.push(format!("{k}={}", truncate_json_for_log(v, 240)));
+    }
+    format!("{{{}}}", parts.join(", "))
+}
+
+/// Log a run_script execution (start or done) on the `leankg::pg_sql` target.
+#[allow(clippy::too_many_arguments)]
+fn log_pg_run_script(
+    phase: &str,
+    kind: crate::db::pg::translate::TranslationKind,
+    cozo: &str,
+    sql: &str,
+    named_params: &str,
+    bound_param_count: usize,
+    gucs: &[(String, String)],
+    rows: Option<usize>,
+    elapsed_ms: Option<u128>,
+) {
+    tracing::info!(
+        target: "leankg::pg_sql",
+        phase,
+        kind = ?kind,
+        bound_params = bound_param_count,
+        rows,
+        elapsed_ms,
+        gucs = ?gucs,
+        named_params,
+        cozo,
+        sql,
+        "pg run_script"
+    );
+}
+
+/// Log an import_relations write on the `leankg::pg_sql` target.
+#[allow(clippy::too_many_arguments)]
+fn log_pg_import(table: &str, path: &str, cols: &[String], rows: usize, sql: &str) {
+    tracing::info!(
+        target: "leankg::pg_sql",
+        table,
+        path,
+        rows,
+        cols = %cols.join(","),
+        sql = %sql,
+        "pg import_relations"
+    );
 }
 
 /// Env gate for the drop-index-during-bulk + reindex strategy (T7.2).
@@ -1305,6 +1528,17 @@ pub(crate) fn test_pg_url() -> String {
         .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5433/leankg".to_string())
 }
 
+/// Whether the local dev Postgres is reachable. Live-PG unit tests call
+/// `init_db_pg()` behind this probe and skip (not fail) when it's down —
+/// plain `cargo test` must stay green without a running database.
+#[cfg(test)]
+pub(crate) fn test_pg_available() -> bool {
+    let Ok(mut client) = postgres::Client::connect(&test_pg_url(), postgres::NoTls) else {
+        return false;
+    };
+    client.batch_execute("SELECT 1").is_ok()
+}
+
 #[cfg(test)]
 fn test_schema_url(schema: &str) -> Result<String, Box<dyn std::error::Error>> {
     let base = test_pg_url();
@@ -1409,7 +1643,10 @@ pub fn init_db_pg() -> Result<SharedDb, Box<dyn std::error::Error>> {
 ///
 /// `LEANKG_PG_LOCK=0` disables the advisory lock (operators who manage
 /// exclusivity externally, e.g. a job queue). Default: on.
-pub fn index_advisory_lock() -> Result<Option<AdvisoryLock>, Box<dyn std::error::Error>> {
+pub fn index_advisory_lock(
+    env: &str,
+    path: &str,
+) -> Result<Option<AdvisoryLock>, Box<dyn std::error::Error>> {
     // Disable when `LEANKG_PG_LOCK=0` env, or `db.lock: false` in leankg.yaml.
     let env_disables = std::env::var("LEANKG_PG_LOCK")
         .ok()
@@ -1423,7 +1660,12 @@ pub fn index_advisory_lock() -> Result<Option<AdvisoryLock>, Box<dyn std::error:
         tracing::info!("PG index advisory lock disabled (LEANKG_PG_LOCK=0 or db.lock: false)");
         return Ok(None);
     }
-    let key = PostgresBackend::INDEX_LOCK_KEY;
+    // Per-(env,path) key so the same env+path serializes across instances
+    // while different projects run concurrently (multi-project PG schemas).
+    let canon = std::fs::canonicalize(path)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.to_string());
+    let key = index_lock_key(env, &canon);
     // Reentrant within this process: the same `leankg index` may call
     // index_codebase twice (incremental fallback). A second PG advisory
     // lock on a different session would deadlock against the first.
@@ -1436,6 +1678,21 @@ pub fn index_advisory_lock() -> Result<Option<AdvisoryLock>, Box<dyn std::error:
     *held = true;
     tracing::info!("index advisory lock held (key {key})");
     Ok(Some(lock))
+}
+
+/// FNV-1a hash over `env`, a salt, and `path` — a stable i64 advisory-lock
+/// key that serializes the same project across instances and lets different
+/// projects lock independently.
+fn index_lock_key(env: &str, path: &str) -> i64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    const SALT: &[u8] = b"leank";
+    let mut h = OFFSET;
+    for b in env.bytes().chain(SALT.iter().copied()).chain(path.bytes()) {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(PRIME);
+    }
+    h as i64
 }
 
 /// Process-level flag so nested index invocations skip re-acquiring.
@@ -1801,5 +2058,81 @@ mod tests {
             ro.contains("search_path"),
             "search_path must survive RO merge: {ro}"
         );
+    }
+
+    #[test]
+    fn index_lock_key_is_stable_and_path_env_distinct() {
+        let k1 = index_lock_key("local", "/workspace/a");
+        assert_eq!(k1, index_lock_key("local", "/workspace/a"));
+        assert_ne!(k1, index_lock_key("local", "/workspace/b"));
+        assert_ne!(k1, index_lock_key("prod", "/workspace/a"));
+    }
+
+    #[test]
+    fn index_lock_key_differs_from_old_single_key() {
+        assert_ne!(
+            index_lock_key("local", "/workspace/a"),
+            PostgresBackend::INDEX_LOCK_KEY,
+            "per-project key must differ from the legacy fixed key"
+        );
+    }
+
+    #[test]
+    fn index_lock_key_fits_i64() {
+        // FNV-1a result must be a valid i64 (it is by construction).
+        let k = index_lock_key("local", "/workspace/a");
+        let _ = k.checked_add(1).unwrap();
+    }
+
+    #[test]
+    fn embedding_state_never_routes_to_copy_even_when_copy_enabled() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("LEANKG_EMBED_COPY", "1");
+        assert!(use_copy_path("embedding_vectors"));
+        assert!(!use_copy_path("embedding_state"));
+        assert!(!use_copy_path("embedding_vectors_staging"));
+        assert!(!use_copy_path("embedding_vectors_qwen3_emb_4b_2560"));
+        assert!(!use_copy_path("embedding_state_qwen3_emb_4b_2560"));
+        std::env::remove_var("LEANKG_EMBED_COPY");
+    }
+
+    #[test]
+    fn max_batch_sanity() {
+        assert_eq!((60_000usize / 5).clamp(1, 5000), 5000);
+        assert_eq!((60_000usize / 60).clamp(1, 5000), 1000);
+        assert_eq!((60_000usize / 20_000).clamp(1, 5000), 3);
+    }
+
+    #[test]
+    fn pg_sql_log_enabled_truthy_values() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("LEANKG_PG_SQL_LOG");
+        assert!(!pg_sql_log_enabled());
+        for v in ["1", "true", "on", "TRUE", "ON"] {
+            std::env::set_var("LEANKG_PG_SQL_LOG", v);
+            assert!(pg_sql_log_enabled(), "expected {v} truthy");
+        }
+        for v in ["0", "no", "off", ""] {
+            std::env::set_var("LEANKG_PG_SQL_LOG", v);
+            assert!(!pg_sql_log_enabled(), "expected {v:?} falsy");
+        }
+        std::env::remove_var("LEANKG_PG_SQL_LOG");
+    }
+
+    #[test]
+    fn format_named_params_for_log_truncates_long_values() {
+        let mut params = BTreeMap::new();
+        params.insert("q".to_string(), serde_json::json!("x".repeat(300)));
+        let s = format_named_params_for_log(&params);
+        assert!(s.contains("(+"), "long value must be truncated: {s}");
+        assert!(s.len() < 300, "truncated log must stay small: {s}");
+        let empty = format_named_params_for_log(&BTreeMap::new());
+        assert_eq!(empty, "{}");
+    }
+
+    #[test]
+    fn truncate_json_for_log_short_value_unchanged() {
+        let short = serde_json::json!("abc");
+        assert_eq!(truncate_json_for_log(&short, 240), "\"abc\"");
     }
 }
