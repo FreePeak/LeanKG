@@ -66,13 +66,87 @@ pub struct RepoSpec {
     pub dest: PathBuf,
 }
 
+/// Recursively find every git repo (a dir containing `.git`) under `root`,
+/// walking at most `max_depth` levels. Used by [`resolve_repos`] when
+/// `LEANKG_WORKSPACE_DIR` is set: the workspace is a monorepo of nested git
+/// repos, and per-project index/embed wants each repo as its own project.
+fn discover_git_repos(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+        if depth > max_depth {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Skip hidden dirs and the workspace's own `.leankg` caches.
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('.') || name == "target" || name == "node_modules" {
+                    continue;
+                }
+            }
+            if path.is_dir() {
+                if path.join(".git").exists() {
+                    out.push(path);
+                } else {
+                    walk(&path, depth + 1, max_depth, out);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, 0, max_depth, &mut out);
+    out.sort();
+    out
+}
+
 /// Resolve the repo list.
 ///
-/// If `LEANKG_PROJECT_DIRS` is set (comma-separated dirs), those are returned
-/// as-is (skip clone). Otherwise `LEANKG_REPOS` (comma-separated
-/// `host/namespace` paths, e.g. `github.com/org/repo`) drives the clone list,
-/// with each repo cloned to `<clone_root>/<namespace>`.
+/// Discovery precedence:
+/// 1. `LEANKG_WORKSPACE_DIR` (a monorepo dir) → every nested git repo found
+///    by walking up to `LEANKG_WORKSPACE_MAX_DEPTH` (default 3).
+/// 2. `LEANKG_PROJECT_DIRS` (comma-separated mounted dirs) → returned as-is
+///    (skip clone).
+/// 3. Otherwise `LEANKG_REPOS` (comma-separated `host/namespace` paths, e.g.
+///    `github.com/org/repo`) drives the clone list, with each repo cloned to
+///    `<clone_root>/<namespace>`.
 pub fn resolve_repos() -> Result<Vec<RepoSpec>, Box<dyn std::error::Error>> {
+    if let Ok(ws) = std::env::var("LEANKG_WORKSPACE_DIR") {
+        let ws = PathBuf::from(ws);
+        if ws.is_dir() {
+            let max_depth = std::env::var("LEANKG_WORKSPACE_MAX_DEPTH")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(3);
+            let repos = discover_git_repos(&ws, max_depth);
+            let specs: Vec<RepoSpec> = repos
+                .iter()
+                .map(|dest| {
+                    let name = dest
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| dest.display().to_string());
+                    RepoSpec {
+                        name,
+                        url: String::new(), // mounted workspace repos are not cloned
+                        dest: dest.clone(),
+                    }
+                })
+                .collect();
+            println!(
+                "Workspace {}: discovered {} git repos (depth <= {max_depth})",
+                ws.display(),
+                specs.len()
+            );
+            return Ok(specs);
+        }
+        println!(
+            "WARN: LEANKG_WORKSPACE_DIR {} is not a directory; falling through",
+            ws.display()
+        );
+    }
+
     if let Ok(dirs) = std::env::var("LEANKG_PROJECT_DIRS") {
         let root = clone_root();
         let specs: Vec<RepoSpec> = dirs
@@ -249,14 +323,25 @@ indexer:
 /// Reuses the exact CLI path for `index` and `embed` without duplicating the
 /// orchestration that lives in `main.rs`. Returns the exit status.
 fn run_leankg_sub(dir: &Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    let status = Command::new("leankg")
+    // Resolve the binary next to the current executable (the compat `leankg`
+    // / `leankg-internal` facade), not a PATH lookup — setup may run from a
+    // container or a distinct internal binary.
+    let bin = crate::cli::reexec::resolve_leankg_bin()?;
+    let status = Command::new(&bin)
         .current_dir(dir)
         .args(args)
         .status()
-        .map_err(|e| format!("failed to spawn `leankg {}`: {e}", args.join(" ")))?;
+        .map_err(|e| {
+            format!(
+                "failed to spawn `{} {}`: {e}",
+                bin.display(),
+                args.join(" ")
+            )
+        })?;
     if !status.success() {
         return Err(format!(
-            "`leankg {}` exited {:?} in {}",
+            "`{} {}` exited {:?} in {}",
+            bin.display(),
             args.join(" "),
             status.code(),
             dir.display()
@@ -586,6 +671,63 @@ mod tests {
                 std::fs::write(root.join(".leankg").join("setup.done"), "1").expect("write marker");
                 assert!(setup_done());
                 let _ = std::fs::remove_dir_all(root);
+            },
+        );
+    }
+
+    /// discover_git_repos walks a nested-monorepo workspace for git repos.
+    #[test]
+    fn discover_git_repos_finds_nested_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for rel in [
+            "platform-food/be-food-order",
+            "platform-food/be-food-gateway",
+            "platform-core/be-mailer",
+        ] {
+            let repo = root.join(rel);
+            std::fs::create_dir_all(&repo).unwrap();
+            std::fs::write(repo.join(".git"), "").unwrap();
+        }
+        // A non-repo dir + hidden + target must be skipped.
+        std::fs::create_dir_all(root.join("misc")).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::create_dir_all(root.join(".hidden")).unwrap();
+        let repos = discover_git_repos(root, 3);
+        assert_eq!(repos.len(), 3);
+        assert!(repos.iter().any(|p| p.ends_with("be-food-order")));
+        assert!(repos.iter().any(|p| p.ends_with("be-mailer")));
+    }
+
+    /// LEANKG_WORKSPACE_DIR drives resolve_repos (monorepo discovery, skip clone).
+    #[test]
+    fn resolve_repos_uses_workspace_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for rel in ["platform-food/be-food-order", "platform-core/be-mailer"] {
+            let repo = root.join(rel);
+            std::fs::create_dir_all(&repo).unwrap();
+            std::fs::write(repo.join(".git"), "").unwrap();
+        }
+        with_envs(
+            &[
+                ("LEANKG_PROJECT_DIRS", None),
+                ("LEANKG_REPOS", None),
+                ("LEANKG_CLONE_ROOT", Some("/")),
+                (
+                    "LEANKG_WORKSPACE_DIR",
+                    Some(root.to_string_lossy().as_ref()),
+                ),
+            ],
+            || {
+                let specs = resolve_repos().expect("resolve");
+                assert_eq!(specs.len(), 2, "workspace must drive discovery");
+                assert!(
+                    specs.iter().all(|s| s.url.is_empty()),
+                    "mounted → skip clone"
+                );
+                assert!(specs.iter().any(|s| s.name == "be-food-order"));
+                assert!(specs.iter().any(|s| s.name == "be-mailer"));
             },
         );
     }
