@@ -87,22 +87,30 @@ pub fn build_blob(element: &CodeElement) -> Option<String> {
 }
 
 fn build_code_blob(element: &CodeElement) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(4);
+    let mut parts: Vec<String> = Vec::with_capacity(5);
     parts.push(element.qualified_name.clone());
     if !element.name.is_empty() && element.name != element.qualified_name {
         parts.push(element.name.clone());
     }
+    let mut got_doc = false;
     if let Some(doc) = extract_doc_signature(&element.metadata) {
         parts.push(doc);
-    } else {
-        // Fallback: keep file path (weak signal but cheap) and try to
-        // synthesize a signature-like line from any structured metadata
-        // (parameters / return_type) the indexer might have stored.
-        if !element.file_path.is_empty() {
-            parts.push(element.file_path.clone());
-        }
-        if let Some(sig) = synthesize_signature(&element.name, &element.metadata) {
-            parts.push(sig);
+        got_doc = true;
+    } else if !element.file_path.is_empty() {
+        // Fallback: keep file path (weak signal but cheap).
+        parts.push(element.file_path.clone());
+    }
+    // Mobile (Kotlin/Swift) entities often carry no doc comment, leaving the
+    // blob as a bare identifier — too thin to distinguish `FoodCartItem` from
+    // `GetAppConfigurations` in the embedding. The synthesized signature line
+    // (params / return_type from structured metadata) thickens the blob so
+    // mobile names embed meaningfully; source bodies stay excluded.
+    if let Some(sig) = synthesize_signature(&element.name, &element.metadata) {
+        parts.push(sig);
+    }
+    if !got_doc {
+        if let Some(comment) = extract_first_comment(&element.metadata) {
+            parts.push(comment);
         }
     }
     parts.join("\n")
@@ -260,8 +268,28 @@ fn extract_doc_signature(metadata: &serde_json::Value) -> Option<String> {
         "docstring",
     ] {
         if let Some(s) = metadata.get(key).and_then(|v| v.as_str()) {
-            if !s.trim().is_empty() {
-                return Some(s.to_string());
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                // Comment keys can hold multi-line bodies; keep only the
+                // first line so the blob stays within the token budget and
+                // anchors on the element's purpose, not its prose.
+                let first = trimmed.lines().next().unwrap_or(trimmed).trim();
+                return Some(first.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// First line of any doc comment stored on the element, if present. Some
+/// extractors keep a `comment` / `doc_comment` that is only one line — that
+/// single line can be the semantic anchor for an otherwise-generic name.
+fn extract_first_comment(metadata: &serde_json::Value) -> Option<String> {
+    for key in &["comment", "doc_comment", "doc", "description"] {
+        if let Some(s) = metadata.get(key).and_then(|v| v.as_str()) {
+            let first = s.lines().next().unwrap_or(s).trim();
+            if !first.is_empty() {
+                return Some(first.to_string());
             }
         }
     }
@@ -414,6 +442,23 @@ mod tests {
         });
         let sig = synthesize_signature("concat", &meta).unwrap();
         assert_eq!(sig, "fn concat(x: String, y: usize)");
+    }
+
+    #[test]
+    fn mobile_code_blob_includes_signature_and_first_comment() {
+        // Kotlin/Swift entities often have no doc_comment; signature +
+        // first comment line thicken the blob so bare mobile identifiers
+        // (FoodCartItem vs GetAppConfigurations) embed meaningfully.
+        let mut el = make_element("class", "FoodCartItem", "FoodCartItem.kt");
+        el.metadata = serde_json::json!({
+            "parameters": [{"name": "quantity", "type": "Int"}],
+            "return_type": "void",
+            "comment": "Cart line for the checkout screen.\nEverything below is ignored."
+        });
+        let blob = build_blob(&el).unwrap();
+        assert!(blob.contains("fn FoodCartItem(quantity: Int) -> void"));
+        assert!(blob.contains("Cart line for the checkout screen."));
+        assert!(!blob.contains("Everything below is ignored."));
     }
 
     #[test]

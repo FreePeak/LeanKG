@@ -794,7 +794,22 @@ impl ToolHandler {
             }));
         }
 
-        Ok(json!({
+        let inventory =
+            crate::graph::inventory::refresh_index_inventory(&self.graph_engine, "mcp_status")
+                .ok()
+                .map(|inv| crate::graph::inventory::inventory_to_json(&inv))
+                .or_else(|| {
+                    crate::graph::inventory::load_latest_inventory(self.graph_engine.db())
+                        .ok()
+                        .flatten()
+                        .map(|inv| crate::graph::inventory::inventory_to_json(&inv))
+                })
+                .unwrap_or(serde_json::json!({}));
+        let corpus_suspicious = inventory
+            .get("corpus_suspicious")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut out = json!({
             "initialized": true,
             "index_populated": true,
             "database_exists": true,
@@ -809,17 +824,23 @@ impl ToolHandler {
             "classes": self.graph_engine.count_by_element_type("class").unwrap_or(0)
                 + self.graph_engine.count_by_element_type("struct").unwrap_or(0),
             "annotations": self.graph_engine.count_business_logic().unwrap_or(0),
-            "inventory": crate::graph::inventory::refresh_index_inventory(&self.graph_engine, "mcp_status")
-                .ok()
-                .map(|inv| crate::graph::inventory::inventory_to_json(&inv))
-                .or_else(|| {
-                    crate::graph::inventory::load_latest_inventory(self.graph_engine.db())
-                        .ok()
-                        .flatten()
-                        .map(|inv| crate::graph::inventory::inventory_to_json(&inv))
-                })
-                .unwrap_or(serde_json::json!({}))
-        }))
+            "inventory": inventory,
+        });
+        // Corpus-suspicion flag: loud instead of silent for a tiny-slice
+        // index (see inventory.rs). `index_populated` stays true so tools
+        // still route correctly, but the warning tells agents the graph is
+        // not a full-workspace navigator.
+        if corpus_suspicious {
+            out["corpus_suspicious"] = Value::Bool(true);
+            out["warning"] = Value::String(
+                "index corpus looks suspiciously small (few files indexed); \
+                 it is a partial slice, not the whole workspace. Re-index the \
+                 full tree before trusting semantic_search / query_graph as a \
+                 workspace navigator; grep works on the unindexed parts."
+                    .to_string(),
+            );
+        }
+        Ok(out)
     }
 
     /// US-CBM-C2 / FR-C02: hot-path result cache for high-frequency
@@ -2238,6 +2259,7 @@ impl ToolHandler {
         let limit = args["limit"].as_i64().unwrap_or(20) as usize;
         let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
         let kind = args["kind"].as_str().unwrap_or("all");
+        let path_prefix = args["path_prefix"].as_str();
 
         // FR-HNSW-D: when the embeddings feature is on AND an embedding
         // index exists, route through CozoDB HNSW (BGE-small-en-v1.5) →
@@ -2246,7 +2268,15 @@ impl ToolHandler {
         // rows), so the tool stays useful on slim installs.
         #[cfg(feature = "embeddings")]
         if embeddings_index_available(self.graph_engine.db()) {
-            return run_hnsw_semantic_search(&self.graph_engine, query, env, limit, offset, kind);
+            return run_hnsw_semantic_search(
+                &self.graph_engine,
+                query,
+                env,
+                limit,
+                offset,
+                kind,
+                path_prefix,
+            );
         }
 
         // Always ontology-first + paginated — never load env-wide element dumps.
@@ -2264,14 +2294,25 @@ impl ToolHandler {
         let mut page = page;
         let total_estimate = page.results.len();
         page.results.retain(|e| {
-            if kind == "all" {
-                return true;
-            }
             match kind {
-                "code" => e.element_type != "document" && e.element_type != "doc_section",
-                "docs" => e.element_type == "document" || e.element_type == "doc_section",
-                _ => true,
+                "code" if e.element_type == "document" || e.element_type == "doc_section" => {
+                    return false;
+                }
+                "docs" if e.element_type != "document" && e.element_type != "doc_section" => {
+                    return false;
+                }
+                _ => {}
             }
+            // Corpus scope gate: hard-drop hits whose file_path lacks the
+            // requested prefix (e.g. `platform-food/be-merchant-group`,
+            // `Android/`, `ios/`). Relative `./internal/...` alone is
+            // ambiguous across a monorepo — see semantic-search A/B report.
+            if let Some(pfx) = path_prefix {
+                if !e.file_path.contains(pfx) {
+                    return false;
+                }
+            }
+            true
         });
         page.total_estimate = page.results.len();
         page.has_more = page.offset + page.results.len() < total_estimate;
@@ -4864,6 +4905,7 @@ fn run_hnsw_semantic_search(
     limit: usize,
     offset: usize,
     #[allow(unused_variables)] kind: &str,
+    path_prefix: Option<&str>,
 ) -> Result<Value, String> {
     use crate::retrieval::{
         is_function_target, is_upper_type, score_functions, traverse_to_functions, RetrieveOptions,
@@ -4992,16 +5034,68 @@ fn run_hnsw_semantic_search(
     // cosine), so normalize each pool to [0,1] via min-max and interleave
     // by the normalized rank. The original score is preserved on each
     // entry under its source-specific key.
-    let direct_scores: Vec<f32> = direct_functions
+
+    // Corpus scope gate: hard-drop hits whose file_path lacks the requested
+    // prefix before any ranking. This is the "guardrail" from the semantic
+    // A/B report turned into a tool-enforced filter — the agent declares the
+    // corpus (`platform-food/be-merchant-group`, `Android/`, `ios/`) and the
+    // tool refuses out-of-scope hits instead of surfacing wrong-corpus
+    // "confident" answers.
+    if let Some(pfx) = path_prefix {
+        let before = direct_functions.len();
+        direct_functions.retain(|s| s.file_path.contains(pfx));
+        scored_functions.retain(|f| f.file_path.contains(pfx));
+        if before > 0 && direct_functions.is_empty() && scored_functions.is_empty() {
+            return Ok(semantic_no_corpus_hit(query, pfx));
+        }
+    }
+
+    // Confidence floor: reject the whole page when retrieval ran in
+    // reranker-fallback mode (all `rerank_score` are None/0.0 — pure ANN
+    // order, no cross-encoder signal) or when even the top cross-encoder
+    // score is below the absolute floor. This is the "wrong corpus, confident
+    // answers" guard: instead of surfacing 4-10 ranked hits that only match
+    // the ANN index, return an empty page so agents fall through to
+    // grep / search_code rather than trusting garbage. RerankerFallback on
+    // a live cross-encoder score below floor is treated as low-confidence.
+    let direct_active = direct_functions.iter().any(|s| s.rerank_score.is_some());
+    let rerank_fallback =
+        !direct_active && scored_functions.iter().any(|f| f.composite_score.is_none());
+    let top_rerank = direct_functions
         .iter()
-        .map(|s| s.rerank_score.unwrap_or(0.0))
-        .collect();
-    let (direct_min, direct_max) = min_max(&direct_scores);
+        .filter_map(|s| s.rerank_score)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let low_confidence = rerank_fallback || (direct_active && top_rerank < SEMANTIC_MIN_RERANK);
+    if low_confidence {
+        return Ok(semantic_low_confidence(query, rerank_fallback));
+    }
+
     let trav_scores: Vec<f32> = scored_functions
         .iter()
         .map(|f| f.composite_score.unwrap_or(0.0))
         .collect();
     let (trav_min, trav_max) = min_max(&trav_scores);
+
+    // Hybrid token guard on the direct pool: confirm the cross-encoder score
+    // with a cheap lexical overlap (distinct query intent-tokens present in
+    // the blob). A hit whose blob contains none of the query's intent tokens
+    // has no lexical evidence — the report's "order" → `DisplayOrder` /
+    // `SortOrder` collision class — so it is halved and outranked by real
+    // intent hits (which share a specific token like "refund" or "cart").
+    let direct_adjusted: Vec<(f32, f32)> = direct_functions
+        .iter()
+        .map(|s| {
+            let tok = query_token_overlap(query, &s.blob_excerpt);
+            let confirm = if tok >= 1.0 {
+                1.0
+            } else {
+                LEX_NO_CONFIRM_FACTOR
+            };
+            (s.rerank_score.unwrap_or(0.0) * confirm, tok)
+        })
+        .collect();
+    let adj_scores: Vec<f32> = direct_adjusted.iter().map(|(a, _)| *a).collect();
+    let (adj_min, adj_max) = min_max(&adj_scores);
 
     // Build merged entries with a normalized `rank_score` for ordering.
     // Dedup by QN: a function present in both pools keeps its DIRECT
@@ -5010,11 +5104,11 @@ fn run_hnsw_semantic_search(
     let mut seen_qn: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut merged: Vec<(f32, Value)> = Vec::new();
 
-    for (s, &raw) in direct_functions.iter().zip(direct_scores.iter()) {
+    for (s, &(adjusted, tok)) in direct_functions.iter().zip(direct_adjusted.iter()) {
         if !seen_qn.insert(s.qualified_name.clone()) {
             continue;
         }
-        let norm = normalize(raw, direct_min, direct_max);
+        let norm = normalize(adjusted, adj_min, adj_max);
         merged.push((
             norm,
             json!({
@@ -5026,6 +5120,7 @@ fn run_hnsw_semantic_search(
                 "rerank_score": s.rerank_score,
                 "composite_score": null,
                 "rank_score": norm,
+                "token_overlap": tok,
                 "source": "direct",
                 "via_upper": null,
                 "via_edge": null,
@@ -5050,6 +5145,7 @@ fn run_hnsw_semantic_search(
                 "rerank_score": null,
                 "composite_score": f.composite_score,
                 "rank_score": norm,
+                "token_overlap": null,
                 "source": "traversed",
                 "via_upper": f.via_upper,
                 "via_edge": f.via_edge,
@@ -5193,6 +5289,109 @@ pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<&'static str>
     }
 }
 
+/// Absolute minimum cross-encoder rerank score for a `semantic_search` hit to
+/// be surfaced. Below this, the match is a token/substring coincidence, not a
+/// real relevance signal — the report's "order" → `DisplayOrder` collision
+/// class. `semantic_low_confidence` turns the page empty instead.
+#[cfg(feature = "embeddings")]
+pub(crate) const SEMANTIC_MIN_RERANK: f32 = 0.10;
+
+/// Cross-encoder score multiplier applied when a hit shares NO lexical
+/// intent-token with the query — the pure substring-coincidence class
+/// ("order" → `DisplayOrder`). Real intent hits (≥1 shared token) keep full
+/// weight, so coincidence hits are outranked rather than damped-by-count.
+#[cfg(feature = "embeddings")]
+pub(crate) const LEX_NO_CONFIRM_FACTOR: f32 = 0.5;
+
+/// Count of distinct query tokens (len >= 3, alphanumeric, non-stopword) that
+/// appear as substrings in the blob text. Pure lexical overlap — a cheap,
+/// deterministic companion to the cross-encoder score. Blob comes from
+/// `Seed.blob_excerpt`, the same text the reranker saw, so the two signals
+/// agree on the same evidence.
+#[cfg(feature = "embeddings")]
+fn query_token_overlap(query: &str, blob: &str) -> f32 {
+    const STOP: &[&str] = &[
+        "and", "the", "for", "with", "from", "that", "this", "into", "have", "has", "are", "was",
+        "what", "where", "when", "how", "who", "which", "would", "could", "should", "your",
+        "their", "about", "screen", "app", "code", "file", "menu", "service",
+        // Generic domain tokens that collide across the whole monorepo — the
+        // report's "order" → DisplayOrder / "user" → user_collection /
+        // "merchant group" → collection-merchant collision classes. They are
+        // NOT intent evidence; the specific token next to them (refund, login,
+        // cart) carries the meaning.
+        "order", "user", "login", "merchant", "group", "checkout", "cart", "item",
+    ];
+    let mut count = 0f32;
+    for tok in query
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(|t| t.trim())
+        .filter(|t| t.len() >= 3)
+    {
+        let lower = tok.to_ascii_lowercase();
+        if STOP.contains(&lower.as_str()) {
+            continue;
+        }
+        if blob.to_ascii_lowercase().contains(&lower) {
+            count += 1.0;
+        }
+    }
+    count
+}
+
+/// Empty-page payload for the reranker-fallback / below-floor rejection. Mirrors
+/// the shape of a normal `semantic_search` response so callers can't tell the
+/// two apart structurally — the only difference is `low_confidence: true`,
+/// `rejected_reason`, and a hint pointing at the tools that still work.
+#[cfg(feature = "embeddings")]
+fn semantic_low_confidence(query: &str, rerank_fallback: bool) -> Value {
+    let (rejected_reason, hint) = if rerank_fallback {
+        (
+            "reranker-fallback",
+            "semantic_search ran without the cross-encoder reranker (ANN-only fallback); \
+             matches may be token/substring coincidences. Use search_code or find_function \
+             for exact-name lookups, or rg on disk.",
+        )
+    } else {
+        (
+            "below-confidence-floor",
+            "no semantic_search hit reached the relevance floor; matches were token \
+             collisions, not intent. Use search_code or find_function for exact names, \
+             or rg on disk.",
+        )
+    };
+    json!({
+        "query": query,
+        "results": [],
+        "total_estimate": 0,
+        "has_more": false,
+        "method": "hnsw+ontology-traverse",
+        "low_confidence": true,
+        "rejected_reason": rejected_reason,
+        "hint": hint,
+    })
+}
+
+/// Empty-page payload when `path_prefix` filtered out every hit that ANN
+/// surfaced — the requested corpus is not in this index, so rather than
+/// returning wrong-scope results we say so explicitly.
+#[cfg(feature = "embeddings")]
+fn semantic_no_corpus_hit(query: &str, prefix: &str) -> Value {
+    json!({
+        "query": query,
+        "results": [],
+        "total_estimate": 0,
+        "has_more": false,
+        "method": "hnsw+ontology-traverse",
+        "empty_reason": "path_prefix",
+        "path_prefix": prefix,
+        "hint": format!(
+            "no indexed element under path_prefix \"{}\" — this corpus is not in the index. \
+             Re-index it (leankg index <tree>) or run rg on disk.",
+            prefix
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5215,6 +5414,50 @@ mod tests {
         let hint = vectors_missing_hint(0).expect("empty vector table must hint");
         assert!(hint.contains("search_code"));
         assert!(vectors_missing_hint(1).is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "embeddings")]
+    fn token_overlap_counts_distinct_intent_tokens() {
+        // Intent tokens for "order refund cancellation" are `refund` +
+        // `cancellation` — "order" is a stopword (dropped). A collision hit
+        // whose only shared token is "order" (DisplayOrder) has NO intent
+        // overlap, so it gets LEX_NO_CONFIRM_FACTOR. A real refund hit shares
+        // `refund` and keeps full weight.
+        let blob_display_order =
+            "DisplayOrder\nSortOrder\nvalidateDisplayOrderUnique\ninternal/services/order.go";
+        let overlap_collision =
+            query_token_overlap("order refund cancellation", blob_display_order);
+        assert_eq!(overlap_collision, 0.0); // "order" is stopword; no intent token present
+        let blob_refund = "refundPayment\napproveRefund\npayment.go";
+        assert_eq!(
+            query_token_overlap("order refund cancellation", blob_refund),
+            1.0
+        );
+        // Short tokens are ignored.
+        assert_eq!(query_token_overlap("a b c", "abc"), 0.0);
+    }
+
+    #[test]
+    #[cfg(feature = "embeddings")]
+    fn low_confidence_payload_is_empty_page() {
+        let v = semantic_low_confidence("merchant menu", false);
+        assert_eq!(v["results"].as_array().unwrap().len(), 0);
+        assert_eq!(v["total_estimate"], 0);
+        assert_eq!(v["low_confidence"], true);
+        assert_eq!(v["rejected_reason"], "below-confidence-floor");
+        let fb = semantic_low_confidence("cart", true);
+        assert_eq!(fb["rejected_reason"], "reranker-fallback");
+        assert!(fb["hint"].as_str().unwrap().contains("search_code"));
+    }
+
+    #[test]
+    #[cfg(feature = "embeddings")]
+    fn no_corpus_hit_payload_carries_prefix() {
+        let v = semantic_no_corpus_hit("food cart", "Android/");
+        assert_eq!(v["empty_reason"], "path_prefix");
+        assert_eq!(v["path_prefix"], "Android/");
+        assert!(v["hint"].as_str().unwrap().contains("Android/"));
     }
 
     #[test]

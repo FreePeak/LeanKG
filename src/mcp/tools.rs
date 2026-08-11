@@ -1002,6 +1002,7 @@ impl ToolRegistry {
                         "limit": {"type": "integer", "default": 20, "description": "Page size (default: 20, max: 50)"},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
                         "kind": {"type": "string", "enum": ["all", "code", "docs"], "default": "all", "description": "Filter results by kind: 'all' (code + docs), 'code' (functions, classes, methods, etc.), 'docs' (documents and doc_sections only)"},
+                        "path_prefix": {"type": "string", "description": "Corpus scope gate: only return hits whose file_path contains this prefix (e.g. 'platform-food/be-merchant-group', 'Android/', 'ios/'). Hits outside the prefix are hard-dropped; if none survive, the tool returns an empty page with empty_reason=path_prefix so agents know that corpus is not indexed. Pass for multi-tree / monorepo work."},
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["query"]

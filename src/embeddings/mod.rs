@@ -31,6 +31,18 @@ pub mod state;
 #[cfg(feature = "embeddings")]
 pub mod text_blob;
 
+/// Serializes env-var mutation across embedding unit tests (one process-wide
+/// lock) — `set_var`/`remove_var` are process-global and tests run in parallel.
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, OnceLock};
+
+    pub fn lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+}
+
 #[cfg(feature = "embeddings")]
 #[allow(unused_imports)]
 pub use build::{

@@ -11,16 +11,20 @@
 
 use super::models::{cache_dir, EmbedModelKind, MAX_SEQ_LEN};
 
-/// Soft toggle. Default **on** — operators can set `LEANKG_EMBED_FAST=0` for
-/// the legacy FP32 / multi-1-thread-worker profile.
+/// Soft toggle. Default **off** — the quality path (FP32 BGE, full 512-token
+/// window) is the default. Operators can set `LEANKG_EMBED_FAST=1` for the
+/// legacy INT8 / seq-cap / fat-batch profile when embedding speed matters more
+/// than vector quality (e.g. incremental runs).
 pub fn embed_fast_enabled() -> bool {
     match std::env::var("LEANKG_EMBED_FAST") {
         Ok(v) => {
             let t = v.trim();
             !(t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("off"))
         }
-        // Default ON: INT8 + high-intra + seq cap is the intended cold path.
-        Err(_) => true,
+        // Default OFF: quality over speed. The 512-token window is the model's
+        // full context; truncating to 128 (the fast path) loses meaning on
+        // doc / first-paragraph blobs.
+        Err(_) => false,
     }
 }
 
@@ -137,9 +141,20 @@ pub fn resolve_embed_runtime(requested_workers: usize, requested_batch: usize) -
         EmbedModelKind::BgeFp32
     };
 
-    let max_seq = env_usize("LEANKG_EMBED_MAX_SEQ")
-        .map(|n| n.clamp(64, MAX_SEQ_LEN))
-        .unwrap_or(if fast { 128 } else { MAX_SEQ_LEN });
+    // Max token window per element. Configurable via `LEANKG_EMBED_MAX_SEQ`;
+    // defaults to the model's full 512-token window. Fast mode only trims to
+    // 128 when the operator did not pin an explicit max_seq — explicit config
+    // always wins.
+    let max_seq = match env_usize("LEANKG_EMBED_MAX_SEQ") {
+        Some(n) => n.clamp(64, MAX_SEQ_LEN),
+        None => {
+            if fast {
+                128
+            } else {
+                MAX_SEQ_LEN
+            }
+        }
+    };
 
     // Threading strategy (Apple Silicon / small BERT):
     // Empirically, N×`intra=1` data-parallel sessions beat 1×`intra=N`
@@ -195,31 +210,81 @@ pub fn resolve_embed_runtime(requested_workers: usize, requested_batch: usize) -
 mod tests {
     use super::*;
 
+    // These tests mutate process env (LEANKG_EMBED_FAST / LEANKG_EMBED_MAX_SEQ),
+    // so they must not run concurrently with each other or with other
+    // env-dependent tests in the same binary.
+    fn env_guard() -> impl Drop {
+        crate::embeddings::test_env::lock()
+    }
+
     #[test]
-    fn fast_plan_uses_int8_seq_cap_and_fat_batch() {
-        std::env::set_var("LEANKG_EMBED_FAST", "1");
-        std::env::set_var("LEANKG_EMBED_MAX_SEQ", "128"); // pin — shell may leak 512
-        std::env::remove_var("LEANKG_EMBED_MODEL");
-        std::env::remove_var("LEANKG_EMBED_DIRECT_INTRA");
-        let plan = resolve_embed_runtime(4, 32);
+    fn default_plan_is_quality_not_fast() {
+        // Default (no LEANKG_EMBED_FAST): quality path — FP32 model, full
+        // 512-token window. Fast must be an explicit opt-in.
+        let plan = {
+            let _g = env_guard();
+            std::env::remove_var("LEANKG_EMBED_FAST");
+            std::env::remove_var("LEANKG_EMBED_MAX_SEQ");
+            std::env::remove_var("LEANKG_EMBED_MODEL");
+            std::env::remove_var("LEANKG_EMBED_DIRECT_INTRA");
+            resolve_embed_runtime(4, 32)
+        }; // guard dropped before asserts — a panic here cannot poison the lock
+        assert_eq!(plan.kind, EmbedModelKind::BgeFp32);
+        assert_eq!(plan.max_seq, MAX_SEQ_LEN, "default must be full 512 window");
+        assert_eq!(plan.workers, 4);
+        assert_eq!(plan.intra_threads, 1);
+    }
+
+    #[test]
+    fn explicit_fast_uses_int8_seq_cap_and_fat_batch() {
+        let plan = {
+            let _g = env_guard();
+            std::env::set_var("LEANKG_EMBED_FAST", "1");
+            std::env::set_var("LEANKG_EMBED_MAX_SEQ", "128"); // pin — shell may leak 512
+            std::env::remove_var("LEANKG_EMBED_MODEL");
+            std::env::remove_var("LEANKG_EMBED_DIRECT_INTRA");
+            let plan = resolve_embed_runtime(4, 32);
+            std::env::remove_var("LEANKG_EMBED_FAST");
+            std::env::remove_var("LEANKG_EMBED_MAX_SEQ");
+            plan
+        };
         assert!(plan.workers >= 4, "workers={}", plan.workers);
         assert_eq!(plan.intra_threads, 1);
         assert_eq!(plan.max_seq, 128);
         assert_eq!(plan.batch_size, 32, "small requested batch stays unchanged");
         assert_eq!(plan.kind, EmbedModelKind::BgeInt8);
-        std::env::remove_var("LEANKG_EMBED_FAST");
-        std::env::remove_var("LEANKG_EMBED_MAX_SEQ");
+    }
+
+    #[test]
+    fn explicit_max_seq_wins_over_fast_cap() {
+        // Operator-pinned max_seq always wins, even in fast mode.
+        let plan = {
+            let _g = env_guard();
+            std::env::set_var("LEANKG_EMBED_FAST", "1");
+            std::env::set_var("LEANKG_EMBED_MAX_SEQ", "256");
+            std::env::remove_var("LEANKG_EMBED_MODEL");
+            std::env::remove_var("LEANKG_EMBED_DIRECT_INTRA");
+            let plan = resolve_embed_runtime(4, 32);
+            std::env::remove_var("LEANKG_EMBED_FAST");
+            std::env::remove_var("LEANKG_EMBED_MAX_SEQ");
+            plan
+        };
+        assert_eq!(plan.max_seq, 256);
     }
 
     #[test]
     fn slow_plan_keeps_multi_worker() {
-        std::env::set_var("LEANKG_EMBED_FAST", "0");
-        std::env::remove_var("LEANKG_EMBED_MODEL");
-        std::env::remove_var("LEANKG_EMBED_DIRECT_INTRA");
-        let plan = resolve_embed_runtime(4, 32);
+        let plan = {
+            let _g = env_guard();
+            std::env::set_var("LEANKG_EMBED_FAST", "0");
+            std::env::remove_var("LEANKG_EMBED_MODEL");
+            std::env::remove_var("LEANKG_EMBED_DIRECT_INTRA");
+            let plan = resolve_embed_runtime(4, 32);
+            std::env::remove_var("LEANKG_EMBED_FAST");
+            plan
+        };
         assert_eq!(plan.workers, 4);
         assert_eq!(plan.intra_threads, 1);
         assert_eq!(plan.kind, EmbedModelKind::BgeFp32);
-        std::env::remove_var("LEANKG_EMBED_FAST");
     }
 }
