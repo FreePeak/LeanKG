@@ -2222,6 +2222,7 @@ mod tests {
     // FR-EMBED-PERF-15M: env var LEANKG_EMBED_MAX_MB overrides the build-time default.
     #[test]
     fn embed_max_rss_mb_env_overrides_default() {
+        let _g = env_lock();
         std::env::set_var("LEANKG_EMBED_MAX_MB", "12000");
         let n = embed_max_rss_mb();
         std::env::remove_var("LEANKG_EMBED_MAX_MB");
@@ -2233,6 +2234,7 @@ mod tests {
         // Default (LEANKG_EMBED_FAST off): fast path is OFF, so the RSS cap is
         // the non-fast value — 2048 on macOS, 3072 elsewhere. The old test
         // assumed fast defaulted ON (4096); that default flipped.
+        let _g = env_lock();
         std::env::remove_var("LEANKG_EMBED_FAST");
         std::env::set_var("LEANKG_EMBED_MAX_MB", "not_a_number");
         let n = embed_max_rss_mb();
