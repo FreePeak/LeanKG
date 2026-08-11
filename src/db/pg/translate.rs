@@ -2789,25 +2789,15 @@ fn build_insert(
     })
 }
 
-/// Translate-time GUC plumbing: per-statement `SET LOCAL` values needed for
-/// the `embedding_vectors` / `embedding_state` writer path to mirror the
-/// per-:put HNSW knob the cozo backend took via `::hnsw create` at index
-/// build time. Cozo embedded `m` / `ef_construction` into the index; pgvector
-/// stores them with the index but accepts session overrides on insert for
-/// tuning. `LEANKG_HNSW_EF_CONST` (default 20) keeps parity with the cozo
-/// builder; absent, no GUC is emitted (uses the index's stored value).
-pub fn embedding_gucs_for(table: &str) -> Vec<(String, String)> {
-    if table != "embedding_vectors" {
-        return Vec::new();
-    }
-    let ef = std::env::var("LEANKG_HNSW_EF_CONST")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .filter(|n| (1..=2000).contains(n));
-    match ef {
-        Some(n) => vec![("hnsw.ef_construction".to_string(), n.to_string())],
-        None => Vec::new(),
-    }
+/// Translate-time GUC plumbing for the `embedding_vectors` / `embedding_state`
+/// writer path. Nothing to set here: `hnsw.ef_construction` is a
+/// `CREATE INDEX ... WITH (...)` parameter, not a runtime GUC on pgvector
+/// 0.8.x. Emitting `SET LOCAL hnsw.ef_construction = 'N'` aborts the write
+/// transaction with `invalid configuration parameter name`. The index-time
+/// knob lives in `build_hnsw_create_stmt` (src/embeddings/state.rs), which
+/// reads `LEANKG_HNSW_EF_CONST` for the DDL; the writer must not re-emit it.
+pub fn embedding_gucs_for(_table: &str) -> Vec<(String, String)> {
+    Vec::new()
 }
 
 fn update_set_clause(cols: &[String], pk: &str) -> String {
@@ -3865,18 +3855,16 @@ mod tests {
         assert!(t.gucs.is_empty(), "missing ef: must not emit GUC");
     }
 
-    // Phase 4 plumbing: `embedding_vectors` upsert emits a
-    // `hnsw.ef_construction` GUC when LEANKG_HNSW_EF_CONST is set and
-    // valid; no GUC otherwise (the index's stored value wins).
+    // Phase 4 plumbing: `embedding_vectors` upsert must NEVER emit a
+    // `hnsw.ef_construction` GUC. `hnsw.ef_construction` is a
+    // `CREATE INDEX ... WITH (...)` parameter, not a runtime GUC on pgvector
+    // 0.8.x — `SET LOCAL hnsw.ef_construction` aborts the write tx with
+    // `invalid configuration parameter name`. The DDL knob stays in
+    // `build_hnsw_create_stmt`.
     #[test]
-    fn embedding_vectors_upsert_emits_ef_construction_when_set() {
-        // The literal-list `:put embedding_vectors` path bypasses the
-        // translator on the bulk vector literal (`vec(...)` is not JSON,
-        // so `parse_nested_lists` would reject it). Today the writer
-        // reaches the GUC path through `DbBackend::import_relations`,
-        // whose bulk path emits `INSERT ... ON CONFLICT (qualified_name)
-        // DO UPDATE` via `build_insert`. We exercise the same GUC hook
-        // directly by simulating the table/cols/pk the writer hands in.
+    fn embedding_vectors_upsert_never_emits_ef_construction_guc() {
+        // Setting LEANKG_HNSW_EF_CONST must not change the translator's
+        // output: the env var is read only by the index-time DDL builder.
         let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
         std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
         let gucs = embedding_gucs_for("embedding_vectors");
@@ -3884,9 +3872,9 @@ mod tests {
             Some(v) => std::env::set_var("LEANKG_HNSW_EF_CONST", v),
             None => std::env::remove_var("LEANKG_HNSW_EF_CONST"),
         }
-        assert_eq!(
-            gucs,
-            vec![("hnsw.ef_construction".to_string(), "100".to_string())]
+        assert!(
+            gucs.is_empty(),
+            "ef_construction is a CREATE INDEX WITH param, never a runtime GUC"
         );
     }
 
@@ -3904,8 +3892,8 @@ mod tests {
 
     #[test]
     fn embedding_state_upsert_does_not_emit_guc() {
-        // Only the embedding_vectors path tunes HNSW; embedding_state is a
-        // plain upsert and must not produce per-statement GUCs.
+        // No upsert path tunes HNSW at runtime anymore (ef_construction is a
+        // CREATE INDEX WITH param); embedding_state must never emit GUCs.
         let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
         std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
         let gucs = embedding_gucs_for("embedding_state");
@@ -4137,6 +4125,29 @@ fn put_embedding_vectors_maps_vector_to_vec() {
         t.sql.contains("\"vec\" = EXCLUDED.\"vec\""),
         "got: {}",
         t.sql
+    );
+}
+
+#[test]
+fn put_embedding_vectors_never_emits_gucs_even_when_env_set() {
+    // hnsw.ef_construction is a CREATE INDEX WITH param, not a runtime GUC;
+    // the translated write must carry no SET LOCAL even when the env knob
+    // that feeds the index DDL is present.
+    let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
+    std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
+    let t = translate(
+        r#"?[qualified_name, vector] <- [["a", vec([1.0, 0.0, 0.0])]] :put embedding_vectors {qualified_name => vector}"#,
+        BTreeMap::new(),
+    )
+    .unwrap();
+    match prev {
+        Some(v) => std::env::set_var("LEANKG_HNSW_EF_CONST", v),
+        None => std::env::remove_var("LEANKG_HNSW_EF_CONST"),
+    }
+    assert!(
+        t.gucs.is_empty(),
+        "no runtime GUCs allowed on embedding_vectors writes: {:?}",
+        t.gucs
     );
 }
 
