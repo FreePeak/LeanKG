@@ -1631,10 +1631,11 @@ async fn index_codebase(
     ref_name: Option<&str>,
     auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // T6.4b: serialize `leankg index` across instances — PG advisory lock
-    // (fixed key). No-op on the cozo shim; reentrant within this process
-    // (incremental → full fallback calls index_codebase again).
-    let _index_lock = crate::db::backend::index_advisory_lock()?;
+    // T6.4b: serialize `leankg index` across instances — per-project PG
+    // advisory lock. Same env+path serializes; different projects run
+    // concurrently. Reentrant within this process (incremental → full
+    // fallback calls index_codebase again).
+    let _index_lock = crate::db::backend::index_advisory_lock(env, path)?;
     let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
@@ -1823,10 +1824,11 @@ async fn incremental_index_codebase(
     auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = env;
-    // T6.4b: serialize `leankg index` across instances — PG advisory lock
-    // (fixed key). No-op on the cozo shim; reentrant within this process
-    // (incremental → full fallback calls index_codebase again).
-    let _index_lock = crate::db::backend::index_advisory_lock()?;
+    // T6.4b: serialize `leankg index` across instances — per-project PG
+    // advisory lock. Same env+path serializes; different projects run
+    // concurrently. Reentrant within this process (incremental → full
+    // fallback calls index_codebase again).
+    let _index_lock = crate::db::backend::index_advisory_lock(env, path)?;
     let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
