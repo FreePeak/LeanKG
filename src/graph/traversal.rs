@@ -462,14 +462,27 @@ where
 mod traverse_tests {
     use super::*;
 
+    // Serialize env-mutating tests in this module — `LEANKG_IMPACT_MAX_AFFECTED`
+    // is process-global and two parallel tests racing on it is a flaky CI
+    // failure (one reads the other's leftover value).
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn impact_scan_options_default_caps_at_10k() {
+        let _guard = env_lock();
+        std::env::remove_var("LEANKG_IMPACT_MAX_AFFECTED");
         let opts = ImpactScanOptions::default();
         assert_eq!(opts.max_affected, 10_000);
     }
 
     #[test]
     fn impact_scan_options_respects_env_override() {
+        let _guard = env_lock();
         std::env::set_var("LEANKG_IMPACT_MAX_AFFECTED", "5");
         let opts = ImpactScanOptions::default();
         assert_eq!(opts.max_affected, 5);
