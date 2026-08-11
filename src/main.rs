@@ -787,10 +787,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             no_vectors,
             summary_primary,
             summary_primary_cap,
+            summary_only,
         } => {
             run_embed(
                 init, full, batch_size, &project, wait, status, cancel, background, workers,
-                &types, benchmark, no_vectors, &summary_primary, summary_primary_cap,
+                &types, benchmark, no_vectors, &summary_primary, summary_primary_cap, &summary_only,
             )?;
         }
         #[cfg(feature = "embeddings")]
@@ -5911,6 +5912,7 @@ fn maybe_run_embed(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
         false, // no_vectors
         "auto", // summary_primary
         None,   // summary_primary_cap
+        "off",  // summary_only
     )
 }
 
@@ -5937,6 +5939,7 @@ fn run_embed(
     no_vectors: bool,
     summary_primary: &str,
     summary_primary_cap: Option<u32>,
+    summary_only: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if init {
         let report = embeddings::init_models()?;
@@ -6005,6 +6008,7 @@ fn run_embed(
             no_vectors,
             summary_primary,
             summary_primary_cap,
+            summary_only,
         )?;
         let elapsed = embed_start.elapsed().as_secs_f64();
 
@@ -6043,6 +6047,7 @@ fn run_embed(
             no_vectors,
             summary_primary,
             summary_primary_cap,
+            summary_only,
         );
     }
 
@@ -6097,6 +6102,9 @@ fn run_embed(
     if let Some(cap) = summary_primary_cap {
         cmd.args(["--summary-primary-cap", &cap.to_string()]);
     }
+    // FR-EMBED-SUMMARY-ONLY: forward summary-only flag so the detached
+    // worker honors the user's choice (default `off`).
+    cmd.args(["--summary-only", summary_only]);
     let child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -6264,6 +6272,24 @@ fn resolve_summary_primary_cap(cli_value: Option<u32>) -> u32 {
         .max(1)
 }
 
+/// Resolve the summary-only enable flag (FR-EMBED-SUMMARY-ONLY).
+///
+/// Precedence: explicit `--summary-only` CLI value >
+/// `LEANKG_EMBED_SUMMARY_ONLY` env > default `false`. Unlike
+/// summary-primary there is no `auto` tier — summary-only is an opt-in
+/// strict mode that drops all function vectors.
+#[cfg(feature = "embeddings")]
+fn resolve_summary_only(cli_value: &str) -> bool {
+    let raw = std::env::var("LEANKG_EMBED_SUMMARY_ONLY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| cli_value.trim().to_string());
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "on" | "true" | "1" | "yes" | "auto"
+    )
+}
+
 #[cfg(feature = "embeddings")]
 fn run_embed_worker(
     _init: bool,
@@ -6276,6 +6302,7 @@ fn run_embed_worker(
     no_vectors: bool,
     summary_primary: &str,
     summary_primary_cap: Option<u32>,
+    summary_only: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     let status_path = leankg_dir.join("embed_status.json");
@@ -6319,28 +6346,37 @@ fn run_embed_worker(
     // 5 min. Smaller workspaces embed every type. Pass `--types all` to
     // override and embed everything regardless of size.
     let parsed_filter = embeddings::parse_type_filter(types_filter);
-    // Cheap count — never `all_elements()` here (mega-graphs skip the
+    // Cheap counts — never `all_elements()` here (mega-graphs skip the
     // elements_cache and that full scan alone burns seconds before work).
     let total = graph.count_elements().unwrap_or(0);
+    let summary_only_on = resolve_summary_only(summary_only);
+    // FR-EMBED-SUMMARY-ONLY: when summary-only is on, the mega-graph default
+    // `function,method` filter would starve the index (file/module nodes
+    // never pass). Drop the default so `element_passes_type_filter`'s
+    // summary-only gate is the sole arbiter. An explicit user `--types` is
+    // still honored (intersected with the summary-only allowlist downstream).
+    let type_filter = match &parsed_filter {
+        Some(_) => parsed_filter.clone(),
+        None if summary_only_on => None,
+        None => {
+            if total > 50_000 {
+                let mut set = std::collections::HashSet::new();
+                set.insert("function".to_string());
+                set.insert("method".to_string());
+                Some(set)
+            } else {
+                None
+            }
+        }
+    };
     let opts = embeddings::BuildOptions {
         mode,
         batch_size,
         reserve_capacity: None,
-        type_filter: match &parsed_filter {
-            Some(_) => parsed_filter.clone(),
-            None => {
-                if total > 50_000 {
-                    let mut set = std::collections::HashSet::new();
-                    set.insert("function".to_string());
-                    set.insert("method".to_string());
-                    Some(set)
-                } else {
-                    None
-                }
-            }
-        },
+        type_filter,
         write_vectors: embeddings::write_vectors_enabled() && !no_vectors,
         summary_primary_enabled: resolve_summary_primary(summary_primary, total),
+        summary_only_enabled: summary_only_on,
         summary_primary_file_cap: resolve_summary_primary_cap(summary_primary_cap),
         ..Default::default()
     };

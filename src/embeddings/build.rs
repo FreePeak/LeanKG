@@ -303,6 +303,15 @@ pub struct BuildOptions {
     /// `file`/`module`/`class`/etc. nodes are always embedded. Default
     /// `false`; the CLI auto-enables on large graphs.
     pub summary_primary_enabled: bool,
+    /// FR-EMBED-SUMMARY-ONLY: when true, only the node types in
+    /// [`SUMMARY_ONLY_TYPES`] (`file` + `module`) are embedded — no
+    /// functions at all. Functions are discovered purely via ontology
+    /// traversal at query time. This is the strictest GraphRAG-style mode:
+    /// smallest vector count, every function reached by walking down from a
+    /// file/module summary seed. Implies `summary_primary_enabled` has no
+    /// further effect (no functions to gate). Default `false`; CLI
+    /// `--summary-only on` / env `LEANKG_EMBED_SUMMARY_ONLY=on`.
+    pub summary_only_enabled: bool,
     /// Size cap (source lines) above which a file is summary-only under
     /// summary-primary. Default `500`.
     pub summary_primary_file_cap: u32,
@@ -332,6 +341,7 @@ impl Default for BuildOptions {
             reserve_capacity: None,
             type_filter: None,
             summary_primary_enabled: false,
+            summary_only_enabled: false,
             summary_primary_file_cap: SUMMARY_PRIMARY_DEFAULT_FILE_CAP,
             file_size_cache: std::collections::HashMap::new(),
             partial: false,
@@ -360,6 +370,16 @@ pub fn write_vectors_enabled() -> bool {
 /// vectors for higher precision on hot small modules. Override with
 /// `--summary-primary-cap` / `LEANKG_EMBED_SUMMARY_PRIMARY_CAP`.
 pub const SUMMARY_PRIMARY_DEFAULT_FILE_CAP: u32 = 500;
+
+/// Element types that are embedded under the summary-only mode
+/// (FR-EMBED-SUMMARY-ONLY). When `BuildOptions::summary_only_enabled` is set,
+/// only these node types get vectors — no `function`/`method`/`constructor`
+/// (or any other type). At query time the seed-then-traverse retrieval flow
+/// discovers functions purely via ontology traversal from file/module summary
+/// seeds (`semantic_search` already partitions HNSW hits into upper seeds and
+/// walks down to functions via `downward_rule_for`, so no retrieval change is
+/// needed). Override the node set with `--types` if you need finer control.
+pub const SUMMARY_ONLY_TYPES: &[&str] = &["file", "module"];
 
 /// Parse a `--types` flag value into a `BuildOptions::type_filter`. Empty
 /// string or `all` => embed every type. `perf` => mega perf preset.
@@ -439,6 +459,14 @@ pub(crate) fn should_skip_hnsw_rebuild(
 }
 
 fn element_passes_type_filter(el: &crate::db::models::CodeElement, opts: &BuildOptions) -> bool {
+    // FR-EMBED-SUMMARY-ONLY: the strictest mode — only `file` + `module`
+    // summary nodes get vectors. Functions are discovered purely via
+    // ontology traversal at query time, so they are never embedded here.
+    // Checked first because it supersedes both `type_filter` and
+    // `summary_primary_enabled`.
+    if opts.summary_only_enabled {
+        return SUMMARY_ONLY_TYPES.contains(&el.element_type.to_ascii_lowercase().as_str());
+    }
     match &opts.type_filter {
         Some(filter) => {
             if !filter.contains(&el.element_type.to_ascii_lowercase()) {
@@ -2961,5 +2989,72 @@ mod tests {
         let mut el = fn_element("src/huge.rs", 5000);
         el.file_path = "src/huge.rs".to_string();
         assert!(element_passes_type_filter(&el, &opts));
+    }
+
+    #[test]
+    fn summary_only_skips_all_functions() {
+        // FR-EMBED-SUMMARY-ONLY: no function vectors at all, regardless of
+        // file size or summary-primary cap. Functions are discovered purely
+        // via ontology traversal at query time.
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        let small = fn_element("src/small.rs", 10);
+        let big = fn_element("src/huge.rs", 5000);
+        assert!(
+            !element_passes_type_filter(&small, &opts),
+            "small-file function must be skipped under summary-only"
+        );
+        assert!(
+            !element_passes_type_filter(&big, &opts),
+            "large-file function must be skipped under summary-only"
+        );
+    }
+
+    #[test]
+    fn summary_only_keeps_file_and_module_summaries() {
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        let mut file_node = fn_element("src/parser.rs", 200);
+        file_node.element_type = "file".to_string();
+        let mut module_node = fn_element("src/parser.rs", 1);
+        module_node.element_type = "module".to_string();
+        assert!(
+            element_passes_type_filter(&file_node, &opts),
+            "file summary must be embedded under summary-only"
+        );
+        assert!(
+            element_passes_type_filter(&module_node, &opts),
+            "module summary must be embedded under summary-only"
+        );
+    }
+
+    #[test]
+    fn summary_only_skips_classes_and_docs() {
+        // summary-only is the strictest mode: only file + module. Classes
+        // (which would pass under summary-primary) and docs are skipped.
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        let mut class_node = fn_element("src/x.rs", 1);
+        class_node.element_type = "class".to_string();
+        let mut doc_node = fn_element("docs/x.md", 1);
+        doc_node.element_type = "document".to_string();
+        assert!(!element_passes_type_filter(&class_node, &opts));
+        assert!(!element_passes_type_filter(&doc_node, &opts));
+    }
+
+    #[test]
+    fn summary_only_supersedes_summary_primary() {
+        // When both flags are on, summary-only wins: no function vectors,
+        // even for a small file that summary-primary would normally keep.
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        opts.summary_primary_enabled = true;
+        opts.summary_primary_file_cap = 500;
+        opts.file_size_cache.insert("src/small.rs".to_string(), 50);
+        let el = fn_element("src/small.rs", 10);
+        assert!(
+            !element_passes_type_filter(&el, &opts),
+            "summary-only must supersede summary-primary"
+        );
     }
 }

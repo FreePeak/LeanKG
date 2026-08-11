@@ -1197,6 +1197,14 @@ fn synthesize_summary_nodes(
         if let Some(module_node) =
             crate::indexer::file_summary::build_module_summary(mod_name, language, &refs)
         {
+            // Bridge the module-summary node to each of its member
+            // file-summary nodes so the retrieval downward traversal can
+            // walk module → file → function. Without these edges a
+            // module-summary HNSW hit is a dead-end seed.
+            new_edges.extend(crate::indexer::file_summary::module_summary_contains_edges(
+                &module_node.qualified_name,
+                &refs,
+            ));
             module_summaries.push(module_node);
         }
     }

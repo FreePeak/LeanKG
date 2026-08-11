@@ -150,8 +150,12 @@ const DOC_FALLBACK_EDGES: &[&str] = &["documented_by", "documents_concept"];
 /// node", expressed as a hop budget + allowed edge types + fanout cap.
 ///
 /// Tuning rationale (mirrors the additive `traverse_rule_for`):
-/// - `class` / `struct` / `interface` / `trait` / `module`: 1 hop via
-///   containment edges — methods hang directly off their enclosing type.
+/// - `class` / `struct` / `interface` / `trait`: 1 hop via containment
+///   edges — methods hang directly off their enclosing type.
+/// - `module`: 2 hops — a cross-file module-summary node aggregates
+///   file-summary nodes (`module → file_summary` via `contains`), and each
+///   file-summary node contains the functions, so reaching a function needs
+///   one extra hop. Wider fanout because one module can span many files.
 /// - `file`: 1 hop — functions are direct children of their file.
 /// - `document` / `doc_section`: 1 hop via `references` / `documented_by`
 ///   — docs link directly to the code they describe.
@@ -167,10 +171,20 @@ const DOC_FALLBACK_EDGES: &[&str] = &["documented_by", "documents_concept"];
 /// - unknown / other: 1 hop via doc edges, small fanout.
 pub fn downward_rule_for(element_type: &str) -> DownwardRule {
     match element_type {
-        "class" | "struct" | "interface" | "trait" | "module" => DownwardRule {
+        "class" | "struct" | "interface" | "trait" => DownwardRule {
             hops: 1,
             edge_types: CLASS_DOWN_EDGES,
             fanout_cap: 12,
+        },
+        // A cross-file module-summary node aggregates multiple file-summary
+        // nodes (module → file_summary via `contains`, added by
+        // `module_summary_contains_edges`), and the file-summary nodes in
+        // turn contain the functions. So a module seed needs 2 hops to reach
+        // a function, unlike a class whose methods hang off it directly.
+        "module" => DownwardRule {
+            hops: 2,
+            edge_types: CLASS_DOWN_EDGES,
+            fanout_cap: 16,
         },
         "file" => DownwardRule {
             hops: 1,
@@ -698,7 +712,7 @@ mod tests {
 
     #[test]
     fn downward_rule_for_class_is_one_hop_via_containment() {
-        for t in ["class", "struct", "interface", "trait", "module"] {
+        for t in ["class", "struct", "interface", "trait"] {
             let r = downward_rule_for(t);
             assert_eq!(r.hops, 1, "{t} should be 1 hop");
             assert!(
@@ -714,6 +728,20 @@ mod tests {
                 "{t} should allow has_method"
             );
         }
+    }
+
+    #[test]
+    fn downward_rule_for_module_is_two_hops() {
+        // A module-summary node reaches functions via module → file_summary
+        // → function, so it needs 2 hops (not 1 like a class whose methods
+        // hang off it directly). Guards against the module rule regressing
+        // back into the 1-hop class arm.
+        let r = downward_rule_for("module");
+        assert_eq!(r.hops, 2, "module should be 2 hops (module → file → fn)");
+        assert!(
+            r.edge_types.contains(&"contains"),
+            "module should allow contains (both legs use it)"
+        );
     }
 
     #[test]

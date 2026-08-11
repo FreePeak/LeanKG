@@ -322,6 +322,36 @@ pub fn file_summary_contains_edges(
     edges
 }
 
+/// Build `contains` edges from a module-summary node to each of its member
+/// file-summary nodes. These are the bridge edges the retrieval downward
+/// traversal walks (`module` → `contains` → `file` → `contains` → function);
+/// without them a module-summary hit is a dead-end seed that can never reach
+/// the functions it aggregates. Mirrors [`file_summary_contains_edges`].
+pub fn module_summary_contains_edges(
+    module_qn: &str,
+    file_summaries: &[&CodeElement],
+) -> Vec<Relationship> {
+    let mut edges = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for fs in file_summaries {
+        if fs.qualified_name == module_qn {
+            continue;
+        }
+        if !seen.insert(fs.qualified_name.clone()) {
+            continue;
+        }
+        edges.push(Relationship {
+            source_qualified: module_qn.to_string(),
+            target_qualified: fs.qualified_name.clone(),
+            rel_type: "contains".to_string(),
+            confidence: 1.0,
+            metadata: serde_json::json!({"source": "module_summary"}),
+            ..Default::default()
+        });
+    }
+    edges
+}
+
 /// Build a cross-file module-level summary node, aggregating the exported
 /// symbols of every file that declares the same module/package.
 ///
@@ -531,5 +561,36 @@ mod tests {
     fn build_module_summary_returns_none_for_empty() {
         assert!(build_module_summary("x", "rust", &[]).is_none());
         assert!(build_module_summary("", "rust", &[]).is_none());
+    }
+
+    #[test]
+    fn module_summary_contains_edges_links_each_file_summary() {
+        let file_a = "pkg/handler.rs";
+        let file_b = "pkg/post.rs";
+        let fs1 = build_file_summary(file_a, "rust", &[&fn_el("get", "fn get()", file_a)], None);
+        let fs2 = build_file_summary(file_b, "rust", &[&fn_el("post", "fn post()", file_b)], None);
+        let refs: Vec<&CodeElement> = vec![&fs1, &fs2];
+        let module = build_module_summary("handler", "rust", &refs).unwrap();
+        let edges = module_summary_contains_edges(&module.qualified_name, &refs);
+        let targets: Vec<&str> = edges.iter().map(|e| e.target_qualified.as_str()).collect();
+        assert!(targets.contains(&file_a));
+        assert!(targets.contains(&file_b));
+        for e in &edges {
+            assert_eq!(e.source_qualified, module.qualified_name);
+            assert_eq!(e.rel_type, "contains");
+            assert_eq!(e.metadata["source"], "module_summary");
+        }
+    }
+
+    #[test]
+    fn module_summary_contains_edges_skips_self() {
+        let file = "pkg/a.rs";
+        let fs = build_file_summary(file, "rust", &[&fn_el("a", "fn a()", file)], None);
+        // A module node whose qualified name collides with a file-summary
+        // must not get a self-loop edge.
+        let module_qn = fs.qualified_name.clone();
+        let refs: Vec<&CodeElement> = vec![&fs];
+        let edges = module_summary_contains_edges(&module_qn, &refs);
+        assert!(edges.is_empty(), "self-loop edge should be skipped");
     }
 }

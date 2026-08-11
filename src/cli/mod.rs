@@ -424,6 +424,17 @@ pub enum CLICommand {
         /// `LEANKG_EMBED_SUMMARY_PRIMARY_CAP`.
         #[arg(long)]
         summary_primary_cap: Option<u32>,
+        /// FR-EMBED-SUMMARY-ONLY: embed only file + module summary nodes —
+        /// no function/method/constructor vectors at all. Functions are
+        /// discovered purely via ontology traversal at query time
+        /// (`semantic_search` walks down from file/module summary seeds via
+        /// `contains` edges). This is the strictest GraphRAG-style mode:
+        /// smallest vector count, every function reached by traversal.
+        /// Combine with `--full` to drop existing function vectors after a
+        /// mode switch. Values: `on` | `off`. Default `off`. Env:
+        /// `LEANKG_EMBED_SUMMARY_ONLY`.
+        #[arg(long, default_value = "off")]
+        summary_only: String,
     },
     /// One-shot embedding retrieval for CLI testing (requires
     /// --features embeddings). Useful for validating the retrieve→rerank→
