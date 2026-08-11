@@ -7,9 +7,9 @@
 #   docker compose -f docker-compose.yml -f docker-compose.embed.yml \
 #     --profile embed run --rm leankg-embed
 #
-# Cold offline job: INT8 fast path. Needs ≥6g so batch 128 fits.
-# Default: cpus="6", mem_reservation=3g, mem_limit=10g (multi-project /
-# mega-graph cold embed envelope — see docs/reports/embed-3-workspaces-2026-07-17.md).
+# Default embed profile: quality (FP32, full 512-token window). For a fast
+# cold embed, override LEANKG_EMBED_FAST=1 + LEANKG_EMBED_MAX_SEQ=128 (the
+# INT8 path) — see docs/reports/embed-3-workspaces-2026-07-17.md.
 # Prefer BACKGROUND=1 on the main MCP service for day-2 so MCP stays up during rebuild.
 
 services:
@@ -45,10 +45,8 @@ services:
       LEANKG_PG_URL: postgresql://postgres:postgres@postgres:5432/leankg
       LEANKG_MCP_PROJECT: ${LEANKG_MCP_PROJECT:-/workspace}
       LEANKG_MMAP_SIZE: "67108864"
-      LEANKG_EMBED_FAST: "1"
-      LEANKG_EMBED_MODEL: "bge-q"
-      LEANKG_EMBED_MAX_SEQ: "128"
-      LEANKG_EMBED_MAX_BLOB_CHARS: "500"
+      # Quality default (FP32, 512-token window). Opt into the fast INT8
+      # profile with LEANKG_EMBED_FAST=1 + LEANKG_EMBED_MAX_SEQ=128.
       # 12g soft cap → 8 workers × 350 MB + 900 MB base (~3.7 GB) fits
       # under 10800 MB (90% of 12000). No duty-cycling.
       LEANKG_EMBED_MAX_MB: "12000"
