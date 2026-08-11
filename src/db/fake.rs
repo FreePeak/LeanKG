@@ -75,6 +75,15 @@ fn table_columns(rel: &str) -> Option<&'static [&'static str]> {
             "embedded_at",
         ],
         "embedding_vectors" => &["qualified_name", "vector"],
+        // Per-model embed collections share the legacy shapes.
+        t if t.starts_with("embedding_state_") => &[
+            "qualified_name",
+            "usearch_key",
+            "content_hash",
+            "state",
+            "embedded_at",
+        ],
+        t if t.starts_with("embedding_vectors_") => &["qualified_name", "vector"],
         _ => return None,
     })
 }
@@ -643,14 +652,20 @@ fn parse_rel_and_cols(after: &str) -> Result<(String, RelCols), Box<dyn std::err
         .split_once(|c: char| c.is_whitespace())
         .map(|(r, rest)| (r.to_string(), rest))
         .unwrap_or_else(|| (after.to_string(), ""));
-    let cols: Vec<String> = rest
-        .trim()
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let inner = rest.trim().trim_start_matches('{').trim_end_matches('}');
+    let cols: Vec<String> = if inner.contains("=>") {
+        inner
+            .split("=>")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        inner
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
     Ok((rel, RelCols { cols }))
 }
 

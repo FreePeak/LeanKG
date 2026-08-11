@@ -29,7 +29,13 @@ CREATE TABLE IF NOT EXISTS migrations (
 /// Migration steps, newest last. A step applies atomically (each runs in its
 /// own transaction with the migrations-table insert). To add a migration,
 /// append a `(version, sql)` entry here and bump the const.
-pub const MIGRATIONS: &[(&str, &str)] = &[("001_schema", include_str!("schema.sql"))];
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    ("001_schema", include_str!("schema.sql")),
+    (
+        "002_multi_model_embed",
+        include_str!("migrations/002_multi_model_embed.sql"),
+    ),
+];
 
 pub struct MigrationReport {
     pub applied: Vec<String>,

@@ -16,6 +16,7 @@
 //! See `EMBEDDINGS.md` in this directory for the module architecture.
 
 pub mod provider;
+pub mod registry;
 
 #[cfg(feature = "embeddings")]
 pub mod build;
@@ -70,9 +71,18 @@ pub use state::{
 pub use text_blob::{build_blob, classify, BlobKind, PERF_TYPE_PRESET};
 
 pub use provider::{
-    create_provider_from_env, embed_query, provider_kind_from_env, validate_provider, EmbedError,
-    EmbedProvider, FakeEmbedProvider, OpenAiCompatibleProvider, ProviderKind, VEC_DIM,
+    create_provider_from_env, create_provider_from_env_with_dim, embed_query,
+    provider_kind_from_env, validate_provider, EmbedError, EmbedProvider, FakeEmbedProvider,
+    OpenAiCompatibleProvider, ProviderKind, VEC_DIM,
 };
 
 #[cfg(feature = "embeddings")]
 pub use provider::LocalOnnxProvider;
+#[allow(unused_imports)]
+pub use registry::{
+    active_model_id_from_env, backfill_legacy_model_id, builtin_registry,
+    create_provider_for_active_model, create_provider_for_entry, lookup_model,
+    resolve_active_model, sanitize_model_id_for_table, state_relation_for_model_id,
+    vectors_relation_for_model_id, EmbeddingModelEntry, RegistryProviderKind, DEFAULT_BGE_MODEL_ID,
+    LEGACY_STATE_RELATION, LEGACY_VECTORS_RELATION,
+};

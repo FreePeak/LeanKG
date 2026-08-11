@@ -334,8 +334,9 @@ fn read_script(
     };
     let head = parse_head(head)?;
 
-    // ANN: `~embedding_vectors:vec_idx { ... }` (H1).
-    if rest.contains("~embedding_vectors") {
+    // ANN: `~<vectors_relation>:vec_idx { ... }` (H1). Any relation ending in
+    // `:vec_idx` is an ANN probe — per-model embed tables included.
+    if rest.contains(":vec_idx") {
         return ann_translation(rest, &head, params);
     }
 
@@ -2097,6 +2098,21 @@ fn render_value_or_param(
 // ANN (H1 — `~embedding_vectors:vec_idx`).
 // ---------------------------------------------------------------------------
 
+fn ann_vectors_table(rest: &str) -> Result<String, String> {
+    let tilde = rest
+        .find('~')
+        .ok_or_else(|| "ANN query missing ~relation:vec_idx".to_string())?;
+    let after = &rest[tilde + 1..];
+    let brace = after
+        .find('{')
+        .ok_or_else(|| "ANN query missing '{' after relation".to_string())?;
+    let rel = after[..brace].trim();
+    let table = rel
+        .strip_suffix(":vec_idx")
+        .ok_or_else(|| format!("ANN relation must end with :vec_idx, got {rel}"))?;
+    Ok(table.to_string())
+}
+
 fn ann_translation(
     rest: &str,
     head: &[String],
@@ -2119,6 +2135,10 @@ fn ann_translation(
         .get(1)
         .cloned()
         .unwrap_or_else(|| "qualified_name".to_string());
+    // Per-model embed tables target the `~<vectors_relation>:vec_idx` ANN —
+    // extract the table from the relation instead of hardcoding the legacy
+    // `embedding_vectors` name.
+    let vectors_table = ann_vectors_table(rest)?;
 
     // Distance note: cozo HNSW returns cosine distance; pgvector `<->` is L2
     // distance. On unit vectors the orders are identical (both monotone
@@ -2126,11 +2146,12 @@ fn ann_translation(
     // need a cosine-distance value should compute `(d*d)/2.0` themselves.
     let sql = format!(
         "SELECT vec <-> $1::text::vector AS {dist_col}, {qn_col} \
-         FROM embedding_vectors \
+         FROM {vectors_table} \
          ORDER BY vec <-> $1::text::vector \
          LIMIT $2::int8",
         dist_col = quote_ident(&dist_col),
         qn_col = quote_ident(&qn_col),
+        vectors_table = quote_ident(&vectors_table),
     );
     let used: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(vec_literal), Box::new(k as i64)];
     let gucs = ef
@@ -2193,8 +2214,12 @@ fn put_script(
     // the left side of an arrow in a follow-up clause).
     // Strip the table-name prefix (everything before the first `{`), and
     // any trailing `<- $args` arrow (CH2 — `:put table {cols} <- $args`).
+    // Keep the explicit table name (the prefix before `{`) — per-model
+    // embed tables (`embedding_vectors_<model_id>`) must not fall back to
+    // column-signature inference, which always resolves to `embedding_vectors`.
     let target = target.split("<-").next().unwrap_or(target).trim();
     let brace_open = target.find('{').unwrap_or(0);
+    let explicit_table = target[..brace_open].trim();
     let tail = &target[brace_open..];
     let inner = tail.trim_start_matches('{').trim_end_matches('}').trim();
     let (cols, pk) = parse_put_target(inner)?;
@@ -2213,14 +2238,21 @@ fn put_script(
             .split_once("<-")
             .map(|(_, r)| r.trim())
             .ok_or_else(|| "missing <- in :put".to_string())?;
-        return put_from_literal(after_arrow, &cols, pk.as_deref(), is_keyed, params);
+        return put_from_literal(
+            after_arrow,
+            &cols,
+            pk.as_deref(),
+            is_keyed,
+            explicit_table,
+            params,
+        );
     }
     if let Some(name) = source.strip_prefix('$') {
         // `?[cols] <- $batch_data` — caller passes a Vec<Vec<serde_json::Value>>
         // under that key. We can't represent UNNEST generically here
         // (caller-typed), so fail with a clear message.
         let v = params.get(name).cloned();
-        return put_from_batch(name, v, &cols, pk.as_deref(), is_keyed);
+        return put_from_batch(name, v, &cols, pk.as_deref(), is_keyed, explicit_table);
     }
     // `:put table {cols} <- $args` — the source is the whole rule body
     // (CH2 — content_hash.rs save_hashes: `:put index_hashes {path, hash}
@@ -2318,6 +2350,7 @@ fn put_from_literal(
     cols: &[String],
     pk: Option<&str>,
     is_keyed: bool,
+    explicit_table: &str,
     params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
     // Parse `[[a, b, c], [a, b, c], ...]`. We accept either a Rust-style
@@ -2343,7 +2376,15 @@ fn put_from_literal(
             ));
         }
     }
-    let table = infer_table(cols, pk);
+    // Explicit table name wins over column-signature inference — `qualified_name`
+    // is the PK of both embedding_state and embedding_vectors, and per-model
+    // embed tables (`embedding_vectors_<model_id>`) must not resolve to the
+    // legacy table.
+    let table = if !explicit_table.is_empty() {
+        explicit_table.to_string()
+    } else {
+        infer_table(cols, pk)
+    };
     // Resolve the effective PK from the known table catalog when the caller
     // omitted the `=>` marker (Cozo allows `:put t {cols}` on a keyed table
     // — the PK is implied by the table). Without this, a re-`put` of an
@@ -2363,6 +2404,11 @@ fn pk_for_table(table: &str) -> Option<&'static str> {
         "index_hashes" => Some("path"),
         "migrations" => Some("id"),
         "api_keys" => Some("key_hash"),
+        // Per-model embed collections (`embedding_vectors_<model_id>`,
+        // `embedding_state_<model_id>`) share the legacy keyed shape.
+        t if t.starts_with("embedding_state_") || t.starts_with("embedding_vectors_") => {
+            Some("qualified_name")
+        }
         _ => None,
     }
 }
@@ -2524,11 +2570,15 @@ fn build_insert(
     is_keyed: bool,
 ) -> Result<Translation, String> {
     // Cozo names the vector column `vector`; the PG schema.sql uses `vec`.
-    // Map the cozo name to the PG column for the embedding_vectors table.
+    // Map the cozo name to the PG column for the embedding_vectors table and
+    // per-model collections (`embedding_vectors_<model_id>`, table-per-model
+    // migration 002 — same legacy shape, same column rename).
     let pg_cols: Vec<String> = cols
         .iter()
         .map(|c| {
-            if table == "embedding_vectors" && c == "vector" {
+            if (table == "embedding_vectors" || table.starts_with("embedding_vectors_"))
+                && c == "vector"
+            {
                 "vec".to_string()
             } else {
                 c.clone()
@@ -2760,6 +2810,7 @@ fn put_from_batch(
     cols: &[String],
     pk: Option<&str>,
     is_keyed: bool,
+    explicit_table: &str,
 ) -> Result<Translation, String> {
     // `?[cols] <- $batch_data` — caller supplies an array of arrays under
     // the same key.
@@ -2783,7 +2834,11 @@ fn put_from_batch(
             Vec::new(),
         ));
     }
-    let table = infer_table(cols, pk);
+    let table = if !explicit_table.is_empty() {
+        explicit_table.to_string()
+    } else {
+        infer_table(cols, pk)
+    };
     let n_cols = cols.len();
     for (i, r) in rows.iter().enumerate() {
         if r.len() != n_cols {
@@ -3036,6 +3091,14 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
     let trimmed = rest.trim();
     if let Some(after) = trimmed.strip_prefix("drop") {
         let target = after.trim();
+        if let Some(table) = target.strip_suffix(":vec_idx") {
+            let table = table.trim();
+            let index_name = format!("{table}_vec_hnsw_idx");
+            return Ok(Translation::write(
+                format!("DROP INDEX IF EXISTS {index_name}"),
+                Vec::new(),
+            ));
+        }
         if target.starts_with("embedding_vectors") {
             return Ok(Translation::write(
                 "DROP INDEX IF EXISTS embedding_vectors_vec_hnsw_idx".to_string(),
@@ -3045,7 +3108,17 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
         return Ok(Translation::ddl_noop(Vec::new()));
     }
     if let Some(_after) = trimmed.strip_prefix("create") {
-        if trimmed.contains("embedding_vectors") {
+        // Per-model embed tables (`~embedding_vectors_<model_id>:vec_idx`)
+        // and the legacy `embedding_vectors:vec_idx` both map to
+        // `CREATE INDEX ... ON <table> USING hnsw (vec vector_cosine_ops)`.
+        if trimmed.contains(":vec_idx") {
+            // Extract the table from `::hnsw create <table>:vec_idx { ... }`.
+            let start = trimmed
+                .find("create")
+                .map(|i| i + "create".len())
+                .unwrap_or(0);
+            let after_create = trimmed[start..].trim();
+            let table = after_create.split(':').next().map(str::trim);
             // Respect the caller's `m` / `ef_construction` (from
             // LEANKG_HNSW_M / LEANKG_HNSW_EF_CONST, see
             // build_hnsw_create_stmt) instead of silently hardcoding.
@@ -3063,12 +3136,24 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
                     }
                 }
             }
+            if let Some(table) = table {
+                let index_name = format!("{table}_vec_hnsw_idx");
+                return Ok(Translation::write(
+                    format!(
+                        "CREATE INDEX IF NOT EXISTS {index_name} \
+                         ON {table} USING hnsw (vec vector_cosine_ops) \
+                         WITH (m = {m}, ef_construction = {ef})"
+                    ),
+                    Vec::new(),
+                ));
+            }
+        }
+        if trimmed.contains("embedding_vectors") {
             return Ok(Translation::write(
-                format!(
-                    "CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx \
-                     ON embedding_vectors USING hnsw (vec vector_cosine_ops) \
-                     WITH (m = {m}, ef_construction = {ef})"
-                ),
+                "CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx \
+                 ON embedding_vectors USING hnsw (vec vector_cosine_ops) \
+                 WITH (m = 16, ef_construction = 200)"
+                    .to_string(),
                 Vec::new(),
             ));
         }

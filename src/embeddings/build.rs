@@ -35,6 +35,7 @@
 use crate::db::backend::SharedDb;
 use crate::embeddings::{
     models::{DirectEmbedder, Embedder, EMBEDDING_DIM},
+    provider::{create_provider_from_env, provider_kind_from_env, ProviderKind},
     state::{self, EmbeddingStateRow, FreshRow},
     text_blob,
 };
@@ -779,7 +780,44 @@ pub fn run(
         });
     }
 
-    let embedder = Embedder::new()?;
+    // Provider switch (multi-model registry): `LEANKG_EMBED_PROVIDER=openai`
+    // routes embedding through the OpenAI-compatible HTTP client (registry
+    // dim); `local` keeps the ONNX DirectEmbedder (BGE 384-d). Mirrors the
+    // parallel path's `EmbedderBackend` selection so the serial `run()` honors
+    // the active model.
+    let embedder: EmbedderBackend = match provider_kind_from_env()? {
+        ProviderKind::OpenAi => {
+            let p = create_provider_from_env()?;
+            tracing::info!("embed (serial): using remote embed provider ({})", p.name());
+            EmbedderBackend::Remote(p)
+        }
+        ProviderKind::Local => {
+            let use_direct = std::env::var("LEANKG_EMBED_DIRECT")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(true);
+            if use_direct {
+                match DirectEmbedder::with_intra_threads(1) {
+                    Ok(e) => {
+                        tracing::info!("embed (serial): using DirectEmbedder (intra_threads=1)");
+                        EmbedderBackend::Direct(e)
+                    }
+                    Err(e) => {
+                        // Refuse fastembed fallback (ORT seq_len risk) — same
+                        // policy as the parallel path.
+                        return Err(format!(
+                            "serial embed: DirectEmbedder init failed ({e}); \
+                             run `leankg embed --init` or set LEANKG_EMBED_DIRECT=0 \
+                             only if you accept that risk."
+                        )
+                        .into());
+                    }
+                }
+            } else {
+                tracing::warn!("embed (serial): LEANKG_EMBED_DIRECT=0 — using FastEmbedder");
+                EmbedderBackend::Fast(Embedder::new()?)
+            }
+        }
+    };
 
     let max_rss = opts.max_rss_mb_override.unwrap_or(mem.max_rss_mb);
     let use_incr_hnsw = crate::embeddings::control::should_use_incremental_hnsw_puts(
@@ -1204,9 +1242,6 @@ pub fn build_index_parallel(
         let work_items = work_items.clone();
         let embedded_count = embedded_count.clone();
         let handle = std::thread::spawn(move || -> Result<(), String> {
-            use crate::embeddings::provider::{
-                create_provider_from_env, provider_kind_from_env, ProviderKind,
-            };
             // Prefer OpenAI-compatible (or other factory) provider when
             // LEANKG_EMBED_PROVIDER requests it; otherwise keep local ONNX.
             let backend = match provider_kind_from_env().map_err(|e| e.to_string())? {
@@ -1365,6 +1400,12 @@ pub fn build_index_parallel(
     })
 }
 
+/// Active model's vectors relation (`embedding_vectors` for the default
+/// BGE model; `embedding_vectors_<model_id>` otherwise).
+fn active_vectors_relation() -> Result<String, Box<dyn std::error::Error>> {
+    Ok(crate::embeddings::registry::resolve_active_model()?.vectors_relation())
+}
+
 /// Helper: write a batch of (qualified_name, vector) pairs to CozoDB
 /// using `import_relations`. This is significantly faster than the
 /// `:put embedding_vectors {qualified_name => vector}` script path
@@ -1417,7 +1458,8 @@ fn upsert_pairs_to_db(
             rows,
         );
         let mut map = std::collections::BTreeMap::new();
-        map.insert("embedding_vectors".to_string(), named_rows);
+        let vectors_rel = active_vectors_relation()?;
+        map.insert(vectors_rel, named_rows);
         // ponytail: import_relations is a single transaction per call on
         // PostgresBackend (per-row INSERT, batched). Phase 7 upgrades this
         // to COPY when the per-commit overhead dominates on megagraphs.
@@ -1443,6 +1485,7 @@ fn put_pairs_to_db_script(
     pairs: &[(String, Vec<f32>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let chunk_size = effective_upsert_chunk();
+    let vectors_rel = active_vectors_relation()?;
     for chunk in pairs.chunks(chunk_size) {
         let rows: Vec<String> = chunk
             .iter()
@@ -1462,7 +1505,7 @@ fn put_pairs_to_db_script(
         let values_clause = rows.join(", ");
         let query = format!(
             r#"?[qualified_name, vector] <- [{values_clause}]
-               :put embedding_vectors {{qualified_name => vector}}"#
+               :put {vectors_rel} {{qualified_name => vector}}"#
         );
         db.run_script(&query, Default::default())?;
     }
@@ -1509,7 +1552,8 @@ where
             rows,
         );
         let mut map = std::collections::BTreeMap::new();
-        map.insert("embedding_vectors".to_string(), named_rows);
+        let vectors_rel = active_vectors_relation()?;
+        map.insert(vectors_rel, named_rows);
         db.import_relations(map)
             .map_err(|e| -> Box<dyn std::error::Error> {
                 format!("import_relations: {e}").into()
@@ -1529,6 +1573,7 @@ fn remove_vectors(
         return Ok(());
     }
     let chunk_size = effective_upsert_chunk();
+    let vectors_rel = active_vectors_relation()?;
     for chunk in qns.chunks(chunk_size) {
         // Parameterized `:rm` — avoids the inline-literal escaping bug for
         // QNs with `"`/`\`/control chars (see delete_state_rows).
@@ -1538,8 +1583,8 @@ fn remove_vectors(
             .collect();
         let mut params = std::collections::BTreeMap::new();
         params.insert("qns".to_string(), serde_json::Value::Array(rows));
-        let query = r#"?[qualified_name] <- $qns :rm embedding_vectors {qualified_name}"#;
-        db.run_script(query, params)?;
+        let query = format!(r#"?[qualified_name] <- $qns :rm {vectors_rel} {{qualified_name}}"#);
+        db.run_script(&query, params)?;
     }
     Ok(())
 }
@@ -1550,7 +1595,11 @@ fn count_vectors(
     // Aggregate COUNT instead of pulling every QN row (628k+ on workspace-be)
     // into memory just to count. Attribute syntax `*embedding_vectors{qn}`
     // is handled by the translator, but COUNT is far cheaper here.
-    let result = db.run_script("?[count(qn)] := *embedding_vectors[qn]", Default::default())?;
+    let vectors_rel = active_vectors_relation()?;
+    let result = db.run_script(
+        &format!("?[count(qn)] := *{vectors_rel}[qn]"),
+        Default::default(),
+    )?;
     Ok(result
         .rows
         .first()
@@ -1804,7 +1853,10 @@ pub fn spawn_background_embed(
                         let embedded = poller_graph
                             .db()
                             .run_script(
-                                "?[qualified_name] := *embedding_vectors{qualified_name}",
+                                &format!(
+                                    "?[qualified_name] := *{}[qualified_name]",
+                                    active_vectors_relation().unwrap_or_default()
+                                ),
                                 std::collections::BTreeMap::new(),
                             )
                             .map(|r| r.rows.len() as u64)

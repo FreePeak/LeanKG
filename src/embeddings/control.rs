@@ -168,8 +168,9 @@ pub fn embed_resume_preflight(
 pub fn count_embedding_vectors(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    let vectors_rel = crate::embeddings::registry::resolve_active_model()?.vectors_relation();
     let result = db.run_script(
-        "?[qualified_name] := *embedding_vectors{qualified_name}",
+        &format!("?[qualified_name] := *{vectors_rel}[qualified_name]"),
         Default::default(),
     )?;
     Ok(result.rows.len())

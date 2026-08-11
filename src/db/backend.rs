@@ -634,10 +634,12 @@ impl PostgresBackend {
             let cols = named.headers.clone();
             // The legacy cozo name for the vector column is `vector`; the PG
             // schema uses `vec`. Map before emitting SQL / binding values.
+            let is_vectors_table =
+                table == "embedding_vectors" || table.starts_with("embedding_vectors_");
             let cols: Vec<String> = cols
                 .into_iter()
                 .map(|c| {
-                    if table == "embedding_vectors" && c == "vector" {
+                    if is_vectors_table && c == "vector" {
                         "vec".to_string()
                     } else {
                         c
@@ -647,8 +649,10 @@ impl PostgresBackend {
             // Keyed tables (single PK) get the COPY + ON CONFLICT path;
             // non-keyed tables (code_elements, relationships, ...) fall back
             // to multi-row INSERT (they cannot dedupe via a PK).
+            let is_state_table =
+                table == "embedding_state" || table.starts_with("embedding_state_");
             let pk_col = match table.as_str() {
-                "embedding_state" | "embedding_vectors" => Some("qualified_name"),
+                _ if is_vectors_table || is_state_table => Some("qualified_name"),
                 "index_inventory" => Some("key"),
                 "index_hashes" => Some("path"),
                 "migrations" => Some("id"),
