@@ -81,6 +81,23 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// Path prefix rewrite, configured via `LEANKG_PATH_REWRITE=FROM=TO`
+/// (e.g. `/Users/linh.doan/work/be=/app`). Applied to every stored
+/// `file_path` / `qualified_name` so indexes from a Mac host read as the
+/// in-container `/app` paths. Only the leading prefix is replaced; paths that
+/// don't start with FROM are left untouched. No-op when the env var is unset.
+pub fn rewrite_path_for_storage(path: &str) -> String {
+    match std::env::var("LEANKG_PATH_REWRITE") {
+        Ok(raw) => match raw.split_once('=') {
+            Some((from, to)) if !from.trim().is_empty() && path.starts_with(from.trim()) => {
+                format!("{}{}", to.trim(), &path[from.trim().len()..])
+            }
+            _ => path.to_string(),
+        },
+        Err(_) => path.to_string(),
+    }
+}
+
 /// Cache for go.mod module name -> directory mapping
 static GO_MOD_CACHE: OnceLock<std::sync::Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
 
@@ -508,6 +525,14 @@ fn extract_elements_for_file(
     }
     let content = std::fs::read(file_path)?;
     let source = content.as_slice();
+
+    // Rebind to the storage-mapped path so both `file_path` and the
+    // `qualified_name`s derived from it (extractors format
+    // `{file_path}::...`) read as the in-container path. The read above used
+    // the real on-disk path. Kept as `&str` so the `&str`-taking extractor
+    // constructors below borrow it instead of moving a String.
+    let mapped_path = rewrite_path_for_storage(file_path);
+    let file_path: &str = &mapped_path;
 
     if file_path.ends_with(".tf") {
         let extractor = crate::indexer::TerraformExtractor::new(source, file_path);
@@ -1053,6 +1078,12 @@ pub fn index_file_sync(
     }
     let content = std::fs::read(file_path)?;
     let source = content.as_slice();
+
+    // Rebind to the storage-mapped path (LEANKG_PATH_REWRITE); the read above
+    // used the real on-disk path. Kept as `&str` so the `&str`-taking
+    // extractor constructors below borrow it instead of moving a String.
+    let mapped_path = rewrite_path_for_storage(file_path);
+    let file_path: &str = &mapped_path;
 
     if file_path.ends_with(".tf") {
         let extractor = TerraformExtractor::new(source, file_path);
@@ -1858,7 +1889,10 @@ pub fn generate_physical_structure(
     let mut relationships = Vec::new();
     let mut seen_folders = std::collections::HashSet::new();
 
-    let root_name = std::path::Path::new(repo_root)
+    // Storage-mapped absolute path (LEANKG_PATH_REWRITE).
+    let repo_root = rewrite_path_for_storage(repo_root);
+
+    let root_name = std::path::Path::new(&repo_root)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| repo_root.to_string());
@@ -1872,7 +1906,9 @@ pub fn generate_physical_structure(
     });
 
     for file in files {
-        let path = std::path::Path::new(file);
+        // Storage-mapped absolute path (LEANKG_PATH_REWRITE).
+        let file = rewrite_path_for_storage(file);
+        let path = std::path::Path::new(&file);
 
         elements.push(CodeElement {
             qualified_name: file.to_string(),
@@ -2009,6 +2045,9 @@ pub fn extract_rationale_markers(files: &[String]) -> (Vec<CodeElement>, Vec<Rel
             Ok(c) => c,
             Err(_) => continue,
         };
+        // Storage-mapped absolute path (LEANKG_PATH_REWRITE); the read above
+        // used the real on-disk path.
+        let file = rewrite_path_for_storage(file);
         let mut current_function: Option<String> = None;
         let mut in_block_comment = false;
         for (line_idx, line) in content.lines().enumerate() {
@@ -2578,5 +2617,48 @@ fn main() {
         assert!(kinds.contains(&"HACK".to_string()));
         assert!(rels.iter().any(|r| r.rel_type == "explained_by"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_rewrite_path_for_storage_applies_prefix() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("LEANKG_PATH_REWRITE");
+        std::env::set_var("LEANKG_PATH_REWRITE", "/Users/linh.doan/work/be=/app");
+        assert_eq!(
+            rewrite_path_for_storage("/Users/linh.doan/work/be/platform-food/be-x/src/main.go"),
+            "/app/platform-food/be-x/src/main.go"
+        );
+        assert_eq!(rewrite_path_for_storage("/Users/linh.doan/work/be"), "/app");
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_PATH_REWRITE", v),
+            None => std::env::remove_var("LEANKG_PATH_REWRITE"),
+        }
+    }
+
+    #[test]
+    fn test_rewrite_path_for_storage_leaves_other_paths() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("LEANKG_PATH_REWRITE");
+        std::env::set_var("LEANKG_PATH_REWRITE", "/Users/linh.doan/work/be=/app");
+        assert_eq!(rewrite_path_for_storage("/etc/passwd"), "/etc/passwd");
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_PATH_REWRITE", v),
+            None => std::env::remove_var("LEANKG_PATH_REWRITE"),
+        }
+    }
+
+    #[test]
+    fn test_rewrite_path_for_storage_noop_without_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("LEANKG_PATH_REWRITE");
+        std::env::remove_var("LEANKG_PATH_REWRITE");
+        assert_eq!(
+            rewrite_path_for_storage("/Users/linh.doan/work/be/platform-food/be-x/src/main.go"),
+            "/Users/linh.doan/work/be/platform-food/be-x/src/main.go"
+        );
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_PATH_REWRITE", v),
+            None => std::env::remove_var("LEANKG_PATH_REWRITE"),
+        }
     }
 }

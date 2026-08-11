@@ -184,6 +184,10 @@ impl DocIndexer {
             "docs/{}",
             relative_path.display().to_string().replace('\\', "/")
         );
+        // Storage-mapped absolute path (LEANKG_PATH_REWRITE) for the stored
+        // `file_path`; the doc `qualified_name` stays `docs/...` (already
+        // relative to docs_root, no rewrite).
+        let stored_path = crate::indexer::rewrite_path_for_storage(&path.display().to_string());
 
         let category = self.detect_category(path, docs_root);
         let title = self.extract_title(&content).unwrap_or_else(|| {
@@ -199,7 +203,7 @@ impl DocIndexer {
             qualified_name: qualified_name.clone(),
             element_type: "document".to_string(),
             name: title.clone(),
-            file_path: format!("{}", path.display()),
+            file_path: stored_path.clone(),
             line_start: 1,
             line_end: content.lines().count() as u32,
             language: "markdown".to_string(),
@@ -215,7 +219,7 @@ impl DocIndexer {
         };
 
         let (sections, heading_rels) =
-            self.extract_sections(&content, &qualified_name, path, &title);
+            self.extract_sections(&content, &qualified_name, &stored_path, &title);
 
         let code_refs = self.extract_code_references(&content);
         let mut relationships = heading_rels;
@@ -429,7 +433,7 @@ impl DocIndexer {
         &self,
         content: &str,
         doc_qualified: &str,
-        path: &Path,
+        stored_path: &str,
         doc_title: &str,
     ) -> (Vec<CodeElement>, Vec<Relationship>) {
         let mut sections = Vec::new();
@@ -448,7 +452,7 @@ impl DocIndexer {
                         qualified_name: section_qualified.clone(),
                         element_type: "doc_section".to_string(),
                         name: sec_name.to_string(),
-                        file_path: format!("{}", path.display()),
+                        file_path: stored_path.to_string(),
                         line_start: sec_start,
                         line_end: line_num - 1,
                         language: "markdown".to_string(),
@@ -483,7 +487,7 @@ impl DocIndexer {
                 qualified_name: section_qualified.clone(),
                 element_type: "doc_section".to_string(),
                 name: sec_name.to_string(),
-                file_path: format!("{}", path.display()),
+                file_path: stored_path.to_string(),
                 line_start: sec_start,
                 line_end: line_num,
                 language: "markdown".to_string(),
