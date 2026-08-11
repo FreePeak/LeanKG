@@ -182,6 +182,8 @@ impl WorkerCommand {
             } => {
                 #[cfg(feature = "embeddings")]
                 {
+                    // The worker surface doesn't expose the summary flags;
+                    // map to the compat CLI defaults (see cli/mod.rs `Embed`).
                     Ok(CLICommand::Embed {
                         init,
                         full,
@@ -195,6 +197,13 @@ impl WorkerCommand {
                         types,
                         benchmark,
                         no_vectors: false,
+                        summary_primary: "auto".to_string(),
+                        summary_primary_cap: None,
+                        summary_only: "off".to_string(),
+                        dry_run: false,
+                        export_file: None,
+                        import: None,
+                        no_verify: false,
                     })
                 }
                 #[cfg(not(feature = "embeddings"))]

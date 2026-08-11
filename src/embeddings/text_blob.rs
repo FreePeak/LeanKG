@@ -9,18 +9,27 @@
 use crate::db::models::CodeElement;
 use sha2::{Digest, Sha256};
 
-/// Maximum text-blob length in characters before truncation. The embedding
-/// model's hard limit is 512 BPE tokens; ~1500 ASCII characters is a safe
-/// approximation that leaves headroom for tokenization expansion.
+/// Maximum text-blob length in characters before truncation. Under the
+/// default `small` profile the local BGE-small model's hard limit is 512 BPE
+/// tokens and ~1500 ASCII characters is a safe approximation that leaves
+/// headroom for tokenization expansion; big-context profiles
+/// (`LEANKG_EMBED_PROFILE=8k|32k`) raise the default for remote models
+/// (bge-m3 / Qwen3-Embedding) whose windows are 8k/32k tokens.
 ///
 /// Fast path (`LEANKG_EMBED_FAST=1`) defaults to a tighter cap so batches
 /// stay short after `LEANKG_EMBED_MAX_SEQ` — needed for ≥500 vec/s on
-/// Apple Silicon. Override with `LEANKG_EMBED_MAX_BLOB_CHARS`.
+/// Apple Silicon; the fast-path cap only applies to the `small` profile
+/// (big profiles mean a remote provider, where fast mode is irrelevant).
+/// Override with `LEANKG_EMBED_MAX_BLOB_CHARS` (clamped 64..=262144).
 pub fn max_blob_chars() -> usize {
     if let Ok(v) = std::env::var("LEANKG_EMBED_MAX_BLOB_CHARS") {
         if let Ok(n) = v.parse::<usize>() {
-            return n.clamp(64, 8_000);
+            return n.clamp(64, 262_144);
         }
+    }
+    let profile = crate::embeddings::profile::active_profile();
+    if profile != crate::embeddings::profile::EmbedProfile::Small {
+        return profile.blob_chars();
     }
     if crate::embeddings::runtime::embed_fast_enabled() {
         500
@@ -29,6 +38,8 @@ pub fn max_blob_chars() -> usize {
     }
 }
 
+/// Small-profile blob ceiling. Historical constant kept for tests/docs;
+/// big-context profiles exceed it via `EmbedProfile::blob_chars`.
 pub const MAX_BLOB_CHARS: usize = 1500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

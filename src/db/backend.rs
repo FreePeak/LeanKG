@@ -1510,6 +1510,16 @@ fn create_schema_if_missing_sync(schema: &str) -> Result<(), Box<dyn std::error:
         "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public"
     ))?;
     crate::db::pg::migrations::run_migrations(&mut client)?;
+    // FR-EMBED-DIM: a model/dim switch (LEANKG_EMBED_DIM / LEANKG_EMBED_API_DIM)
+    // reconciles the pgvector column width here — wiping derived vectors +
+    // freshness rows — so the next `embed` rebuilds at the new width.
+    if let Some((stored, desired)) = crate::db::pg::migrations::reconcile_vector_dim(&mut client)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?
+    {
+        tracing::warn!(
+            "embedding vector dim changed {stored} -> {desired}; vector store wiped (re-embed required)"
+        );
+    }
     client.batch_execute(&format!("SET search_path TO {schema}, public"))?;
     Ok(())
 }

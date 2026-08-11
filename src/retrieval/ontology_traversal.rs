@@ -1200,8 +1200,8 @@ mod tests {
     /// rule; the summary node just makes those paths fire in practice.
     #[test]
     fn file_summary_seed_traverses_to_member_functions() {
+        use crate::db::backend::init_db;
         use crate::db::models::Relationship;
-        use crate::db::schema::init_db;
 
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let db = init_db(&tmp.path().join("summary.db")).expect("init_db");
@@ -1265,8 +1265,14 @@ mod tests {
     /// removal from UPPER_TYPES.
     #[test]
     fn file_and_module_are_upper_types() {
-        assert!(is_upper_type("file"), "file must be an upper type (FR-EMBED-SUMMARY)");
-        assert!(is_upper_type("module"), "module must be an upper type (FR-EMBED-SUMMARY)");
+        assert!(
+            is_upper_type("file"),
+            "file must be an upper type (FR-EMBED-SUMMARY)"
+        );
+        assert!(
+            is_upper_type("module"),
+            "module must be an upper type (FR-EMBED-SUMMARY)"
+        );
         // And their downward rule must use `contains`.
         let file_rule = downward_rule_for("file");
         assert!(file_rule.edge_types.contains(&"contains"));

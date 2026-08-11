@@ -89,7 +89,7 @@ impl EmbedderBackend {
 /// and longer tail latency if the run crashes mid-flush.
 const DEFAULT_UPSERT_CHUNK: usize = 5000;
 
-fn effective_upsert_chunk() -> usize {
+pub(crate) fn effective_upsert_chunk() -> usize {
     std::env::var("LEANKG_EMBED_UPSERT_CHUNK")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -495,11 +495,7 @@ fn element_passes_type_filter(el: &crate::db::models::CodeElement, opts: &BuildO
 /// True if the file is large enough to be summary-only under summary-primary.
 /// Falls back to the element's own `line_end` when the file isn't in the
 /// pre-computed cache (e.g. the cache wasn't populated for a tiny run).
-fn file_exceeds_summary_cap(
-    file_path: &str,
-    element_line_end: u32,
-    opts: &BuildOptions,
-) -> bool {
+fn file_exceeds_summary_cap(file_path: &str, element_line_end: u32, opts: &BuildOptions) -> bool {
     let cached = opts.file_size_cache.get(file_path).copied();
     let effective = cached.unwrap_or(element_line_end);
     effective > opts.summary_primary_file_cap
@@ -524,7 +520,7 @@ const INCREMENTAL_POINT_LOOKUP_CAP: usize = 2_000;
 /// single paginated scan of `code_elements` (FR-EMBED-SUMMARY). The cache
 /// backs the summary-primary gate so we don't re-scan per element. No-op
 /// (and cheap) when summary-primary is disabled.
-fn populate_file_size_cache(
+pub(crate) fn populate_file_size_cache(
     graph: &GraphEngine,
     opts: &mut BuildOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -586,7 +582,7 @@ fn populate_file_size_cache(
 /// Avoids mega `all_elements` / full pagination just to skip fresh rows
 /// when the dirty set is small. Large dirty / cold rebuilds use one
 /// paginated walk keyed by the stale QN set.
-fn collect_incremental_dirty_work(
+pub(crate) fn collect_incremental_dirty_work(
     graph: &GraphEngine,
     opts: &BuildOptions,
 ) -> Result<(Vec<WorkItem>, Vec<EmbeddingStateRow>, usize), Box<dyn std::error::Error>> {
@@ -688,7 +684,7 @@ fn collect_incremental_dirty_work(
 }
 
 /// Full (or non-incremental) collect — paginated on mega-graphs.
-fn collect_work_items(
+pub(crate) fn collect_work_items(
     graph: &GraphEngine,
     opts: &BuildOptions,
 ) -> Result<Vec<WorkItem>, Box<dyn std::error::Error>> {
@@ -1646,7 +1642,7 @@ fn active_vectors_relation() -> Result<String, Box<dyn std::error::Error>> {
 /// (~371k functions-only) jumped from ~85 vec/sec (parameterized
 /// `:put`) to ~700 vec/sec with `import_relations` — about 8× — which
 /// brings cold embed from ~73 min to ~9 min on the same workspace.
-fn upsert_pairs_to_db(
+pub(crate) fn upsert_pairs_to_db(
     db: &dyn crate::db::backend::DbBackend,
     pairs: &[(String, Vec<f32>)],
     hnsw_live: bool,
@@ -1816,7 +1812,7 @@ fn remove_vectors(
     Ok(())
 }
 
-fn count_vectors(
+pub(crate) fn count_vectors(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // Aggregate COUNT instead of pulling every QN row (628k+ on workspace-be)
@@ -2286,9 +2282,9 @@ unsafe fn libc_kill_compat(pid: u64, sig: i32) -> i32 {
 
 #[derive(Clone)]
 pub(crate) struct WorkItem {
-    qualified_name: String,
-    blob: String,
-    current_hash: String,
+    pub(crate) qualified_name: String,
+    pub(crate) blob: String,
+    pub(crate) current_hash: String,
 }
 
 pub const EMBEDDING_DIM_CONST: usize = EMBEDDING_DIM;
@@ -2935,8 +2931,7 @@ mod tests {
         let mut opts = BuildOptions::default();
         opts.summary_primary_enabled = true;
         opts.summary_primary_file_cap = 500;
-        opts.file_size_cache
-            .insert("src/huge.rs".to_string(), 1200);
+        opts.file_size_cache.insert("src/huge.rs".to_string(), 1200);
         let el = fn_element("src/huge.rs", 1190);
         assert!(
             !element_passes_type_filter(&el, &opts),

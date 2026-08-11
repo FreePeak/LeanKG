@@ -29,6 +29,7 @@ pub mod android_workmanager;
 pub mod call_graph;
 pub mod config_extractor;
 pub mod coroutine_dispatcher;
+pub mod file_summary;
 pub mod framework_detector;
 pub mod gradle_extractor;
 pub mod gradle_module_extractor;
@@ -37,7 +38,6 @@ pub mod kotlin_utils;
 pub mod lang;
 pub mod maven_extractor;
 pub mod viewmodel_repository;
-pub mod file_summary;
 pub mod xml_generic;
 pub mod xml_layout;
 

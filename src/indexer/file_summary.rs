@@ -24,30 +24,56 @@
 //! retrieval changes.
 //!
 //! ## Token budget
-//! [`FILE_SUMMARY_MAX_CHARS`] caps the composed TOC at ~400 characters to
-//! fit the BGE-small-en-v1.5 fast-path (`LEANKG_EMBED_FAST=1` pins
-//! `max_seq=128`; ~400 ASCII chars ≈ 100–120 BPE tokens, leaving headroom
-//! for the qualified_name line that the blob builder prepends).
+//! [`file_summary_max_chars`] caps the composed TOC — default 400 characters
+//! under the `small` embedding profile to fit the BGE-small-en-v1.5 fast-path
+//! (`LEANKG_EMBED_FAST=1` pins `max_seq=128`; ~400 ASCII chars ≈ 100–120 BPE
+//! tokens, leaving headroom for the qualified_name line that the blob builder
+//! prepends). Big-context profiles (`LEANKG_EMBED_PROFILE=8k|32k`, for remote
+//! bge-m3 / Qwen3-Embedding providers) raise the default to 4000/16000 chars
+//! and widen the TOC item caps — `LEANKG_EMBED_SUMMARY_CHARS` always wins.
 //!
 //! See `docs/prd.md` § "Summary-node embedding (FR-EMBED-SUMMARY)".
 
 use crate::db::models::{CodeElement, Relationship};
 
 /// Maximum length (in characters) of the composed `summary` field stored in
-/// a summary node's metadata. Sized to fit the 128-token fast-path budget
-/// after the blob builder prepends the qualified name. Override with
-/// `LEANKG_EMBED_SUMMARY_CHARS` (clamped 120–1500).
+/// a summary node's metadata. Default comes from the active
+/// [`crate::embeddings::profile::EmbedProfile`] (`small` = 400, sized to fit
+/// the 128-token fast-path budget after the blob builder prepends the
+/// qualified name; big-context profiles widen it for 8k/32k-token remote
+/// models). Override with `LEANKG_EMBED_SUMMARY_CHARS` (clamped 120–65536).
 pub fn file_summary_max_chars() -> usize {
     if let Ok(v) = std::env::var("LEANKG_EMBED_SUMMARY_CHARS") {
         if let Ok(n) = v.parse::<usize>() {
-            return n.clamp(120, 1500);
+            return n.clamp(120, 65_536);
         }
     }
-    400
+    crate::embeddings::profile::active_profile().summary_chars()
+}
+
+/// TOC item caps (exported types, function signatures) from the active
+/// embedding profile.
+fn toc_type_sig_caps() -> (usize, usize) {
+    let (t, s, _) = crate::embeddings::profile::active_profile().toc_item_caps();
+    (t, s)
+}
+
+/// Module TOC member-file cap from the active embedding profile.
+fn toc_file_cap() -> usize {
+    let (_, _, f) = crate::embeddings::profile::active_profile().toc_item_caps();
+    f
 }
 
 /// Element types we treat as exported "type" declarations for the TOC.
-const TYPE_ELEMENTS: &[&str] = &["class", "struct", "interface", "trait", "enum", "record", "union"];
+const TYPE_ELEMENTS: &[&str] = &[
+    "class",
+    "struct",
+    "interface",
+    "trait",
+    "enum",
+    "record",
+    "union",
+];
 
 /// Element types we treat as function-like for the TOC.
 const FUNCTION_ELEMENTS: &[&str] = &["function", "method", "constructor"];
@@ -125,10 +151,7 @@ pub fn build_file_summary(
 /// 5. Filler counts (`"N functions, M types"`)
 ///
 /// Returns `(summary_string, fn_count, type_count, line_count)`.
-fn compose_toc(
-    file_path: &str,
-    elements: &[&CodeElement],
-) -> (String, usize, usize, Option<u32>) {
+fn compose_toc(file_path: &str, elements: &[&CodeElement]) -> (String, usize, usize, Option<u32>) {
     compose_toc_with_cap(file_path, elements, file_summary_max_chars())
 }
 
@@ -144,6 +167,7 @@ fn compose_toc_with_cap(
     let mut fn_count = 0usize;
     let mut type_count = 0usize;
     let mut max_line: Option<u32> = None;
+    let (type_cap, sig_cap) = toc_type_sig_caps();
 
     // Section 1: file path (always).
     push_section(&mut line, cap, file_path);
@@ -164,12 +188,12 @@ fn compose_toc_with_cap(
             }
         } else if TYPE_ELEMENTS.contains(&et) {
             type_count += 1;
-            if !el.name.is_empty() && types.len() < 24 {
+            if !el.name.is_empty() && types.len() < type_cap {
                 types.push(el.name.as_str());
             }
         } else if FUNCTION_ELEMENTS.contains(&et) {
             fn_count += 1;
-            if func_sigs.len() < 24 {
+            if func_sigs.len() < sig_cap {
                 if let Some(sig) = short_signature(el) {
                     func_sigs.push(sig);
                 } else if !el.name.is_empty() {
@@ -376,15 +400,26 @@ pub fn build_module_summary(
     let mut total_fn = 0usize;
     let mut total_types = 0usize;
     for fs in file_summaries {
-        let t = fs.metadata.get("type_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        let f = fs.metadata.get("fn_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let t = fs
+            .metadata
+            .get("type_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let f = fs
+            .metadata
+            .get("fn_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
         total_types += t;
         total_fn += f;
     }
 
     // Re-scan each file summary's sibling elements is not possible here (we
     // only have the summary nodes), so the module TOC lists file basenames
-    // + counts — still far richer than an empty module blob.
+    // + counts — still far richer than an empty module blob. The member-file
+    // list cap scales with the embedding profile (16 under `small`; big-
+    // context models can carry denser module TOCs).
+    let file_cap = toc_file_cap();
     let mut files: Vec<String> = Vec::new();
     for fs in file_summaries {
         let basename = std::path::Path::new(&fs.file_path)
@@ -395,14 +430,18 @@ pub fn build_module_summary(
         if !files.contains(&basename) {
             files.push(basename);
         }
-        if files.len() >= 16 {
+        if files.len() >= file_cap {
             break;
         }
     }
     if !files.is_empty() {
         push_section(&mut line, cap, &format!("files: {}", files.join(", ")));
     }
-    push_section(&mut line, cap, &format!("{total_fn} functions, {total_types} types"));
+    push_section(
+        &mut line,
+        cap,
+        &format!("{total_fn} functions, {total_types} types"),
+    );
 
     let first = file_summaries.first()?;
     let qn = format!("{}::module::{}", first.file_path, module_name);
@@ -489,7 +528,10 @@ mod tests {
 
     #[test]
     fn collapses_multiline_signature_to_first_line() {
-        assert_eq!(collapse_signature("pub fn x(\n  a: i32,\n) -> i32 {"), "pub fn x(");
+        assert_eq!(
+            collapse_signature("pub fn x(\n  a: i32,\n) -> i32 {"),
+            "pub fn x("
+        );
         assert_eq!(collapse_signature("fn y() => 1"), "fn y()");
         assert_eq!(collapse_signature("  fn z()  "), "fn z()");
     }
@@ -510,7 +552,10 @@ mod tests {
         assert_eq!(summary.qualified_name, file);
         assert_eq!(summary.element_type, "file");
         assert_eq!(summary.name, "main.rs");
-        assert!(summary.metadata["summary"].as_str().unwrap().contains("fn main()"));
+        assert!(summary.metadata["summary"]
+            .as_str()
+            .unwrap()
+            .contains("fn main()"));
         assert_eq!(summary.metadata["fn_count"].as_u64().unwrap(), 1);
         assert_eq!(summary.metadata["summary_kind"].as_str().unwrap(), "toc");
     }
@@ -518,12 +563,16 @@ mod tests {
     #[test]
     fn build_file_summary_creates_new_node_when_none_exists() {
         let file = "lib.go";
-        let fns: Vec<CodeElement> = vec![fn_el("Handle", "func Handle(w http.ResponseWriter)", file)];
+        let fns: Vec<CodeElement> =
+            vec![fn_el("Handle", "func Handle(w http.ResponseWriter)", file)];
         let refs: Vec<&CodeElement> = fns.iter().collect();
         let summary = build_file_summary(file, "go", &refs, None);
         assert_eq!(summary.qualified_name, file);
         assert_eq!(summary.element_type, "file");
-        assert!(summary.metadata["summary"].as_str().unwrap().contains("Handle"));
+        assert!(summary.metadata["summary"]
+            .as_str()
+            .unwrap()
+            .contains("Handle"));
     }
 
     #[test]
@@ -548,7 +597,12 @@ mod tests {
     fn build_module_summary_aggregates_files() {
         let file = "pkg/handler.rs";
         let fs1 = build_file_summary(file, "rust", &[&fn_el("get", "fn get()", file)], None);
-        let fs2 = build_file_summary("pkg/post.rs", "rust", &[&fn_el("post", "fn post()", "pkg/post.rs")], None);
+        let fs2 = build_file_summary(
+            "pkg/post.rs",
+            "rust",
+            &[&fn_el("post", "fn post()", "pkg/post.rs")],
+            None,
+        );
         let refs: Vec<&CodeElement> = vec![&fs1, &fs2];
         let module = build_module_summary("handler", "rust", &refs).unwrap();
         assert_eq!(module.element_type, "module");

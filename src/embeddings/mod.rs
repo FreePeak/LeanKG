@@ -15,8 +15,11 @@
 //!
 //! See `EMBEDDINGS.md` in this directory for the module architecture.
 
+pub mod profile;
 pub mod provider;
 pub mod registry;
+
+pub use profile::{active_profile, EmbedProfile};
 
 #[cfg(feature = "embeddings")]
 pub mod build;
@@ -24,6 +27,8 @@ pub mod build;
 pub mod control;
 #[cfg(feature = "embeddings")]
 pub mod models;
+#[cfg(feature = "embeddings")]
+pub mod offsite;
 #[cfg(feature = "embeddings")]
 pub mod runtime;
 #[cfg(feature = "embeddings")]
@@ -67,6 +72,12 @@ pub use models::{
 };
 #[cfg(feature = "embeddings")]
 #[allow(unused_imports)]
+pub use offsite::{
+    export_work_items, import_vectors, ExportReport, ImportReport, ImportRow, MetaLine,
+    META_FORMAT_EXPORT, META_FORMAT_IMPORT, META_VERSION,
+};
+#[cfg(feature = "embeddings")]
+#[allow(unused_imports)]
 pub use runtime::{
     embed_fast_enabled, ensure_quantized_onnx, quantized_onnx_available, resolve_embed_runtime,
     EmbedRuntimePlan,
@@ -82,9 +93,10 @@ pub use state::{
 #[allow(unused_imports)]
 pub use text_blob::{build_blob, classify, BlobKind, PERF_TYPE_PRESET};
 
+#[allow(unused_imports)]
 pub use provider::{
     create_provider_from_env, create_provider_from_env_with_dim, embed_query,
-    provider_kind_from_env, validate_provider, EmbedError, EmbedProvider, FakeEmbedProvider,
+    provider_kind_from_env, validate_provider, vec_dim, EmbedError, EmbedProvider, FakeEmbedProvider,
     OpenAiCompatibleProvider, ProviderKind, VEC_DIM,
 };
 
