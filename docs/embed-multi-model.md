@@ -28,7 +28,7 @@ LEANKG_EMBED_API_* ─────────┤  resolve at embed + query time
         ┌───────────────────┴────────────────────┐
         ▼                                       ▼
 LocalOnnxProvider                         OpenAiCompatibleProvider
-(ONNX, 384-d only)                        (POST /v1/embeddings, any dim)
+(ONNX, 384-d only)                        (POST /embeddings, any dim)
         │                                       │
         ▼                                       ▼
  embedding_vectors                embedding_vectors_<model_id>
@@ -50,6 +50,14 @@ without touching any other collection.
 | `bge-small-en-v1.5-384` (default) | local ONNX | `bge-small-en-v1.5` | 384 | `embedding_vectors` (legacy) | `embedding_state` (legacy) |
 | `qwen3-emb-4b-2560` | openai | `Qwen/Qwen3-Embedding-4B` | 2560 | `embedding_vectors_qwen3_emb_4b_2560` | `embedding_state_qwen3_emb_4b_2560` |
 | `jina-embeddings-v3-1024` | openai | `jina-embeddings-v3` | 1024 | `embedding_vectors_jina_embeddings_v3_1024` | `embedding_state_jina_embeddings_v3_1024` |
+| `gemini-embedding-2-3072` | openai | `gemini-embedding-2` | 3072 | `embedding_vectors_gemini_embedding_2_3072` | `embedding_state_gemini_embedding_2_3072` |
+| `gemini-embedding-001-3072` | openai | `gemini-embedding-001` | 3072 | `embedding_vectors_gemini_embedding_001_3072` | `embedding_state_gemini_embedding_001_3072` |
+
+Gemini entries use **3072-d** because that is Google's default output
+dimensionality — the OpenAI-compatible `/embeddings` call carries no
+`output_dimensionality`, so the registry dim must match what Google returns.
+`gemini-embedding-2` supports 128–3072 (recommended 768/1536/3072); register a
+new model_id (e.g. `gemini-embedding-2-768`) if you want a smaller collection.
 
 The default BGE model keeps the legacy `embedding_vectors` / `embedding_state`
 names for backward compatibility; other models get `<table>_<model_id>` with
@@ -69,9 +77,9 @@ registry is a config error.
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `LEANKG_EMBED_PROVIDER` | `local` | `local` (or `onnx`) / `openai` (or `api`, `openai-compatible`). Overrides the registry entry's provider kind |
-| `LEANKG_EMBED_API_BASE_URL` | — | Base URL of the OpenAI-compatible server (required for `openai`) |
+| `LEANKG_EMBED_API_BASE_URL` | — | Versioned API root (required for `openai`). `/embeddings` is appended — pass `https://api.openai.com/v1`, `https://api.jina.ai/v1`, or Google's `https://generativelanguage.googleapis.com/v1beta/openai` (no `/v1` segment there) |
 | `LEANKG_EMBED_API_KEY` | — | Bearer token (required for `openai`) |
-| `LEANKG_EMBED_API_MODEL` | `bge-small-en-v1.5` | Model name sent in the `/v1/embeddings` body |
+| `LEANKG_EMBED_API_MODEL` | `bge-small-en-v1.5` | Model name sent in the `/embeddings` body |
 | `LEANKG_EMBED_API_DIM` | registry dim | Expected vector length; response mismatches are an error |
 
 ### Local ONNX tuning
@@ -113,7 +121,7 @@ cargo run --release --features embeddings -- embed --wait --project /path/to/rep
 
 ### OpenAI-compatible API (TEI / Jina / Voyage / Cohere, self-hosted)
 
-Any server speaking `POST /v1/embeddings` works — a self-hosted TEI serving
+Any server speaking `POST /embeddings` works — a self-hosted TEI serving
 `Qwen/Qwen3-Embedding-4B`, or a hosted free API (see
 `docs/embed-model-switch-smoke.md` for the option table).
 
@@ -137,23 +145,41 @@ export LEANKG_EMBED_API_KEY="$JINA_API_KEY"
 export LEANKG_EMBED_API_MODEL=jina-embeddings-v3
 ```
 
+### Google Gemini (free tier)
+
+Use Google's OpenAI-compatible endpoint. The base URL includes the
+`v1beta/openai` version prefix (there is **no** `/v1` segment), and the
+registry dim is 3072 (Google's default output dimensionality):
+
+```bash
+export LEANKG_EMBED_ACTIVE_MODEL=gemini-embedding-2-3072
+export LEANKG_EMBED_PROVIDER=openai
+export LEANKG_EMBED_API_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+export LEANKG_EMBED_API_KEY="$GOOGLE_EMBEDING"   # Gemini API key from AI Studio
+export LEANKG_EMBED_API_MODEL=gemini-embedding-2
+```
+
+`gemini-embedding-001-3072` is the text-only alternative. Both are covered by
+`tests/gemini_live_test.rs` (skips unless `GOOGLE_EMBEDING` is set).
+
 Query-time embedding uses the same env: `semantic-context` /
 `kg_semantic_context` embed the query with the active model and ANN-query the
 active collection.
 
 ## Migration notes
 
-Postgres migration `002_multi_model_embed` (registered in
-`src/db/pg/migrations.rs`, applied by `leankg migrate` or automatically on
-writer `init_db`) creates:
+Postgres migration `002_multi_model_embed` plus `003_gemini_embed`
+(registered in `src/db/pg/migrations.rs`, applied by `leankg migrate` or
+automatically on writer `init_db`) creates:
 
-- `embedding_models` — registry table, seeded with the three built-in entries
-  (`ON CONFLICT DO NOTHING`).
+- `embedding_models` — registry table, seeded with the built-in entries
+  (`ON CONFLICT DO NOTHING`); `003` adds the two Gemini 3072-d entries.
 - `embedding_active` — `scope` / `model_id` pointer, seeded to
   `bge-small-en-v1.5-384`.
 - Per-model vector + state tables with HNSW indexes for the non-legacy
   models (`embedding_vectors_qwen3_emb_4b_2560`, `embedding_state_qwen3_emb_4b_2560`,
-  and the jina pair), so each dim is backed by its own `vector(n)` column.
+  the jina pair, and the two `gemini_embedding_*_3072` pairs), so each dim is
+  backed by its own `vector(n)` column.
 
 Legacy single-model installs stay on `embedding_vectors` /
 `embedding_state` (BGE 384-d), which are the default model's tables — no

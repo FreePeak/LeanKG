@@ -91,6 +91,26 @@ pub fn builtin_registry() -> HashMap<String, EmbeddingModelEntry> {
             distance: "cosine".to_string(),
         },
     );
+    m.insert(
+        "gemini-embedding-2-3072".to_string(),
+        EmbeddingModelEntry {
+            model_id: "gemini-embedding-2-3072".to_string(),
+            provider: RegistryProviderKind::OpenAi,
+            model_name: "gemini-embedding-2".to_string(),
+            dimensions: 3072,
+            distance: "cosine".to_string(),
+        },
+    );
+    m.insert(
+        "gemini-embedding-001-3072".to_string(),
+        EmbeddingModelEntry {
+            model_id: "gemini-embedding-001-3072".to_string(),
+            provider: RegistryProviderKind::OpenAi,
+            model_name: "gemini-embedding-001".to_string(),
+            dimensions: 3072,
+            distance: "cosine".to_string(),
+        },
+    );
     m
 }
 
@@ -234,6 +254,30 @@ mod tests {
         assert_eq!(entry.vectors_relation(), LEGACY_VECTORS_RELATION);
         assert_eq!(entry.state_relation(), LEGACY_STATE_RELATION);
         assert_eq!(entry.hnsw_index_relation(), "embedding_vectors:vec_idx");
+    }
+
+    #[test]
+    fn gemini_entries_resolve_with_3072_and_table_names() {
+        let gem2 = lookup_model("gemini-embedding-2-3072").expect("gemini-2 entry");
+        assert_eq!(gem2.provider, RegistryProviderKind::OpenAi);
+        assert_eq!(gem2.dimensions, 3072);
+        assert_eq!(gem2.model_name, "gemini-embedding-2");
+        assert_eq!(
+            gem2.vectors_relation(),
+            "embedding_vectors_gemini_embedding_2_3072"
+        );
+        assert_eq!(
+            gem2.state_relation(),
+            "embedding_state_gemini_embedding_2_3072"
+        );
+
+        let gem1 = lookup_model("gemini-embedding-001-3072").expect("gemini-001 entry");
+        assert_eq!(gem1.dimensions, 3072);
+        assert_eq!(gem1.model_name, "gemini-embedding-001");
+        assert_eq!(
+            gem1.vectors_relation(),
+            "embedding_vectors_gemini_embedding_001_3072"
+        );
     }
 
     #[test]

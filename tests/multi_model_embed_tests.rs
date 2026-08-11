@@ -5,7 +5,7 @@
 //!    `embedding_vectors` / `embedding_state` tables.
 //! 2. Remote OpenAI-compatible qwen3-emb-4b-2560 embeds into its OWN
 //!    `embedding_vectors_qwen3_emb_4b_2560` collection, against a mock
-//!    `POST /v1/embeddings` TCP stub (mirrors provider.rs unit test).
+//!    `POST /embeddings` TCP stub (mirrors provider.rs unit test).
 //! 3. Switching active model A → B → A preserves both collections' counts
 //!    (the CLI smoke script scripts/smoke-embed-model-switch.sh semantics).
 //!
@@ -100,12 +100,14 @@ fn seed_state(db: &dyn leankg::db::backend::DbBackend, qns: &[&str]) {
     upsert_fresh(db, &rows).expect("upsert_fresh");
 }
 
-/// Mock OpenAI-compatible `/v1/embeddings` TCP stub on an ephemeral port.
+/// Mock OpenAI-compatible `/embeddings` TCP stub on an ephemeral port.
 /// Accepts `connections` requests, verifying each, and replies with a JSON
 /// body whose embedding has EXACTLY `dim` floats. Mirrors the in-process
 /// one-shot stub in provider.rs
 /// (`openai_compatible_provider_posts_and_parses_vectors`), extended to
-/// serve repeated embed_batch calls.
+/// serve repeated embed_batch calls. The base URL is a bare origin; the
+/// provider appends `/embeddings` (no `/v1` segment — the version prefix is
+/// part of the base, e.g. `https://api.openai.com/v1`).
 fn mock_embeddings_server(dim: usize, connections: usize) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().unwrap();
@@ -116,7 +118,7 @@ fn mock_embeddings_server(dim: usize, connections: usize) -> (String, std::threa
             let n = stream.read(&mut buf).expect("read request");
             let req = String::from_utf8_lossy(&buf[..n]);
             assert!(
-                req.contains("POST /v1/embeddings"),
+                req.contains("POST /embeddings"),
                 "expected embeddings path, got: {req}"
             );
             assert!(req.contains("Bearer sk-test"), "missing auth: {req}");
@@ -178,6 +180,28 @@ fn registry_sanitize_model_id_for_table() {
         leankg::embeddings::registry::sanitize_model_id_for_table("qwen3-emb-4b-2560"),
         "qwen3_emb_4b_2560"
     );
+}
+
+/// Gemini entries resolve to 3072-d OpenAI-compatible collections (Google's
+/// default output dim — the provider sends no `output_dimensionality`).
+#[test]
+fn registry_gemini_entries_resolve_with_3072() {
+    for (model_id, model_name) in [
+        ("gemini-embedding-2-3072", "gemini-embedding-2"),
+        ("gemini-embedding-001-3072", "gemini-embedding-001"),
+    ] {
+        let entry = lookup_model(model_id).expect("gemini entry resolves");
+        assert_eq!(entry.dimensions, 3072);
+        assert_eq!(entry.model_name, model_name);
+        assert_eq!(
+            entry.provider,
+            leankg::embeddings::registry::RegistryProviderKind::OpenAi
+        );
+        assert_eq!(
+            entry.vectors_relation(),
+            leankg::embeddings::registry::vectors_relation_for_model_id(model_id)
+        );
+    }
 }
 
 /// OpenAI provider against the mock stub: 2560-d provider, 2560-vector back.
