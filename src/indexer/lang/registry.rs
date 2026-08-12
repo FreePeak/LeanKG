@@ -1662,6 +1662,26 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
         grammar: Some(|| tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     },
     LanguageSpec {
+        // The plain "typescript" grammar (LANGUAGE_TYPESCRIPT) cannot parse
+        // JSX syntax (`<Foo>...`), so .tsx/.jsx files need the TSX grammar
+        // variant. Previously .tsx/.jsx had no LanguageSpec entry at all
+        // (not even routed to a parser), so every such file silently
+        // produced zero extracted elements regardless of project config.
+        name: "tsx",
+        extensions: &["tsx", "jsx"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["function_definition", "function_declaration"],
+            classes: &["class_declaration"],
+            interfaces: &["interface_declaration"],
+            properties: EMPTY,
+            imports: &["import_statement"],
+            calls: &["call_expression"],
+        },
+        grammar: Some(|| tree_sitter_typescript::LANGUAGE_TSX.into()),
+    },
+    LanguageSpec {
         name: "go",
         extensions: &["go"],
         config_files: EMPTY,
