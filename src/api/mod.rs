@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 pub mod auth;
+pub mod auth_handlers;
 pub mod handlers;
 
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use std::net::SocketAddr;
@@ -130,11 +131,36 @@ pub async fn start_api_server(
         .route("/api/v2/incidents", get(handlers::api_v2_incidents))
         .route("/api/v2/env/diff", get(handlers::api_v2_env_diff))
         .route("/api/v2/health", get(handlers::api_v2_health))
+        // OAuth2-style access-token auth endpoints.
+        .route("/api/v1/auth/register", post(auth_handlers::register))
+        .route("/api/v1/auth/login", post(auth_handlers::login))
+        .route("/api/v1/auth/token", post(auth_handlers::issue_token))
+        .route("/api/v1/auth/token", get(auth_handlers::list_tokens))
+        .route(
+            "/api/v1/auth/token/revoke",
+            post(auth_handlers::revoke_token),
+        )
+        .route("/api/v1/auth/org", post(auth_handlers::create_org))
+        .route(
+            "/api/v1/auth/org/{org_id}/member",
+            post(auth_handlers::add_org_member),
+        )
+        .route(
+            "/api/v1/auth/org/{org_id}/members",
+            get(auth_handlers::list_org_members),
+        )
+        .route(
+            "/api/v1/auth/resource/claim",
+            post(auth_handlers::claim_resource),
+        )
         .layer(cors)
         .with_state(state);
 
     if require_auth {
-        println!("API auth enabled (X-LeanKG-Token + team tokens)");
+        println!(
+            "API auth enabled: /api/v1/auth/* registration + access-token endpoints, \
+             protected routes require `Authorization: Bearer <access_token>`"
+        );
     } else {
         println!("Warning: Auth not enforced, starting without auth");
     }

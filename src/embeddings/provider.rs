@@ -97,7 +97,13 @@ impl EmbedProvider for FakeEmbedProvider {
     }
 }
 
-/// OpenAI-compatible `/v1/embeddings` HTTP client (blocking).
+/// OpenAI-compatible `/embeddings` HTTP client (blocking).
+///
+/// `base_url` is the versioned API root, e.g. `https://api.openai.com/v1`,
+/// `https://api.jina.ai/v1`, or Google's Gemini OpenAI-compat endpoint
+/// `https://generativelanguage.googleapis.com/v1beta/openai`. The embeddings
+/// path is appended (`/embeddings`), so the version prefix must already be in
+/// `base_url` — Google's compat layer has no `/v1` segment.
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatibleProvider {
     base_url: String,
@@ -108,6 +114,19 @@ pub struct OpenAiCompatibleProvider {
 }
 
 impl OpenAiCompatibleProvider {
+    /// Normalize `base_url` and append the embeddings path. Accepts either a
+    /// versioned root (`.../v1`) or a full `/v1/embeddings` / `/embeddings`
+    /// URL; always returns the URL that serves embeddings for this base.
+    pub fn embeddings_url(base_url: &str) -> String {
+        let trimmed = base_url.trim_end_matches('/');
+        for suffix in ["/v1/embeddings", "/embeddings"] {
+            if trimmed.ends_with(suffix) {
+                return trimmed.to_string();
+            }
+        }
+        format!("{trimmed}/embeddings")
+    }
+
     pub fn new(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -119,7 +138,7 @@ impl OpenAiCompatibleProvider {
             .build()
             .map_err(|e| EmbedError::Http(e.to_string()))?;
         Ok(Self {
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            base_url: Self::embeddings_url(&base_url.into()),
             api_key: api_key.into(),
             model: model.into(),
             dimensions,
@@ -141,14 +160,14 @@ impl EmbedProvider for OpenAiCompatibleProvider {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let url = format!("{}/v1/embeddings", self.base_url);
+        let url = self.base_url.as_str();
         let body = serde_json::json!({
             "input": texts,
             "model": self.model,
         });
         let resp = self
             .http
-            .post(&url)
+            .post(url)
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
@@ -201,6 +220,7 @@ struct OpenAiEmbeddingData {
 #[cfg(feature = "embeddings")]
 pub struct LocalOnnxProvider {
     backend: LocalBackend,
+    dimensions: usize,
 }
 
 #[cfg(feature = "embeddings")]
@@ -213,7 +233,18 @@ enum LocalBackend {
 impl LocalOnnxProvider {
     /// Prefer DirectEmbedder; fall back to fastembed Embedder when
     /// `LEANKG_EMBED_DIRECT=0`.
-    pub fn new() -> Result<Self, EmbedError> {
+    ///
+    /// `expected_dim` comes from the registry; the local ONNX backend only
+    /// supports the BGE 384-d model, so other dims must use an
+    /// OpenAI-compatible provider.
+    pub fn new(expected_dim: usize) -> Result<Self, EmbedError> {
+        if expected_dim != super::models::EMBEDDING_DIM {
+            return Err(EmbedError::Config(format!(
+                "local ONNX provider supports dim={} only (active model requested {expected_dim}); \
+                 use an OpenAI-compatible provider for other dims",
+                super::models::EMBEDDING_DIM
+            )));
+        }
         let use_direct = std::env::var("LEANKG_EMBED_DIRECT")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(true);
@@ -227,6 +258,7 @@ impl LocalOnnxProvider {
                 Ok(e) => {
                     return Ok(Self {
                         backend: LocalBackend::Direct(e),
+                        dimensions: expected_dim,
                     });
                 }
                 Err(e) => {
@@ -240,6 +272,7 @@ impl LocalOnnxProvider {
         let fast = super::models::Embedder::new().map_err(|e| EmbedError::Other(e.to_string()))?;
         Ok(Self {
             backend: LocalBackend::Fast(fast),
+            dimensions: expected_dim,
         })
     }
 }
@@ -251,7 +284,7 @@ impl EmbedProvider for LocalOnnxProvider {
     }
 
     fn dimensions(&self) -> usize {
-        VEC_DIM
+        self.dimensions
     }
 
     fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
@@ -286,34 +319,36 @@ pub enum ProviderKind {
     OpenAi,
 }
 
-/// Build a provider from env.
-///
-/// Env:
-/// - `LEANKG_EMBED_PROVIDER` — `local` (default) or `openai`
-/// - `LEANKG_EMBED_API_BASE_URL` — required for openai (e.g. `http://127.0.0.1:8080`)
-/// - `LEANKG_EMBED_API_KEY` — required for openai
-/// - `LEANKG_EMBED_API_MODEL` — optional (default `bge-small-en-v1.5`)
-/// - `LEANKG_EMBED_API_DIM` — optional (default [`VEC_DIM`])
+/// Build a provider from env + active model registry (dim from registry).
 pub fn create_provider_from_env() -> Result<Arc<dyn EmbedProvider>, EmbedError> {
-    match provider_kind_from_env()? {
-        ProviderKind::Local => create_local_provider(),
+    super::registry::create_provider_for_active_model()
+}
+
+/// Build a provider for an explicit kind, validating against the registry dim.
+pub fn create_provider_from_env_with_dim(
+    kind: ProviderKind,
+    expected_dim: usize,
+) -> Result<Arc<dyn EmbedProvider>, EmbedError> {
+    match kind {
+        ProviderKind::Local => create_local_provider(expected_dim),
         ProviderKind::OpenAi => {
-            let provider = openai_provider_from_env()?;
-            validate_provider(provider.as_ref(), VEC_DIM)?;
+            let provider = openai_provider_from_env(expected_dim)?;
+            validate_provider(provider.as_ref(), expected_dim)?;
             Ok(provider)
         }
     }
 }
 
-fn create_local_provider() -> Result<Arc<dyn EmbedProvider>, EmbedError> {
+fn create_local_provider(expected_dim: usize) -> Result<Arc<dyn EmbedProvider>, EmbedError> {
     #[cfg(feature = "embeddings")]
     {
-        let p = LocalOnnxProvider::new()?;
-        validate_provider(&p, VEC_DIM)?;
+        let p = LocalOnnxProvider::new(expected_dim)?;
+        validate_provider(&p, expected_dim)?;
         Ok(Arc::new(p))
     }
     #[cfg(not(feature = "embeddings"))]
     {
+        let _ = expected_dim;
         Err(EmbedError::Config(
             "LEANKG_EMBED_PROVIDER=local requires the `embeddings` cargo feature \
              (or set LEANKG_EMBED_PROVIDER=openai with LEANKG_EMBED_API_*)"
@@ -322,7 +357,7 @@ fn create_local_provider() -> Result<Arc<dyn EmbedProvider>, EmbedError> {
     }
 }
 
-fn openai_provider_from_env() -> Result<Arc<dyn EmbedProvider>, EmbedError> {
+fn openai_provider_from_env(expected_dim: usize) -> Result<Arc<dyn EmbedProvider>, EmbedError> {
     let base_url = std::env::var("LEANKG_EMBED_API_BASE_URL").map_err(|_| {
         EmbedError::Config(
             "LEANKG_EMBED_API_BASE_URL is required when LEANKG_EMBED_PROVIDER=openai".into(),
@@ -343,7 +378,7 @@ fn openai_provider_from_env() -> Result<Arc<dyn EmbedProvider>, EmbedError> {
     let dimensions = std::env::var("LEANKG_EMBED_API_DIM")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(VEC_DIM);
+        .unwrap_or(expected_dim);
     let p = OpenAiCompatibleProvider::new(base_url, api_key, model, dimensions)?;
     Ok(Arc::new(p))
 }
@@ -384,6 +419,48 @@ mod tests {
     }
 
     #[test]
+    fn embeddings_url_appends_path_to_versioned_root() {
+        assert_eq!(
+            OpenAiCompatibleProvider::embeddings_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1/embeddings"
+        );
+        assert_eq!(
+            OpenAiCompatibleProvider::embeddings_url("https://api.jina.ai/v1"),
+            "https://api.jina.ai/v1/embeddings"
+        );
+    }
+
+    #[test]
+    fn embeddings_url_supports_google_openai_compat_base() {
+        // Google's compat layer has no `/v1` segment — the version prefix is
+        // `v1beta/openai` and the embeddings path appends directly.
+        assert_eq!(
+            OpenAiCompatibleProvider::embeddings_url(
+                "https://generativelanguage.googleapis.com/v1beta/openai"
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/openai/embeddings"
+        );
+    }
+
+    #[test]
+    fn embeddings_url_is_idempotent_and_normalizes_trailing_slash() {
+        for url in [
+            "https://api.openai.com/v1/",
+            "https://api.openai.com/v1/embeddings",
+            "https://api.openai.com/v1/embeddings/",
+        ] {
+            assert_eq!(
+                OpenAiCompatibleProvider::embeddings_url(url),
+                "https://api.openai.com/v1/embeddings"
+            );
+        }
+        assert_eq!(
+            OpenAiCompatibleProvider::embeddings_url("https://example.com/embeddings"),
+            "https://example.com/embeddings"
+        );
+    }
+
+    #[test]
     fn fake_provider_embed_batch_returns_384() {
         let fake = FakeEmbedProvider::new(VEC_DIM);
         validate_provider(&fake, VEC_DIM).expect("384-dim ok");
@@ -404,7 +481,7 @@ mod tests {
             let n = stream.read(&mut buf).unwrap();
             let req = String::from_utf8_lossy(&buf[..n]);
             assert!(
-                req.contains("POST /v1/embeddings"),
+                req.contains("POST /embeddings"),
                 "expected embeddings path, got: {req}"
             );
             assert!(req.contains("Bearer test-key"), "missing auth: {req}");
@@ -477,6 +554,55 @@ mod tests {
     }
 
     #[test]
+    fn gemini_openai_compat_posts_to_embeddings_path_and_parses_3072() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]);
+            // Google's OpenAI-compat base has no `/v1` segment.
+            assert!(
+                req.contains("POST /embeddings"),
+                "expected /embeddings path, got: {req}"
+            );
+            assert!(req.contains("Bearer test-key"), "missing auth: {req}");
+            assert!(
+                req.contains("\"gemini-embedding-2\""),
+                "missing model: {req}"
+            );
+
+            let embedding: Vec<f32> = (0..3072).map(|i| (i as f32 * 0.001) % 1.0).collect();
+            let body = serde_json::json!({
+                "data": [{ "embedding": embedding, "index": 0 }]
+            });
+            let body_str = body.to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body_str.len(),
+                body_str
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+        });
+
+        let provider = OpenAiCompatibleProvider::new(
+            format!("http://{addr}"),
+            "test-key",
+            "gemini-embedding-2",
+            3072,
+        )
+        .unwrap();
+        validate_provider(&provider, 3072).unwrap();
+        let vecs = provider
+            .embed_batch(&[String::from("hello")])
+            .expect("embed_batch");
+        assert_eq!(vecs.len(), 1);
+        assert_eq!(vecs[0].len(), 3072);
+        handle.join().unwrap();
+    }
+
+    #[test]
     fn factory_defaults_to_local_when_unset() {
         let _g = env_lock();
         std::env::remove_var("LEANKG_EMBED_PROVIDER");
@@ -517,6 +643,28 @@ mod tests {
             msg.contains("LEANKG_EMBED_API_KEY"),
             "expected key error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn fake_provider_accepts_registry_dim_not_only_384() {
+        let fake = FakeEmbedProvider::new(2560);
+        validate_provider(&fake, 2560).expect("2560-dim ok");
+    }
+
+    #[test]
+    fn factory_selects_openai_from_env_with_registry_dim() {
+        let _g = env_lock();
+        std::env::set_var("LEANKG_EMBED_PROVIDER", "openai");
+        std::env::set_var("LEANKG_EMBED_API_BASE_URL", "http://127.0.0.1:9");
+        std::env::set_var("LEANKG_EMBED_API_KEY", "sk-test");
+        std::env::remove_var("LEANKG_EMBED_ACTIVE_MODEL");
+        let result = create_provider_from_env();
+        std::env::remove_var("LEANKG_EMBED_PROVIDER");
+        std::env::remove_var("LEANKG_EMBED_API_BASE_URL");
+        std::env::remove_var("LEANKG_EMBED_API_KEY");
+        let p = result.expect("openai factory");
+        assert_eq!(p.name(), "openai");
+        assert_eq!(p.dimensions(), VEC_DIM);
     }
 
     #[test]

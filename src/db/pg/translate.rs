@@ -334,8 +334,9 @@ fn read_script(
     };
     let head = parse_head(head)?;
 
-    // ANN: `~embedding_vectors:vec_idx { ... }` (H1).
-    if rest.contains("~embedding_vectors") {
+    // ANN: `~<vectors_relation>:vec_idx { ... }` (H1). Any relation ending in
+    // `:vec_idx` is an ANN probe — per-model embed tables included.
+    if rest.contains(":vec_idx") {
         return ann_translation(rest, &head, params);
     }
 
@@ -2011,6 +2012,8 @@ const JSONB_COLUMNS: &[&str] = &[
     "elements_by_type_json",
     "relationships_by_type_json",
     "vectors_by_type_json",
+    // Auth tables (004_auth): access_tokens.scopes is JSONB.
+    "scopes",
 ];
 
 /// Render a column reference for a string operator (`LIKE`/`~`), casting
@@ -2097,6 +2100,21 @@ fn render_value_or_param(
 // ANN (H1 — `~embedding_vectors:vec_idx`).
 // ---------------------------------------------------------------------------
 
+fn ann_vectors_table(rest: &str) -> Result<String, String> {
+    let tilde = rest
+        .find('~')
+        .ok_or_else(|| "ANN query missing ~relation:vec_idx".to_string())?;
+    let after = &rest[tilde + 1..];
+    let brace = after
+        .find('{')
+        .ok_or_else(|| "ANN query missing '{' after relation".to_string())?;
+    let rel = after[..brace].trim();
+    let table = rel
+        .strip_suffix(":vec_idx")
+        .ok_or_else(|| format!("ANN relation must end with :vec_idx, got {rel}"))?;
+    Ok(table.to_string())
+}
+
 fn ann_translation(
     rest: &str,
     head: &[String],
@@ -2119,6 +2137,10 @@ fn ann_translation(
         .get(1)
         .cloned()
         .unwrap_or_else(|| "qualified_name".to_string());
+    // Per-model embed tables target the `~<vectors_relation>:vec_idx` ANN —
+    // extract the table from the relation instead of hardcoding the legacy
+    // `embedding_vectors` name.
+    let vectors_table = ann_vectors_table(rest)?;
 
     // Distance note: cozo HNSW returns cosine distance; pgvector `<->` is L2
     // distance. On unit vectors the orders are identical (both monotone
@@ -2126,11 +2148,12 @@ fn ann_translation(
     // need a cosine-distance value should compute `(d*d)/2.0` themselves.
     let sql = format!(
         "SELECT vec <-> $1::text::vector AS {dist_col}, {qn_col} \
-         FROM embedding_vectors \
+         FROM {vectors_table} \
          ORDER BY vec <-> $1::text::vector \
          LIMIT $2::int8",
         dist_col = quote_ident(&dist_col),
         qn_col = quote_ident(&qn_col),
+        vectors_table = quote_ident(&vectors_table),
     );
     let used: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(vec_literal), Box::new(k as i64)];
     let gucs = ef
@@ -2193,8 +2216,12 @@ fn put_script(
     // the left side of an arrow in a follow-up clause).
     // Strip the table-name prefix (everything before the first `{`), and
     // any trailing `<- $args` arrow (CH2 — `:put table {cols} <- $args`).
+    // Keep the explicit table name (the prefix before `{`) — per-model
+    // embed tables (`embedding_vectors_<model_id>`) must not fall back to
+    // column-signature inference, which always resolves to `embedding_vectors`.
     let target = target.split("<-").next().unwrap_or(target).trim();
     let brace_open = target.find('{').unwrap_or(0);
+    let explicit_table = target[..brace_open].trim();
     let tail = &target[brace_open..];
     let inner = tail.trim_start_matches('{').trim_end_matches('}').trim();
     let (cols, pk) = parse_put_target(inner)?;
@@ -2213,14 +2240,21 @@ fn put_script(
             .split_once("<-")
             .map(|(_, r)| r.trim())
             .ok_or_else(|| "missing <- in :put".to_string())?;
-        return put_from_literal(after_arrow, &cols, pk.as_deref(), is_keyed, params);
+        return put_from_literal(
+            after_arrow,
+            &cols,
+            pk.as_deref(),
+            is_keyed,
+            explicit_table,
+            params,
+        );
     }
     if let Some(name) = source.strip_prefix('$') {
         // `?[cols] <- $batch_data` — caller passes a Vec<Vec<serde_json::Value>>
         // under that key. We can't represent UNNEST generically here
         // (caller-typed), so fail with a clear message.
         let v = params.get(name).cloned();
-        return put_from_batch(name, v, &cols, pk.as_deref(), is_keyed);
+        return put_from_batch(name, v, &cols, pk.as_deref(), is_keyed, explicit_table);
     }
     // `:put table {cols} <- $args` — the source is the whole rule body
     // (CH2 — content_hash.rs save_hashes: `:put index_hashes {path, hash}
@@ -2318,6 +2352,7 @@ fn put_from_literal(
     cols: &[String],
     pk: Option<&str>,
     is_keyed: bool,
+    explicit_table: &str,
     params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
     // Parse `[[a, b, c], [a, b, c], ...]`. We accept either a Rust-style
@@ -2343,7 +2378,15 @@ fn put_from_literal(
             ));
         }
     }
-    let table = infer_table(cols, pk);
+    // Explicit table name wins over column-signature inference — `qualified_name`
+    // is the PK of both embedding_state and embedding_vectors, and per-model
+    // embed tables (`embedding_vectors_<model_id>`) must not resolve to the
+    // legacy table.
+    let table = if !explicit_table.is_empty() {
+        explicit_table.to_string()
+    } else {
+        infer_table(cols, pk)
+    };
     // Resolve the effective PK from the known table catalog when the caller
     // omitted the `=>` marker (Cozo allows `:put t {cols}` on a keyed table
     // — the PK is implied by the table). Without this, a re-`put` of an
@@ -2363,6 +2406,19 @@ fn pk_for_table(table: &str) -> Option<&'static str> {
         "index_hashes" => Some("path"),
         "migrations" => Some("id"),
         "api_keys" => Some("key_hash"),
+        // Auth tables (004_auth): keyed by id for Cozo `:put` upsert.
+        "accounts" => Some("id"),
+        "orgs" => Some("id"),
+        "access_tokens" => Some("id"),
+        // Composite keys: two members of one org/team are distinct rows, so
+        // the conflict target must cover both columns.
+        "org_memberships" => Some("org_id, account_id"),
+        "team_members" => Some("team_id, account_id"),
+        // Per-model embed collections (`embedding_vectors_<model_id>`,
+        // `embedding_state_<model_id>`) share the legacy keyed shape.
+        t if t.starts_with("embedding_state_") || t.starts_with("embedding_vectors_") => {
+            Some("qualified_name")
+        }
         _ => None,
     }
 }
@@ -2524,11 +2580,15 @@ fn build_insert(
     is_keyed: bool,
 ) -> Result<Translation, String> {
     // Cozo names the vector column `vector`; the PG schema.sql uses `vec`.
-    // Map the cozo name to the PG column for the embedding_vectors table.
+    // Map the cozo name to the PG column for the embedding_vectors table and
+    // per-model collections (`embedding_vectors_<model_id>`, table-per-model
+    // migration 002 — same legacy shape, same column rename).
     let pg_cols: Vec<String> = cols
         .iter()
         .map(|c| {
-            if table == "embedding_vectors" && c == "vector" {
+            if (table == "embedding_vectors" || table.starts_with("embedding_vectors_"))
+                && c == "vector"
+            {
                 "vec".to_string()
             } else {
                 c.clone()
@@ -2612,7 +2672,11 @@ fn build_insert(
                     | "total_doc_sections"
                     | "estimated_vector_bytes"
                     | "estimated_hnsw_bytes"
-                    | "usearch_key" => "::bigint",
+                    | "usearch_key"
+                    // Auth tables (004_auth): epoch columns are BIGINT.
+                    | "joined_at"
+                    | "revoked_at"
+                    | "last_used_at" => "::bigint",
                     "savings_percent" | "f1_score" | "confidence" => "::float8",
                     "success" | "is_deleted" | "accepted" => "::bool",
                     c if JSONB_COLUMNS.contains(&c) => "::jsonb",
@@ -2644,9 +2708,14 @@ fn build_insert(
                 // value type must match it — otherwise the postgres crate
                 // fails with "error serializing parameter N" and the server
                 // rejects text-typed NULL into bigint columns (E42804).
-                let typed_none: Box<dyn postgres::types::ToSql + Send + Sync> = match pg_cols[j]
-                    .as_str()
-                {
+                let typed_none: Box<dyn postgres::types::ToSql + Send + Sync> =
+                    if is_api_keys_text_ts {
+                        // api_keys timestamps are TEXT columns (schema.sql keeps
+                        // epoch strings) — NULL must bind as Option::<String> to
+                        // match the `::text` placeholder cast (mirrors null_cast).
+                        Box::new(Option::<String>::None)
+                    } else {
+                        match pg_cols[j].as_str() {
                     c if JSONB_COLUMNS.contains(&c) => Box::new(Option::<serde_json::Value>::None),
                     "savings_percent" | "f1_score" | "confidence" => Box::new(Option::<f64>::None),
                     "success" | "is_deleted" | "accepted" => Box::new(Option::<bool>::None),
@@ -2678,9 +2747,14 @@ fn build_insert(
                     | "total_doc_sections"
                     | "estimated_vector_bytes"
                     | "estimated_hnsw_bytes"
-                    | "usearch_key" => Box::new(Option::<i64>::None),
+                    | "usearch_key"
+                    // Auth tables (004_auth): epoch columns are BIGINT.
+                    | "joined_at"
+                    | "revoked_at"
+                    | "last_used_at" => Box::new(Option::<i64>::None),
                     _ => Box::new(Option::<String>::None),
-                };
+                    }
+                    };
                 all_params.push(typed_none);
             } else {
                 all_params.push(json_to_pg(v.clone()));
@@ -2689,12 +2763,22 @@ fn build_insert(
         values_sql.push(')');
     }
     let sql = match (is_keyed, pk) {
-        (true, Some(pk_str)) => format!(
-            "INSERT INTO {table} ({col_sql}) VALUES {values_sql} \
-             ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
-            pk = quote_ident(pk_str),
-            update_set = update_set_clause(&pg_cols, pk_str),
-        ),
+        (true, Some(pk_str)) => {
+            // Composite PKs come in as `org_id, account_id` — quote each
+            // column separately (a single quote_ident would make it one
+            // literal identifier `"org_id, account_id"`).
+            let pk_sql = pk_str
+                .split(", ")
+                .map(quote_ident)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "INSERT INTO {table} ({col_sql}) VALUES {values_sql} \
+                 ON CONFLICT ({pk}) DO UPDATE SET {update_set}",
+                pk = pk_sql,
+                update_set = update_set_clause(&pg_cols, pk_str),
+            )
+        }
         _ => format!("INSERT INTO {table} ({col_sql}) VALUES {values_sql}"),
     };
     let gucs = embedding_gucs_for(table);
@@ -2705,30 +2789,23 @@ fn build_insert(
     })
 }
 
-/// Translate-time GUC plumbing: per-statement `SET LOCAL` values needed for
-/// the `embedding_vectors` / `embedding_state` writer path to mirror the
-/// per-:put HNSW knob the cozo backend took via `::hnsw create` at index
-/// build time. Cozo embedded `m` / `ef_construction` into the index; pgvector
-/// stores them with the index but accepts session overrides on insert for
-/// tuning. `LEANKG_HNSW_EF_CONST` (default 20) keeps parity with the cozo
-/// builder; absent, no GUC is emitted (uses the index's stored value).
-pub fn embedding_gucs_for(table: &str) -> Vec<(String, String)> {
-    if table != "embedding_vectors" {
-        return Vec::new();
-    }
-    let ef = std::env::var("LEANKG_HNSW_EF_CONST")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .filter(|n| (1..=2000).contains(n));
-    match ef {
-        Some(n) => vec![("hnsw.ef_construction".to_string(), n.to_string())],
-        None => Vec::new(),
-    }
+/// Translate-time GUC plumbing for the `embedding_vectors` / `embedding_state`
+/// writer path. Nothing to set here: `hnsw.ef_construction` is a
+/// `CREATE INDEX ... WITH (...)` parameter, not a runtime GUC on pgvector
+/// 0.8.x. Emitting `SET LOCAL hnsw.ef_construction = 'N'` aborts the write
+/// transaction with `invalid configuration parameter name`. The index-time
+/// knob lives in `build_hnsw_create_stmt` (src/embeddings/state.rs), which
+/// reads `LEANKG_HNSW_EF_CONST` for the DDL; the writer must not re-emit it.
+pub fn embedding_gucs_for(_table: &str) -> Vec<(String, String)> {
+    Vec::new()
 }
 
 fn update_set_clause(cols: &[String], pk: &str) -> String {
+    // Composite PKs (`org_id, account_id`) name several columns; none of them
+    // belong in the SET list.
+    let pk_cols: Vec<&str> = pk.split(", ").collect();
     cols.iter()
-        .filter(|c| c.as_str() != pk)
+        .filter(|c| !pk_cols.contains(&c.as_str()))
         .map(|c| format!("{} = EXCLUDED.{}", quote_ident(c), quote_ident(c)))
         .collect::<Vec<_>>()
         .join(", ")
@@ -2760,6 +2837,7 @@ fn put_from_batch(
     cols: &[String],
     pk: Option<&str>,
     is_keyed: bool,
+    explicit_table: &str,
 ) -> Result<Translation, String> {
     // `?[cols] <- $batch_data` — caller supplies an array of arrays under
     // the same key.
@@ -2783,7 +2861,11 @@ fn put_from_batch(
             Vec::new(),
         ));
     }
-    let table = infer_table(cols, pk);
+    let table = if !explicit_table.is_empty() {
+        explicit_table.to_string()
+    } else {
+        infer_table(cols, pk)
+    };
     let n_cols = cols.len();
     for (i, r) in rows.iter().enumerate() {
         if r.len() != n_cols {
@@ -3036,6 +3118,14 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
     let trimmed = rest.trim();
     if let Some(after) = trimmed.strip_prefix("drop") {
         let target = after.trim();
+        if let Some(table) = target.strip_suffix(":vec_idx") {
+            let table = table.trim();
+            let index_name = format!("{table}_vec_hnsw_idx");
+            return Ok(Translation::write(
+                format!("DROP INDEX IF EXISTS {index_name}"),
+                Vec::new(),
+            ));
+        }
         if target.starts_with("embedding_vectors") {
             return Ok(Translation::write(
                 "DROP INDEX IF EXISTS embedding_vectors_vec_hnsw_idx".to_string(),
@@ -3045,7 +3135,17 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
         return Ok(Translation::ddl_noop(Vec::new()));
     }
     if let Some(_after) = trimmed.strip_prefix("create") {
-        if trimmed.contains("embedding_vectors") {
+        // Per-model embed tables (`~embedding_vectors_<model_id>:vec_idx`)
+        // and the legacy `embedding_vectors:vec_idx` both map to
+        // `CREATE INDEX ... ON <table> USING hnsw (vec vector_cosine_ops)`.
+        if trimmed.contains(":vec_idx") {
+            // Extract the table from `::hnsw create <table>:vec_idx { ... }`.
+            let start = trimmed
+                .find("create")
+                .map(|i| i + "create".len())
+                .unwrap_or(0);
+            let after_create = trimmed[start..].trim();
+            let table = after_create.split(':').next().map(str::trim);
             // Respect the caller's `m` / `ef_construction` (from
             // LEANKG_HNSW_M / LEANKG_HNSW_EF_CONST, see
             // build_hnsw_create_stmt) instead of silently hardcoding.
@@ -3063,12 +3163,24 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
                     }
                 }
             }
+            if let Some(table) = table {
+                let index_name = format!("{table}_vec_hnsw_idx");
+                return Ok(Translation::write(
+                    format!(
+                        "CREATE INDEX IF NOT EXISTS {index_name} \
+                         ON {table} USING hnsw (vec vector_cosine_ops) \
+                         WITH (m = {m}, ef_construction = {ef})"
+                    ),
+                    Vec::new(),
+                ));
+            }
+        }
+        if trimmed.contains("embedding_vectors") {
             return Ok(Translation::write(
-                format!(
-                    "CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx \
-                     ON embedding_vectors USING hnsw (vec vector_cosine_ops) \
-                     WITH (m = {m}, ef_construction = {ef})"
-                ),
+                "CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx \
+                 ON embedding_vectors USING hnsw (vec vector_cosine_ops) \
+                 WITH (m = 16, ef_construction = 200)"
+                    .to_string(),
                 Vec::new(),
             ));
         }
@@ -3743,18 +3855,16 @@ mod tests {
         assert!(t.gucs.is_empty(), "missing ef: must not emit GUC");
     }
 
-    // Phase 4 plumbing: `embedding_vectors` upsert emits a
-    // `hnsw.ef_construction` GUC when LEANKG_HNSW_EF_CONST is set and
-    // valid; no GUC otherwise (the index's stored value wins).
+    // Phase 4 plumbing: `embedding_vectors` upsert must NEVER emit a
+    // `hnsw.ef_construction` GUC. `hnsw.ef_construction` is a
+    // `CREATE INDEX ... WITH (...)` parameter, not a runtime GUC on pgvector
+    // 0.8.x — `SET LOCAL hnsw.ef_construction` aborts the write tx with
+    // `invalid configuration parameter name`. The DDL knob stays in
+    // `build_hnsw_create_stmt`.
     #[test]
-    fn embedding_vectors_upsert_emits_ef_construction_when_set() {
-        // The literal-list `:put embedding_vectors` path bypasses the
-        // translator on the bulk vector literal (`vec(...)` is not JSON,
-        // so `parse_nested_lists` would reject it). Today the writer
-        // reaches the GUC path through `DbBackend::import_relations`,
-        // whose bulk path emits `INSERT ... ON CONFLICT (qualified_name)
-        // DO UPDATE` via `build_insert`. We exercise the same GUC hook
-        // directly by simulating the table/cols/pk the writer hands in.
+    fn embedding_vectors_upsert_never_emits_ef_construction_guc() {
+        // Setting LEANKG_HNSW_EF_CONST must not change the translator's
+        // output: the env var is read only by the index-time DDL builder.
         let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
         std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
         let gucs = embedding_gucs_for("embedding_vectors");
@@ -3762,9 +3872,9 @@ mod tests {
             Some(v) => std::env::set_var("LEANKG_HNSW_EF_CONST", v),
             None => std::env::remove_var("LEANKG_HNSW_EF_CONST"),
         }
-        assert_eq!(
-            gucs,
-            vec![("hnsw.ef_construction".to_string(), "100".to_string())]
+        assert!(
+            gucs.is_empty(),
+            "ef_construction is a CREATE INDEX WITH param, never a runtime GUC"
         );
     }
 
@@ -3782,8 +3892,8 @@ mod tests {
 
     #[test]
     fn embedding_state_upsert_does_not_emit_guc() {
-        // Only the embedding_vectors path tunes HNSW; embedding_state is a
-        // plain upsert and must not produce per-statement GUCs.
+        // No upsert path tunes HNSW at runtime anymore (ef_construction is a
+        // CREATE INDEX WITH param); embedding_state must never emit GUCs.
         let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
         std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
         let gucs = embedding_gucs_for("embedding_state");
@@ -4015,6 +4125,29 @@ fn put_embedding_vectors_maps_vector_to_vec() {
         t.sql.contains("\"vec\" = EXCLUDED.\"vec\""),
         "got: {}",
         t.sql
+    );
+}
+
+#[test]
+fn put_embedding_vectors_never_emits_gucs_even_when_env_set() {
+    // hnsw.ef_construction is a CREATE INDEX WITH param, not a runtime GUC;
+    // the translated write must carry no SET LOCAL even when the env knob
+    // that feeds the index DDL is present.
+    let prev = std::env::var_os("LEANKG_HNSW_EF_CONST");
+    std::env::set_var("LEANKG_HNSW_EF_CONST", "100");
+    let t = translate(
+        r#"?[qualified_name, vector] <- [["a", vec([1.0, 0.0, 0.0])]] :put embedding_vectors {qualified_name => vector}"#,
+        BTreeMap::new(),
+    )
+    .unwrap();
+    match prev {
+        Some(v) => std::env::set_var("LEANKG_HNSW_EF_CONST", v),
+        None => std::env::remove_var("LEANKG_HNSW_EF_CONST"),
+    }
+    assert!(
+        t.gucs.is_empty(),
+        "no runtime GUCs allowed on embedding_vectors writes: {:?}",
+        t.gucs
     );
 }
 

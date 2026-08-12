@@ -85,6 +85,7 @@ impl Scratch {
     fn rw_backend(&self) -> std::sync::Arc<PostgresBackend> {
         std::sync::Arc::new(PostgresBackend {
             pg_url: self.rw_url.clone(),
+            schema: Some(self.name.clone()),
             pool: std::sync::Arc::new(ClientPool::new(2)),
             ro_pool: std::sync::Arc::new(ClientPool::new(2)),
             read_only: false,

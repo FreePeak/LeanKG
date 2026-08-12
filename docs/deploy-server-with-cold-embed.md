@@ -92,9 +92,9 @@ services:
       # LEANKG_EMBED_API_KEY: ${LEANKG_EMBED_API_KEY}
       # LEANKG_EMBED_API_MODEL: text-embedding-3-small
       # LEANKG_EMBED_API_DIM: "384"   # must equal VEC_DIM
-      LEANKG_EMBED_FAST: "1"
-      LEANKG_EMBED_MODEL: bge-q
-      LEANKG_EMBED_MAX_SEQ: "128"
+      # Quality default: FP32, full 512-token window. Fast INT8/128-token
+      # is opt-in: LEANKG_EMBED_FAST=1 + LEANKG_EMBED_MODEL=bge-q +
+      # LEANKG_EMBED_MAX_SEQ=128.
       LEANKG_EMBED_MAX_MB: "0"     # unlimited on the worker (separate container)
       LEANKG_INSERT_BATCH_SIZE: "20000"
     volumes:
@@ -124,10 +124,8 @@ services:
       LEANKG_EMBED_AUTO_ARM: "0"
       # Query-time embed of the search string (same provider as worker recommended)
       LEANKG_EMBED_PROVIDER: local
-      LEANKG_EMBED_FAST: "1"
-      LEANKG_EMBED_MODEL: bge-q
-      LEANKG_EMBED_MAX_SEQ: "128"
-      LEANKG_EMBED_MAX_BLOB_CHARS: "500"
+      # Quality default: FP32, full 512-token window. Fast is opt-in via
+      # LEANKG_EMBED_FAST=1 + LEANKG_EMBED_MAX_SEQ=128.
       LEANKG_EMBED_MAX_MB: "512"
       LEANKG_ONTOLOGY_SYNC_ON_BOOT: timeout
       LEANKG_ONTOLOGY_SYNC_TIMEOUT_SECS: "45"

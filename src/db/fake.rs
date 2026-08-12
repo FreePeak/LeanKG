@@ -18,6 +18,27 @@ use super::value::{DataValue, NamedRows, Num};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+/// Primary-key column per relation, mirroring `pg::translate::pk_for_table`
+/// so the fake's `:put` upserts on the same key the PG translator does.
+fn pk_for_table(rel: &str) -> Option<&'static str> {
+    Some(match rel {
+        "embedding_state" | "embedding_vectors" => "qualified_name",
+        "index_inventory" => "key",
+        "index_hashes" => "path",
+        "migrations" => "id",
+        "api_keys" => "key_hash",
+        "accounts" | "orgs" | "access_tokens" => "id",
+        // Composite keys: mirror translate.rs so the fake upserts on the same
+        // columns PG's `ON CONFLICT (org_id, account_id)` targets.
+        "org_memberships" => "org_id, account_id",
+        "team_members" => "team_id, account_id",
+        t if t.starts_with("embedding_state_") || t.starts_with("embedding_vectors_") => {
+            "qualified_name"
+        }
+        _ => return None,
+    })
+}
+
 /// Column order for each relation the fake understands. Mirrors the PG
 /// `schema.sql` / `models.rs` layout for `code_elements`, `relationships`,
 /// and `business_logic`.
@@ -75,6 +96,48 @@ fn table_columns(rel: &str) -> Option<&'static [&'static str]> {
             "embedded_at",
         ],
         "embedding_vectors" => &["qualified_name", "vector"],
+        // Per-model embed collections share the legacy shapes.
+        t if t.starts_with("embedding_state_") => &[
+            "qualified_name",
+            "usearch_key",
+            "content_hash",
+            "state",
+            "embedded_at",
+        ],
+        t if t.starts_with("embedding_vectors_") => &["qualified_name", "vector"],
+        // OAuth2-style auth tables (004_auth).
+        "accounts" => &[
+            "id",
+            "email",
+            "name",
+            "password_hash",
+            "status",
+            "created_at",
+            "updated_at",
+        ],
+        "orgs" => &["id", "name", "owner_account_id", "created_at", "updated_at"],
+        "org_memberships" => &["org_id", "account_id", "role", "joined_at"],
+        "team_members" => &["team_id", "account_id", "role", "joined_at"],
+        "access_tokens" => &[
+            "id",
+            "account_id",
+            "org_id",
+            "token_hash",
+            "name",
+            "role",
+            "scopes",
+            "expires_at",
+            "created_at",
+            "revoked_at",
+            "last_used_at",
+        ],
+        "resource_ownership" => &[
+            "resource_type",
+            "resource_id",
+            "owner_account_id",
+            "org_id",
+            "created_at",
+        ],
         _ => return None,
     })
 }
@@ -252,7 +315,30 @@ impl FakeBackend {
         match op {
             ":put" | ":replace" => {
                 let rows = extract_write_rows(source, &rel, &rest.cols, params)?;
-                self.append_rows(&rel, rows);
+                // Upsert semantics: a `:put` on a known-PK table replaces the
+                // row with the same PK (PG `ON CONFLICT ... DO UPDATE`).
+                if let Some(pk) = pk_for_table(&rel) {
+                    // Composite PKs are comma-separated (`org_id, account_id`).
+                    let pk_cols: Vec<&str> = pk.split(", ").collect();
+                    let pk_idx: Vec<usize> = pk_cols
+                        .iter()
+                        .map(|c| col_index(&rel, c).unwrap_or(0))
+                        .collect();
+                    let matches_pk = |r: &Vec<DataValue>, row: &Vec<DataValue>| {
+                        pk_idx.iter().all(|&i| {
+                            r.get(i).cloned().unwrap_or(DataValue::Null)
+                                == row.get(i).cloned().unwrap_or(DataValue::Null)
+                        })
+                    };
+                    let mut current = self.rows(&rel);
+                    for row in rows {
+                        current.retain(|r| !matches_pk(r, &row));
+                        current.push(row);
+                    }
+                    self.set_rows(&rel, current);
+                } else {
+                    self.append_rows(&rel, rows);
+                }
             }
             ":rm" | ":delete" => {
                 if rest.cols.is_empty() {
@@ -643,14 +729,20 @@ fn parse_rel_and_cols(after: &str) -> Result<(String, RelCols), Box<dyn std::err
         .split_once(|c: char| c.is_whitespace())
         .map(|(r, rest)| (r.to_string(), rest))
         .unwrap_or_else(|| (after.to_string(), ""));
-    let cols: Vec<String> = rest
-        .trim()
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let inner = rest.trim().trim_start_matches('{').trim_end_matches('}');
+    let cols: Vec<String> = if inner.contains("=>") {
+        inner
+            .split("=>")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        inner
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
     Ok((rel, RelCols { cols }))
 }
 

@@ -6,6 +6,12 @@ use std::collections::BTreeMap;
 
 pub const INVENTORY_KEY_LATEST: &str = "latest";
 
+/// Below this many indexed `file` elements, `inventory_to_json` flags the
+/// index as `corpus_suspicious`. 2500 is far below a healthy monorepo code
+/// tree (tens of thousands of files) but well above a tiny demo / single
+/// crate graph, so legit small installs stay quiet.
+pub const CORPUS_SUSPICIOUS_MIN_FILES: i64 = 2500;
+
 const CREATE_INDEX_INVENTORY: &str = r#":create index_inventory {
     key: String =>
     computed_at: String,
@@ -231,6 +237,20 @@ pub fn load_latest_inventory(
 }
 
 pub fn inventory_to_json(inv: &IndexInventory) -> serde_json::Value {
+    // Corpus-suspicion heuristic: a healthy code index has thousands of
+    // files; when the "file" element type is absent or near-zero while
+    // element types that derive from a single shallow walk are present, the
+    // corpus is a tiny slice of the workspace. Flags the same-day regression
+    // class: an 81k-path monorepo indexed down to a 3.3k collection-service
+    // graph. Agents should not treat such an index as authoritative for
+    // "where is X?" on the wider repo.
+    let files = inv
+        .elements_by_type_json
+        .parse::<serde_json::Value>()
+        .ok()
+        .and_then(|v| v.get("file").and_then(|n| n.as_i64()))
+        .unwrap_or(0);
+    let corpus_suspicious = files > 0 && files < CORPUS_SUSPICIOUS_MIN_FILES;
     serde_json::json!({
         "key": inv.key,
         "computed_at": inv.computed_at,
@@ -239,6 +259,8 @@ pub fn inventory_to_json(inv: &IndexInventory) -> serde_json::Value {
         "total_vectors": inv.total_vectors,
         "total_documents": inv.total_documents,
         "total_doc_sections": inv.total_doc_sections,
+        "files": files,
+        "corpus_suspicious": corpus_suspicious,
         "elements_by_type": serde_json::from_str::<serde_json::Value>(&inv.elements_by_type_json).unwrap_or(serde_json::json!({})),
         "relationships_by_type": serde_json::from_str::<serde_json::Value>(&inv.relationships_by_type_json).unwrap_or(serde_json::json!({})),
         "estimated_vector_bytes": inv.estimated_vector_bytes,
@@ -263,5 +285,37 @@ mod tests {
         let loaded = load_latest_inventory(graph.db()).unwrap().unwrap();
         assert_eq!(loaded.total_elements, 0);
         assert_eq!(loaded.notes, "test");
+    }
+
+    #[test]
+    fn corpus_suspicious_flags_tiny_slice() {
+        // A collection-service slice (tens of files) is far below the
+        // 2500-file threshold — the "81k path monorepo indexed to 3.3k"
+        // regression class. A healthy workspace index stays quiet.
+        let small = IndexInventory {
+            key: "latest".to_string(),
+            computed_at: "0".to_string(),
+            total_elements: 3367,
+            total_relationships: 218698,
+            total_vectors: 1524,
+            total_documents: 0,
+            total_doc_sections: 0,
+            elements_by_type_json: r#"{"file":130,"function":2259,"class":133}"#.to_string(),
+            relationships_by_type_json: "{}".to_string(),
+            vectors_by_type_json: "{}".to_string(),
+            estimated_vector_bytes: 0,
+            estimated_hnsw_bytes: 0,
+            notes: "test".to_string(),
+        };
+        let json = inventory_to_json(&small);
+        assert_eq!(json["files"], 130);
+        assert_eq!(json["corpus_suspicious"], true);
+
+        let healthy = IndexInventory {
+            elements_by_type_json: r#"{"file":90000,"function":200000}"#.to_string(),
+            ..small
+        };
+        let healthy_json = inventory_to_json(&healthy);
+        assert_eq!(healthy_json["corpus_suspicious"], false);
     }
 }

@@ -3,10 +3,11 @@
 //! MCP handler to hand off to the traversal stage.
 //!
 //! **FR-HNSW-B (v3.6.2)**: this pipeline is the canonical ANN path.
-//! `~embedding_vectors:vec_idx` (CozoDB native HNSW) is the only semantic
-//! index — there is no second ANN stack for discovery. Any caller that
-//! needs "find similar X by meaning" must construct a
-//! [`SemanticRetrievalPipeline`] and call [`SemanticRetrievalPipeline::retrieve`].
+//! `~<active_vectors_relation>:vec_idx` (CozoDB native HNSW, default
+//! `embedding_vectors:vec_idx`) is the only semantic index — there is no
+//! second ANN stack for discovery. Any caller that needs "find similar X by
+//! meaning" must construct a [`SemanticRetrievalPipeline`] and call
+//! [`SemanticRetrievalPipeline::retrieve`].
 
 use crate::db::backend::DataValue;
 use crate::db::backend::SharedDb;
@@ -19,6 +20,9 @@ use std::sync::Arc;
 
 pub struct SemanticRetrievalPipeline {
     provider: Arc<dyn EmbedProvider>,
+    /// Active model's vectors relation (`embedding_vectors` for the default
+    /// BGE model; `embedding_vectors_<model_id>` otherwise) — the ANN target.
+    active_vectors_relation: String,
     rerank_stage: RerankStage,
     db: SharedDb,
     /// Most recent query embedding from [`Self::retrieve`], stashed so
@@ -212,17 +216,20 @@ mod adaptive_k_tests {
 impl SemanticRetrievalPipeline {
     pub fn new(db: SharedDb) -> Result<Self, Box<dyn std::error::Error>> {
         let provider = create_provider_from_env()?;
-        Self::with_provider(db, provider)
+        let entry = crate::embeddings::registry::resolve_active_model()?;
+        Self::with_provider(db, provider, entry.vectors_relation())
     }
 
     /// Inject a provider (tests / custom wiring). Prefer [`Self::new`] in prod.
     pub fn with_provider(
         db: SharedDb,
         provider: Arc<dyn EmbedProvider>,
+        vectors_relation: String,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let rerank_stage = RerankStage::try_new();
         Ok(Self {
             provider,
+            active_vectors_relation: vectors_relation,
             rerank_stage,
             db,
             last_query_vec: Vec::new(),
@@ -372,8 +379,9 @@ impl SemanticRetrievalPipeline {
             .map(|f| format!("{:.6}", f))
             .collect::<Vec<_>>()
             .join(", ");
+        let vec_idx = format!("{}:vec_idx", self.active_vectors_relation);
         let query = format!(
-            r#"?[dist, qualified_name] := ~embedding_vectors:vec_idx {{
+            r#"?[dist, qualified_name] := ~{vec_idx} {{
                     qualified_name |
                     query: vec([{vec_literal}]),
                     k: {k},
@@ -522,9 +530,26 @@ mod tests {
 
         let db: SharedDb = Arc::new(FakeBackend::new());
         let fake: Arc<dyn EmbedProvider> = Arc::new(FakeEmbedProvider::new(VEC_DIM));
-        let pipeline = SemanticRetrievalPipeline::with_provider(db, fake).expect("pipeline");
+        let pipeline =
+            SemanticRetrievalPipeline::with_provider(db, fake, "embedding_vectors".to_string())
+                .expect("pipeline");
         assert_eq!(pipeline.provider().name(), "fake");
         let v = embed_query(pipeline.provider(), "nl intent").expect("embed");
         assert_eq!(v.len(), VEC_DIM);
+    }
+
+    #[test]
+    fn hnsw_query_targets_active_model_vectors_relation() {
+        use crate::embeddings::registry::{lookup_model, DEFAULT_BGE_MODEL_ID};
+        let bge = lookup_model(DEFAULT_BGE_MODEL_ID).unwrap();
+        let vec_idx = format!("{}:vec_idx", bge.vectors_relation());
+        assert_eq!(vec_idx, "embedding_vectors:vec_idx");
+
+        std::env::set_var("LEANKG_EMBED_ACTIVE_MODEL", "qwen3-emb-4b-2560");
+        let qwen = lookup_model("qwen3-emb-4b-2560").unwrap();
+        let qwen_idx = format!("{}:vec_idx", qwen.vectors_relation());
+        std::env::remove_var("LEANKG_EMBED_ACTIVE_MODEL");
+        assert_eq!(qwen_idx, "embedding_vectors_qwen3_emb_4b_2560:vec_idx");
+        assert_ne!(vec_idx, qwen_idx, "ANN must not share index across models");
     }
 }

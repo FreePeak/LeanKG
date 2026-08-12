@@ -283,7 +283,7 @@ pub enum GcAction {
 /// other platforms. Rust's default allocator is system malloc on
 /// Linux and macOS, so this works in practice.
 pub fn trim_heap() -> bool {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     unsafe {
         // malloc_trim(0) returns 1 on success, 0 on failure. We pass
         // 0 so all unused pages are released back to the OS.
@@ -292,12 +292,14 @@ pub fn trim_heap() -> bool {
         }
         malloc_trim(0) == 1
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
     {
-        // macOS allocator is not exposed via malloc_trim, but the
-        // system's default allocator (called by the Rust runtime)
-        // does return pages on large frees. There's no portable
-        // hint to force it, so we just report false.
+        // malloc_trim is a glibc extension; musl (e.g. alpine) has no
+        // malloc_trim, so gate on target_env = "gnu" rather than just
+        // target_os = "linux". The macOS allocator is not exposed via
+        // malloc_trim, but the system's default allocator (called by
+        // the Rust runtime) does return pages on large frees. There's
+        // no portable hint to force it, so we just report false.
         false
     }
 }

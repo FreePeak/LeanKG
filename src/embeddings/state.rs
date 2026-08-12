@@ -20,14 +20,33 @@
 //! `~embedding_vectors:vec_idx` plus cross-encoder rerank
 //! (`src/retrieval/pipeline.rs::SemanticRetrievalPipeline`).
 
-const CREATE_EMBEDDING_STATE: &str = r#":create embedding_state {qualified_name: String => usearch_key: Int, content_hash: String, state: String, embedded_at: String}"#;
+//! Model-scoped `embedding_state_*` / `embedding_vectors_*` collections.
+//! Active model from `LEANKG_EMBED_ACTIVE_MODEL` (default BGE 384-d).
+//! Legacy undecorated tables remain the default BGE collection.
 
-const CREATE_QN_INDEX: &str = r#"::index create embedding_state:qn_index { qualified_name }"#;
+use super::registry::{resolve_active_model, EmbeddingModelEntry};
 
-const CREATE_KEY_INDEX: &str =
-    r#"::index create embedding_state:usearch_key_index { usearch_key }"#;
+fn active_entry() -> Result<EmbeddingModelEntry, Box<dyn std::error::Error>> {
+    resolve_active_model().map_err(|e| e.into())
+}
 
-const CREATE_STATE_INDEX: &str = r#"::index create embedding_state:state_index { state }"#;
+fn create_embedding_state_ddl(state_rel: &str) -> String {
+    format!(
+        r#":create {state_rel} {{qualified_name: String => usearch_key: Int, content_hash: String, state: String, embedded_at: String}}"#
+    )
+}
+
+fn create_state_index_ddl(state_rel: &str, index_suffix: &str, field: &str) -> String {
+    format!(r#"::index create {state_rel}:{index_suffix} {{ {field} }}"#)
+}
+
+fn create_embedding_vectors_ddl(vectors_rel: &str, dim: usize) -> String {
+    format!(r#":create {vectors_rel} {{qualified_name: String => vector: <F32; {dim}>}}"#)
+}
+
+fn hnsw_index_key(vectors_rel: &str) -> String {
+    format!("{vectors_rel}:vec_idx")
+}
 
 #[derive(Debug, Clone)]
 pub struct EmbeddingStateRow {
@@ -40,12 +59,24 @@ pub struct EmbeddingStateRow {
     pub embedded_at: String,
 }
 
-/// Idempotently create the `embedding_state` table and the `embedding_vectors`
-/// relation + HNSW index. Called from `init_schema` on every DB open, so it
-/// must be cheap when both already exist.
+/// Idempotently create the active model's state + vector relations and HNSW index.
 pub fn ensure_embedding_state_table(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let entry = active_entry()?;
+    ensure_model_collections(db, &entry)
+}
+
+/// Ensure one model's state/vector collections exist (table-per-model).
+pub fn ensure_model_collections(
+    db: &dyn crate::db::backend::DbBackend,
+    entry: &EmbeddingModelEntry,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let state_rel = entry.state_relation();
+    let vectors_rel = entry.vectors_relation();
+    let vec_idx = hnsw_index_key(&vectors_rel);
+    let dim = entry.dimensions;
+
     let existing: std::collections::HashSet<String> = db
         .run_script("::relations", Default::default())
         .map(|r| {
@@ -56,33 +87,40 @@ pub fn ensure_embedding_state_table(
         })
         .unwrap_or_default();
 
-    if !existing.contains("embedding_state") {
-        db.run_script(CREATE_EMBEDDING_STATE, Default::default())?;
-        for idx in &[CREATE_QN_INDEX, CREATE_KEY_INDEX, CREATE_STATE_INDEX] {
-            if let Err(e) = db.run_script(idx, Default::default()) {
-                tracing::debug!("embedding_state index note: {:?}", e);
+    if !existing.contains(&state_rel) {
+        db.run_script(&create_embedding_state_ddl(&state_rel), Default::default())?;
+        for (suffix, field) in [
+            ("qn_index", "qualified_name"),
+            ("usearch_key_index", "usearch_key"),
+            ("state_index", "state"),
+        ] {
+            let idx = create_state_index_ddl(&state_rel, suffix, field);
+            if let Err(e) = db.run_script(&idx, Default::default()) {
+                tracing::debug!("{state_rel} index note: {:?}", e);
             }
         }
-        tracing::info!("created embedding_state table");
+        tracing::info!("created {state_rel} table");
     }
 
     // HNSW-backed vector store. qualified_name is the only key (=> separator),
-    // so :put acts as upsert and `:rm embedding_vectors {qualified_name}` is
-    // sufficient for deletes. The HNSW index uses Cosine distance + f32 (the
-    // default fastembed output type for BGE-small-en-v1.5, 384-dim).
-    if !existing.contains("embedding_vectors") {
-        db.run_script(CREATE_EMBEDDING_VECTORS, Default::default())?;
-        tracing::info!("created embedding_vectors relation");
+    // so :put acts as upsert and `:rm <vectors_rel> {qualified_name}` is
+    // sufficient for deletes. The HNSW index uses Cosine distance + f32.
+    if !existing.contains(&vectors_rel) {
+        db.run_script(
+            &create_embedding_vectors_ddl(&vectors_rel, dim),
+            Default::default(),
+        )?;
+        tracing::info!("created {vectors_rel} relation (dim={dim})");
     }
     // Check the index separately — earlier runs may have created the relation
     // but failed silently on HNSW (e.g., the index create is not idempotent
     // and gets skipped if the relation check is coupled to it).
-    if !existing.contains("embedding_vectors:vec_idx") {
-        let hnsw_create = build_hnsw_create_stmt();
+    if !existing.contains(&vec_idx) {
+        let hnsw_create = build_hnsw_create_stmt(&vectors_rel, dim);
         match db.run_script(&hnsw_create, Default::default()) {
-            Ok(_) => tracing::info!("created HNSW index embedding_vectors:vec_idx"),
+            Ok(_) => tracing::info!("created HNSW index {vec_idx}"),
             Err(e) => tracing::warn!(
-                "failed to create HNSW index on embedding_vectors (query len={}): {:?}",
+                "failed to create HNSW index on {vectors_rel} (query len={}): {:?}",
                 hnsw_create.len(),
                 e
             ),
@@ -92,13 +130,10 @@ pub fn ensure_embedding_state_table(
     Ok(())
 }
 
-const CREATE_EMBEDDING_VECTORS: &str =
-    r#":create embedding_vectors {qualified_name: String => vector: <F32; 384>}"#;
-
-/// Drop the HNSW index on `embedding_vectors:vec_idx` so a bulk insert can
-/// proceed without paying the per-vector HNSW update cost. The CozoDB
-/// `::hnsw` operator is idempotent for `drop` — if the index is missing
-/// the call is a no-op, which is the only error path we swallow here.
+/// Drop the HNSW index on the active model's vectors relation so a bulk
+/// insert can proceed without paying the per-vector HNSW update cost. The
+/// CozoDB `::hnsw` operator is idempotent for `drop` — if the index is
+/// missing the call is a no-op, which is the only error path we swallow here.
 pub fn drop_hnsw_index(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -114,17 +149,21 @@ pub fn drop_hnsw_index(
     {
         return Ok(());
     }
-    let _ = db.run_script("::hnsw drop embedding_vectors:vec_idx", Default::default());
+    let entry = active_entry()?;
+    let vec_idx = hnsw_index_key(&entry.vectors_relation());
+    let drop_stmt = format!("::hnsw drop {vec_idx}");
+    let _ = db.run_script(&drop_stmt, Default::default());
     Ok(())
 }
 
-/// Recreate the HNSW index on `embedding_vectors:vec_idx` after a bulk
-/// insert. Reads `LEANKG_HNSW_M` / `LEANKG_HNSW_EF_CONST` (see
+/// Recreate the HNSW index on the active model's vectors relation after a
+/// bulk insert. Reads `LEANKG_HNSW_M` / `LEANKG_HNSW_EF_CONST` (see
 /// `build_hnsw_create_stmt`) and returns the index to a queryable state.
 pub fn create_hnsw_index(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let stmt = build_hnsw_create_stmt();
+    let entry = active_entry()?;
+    let stmt = build_hnsw_create_stmt(&entry.vectors_relation(), entry.dimensions);
     db.run_script(&stmt, Default::default())?;
     Ok(())
 }
@@ -141,7 +180,7 @@ pub fn create_hnsw_index(
 //
 // `ef` (search-time, query-side) lives in `src/retrieval/pipeline.rs` and
 // is overridable via the `LEANKG_HNSW_EF` env var without re-indexing.
-fn build_hnsw_create_stmt() -> String {
+fn build_hnsw_create_stmt(vectors_rel: &str, dim: usize) -> String {
     let m = std::env::var("LEANKG_HNSW_M")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -154,9 +193,10 @@ fn build_hnsw_create_stmt() -> String {
         .unwrap_or(20)
         // pgvector requires ef_construction >= 2*m (CozoDB accepted any pair).
         .max(2 * m);
+    let vec_idx = hnsw_index_key(vectors_rel);
     format!(
-        r#"::hnsw create embedding_vectors:vec_idx {{
-    dim: 384,
+        r#"::hnsw create {vec_idx} {{
+    dim: {dim},
     dtype: F32,
     fields: [vector],
     distance: Cosine,
@@ -265,7 +305,8 @@ pub fn mark_stale_for_qualified_names(
             rows,
         );
         let mut map = std::collections::BTreeMap::new();
-        map.insert("embedding_state".to_string(), named_rows);
+        let state_rel = active_state_relation()?;
+        map.insert(state_rel, named_rows);
         db.import_relations(map)?;
     }
     Ok(())
@@ -277,8 +318,11 @@ pub fn mark_stale_for_qualified_names(
 pub fn list_stale(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
-    let query = r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at], state != "fresh""#;
-    let result = db.run_script(query, Default::default())?;
+    let state_rel = active_state_relation()?;
+    let query = format!(
+        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *{state_rel}[qualified_name, usearch_key, content_hash, state, embedded_at], state != "fresh""#
+    );
+    let result = db.run_script(&query, Default::default())?;
     Ok(result
         .rows
         .iter()
@@ -292,12 +336,15 @@ pub fn list_stale(
 pub fn list_orphans(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
-    let query = r#"
+    let state_rel = active_state_relation()?;
+    let query = format!(
+        r#"
         ?[qualified_name, usearch_key, content_hash, state, embedded_at] :=
-            *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at],
+            *{state_rel}[qualified_name, usearch_key, content_hash, state, embedded_at],
             not *code_elements[qualified_name, _, _, _, _, _, _, _, _, _, _, _, _]
-    "#;
-    let result = db.run_script(query, Default::default())?;
+    "#
+    );
+    let result = db.run_script(&query, Default::default())?;
     Ok(result
         .rows
         .iter()
@@ -310,8 +357,11 @@ pub fn list_orphans(
 pub fn list_all(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Vec<EmbeddingStateRow>, Box<dyn std::error::Error>> {
-    let query = r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at]"#;
-    let result = db.run_script(query, Default::default())?;
+    let state_rel = active_state_relation()?;
+    let query = format!(
+        r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] := *{state_rel}[qualified_name, usearch_key, content_hash, state, embedded_at]"#
+    );
+    let result = db.run_script(&query, Default::default())?;
     Ok(result
         .rows
         .iter()
@@ -322,8 +372,11 @@ pub fn list_all(
 /// Cheap non-empty probe for MCP HNSW gating (FR-SEM-07).
 /// Avoids loading every `embedding_state` row via [`list_all`].
 pub fn has_any(db: &dyn crate::db::backend::DbBackend) -> Result<bool, Box<dyn std::error::Error>> {
-    let query = r#"?[qualified_name] := *embedding_state[qualified_name, usearch_key, content_hash, state, embedded_at] :limit 1"#;
-    let result = db.run_script(query, Default::default())?;
+    let state_rel = active_state_relation()?;
+    let query = format!(
+        r#"?[qualified_name] := *{state_rel}[qualified_name, usearch_key, content_hash, state, embedded_at] :limit 1"#
+    );
+    let result = db.run_script(&query, Default::default())?;
     Ok(!result.rows.is_empty())
 }
 
@@ -374,7 +427,8 @@ pub fn upsert_fresh(
             rows,
         );
         let mut map = std::collections::BTreeMap::new();
-        map.insert("embedding_state".to_string(), named_rows);
+        let state_rel = active_state_relation()?;
+        map.insert(state_rel, named_rows);
         db.import_relations(map)?;
     }
     Ok(())
@@ -408,8 +462,9 @@ pub fn delete_state_rows(
                     .collect(),
             ),
         );
-        let query = r#"?[qualified_name] <- $qns :rm embedding_state {qualified_name}"#;
-        db.run_script(query, params)?;
+        let state_rel = active_state_relation()?;
+        let query = format!(r#"?[qualified_name] <- $qns :rm {state_rel} {{qualified_name}}"#);
+        db.run_script(&query, params)?;
     }
     Ok(())
 }
@@ -459,6 +514,10 @@ fn row_to_state_row(row: &[crate::db::backend::DataValue]) -> Option<EmbeddingSt
         state,
         embedded_at,
     })
+}
+
+fn active_state_relation() -> Result<String, Box<dyn std::error::Error>> {
+    Ok(active_entry()?.state_relation())
 }
 
 fn now_iso() -> String {
@@ -574,15 +633,43 @@ mod tests {
     }
 
     #[test]
+    fn hnsw_ddl_uses_registry_dim_for_qwen() {
+        use super::super::registry::lookup_model;
+        let entry = lookup_model("qwen3-emb-4b-2560").unwrap();
+        let stmt = build_hnsw_create_stmt(&entry.vectors_relation(), entry.dimensions);
+        assert!(stmt.contains("dim: 2560"), "stmt: {stmt}");
+        assert!(stmt.contains("embedding_vectors_qwen3_emb_4b_2560:vec_idx"));
+    }
+
+    #[test]
+    fn model_collections_do_not_share_vector_relations() {
+        use super::super::registry::{lookup_model, DEFAULT_BGE_MODEL_ID};
+        let bge = lookup_model(DEFAULT_BGE_MODEL_ID).unwrap();
+        let qwen = lookup_model("qwen3-emb-4b-2560").unwrap();
+        assert_ne!(bge.vectors_relation(), qwen.vectors_relation());
+        assert_ne!(bge.state_relation(), qwen.state_relation());
+    }
+
+    #[test]
+    fn backfill_legacy_target_is_default_bge_table() {
+        use super::super::registry::{backfill_legacy_model_id, legacy_backfill_target_relation};
+        assert_eq!(
+            legacy_backfill_target_relation(backfill_legacy_model_id()),
+            Some("embedding_vectors")
+        );
+    }
+
+    #[test]
     fn mark_stale_dedupes_duplicate_qualified_names() {
         // Regression: duplicate qualified_names in one call must not emit a
-        // `:put` with two rows for the same PK (E21000 on PG).
-        use crate::db::backend::PostgresBackend;
-        let Ok(db) = PostgresBackend::from_env() else {
-            eprintln!("skipping: LEANKG_PG_URL not set");
+        // `:put` with two rows for the same PK (E21000 on PG). Live-PG only:
+        // FakeBackend's import_relations appends without PK-dedupe, so the
+        // E21000 path can only be exercised against a real database.
+        if !crate::db::backend::test_pg_available() {
+            eprintln!("skipping: no Postgres on :5433 (start leankg-pg-phase0)");
             return;
-        };
-        let boxed: Box<dyn crate::db::backend::DbBackend> = Box::new(db);
+        }
+        let db = crate::db::backend::init_db_pg().expect("init_db_pg");
         let dupes: Vec<String> = vec![
             "/dup/qn".to_string(),
             "/dup/qn".to_string(),
@@ -590,12 +677,12 @@ mod tests {
             "/other/qn".to_string(),
         ];
         // Should not error (no E21000) even though /dup/qn appears 3x.
-        mark_stale_for_qualified_names(boxed.as_ref(), &dupes).expect("dedupe must prevent E21000");
+        mark_stale_for_qualified_names(db.as_ref(), &dupes).expect("dedupe must prevent E21000");
         // Real indexer shape: UPSERT_CHUNK=500 long-path QNs, all distinct.
         let big: Vec<String> = (0..500)
             .map(|i| format!("/Users/linh.doan/work/harvey/freepeak/leankg/tests/load_test_1m_nodes.rs::load_test_fn_{i}"))
             .collect();
-        mark_stale_for_qualified_names(boxed.as_ref(), &big).expect("500 distinct must not E21000");
+        mark_stale_for_qualified_names(db.as_ref(), &big).expect("500 distinct must not E21000");
         // Clean up.
         let clean_qns: Vec<String> = (0..500)
             .map(|i| format!("/Users/linh.doan/work/harvey/freepeak/leankg/tests/load_test_1m_nodes.rs::load_test_fn_{i}"))
@@ -605,29 +692,29 @@ mod tests {
             "?[qualified_name] <- [{}] :rm embedding_state {{qualified_name}}",
             literals.join(", ")
         );
-        let _ = boxed.run_script(&clean, std::collections::BTreeMap::new());
+        let _ = db.run_script(&clean, std::collections::BTreeMap::new());
         // Clean up the rows we inserted.
         let clean = r#"?[qualified_name] <- [["/dup/qn"], ["/other/qn"]]
 :rm embedding_state {qualified_name}"#;
-        let _ = boxed.run_script(clean, std::collections::BTreeMap::new());
+        let _ = db.run_script(clean, std::collections::BTreeMap::new());
     }
 
     #[test]
     fn mark_stale_many_identical_qns_no_e21000() {
         // Reproduces the indexer on a real codebase: vis-network.min.js
         // yields 171 identical qualified_names. A single `:put` with all of
-        // them must not E21000 (dedupe collapses to one row).
-        use crate::db::backend::PostgresBackend;
-        let Ok(db) = PostgresBackend::from_env() else {
-            eprintln!("skipping: LEANKG_PG_URL not set");
+        // them must not E21000 (dedupe collapses to one row). Live-PG only
+        // (same FakeBackend limitation as `mark_stale_dedupes_...`).
+        if !crate::db::backend::test_pg_available() {
+            eprintln!("skipping: no Postgres on :5433 (start leankg-pg-phase0)");
             return;
-        };
-        let boxed: Box<dyn crate::db::backend::DbBackend> = Box::new(db);
+        }
+        let db = crate::db::backend::init_db_pg().expect("init_db_pg");
         let dupes: Vec<String> = (0..171).map(|_| "/vis/constructor".to_string()).collect();
-        mark_stale_for_qualified_names(boxed.as_ref(), &dupes)
+        mark_stale_for_qualified_names(db.as_ref(), &dupes)
             .expect("171 identical qns must not E21000");
         let clean = r#"?[qualified_name] <- [["/vis/constructor"]]
 :rm embedding_state {qualified_name}"#;
-        let _ = boxed.run_script(clean, std::collections::BTreeMap::new());
+        let _ = db.run_script(clean, std::collections::BTreeMap::new());
     }
 }

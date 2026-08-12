@@ -168,8 +168,9 @@ pub fn embed_resume_preflight(
 pub fn count_embedding_vectors(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    let vectors_rel = crate::embeddings::registry::resolve_active_model()?.vectors_relation();
     let result = db.run_script(
-        "?[qualified_name] := *embedding_vectors{qualified_name}",
+        &format!("?[qualified_name] := *{vectors_rel}[qualified_name]"),
         Default::default(),
     )?;
     Ok(result.rows.len())
@@ -208,15 +209,14 @@ pub fn resolve_partial_embed_budget_mb(rss_fraction: f64) -> u64 {
     budget.max(256)
 }
 
-/// Prefer incremental HNSW `:put` when dirty set is small vs existing index.
+/// Keep the HNSW index live with incremental `:put` — the default.
 ///
-/// Phase 7 (T7.2) env overrides:
-/// - `LEANKG_EMBED_COPY=1` forces the bulk drop-reindex path (COZY copy),
-///   never incremental — the operator's explicit "cold embed" signal.
-/// - `LEANKG_EMBED_BULK_REINDEX_THRESHOLD` raises/lowers the dirty-set size
-///   that triggers the drop-index-during-bulk strategy (default: the existing
-///   adaptive `max(1000, total/20)`).
-pub fn should_use_incremental_hnsw_puts(dirty_count: usize, total_vectors: usize) -> bool {
+/// pgvector maintains the HNSW index on INSERT, so incremental puts keep the
+/// index hot with no drop/rebuild. The cold drop → bulk insert → recreate
+/// path requires table ownership, which DML-only app roles often lack, so it
+/// is opt-in via `LEANKG_EMBED_COPY=1` ("1"|"true"|"on") rather than sized by
+/// dirty-set threshold.
+pub fn should_use_incremental_hnsw_puts(dirty_count: usize, _total_vectors: usize) -> bool {
     if dirty_count == 0 {
         return false;
     }
@@ -227,12 +227,7 @@ pub fn should_use_incremental_hnsw_puts(dirty_count: usize, total_vectors: usize
     {
         return false;
     }
-    let threshold = (total_vectors / 20).max(1_000);
-    let threshold = std::env::var("LEANKG_EMBED_BULK_REINDEX_THRESHOLD")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(threshold);
-    dirty_count <= threshold
+    true
 }
 
 pub fn embed_idle_after_secs() -> u64 {
@@ -393,10 +388,20 @@ mod tests {
     }
 
     #[test]
-    fn incremental_hnsw_puts_for_small_dirty() {
+    fn incremental_hnsw_puts_keeps_index_live_by_default() {
+        // Live HNSW `:put` is the default: pgvector maintains the index on
+        // INSERT, and CREATE INDEX needs table ownership DML-only roles lack.
         assert!(should_use_incremental_hnsw_puts(50, 100_000));
-        assert!(!should_use_incremental_hnsw_puts(50_000, 100_000));
+        assert!(should_use_incremental_hnsw_puts(50_000, 100_000));
         assert!(!should_use_incremental_hnsw_puts(0, 100_000));
+        // LEANKG_EMBED_COPY=1: explicit cold rebuild (drop → COPY → recreate).
+        let prev = std::env::var("LEANKG_EMBED_COPY").ok();
+        std::env::set_var("LEANKG_EMBED_COPY", "1");
+        assert!(!should_use_incremental_hnsw_puts(50, 100_000));
+        match prev {
+            Some(v) => std::env::set_var("LEANKG_EMBED_COPY", v),
+            None => std::env::remove_var("LEANKG_EMBED_COPY"),
+        }
     }
 
     #[test]

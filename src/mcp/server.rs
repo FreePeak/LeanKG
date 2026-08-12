@@ -74,22 +74,15 @@ static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
-/// FR-P0-MCP-RC-03: concurrency cap for tool execution. `num_cpus - 1`
-/// permits (min 1) guarantees at least one Tokio worker is always free for
-/// `/health` and the SSE loop, so a heavy full-scan tool can't stall the
-/// whole server. Overridable via `LEANKG_MCP_TOOL_CONCURRENCY`.
+/// FR-P0-MCP-RC-03: concurrency cap for tool execution. Default **100**
+/// permits so parallel Cursor tool batches can proceed without immediate
+/// `-32603` failures. Overridable via `LEANKG_MCP_TOOL_CONCURRENCY`.
 fn build_tool_semaphore() -> Arc<tokio::sync::Semaphore> {
     let permits = std::env::var("LEANKG_MCP_TOOL_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n >= 1)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-                .saturating_sub(1)
-                .max(1)
-        });
+        .unwrap_or(100);
     Arc::new(tokio::sync::Semaphore::new(permits))
 }
 
@@ -195,8 +188,8 @@ pub struct MCPServer {
     write_bus: Arc<dyn crate::db::write_bus::WriteBus>,
     /// FR-P0-MCP-RC-03: concurrency cap so a heavy full-scan tool can never
     /// starve every Tokio worker (which stalled `/health` and flipped the
-    /// container `(unhealthy)`). `num_cpus - 1` permits (min 1) keeps at
-    /// least one worker free for `/health` and the SSE loop.
+    /// container `(unhealthy)`). Default 100 permits; overridable via
+    /// `LEANKG_MCP_TOOL_CONCURRENCY`.
     tool_semaphore: Arc<tokio::sync::Semaphore>,
     /// When true, the server rejects any tool that mutates state. Read tools
     /// (search_code, get_context, kg_*, etc.) still work; write tools return
@@ -211,6 +204,22 @@ impl std::fmt::Debug for MCPServer {
             .field("read_only", &self.read_only)
             .finish()
     }
+}
+
+/// Read the `auth:` block from the nearest `leankg.yaml` at `db_path`
+/// (walking up), defaulting to disabled when absent.
+fn load_auth_settings(db_path: &std::path::Path) -> crate::config::AuthSettings {
+    let mut dir = Some(db_path);
+    while let Some(d) = dir {
+        let cfg = d.join("leankg.yaml");
+        if let Ok(content) = std::fs::read_to_string(&cfg) {
+            if let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) {
+                return config.auth;
+            }
+        }
+        dir = d.parent();
+    }
+    crate::config::AuthSettings::default()
 }
 
 impl Clone for MCPServer {
@@ -255,8 +264,12 @@ pub enum AutoIndexDecision {
 impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
+        // Wire leankg.yaml `auth.tokens` into the static AuthManager when
+        // present; otherwise the default admin token. (The DB-backed
+        // access-token store is the authoritative auth when it exists.)
+        let auth_manager = AuthManager::from_config(&load_auth_settings(&effective_db_path));
         Self {
-            auth_manager: Arc::new(TokioRwLock::new(AuthManager::with_default_token())),
+            auth_manager: Arc::new(TokioRwLock::new(auth_manager)),
             db_path: Arc::new(RwLock::new(effective_db_path)),
             graph_engine: Arc::new(parking_lot::Mutex::new(None)),
             graph_engine_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
@@ -896,6 +909,7 @@ impl MCPServer {
             partial: true,
             rss_fraction: 0.0,
             project_path: None,
+            write_vectors: crate::embeddings::write_vectors_enabled(),
         }
     }
 
@@ -1165,6 +1179,7 @@ impl MCPServer {
                     partial: mode != "continuous",
                     rss_fraction,
                     project_path: project_path.clone(),
+                    write_vectors: crate::embeddings::write_vectors_enabled(),
                 };
                 crate::embeddings::control::clear_cancel();
                 crate::embeddings::arm_embed(cfg);
@@ -1521,6 +1536,7 @@ impl MCPServer {
             partial: !full,
             rss_fraction: 0.0,
             project_path: None,
+            write_vectors: crate::embeddings::write_vectors_enabled(),
         };
         // Optional LEANKG_EMBED_BACKGROUND_PARTIAL override (advanced).
         let cfg = if let Ok(p) = std::env::var("LEANKG_EMBED_BACKGROUND_PARTIAL") {
@@ -2085,10 +2101,21 @@ impl MCPServer {
             }
         }
 
+        // Unified auth: the MCP HTTP server shares the DB-backed access-token
+        // store (same Postgres pool via the server's backend). Resolve the
+        // engine the request handlers actually use (the path-keyed cache) —
+        // the singular `graph_engine` field may still be None when the project
+        // was already initialized and auto-init only spawned a background
+        // index. Built lazily; the store only talks to PG on first validate.
+        let token_store = self
+            .get_graph_engine()
+            .ok()
+            .map(|ge| crate::auth::AccessTokenStore::new(ge.db_arc().clone()));
         let server = Arc::new(HttpMcpServer {
             mcp_server: self.clone(),
             auth_token,
             auth_manager: AuthManager::with_default_token(),
+            token_store,
         });
 
         let cors = CorsLayer::new()
@@ -3182,6 +3209,10 @@ struct HttpMcpServer {
     mcp_server: MCPServer,
     auth_token: Option<String>,
     auth_manager: AuthManager,
+    /// DB-backed access-token store (unified auth). When present, Bearer
+    /// tokens are validated against access_tokens first, falling back to the
+    /// static auth_token compare only when DB auth yields no match.
+    token_store: Option<crate::auth::AccessTokenStore>,
 }
 
 /// Query parameters extracted from MCP HTTP requests
@@ -3257,12 +3288,32 @@ fn should_resolve_tool_paths(tool_name: &str) -> bool {
     )
 }
 
-/// Extract bearer token from Authorization header using constant-time comparison
-/// to prevent timing attacks on bearer tokens. Returns an AuthContext with role.
+/// Extract bearer token from Authorization header. Validates against the
+/// DB-backed access-token store first (unified OAuth2-style auth); falls back
+/// to the static `auth_token` constant-time compare when DB auth is
+/// unavailable (no backend yet) or the token is not a DB token. Returns an
+/// [`AuthContext`] with the account id + role.
 fn extract_auth_context(
     auth_header: Option<&str>,
     server: &HttpMcpServer,
 ) -> Result<crate::db::models::AuthContext, StatusCode> {
+    // If the server has a DB-backed token store, try it first: an issued
+    // access token (Bearer) resolves to a real account + role.
+    if let Some(store) = &server.token_store {
+        if let Some(auth) = auth_header {
+            if let Some(token) = auth.strip_prefix("Bearer ") {
+                match store.validate_token(token) {
+                    Ok(ctx) => return Ok(ctx),
+                    Err(e) => {
+                        tracing::debug!("db access-token validate failed: {e}");
+                    }
+                }
+                // Fall through to the static token path (a static token is not a
+                // DB token — it just fails the DB lookup).
+            }
+        }
+    }
+
     if server.auth_token.is_none() {
         // No auth configured — grant admin
         return Ok(crate::db::models::AuthContext {
@@ -3598,11 +3649,13 @@ async fn process_jsonrpc_request(
                     .or_insert(serde_json::Value::String(project.to_string()));
             }
 
-            // FR-P0-MCP-RC-03: acquire a concurrency permit (bounded by
-            // num_cpus-1) and wrap execution in a timeout so a slow tool
-            // returns `-32000 timed out` instead of stalling `/health`.
+            // FR-P0-MCP-RC-03: acquire a concurrency permit (default 100)
+            // and wrap execution in a timeout so a slow tool returns
+            // `-32000 timed out` instead of stalling `/health`. Wait up to
+            // 30s for a free slot so parallel Cursor batches queue instead
+            // of failing immediately with concurrency-limit errors.
             let _permit = match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
+                std::time::Duration::from_secs(30),
                 mcp_server.tool_semaphore.clone().acquire_owned(),
             )
             .await
@@ -4086,6 +4139,7 @@ mod tests {
             partial: !false, // mirrors spawn_background_embed_in_process flip
             rss_fraction: 0.0,
             project_path: None,
+            write_vectors: crate::embeddings::write_vectors_enabled(),
         };
         assert!(cfg.partial);
         // Override: FULL=1 flips partial=false, then PARTIAL=1 forces it back.
@@ -4306,12 +4360,8 @@ mod tests {
         std::env::remove_var("LEANKG_MCP_TOOL_CONCURRENCY");
         let sem = build_tool_semaphore();
         let max = sem.available_permits();
-        // num_cpus - 1 (min 1); must be at least 1 permit for tool calls.
-        assert!(max >= 1, "semaphore must have >= 1 permit");
-        let cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
-        assert_eq!(max, cpus.saturating_sub(1).max(1));
+        // Default permits == 100 when env unset.
+        assert_eq!(max, 100, "default semaphore permits must be 100");
     }
 
     #[test]

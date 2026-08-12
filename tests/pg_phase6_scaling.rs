@@ -80,6 +80,7 @@ impl Scratch {
     fn rw_backend(&self) -> Arc<PostgresBackend> {
         Arc::new(PostgresBackend {
             pg_url: self.rw_url.clone(),
+            schema: Some(self.name.clone()),
             pool: Arc::new(ClientPool::new(5)),
             ro_pool: Arc::new(ClientPool::new(5)),
             read_only: false,
@@ -90,6 +91,7 @@ impl Scratch {
     fn ro_backend(&self) -> Arc<PostgresBackend> {
         Arc::new(PostgresBackend {
             pg_url: self.rw_url.clone(),
+            schema: Some(self.name.clone()),
             pool: Arc::new(ClientPool::new(5)),
             ro_pool: Arc::new(ClientPool::new(5)),
             read_only: true,

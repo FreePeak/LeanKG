@@ -69,6 +69,22 @@ The HNSW index is the source of truth for vector data. `embedding_state`
 tracks freshness for incremental builds. Both live in CozoDB, so they share
 the same transactional semantics as the rest of the KG.
 
+## Multi-model registry (table-per-model collections)
+
+Since the multi-model feature, the tables above are the **default BGE 384-d**
+model's collection (legacy names preserved). A model registry
+(`src/embeddings/registry.rs`) maps `model_id` → provider kind, dims, and
+collection names; the active model resolves from `LEANKG_EMBED_ACTIVE_MODEL`
+(default BGE). Other models get their own tables —
+`embedding_vectors_<model_id>` / `embedding_state_<model_id>` with their own
+HNSW index and dim (`<F32; dim>`), so ANN never mixes dims. Embedding can run
+through `EmbedProvider` implementations (`src/embeddings/provider.rs`): local
+ONNX (384-d only) or an OpenAI-compatible `/v1/embeddings` HTTP server
+(any dim, configured via `LEANKG_EMBED_API_*`). Retrieval queries
+`~<active_vectors_relation>:vec_idx`, so the pointer flip re-targets both
+write and query without touching other collections. See
+`docs/embed-multi-model.md` for the full reference.
+
 ## Embed pipeline (`embed` command)
 
 Implemented in `build.rs::run`. Default mode is **incremental**; `--full`

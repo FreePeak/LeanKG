@@ -46,6 +46,20 @@ lang-extras = [
   "dep:tree-sitter-qsharp",
 ]
 
+# Embedding-bench examples import `embeddings`-feature symbols; skip them when
+# the feature is off so `cargo test`/`cargo build --examples` stay green.
+[[example]]
+name = "bench_embed_stress"
+required-features = ["embeddings"]
+
+[[example]]
+name = "bench_embed_infer"
+required-features = ["embeddings"]
+
+[[example]]
+name = "bench_fastembed_smoke"
+required-features = ["embeddings"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

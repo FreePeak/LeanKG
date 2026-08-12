@@ -10,6 +10,7 @@
 #![allow(clippy::len_zero)]
 #![allow(clippy::absurd_extreme_comparisons)]
 mod api;
+mod auth;
 mod benchmark;
 mod budget;
 mod cli;
@@ -783,10 +784,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             workers,
             types,
             benchmark,
+            no_vectors,
         } => {
             run_embed(
                 init, full, batch_size, &project, wait, status, cancel, background, workers,
-                &types, benchmark,
+                &types, benchmark, no_vectors,
             )?;
         }
         #[cfg(feature = "embeddings")]
@@ -1178,6 +1180,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             cli::ApiKeyCommand::Revoke { id } => {
                 api_key_revoke(&id)?;
+            }
+        },
+        cli::CLICommand::Auth { command } => match command {
+            cli::AuthCommand::Register {
+                email,
+                password,
+                name,
+            } => {
+                auth_register(&email, &password, &name)?;
+            }
+            cli::AuthCommand::Token {
+                account_id,
+                name,
+                role,
+                org_id,
+            } => {
+                auth_issue_token(&account_id, &name, &role, org_id.as_deref())?;
+            }
+            cli::AuthCommand::ListTokens { account_id } => {
+                auth_list_tokens(&account_id)?;
+            }
+            cli::AuthCommand::Revoke { token_id } => {
+                auth_revoke_token(&token_id)?;
             }
         },
         cli::CLICommand::Obsidian { command } => {
@@ -1606,10 +1631,11 @@ async fn index_codebase(
     ref_name: Option<&str>,
     auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // T6.4b: serialize `leankg index` across instances — PG advisory lock
-    // (fixed key). No-op on the cozo shim; reentrant within this process
-    // (incremental → full fallback calls index_codebase again).
-    let _index_lock = crate::db::backend::index_advisory_lock()?;
+    // T6.4b: serialize `leankg index` across instances — per-project PG
+    // advisory lock. Same env+path serializes; different projects run
+    // concurrently. Reentrant within this process (incremental → full
+    // fallback calls index_codebase again).
+    let _index_lock = crate::db::backend::index_advisory_lock(env, path)?;
     let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
@@ -1798,10 +1824,11 @@ async fn incremental_index_codebase(
     auth: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = env;
-    // T6.4b: serialize `leankg index` across instances — PG advisory lock
-    // (fixed key). No-op on the cozo shim; reentrant within this process
-    // (incremental → full fallback calls index_codebase again).
-    let _index_lock = crate::db::backend::index_advisory_lock()?;
+    // T6.4b: serialize `leankg index` across instances — per-project PG
+    // advisory lock. Same env+path serializes; different projects run
+    // concurrently. Reentrant within this process (incremental → full
+    // fallback calls index_codebase again).
+    let _index_lock = crate::db::backend::index_advisory_lock(env, path)?;
     let db = db::backend::init_db(db_path)?;
     let graph_engine = graph::GraphEngine::new(db);
     let mut parser_manager = indexer::ParserManager::new();
@@ -3372,6 +3399,73 @@ fn api_key_revoke(id: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!("API key '{}' not found or already revoked.", id);
     }
 
+    Ok(())
+}
+
+fn auth_register(
+    email: &str,
+    password: &str,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::accounts::AccountStore::new(db);
+    let account = store.register(email, password, name)?;
+    println!("Account registered:");
+    println!("  ID:    {}", account.id);
+    println!("  Email: {}", account.email);
+    println!("  Name:  {}", account.name);
+    Ok(())
+}
+
+fn auth_issue_token(
+    account_id: &str,
+    name: &str,
+    role: &str,
+    org_id: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::tokens::AccessTokenStore::new(db);
+    let role = crate::db::models::Role::from_str(role)
+        .ok_or_else(|| format!("invalid role {role:?}; expected admin|contributor|viewer"))?;
+    let (token, row) = store.create_access_token(account_id, org_id, role, name, None)?;
+    println!("Access token issued:");
+    println!("  ID:    {}", row.id);
+    println!("  Role:  {}", row.role);
+    println!("\nIMPORTANT: Save this token - it will not be shown again:");
+    println!("  {}", token);
+    Ok(())
+}
+
+fn auth_list_tokens(account_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::tokens::AccessTokenStore::new(db);
+    let tokens = store.list_tokens(account_id)?;
+    if tokens.is_empty() {
+        println!("No access tokens for account {account_id}.");
+        return Ok(());
+    }
+    println!("Access tokens for {account_id}:");
+    for t in tokens {
+        println!(
+            "  ID: {}  Name: {}  Role: {}  revoked: {}",
+            t.id,
+            t.name,
+            t.role,
+            t.revoked_at.is_some()
+        );
+    }
+    Ok(())
+}
+
+fn auth_revoke_token(token_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let db = db::backend::init_db_pg()?;
+    let store = auth::tokens::AccessTokenStore::new(db);
+    let revoked = store.revoke_token(token_id)?;
+    if revoked {
+        println!("Access token '{token_id}' revoked.");
+    } else {
+        println!("Access token '{token_id}' not found or already revoked.");
+    }
     Ok(())
 }
 
@@ -5812,6 +5906,7 @@ fn maybe_run_embed(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
         4,     // workers
         "",    // types_filter
         false, // benchmark
+        false, // no_vectors
     )
 }
 
@@ -5835,6 +5930,7 @@ fn run_embed(
     workers: usize,
     types_filter: &str,
     benchmark: bool,
+    no_vectors: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if init {
         let report = embeddings::init_models()?;
@@ -5900,6 +5996,7 @@ fn run_embed(
             &leankg_dir,
             workers,
             types_filter,
+            no_vectors,
         )?;
         let elapsed = embed_start.elapsed().as_secs_f64();
 
@@ -5935,6 +6032,7 @@ fn run_embed(
             &leankg_dir,
             workers,
             types_filter,
+            no_vectors,
         );
     }
 
@@ -5977,6 +6075,11 @@ fn run_embed(
         // background worker honors it (otherwise the mega-graph heuristic
         // re-derives a default that ignores the user's intent).
         cmd.args(["--types", types_filter]);
+    }
+    if no_vectors {
+        // Pass --no-vectors through so the background worker also skips PG
+        // vector writes.
+        cmd.arg("--no-vectors");
     }
     let child = cmd
         .stdin(std::process::Stdio::null())
@@ -6121,6 +6224,7 @@ fn run_embed_worker(
     leankg_dir: &std::path::Path,
     workers: usize,
     types_filter: &str,
+    no_vectors: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     let status_path = leankg_dir.join("embed_status.json");
@@ -6184,6 +6288,7 @@ fn run_embed_worker(
                 }
             }
         },
+        write_vectors: embeddings::write_vectors_enabled() && !no_vectors,
         ..Default::default()
     };
     write_status(total as u64, 0, 0, 0, "running");

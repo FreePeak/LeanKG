@@ -100,7 +100,12 @@ fn all_16_tables_exist_and_no_query_cache() {
     let report = leankg::db::pg::migrations::run_migrations(&mut s.client).unwrap();
     assert_eq!(
         report.applied,
-        vec!["001_schema".to_string()],
+        vec![
+            "001_schema".to_string(),
+            "002_multi_model_embed".to_string(),
+            "003_gemini_embed".to_string(),
+            "004_auth".to_string(),
+        ],
         "migrations should apply exactly once on a fresh schema"
     );
 
@@ -135,7 +140,15 @@ fn rerun_is_noop() {
     leankg::db::pg::migrations::run_migrations(&mut s.client).unwrap();
     let report = leankg::db::pg::migrations::run_migrations(&mut s.client).unwrap();
     assert!(report.applied.is_empty(), "second run must apply nothing");
-    assert_eq!(report.skipped, vec!["001_schema".to_string()]);
+    assert_eq!(
+        report.skipped,
+        vec![
+            "001_schema".to_string(),
+            "002_multi_model_embed".to_string(),
+            "003_gemini_embed".to_string(),
+            "004_auth".to_string(),
+        ]
+    );
 }
 
 /// embedding_vectors: vector(384) column + HNSW cosine index.

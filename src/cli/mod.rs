@@ -405,6 +405,11 @@ pub enum CLICommand {
         /// Run live A/B benchmark measuring semantic search quality before and after embedding.
         #[arg(long)]
         benchmark: bool,
+        /// Do NOT write embedding vectors to the Postgres vector store.
+        /// Runs inference only (useful for benchmarking/smoke tests without
+        /// touching PG). Equivalent to `LEANKG_EMBED_WRITE_VECTORS=0`.
+        #[arg(long)]
+        no_vectors: bool,
     },
     /// One-shot embedding retrieval for CLI testing (requires
     /// --features embeddings). Useful for validating the retrieve→rerank→
@@ -705,6 +710,11 @@ pub enum CLICommand {
         #[command(subcommand)]
         command: ApiKeyCommand,
     },
+    /// OAuth2-style access-token auth management (accounts, tokens)
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
     /// Obsidian vault sync commands
     Obsidian {
         #[command(subcommand)]
@@ -833,6 +843,40 @@ pub enum ApiKeyCommand {
         /// ID of the API key to revoke
         #[arg(long)]
         id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AuthCommand {
+    /// Register an account (creates a bootstrap org owned by it)
+    Register {
+        #[arg(long)]
+        email: String,
+        #[arg(long)]
+        password: String,
+        #[arg(long)]
+        name: String,
+    },
+    /// Issue an access token for an account
+    Token {
+        #[arg(long)]
+        account_id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "viewer")]
+        role: String,
+        #[arg(long)]
+        org_id: Option<String>,
+    },
+    /// List access tokens for an account
+    ListTokens {
+        #[arg(long)]
+        account_id: String,
+    },
+    /// Revoke an access token by id
+    Revoke {
+        #[arg(long)]
+        token_id: String,
     },
 }
 
