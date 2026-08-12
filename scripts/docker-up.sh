@@ -73,10 +73,8 @@ ENV_COMMON=(
   -e LEANKG_AUTO_INDEX=1
   -e LEANKG_EMBED_ON_BOOT=0
   -e LEANKG_EMBED_BACKGROUND=0
-  -e LEANKG_EMBED_FAST=1
-  -e LEANKG_EMBED_MODEL=bge-q
-  -e LEANKG_EMBED_MAX_SEQ=128
-  -e LEANKG_EMBED_MAX_BLOB_CHARS=500
+  # Default embed profile: quality (FP32, full 512-token window). Fast
+  # (INT8 / 128-token) is opt-in via LEANKG_EMBED_FAST=1 + LEANKG_EMBED_MAX_SEQ=128.
   -e OMP_NUM_THREADS=1
   -e RUST_LOG=leankg=info
 )
