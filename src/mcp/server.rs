@@ -74,22 +74,15 @@ static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
-/// FR-P0-MCP-RC-03: concurrency cap for tool execution. `num_cpus - 1`
-/// permits (min 1) guarantees at least one Tokio worker is always free for
-/// `/health` and the SSE loop, so a heavy full-scan tool can't stall the
-/// whole server. Overridable via `LEANKG_MCP_TOOL_CONCURRENCY`.
+/// FR-P0-MCP-RC-03: concurrency cap for tool execution. Default **100**
+/// permits so parallel Cursor tool batches can proceed without immediate
+/// `-32603` failures. Overridable via `LEANKG_MCP_TOOL_CONCURRENCY`.
 fn build_tool_semaphore() -> Arc<tokio::sync::Semaphore> {
     let permits = std::env::var("LEANKG_MCP_TOOL_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n >= 1)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-                .saturating_sub(1)
-                .max(1)
-        });
+        .unwrap_or(100);
     Arc::new(tokio::sync::Semaphore::new(permits))
 }
 
@@ -195,8 +188,8 @@ pub struct MCPServer {
     write_bus: Arc<dyn crate::db::write_bus::WriteBus>,
     /// FR-P0-MCP-RC-03: concurrency cap so a heavy full-scan tool can never
     /// starve every Tokio worker (which stalled `/health` and flipped the
-    /// container `(unhealthy)`). `num_cpus - 1` permits (min 1) keeps at
-    /// least one worker free for `/health` and the SSE loop.
+    /// container `(unhealthy)`). Default 100 permits; overridable via
+    /// `LEANKG_MCP_TOOL_CONCURRENCY`.
     tool_semaphore: Arc<tokio::sync::Semaphore>,
     /// When true, the server rejects any tool that mutates state. Read tools
     /// (search_code, get_context, kg_*, etc.) still work; write tools return
@@ -3656,11 +3649,13 @@ async fn process_jsonrpc_request(
                     .or_insert(serde_json::Value::String(project.to_string()));
             }
 
-            // FR-P0-MCP-RC-03: acquire a concurrency permit (bounded by
-            // num_cpus-1) and wrap execution in a timeout so a slow tool
-            // returns `-32000 timed out` instead of stalling `/health`.
+            // FR-P0-MCP-RC-03: acquire a concurrency permit (default 100)
+            // and wrap execution in a timeout so a slow tool returns
+            // `-32000 timed out` instead of stalling `/health`. Wait up to
+            // 30s for a free slot so parallel Cursor batches queue instead
+            // of failing immediately with concurrency-limit errors.
             let _permit = match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
+                std::time::Duration::from_secs(30),
                 mcp_server.tool_semaphore.clone().acquire_owned(),
             )
             .await
@@ -4365,12 +4360,8 @@ mod tests {
         std::env::remove_var("LEANKG_MCP_TOOL_CONCURRENCY");
         let sem = build_tool_semaphore();
         let max = sem.available_permits();
-        // num_cpus - 1 (min 1); must be at least 1 permit for tool calls.
-        assert!(max >= 1, "semaphore must have >= 1 permit");
-        let cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
-        assert_eq!(max, cpus.saturating_sub(1).max(1));
+        // Default permits == 100 when env unset.
+        assert_eq!(max, 100, "default semaphore permits must be 100");
     }
 
     #[test]
