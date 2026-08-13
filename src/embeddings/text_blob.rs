@@ -169,28 +169,24 @@ fn synthesize_signature(name: &str, metadata: &serde_json::Value) -> Option<Stri
 /// `name`/`type`, or an object mapping name -> type.
 fn format_parameters(value: Option<&serde_json::Value>) -> Option<String> {
     let value = value?;
-    let items: Vec<String> = if let Some(arr) = value.as_array() {
-        if arr.is_empty() {
-            return None;
-        }
-        arr.iter().filter_map(param_to_string).collect()
-    } else if let Some(obj) = value.as_object() {
-        if obj.is_empty() {
-            return None;
-        }
-        obj.iter()
-            .map(|(k, v)| {
-                let ty = v.as_str().unwrap_or("");
-                if ty.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{k}: {ty}")
-                }
+    let items: Vec<String> = value
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .map(|arr| arr.iter().filter_map(param_to_string).collect())
+        .or_else(|| {
+            value.as_object().filter(|o| !o.is_empty()).map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| {
+                        let ty = v.as_str().unwrap_or("");
+                        if ty.is_empty() {
+                            k.clone()
+                        } else {
+                            format!("{k}: {ty}")
+                        }
+                    })
+                    .collect()
             })
-            .collect()
-    } else {
-        return None;
-    };
+        })?;
 
     if items.is_empty() {
         None

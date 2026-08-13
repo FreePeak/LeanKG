@@ -467,27 +467,23 @@ fn element_passes_type_filter(el: &crate::db::models::CodeElement, opts: &BuildO
     if opts.summary_only_enabled {
         return SUMMARY_ONLY_TYPES.contains(&el.element_type.to_ascii_lowercase().as_str());
     }
-    match &opts.type_filter {
-        Some(filter) => {
-            if !filter.contains(&el.element_type.to_ascii_lowercase()) {
-                return false;
-            }
+    if let Some(filter) = &opts.type_filter {
+        if !filter.contains(&el.element_type.to_ascii_lowercase()) {
+            return false;
         }
-        None => {}
     }
     // FR-EMBED-SUMMARY: under summary-primary, skip per-function vectors for
     // files above the size cap — the file-summary node carries the signal.
     // `file`/`module`/`class`/etc. are always allowed (the type_filter above
     // already gates them; summary-primary never adds them back).
-    if opts.summary_primary_enabled {
-        match el.element_type.as_str() {
-            "function" | "method" | "constructor" => {
-                if file_exceeds_summary_cap(&el.file_path, el.line_end, opts) {
-                    return false;
-                }
-            }
-            _ => {}
-        }
+    if opts.summary_primary_enabled
+        && matches!(
+            el.element_type.as_str(),
+            "function" | "method" | "constructor"
+        )
+        && file_exceeds_summary_cap(&el.file_path, el.line_end, opts)
+    {
+        return false;
     }
     true
 }

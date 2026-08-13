@@ -19,6 +19,10 @@ pub mod profile;
 pub mod provider;
 pub mod registry;
 
+// Re-exported only for `main.rs` embed/bench code (both feature-gated); the
+// feature-agnostic indexer path (file_summary) uses the full
+// `crate::embeddings::profile::*` path so no re-export is needed there.
+#[cfg(feature = "embeddings")]
 pub use profile::{active_profile, EmbedProfile};
 
 #[cfg(feature = "embeddings")]
@@ -96,12 +100,10 @@ pub use text_blob::{build_blob, classify, BlobKind, PERF_TYPE_PRESET};
 #[allow(unused_imports)]
 pub use provider::{
     create_provider_from_env, create_provider_from_env_with_dim, embed_query,
-    provider_kind_from_env, validate_provider, vec_dim, EmbedError, EmbedProvider, FakeEmbedProvider,
-    OpenAiCompatibleProvider, ProviderKind, VEC_DIM,
+    provider_kind_from_env, validate_provider, vec_dim, EmbedError, EmbedProvider,
+    FakeEmbedProvider, OpenAiCompatibleProvider, ProviderKind, VEC_DIM,
 };
 
-#[cfg(feature = "embeddings")]
-pub use provider::LocalOnnxProvider;
 #[allow(unused_imports)]
 pub use registry::{
     active_model_id_from_env, backfill_legacy_model_id, builtin_registry,

@@ -23,7 +23,11 @@ mod db;
 mod doc;
 mod doc_indexer;
 mod embed;
-#[cfg(feature = "embeddings")]
+// The `embeddings` module tree self-gates its heavy parts (ONNX / fastembed)
+// behind the feature in `src/embeddings/mod.rs`; `provider` / `profile` /
+// `registry` are always available so feature-agnostic callers in `db` and
+// `indexer` (e.g. `reconcile_vector_dim`, summary-node blob caps) can resolve
+// `crate::embeddings::*` in the binary build too.
 mod embeddings;
 mod gc;
 mod graph;

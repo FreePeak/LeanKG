@@ -403,10 +403,14 @@ fn openai_provider_from_env(expected_dim: usize) -> Result<Arc<dyn EmbedProvider
     }
     let model =
         std::env::var("LEANKG_EMBED_API_MODEL").unwrap_or_else(|_| "bge-small-en-v1.5".to_string());
-    // Must equal the storage width [`vec_dim`] — the pgvector column / cozo
-    // vector type is created at exactly this size, and a mismatch fails every
-    // insert/query with a dimension error.
-    let dimensions = vec_dim();
+    // Registry dim wins (per-model width, e.g. 2560 for Qwen3); fall back to
+    // the storage width [`vec_dim`] only when the registry didn't pin one.
+    // The pgvector column / cozo vector type is created at exactly this size,
+    // so a mismatch fails every insert/query with a dimension error.
+    let dimensions = std::env::var("LEANKG_EMBED_API_DIM")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(expected_dim);
     let p = OpenAiCompatibleProvider::new(base_url, api_key, model, dimensions)?;
     Ok(Arc::new(p))
 }
