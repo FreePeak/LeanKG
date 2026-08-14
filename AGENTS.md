@@ -23,6 +23,8 @@ cargo fmt --all -- --check      # formatting check
 | `cargo run --release -- mcp-stdio --watch` | MCP stdio (local AI tools) |
 | `cargo run --release -- mcp-http --port 9699` | MCP HTTP (remote clients) |
 | `cargo run --release -- embed` | Build embedding vectors (after index) |
+| `cargo run --release -- embed --dry-run` | Export embed queries to `.leankg/embed_export.jsonl` (offsite/GPU batch — pair with `scripts/embed_batch.py` + `embed --import`) |
+| `cargo run --release -- embed --import <file>` | Import vectors produced from a `--dry-run` export (resumable; `--no-verify` skips drift check) |
 | `cargo run --release -- serve` | REST API + embedded UI v2 on :8080 |
 | `cargo run --release -- impact <file> <depth>` | Blast radius calc |
 

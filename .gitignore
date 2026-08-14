@@ -52,3 +52,4 @@ vendor/
 actionlint/
 docker-compose.enterprise.local.yml
 .docker-compose-enterprise.local.yml
+__pycache__/
