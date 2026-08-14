@@ -36,6 +36,8 @@ Vectors are stored in CozoDB's native HNSW index — no extra native deps.
 | `text_blob.rs` | Per-element text blob construction + SHA-256 content hash. Caps blobs at 1500 chars (≈512 BPE tokens). |
 | `state.rs` | `embedding_state` CozoDB table + `embedding_vectors` relation + HNSW index. Helpers: mark_stale, list_all, upsert_fresh, delete_state_rows. |
 | `build.rs` | Orchestrates the `embed` CLI: incremental vs full rebuild, orphan reap. Writes to `embedding_vectors` via `:put`. |
+| `offsite.rs` | Offsite embedding: `export_work_items` (`embed --dry-run`) and `import_vectors` (`embed --import`). NDJSON exchange format, resume, graph-drift verify. |
+| `profile.rs` | `EmbedProfile` (`small` / `8k` / `32k`) — default blob/summary budgets read from `LEANKG_EMBED_PROFILE`. |
 
 The retrieval pipeline (retrieve → rerank → traverse) lives in `src/retrieval/`
 and the MCP tool `kg_semantic_context` lives in `src/mcp/`. They consume this
@@ -111,6 +113,56 @@ re-embeds every element regardless of state.
 `upsert_fresh`, `mark_stale_for_qualified_names`, and `delete_state_rows` all
 chunk their CozoDB writes at 500 rows per query (see `UPSERT_CHUNK` in
 `state.rs`) to keep pest parser input bounded on large repos.
+
+## Offsite / dry-run embedding (`embed --dry-run` / `embed --import`)
+
+Implemented in `offsite.rs`. Lets you move the expensive inference step off
+the LeanKG host — e.g. onto a Colab T4 GPU — while keeping the same work list,
+mapping, and resume semantics as the in-process pipeline.
+
+```
+host:  leankg embed --dry-run                      → .leankg/embed_export.jsonl
+gpu:   python scripts/embed_batch.py --in … --out … → import.jsonl
+host:  leankg embed --import .leankg/import.jsonl  → vectors in DB, state fresh
+```
+
+**`embed --dry-run`** (`export_work_items`): runs the same work-list
+collection as a real run (Incremental or Full, same Incremental→Full
+self-heal), then writes NDJSON — a leading `_meta` line + one row per query:
+
+```json
+{"_meta":true,"format":"leankg-embed-export","version":1,"vec_dim":384,"model":"…","profile":"small","mode":"Full","item_count":N}
+{"i":0,"qualified_name":"src/main.rs::main","blob":"…text…","content_hash":"sha256"}
+```
+
+Non-mutating: never calls the embedder, never touches `embedding_vectors` or
+`embedding_state`, never drops/rebuilds HNSW.
+
+**`scripts/embed_batch.py`**: sentence-transformers batch embedder. One input
+row → one output row, keyed by `qualified_name`; asserts the input `i` is
+gap-free; resumes via `--checkpoint`. Output NDJSON:
+
+```json
+{"_meta":true,"format":"leankg-embed-import","version":1,"vec_dim":384,"model":"…","source_export":"embed_export.jsonl"}
+{"i":0,"qualified_name":"src/main.rs::main","vector":[0.1,…],"content_hash":"sha256"}
+```
+
+**`embed --import`** (`import_vectors`): upserts vectors in batches via the
+exact `upsert_pairs_to_db` + `state::upsert_fresh` pair the live writer uses,
+so resume is identical. Guarantees:
+
+- **Dim guard** — refuses if the file's `vec_dim` ≠ runtime `vec_dim()`.
+- **Resume** — skips rows already `fresh` with matching `content_hash`
+  (idempotent; re-running after a kill picks up where it left off).
+- **Drift safety** (default) — rebuilds each row's current `content_hash`
+  from the live graph and skips rows whose element drifted (hash mismatch)
+  or vanished (orphan); the next normal `embed` re-embeds them. Pass
+  `--no-verify` to trust the file blindly (faster, risk of stale vectors if
+  the graph changed since the export).
+
+`qualified_name` is the authoritative join key (PK of both `embedding_vectors`
+and `embedding_state`); `content_hash` is echoed unchanged so
+`embedding_state.content_hash` is stamped correctly.
 
 ## Retrieval pipeline
 

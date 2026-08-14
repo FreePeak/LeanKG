@@ -89,7 +89,7 @@ impl EmbedderBackend {
 /// and longer tail latency if the run crashes mid-flush.
 const DEFAULT_UPSERT_CHUNK: usize = 5000;
 
-fn effective_upsert_chunk() -> usize {
+pub(crate) fn effective_upsert_chunk() -> usize {
     std::env::var("LEANKG_EMBED_UPSERT_CHUNK")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -296,6 +296,29 @@ pub struct BuildOptions {
     /// defaults to `function,method` on mega-graphs to keep cold embed
     /// under 5 min; pass `all` (empty string from CLI) to disable.
     pub type_filter: Option<std::collections::HashSet<String>>,
+    /// FR-EMBED-SUMMARY: when true, individual `function`/`method`/
+    /// `constructor` elements are skipped if their parent file exceeds
+    /// [`BuildOptions::summary_primary_file_cap`] lines — the file-summary
+    /// node (with its `contains` bridge edges) carries the signal instead.
+    /// `file`/`module`/`class`/etc. nodes are always embedded. Default
+    /// `false`; the CLI auto-enables on large graphs.
+    pub summary_primary_enabled: bool,
+    /// FR-EMBED-SUMMARY-ONLY: when true, only the node types in
+    /// [`SUMMARY_ONLY_TYPES`] (`file` + `module`) are embedded — no
+    /// functions at all. Functions are discovered purely via ontology
+    /// traversal at query time. This is the strictest GraphRAG-style mode:
+    /// smallest vector count, every function reached by walking down from a
+    /// file/module summary seed. Implies `summary_primary_enabled` has no
+    /// further effect (no functions to gate). Default `false`; CLI
+    /// `--summary-only on` / env `LEANKG_EMBED_SUMMARY_ONLY=on`.
+    pub summary_only_enabled: bool,
+    /// Size cap (source lines) above which a file is summary-only under
+    /// summary-primary. Default `500`.
+    pub summary_primary_file_cap: u32,
+    /// Pre-computed `file_path -> max line_end` map, populated by a single
+    /// scan of `code_elements` before work-item collection. Used by the
+    /// summary-primary gate so we don't re-scan per element.
+    pub file_size_cache: std::collections::HashMap<String, u32>,
     /// Duty-cycle / yield under MCP (FR-EMBED-PARTIAL-01).
     pub partial: bool,
     /// Soft RSS cap override (MB); `None` uses `plan_embed_memory` / env.
@@ -317,6 +340,10 @@ impl Default for BuildOptions {
             batch_size: 32,
             reserve_capacity: None,
             type_filter: None,
+            summary_primary_enabled: false,
+            summary_only_enabled: false,
+            summary_primary_file_cap: SUMMARY_PRIMARY_DEFAULT_FILE_CAP,
+            file_size_cache: std::collections::HashMap::new(),
             partial: false,
             max_rss_mb_override: None,
             write_vectors: write_vectors_enabled(),
@@ -337,6 +364,22 @@ pub fn write_vectors_enabled() -> bool {
         })
         .unwrap_or(true)
 }
+
+/// Default source-line cap for summary-primary embedding (FR-EMBED-SUMMARY).
+/// Files larger than this are summary-only; smaller files keep per-function
+/// vectors for higher precision on hot small modules. Override with
+/// `--summary-primary-cap` / `LEANKG_EMBED_SUMMARY_PRIMARY_CAP`.
+pub const SUMMARY_PRIMARY_DEFAULT_FILE_CAP: u32 = 500;
+
+/// Element types that are embedded under the summary-only mode
+/// (FR-EMBED-SUMMARY-ONLY). When `BuildOptions::summary_only_enabled` is set,
+/// only these node types get vectors — no `function`/`method`/`constructor`
+/// (or any other type). At query time the seed-then-traverse retrieval flow
+/// discovers functions purely via ontology traversal from file/module summary
+/// seeds (`semantic_search` already partitions HNSW hits into upper seeds and
+/// walks down to functions via `downward_rule_for`, so no retrieval change is
+/// needed). Override the node set with `--types` if you need finer control.
+pub const SUMMARY_ONLY_TYPES: &[&str] = &["file", "module"];
 
 /// Parse a `--types` flag value into a `BuildOptions::type_filter`. Empty
 /// string or `all` => embed every type. `perf` => mega perf preset.
@@ -416,10 +459,42 @@ pub(crate) fn should_skip_hnsw_rebuild(
 }
 
 fn element_passes_type_filter(el: &crate::db::models::CodeElement, opts: &BuildOptions) -> bool {
-    match &opts.type_filter {
-        Some(filter) => filter.contains(&el.element_type.to_ascii_lowercase()),
-        None => true,
+    // FR-EMBED-SUMMARY-ONLY: the strictest mode — only `file` + `module`
+    // summary nodes get vectors. Functions are discovered purely via
+    // ontology traversal at query time, so they are never embedded here.
+    // Checked first because it supersedes both `type_filter` and
+    // `summary_primary_enabled`.
+    if opts.summary_only_enabled {
+        return SUMMARY_ONLY_TYPES.contains(&el.element_type.to_ascii_lowercase().as_str());
     }
+    if let Some(filter) = &opts.type_filter {
+        if !filter.contains(&el.element_type.to_ascii_lowercase()) {
+            return false;
+        }
+    }
+    // FR-EMBED-SUMMARY: under summary-primary, skip per-function vectors for
+    // files above the size cap — the file-summary node carries the signal.
+    // `file`/`module`/`class`/etc. are always allowed (the type_filter above
+    // already gates them; summary-primary never adds them back).
+    if opts.summary_primary_enabled
+        && matches!(
+            el.element_type.as_str(),
+            "function" | "method" | "constructor"
+        )
+        && file_exceeds_summary_cap(&el.file_path, el.line_end, opts)
+    {
+        return false;
+    }
+    true
+}
+
+/// True if the file is large enough to be summary-only under summary-primary.
+/// Falls back to the element's own `line_end` when the file isn't in the
+/// pre-computed cache (e.g. the cache wasn't populated for a tiny run).
+fn file_exceeds_summary_cap(file_path: &str, element_line_end: u32, opts: &BuildOptions) -> bool {
+    let cached = opts.file_size_cache.get(file_path).copied();
+    let effective = cached.unwrap_or(element_line_end);
+    effective > opts.summary_primary_file_cap
 }
 
 fn work_item_from_element(el: &crate::db::models::CodeElement) -> Option<WorkItem> {
@@ -437,11 +512,73 @@ fn work_item_from_element(el: &crate::db::models::CodeElement) -> Option<WorkIte
 /// mega-graphs. One paginated scan + HashSet join is O(elements).
 const INCREMENTAL_POINT_LOOKUP_CAP: usize = 2_000;
 
+/// Populate `opts.file_size_cache` with `file_path -> max(line_end)` from a
+/// single paginated scan of `code_elements` (FR-EMBED-SUMMARY). The cache
+/// backs the summary-primary gate so we don't re-scan per element. No-op
+/// (and cheap) when summary-primary is disabled.
+pub(crate) fn populate_file_size_cache(
+    graph: &GraphEngine,
+    opts: &mut BuildOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !opts.summary_primary_enabled {
+        return Ok(());
+    }
+    let total = graph.count_elements().unwrap_or(0);
+    if total == 0 {
+        return Ok(());
+    }
+    let mut cache: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mega = total > 50_000;
+    if mega {
+        let mut offset = 0usize;
+        let page_size = 5_000usize;
+        loop {
+            if crate::embeddings::control::is_cancel_requested() {
+                return Err("embed cancelled".into());
+            }
+            let (page, _) = graph.get_elements_paginated(page_size, offset)?;
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len();
+            for el in &page {
+                if el.file_path.is_empty() || el.line_end == 0 {
+                    continue;
+                }
+                let entry = cache.entry(el.file_path.clone()).or_insert(0);
+                if el.line_end > *entry {
+                    *entry = el.line_end;
+                }
+            }
+            if offset >= total {
+                break;
+            }
+        }
+    } else {
+        for el in graph.all_elements()? {
+            if el.file_path.is_empty() || el.line_end == 0 {
+                continue;
+            }
+            let entry = cache.entry(el.file_path.clone()).or_insert(0);
+            if el.line_end > *entry {
+                *entry = el.line_end;
+            }
+        }
+    }
+    tracing::info!(
+        "summary-primary file-size cache: {} files (cap={} lines)",
+        cache.len(),
+        opts.summary_primary_file_cap
+    );
+    opts.file_size_cache = cache;
+    Ok(())
+}
+
 /// Incremental dirty set from `embedding_state` (indexer marks stale/new).
 /// Avoids mega `all_elements` / full pagination just to skip fresh rows
 /// when the dirty set is small. Large dirty / cold rebuilds use one
 /// paginated walk keyed by the stale QN set.
-fn collect_incremental_dirty_work(
+pub(crate) fn collect_incremental_dirty_work(
     graph: &GraphEngine,
     opts: &BuildOptions,
 ) -> Result<(Vec<WorkItem>, Vec<EmbeddingStateRow>, usize), Box<dyn std::error::Error>> {
@@ -543,7 +680,7 @@ fn collect_incremental_dirty_work(
 }
 
 /// Full (or non-incremental) collect — paginated on mega-graphs.
-fn collect_work_items(
+pub(crate) fn collect_work_items(
     graph: &GraphEngine,
     opts: &BuildOptions,
 ) -> Result<Vec<WorkItem>, Box<dyn std::error::Error>> {
@@ -684,6 +821,7 @@ pub fn run(
 ) -> Result<BuildReport, Box<dyn std::error::Error>> {
     let mem = plan_embed_memory(1, opts.batch_size);
     let mut opts = opts.clone();
+    populate_file_size_cache(graph, &mut opts)?;
     opts.batch_size = mem.batch_size;
     if mem.max_rss_mb > 0 {
         tracing::info!(
@@ -1006,6 +1144,7 @@ pub fn build_index_parallel(
         .map(|p| p.fresh)
         .unwrap_or(0);
     let vectors_existing = count_vectors(db).unwrap_or(0);
+    populate_file_size_cache(graph, &mut opts).map_err(|e| e.to_string())?;
     if matches!(opts.mode, BuildMode::Incremental)
         && should_escalate_incremental_to_full(vectors_existing, fresh_state_rows)
     {
@@ -1499,7 +1638,7 @@ fn active_vectors_relation() -> Result<String, Box<dyn std::error::Error>> {
 /// (~371k functions-only) jumped from ~85 vec/sec (parameterized
 /// `:put`) to ~700 vec/sec with `import_relations` — about 8× — which
 /// brings cold embed from ~73 min to ~9 min on the same workspace.
-fn upsert_pairs_to_db(
+pub(crate) fn upsert_pairs_to_db(
     db: &dyn crate::db::backend::DbBackend,
     pairs: &[(String, Vec<f32>)],
     hnsw_live: bool,
@@ -1669,7 +1808,7 @@ fn remove_vectors(
     Ok(())
 }
 
-fn count_vectors(
+pub(crate) fn count_vectors(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // Aggregate COUNT instead of pulling every QN row (628k+ on workspace-be)
@@ -1713,6 +1852,13 @@ pub struct BackgroundEmbedConfig {
     /// Whether to persist vectors + state to the Postgres vector store
     /// (default: env `LEANKG_EMBED_WRITE_VECTORS`, default true).
     pub write_vectors: bool,
+    /// FR-EMBED-SUMMARY: enable summary-primary embedding for this background
+    /// run. Default `true` — the MCP background embed runs on already-warm
+    /// projects where summary nodes deliver the biggest inference win.
+    pub summary_primary_enabled: bool,
+    /// FR-EMBED-SUMMARY: file-size cap for summary-primary. `None` uses the
+    /// `BuildOptions` default (500 lines) or `LEANKG_EMBED_SUMMARY_PRIMARY_CAP`.
+    pub summary_primary_cap: Option<u32>,
 }
 
 impl Default for BackgroundEmbedConfig {
@@ -1727,6 +1873,8 @@ impl Default for BackgroundEmbedConfig {
             rss_fraction: 0.0,
             project_path: None,
             write_vectors: write_vectors_enabled(),
+            summary_primary_enabled: true,
+            summary_primary_cap: None,
         }
     }
 }
@@ -1779,6 +1927,8 @@ pub fn spawn_background_embed(
         rss_fraction: cfg.rss_fraction,
         project_path: cfg.project_path,
         write_vectors: cfg.write_vectors,
+        summary_primary_enabled: cfg.summary_primary_enabled,
+        summary_primary_cap: cfg.summary_primary_cap,
     };
     if mem.max_rss_mb > 0 {
         tracing::info!(
@@ -1904,6 +2054,12 @@ pub fn spawn_background_embed(
                 partial: cfg.partial,
                 max_rss_mb_override: Some(mem.max_rss_mb).filter(|n| *n > 0),
                 write_vectors: cfg.write_vectors,
+                summary_primary_enabled: cfg.summary_primary_enabled,
+                summary_primary_file_cap: cfg
+                    .summary_primary_cap
+                    .unwrap_or(SUMMARY_PRIMARY_DEFAULT_FILE_CAP)
+                    .max(1),
+                ..Default::default()
             };
 
             // Periodic status snapshot poller. Reads the live row count from the
@@ -2122,9 +2278,9 @@ unsafe fn libc_kill_compat(pid: u64, sig: i32) -> i32 {
 
 #[derive(Clone)]
 pub(crate) struct WorkItem {
-    qualified_name: String,
-    blob: String,
-    current_hash: String,
+    pub(crate) qualified_name: String,
+    pub(crate) blob: String,
+    pub(crate) current_hash: String,
 }
 
 pub const EMBEDDING_DIM_CONST: usize = EMBEDDING_DIM;
@@ -2473,6 +2629,9 @@ mod tests {
         assert!(!cfg.full);
         assert!(cfg.types_filter.is_empty());
         assert_eq!(cfg.rss_fraction, 0.0);
+        // FR-EMBED-SUMMARY: MCP background embed defaults to summary-primary.
+        assert!(cfg.summary_primary_enabled);
+        assert!(cfg.summary_primary_cap.is_none());
     }
 
     /// Regression for REL-REFRESH-01: the incremental path writes vectors
@@ -2748,5 +2907,145 @@ mod tests {
         let state_rows = state::list_all(db.as_ref()).expect("state rows");
         assert_eq!(state_rows.len(), 1, "no-write run must not stamp new state");
         assert_eq!(state_rows[0].qualified_name, "src/keep.rs::fnKeep");
+    }
+
+    fn fn_element(file: &str, line_end: u32) -> crate::db::models::CodeElement {
+        crate::db::models::CodeElement {
+            element_type: "function".to_string(),
+            name: "do_thing".to_string(),
+            qualified_name: format!("{file}::do_thing"),
+            file_path: file.to_string(),
+            line_start: 1,
+            line_end,
+            language: "rust".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn summary_primary_skips_functions_in_large_files() {
+        let mut opts = BuildOptions::default();
+        opts.summary_primary_enabled = true;
+        opts.summary_primary_file_cap = 500;
+        opts.file_size_cache.insert("src/huge.rs".to_string(), 1200);
+        let el = fn_element("src/huge.rs", 1190);
+        assert!(
+            !element_passes_type_filter(&el, &opts),
+            "function in >500-line file must be skipped under summary-primary"
+        );
+    }
+
+    #[test]
+    fn summary_primary_keeps_functions_in_small_files() {
+        let mut opts = BuildOptions::default();
+        opts.summary_primary_enabled = true;
+        opts.summary_primary_file_cap = 500;
+        opts.file_size_cache.insert("src/small.rs".to_string(), 120);
+        let el = fn_element("src/small.rs", 110);
+        assert!(
+            element_passes_type_filter(&el, &opts),
+            "function in <=500-line file must be embedded"
+        );
+    }
+
+    #[test]
+    fn summary_primary_falls_back_to_element_line_end() {
+        // No cache entry → fall back to the element's own line_end.
+        let mut opts = BuildOptions::default();
+        opts.summary_primary_enabled = true;
+        opts.summary_primary_file_cap = 500;
+        let small = fn_element("src/x.rs", 40);
+        let big = fn_element("src/y.rs", 800);
+        assert!(element_passes_type_filter(&small, &opts));
+        assert!(!element_passes_type_filter(&big, &opts));
+    }
+
+    #[test]
+    fn summary_primary_never_skips_non_functions() {
+        let mut opts = BuildOptions::default();
+        opts.summary_primary_enabled = true;
+        opts.summary_primary_file_cap = 1; // aggressive
+        opts.file_size_cache.insert("src/f.rs".to_string(), 9999);
+        let mut file_node = fn_element("src/f.rs", 1);
+        file_node.element_type = "file".to_string();
+        let mut class_node = fn_element("src/f.rs", 1);
+        class_node.element_type = "class".to_string();
+        assert!(element_passes_type_filter(&file_node, &opts));
+        assert!(element_passes_type_filter(&class_node, &opts));
+    }
+
+    #[test]
+    fn summary_primary_disabled_by_default() {
+        let opts = BuildOptions::default();
+        let mut el = fn_element("src/huge.rs", 5000);
+        el.file_path = "src/huge.rs".to_string();
+        assert!(element_passes_type_filter(&el, &opts));
+    }
+
+    #[test]
+    fn summary_only_skips_all_functions() {
+        // FR-EMBED-SUMMARY-ONLY: no function vectors at all, regardless of
+        // file size or summary-primary cap. Functions are discovered purely
+        // via ontology traversal at query time.
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        let small = fn_element("src/small.rs", 10);
+        let big = fn_element("src/huge.rs", 5000);
+        assert!(
+            !element_passes_type_filter(&small, &opts),
+            "small-file function must be skipped under summary-only"
+        );
+        assert!(
+            !element_passes_type_filter(&big, &opts),
+            "large-file function must be skipped under summary-only"
+        );
+    }
+
+    #[test]
+    fn summary_only_keeps_file_and_module_summaries() {
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        let mut file_node = fn_element("src/parser.rs", 200);
+        file_node.element_type = "file".to_string();
+        let mut module_node = fn_element("src/parser.rs", 1);
+        module_node.element_type = "module".to_string();
+        assert!(
+            element_passes_type_filter(&file_node, &opts),
+            "file summary must be embedded under summary-only"
+        );
+        assert!(
+            element_passes_type_filter(&module_node, &opts),
+            "module summary must be embedded under summary-only"
+        );
+    }
+
+    #[test]
+    fn summary_only_skips_classes_and_docs() {
+        // summary-only is the strictest mode: only file + module. Classes
+        // (which would pass under summary-primary) and docs are skipped.
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        let mut class_node = fn_element("src/x.rs", 1);
+        class_node.element_type = "class".to_string();
+        let mut doc_node = fn_element("docs/x.md", 1);
+        doc_node.element_type = "document".to_string();
+        assert!(!element_passes_type_filter(&class_node, &opts));
+        assert!(!element_passes_type_filter(&doc_node, &opts));
+    }
+
+    #[test]
+    fn summary_only_supersedes_summary_primary() {
+        // When both flags are on, summary-only wins: no function vectors,
+        // even for a small file that summary-primary would normally keep.
+        let mut opts = BuildOptions::default();
+        opts.summary_only_enabled = true;
+        opts.summary_primary_enabled = true;
+        opts.summary_primary_file_cap = 500;
+        opts.file_size_cache.insert("src/small.rs".to_string(), 50);
+        let el = fn_element("src/small.rs", 10);
+        assert!(
+            !element_passes_type_filter(&el, &opts),
+            "summary-only must supersede summary-primary"
+        );
     }
 }

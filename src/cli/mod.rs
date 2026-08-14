@@ -410,6 +410,58 @@ pub enum CLICommand {
         /// touching PG). Equivalent to `LEANKG_EMBED_WRITE_VECTORS=0`.
         #[arg(long)]
         no_vectors: bool,
+        /// FR-EMBED-SUMMARY: GraphRAG-style summary-primary embedding. When
+        /// enabled, per-function vectors are skipped for files above
+        /// `--summary-primary-cap` lines (default 500) — the file-summary
+        /// node carries the signal via its `contains` edges instead. Cuts
+        /// inference ~3–8× on large codebases. Values: `on` | `off` | `auto`
+        /// (auto = enabled when the graph exceeds 50k elements). Default
+        /// `auto`. Env: `LEANKG_EMBED_SUMMARY_PRIMARY`.
+        #[arg(long, default_value = "auto")]
+        summary_primary: String,
+        /// Source-line cap above which a file is summary-only under
+        /// `--summary-primary`. Default 500. Env:
+        /// `LEANKG_EMBED_SUMMARY_PRIMARY_CAP`.
+        #[arg(long)]
+        summary_primary_cap: Option<u32>,
+        /// FR-EMBED-SUMMARY-ONLY: embed only file + module summary nodes —
+        /// no function/method/constructor vectors at all. Functions are
+        /// discovered purely via ontology traversal at query time
+        /// (`semantic_search` walks down from file/module summary seeds via
+        /// `contains` edges). This is the strictest GraphRAG-style mode:
+        /// smallest vector count, every function reached by traversal.
+        /// Combine with `--full` to drop existing function vectors after a
+        /// mode switch. Values: `on` | `off`. Default `off`. Env:
+        /// `LEANKG_EMBED_SUMMARY_ONLY`.
+        #[arg(long, default_value = "off")]
+        summary_only: String,
+        /// Offsite embedding — collect embed queries exactly as a normal run
+        /// would, then write them to a file (one row per query, NDJSON)
+        /// instead of calling the embedder. Non-mutating: leaves
+        /// `embedding_vectors` and `embedding_state` untouched. Batch-embed
+        /// the file elsewhere (e.g. Colab T4 GPU via
+        /// `scripts/embed_batch.py`), then load results with `--import`.
+        /// Default file: `<project>/.leankg/embed_export.jsonl`.
+        #[arg(long)]
+        dry_run: bool,
+        /// Output path for `--dry-run`. Default
+        /// `<project>/.leankg/embed_export.jsonl`.
+        #[arg(long)]
+        export_file: Option<String>,
+        /// Import mode — read vectors produced from a `--dry-run` export
+        /// file (typically by `scripts/embed_batch.py`) and upsert them into
+        /// the DB. Resumable: rows already fresh with a matching
+        /// `content_hash` are skipped, so re-running after an interruption
+        /// picks up where it left off.
+        #[arg(long)]
+        import: Option<String>,
+        /// Skip the graph-drift content_hash check on `--import` (faster).
+        /// By default `--import` rebuilds each row's current hash from the
+        /// live graph and skips rows whose element changed or vanished since
+        /// the export (so stale vectors are never written). Only pass
+        /// `--no-verify` when the graph has not changed since the export.
+        #[arg(long)]
+        no_verify: bool,
     },
     /// One-shot embedding retrieval for CLI testing (requires
     /// --features embeddings). Useful for validating the retrieve→rerank→

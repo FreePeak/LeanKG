@@ -9,18 +9,27 @@
 use crate::db::models::CodeElement;
 use sha2::{Digest, Sha256};
 
-/// Maximum text-blob length in characters before truncation. The embedding
-/// model's hard limit is 512 BPE tokens; ~1500 ASCII characters is a safe
-/// approximation that leaves headroom for tokenization expansion.
+/// Maximum text-blob length in characters before truncation. Under the
+/// default `small` profile the local BGE-small model's hard limit is 512 BPE
+/// tokens and ~1500 ASCII characters is a safe approximation that leaves
+/// headroom for tokenization expansion; big-context profiles
+/// (`LEANKG_EMBED_PROFILE=8k|32k`) raise the default for remote models
+/// (bge-m3 / Qwen3-Embedding) whose windows are 8k/32k tokens.
 ///
 /// Fast path (`LEANKG_EMBED_FAST=1`) defaults to a tighter cap so batches
 /// stay short after `LEANKG_EMBED_MAX_SEQ` — needed for ≥500 vec/s on
-/// Apple Silicon. Override with `LEANKG_EMBED_MAX_BLOB_CHARS`.
+/// Apple Silicon; the fast-path cap only applies to the `small` profile
+/// (big profiles mean a remote provider, where fast mode is irrelevant).
+/// Override with `LEANKG_EMBED_MAX_BLOB_CHARS` (clamped 64..=262144).
 pub fn max_blob_chars() -> usize {
     if let Ok(v) = std::env::var("LEANKG_EMBED_MAX_BLOB_CHARS") {
         if let Ok(n) = v.parse::<usize>() {
-            return n.clamp(64, 8_000);
+            return n.clamp(64, 262_144);
         }
+    }
+    let profile = crate::embeddings::profile::active_profile();
+    if profile != crate::embeddings::profile::EmbedProfile::Small {
+        return profile.blob_chars();
     }
     if crate::embeddings::runtime::embed_fast_enabled() {
         500
@@ -29,6 +38,8 @@ pub fn max_blob_chars() -> usize {
     }
 }
 
+/// Small-profile blob ceiling. Historical constant kept for tests/docs;
+/// big-context profiles exceed it via `EmbedProfile::blob_chars`.
 pub const MAX_BLOB_CHARS: usize = 1500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +104,16 @@ fn build_code_blob(element: &CodeElement) -> String {
         parts.push(element.name.clone());
     }
     let mut got_doc = false;
+    // Summary nodes (file/module TOCs from `indexer::file_summary`) carry a
+    // dense, pre-composed `metadata.summary` string. Prefer it as the
+    // semantic signal — it already encodes the qualified name, so skip the
+    // generic doc/signature fallback for these nodes (FR-EMBED-SUMMARY).
+    if let Some(summary) = element.metadata.get("summary").and_then(|v| v.as_str()) {
+        if !summary.trim().is_empty() {
+            parts.push(summary.to_string());
+            return parts.join("\n");
+        }
+    }
     if let Some(doc) = extract_doc_signature(&element.metadata) {
         parts.push(doc);
         got_doc = true;
@@ -148,28 +169,24 @@ fn synthesize_signature(name: &str, metadata: &serde_json::Value) -> Option<Stri
 /// `name`/`type`, or an object mapping name -> type.
 fn format_parameters(value: Option<&serde_json::Value>) -> Option<String> {
     let value = value?;
-    let items: Vec<String> = if let Some(arr) = value.as_array() {
-        if arr.is_empty() {
-            return None;
-        }
-        arr.iter().filter_map(param_to_string).collect()
-    } else if let Some(obj) = value.as_object() {
-        if obj.is_empty() {
-            return None;
-        }
-        obj.iter()
-            .map(|(k, v)| {
-                let ty = v.as_str().unwrap_or("");
-                if ty.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{k}: {ty}")
-                }
+    let items: Vec<String> = value
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .map(|arr| arr.iter().filter_map(param_to_string).collect())
+        .or_else(|| {
+            value.as_object().filter(|o| !o.is_empty()).map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| {
+                        let ty = v.as_str().unwrap_or("");
+                        if ty.is_empty() {
+                            k.clone()
+                        } else {
+                            format!("{k}: {ty}")
+                        }
+                    })
+                    .collect()
             })
-            .collect()
-    } else {
-        return None;
-    };
+        })?;
 
     if items.is_empty() {
         None
@@ -472,5 +489,34 @@ mod tests {
         let blob = build_blob(&el).unwrap();
         assert!(blob.contains("src/main.rs::detect_root"));
         assert!(blob.contains("fn detect_root(path: PathBuf) -> Option<PathBuf>"));
+    }
+
+    #[test]
+    fn file_summary_blob_uses_metadata_summary() {
+        let mut el = make_element("file", "parser.rs", "src/parser.rs");
+        el.metadata = serde_json::json!({
+            "summary": "src/parser.rs | module: parser | types: Ast | fn parse(src: &str) -> Ast",
+            "summary_kind": "toc",
+            "fn_count": 1
+        });
+        let blob = build_blob(&el).unwrap();
+        assert!(blob.contains("src/parser.rs"));
+        assert!(blob.contains("module: parser"));
+        assert!(blob.contains("fn parse(src: &str) -> Ast"));
+        // The qualified name is prepended but the signature fallback is NOT
+        // added (no spurious file path or synthesized signature).
+        assert!(!blob.contains("\n./") || blob.matches('\n').count() <= 2);
+    }
+
+    #[test]
+    fn file_summary_blob_empty_summary_falls_through() {
+        // An empty/blank summary string must NOT short-circuit — fall back
+        // to the generic path so we don't embed a bare qualified name.
+        let mut el = make_element("file", "x.rs", "x.rs");
+        el.metadata = serde_json::json!({"summary": "   "});
+        let blob = build_blob(&el);
+        // x.rs has no doc/signature → fallback appends file_path "x.rs".
+        // The blob should still exist (qualified_name + file_path).
+        assert!(blob.is_some());
     }
 }

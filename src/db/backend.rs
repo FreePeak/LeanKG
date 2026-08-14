@@ -10,6 +10,89 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Condvar, Mutex};
 
+/// Connect a Postgres client, choosing NoTls or rustls at the call site.
+///
+/// Local dev PG on :5433 (no `LEANKG_PG_CA_CERT`, no `sslmode=verify-*`)
+/// connects plain; remote managed Postgres connects over rustls rooted at the
+/// CA in `LEANKG_PG_CA_CERT` (Aiven private CA). A `verify-full`/`verify-ca`
+/// URL without that env var falls back to the Mozilla root store compiled in
+/// via `webpki-roots` (public CAs like Let's Encrypt). Each branch uses a
+/// concrete connector — `MakeTlsConnect` has associated types, so a single
+/// boxed trait object is not object-safe — hence the separate
+/// `cfg.connect(...)` calls below.
+///
+/// True when the URL requests libpq `sslmode=verify-full` / `verify-ca`.
+fn url_wants_verified_tls(url: &str) -> bool {
+    url.split('?').nth(1).unwrap_or("").split('&').any(|kv| {
+        kv.strip_prefix("sslmode=")
+            .map(|v| matches!(v, "verify-full" | "verify-ca"))
+            .unwrap_or(false)
+    })
+}
+
+/// Rewrite `sslmode=verify-full` / `verify-ca` to `sslmode=require` in the URL.
+///
+/// tokio-postgres 0.7 only understands disable|prefer|require and *rejects*
+/// unknown `sslmode` values at `Config::parse` time, so the rewrite must
+/// happen on the URL string before parsing. Chain + hostname verification is
+/// still performed — it comes from the rustls root store + server name, which
+/// is exactly what verify-full/verify-ca mean. Returns the URL unchanged when
+/// it is already parseable.
+fn normalize_pg_url_for_parse(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let normalized: Vec<&str> = query
+        .split('&')
+        .map(|kv| match kv.strip_prefix("sslmode=") {
+            Some("verify-full") | Some("verify-ca") => "sslmode=require",
+            _ => kv,
+        })
+        .collect();
+    format!("{base}?{}", normalized.join("&"))
+}
+
+fn pg_connect(url: &str) -> Result<postgres::Client, Box<dyn std::error::Error>> {
+    let normalized = normalize_pg_url_for_parse(url);
+    let wants_tls = url_wants_verified_tls(url);
+    let cfg: postgres::Config = normalized.parse()?;
+    // Install the ring crypto provider before any rustls use (idempotent;
+    // rustls 0.23 panics at first handshake if no provider is installed).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let ca_path = std::env::var("LEANKG_PG_CA_CERT").ok();
+    match ca_path {
+        Some(path) => {
+            // Private/managed CA (Aiven, Neon, ...): root at that CA cert.
+            let pem = std::fs::read(&path)?;
+            let certs = rustls_pemfile::certs(&mut &pem[..]).collect::<Result<Vec<_>, _>>()?;
+            let mut roots = rustls::RootCertStore::empty();
+            for c in certs {
+                roots
+                    .add(c)
+                    .map_err(|e| format!("bad CA cert in {path}: {e}"))?;
+            }
+            let config = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            let connector = postgres_rustls::MakeTlsConnector::new(Arc::new(config).into());
+            Ok(cfg.connect(connector)?)
+        }
+        None if wants_tls => {
+            // Public CA (Let's Encrypt, ...): verify against the Mozilla roots
+            // compiled in via webpki-roots (already in the tree through
+            // reqwest/hyper-rustls; no new dependency).
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let config = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            let connector = postgres_rustls::MakeTlsConnector::new(Arc::new(config).into());
+            Ok(cfg.connect(connector)?)
+        }
+        None => Ok(cfg.connect(postgres::NoTls)?),
+    }
+}
+
 /// Re-export the row/result value types the rest of the codebase consumes
 /// positionally (`row[0].get_str()`, `NamedRows::new`, `DataValue::Num`).
 pub use crate::db::value::{DataValue, NamedRows};
@@ -258,7 +341,7 @@ impl ClientPool {
                 return Ok(PooledClient::new(c, pool_arc.clone()));
             }
             if guard.live < self.inner.max {
-                let client = postgres::Client::connect(connect_url, postgres::NoTls)?;
+                let client = pg_connect(connect_url)?;
                 guard.live += 1;
                 return Ok(PooledClient::new(client, pool_arc.clone()));
             }
@@ -1327,9 +1410,18 @@ fn inject_search_path(url: &str, schema: &str) -> String {
             rest
         );
     }
+    // `split_once('?')` removes the `?` from `before`, so it must be
+    // re-added before appending `options=`. When the URL already carries a
+    // query string, the new param joins with `&`; when bare, it starts with
+    // `?`. (The old code used `&` for the non-empty case, which merged the
+    // db name with the query — `defaultdb&sslmode=...` — and broke remote
+    // TLS URLs like `?sslmode=require`.)
     let (before, after) = base.split_once('?').unwrap_or((base, ""));
-    let sep = if after.is_empty() { "?" } else { "&" };
-    format!("{before}{sep}{after}options={sp_flag}")
+    if after.is_empty() {
+        format!("{before}?options={sp_flag}")
+    } else {
+        format!("{before}?{after}&options={sp_flag}")
+    }
 }
 
 /// Percent-encode a schema name for a libpq `options=-csearch_path=<v>`
@@ -1491,7 +1583,7 @@ fn schema_exists_sync(schema: &str) -> bool {
         Ok(pg) => pg.pg_url,
         Err(_) => return false,
     };
-    let Ok(mut client) = postgres::Client::connect(&base, postgres::NoTls) else {
+    let Ok(mut client) = pg_connect(&base) else {
         return false;
     };
     // Schema names come from schema_for_path (hex/hash, always a safe
@@ -1505,11 +1597,21 @@ fn schema_exists_sync(schema: &str) -> bool {
 
 fn create_schema_if_missing_sync(schema: &str) -> Result<(), Box<dyn std::error::Error>> {
     let base = PostgresBackend::from_env()?.pg_url;
-    let mut client = postgres::Client::connect(&base, postgres::NoTls)?;
+    let mut client = pg_connect(&base)?;
     client.batch_execute(&format!(
         "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public"
     ))?;
     crate::db::pg::migrations::run_migrations(&mut client)?;
+    // FR-EMBED-DIM: a model/dim switch (LEANKG_EMBED_DIM / LEANKG_EMBED_API_DIM)
+    // reconciles the pgvector column width here — wiping derived vectors +
+    // freshness rows — so the next `embed` rebuilds at the new width.
+    if let Some((stored, desired)) = crate::db::pg::migrations::reconcile_vector_dim(&mut client)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?
+    {
+        tracing::warn!(
+            "embedding vector dim changed {stored} -> {desired}; vector store wiped (re-embed required)"
+        );
+    }
     client.batch_execute(&format!("SET search_path TO {schema}, public"))?;
     Ok(())
 }
@@ -1533,7 +1635,7 @@ pub(crate) fn test_pg_url() -> String {
 /// plain `cargo test` must stay green without a running database.
 #[cfg(test)]
 pub(crate) fn test_pg_available() -> bool {
-    let Ok(mut client) = postgres::Client::connect(&test_pg_url(), postgres::NoTls) else {
+    let Ok(mut client) = pg_connect(&test_pg_url()) else {
         return false;
     };
     client.batch_execute("SELECT 1").is_ok()
@@ -1582,7 +1684,7 @@ fn create_scratch_schema() -> Result<String, Box<dyn std::error::Error>> {
         std::process::id(),
         COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
-    let mut client = postgres::Client::connect(&base, postgres::NoTls)?;
+    let mut client = pg_connect(&base)?;
     client.batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))?;
     client.batch_execute(&format!("CREATE SCHEMA {name}"))?;
     client.batch_execute(&format!("SET search_path TO {name}, public"))?;
@@ -1750,6 +1852,62 @@ mod tests {
         assert!(!redacted.contains("s3cret"));
         assert!(redacted.contains("postgres://user:****@host:5432/db?sslmode=require"));
         std::env::remove_var("LEANKG_PG_URL");
+    }
+
+    #[test]
+    fn url_wants_verified_tls_folds_verify_modes() {
+        // verify-full / verify-ca -> TLS required (folded to require by
+        // pg_connect); everything else stays plain / require / prefer.
+        assert!(url_wants_verified_tls(
+            "postgres://u:p@host:5432/db?sslmode=verify-full"
+        ));
+        assert!(url_wants_verified_tls(
+            "postgres://u:p@host:5432/db?sslmode=verify-ca&connect_timeout=5"
+        ));
+        assert!(!url_wants_verified_tls(
+            "postgres://u:p@host:5432/db?sslmode=require"
+        ));
+        assert!(!url_wants_verified_tls(
+            "postgres://u:p@host:5432/db?sslmode=prefer"
+        ));
+        assert!(!url_wants_verified_tls(
+            "postgres://u:p@host:5432/db?sslmode=disable"
+        ));
+        assert!(!url_wants_verified_tls("postgres://u:p@host:5432/db"));
+        // Not an exact `sslmode=` value — must not match.
+        assert!(!url_wants_verified_tls(
+            "postgres://u:p@host:5432/db?sslmode=verify_ca"
+        ));
+    }
+
+    #[test]
+    fn normalize_pg_url_for_parse_folds_verify_to_require() {
+        assert_eq!(
+            normalize_pg_url_for_parse("postgres://u:p@h:5432/db?sslmode=verify-full"),
+            "postgres://u:p@h:5432/db?sslmode=require"
+        );
+        assert_eq!(
+            normalize_pg_url_for_parse(
+                "postgres://u:p@h:5432/db?sslmode=verify-ca&connect_timeout=5"
+            ),
+            "postgres://u:p@h:5432/db?sslmode=require&connect_timeout=5"
+        );
+        // Unchanged when already parseable or no query string.
+        assert_eq!(
+            normalize_pg_url_for_parse("postgres://u:p@h:5432/db?sslmode=require"),
+            "postgres://u:p@h:5432/db?sslmode=require"
+        );
+        assert_eq!(
+            normalize_pg_url_for_parse("postgres://u:p@h:5432/db"),
+            "postgres://u:p@h:5432/db"
+        );
+        // The folded URL must parse cleanly (this used to error with
+        // InvalidValue("sslmode")).
+        let cfg: postgres::Config =
+            normalize_pg_url_for_parse("postgres://u:p@h:5432/db?sslmode=verify-full")
+                .parse()
+                .expect("folded URL parses");
+        assert_eq!(cfg.get_ssl_mode(), postgres::config::SslMode::Require);
     }
 
     #[test]

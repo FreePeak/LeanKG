@@ -23,7 +23,11 @@ mod db;
 mod doc;
 mod doc_indexer;
 mod embed;
-#[cfg(feature = "embeddings")]
+// The `embeddings` module tree self-gates its heavy parts (ONNX / fastembed)
+// behind the feature in `src/embeddings/mod.rs`; `provider` / `profile` /
+// `registry` are always available so feature-agnostic callers in `db` and
+// `indexer` (e.g. `reconcile_vector_dim`, summary-node blob caps) can resolve
+// `crate::embeddings::*` in the binary build too.
 mod embeddings;
 mod gc;
 mod graph;
@@ -785,10 +789,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             types,
             benchmark,
             no_vectors,
+            summary_primary,
+            summary_primary_cap,
+            summary_only,
+            dry_run,
+            export_file,
+            import,
+            no_verify,
         } => {
             run_embed(
-                init, full, batch_size, &project, wait, status, cancel, background, workers,
-                &types, benchmark, no_vectors,
+                init,
+                full,
+                batch_size,
+                &project,
+                wait,
+                status,
+                cancel,
+                background,
+                workers,
+                &types,
+                benchmark,
+                no_vectors,
+                &summary_primary,
+                summary_primary_cap,
+                &summary_only,
+                dry_run,
+                export_file.as_deref(),
+                import.as_deref(),
+                no_verify,
             )?;
         }
         #[cfg(feature = "embeddings")]
@@ -5899,14 +5927,21 @@ fn maybe_run_embed(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::
         false, // full
         32,    // batch_size
         &project_str,
-        true,  // wait
-        false, // status
-        false, // cancel
-        false, // background
-        4,     // workers
-        "",    // types_filter
-        false, // benchmark
-        false, // no_vectors
+        true,   // wait
+        false,  // status
+        false,  // cancel
+        false,  // background
+        4,      // workers
+        "",     // types_filter
+        false,  // benchmark
+        false,  // no_vectors
+        "auto", // summary_primary
+        None,   // summary_primary_cap
+        "off",  // summary_only
+        false,  // dry_run
+        None,   // export_file
+        None,   // import
+        false,  // no_verify
     )
 }
 
@@ -5931,6 +5966,13 @@ fn run_embed(
     types_filter: &str,
     benchmark: bool,
     no_vectors: bool,
+    summary_primary: &str,
+    summary_primary_cap: Option<u32>,
+    summary_only: &str,
+    dry_run: bool,
+    export_file: Option<&str>,
+    import: Option<&str>,
+    no_verify: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if init {
         let report = embeddings::init_models()?;
@@ -5966,6 +6008,25 @@ fn run_embed(
         .into());
     }
 
+    // --dry-run / --import: offsite embedding shortcuts. They never load
+    // ONNX and never spawn a background process, so branch before the
+    // benchmark / worker / background logic below.
+    if dry_run {
+        return run_embed_dry_run(
+            &project_path,
+            &leankg_dir,
+            full,
+            types_filter,
+            summary_primary,
+            summary_primary_cap,
+            summary_only,
+            export_file,
+        );
+    }
+    if let Some(import_path) = import {
+        return run_embed_import(&leankg_dir, import_path, !no_verify);
+    }
+
     // Live A/B benchmark before embedding.
     let embed_bench = if benchmark {
         println!("[benchmark] Running semantic search baseline...");
@@ -5997,6 +6058,9 @@ fn run_embed(
             workers,
             types_filter,
             no_vectors,
+            summary_primary,
+            summary_primary_cap,
+            summary_only,
         )?;
         let elapsed = embed_start.elapsed().as_secs_f64();
 
@@ -6033,6 +6097,9 @@ fn run_embed(
             workers,
             types_filter,
             no_vectors,
+            summary_primary,
+            summary_primary_cap,
+            summary_only,
         );
     }
 
@@ -6081,6 +6148,15 @@ fn run_embed(
         // vector writes.
         cmd.arg("--no-vectors");
     }
+    // FR-EMBED-SUMMARY: forward summary-primary flags so the detached
+    // worker honors the user's choice (default `auto`).
+    cmd.args(["--summary-primary", summary_primary]);
+    if let Some(cap) = summary_primary_cap {
+        cmd.args(["--summary-primary-cap", &cap.to_string()]);
+    }
+    // FR-EMBED-SUMMARY-ONLY: forward summary-only flag so the detached
+    // worker honors the user's choice (default `off`).
+    cmd.args(["--summary-only", summary_only]);
     let child = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -6215,6 +6291,214 @@ unsafe fn libc_kill(pid: u64, sig: i32) -> i32 {
 #[cfg(feature = "embeddings")]
 const libc_SIGTERM: i32 = 15;
 
+/// Resolve the summary-primary enable flag for the current run (FR-EMBED-SUMMARY).
+///
+/// Precedence: explicit `--summary-primary` CLI value > `LEANKG_EMBED_SUMMARY_PRIMARY`
+/// env > default. `auto` enables it on large graphs (>50k elements), matching
+/// the existing mega-graph `--types` heuristic; `on`/`off` are unconditional.
+#[cfg(feature = "embeddings")]
+fn resolve_summary_primary(cli_value: &str, total_elements: usize) -> bool {
+    let raw = std::env::var("LEANKG_EMBED_SUMMARY_PRIMARY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| cli_value.trim().to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => true,
+        "off" | "false" | "0" | "no" => false,
+        // default: auto — enable on mega-graphs where per-function inference
+        // cost dominates and file-summary nodes carry more signal anyway.
+        _ => total_elements > 50_000,
+    }
+}
+
+/// Resolve the summary-primary file-size cap (FR-EMBED-SUMMARY).
+#[cfg(feature = "embeddings")]
+fn resolve_summary_primary_cap(cli_value: Option<u32>) -> u32 {
+    if let Some(v) = cli_value {
+        return v.max(1);
+    }
+    std::env::var("LEANKG_EMBED_SUMMARY_PRIMARY_CAP")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(embeddings::SUMMARY_PRIMARY_DEFAULT_FILE_CAP)
+        .max(1)
+}
+
+/// Resolve the summary-only enable flag (FR-EMBED-SUMMARY-ONLY).
+///
+/// Precedence: explicit `--summary-only` CLI value >
+/// `LEANKG_EMBED_SUMMARY_ONLY` env > default `false`. Unlike
+/// summary-primary there is no `auto` tier — summary-only is an opt-in
+/// strict mode that drops all function vectors.
+#[cfg(feature = "embeddings")]
+fn resolve_summary_only(cli_value: &str) -> bool {
+    let raw = std::env::var("LEANKG_EMBED_SUMMARY_ONLY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| cli_value.trim().to_string());
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "on" | "true" | "1" | "yes" | "auto"
+    )
+}
+
+/// Assemble [`embeddings::BuildOptions`] from the CLI flags, applying the
+/// mega-graph `function,method` default type filter and the summary-primary /
+/// summary-only resolutions. Shared by `run_embed_worker` (real embed) and
+/// `run_embed_dry_run` (offsite export) so a `--dry-run` faithfully represents
+/// exactly what the next real embed run would process.
+#[cfg(feature = "embeddings")]
+fn build_embed_options(
+    graph: &graph::GraphEngine,
+    full: bool,
+    batch_size: usize,
+    types_filter: &str,
+    summary_primary: &str,
+    summary_primary_cap: Option<u32>,
+    summary_only: &str,
+) -> embeddings::BuildOptions {
+    let mode = if full {
+        embeddings::BuildMode::Full
+    } else {
+        embeddings::BuildMode::Incremental
+    };
+    // Default to `function,method` on mega-graphs to keep cold embed under
+    // 5 min. Smaller workspaces embed every type. Pass `--types all` to
+    // override and embed everything regardless of size.
+    let parsed_filter = embeddings::parse_type_filter(types_filter);
+    let total = graph.count_elements().unwrap_or(0);
+    let summary_only_on = resolve_summary_only(summary_only);
+    // FR-EMBED-SUMMARY-ONLY: when summary-only is on, the mega-graph default
+    // `function,method` filter would starve the index (file/module nodes
+    // never pass). Drop the default so `element_passes_type_filter`'s
+    // summary-only gate is the sole arbiter. An explicit user `--types` is
+    // still honored (intersected with the summary-only allowlist downstream).
+    let type_filter = match &parsed_filter {
+        Some(_) => parsed_filter.clone(),
+        None if summary_only_on => None,
+        None => {
+            if total > 50_000 {
+                let mut set = std::collections::HashSet::new();
+                set.insert("function".to_string());
+                set.insert("method".to_string());
+                Some(set)
+            } else {
+                None
+            }
+        }
+    };
+    embeddings::BuildOptions {
+        mode,
+        batch_size,
+        reserve_capacity: None,
+        type_filter,
+        summary_primary_enabled: resolve_summary_primary(summary_primary, total),
+        summary_only_enabled: summary_only_on,
+        summary_primary_file_cap: resolve_summary_primary_cap(summary_primary_cap),
+        ..Default::default()
+    }
+}
+
+/// `embed --dry-run`: collect embed queries as a normal run would and write
+/// them to an NDJSON file (one row per query) without calling the embedder.
+/// Non-mutating. The output is batch-embedded elsewhere (e.g. Colab T4 GPU
+/// via `scripts/embed_batch.py`) and loaded back with `embed --import`.
+#[cfg(feature = "embeddings")]
+fn run_embed_dry_run(
+    _project_path: &std::path::Path,
+    leankg_dir: &std::path::Path,
+    full: bool,
+    types_filter: &str,
+    summary_primary: &str,
+    summary_primary_cap: Option<u32>,
+    summary_only: &str,
+    export_file: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db_path = leankg_dir.join("leankg.db");
+    let db = db::backend::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db);
+
+    let export_path = match export_file {
+        Some(p) => std::path::PathBuf::from(p),
+        None => leankg_dir.join("embed_export.jsonl"),
+    };
+
+    // batch_size is irrelevant for export (no inference), but the helper
+    // takes it; pass the default.
+    let opts = build_embed_options(
+        &graph,
+        full,
+        embeddings::BuildOptions::default().batch_size,
+        types_filter,
+        summary_primary,
+        summary_primary_cap,
+        summary_only,
+    );
+
+    println!(
+        "embedding config: profile={} vec_dim={}",
+        embeddings::active_profile().label(),
+        embeddings::vec_dim()
+    );
+    println!(
+        "dry-run: exporting embed queries to {}",
+        export_path.display()
+    );
+
+    let started = std::time::Instant::now();
+    let report = embeddings::export_work_items(&graph, &opts, &export_path)?;
+    println!(
+        "dry-run: wrote {} queries (skipped {} fresh) to {} in {:.2}s — vec_dim={} model={}",
+        report.item_count,
+        report.skipped_fresh,
+        report.export_path.display(),
+        started.elapsed().as_secs_f64(),
+        report.vec_dim,
+        report.model
+    );
+    println!();
+    println!("Next steps:");
+    println!(
+        "  python scripts/embed_batch.py --in {} --out <import.jsonl>",
+        report.export_path.display()
+    );
+    println!("  cargo run --release -- embed --import <import.jsonl>");
+    Ok(())
+}
+
+/// `embed --import`: load vectors produced from a `--dry-run` export file
+/// (typically by `scripts/embed_batch.py`) back into the DB. Resumable.
+#[cfg(feature = "embeddings")]
+fn run_embed_import(
+    leankg_dir: &std::path::Path,
+    import_path: &str,
+    verify: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db_path = leankg_dir.join("leankg.db");
+    let db = db::backend::init_db(&db_path)?;
+    let graph = graph::GraphEngine::new(db);
+
+    let path = std::path::Path::new(import_path);
+    println!(
+        "import: loading vectors from {} (verify={})",
+        path.display(),
+        verify
+    );
+
+    let started = std::time::Instant::now();
+    let report = embeddings::import_vectors(&graph, path, verify)?;
+    println!(
+        "import: {} vectors written (skipped: {} resume, {} drifted, {} orphaned) vec_dim={} in {:.2}s",
+        report.imported,
+        report.skipped_resume,
+        report.skipped_drift,
+        report.skipped_orphan,
+        report.vec_dim,
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
 #[cfg(feature = "embeddings")]
 fn run_embed_worker(
     _init: bool,
@@ -6225,6 +6509,9 @@ fn run_embed_worker(
     workers: usize,
     types_filter: &str,
     no_vectors: bool,
+    summary_primary: &str,
+    summary_primary_cap: Option<u32>,
+    summary_only: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     let status_path = leankg_dir.join("embed_status.json");
@@ -6259,38 +6546,40 @@ fn run_embed_worker(
     let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
 
-    let mode = if full {
-        embeddings::BuildMode::Full
-    } else {
-        embeddings::BuildMode::Incremental
-    };
-    // Default to `function,method` on mega-graphs to keep cold embed under
-    // 5 min. Smaller workspaces embed every type. Pass `--types all` to
-    // override and embed everything regardless of size.
-    let parsed_filter = embeddings::parse_type_filter(types_filter);
-    // Cheap count — never `all_elements()` here (mega-graphs skip the
+    // FR-EMBED-DIM / FR-EMBED-PROFILE: surface the effective embedding
+    // configuration so a model/context switch is visible (and mismatch
+    // between writer/reader processes is debuggable).
+    {
+        let provider =
+            embeddings::provider_kind_from_env().unwrap_or(embeddings::ProviderKind::Local);
+        let profile = embeddings::active_profile();
+        println!(
+            "embedding config: provider={provider:?} profile={} vec_dim={}",
+            profile.label(),
+            embeddings::vec_dim()
+        );
+        if profile != embeddings::EmbedProfile::Small
+            && matches!(provider, embeddings::ProviderKind::Local)
+        {
+            println!(
+                "note: local ONNX models cap blobs at 512 tokens — profile budgets \
+                 only take effect with LEANKG_EMBED_PROVIDER=openai"
+            );
+        }
+    }
+
+    let opts = build_embed_options(
+        &graph,
+        full,
+        batch_size,
+        types_filter,
+        summary_primary,
+        summary_primary_cap,
+        summary_only,
+    );
+    // Cheap counts — never `all_elements()` here (mega-graphs skip the
     // elements_cache and that full scan alone burns seconds before work).
     let total = graph.count_elements().unwrap_or(0);
-    let opts = embeddings::BuildOptions {
-        mode,
-        batch_size,
-        reserve_capacity: None,
-        type_filter: match &parsed_filter {
-            Some(_) => parsed_filter.clone(),
-            None => {
-                if total > 50_000 {
-                    let mut set = std::collections::HashSet::new();
-                    set.insert("function".to_string());
-                    set.insert("method".to_string());
-                    Some(set)
-                } else {
-                    None
-                }
-            }
-        },
-        write_vectors: embeddings::write_vectors_enabled() && !no_vectors,
-        ..Default::default()
-    };
     write_status(total as u64, 0, 0, 0, "running");
 
     let started = std::time::Instant::now();
@@ -6318,7 +6607,7 @@ fn run_embed_worker(
     if atty_stdout() {
         println!(
             "Embed build complete ({:?}) in {:.2}s ({} workers, batch {})",
-            mode,
+            opts.mode,
             elapsed.as_secs_f64(),
             workers,
             batch_size

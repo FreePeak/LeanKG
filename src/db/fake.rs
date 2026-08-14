@@ -225,6 +225,13 @@ impl DbBackend for FakeBackend {
         if q.contains("query_cache") {
             return Ok(NamedRows::new(Vec::new(), Vec::new()));
         }
+        // `::hnsw create` / `::hnsw drop` / `::hnsw ensure` — the in-memory
+        // mock has no vector index; treat HNSW admin as a no-op so the embed
+        // write paths (`put_pairs_to_db_script`, `state::create_hnsw_index`)
+        // are exercisable in unit tests.
+        if q.starts_with("::hnsw") {
+            return Ok(NamedRows::new(Vec::new(), Vec::new()));
+        }
 
         // `:create rel { ... }` — record the table so later reads find it.
         if q.starts_with(":create") {
@@ -772,8 +779,9 @@ fn extract_write_rows(
     // references inside (`[[ $qn, $et, ... ]]`). Interpolate each `$name`
     // with its JSON value before parsing.
     if src.starts_with('[') {
-        let json: serde_json::Value = serde_json::from_str(&interpolate(src, params))
-            .map_err(|e| fake_err(&format!("bad literal: {e}")))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&strip_cozo_vec_literals(&interpolate(src, params)))
+                .map_err(|e| fake_err(&format!("bad literal: {e}")))?;
         return rows_from_json(&json, cols);
     }
 
@@ -810,6 +818,16 @@ fn interpolate(src: &str, params: &BTreeMap<String, serde_json::Value>) -> Strin
         i += 1;
     }
     out
+}
+
+/// Strip CozoDB vector literals `vec([1.0, 2.0])` → `[1.0, 2.0]` so the
+/// write source parses as JSON. The embeddings writer (`put_pairs_to_db_script`)
+/// emits vector cells in this Cozo form, which is not valid JSON. The inner
+/// content is a float list (no `]`), so the match is unambiguous and never
+/// touches `])` sequences inside string cells (qualified names / blobs).
+fn strip_cozo_vec_literals(src: &str) -> String {
+    let re = regex::Regex::new(r"vec\(\[([^\]]*)\]\)").expect("valid vec-literal regex");
+    re.replace_all(src, "[$1]").into_owned()
 }
 
 fn rows_from_json(

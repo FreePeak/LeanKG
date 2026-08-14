@@ -6,8 +6,36 @@
 use std::sync::Arc;
 use thiserror::Error;
 
-/// Must match `VEC_DIM` / `EMBEDDING_DIM` (pgvector column width).
+/// Historical default vector width (BGE-small-en-v1.5) for the pgvector
+/// column / cozo `<F32; N>` vector type. The **effective** storage width is
+/// runtime-configurable — see [`vec_dim`].
 pub const VEC_DIM: usize = 384;
+
+/// Effective vector width for BOTH storage (`vector(N)` column / cozo
+/// `<F32; N>`) and the active embed provider. Precedence:
+/// 1. `LEANKG_EMBED_DIM` (explicit override, clamped 32..=16384)
+/// 2. remote provider (`LEANKG_EMBED_PROVIDER=openai`): `LEANKG_EMBED_API_DIM`
+///    (clamped 32..=16384, default [`VEC_DIM`])
+/// 3. otherwise [`VEC_DIM`] (the local ONNX BGE-small / MiniLM family)
+///
+/// Changing this wipes `embedding_vectors` + `embedding_state` on the next
+/// writer init (`db::pg::migrations::reconcile_vector_dim`); writers and
+/// readers MUST run with the same value.
+pub fn vec_dim() -> usize {
+    if let Ok(v) = std::env::var("LEANKG_EMBED_DIM") {
+        if let Ok(n) = v.trim().parse::<usize>() {
+            return n.clamp(32, 16_384);
+        }
+    }
+    if matches!(provider_kind_from_env(), Ok(ProviderKind::OpenAi)) {
+        if let Ok(v) = std::env::var("LEANKG_EMBED_API_DIM") {
+            if let Ok(n) = v.trim().parse::<usize>() {
+                return n.clamp(32, 16_384);
+            }
+        }
+    }
+    VEC_DIM
+}
 
 #[derive(Debug, Error)]
 pub enum EmbedError {
@@ -375,6 +403,10 @@ fn openai_provider_from_env(expected_dim: usize) -> Result<Arc<dyn EmbedProvider
     }
     let model =
         std::env::var("LEANKG_EMBED_API_MODEL").unwrap_or_else(|_| "bge-small-en-v1.5".to_string());
+    // Registry dim wins (per-model width, e.g. 2560 for Qwen3); fall back to
+    // the storage width [`vec_dim`] only when the registry didn't pin one.
+    // The pgvector column / cozo vector type is created at exactly this size,
+    // so a mismatch fails every insert/query with a dimension error.
     let dimensions = std::env::var("LEANKG_EMBED_API_DIM")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())

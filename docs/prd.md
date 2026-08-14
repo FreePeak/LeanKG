@@ -2602,6 +2602,34 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 **Won't Do:** Requiring absolute container paths from clients as the D1 workaround; treating data-absent empty results as tool errors; blocking cold-embed for D3.
 
 
+### 5.35 Summary-node embedding (FR-EMBED-SUMMARY + FR-EMBED-SUMMARY-ONLY) — v3.8.6 **P1**
+
+> GraphRAG-style coarse-granularity embedding for large codebases. Instead of
+> one vector per function (sparse signal, N-functions inferences), synthesize
+> deterministic table-of-contents summary nodes per file and per module whose
+> blob is the densest description of that file's purpose (path + module decl +
+> exported types + public signatures). Functions are then discovered purely
+> via ontology traversal from summary seeds at query time.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-EMBED-SUMMARY-01 | Must Have | Indexer synthesizes a `"file"` summary node per source file (reusing the existing `element_type="file"` slot) whose `metadata.summary` is a deterministic TOC; `metadata.summary_kind="toc"` marks it. Zero schema changes (reuses `code_elements`) |
+| FR-EMBED-SUMMARY-02 | Must Have | Indexer synthesizes a cross-file `"module"` summary node per declared package (≥2 files sharing it); `qualified_name = {first_file}::module::{name}`, `metadata.summary_kind="module_toc"` |
+| FR-EMBED-SUMMARY-03 | Must Have | File-summary nodes link to their top-level functions/types via `contains` bridge edges (`metadata.source="file_summary"`) so retrieval's `downward_rule_for("file")` walks to functions |
+| FR-EMBED-SUMMARY-04 | Must Have | Module-summary nodes link to each of their member file-summary nodes via `contains` bridge edges (`metadata.source="module_summary"`) so a module seed is not a dead-end |
+| FR-EMBED-SUMMARY-05 | Must Have | `downward_rule_for("module")` is **2 hops** (module → file_summary → function), distinct from `class` (1 hop: class → method). Fanout 16 |
+| FR-EMBED-SUMMARY-06 | Must Have | Blob builder short-circuits on `metadata.summary` so a summary node embeds as `qualified_name + "\n" + summary` |
+| FR-EMBED-SUMMARY-07 | Should Have | `--summary-primary <on|off|auto>` CLI flag (`auto` enables on >50k-element graphs); skips per-function vectors for files above `--summary-primary-cap` lines (default 500). `file`/`module`/`class` always embedded |
+| FR-EMBED-SUMMARY-ONLY-01 | Must Have | `--summary-only <on|off>` CLI flag (default `off`, env `LEANKG_EMBED_SUMMARY_ONLY`): embed only `file` + `module` summary nodes — **no function/method/constructor vectors at all** |
+| FR-EMBED-SUMMARY-ONLY-02 | Must Have | Summary-only gate in `element_passes_type_filter` supersedes `type_filter` and `summary_primary_enabled`; the mega-graph default `{function,method}` type filter is dropped so summary nodes aren't starved |
+| FR-EMBED-SUMMARY-ONLY-03 | Must Have | At query time `semantic_search` discovers functions purely via ontology traversal: HNSW file/module summary hits → upper seeds → `downward_rule_for` BFS → functions (composite-scored). Empty direct-function pool handled safely by existing `normalize` |
+
+**Design notes:**
+- Summary nodes are pure functions of the already-extracted `CodeElement` set — no source re-read, no LLM call.
+- `file` and `module` are already in `UPPER_TYPES` and already use `contains` downward rules, so the seed→traverse retrieval flow needed **zero** handler changes.
+- Out of scope: filesystem `directory` summaries (every file covered); embedding type declarations (`class`/`struct`) under summary-only. Both extensible later by widening `SUMMARY_ONLY_TYPES`.
+
+
 ### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
 
 | ID | Priority | Requirement |
