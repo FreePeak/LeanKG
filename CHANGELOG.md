@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.25.0](https://github.com/FreePeak/LeanKG/compare/v0.24.0...v0.25.0) (2026-08-12)
+
+
 ## [0.24.0](https://github.com/FreePeak/LeanKG/compare/v0.23.0...v0.24.0) (2026-08-12)
 
 
