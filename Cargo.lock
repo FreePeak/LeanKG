@@ -2016,6 +2016,7 @@ dependencies = [
  "tree-sitter-zig",
  "uuid",
  "walkdir",
+ "webpki-roots 1.0.6",
  "which",
 ]
 
