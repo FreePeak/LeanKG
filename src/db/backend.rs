@@ -1357,9 +1357,18 @@ fn inject_search_path(url: &str, schema: &str) -> String {
             rest
         );
     }
+    // `split_once('?')` removes the `?` from `before`, so it must be
+    // re-added before appending `options=`. When the URL already carries a
+    // query string, the new param joins with `&`; when bare, it starts with
+    // `?`. (The old code used `&` for the non-empty case, which merged the
+    // db name with the query — `defaultdb&sslmode=...` — and broke remote
+    // TLS URLs like `?sslmode=require`.)
     let (before, after) = base.split_once('?').unwrap_or((base, ""));
-    let sep = if after.is_empty() { "?" } else { "&" };
-    format!("{before}{sep}{after}options={sp_flag}")
+    if after.is_empty() {
+        format!("{before}?options={sp_flag}")
+    } else {
+        format!("{before}?{after}&options={sp_flag}")
+    }
 }
 
 /// Percent-encode a schema name for a libpq `options=-csearch_path=<v>`
