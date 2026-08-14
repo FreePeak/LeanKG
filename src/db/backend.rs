@@ -10,6 +10,36 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Condvar, Mutex};
 
+/// Connect a Postgres client, choosing NoTls or rustls at the call site.
+///
+/// Local dev PG on :5433 (no `LEANKG_PG_CA_CERT`) connects plain; remote
+/// managed Postgres (Aiven/Neon/... via `LEANKG_PG_CA_CERT`) connects over
+/// rustls rooted at that private CA. Each branch uses a concrete connector —
+/// `MakeTlsConnect` has associated types, so a single boxed trait object is
+/// not object-safe — hence the two `cfg.connect(...)` calls.
+fn pg_connect(url: &str) -> Result<postgres::Client, Box<dyn std::error::Error>> {
+    let cfg: postgres::Config = url.parse()?;
+    let Ok(ca_path) = std::env::var("LEANKG_PG_CA_CERT") else {
+        return Ok(cfg.connect(postgres::NoTls)?);
+    };
+    // rustls 0.23 requires an installed crypto provider; install the ring
+    // provider once (idempotent) before building the connector.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let pem = std::fs::read(&ca_path)?;
+    let certs = rustls_pemfile::certs(&mut &pem[..]).collect::<Result<Vec<_>, _>>()?;
+    let mut roots = rustls::RootCertStore::empty();
+    for c in certs {
+        roots
+            .add(c)
+            .map_err(|e| format!("bad CA cert in {ca_path}: {e}"))?;
+    }
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let connector = postgres_rustls::MakeTlsConnector::new(Arc::new(config).into());
+    Ok(cfg.connect(connector)?)
+}
+
 /// Re-export the row/result value types the rest of the codebase consumes
 /// positionally (`row[0].get_str()`, `NamedRows::new`, `DataValue::Num`).
 pub use crate::db::value::{DataValue, NamedRows};
@@ -258,7 +288,7 @@ impl ClientPool {
                 return Ok(PooledClient::new(c, pool_arc.clone()));
             }
             if guard.live < self.inner.max {
-                let client = postgres::Client::connect(connect_url, postgres::NoTls)?;
+                let client = pg_connect(connect_url)?;
                 guard.live += 1;
                 return Ok(PooledClient::new(client, pool_arc.clone()));
             }
@@ -1491,7 +1521,7 @@ fn schema_exists_sync(schema: &str) -> bool {
         Ok(pg) => pg.pg_url,
         Err(_) => return false,
     };
-    let Ok(mut client) = postgres::Client::connect(&base, postgres::NoTls) else {
+    let Ok(mut client) = pg_connect(&base) else {
         return false;
     };
     // Schema names come from schema_for_path (hex/hash, always a safe
@@ -1505,7 +1535,7 @@ fn schema_exists_sync(schema: &str) -> bool {
 
 fn create_schema_if_missing_sync(schema: &str) -> Result<(), Box<dyn std::error::Error>> {
     let base = PostgresBackend::from_env()?.pg_url;
-    let mut client = postgres::Client::connect(&base, postgres::NoTls)?;
+    let mut client = pg_connect(&base)?;
     client.batch_execute(&format!(
         "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public"
     ))?;
@@ -1543,7 +1573,7 @@ pub(crate) fn test_pg_url() -> String {
 /// plain `cargo test` must stay green without a running database.
 #[cfg(test)]
 pub(crate) fn test_pg_available() -> bool {
-    let Ok(mut client) = postgres::Client::connect(&test_pg_url(), postgres::NoTls) else {
+    let Ok(mut client) = pg_connect(&test_pg_url()) else {
         return false;
     };
     client.batch_execute("SELECT 1").is_ok()
@@ -1592,7 +1622,7 @@ fn create_scratch_schema() -> Result<String, Box<dyn std::error::Error>> {
         std::process::id(),
         COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
-    let mut client = postgres::Client::connect(&base, postgres::NoTls)?;
+    let mut client = pg_connect(&base)?;
     client.batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))?;
     client.batch_execute(&format!("CREATE SCHEMA {name}"))?;
     client.batch_execute(&format!("SET search_path TO {name}, public"))?;

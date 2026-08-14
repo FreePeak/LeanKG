@@ -185,5 +185,13 @@ moka = { version = "0.12", features = ["future"] }
 # `with-serde_json-1` gives `postgres::types::Json<T>` + `serde_json::Value`
 # ToSql/FromSql for the JSONB columns (metadata/tags/members/...).
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
+# TLS for remote managed Postgres (Aiven/Neon/...). `postgres-rustls` gives
+# `MakeTlsConnector` for the sync `postgres` client; rustls-pemfile loads the
+# private CA cert from `LEANKG_PG_CA_CERT`. Only active when a CA cert is set —
+# local dev PG on :5433 stays NoTls.
+postgres_rustls = "0.1"
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2"
+tokio-postgres = { version = "0.7", default-features = false }
 
 [dev-dependencies]
