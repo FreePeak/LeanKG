@@ -236,6 +236,29 @@ impl SemanticRetrievalPipeline {
         })
     }
 
+    /// Build the pipeline for an explicit model (per-request hot-switch).
+    /// `None` falls back to the active model (runtime override → env →
+    /// default BGE). The provider/collection are derived from the model's
+    /// registry entry, so the query embeds and is retrieved against the
+    /// right dimension and table.
+    pub fn for_model(
+        db: SharedDb,
+        model: Option<&str>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        use crate::embeddings::registry::{create_provider_for_entry, lookup_model};
+        let entry = match model {
+            Some(id) => lookup_model(id).ok_or_else(|| {
+                format!(
+                    "unknown embed model {id:?}; known: bge-small-en-v1.5-384, qwen3-emb-4b-2560,                      jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072"
+                )
+            })?,
+            None => crate::embeddings::registry::resolve_active_model()?,
+        };
+        let provider = create_provider_for_entry(&entry)?;
+        let active_vectors_relation = entry.vectors_relation();
+        Self::with_provider(db, provider, active_vectors_relation)
+    }
+
     pub fn provider(&self) -> &dyn EmbedProvider {
         self.provider.as_ref()
     }
@@ -551,5 +574,52 @@ mod tests {
         std::env::remove_var("LEANKG_EMBED_ACTIVE_MODEL");
         assert_eq!(qwen_idx, "embedding_vectors_qwen3_emb_4b_2560:vec_idx");
         assert_ne!(vec_idx, qwen_idx, "ANN must not share index across models");
+    }
+
+    #[test]
+    fn for_model_selects_registry_entry_and_provider_dim() {
+        let _g = crate::embeddings::test_env::lock();
+        // Pin the active model to a remote (OpenAI-compatible) entry. Its
+        // provider construction fails cleanly without API env vars, which is
+        // exactly what we assert — proving `for_model(None)` resolved the
+        // *right* entry (dim 2560) without needing a live model or network.
+        std::env::set_var("LEANKG_EMBED_ACTIVE_MODEL", "qwen3-emb-4b-2560");
+        let db: SharedDb = Arc::new(crate::db::fake::FakeBackend::new());
+        match SemanticRetrievalPipeline::for_model(db.clone(), None) {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("LEANKG_EMBED_API_BASE_URL")
+                        || msg.contains("LEANKG_EMBED_PROVIDER"),
+                    "expected provider config error for qwen, got: {msg}"
+                );
+            }
+            Ok(p) => assert_eq!(p.provider().dimensions(), 2560),
+        }
+
+        // Explicit `Some` overrides the active model to jina (dim 1024).
+        // Same clean-error assertion proves entry selection by dimension.
+        match SemanticRetrievalPipeline::for_model(db.clone(), Some("jina-embeddings-v3-1024")) {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("LEANKG_EMBED_API_BASE_URL")
+                        || msg.contains("LEANKG_EMBED_PROVIDER"),
+                    "expected provider config error for jina, got: {msg}"
+                );
+            }
+            Ok(p) => assert_eq!(p.provider().dimensions(), 1024),
+        }
+
+        std::env::remove_var("LEANKG_EMBED_ACTIVE_MODEL");
+    }
+
+    #[test]
+    fn for_model_unknown_id_errors() {
+        let db: SharedDb = Arc::new(crate::db::fake::FakeBackend::new());
+        match SemanticRetrievalPipeline::for_model(db, Some("no-such")) {
+            Err(e) => assert!(e.to_string().contains("unknown embed model")),
+            Ok(_) => panic!("expected error for unknown model"),
+        }
     }
 }

@@ -264,6 +264,11 @@ pub enum AutoIndexDecision {
 impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
+        // Restore the last user-selected embed model (persisted by
+        // `set_embed_model ... persist=true`) so a fresh boot keeps it as
+        // the default instead of falling back to BGE 384. PERSIST_PATH is
+        // project-root relative, so resolve from the parent of the .leankg dir.
+        crate::embeddings::apply_persisted_model(effective_db_path.parent());
         // Wire leankg.yaml `auth.tokens` into the static AuthManager when
         // present; otherwise the default admin token. (The DB-backed
         // access-token store is the authoritative auth when it exists.)
@@ -290,6 +295,8 @@ impl MCPServer {
 
     pub fn new_with_watch(db_path: std::path::PathBuf, watch_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
+        // Same persisted-model restore as `new`.
+        crate::embeddings::apply_persisted_model(effective_db_path.parent());
         Self {
             auth_manager: Arc::new(TokioRwLock::new(AuthManager::with_default_token())),
             db_path: Arc::new(RwLock::new(effective_db_path)),

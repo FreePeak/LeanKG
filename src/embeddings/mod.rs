@@ -37,6 +37,7 @@ pub mod offsite;
 pub mod runtime;
 #[cfg(feature = "embeddings")]
 pub mod state;
+pub mod switch;
 #[cfg(feature = "embeddings")]
 pub mod text_blob;
 
@@ -90,8 +91,13 @@ pub use runtime::{
 #[allow(unused_imports)]
 pub use state::{
     count_by_state, create_hnsw_index, delete_state_rows, drop_hnsw_index,
-    ensure_embedding_state_table, has_any, list_all, list_orphans, list_stale,
-    mark_stale_for_qualified_names, upsert_fresh, EmbeddingStateRow, FreshRow, StateCounts,
+    ensure_embedding_state_table, ensure_model_collections, has_any, list_all, list_orphans,
+    list_stale, mark_stale_for_qualified_names, upsert_fresh, EmbeddingStateRow, FreshRow,
+    StateCounts,
+};
+#[allow(unused_imports)]
+pub use switch::{
+    active_model_id, apply_persisted_model, resolve_active, set_active_model, PERSIST_PATH,
 };
 #[cfg(feature = "embeddings")]
 #[allow(unused_imports)]

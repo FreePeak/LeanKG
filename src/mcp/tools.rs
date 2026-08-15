@@ -1003,6 +1003,7 @@ impl ToolRegistry {
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
                         "kind": {"type": "string", "enum": ["all", "code", "docs"], "default": "all", "description": "Filter results by kind: 'all' (code + docs), 'code' (functions, classes, methods, etc.), 'docs' (documents and doc_sections only)"},
                         "path_prefix": {"type": "string", "description": "Corpus scope gate: only return hits whose file_path contains this prefix (e.g. 'platform-food/be-merchant-group', 'Android/', 'ios/'). Hits outside the prefix are hard-dropped; if none survive, the tool returns an empty page with empty_reason=path_prefix so agents know that corpus is not indexed. Pass for multi-tree / monorepo work."},
+                        "model": {"type": "string", "description": "Embedding model to query for this request (hot-switch). Registered: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote). Queries that model's collection; empty results if it has no index yet."},
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["query"]
@@ -1096,6 +1097,7 @@ impl ToolRegistry {
                         "top_k": {"type": "integer", "default": 50, "description": "ANN retrieve depth (candidates before rerank)"},
                         "rerank_top_n": {"type": "integer", "default": 10, "description": "Final seed count after cross-encoder rerank"},
                         "traverse": {"type": "boolean", "default": true, "description": "Toggle Stage 4 graph enrichment (1-2 hop neighbors via ontology + code edges)"},
+                        "model": {"type": "string", "description": "Embedding model to query for this request (hot-switch). Registered: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote). Collections are created on demand if absent."},
                         "include_worktrees": {"type": "boolean", "default": false, "description": "Include paths under .worktrees/ / .claude/worktrees/ / .opencode/worktrees/ (filtered by default to dedupe agent scratch copies)"},
                         "debug": {"type": "boolean", "default": false, "description": "Include diagnostics: candidate counts, latency per stage, reranker status"},
                         "project": {"type": "string", "description": "Optional: project path (defaults to current working directory)"}
@@ -1121,6 +1123,20 @@ impl ToolRegistry {
                         "project": {"type": "string"}
                     },
                     "required": ["action"]
+                }),
+            },
+            #[cfg(feature = "embeddings")]
+            ToolDefinition {
+                name: "set_embed_model".to_string(),
+                description: "Set the runtime-active embedding model for this MCP process. Subsequent semantic_search / kg_semantic_context calls default to this model (per-request `model` arg still overrides). With persist=true the choice is saved to .leankg/embed-model.json and restored on the next boot. Registered models: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote).".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "model_id": {"type": "string", "description": "Registered model id, e.g. qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, bge-small-en-v1.5-384"},
+                        "persist": {"type": "boolean", "default": false, "description": "Persist to .leankg/embed-model.json so the next boot restores it as the default"},
+                        "project": {"type": "string", "description": "Optional: project root for persistence (defaults to the served project)"}
+                    },
+                    "required": ["model_id"]
                 }),
             },
             ToolDefinition {
@@ -1413,6 +1429,26 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("required");
         assert!(required.iter().any(|v| v.as_str() == Some("action")));
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn test_set_embed_model_tool_exists() {
+        let tools = ToolRegistry::list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "set_embed_model")
+            .expect("set_embed_model tool must exist when embeddings feature is on");
+        assert!(tool.description.contains("runtime-active embedding model"));
+        let props = tool.input_schema.get("properties").expect("properties");
+        assert!(props.get("model_id").is_some());
+        assert!(props.get("persist").is_some());
+        let required = tool
+            .input_schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("required");
+        assert!(required.iter().any(|v| v.as_str() == Some("model_id")));
     }
 
     #[test]
