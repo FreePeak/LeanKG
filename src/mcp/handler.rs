@@ -338,6 +338,8 @@ impl ToolHandler {
                 "embed_control is handled by MCPServer (idle scheduler); unreachable via ToolHandler"
                     .into(),
             ),
+            #[cfg(feature = "embeddings")]
+            "set_embed_model" => self.set_embed_model(arguments),
             "ontology_control" => Err(
                 "ontology_control is handled by MCPServer; unreachable via ToolHandler".into(),
             ),
@@ -2260,6 +2262,9 @@ impl ToolHandler {
         let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
         let kind = args["kind"].as_str().unwrap_or("all");
         let path_prefix = args["path_prefix"].as_str();
+        // Only used by the (embeddings-gated) HNSW route below.
+        #[allow(unused_variables)]
+        let model = args["model"].as_str();
 
         // FR-HNSW-D: when the embeddings feature is on AND an embedding
         // index exists, route through CozoDB HNSW (BGE-small-en-v1.5) →
@@ -2267,7 +2272,7 @@ impl ToolHandler {
         // ontology-first path when embeddings are not built (no index
         // rows), so the tool stays useful on slim installs.
         #[cfg(feature = "embeddings")]
-        if embeddings_index_available(self.graph_engine.db()) {
+        if model.is_some() || embeddings_index_available(self.graph_engine.db()) {
             return run_hnsw_semantic_search(
                 &self.graph_engine,
                 query,
@@ -2276,6 +2281,7 @@ impl ToolHandler {
                 offset,
                 kind,
                 path_prefix,
+                model,
             );
         }
 
@@ -4326,6 +4332,41 @@ impl ToolHandler {
         }))
     }
 
+    /// Hot-switch the process-wide active embedding model. Registry-only ids
+    /// are accepted so every embedding tool has a known dimension/collection.
+    /// `persist=true` writes `.leankg/embed-model.json` (restored on boot).
+    #[cfg(feature = "embeddings")]
+    fn set_embed_model(&self, args: &Value) -> Result<Value, String> {
+        let model_id = args["model_id"].as_str().ok_or("Missing 'model_id'")?;
+        let persist = args["persist"].as_bool().unwrap_or(false);
+        let project_root = args["project"].as_str().map(std::path::PathBuf::from);
+        // Default the persist root to the served project's .leankg dir so
+        // `persist=true` with no `project` still lands in the right place.
+        let project_root = if project_root.is_some() {
+            project_root
+        } else {
+            Some(
+                self.db_path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from(".")),
+            )
+        };
+        let entry = crate::embeddings::set_active_model(model_id, persist, project_root.as_deref())
+            .map_err(|e| e.to_string())?;
+        let known: Vec<String> = crate::embeddings::builtin_registry()
+            .keys()
+            .cloned()
+            .collect();
+        Ok(json!({
+            "active_model_id": entry.model_id,
+            "provider": entry.provider.as_str(),
+            "dimensions": entry.dimensions,
+            "persisted": persist,
+            "registered_models": known,
+        }))
+    }
+
     fn kg_context(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
         let env = args["env"].as_str().unwrap_or("local");
@@ -4473,20 +4514,49 @@ impl ToolHandler {
         let include_worktrees = args["include_worktrees"].as_bool().unwrap_or(false);
         let debug = args["debug"].as_bool().unwrap_or(false);
         let _project = args["project"].as_str().unwrap_or(".");
+        let model = args["model"].as_str();
 
         // Vectors live in CozoDB now; freshness check is a state-table count.
         // FR-SEM-07: cheap :limit 1 — never list_all (~147k rows) before retrieve.
-        let has_vectors =
-            crate::embeddings::state::has_any(self.graph_engine.db()).unwrap_or(false);
+        // When a `model` is requested, scope the gate to that model's collection
+        // (the default BGE table may be empty while the requested model is not).
+        let (has_vectors, target_rel): (bool, String) = match model {
+            Some(id) => {
+                let entry = crate::embeddings::registry::lookup_model(id)
+                    .ok_or_else(|| format!("unknown embed model {id:?}"))?;
+                let rel = entry.vectors_relation();
+                let has = self
+                    .graph_engine
+                    .db()
+                    .run_script(
+                        &format!(":limit 1 ?[qualified_name] := *{rel}[qualified_name, _]"),
+                        std::collections::BTreeMap::new(),
+                    )
+                    .map(|r| !r.rows.is_empty())
+                    .unwrap_or(false);
+                (has, rel)
+            }
+            None => (
+                crate::embeddings::state::has_any(self.graph_engine.db()).unwrap_or(false),
+                String::new(),
+            ),
+        };
         if !has_vectors {
-            return Err("No embedded vectors found. Run `leankg embed --init` \
-                 to download models, then `leankg embed` to build the index."
-                .to_string());
+            return Err(format!(
+                "No embedded vectors found{} (collection `{target_rel}`). Run `leankg embed` \
+                 with the matching LEANKG_EMBED_ACTIVE_MODEL to build the index.",
+                if model.is_some() {
+                    " for the requested model"
+                } else {
+                    ""
+                }
+            ));
         }
 
         let t0 = std::time::Instant::now();
-        let mut pipeline = SemanticRetrievalPipeline::new(self.graph_engine.db_arc().clone())
-            .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
+        let mut pipeline =
+            SemanticRetrievalPipeline::for_model(self.graph_engine.db_arc().clone(), model)
+                .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
         let t_pipeline_ms = t0.elapsed().as_millis() as u64;
 
         // CozoDB HNSW stores vectors as first-class data, so the old
@@ -4898,6 +4968,7 @@ fn embeddings_index_available(db: &dyn crate::db::backend::DbBackend) -> bool {
 }
 
 #[cfg(feature = "embeddings")]
+#[allow(clippy::too_many_arguments)]
 fn run_hnsw_semantic_search(
     engine: &GraphEngine,
     query: &str,
@@ -4906,6 +4977,7 @@ fn run_hnsw_semantic_search(
     offset: usize,
     #[allow(unused_variables)] kind: &str,
     path_prefix: Option<&str>,
+    #[allow(unused_variables)] model: Option<&str>,
 ) -> Result<Value, String> {
     use crate::retrieval::{
         is_function_target, is_upper_type, score_functions, traverse_to_functions, RetrieveOptions,
@@ -4923,7 +4995,7 @@ fn run_hnsw_semantic_search(
         embeddings_stale: false,
     };
 
-    let mut pipeline = SemanticRetrievalPipeline::new(engine.db_arc().clone())
+    let mut pipeline = SemanticRetrievalPipeline::for_model(engine.db_arc().clone(), model)
         .map_err(|e| format!("Failed to init HNSW pipeline: {}", e))?;
     let retrieval = pipeline
         .retrieve(query, &opts)

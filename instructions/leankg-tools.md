@@ -22,6 +22,17 @@ to the ontology layer:
 3. `kg_context(query="...")` — ontology-aware concept expansion (no embeddings required).
 4. `search_code(query="...")` / `find_function(name="...")` — bounded name search.
 
+### Embedding-model hot-switch
+
+`set_embed_model(model_id, persist=false, project=…)` switches the
+runtime-active embedding model for the whole MCP process (registry-only ids).
+Both semantic tools also accept a per-request `model` override that queries
+that model's collection without changing the process default. With
+`persist=true` the choice is written to `.leankg/embed-model.json` and
+restored on the next boot. Registered models: `bge-small-en-v1.5-384`
+(default, local), `qwen3-emb-4b-2560`, `jina-embeddings-v3-1024`,
+`gemini-embedding-2-3072`, `gemini-embedding-001-3072` (remote).
+
 ---
 
 ## Tool Selection Flowchart

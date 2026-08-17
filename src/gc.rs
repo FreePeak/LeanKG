@@ -309,8 +309,21 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// Crate-wide lock for tests that mutate the process-global
+    /// `LAST_ACTIVITY_NANOS` / `LAST_RSS_MB` atomics (guards write
+    /// "now" on construction/touch, idle-trim tests write a synthetic
+    /// past). Parallel tests otherwise race on the shared timestamps
+    /// and intermittently flip `IdleTrim` to `NoOp`.
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap()
+    }
+
     #[test]
     fn guard_touch_resets_idle() {
+        let _g = lock();
         MemoryGuard::touch();
         assert_eq!(MemoryGuard::idle_secs(), 0);
     }
@@ -329,12 +342,14 @@ mod tests {
 
     #[test]
     fn tick_returns_a_variant() {
+        let _g = lock();
         let mut g = MemoryGuard::new(None);
         let _ = g.tick();
     }
 
     #[test]
     fn tick_skips_when_poll_window_not_elapsed() {
+        let _g = lock();
         let mut g = MemoryGuard::new(None);
         g.last_check = Instant::now();
         let action = g.tick();
@@ -348,6 +363,7 @@ mod tests {
 
     #[test]
     fn idle_trim_runs_at_most_once_per_activity_period() {
+        let _g = lock();
         // Pin the force-trim cap high so a memory-heavy CI runner can't
         // preempt the idle-trim path under test with a ForceTrim. RAII
         // guard, so a panic in this test still releases the override.
@@ -407,6 +423,7 @@ mod tests {
 
     #[test]
     fn release_returning_false_is_noop_not_idle_trim() {
+        let _g = lock();
         // Pin the force-trim cap high so a memory-heavy CI runner (RSS > 4 GB
         // by the time the full suite reaches this test) can't preempt the
         // idle-trim path with a ForceTrim. RAII guard, so a panic here still
