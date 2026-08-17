@@ -14,6 +14,24 @@ on:
 jobs:
   update-graph:
     runs-on: ubuntu-latest
+    # `leankg index` writes into PostgreSQL (Postgres is the only engine, D4) —
+    # without a live instance it fails with "connection refused".
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: leankg
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d leankg"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      LEANKG_PG_URL: postgresql://postgres:postgres@localhost:5433/leankg
     steps:
       - uses: actions/checkout@v4
 
