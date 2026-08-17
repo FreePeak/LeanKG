@@ -563,6 +563,7 @@ mod tests {
 
     #[test]
     fn hnsw_query_targets_active_model_vectors_relation() {
+        let _g = crate::embeddings::test_env::lock();
         use crate::embeddings::registry::{lookup_model, DEFAULT_BGE_MODEL_ID};
         let bge = lookup_model(DEFAULT_BGE_MODEL_ID).unwrap();
         let vec_idx = format!("{}:vec_idx", bge.vectors_relation());

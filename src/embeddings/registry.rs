@@ -212,11 +212,12 @@ pub fn legacy_backfill_target_relation(model_id: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
 
+    /// Single crate-wide lock for env-var mutation (shared with the
+    /// embeddings switch/pipeline tests) so parallel tests cannot race on
+    /// `LEANKG_EMBED_ACTIVE_MODEL`.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        crate::embeddings::test_env::lock()
     }
 
     #[test]
