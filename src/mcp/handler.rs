@@ -5,7 +5,6 @@ use crate::db::record_metric;
 use crate::graph::{export, export_select, GraphEngine, ImpactAnalyzer};
 use crate::mcp::token_budget::TokenBudget;
 use crate::orchestrator::QueryOrchestrator;
-use glob;
 use serde_json::{json, Value};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -31,7 +30,7 @@ If `kg_semantic_context` returns "No embedded vectors found", fall back
 to the ontology layer:
 
 3. `kg_context(query="...")` — ontology-aware concept expansion (no embeddings required).
-4. `search_code(query="...")` / `find_function(name="...")` — bounded name search.
+4. `search_code(query="...")` — bounded name search.
 
 ---
 
@@ -41,17 +40,13 @@ to the ontology layer:
 User asks about codebase → mcp_status (check initialized)
   │
   ├─ "Where is X?" / "Find Y" (fuzzy / NL / domain) ─► concept_search → semantic_search
-  │   ├─ by name/type ─────────────────────────► search_code(query="X")
-  │   └─ exact function ───────────────────────► find_function(name="parseJson")
-  │                                              scope to file: find_function(name="foo", file="src/bar.rs")
+  │   └─ by name/type ─────────────────────────► search_code(query="X")
   │
   ├─ "What breaks if I change X?" ────────────► get_impact_radius(file="X", depth=2)
   │   └─ use depth<=2 for token budgets (depth=3 returns hundreds of nodes)
   │
   ├─ "How does X work?" / call chain ─────────► get_call_graph(function="X")
   │   └─ keep depth≤2, avoid depth>3 (neighbor explosion)
-  │
-  ├─ "Who calls X?" / callers ────────────────► get_callers(function="X")
   │
   ├─ "What does X import/use?" ───────────────► get_dependencies(file="X")
   ├─ "What uses X?" ──────────────────────────► get_dependents(file="X")
@@ -187,10 +182,6 @@ pub struct ToolHandler {
     db_path: std::path::PathBuf,
     orchestrator: QueryOrchestrator,
     session_cache: std::sync::Arc<parking_lot::RwLock<crate::compress::SessionCache>>,
-    /// US-CBM-C2 / FR-C02: hot-path cache for high-frequency MCP tools
-    /// (search, find_function, get_architecture, get_graph_schema,
-    /// find_dead_code). Keyed by (tool, args-json) with 60s TTL.
-    hot_cache: std::sync::Arc<parking_lot::RwLock<crate::graph::cache::TimedCache<String, Value>>>,
 }
 
 impl ToolHandler {
@@ -201,9 +192,6 @@ impl ToolHandler {
             orchestrator: QueryOrchestrator::with_persistence(graph_engine),
             session_cache: std::sync::Arc::new(parking_lot::RwLock::new(
                 crate::compress::SessionCache::new(),
-            )),
-            hot_cache: std::sync::Arc::new(parking_lot::RwLock::new(
-                crate::graph::cache::TimedCache::new(60, 256),
             )),
         }
     }
@@ -219,7 +207,6 @@ impl ToolHandler {
             "get_impact_radius" => compressor.compress_impact_radius(&response),
             "get_call_graph" => compressor.compress_call_graph(&response),
             "search_code" => compressor.compress_search_code(&response),
-            "search_annotations" => compressor.compress_search_annotations(&response),
             "get_nav_graph" => compressor.compress_nav_graph(&response),
             "get_dependencies" => compressor.compress_dependencies(&response),
             "get_dependents" => compressor.compress_dependents(&response),
@@ -246,7 +233,6 @@ impl ToolHandler {
             "mcp_install" => self.mcp_install(arguments),
             "mcp_status" => self.mcp_status(arguments),
             "detect_changes" => self.detect_changes(arguments),
-            "query_file" => self.query_file(arguments),
             "get_dependencies" => self.get_dependencies(arguments),
             "get_dependents" => self.get_dependents(arguments),
             "get_impact_radius" => self.get_impact_radius(arguments),
@@ -254,7 +240,6 @@ impl ToolHandler {
             "get_context" => self.get_context(arguments),
             "ctx_read" => self.ctx_read(arguments),
             "orchestrate" => self.orchestrate_tool(arguments),
-            "find_function" => self.find_function(arguments),
             "explain_node" => self.explain_node(arguments),
             "get_god_nodes" => self.get_god_nodes(arguments),
             "temporal_query" => self.temporal_query(arguments),
@@ -266,7 +251,6 @@ impl ToolHandler {
             "agent_focus" => self.agent_focus(arguments),
             "agent_diary_write" => self.agent_diary_write(arguments),
             "agent_diary_read" => self.agent_diary_read(arguments),
-            "session_recall" => self.session_recall(arguments),
             "report_query_outcome" => self.report_query_outcome(arguments),
             "get_team_map" => self.get_team_map(arguments),
             "get_overview_context" => self.get_overview_context(arguments),
@@ -276,11 +260,9 @@ impl ToolHandler {
             "get_graph_report" => self.get_graph_report(arguments),
             "query_graph" => self.query_graph(arguments),
             "shortest_path" => self.shortest_path(arguments),
-            "get_callers" => self.get_callers(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
             "search_code" => self.search_code(arguments),
             "concept_search" => self.concept_search(arguments),
-            "search_annotations" => self.search_annotations(arguments),
             "semantic_search" => self.semantic_search(arguments),
             "generate_doc" => self.generate_doc(arguments),
             "find_large_functions" => self.find_large_functions(arguments),
@@ -292,7 +274,6 @@ impl ToolHandler {
             "get_code_tree" => self.get_code_tree(arguments),
             "find_related_docs" => self.find_related_docs(arguments),
             "get_clusters" => self.get_clusters(arguments),
-            "get_cluster_context" => self.get_cluster_context(arguments),
             "run_raw_query" => self.run_raw_query(arguments),
             "get_service_graph" => self.get_service_graph(arguments),
             "get_nav_graph" => self.get_nav_graph(arguments),
@@ -320,13 +301,9 @@ impl ToolHandler {
             "get_service_context" => self.get_service_context(arguments),
             // Ontology semantic search tools
             "kg_context" => self.kg_context(arguments),
-            "kg_concept_map" => self.kg_concept_map(arguments),
             "kg_trace_workflow" => self.kg_trace_workflow(arguments),
             "kg_ontology_status" => self.kg_ontology_status(arguments),
-            "kg_self_test" => self.kg_self_test(arguments),
             "get_architecture" => self.get_architecture(arguments),
-            "get_graph_schema" => self.get_graph_schema(arguments),
-            "find_dead_code" => self.find_dead_code(arguments),
             // PRD-in-KG traceability tools
             "index_prd" => self.index_prd(arguments),
             "get_feature_flow" => self.get_feature_flow(arguments),
@@ -845,24 +822,6 @@ impl ToolHandler {
         Ok(out)
     }
 
-    /// US-CBM-C2 / FR-C02: hot-path result cache for high-frequency
-    /// MCP tools. Wraps an LRU TimedCache keyed by `(tool, args)`.
-    /// Default 60s TTL, 256 entries. Cache is invalidated on every
-    /// successful index via `invalidate_hot_cache` (see write tracker).
-    fn hot_cache_get(&self, tool: &str, key_suffix: &str) -> Option<Value> {
-        let key = format!("{}:{}", tool, key_suffix);
-        self.hot_cache.read().get(&key)
-    }
-
-    fn hot_cache_put(&self, tool: &str, key_suffix: &str, value: Value) {
-        let key = format!("{}:{}", tool, key_suffix);
-        self.hot_cache.write().insert(key, value);
-    }
-
-    pub fn invalidate_hot_cache(&self) {
-        self.hot_cache.write().clear();
-    }
-
     fn detect_changes(&self, args: &Value) -> Result<Value, String> {
         let scope = args["scope"].as_str().unwrap_or("all");
         let min_confidence = args["min_confidence"].as_f64().unwrap_or(0.0);
@@ -1012,17 +971,6 @@ impl ToolHandler {
         }))
     }
 
-    /// Glob matching using the glob crate (already a dependency).
-    /// Supports ** (any path), * (any chars), ? (single char), [abc] (char class).
-    fn glob_match(&self, pattern: &str, text: &str) -> bool {
-        if let Ok(g) = glob::Pattern::new(pattern) {
-            g.matches(text)
-        } else {
-            // Fall back to substring match for invalid patterns
-            text.contains(pattern)
-        }
-    }
-
     /// Pre-process a user query string into valid Cozo Datalog syntax.
     /// Handles common patterns like:
     ///   "function[file ~ 'chat']"  →  full Cozo query
@@ -1089,134 +1037,6 @@ impl ToolHandler {
 
         // Fall through - pass as-is and let Cozo report the error
         trimmed.to_string()
-    }
-
-    fn query_file(&self, args: &Value) -> Result<Value, String> {
-        let pattern = args["pattern"]
-            .as_str()
-            .ok_or("Missing 'pattern' parameter")?;
-
-        let element_type_filter = args["element_type"].as_str().map(String::from);
-        let limit = crate::ontology::safe_discover::clamp_limit(
-            args["limit"].as_i64().unwrap_or(50) as usize,
-        );
-        let offset = args["offset"].as_i64().unwrap_or(0).max(0) as usize;
-
-        // Mega-graph: ontology/semantic discover instead of full table scan.
-        if crate::ontology::safe_discover::is_mega_graph(&self.graph_engine) {
-            let page = crate::ontology::safe_discover::discover(
-                &self.graph_engine,
-                pattern,
-                args["env"].as_str().unwrap_or("local"),
-                limit,
-                offset,
-                true,
-            )
-            .map_err(|e| e.to_string())?;
-            let mut matches: Vec<Value> = page
-                .results
-                .iter()
-                .filter(|e| {
-                    let pattern_match = if pattern.contains('*') || pattern.contains('?') {
-                        self.glob_match(pattern, &e.file_path)
-                            || self.glob_match(pattern, &e.qualified_name)
-                    } else {
-                        e.file_path.contains(pattern) || e.qualified_name.contains(pattern)
-                    };
-                    let type_match = element_type_filter
-                        .as_ref()
-                        .map(|et| &e.element_type == et)
-                        .unwrap_or(true);
-                    pattern_match && type_match
-                })
-                .map(|e| {
-                    json!({
-                        "qualified_name": e.qualified_name,
-                        "name": e.name,
-                        "type": e.element_type,
-                        "file": e.file_path,
-                        "line": e.line_start
-                    })
-                })
-                .collect();
-            // If ontology path filtered everything, fall back to typed name search page.
-            if matches.is_empty() {
-                let probe = pattern.trim_matches(|c| c == '*' || c == '?' || c == '/');
-                let found = self
-                    .graph_engine
-                    .search_by_name_typed(probe, element_type_filter.as_deref(), limit + offset)
-                    .map_err(|e| e.to_string())?;
-                matches = found
-                    .into_iter()
-                    .skip(offset)
-                    .take(limit)
-                    .filter(|e| {
-                        e.file_path.contains(probe)
-                            || e.qualified_name.contains(probe)
-                            || probe.is_empty()
-                    })
-                    .map(|e| {
-                        json!({
-                            "qualified_name": e.qualified_name,
-                            "name": e.name,
-                            "type": e.element_type,
-                            "file": e.file_path,
-                            "line": e.line_start
-                        })
-                    })
-                    .collect();
-            }
-            return Ok(json!({
-                "files": matches,
-                "results": matches,
-                "count": matches.len(),
-                "limit": limit,
-                "offset": offset,
-                "method": "ontology_or_name_paginated"
-            }));
-        }
-
-        let elements = self
-            .graph_engine
-            .all_elements()
-            .map_err(|e| e.to_string())?;
-
-        let matches: Vec<_> = elements
-            .iter()
-            .filter(|e| {
-                let pattern_match = if pattern.contains('*') || pattern.contains('?') {
-                    self.glob_match(pattern, &e.file_path)
-                        || self.glob_match(pattern, &e.qualified_name)
-                } else {
-                    e.file_path.contains(pattern) || e.qualified_name.contains(pattern)
-                };
-                let type_match = element_type_filter
-                    .as_ref()
-                    .map(|et| &e.element_type == et)
-                    .unwrap_or(true);
-                pattern_match && type_match
-            })
-            .skip(offset)
-            .take(limit)
-            .map(|e| {
-                json!({
-                    "qualified_name": e.qualified_name,
-                    "name": e.name,
-                    "type": e.element_type,
-                    "file": e.file_path,
-                    "line": e.line_start
-                })
-            })
-            .collect();
-
-        Ok(json!({
-            "files": matches,
-            "results": matches,
-            "count": matches.len(),
-            "limit": limit,
-            "offset": offset,
-            "method": "scan"
-        }))
     }
 
     fn get_dependencies(&self, args: &Value) -> Result<Value, String> {
@@ -1443,35 +1263,6 @@ impl ToolHandler {
             "signature_only": signature_only,
             "prompt": result.to_prompt()
         }))
-    }
-
-    fn find_function(&self, args: &Value) -> Result<Value, String> {
-        let name = args["name"].as_str().ok_or("Missing 'name' parameter")?;
-        if let Some(v) = self.hot_cache_get("find_function", name) {
-            return Ok(v);
-        }
-        let elements = self
-            .graph_engine
-            .search_by_name_typed(name, Some("function"), 50)
-            .map_err(|e| e.to_string())?;
-
-        let matches: Vec<_> = elements
-            .iter()
-            .filter(|e| e.name.contains(name))
-            .map(|e| {
-                json!({
-                    "qualified_name": e.qualified_name,
-                    "name": e.name,
-                    "file": e.file_path,
-                    "line": e.line_start,
-                    "line_end": e.line_end
-                })
-            })
-            .collect();
-
-        let value = json!({ "functions": matches });
-        self.hot_cache_put("find_function", name, value.clone());
-        Ok(value)
     }
 
     fn shortest_path(&self, args: &Value) -> Result<Value, String> {
@@ -1719,25 +1510,6 @@ impl ToolHandler {
         Ok(json!({ "count": entries.len(), "entries": entries }))
     }
 
-    /// US-SM-01 / FR-SM-03: thin dispatch — recover an offloaded payload
-    /// bit-for-bit by node_id from `.leankg/sessions/<id>/refs/<node_id>.md`.
-    fn session_recall(&self, args: &Value) -> Result<Value, String> {
-        let node_id = args["node_id"].as_str().ok_or("Missing 'node_id'")?;
-        let session_id = args["session_id"].as_str().ok_or("Missing 'session_id'")?;
-        let project = args["project"].as_str().unwrap_or(".");
-        let store = crate::session::SessionStore::new(session_id, std::path::Path::new(project))?;
-        let payload = store.read_ref(node_id)?;
-        let raw = std::fs::read_to_string(store.ref_path(node_id))
-            .map_err(|e| format!("read ref file: {e}"))?;
-        Ok(json!({
-            "node_id": node_id,
-            "session_id": session_id,
-            "payload": payload,
-            "ref_file": store.ref_path(node_id).display().to_string(),
-            "bytes": raw.len(),
-        }))
-    }
-
     fn report_query_outcome(&self, args: &Value) -> Result<Value, String> {
         let question = args["question"].as_str().ok_or("Missing 'question'")?;
         let outcome = args["outcome"].as_str().ok_or("Missing 'outcome'")?;
@@ -1965,33 +1737,6 @@ impl ToolHandler {
         }))
     }
 
-    fn get_callers(&self, args: &Value) -> Result<Value, String> {
-        let function = args["function"]
-            .as_str()
-            .ok_or("Missing 'function' parameter")?;
-        let file_scope = args["file"].as_str();
-
-        let callers = self
-            .graph_engine
-            .get_callers(function, file_scope)
-            .map_err(|e| e.to_string())?;
-
-        let matches: Vec<_> = callers
-            .iter()
-            .map(|e| {
-                json!({
-                    "name": e.name,
-                    "qualified_name": e.qualified_name,
-                    "file": e.file_path,
-                    "line_start": e.line_start,
-                    "line_end": e.line_end,
-                })
-            })
-            .collect();
-
-        Ok(json!({ "callers": matches }))
-    }
-
     fn get_call_graph(&self, args: &Value) -> Result<Value, String> {
         let function = args["function"]
             .as_str()
@@ -2175,84 +1920,6 @@ impl ToolHandler {
             "fallback_used": result.fallback_used,
             "fallback_results": fallback_results,
         })
-    }
-
-    fn search_annotations(&self, args: &Value) -> Result<Value, String> {
-        let annotation_name = args["annotation_name"]
-            .as_str()
-            .ok_or("Missing 'annotation_name' parameter")?;
-        let target_type = args["target_type"].as_str();
-        let file_pattern = args["file_pattern"].as_str();
-        let limit = args["limit"].as_i64().unwrap_or(20) as usize;
-
-        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
-            &self.graph_engine,
-            "search_annotations",
-        ) {
-            return Ok(refusal);
-        }
-
-        let all_elements = self
-            .graph_engine
-            .all_elements()
-            .map_err(|e| e.to_string())?;
-
-        let all_relationships = self
-            .graph_engine
-            .all_relationships()
-            .map_err(|e| e.to_string())?;
-
-        let element_by_qn: std::collections::HashMap<&str, &CodeElement> = all_elements
-            .iter()
-            .map(|e| (e.qualified_name.as_str(), e))
-            .collect();
-
-        let annotates_by_src: std::collections::HashMap<&str, &Relationship> = all_relationships
-            .iter()
-            .filter(|r| r.rel_type == "annotates")
-            .map(|r| (r.source_qualified.as_str(), r))
-            .collect();
-
-        let annotations = all_elements
-            .iter()
-            .filter(|e| e.element_type == "annotation" && e.name == annotation_name)
-            .filter(|e| file_pattern.is_none_or(|p| e.file_path.contains(p)));
-
-        let results: Vec<_> = annotations
-            .filter_map(|ann| {
-                let target_rel = annotates_by_src.get(ann.qualified_name.as_str())?;
-                let target_elem = element_by_qn.get(target_rel.target_qualified.as_str())?;
-
-                if let Some(tt) = target_type {
-                    let actual_type = ann
-                        .metadata
-                        .get("target_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&target_elem.element_type);
-                    if actual_type != tt && tt != "all" {
-                        return None;
-                    }
-                }
-
-                Some(json!({
-                    "annotation_name": ann.name,
-                    "target_qualified": target_elem.qualified_name,
-                    "target_name": target_elem.name,
-                    "target_type": ann.metadata.get("target_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&target_elem.element_type),
-                    "file_path": ann.file_path,
-                    "line": ann.line_start,
-                    "arguments": ann.metadata.get("arguments").cloned().unwrap_or(json!({}))
-                }))
-            })
-            .take(limit)
-            .collect();
-
-        Ok(json!({
-            "annotations": results,
-            "count": results.len()
-        }))
     }
 
     fn semantic_search(&self, args: &Value) -> Result<Value, String> {
@@ -3040,107 +2707,6 @@ impl ToolHandler {
             "destination": destination,
             "callers": callers
         }))
-    }
-
-    fn get_cluster_context(&self, args: &Value) -> Result<Value, String> {
-        use crate::graph::clustering::CommunityDetector;
-
-        let cluster_id = args["cluster_id"].as_str();
-        let cluster_label = args["cluster_label"].as_str();
-
-        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
-            &self.graph_engine,
-            "get_cluster_context",
-        ) {
-            return Ok(refusal);
-        }
-
-        let detector = CommunityDetector::new(self.graph_engine.db_arc().clone());
-        let clusters = match detector.detect_communities() {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(
-                    "detect_communities failed in get_cluster_context ({}): {}",
-                    cluster_id.map(|s| s.to_string()).unwrap_or_default(),
-                    e
-                );
-                return Err(format!("Failed to load clusters: {}", e));
-            }
-        };
-
-        let target_cluster = if let Some(cid) = cluster_id {
-            clusters.get(cid).cloned()
-        } else if let Some(label) = cluster_label {
-            clusters.values().find(|c| c.label == label).cloned()
-        } else {
-            None
-        };
-
-        match target_cluster {
-            Some(cluster) => {
-                let elements = self
-                    .graph_engine
-                    .all_elements()
-                    .map_err(|e| e.to_string())?;
-                let relationships = self
-                    .graph_engine
-                    .all_relationships()
-                    .map_err(|e| e.to_string())?;
-
-                let cluster_elements: Vec<_> = elements
-                    .iter()
-                    .filter(|e| cluster.members.contains(&e.qualified_name))
-                    .map(|e| {
-                        json!({
-                            "qualified_name": e.qualified_name,
-                            "element_type": e.element_type,
-                            "name": e.name,
-                            "file_path": e.file_path
-                        })
-                    })
-                    .collect();
-
-                let member_set: std::collections::HashSet<_> = cluster.members.iter().collect();
-                let inter_cluster: Vec<_> = relationships
-                    .iter()
-                    .filter(|r| {
-                        let src_in_cluster = member_set.contains(&r.source_qualified);
-                        let tgt_in_cluster = member_set.contains(&r.target_qualified);
-                        src_in_cluster != tgt_in_cluster
-                    })
-                    .map(|r| {
-                        json!({
-                            "source": r.source_qualified,
-                            "target": r.target_qualified,
-                            "type": r.rel_type
-                        })
-                    })
-                    .collect();
-
-                let entry_points: Vec<_> = cluster_elements
-                    .iter()
-                    .filter(|e| {
-                        relationships.iter().any(|r| {
-                            r.target_qualified == e["qualified_name"]
-                                && !member_set.contains(&r.source_qualified)
-                        })
-                    })
-                    .collect();
-
-                Ok(json!({
-                    "cluster_id": cluster.id,
-                    "cluster_label": cluster.label,
-                    "members": cluster_elements,
-                    "member_count": cluster.members.len(),
-                    "representative_files": cluster.representative_files,
-                    "entry_points": entry_points,
-                    "inter_cluster_dependencies": inter_cluster
-                }))
-            }
-            None => {
-                Err("Cluster not found. Try get_clusters to see available cluster IDs.".to_string())
-            }
-        }
     }
 
     /// US-GN-07 / Cluster-level SKILL.md generator. Builds a per-cluster
@@ -4391,37 +3957,6 @@ impl ToolHandler {
         }))
     }
 
-    fn kg_concept_map(&self, args: &Value) -> Result<Value, String> {
-        let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
-        let env = args["env"].as_str().unwrap_or("local");
-
-        let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
-
-        // Search for matching ontology nodes
-        let nodes = query_engine
-            .search_ontology_nodes(query, env, 2)
-            .map_err(|e| format!("Failed to search ontology: {}", e))?;
-
-        // Expand context for each node
-        let mut all_elements = Vec::new();
-        let mut all_relationships = Vec::new();
-
-        for node in &nodes {
-            let (elements, relationships) = query_engine
-                .expand_ontology_context(&node.gid, 2)
-                .unwrap_or_else(|_| (vec![], vec![]));
-            all_elements.extend(elements);
-            all_relationships.extend(relationships);
-        }
-
-        Ok(json!({
-            "concept_nodes": nodes,
-            "related_code": all_elements,
-            "relationships": all_relationships,
-        }))
-    }
-
     fn kg_trace_workflow(&self, args: &Value) -> Result<Value, String> {
         let workflow_query = args["workflow_id_or_query"]
             .as_str()
@@ -4472,18 +4007,6 @@ impl ToolHandler {
             "workflows_without_failure_modes": status.workflows_without_failure_modes,
             "dynamic_concepts": status.dynamic_concepts,
             "dynamic_workflows": status.dynamic_workflows,
-        }))
-    }
-
-    fn kg_self_test(&self, _args: &Value) -> Result<Value, String> {
-        let query_engine =
-            crate::ontology::OntologyQueryEngine::new(self.graph_engine.db_arc().clone());
-        let report = query_engine.self_test();
-        Ok(serde_json::to_value(report).unwrap_or_else(|e| {
-            json!({
-                "all_ok": false,
-                "serialization_error": format!("{}", e),
-            })
         }))
     }
 
@@ -4786,35 +4309,6 @@ impl ToolHandler {
         self.graph_engine
             .get_architecture(max_items)
             .map_err(|e| format!("Failed to get architecture: {}", e))
-    }
-
-    /// FR-B21: Get graph schema overview.
-    /// FR-B22: Honors per-section max_items token budget.
-    fn get_graph_schema(&self, args: &Value) -> Result<Value, String> {
-        let max_items = args["max_items"].as_u64().map(|v| v as usize);
-        self.graph_engine
-            .get_graph_schema(max_items)
-            .map_err(|e| format!("Failed to get graph schema: {}", e))
-    }
-
-    /// FR-B23: Find dead code
-    fn find_dead_code(&self, args: &Value) -> Result<Value, String> {
-        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
-            &self.graph_engine,
-            "find_dead_code",
-        ) {
-            return Ok(refusal);
-        }
-        let min_lines = args["min_lines"].as_u64().unwrap_or(10) as u32;
-        let dead = self
-            .graph_engine
-            .find_dead_code(min_lines)
-            .map_err(|e| format!("Failed to find dead code: {}", e))?;
-        Ok(json!({
-            "dead_functions": dead,
-            "count": dead.len(),
-            "min_lines": min_lines,
-        }))
     }
 }
 
@@ -5353,7 +4847,7 @@ pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<&'static str>
     if total_vectors == 0 {
         Some(
             "no embedding vectors for this project, so semantic_search cannot match anything; \
-             use search_code or find_function instead, and run \
+             use search_code instead, and run \
              embed_control action=on force_full=true to build the vectors",
         )
     } else {
@@ -5420,14 +4914,14 @@ fn semantic_low_confidence(query: &str, rerank_fallback: bool) -> Value {
         (
             "reranker-fallback",
             "semantic_search ran without the cross-encoder reranker (ANN-only fallback); \
-             matches may be token/substring coincidences. Use search_code or find_function \
+             matches may be token/substring coincidences. Use search_code \
              for exact-name lookups, or rg on disk.",
         )
     } else {
         (
             "below-confidence-floor",
             "no semantic_search hit reached the relevance floor; matches were token \
-             collisions, not intent. Use search_code or find_function for exact names, \
+             collisions, not intent. Use search_code for exact names, \
              or rg on disk.",
         )
     };

@@ -4882,7 +4882,7 @@ const GUIDANCE = {
   Read: `
 <tool_routing>
 Use LeanKG instead of Read for code analysis:
-  - mcp__leankg__query_file(filename) - find files by name
+  - mcp__leankg__search_code(query, element_type="file") - find files by name
   - mcp__leankg__get_context(file) - read with token optimization
 </tool_routing>`,
 
@@ -4890,7 +4890,6 @@ Use LeanKG instead of Read for code analysis:
 <tool_routing>
 Use LeanKG instead of Grep for code search:
   - mcp__leankg__search_code(query, element_type) - search functions, files, structs
-  - mcp__leankg__find_function(name) - locate function definitions
 </tool_routing>`,
 
   Bash: `
@@ -4941,13 +4940,10 @@ import { homedir } from "node:os";
 const LEANKG_TOOLS = [
   "mcp__leankg__orchestrate",
   "mcp__leankg__search_code",
-  "mcp__leankg__find_function",
-  "mcp__leankg__query_file",
   "mcp__leankg__get_impact_radius",
   "mcp__leankg__get_dependencies",
   "mcp__leankg__get_dependents",
   "mcp__leankg__get_context",
-  "mcp__leankg__get_callers",
   "mcp__leankg__get_call_graph",
   "mcp__leankg__get_clusters",
   "mcp__leankg__get_doc_for_file",
@@ -5032,7 +5028,7 @@ const ROUTING_BLOCK = `
 
   5. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
 
-  6. CALLERS: mcp__leankg__get_callers(function) | mcp__leankg__find_function(name)
+  6. CALLERS: mcp__leankg__get_call_graph(function, depth=1)
 
   7. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
 
@@ -5041,7 +5037,7 @@ const ROUTING_BLOCK = `
 
 <forbidden_actions>
   - DO NOT use Grep for code search (use mcp__leankg__search_code instead)
-  - DO NOT use Bash find/grep for file search (use mcp__leankg__query_file instead)
+  - DO NOT use Bash find/grep for file search (use mcp__leankg__search_code instead)
 </forbidden_actions>
 `;
 

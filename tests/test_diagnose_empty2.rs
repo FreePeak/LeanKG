@@ -14,41 +14,38 @@ async fn test_diagnose_relationships() {
     // Check what relationship types exist
     println!("=== Checking relationships ===");
 
-    // Get a real function with correct qualified name
+    // Get a real function with search_code
     let func_result = handler
-        .execute_tool("find_function", &json!({"name": "main"}))
+        .execute_tool(
+            "search_code",
+            &json!({"query": "main", "element_type": "function"}),
+        )
         .await
         .unwrap();
-    let functions = func_result
-        .get("functions")
-        .and_then(|f| f.as_array())
-        .unwrap();
-    println!("Found {} functions with 'main' name", functions.len());
-    if !functions.is_empty() {
-        if let Some(first) = functions.first() {
-            println!(
-                "First function qualified_name: {:?}",
-                first.get("qualified_name")
-            );
-        }
-    }
+    println!("search_code('main', function): {}", func_result);
 
-    // Try get_callers with the correct qualified name format
-    println!("\n=== Testing get_callers with different formats ===");
+    // Try get_call_graph with the correct qualified name format
+    println!("\n=== Testing get_call_graph with different formats ===");
 
     // Test with ./ prefix
     let callers1 = handler
-        .execute_tool("get_callers", &json!({"function": "./src/main.rs::main"}))
+        .execute_tool(
+            "get_call_graph",
+            &json!({"function": "./src/main.rs::main", "depth": 1}),
+        )
         .await
         .unwrap();
-    println!("get_callers './src/main.rs::main': {}", callers1);
+    println!("get_call_graph './src/main.rs::main': {}", callers1);
 
     // Test with just lib.rs function
     let callers2 = handler
-        .execute_tool("get_callers", &json!({"function": "./src/lib.rs::new"}))
+        .execute_tool(
+            "get_call_graph",
+            &json!({"function": "./src/lib.rs::new", "depth": 1}),
+        )
         .await
         .unwrap();
-    println!("get_callers './src/lib.rs::new': {}", callers2);
+    println!("get_call_graph './src/lib.rs::new': {}", callers2);
 
     // Try get_dependencies with correct path
     println!("\n=== Testing get_dependencies ===");

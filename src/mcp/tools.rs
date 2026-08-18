@@ -73,19 +73,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "query_file".to_string(),
-                description: "Find file by name or pattern".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "pattern": {"type": "string", "description": "File name or pattern to search"},
-                        "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module", "activity", "fragment", "service", "receiver", "provider", "hilt_module", "room_entity", "room_dao", "room_database", "nav_destination", "android_widget", "annotation"], "description": "Optional filter by element type"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
                 name: "get_dependencies".to_string(),
                 description: "Get file dependencies (direct imports)".to_string(),
                 input_schema: json!({
@@ -337,19 +324,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "session_recall".to_string(),
-                description: "US-SM-01 / FR-SM-03: Recover an offloaded MCP/tool payload bit-for-bit by node_id from .leankg/sessions/<session_id>/refs/<node_id>.md. Use when a canvas entry shows node_id=offload-NNN.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "node_id": {"type": "string", "description": "Drill-down id from the session canvas (e.g. offload-001)"},
-                        "session_id": {"type": "string", "description": "Session id"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["node_id", "session_id"]
-                }),
-            },
-            ToolDefinition {
                 name: "get_cluster_skill".to_string(),
                 description: "US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
                 input_schema: json!({
@@ -459,33 +433,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "find_function".to_string(),
-                description: "Locate function definition by name. Optionally scope to a file.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Function name to search for"},
-                        "file": {"type": "string", "description": "Optional file to scope the search to"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["name"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_callers".to_string(),
-                description: "Find all functions/methods that call a given function. \
-                              Returns the caller name, file path, and line number.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "function": {"type": "string", "description": "Function name to find callers for"},
-                        "file": {"type": "string", "description": "Optional file to scope the search"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["function"]
-                }),
-            },
-            ToolDefinition {
                 name: "get_call_graph".to_string(),
                 description: "Get bounded function call chain. Use depth=1 for direct callees, depth=2 for two hops. Avoid depth>3 to prevent neighbor explosion.".to_string(),
                 input_schema: json!({
@@ -528,21 +475,6 @@ impl ToolRegistry {
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "search_annotations".to_string(),
-                description: "Search for code elements by annotation. Returns classes, functions, or properties with matching annotations.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "annotation_name": {"type": "string", "description": "Annotation name to search for (e.g., 'Entity', 'HiltViewModel')"},
-                        "target_type": {"type": "string", "enum": ["class", "function", "property", "parameter", "all"], "description": "Filter by target type"},
-                        "file_pattern": {"type": "string", "description": "Optional file pattern to limit search"},
-                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20)"},
-                        "project": {"type": "string", "description": "Optional: project path to search in"}
-                    },
-                    "required": ["annotation_name"]
                 }),
             },
             ToolDefinition {
@@ -665,19 +597,6 @@ impl ToolRegistry {
                     "properties": {
                         "limit": {"type": "integer", "default": 50, "description": "Maximum number of clusters (default: 50, max: 100)"},
                         "offset": {"type": "integer", "default": 0, "description": "Number of clusters to skip (pagination offset)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "get_cluster_context".to_string(),
-                description: "Get all symbols in a cluster with entry points and inter-cluster dependencies.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "cluster_id": {"type": "string", "description": "Cluster ID to get context for"},
-                        "cluster_label": {"type": "string", "description": "Alternative: cluster label to search for"},
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": []
@@ -1026,19 +945,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "kg_concept_map".to_string(),
-                description: "Get a compact concept neighborhood for a domain, service, or feature. Useful for feature onboarding, impact analysis before edits, and understanding ownership boundaries.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Concept or service name to map"},
-                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            ToolDefinition {
                 name: "kg_trace_workflow".to_string(),
                 description: "Get an ordered procedural trace for a workflow. Useful for debugging user flows, understanding what code runs before/after a step, and identifying missing tests or failure handling.".to_string(),
                 input_schema: json!({
@@ -1072,17 +978,6 @@ impl ToolRegistry {
                         "project": {"type": "string", "description": "Optional: project path"}
                     },
                     "required": ["action"]
-                }),
-            },
-            ToolDefinition {
-                name: "kg_self_test".to_string(),
-                description: "Run a smoke test against every kg_* ontology tool and the live CozoDB schema. Returns per-tool status plus the code_elements and relationships arity/columns. Use this to detect ontology-layer drift (e.g. arity mismatch from a missed schema migration) before any agent relies on kg_*. Safe to call at any time; does not mutate state.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": []
                 }),
             },
             #[cfg(feature = "embeddings")]
@@ -1140,28 +1035,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "mcp_embed".to_string(),
-                description: "US-EMBED-INDEX-01: One-call index + embed workflow. Default runs `mcp_index` against the path (full reindex when index=true, incremental otherwise), then arms in-process background embed via `embed_control{action=on}`. Use this to chain index→embed via a single MCP tool. Requires the binary to be built with --features=embeddings; otherwise returns a clear error pointing to the rebuild."
-                    .to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Path to index (default: .). Used as the embed project root too."},
-                        "incremental": {"type": "boolean", "default": false, "description": "Pass through to mcp_index. true = git-based incremental (faster), false = full reindex."},
-                        "index": {"type": "boolean", "default": true, "description": "Run mcp_index first. Set false to skip when the index is already current."},
-                        "resolve_calls": {"type": "boolean", "default": false},
-                        "full": {"type": "boolean", "default": false, "description": "Force full rebuild of vectors (ignored on mega-graphs unless force_full)."},
-                        "force_full": {"type": "boolean", "default": false},
-                        "mode": {"type": "string", "enum": ["partial", "continuous"], "default": "partial"},
-                        "workers": {"type": "integer", "default": 2},
-                        "batch_size": {"type": "integer", "default": 128},
-                        "types": {"type": "string", "description": "Optional element type filter, e.g. function,method"},
-                        "project": {"type": "string", "description": "Optional: project path (defaults to MCP-served project)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
                 name: "get_architecture".to_string(),
                 description: "Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries. Supports max_items to cap each section for token budget control.".to_string(),
                 input_schema: json!({
@@ -1173,31 +1046,6 @@ impl ToolRegistry {
                     "required": []
                 }),
             },
-            ToolDefinition {
-                name: "get_graph_schema".to_string(),
-                description: "Get graph schema overview: element type counts, relationship type counts. Use to understand database structure and find available element/relationship patterns. Supports max_items to cap each section for token budget control.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "max_items": {"type": "integer", "description": "Optional: per-section item cap. When set, each array section (element_types, relationship_types) is truncated to this many entries. truncated_sections reports which were trimmed."},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "find_dead_code".to_string(),
-                description: "Find potentially dead code: functions with zero callers and zero tests, excluding known entry points (main, Main). Filter by minimum line count to avoid trivial getters/setters.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "min_lines": {"type": "integer", "default": 10, "description": "Minimum line count threshold (default: 10). Functions shorter than this are excluded."},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-
             // PRD-in-KG Traceability Tools
             ToolDefinition {
                 name: "index_prd".to_string(),
@@ -1264,7 +1112,6 @@ mod tests {
     fn test_list_tools_contains_expected() {
         let tools = ToolRegistry::list_tools();
         let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"query_file"));
         assert!(names.contains(&"get_dependencies"));
         assert!(names.contains(&"get_impact_radius"));
         assert!(names.contains(&"find_related_docs"));
@@ -1283,6 +1130,71 @@ mod tests {
                 "removed tool `{removed}` must not be registered"
             );
         }
+    }
+
+    /// TDD: Verify the 11 redundant/thin-wrapper tools have been removed.
+    /// These tools were identified as overlapping with more general tools:
+    /// - query_file → search_code (same safe_discover path on mega-graphs)
+    /// - find_function → search_code with element_type="function"
+    /// - get_callers → get_call_graph with depth=1
+    /// - search_annotations → manual filter on full graph load
+    /// - get_cluster_context → get_cluster_skill (same detect+load+filter)
+    /// - kg_concept_map → kg_context (same ontology query engine)
+    /// - get_graph_schema → low-value meta tool
+    /// - find_dead_code → low-value analysis tool
+    /// - session_recall → session-specific, rarely used
+    /// - kg_self_test → internal test tool
+    /// - mcp_embed → thin wrapper (call mcp_index + embed_control sequentially)
+    #[test]
+    fn test_redundant_tools_removed() {
+        let tools = ToolRegistry::list_tools();
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+        let removed = [
+            "query_file",
+            "find_function",
+            "get_callers",
+            "search_annotations",
+            "get_cluster_context",
+            "kg_concept_map",
+            "get_graph_schema",
+            "find_dead_code",
+            "session_recall",
+            "kg_self_test",
+            "mcp_embed",
+        ];
+        for tool_name in &removed {
+            assert!(
+                !names.contains(tool_name),
+                "redundant tool `{tool_name}` must be removed (replaced by more general tools)"
+            );
+        }
+        // Verify core tools that replace them still exist
+        assert!(
+            names.contains(&"search_code"),
+            "search_code replaces query_file and find_function"
+        );
+        assert!(
+            names.contains(&"get_call_graph"),
+            "get_call_graph replaces get_callers"
+        );
+        assert!(
+            names.contains(&"get_cluster_skill"),
+            "get_cluster_skill replaces get_cluster_context"
+        );
+        assert!(
+            names.contains(&"kg_context"),
+            "kg_context replaces kg_concept_map"
+        );
+        assert!(
+            names.contains(&"get_architecture"),
+            "get_architecture is the primary overview tool"
+        );
+        // Exact count: 87 - 11 = 76
+        assert_eq!(
+            names.len(),
+            76,
+            "expected 76 tools after removing 11 redundant ones"
+        );
     }
 
     #[test]

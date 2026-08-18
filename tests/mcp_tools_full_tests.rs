@@ -184,40 +184,6 @@ mod query_tools {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_query_file() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool(
-                "query_file",
-                &json!({"file": "./src/main.rs", "pattern": "fn"}),
-            )
-            .await;
-        assert!(
-            result.is_ok(),
-            "query_file should succeed: {:?}",
-            result.err()
-        );
-        let value = result.unwrap();
-        let has_data = value.get("files").is_some()
-            || value.get("results").is_some()
-            || !value.to_string().is_empty();
-        assert!(has_data, "query_file should return data");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_query_file_missing_pattern() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool("query_file", &json!({"file": "./src/main.rs"}))
-            .await;
-        assert!(result.is_err(), "query_file should error without pattern");
-        assert!(
-            result.unwrap_err().contains("pattern"),
-            "Error should mention 'pattern'"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn test_search_code() {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler
@@ -241,33 +207,6 @@ mod query_tools {
         assert!(
             result.unwrap_err().contains("query"),
             "Error should mention 'query'"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_find_function() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool("find_function", &json!({"name": "main"}))
-            .await;
-        assert!(
-            result.is_ok(),
-            "find_function should succeed: {:?}",
-            result.err()
-        );
-        let value = result.unwrap();
-        let is_empty = value.as_array().map(|a| a.is_empty()).unwrap_or(false);
-        assert!(!is_empty, "find_function should return data for 'main'");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_find_function_missing_name() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler.execute_tool("find_function", &json!({})).await;
-        assert!(result.is_err(), "find_function should error without name");
-        assert!(
-            result.unwrap_err().contains("name"),
-            "Error should mention 'name'"
         );
     }
 }
@@ -367,39 +306,6 @@ mod dependency_tools {
             result.unwrap_err().contains("function"),
             "Error should mention 'function'"
         );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_get_callers() {
-        let (handler, _tmp) = create_real_handler().await;
-        // Find a function that has callers
-        let result = handler
-            .execute_tool("get_callers", &json!({"function": "validate_key"}))
-            .await;
-        assert!(
-            result.is_ok(),
-            "get_callers should succeed: {:?}",
-            result.err()
-        );
-        let value = result.unwrap();
-        // May be empty if validate_key has no callers, but should not error
-        assert!(
-            value.get("callers").is_some() || !value.to_string().is_empty(),
-            "get_callers should return callers field or empty array"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_get_callers_missing_function() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler.execute_tool("get_callers", &json!({})).await;
-        // get_callers might require function parameter
-        if let Err(err) = result {
-            assert!(
-                err.contains("function") || err.contains("name"),
-                "Error should mention 'function' or 'name'"
-            );
-        }
     }
 }
 
@@ -676,22 +582,6 @@ mod cluster_tools {
         let has_data = value.get("clusters").is_some() || !value.to_string().is_empty();
         assert!(has_data, "get_clusters should return data");
     }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_get_cluster_context() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool("get_cluster_context", &json!({"cluster_id": "1"}))
-            .await;
-        // May fail if cluster doesn't exist
-        if let Err(err) = result {
-            assert!(
-                err.contains("not found") || err.contains("Cluster"),
-                "Expected cluster not found error: {}",
-                err
-            );
-        }
-    }
 }
 
 // ============================================================================
@@ -700,22 +590,6 @@ mod cluster_tools {
 
 mod utility_tools {
     use super::*;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_kg_self_test() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler.execute_tool("kg_self_test", &json!({})).await;
-        assert!(
-            result.is_ok(),
-            "kg_self_test should succeed: {:?}",
-            result.err()
-        );
-        let value = result.unwrap();
-        assert!(
-            !value.to_string().is_empty(),
-            "kg_self_test should return diagnostics"
-        );
-    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_get_service_graph() {
@@ -925,7 +799,6 @@ mod mega_guard_tests {
         // get_cluster_skill is excluded: it now serves precomputed cluster rows
         // on mega (better than refusal) — covered by the dedicated test below.
         let cases: Vec<(&str, serde_json::Value)> = vec![
-            ("find_dead_code", json!({"min_lines": 1})),
             ("get_graph_report", json!({})),
             ("export_html", json!({})),
             ("export_graph_snapshot", json!({})),

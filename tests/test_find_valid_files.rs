@@ -44,8 +44,8 @@ async fn test_find_valid_files_for_relationships() {
             println!("  -> {}", t);
         }
 
-        // Now test get_callers and get_call_graph on this
-        println!("\n=== Testing get_callers and get_call_graph ===");
+        // Now test get_call_graph on this
+        println!("\n=== Testing get_call_graph ===");
         println!("Would test with: {}", first_source);
     }
 }
