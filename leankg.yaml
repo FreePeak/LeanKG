@@ -4,12 +4,12 @@ project:
   languages:
   - javascript
   - rust
-# Postgres connection defaults. Env LEANKG_PG_URL / LEANKG_PG_POOL_SIZE /
-# LEANKG_PG_LOCK override these; unset fields fall back to built-in defaults.
-db:
-  url: postgresql://postgres:postgres@localhost:5433/leankg
-  pool_size: 5
-  lock: true
+  steer:
+    priority_paths: []
+    ignore_paths: []
+    languages:
+      items: []
+    notes: []
 indexer:
   exclude:
   - '**/node_modules/**'
@@ -21,6 +21,28 @@ indexer:
   - '*.java'
   - '*.kt'
   - '*.xml'
+  - '*.rs'
+  - '*.dart'
+  - '*.swift'
+  - '*.m'
+  - '*.mm'
+  - '*.c'
+  - '*.h'
+  - '*.cpp'
+  - '*.hpp'
+  - '*.rb'
+  - '*.php'
+  - '*.pl'
+  - '*.pm'
+  - '*.r'
+  - '*.ex'
+  - '*.exs'
+  - '*.sh'
+  - '*.lua'
+  - '*.scala'
+  - '*.zig'
+  - '*.sol'
+  - '*.cs'
   typed_resolve: off
 mcp:
   enabled: true
