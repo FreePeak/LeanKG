@@ -288,7 +288,9 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     let extensions = [
         "go",
         "ts",
+        "tsx",
         "js",
+        "jsx",
         "py",
         "rs",
         "java",
