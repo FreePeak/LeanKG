@@ -1,4 +1,4 @@
-//! Coverage for the 36 MCP tools that have **no** direct test in
+//! Coverage for MCP tools that have **no** direct test in
 //! `tests/mcp_tools_full_tests.rs`, plus a redundancy matrix that documents
 //! which tools overlap, are deprecated, or are aliases of newer ones.
 //!
@@ -18,14 +18,14 @@
 //! agent_diary_read, agent_diary_write, agent_focus,
 //! check_consistency, concept_search,
 //! delete_knowledge, explain_node, export_graph_snapshot,
-//! find_dead_code, find_env_conflicts, find_route, find_tunnels,
+//! find_env_conflicts, find_route, find_tunnels,
 //! get_architecture, get_cluster_skill, get_god_nodes, get_graph_report,
-//! get_graph_schema, get_nav_callers, get_nav_graph, get_overview_context,
+//! get_nav_callers, get_nav_graph, get_overview_context,
 //! get_pr_impact, get_screen_args, get_service_context, get_team_map,
-//! get_upcoming_changes, kg_concept_map, kg_context, kg_ontology_status,
-//! kg_self_test, kg_semantic_context, kg_trace_workflow, link_element,
+//! get_upcoming_changes, kg_context, kg_ontology_status,
+//! kg_semantic_context, kg_trace_workflow, link_element,
 //! load_layer, promote_environment, query_incidents, report_query_outcome,
-//! resolve_with_lsp, search_annotations,
+//! resolve_with_lsp,
 //! search_knowledge, semantic_search, shortest_path, temporal_query,
 //! timeline, update_knowledge, query_graph
 
@@ -33,6 +33,7 @@ use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
 use leankg::mcp::tools::ToolRegistry;
+use leankg::session::{Lesson, RecallStore};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use tempfile::TempDir;
@@ -127,7 +128,6 @@ fn every_tested_tool_is_registered() {
         "delete_knowledge",
         "explain_node",
         "export_graph_snapshot",
-        "find_dead_code",
         "find_env_conflicts",
         "find_route",
         "find_tunnels",
@@ -135,7 +135,6 @@ fn every_tested_tool_is_registered() {
         "get_cluster_skill",
         "get_god_nodes",
         "get_graph_report",
-        "get_graph_schema",
         "get_nav_callers",
         "get_nav_graph",
         "get_overview_context",
@@ -144,11 +143,8 @@ fn every_tested_tool_is_registered() {
         "get_service_context",
         "get_team_map",
         "get_upcoming_changes",
-        "session_recall",
-        "kg_concept_map",
         "kg_context",
         "kg_ontology_status",
-        "kg_self_test",
         "kg_semantic_context",
         "kg_trace_workflow",
         "link_element",
@@ -156,7 +152,6 @@ fn every_tested_tool_is_registered() {
         "query_incidents",
         "report_query_outcome",
         "resolve_with_lsp",
-        "search_annotations",
         "search_knowledge",
         "semantic_search",
         "shortest_path",
@@ -226,36 +221,6 @@ mod knowledge {
             .await
             .expect("delete_knowledge");
         assert!(!deleted.to_string().is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn add_and_search_annotations() {
-        let (handler, _tmp) = make_handler().await;
-        let added = call(
-            &handler,
-            "add_annotation",
-            json!({
-                "element": "src/auth/mod.rs::login",
-                "description": "bcrypt cost factor is intentionally high"
-            }),
-        )
-        .await
-        .expect("add_annotation");
-        // add_annotation returns {element, description, action}; both shapes accepted.
-        assert!(
-            added.get("element").is_some()
-                || added.get("id").is_some()
-                || added.to_string().contains("annotation")
-        );
-
-        let hits = call(
-            &handler,
-            "search_annotations",
-            json!({"annotation_name": "bcrypt"}),
-        )
-        .await
-        .expect("search_annotations");
-        assert!(!hits.to_string().is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -364,202 +329,134 @@ mod agent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Session memory offload (US-SM-01 / FR-SM-01..03)
-// ---------------------------------------------------------------------------
-
-mod session_offload {
-    use super::*;
-    use leankg::session::{offload_step, Lesson, RecallStore, SessionStore};
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn offload_then_recall_via_mcp_round_trips() {
-        let (handler, tmp) = make_handler().await;
-        let project = tmp.path().to_string_lossy().to_string();
-        let payload: Value = serde_json::from_str(
-            r#"{"tool":"search_code","hits":[
-                {"qualified_name":"src/auth/mod.rs::login","file":"src/auth/mod.rs","line":10},
-                {"qualified_name":"src/auth/mod.rs::verify_token","file":"src/auth/mod.rs","line":31}
-            ]}"#,
-        )
-        .unwrap();
-
-        // Offload through the lib seam (writes ref + canvas under <tmp>/.leankg/sessions).
-        let store = SessionStore::new("sess-mcp-1", tmp.path()).expect("store");
-        let compact = offload_step(&store, "search_code", &payload, 100).expect("offload");
-        assert_eq!(compact["steps"][0]["node_id"], "offload-001");
-
-        // session_recall via the MCP dispatch must return the exact payload.
-        let recalled = call(
-            &handler,
-            "session_recall",
-            json!({
-                "node_id": "offload-001",
-                "session_id": "sess-mcp-1",
-                "project": &project
-            }),
-        )
-        .await
-        .expect("session_recall");
-        assert_eq!(recalled["node_id"], "offload-001");
-        assert_eq!(recalled["session_id"], "sess-mcp-1");
-        assert_eq!(recalled["payload"], payload, "bit-for-bit recall");
-        assert!(
-            recalled["ref_file"]
-                .as_str()
-                .unwrap_or("")
-                .contains("refs/offload-001.md"),
-            "ref file path: {recalled}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn session_recall_missing_node_errors() {
-        let (handler, tmp) = make_handler().await;
-        let project = tmp.path().to_string_lossy().to_string();
-        let err = call(
-            &handler,
-            "session_recall",
-            json!({
-                "node_id": "offload-999",
-                "session_id": "sess-mcp-1",
-                "project": &project
-            }),
-        )
-        .await
-        .expect_err("missing node must error");
-        assert!(err.contains("not found"), "{err}");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn overview_opt_in_off_has_no_recall_key() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "get_overview_context", json!({}))
-            .await
-            .expect("get_overview_context");
-        assert!(
-            resp.get("session_lessons").is_none(),
-            "default opt-in OFF must not inject recall: {resp}"
-        );
-        // explicit recall=false behaves like today
-        let resp = call(
-            &handler,
-            "get_overview_context",
-            json!({"recall": false, "project_name": "p"}),
-        )
+#[tokio::test(flavor = "multi_thread")]
+async fn overview_opt_in_off_has_no_recall_key() {
+    let (handler, _tmp) = make_handler().await;
+    let resp = call(&handler, "get_overview_context", json!({}))
         .await
         .expect("get_overview_context");
-        assert!(resp.get("session_lessons").is_none());
-    }
+    assert!(
+        resp.get("session_lessons").is_none(),
+        "default opt-in OFF must not inject recall: {resp}"
+    );
+    // explicit recall=false behaves like today
+    let resp = call(
+        &handler,
+        "get_overview_context",
+        json!({"recall": false, "project_name": "p"}),
+    )
+    .await
+    .expect("get_overview_context");
+    assert!(resp.get("session_lessons").is_none());
+}
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn overview_opt_in_on_injects_lessons_and_respects_budgets() {
-        let (handler, tmp) = make_handler().await;
-        let project = tmp.path().to_string_lossy().to_string();
+#[tokio::test(flavor = "multi_thread")]
+async fn overview_opt_in_on_injects_lessons_and_respects_budgets() {
+    let (handler, tmp) = make_handler().await;
+    let project = tmp.path().to_string_lossy().to_string();
 
-        // Seed the recall index through the lib seam (same on-disk index the
-        // overview arm reads).
-        let recall = RecallStore::new(tmp.path()).expect("recall store");
+    // Seed the recall index through the lib seam (same on-disk index the
+    // overview arm reads).
+    let recall = RecallStore::new(tmp.path()).expect("recall store");
+    recall
+        .push_dedup(&Lesson {
+            id: "r-1".to_string(),
+            source: "report_query_outcome".to_string(),
+            rank: 9.0,
+            text: "prefer get_overview_context at session start (never grep first)".to_string(),
+        })
+        .expect("push lesson");
+    recall
+        .push_dedup(&Lesson {
+            id: "r-2".to_string(),
+            source: "diary".to_string(),
+            rank: 3.0,
+            text: "validate_key is the hot entry point for auth changes".to_string(),
+        })
+        .expect("push lesson");
+
+    let resp = call(
+        &handler,
+        "get_overview_context",
+        json!({"recall": true, "project": &project}),
+    )
+    .await
+    .expect("get_overview_context");
+    let lessons = resp["session_lessons"].as_str().expect("lessons injected");
+    assert!(lessons.contains("prefer get_overview_context"), "{lessons}");
+    assert!(lessons.contains("validate_key"), "{lessons}");
+    assert!(
+        lessons.chars().count() <= 3000,
+        "total char budget: {}",
+        lessons.chars().count()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn overview_opt_in_on_with_empty_index_skips_injection() {
+    let (handler, tmp) = make_handler().await;
+    let project = tmp.path().to_string_lossy().to_string();
+    let resp = call(
+        &handler,
+        "get_overview_context",
+        json!({"recall": true, "project": &project}),
+    )
+    .await
+    .expect("get_overview_context");
+    assert!(resp.get("session_lessons").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn recall_dedups_across_sources_and_top_k_respects_rank() {
+    let (handler, tmp) = make_handler().await;
+    let project = tmp.path().to_string_lossy().to_string();
+    let recall = RecallStore::new(tmp.path()).expect("recall store");
+    // Same lesson from two sources must be deduped (FR-SM-04).
+    recall
+        .push_dedup(&Lesson {
+            id: "r-1".to_string(),
+            source: "LESSONS.md".to_string(),
+            rank: 9.0,
+            text: "duplicate lesson text for dedup verification".to_string(),
+        })
+        .expect("push");
+    recall
+        .push_dedup(&Lesson {
+            id: "r-2".to_string(),
+            source: "knowledge".to_string(),
+            rank: 8.0,
+            text: "duplicate lesson text for dedup verification".to_string(),
+        })
+        .expect("push");
+    let lessons = recall.load().expect("load");
+    assert_eq!(lessons.len(), 1, "duplicate text deduped");
+    assert_eq!(lessons[0].source, "LESSONS.md", "first write wins");
+
+    // top-K: only the top-K by rank are injected.
+    for i in 0..8 {
         recall
             .push_dedup(&Lesson {
-                id: "r-1".to_string(),
-                source: "report_query_outcome".to_string(),
-                rank: 9.0,
-                text: "prefer get_overview_context at session start (never grep first)".to_string(),
-            })
-            .expect("push lesson");
-        recall
-            .push_dedup(&Lesson {
-                id: "r-2".to_string(),
+                id: format!("r-{i}"),
                 source: "diary".to_string(),
-                rank: 3.0,
-                text: "validate_key is the hot entry point for auth changes".to_string(),
-            })
-            .expect("push lesson");
-
-        let resp = call(
-            &handler,
-            "get_overview_context",
-            json!({"recall": true, "project": &project}),
-        )
-        .await
-        .expect("get_overview_context");
-        let lessons = resp["session_lessons"].as_str().expect("lessons injected");
-        assert!(lessons.contains("prefer get_overview_context"), "{lessons}");
-        assert!(lessons.contains("validate_key"), "{lessons}");
-        assert!(
-            lessons.chars().count() <= 3000,
-            "total char budget: {}",
-            lessons.chars().count()
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn overview_opt_in_on_with_empty_index_skips_injection() {
-        let (handler, tmp) = make_handler().await;
-        let project = tmp.path().to_string_lossy().to_string();
-        let resp = call(
-            &handler,
-            "get_overview_context",
-            json!({"recall": true, "project": &project}),
-        )
-        .await
-        .expect("get_overview_context");
-        assert!(resp.get("session_lessons").is_none());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn recall_dedups_across_sources_and_top_k_respects_rank() {
-        let (handler, tmp) = make_handler().await;
-        let project = tmp.path().to_string_lossy().to_string();
-        let recall = RecallStore::new(tmp.path()).expect("recall store");
-        // Same lesson from two sources must be deduped (FR-SM-04).
-        recall
-            .push_dedup(&Lesson {
-                id: "r-1".to_string(),
-                source: "LESSONS.md".to_string(),
-                rank: 9.0,
-                text: "duplicate lesson text for dedup verification".to_string(),
+                rank: i as f64,
+                text: format!("lesson {i}"),
             })
             .expect("push");
-        recall
-            .push_dedup(&Lesson {
-                id: "r-2".to_string(),
-                source: "knowledge".to_string(),
-                rank: 8.0,
-                text: "duplicate lesson text for dedup verification".to_string(),
-            })
-            .expect("push");
-        let lessons = recall.load().expect("load");
-        assert_eq!(lessons.len(), 1, "duplicate text deduped");
-        assert_eq!(lessons[0].source, "LESSONS.md", "first write wins");
-
-        // top-K: only the top-K by rank are injected.
-        for i in 0..8 {
-            recall
-                .push_dedup(&Lesson {
-                    id: format!("r-{i}"),
-                    source: "diary".to_string(),
-                    rank: i as f64,
-                    text: format!("lesson {i}"),
-                })
-                .expect("push");
-        }
-        let resp = call(
-            &handler,
-            "get_overview_context",
-            json!({"recall": true, "project": &project}),
-        )
-        .await
-        .expect("get_overview_context");
-        let lessons = resp["session_lessons"].as_str().unwrap();
-        // top-K = 5 by default; the highest-rank duplicate text must be present.
-        assert!(lessons.contains("duplicate lesson text"), "{lessons}");
-        assert!(
-            lessons.matches("lesson ").count() <= 5,
-            "top-K exceeded: {lessons}"
-        );
     }
+    let resp = call(
+        &handler,
+        "get_overview_context",
+        json!({"recall": true, "project": &project}),
+    )
+    .await
+    .expect("get_overview_context");
+    let lessons = resp["session_lessons"].as_str().unwrap();
+    // top-K = 5 by default; the highest-rank duplicate text must be present.
+    assert!(lessons.contains("duplicate lesson text"), "{lessons}");
+    assert!(
+        lessons.matches("lesson ").count() <= 5,
+        "top-K exceeded: {lessons}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -751,19 +648,6 @@ mod aggregators {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn get_graph_schema_reports_counts() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "get_graph_schema", json!({}))
-            .await
-            .expect("get_graph_schema");
-        let s = resp.to_string();
-        assert!(
-            s.contains("element") || s.contains("edge") || s.contains("count"),
-            "get_graph_schema should report counts: {s}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn get_god_nodes_returns_top_n() {
         let (handler, _tmp) = make_handler().await;
         let resp = call(&handler, "get_god_nodes", json!({"limit": 5}))
@@ -784,15 +668,6 @@ mod aggregators {
                 "expected graceful error: {e}"
             ),
         }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn find_dead_code_returns_list() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "find_dead_code", json!({}))
-            .await
-            .expect("find_dead_code");
-        assert!(!resp.to_string().is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -932,19 +807,6 @@ mod ontology {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn kg_self_test_reports_health() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "kg_self_test", json!({}))
-            .await
-            .expect("kg_self_test");
-        let s = resp.to_string();
-        assert!(
-            s.contains("all_ok") || s.contains("ok") || s.contains("status"),
-            "kg_self_test should report status: {s}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn kg_ontology_status_returns_metrics() {
         let (handler, _tmp) = make_handler().await;
         let resp = call(&handler, "kg_ontology_status", json!({}))
@@ -959,15 +821,6 @@ mod ontology {
         let resp = call(&handler, "kg_context", json!({"query": "auth flow"}))
             .await
             .expect("kg_context");
-        assert!(!resp.to_string().is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn kg_concept_map_returns_payload() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "kg_concept_map", json!({"query": "auth"}))
-            .await
-            .expect("kg_concept_map");
         assert!(!resp.to_string().is_empty());
     }
 

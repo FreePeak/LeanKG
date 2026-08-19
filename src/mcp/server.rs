@@ -47,7 +47,6 @@ static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "mcp_index",
         "mcp_index_docs",
         "mcp_install",
-        "mcp_embed",
         "index_prd",
         "add_knowledge",
         "update_knowledge",
@@ -1216,163 +1215,6 @@ impl MCPServer {
         _arguments: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
         Err("embed_control requires the `embeddings` cargo feature".into())
-    }
-
-    /// US-EMBED-INDEX-01: chain `mcp_index` → `embed_control{action="on"}`
-    /// via a single MCP call. Always available; the underlying binary must
-    /// have been built with `--features=embeddings` for the embed arm to do
-    /// anything (otherwise the embed step returns a clear error pointing to
-    /// the rebuild).
-    async fn handle_mcp_embed(
-        &self,
-        arguments: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<serde_json::Value, String> {
-        let path = arguments
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
-        let incremental = arguments
-            .get("incremental")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let run_index = arguments
-            .get("index")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let resolve_calls = arguments
-            .get("resolve_calls")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let full = arguments
-            .get("full")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let force_full = arguments
-            .get("force_full")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let mode = arguments
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("partial")
-            .to_string();
-        let workers = arguments
-            .get("workers")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(2) as usize;
-        let batch_size = arguments
-            .get("batch_size")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(128) as usize;
-        let types_filter = arguments
-            .get("types")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let project = arguments
-            .get("project")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        // Resolve the routing key (project) BEFORE acquiring graph engine so
-        // we route the index to the right DB.
-        let mut index_result: Option<serde_json::Value> = None;
-        let mut index_error: Option<String> = None;
-
-        if run_index {
-            // Build the mcp_index argument map. Reuse the same project/path
-            // the user passed so the indexed directory matches the embed
-            // root.
-            let mut idx_args = serde_json::Map::new();
-            idx_args.insert("path".into(), serde_json::Value::String(path.clone()));
-            idx_args.insert("incremental".into(), serde_json::Value::Bool(incremental));
-            idx_args.insert(
-                "resolve_calls".into(),
-                serde_json::Value::Bool(resolve_calls),
-            );
-            if let Some(p) = &project {
-                idx_args.insert("project".into(), serde_json::Value::String(p.clone()));
-            }
-            // Direct ToolHandler call (no recursive execute_tool — would
-            // deadlock on the non-reentrant write_lock).
-            let routing_key = Self::resolve_db_route(&idx_args);
-            let project_db_path = match &routing_key {
-                Some(key) => {
-                    Self::resolve_project_db_path(key).unwrap_or_else(|| self.get_db_path())
-                }
-                None => Self::resolve_project_db_path(".")
-                    .or_else(|| Self::find_leankg_for_path("."))
-                    .unwrap_or_else(|| self.get_db_path()),
-            };
-            let graph_engine = self
-                .get_graph_engine_for_path(routing_key.as_ref())
-                .map_err(|e| format!("mcp_embed: graph engine unavailable: {}", e))?;
-            let handler = crate::mcp::handler::ToolHandler::new(graph_engine, project_db_path);
-            let args_value = serde_json::Value::Object(idx_args);
-            match handler.execute_tool("mcp_index", &args_value).await {
-                Ok(v) => index_result = Some(v),
-                Err(e) => index_error = Some(e),
-            }
-        }
-
-        // Always run the embed arm step, even if index failed — the user
-        // might want to retry the embed against an existing index. The
-        // embed_control endpoint will surface "no embeddings feature" etc.
-        let mut embed_args = serde_json::Map::new();
-        embed_args.insert("action".into(), serde_json::Value::String("on".into()));
-        embed_args.insert("mode".into(), serde_json::Value::String(mode.clone()));
-        embed_args.insert("full".into(), serde_json::Value::Bool(full));
-        embed_args.insert("force_full".into(), serde_json::Value::Bool(force_full));
-        embed_args.insert(
-            "workers".into(),
-            serde_json::Value::Number(serde_json::Number::from(workers as u64)),
-        );
-        embed_args.insert(
-            "batch_size".into(),
-            serde_json::Value::Number(serde_json::Number::from(batch_size as u64)),
-        );
-        if let Some(t) = &types_filter {
-            embed_args.insert("types".into(), serde_json::Value::String(t.clone()));
-        }
-        if let Some(p) = &project {
-            embed_args.insert("project".into(), serde_json::Value::String(p.clone()));
-        }
-        let embed_res = self.handle_embed_control(&embed_args);
-
-        let mut out = serde_json::Map::new();
-        out.insert("index".into(), serde_json::Value::Bool(run_index));
-        out.insert(
-            "embed".into(),
-            serde_json::json!({
-                "action": "on",
-                "mode": mode,
-                "full": full,
-                "force_full": force_full,
-                "workers": workers,
-                "batch_size": batch_size,
-            }),
-        );
-        if let Some(p) = &project {
-            out.insert("project".into(), serde_json::Value::String(p.clone()));
-        }
-        if let Some(p) = &types_filter {
-            out.insert("types".into(), serde_json::Value::String(p.clone()));
-        }
-        match index_result {
-            Some(v) => out.insert("index_result".into(), v),
-            None => out.insert("index_skipped".into(), serde_json::Value::Bool(true)),
-        };
-        if let Some(e) = index_error {
-            out.insert("index_error".into(), serde_json::Value::String(e));
-        }
-        match embed_res {
-            Ok(v) => out.insert("embed_result".into(), v),
-            Err(e) => {
-                out.insert("embed_error".into(), serde_json::Value::String(e.clone()));
-                return Err(format!("embed step failed: {}", e));
-            }
-        };
-        Ok(serde_json::Value::Object(out))
     }
 
     /// FR-ONT-PROC-01: watch ontology YAML and re-sync without dropping HTTP.
@@ -2933,15 +2775,6 @@ impl MCPServer {
             // on write_lock the same way the legacy path did.
             let _write_guard = self.write_lock.lock().await;
             return self.handle_embed_control(&arguments);
-        }
-
-        if tool_name == "mcp_embed" {
-            // US-EMBED-INDEX-01: chain index → embed via a single MCP call.
-            // Returns a unified result object. Stays on the same write_lock
-            // so the index write and the embed arm are serialised against
-            // other writers.
-            let _write_guard = self.write_lock.lock().await;
-            return self.handle_mcp_embed(&arguments).await;
         }
 
         if tool_name == "ontology_control" {

@@ -1546,8 +1546,19 @@ pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error
         // Writer path: ALWAYS create + pin to the per-project schema. The
         // writer owns schema creation; it never falls back to `public` (that
         // fallback is reader-only, so a pre-schema index stays visible).
-        create_schema_if_missing(&schema)?;
-        let pg = PostgresBackend::from_env()?.with_schema(&schema);
+        let ext_schema = create_schema_if_missing(&schema)?;
+        let mut pg = PostgresBackend::from_env()?.with_schema(&schema);
+        // If the pgvector extension lives in a schema other than {schema} or
+        // public, add it to the runtime search_path so `vector(N)` resolves.
+        if let Some(ref ext_s) = ext_schema {
+            if ext_s != &schema && ext_s != "public" {
+                let sep = if pg.pg_url.contains('?') { '&' } else { '?' };
+                pg.pg_url = format!(
+                    "{}{sep}options=-csearch_path%3D{schema}%2C{ext_s}%2Cpublic",
+                    pg.pg_url
+                );
+            }
+        }
         tracing::info!("DB engine = postgres: {}", redact_url(&pg.pg_url));
         Ok(Arc::new(pg))
     }
@@ -1558,7 +1569,9 @@ pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error
 /// migrations make it a cheap no-op on warm paths. May be called from async
 /// contexts (embed `--wait` on a tokio runtime), so the sync PG body runs
 /// under the same `block_in_place` guard as `run_script`.
-pub fn create_schema_if_missing(schema: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn create_schema_if_missing(
+    schema: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
     if tokio::runtime::Handle::try_current().is_ok() {
         tokio::task::block_in_place(|| create_schema_if_missing_sync(schema))
     } else {
@@ -1595,12 +1608,32 @@ fn schema_exists_sync(schema: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn create_schema_if_missing_sync(schema: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn create_schema_if_missing_sync(
+    schema: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let base = PostgresBackend::from_env()?.pg_url;
     let mut client = pg_connect(&base)?;
     client.batch_execute(&format!(
         "CREATE SCHEMA IF NOT EXISTS {schema}; SET search_path TO {schema}, public"
     ))?;
+    // Ensure the pgvector extension is available in this schema's search_path.
+    // If vector was installed in a different schema by a prior project, the
+    // CREATE EXTENSION IF NOT EXISTS in schema.sql is a no-op and the type
+    // becomes invisible. Fix: find the extension's schema and prepend it.
+    let ext_schema: Option<String> = client
+        .query_one(
+            "SELECT n.nspname FROM pg_extension e \
+             JOIN pg_namespace n ON e.extnamespace = n.oid \
+             WHERE e.extname = 'vector'",
+            &[],
+        )
+        .ok()
+        .and_then(|row| row.get(0));
+    if let Some(ref ext_s) = ext_schema {
+        if ext_s != schema && ext_s != "public" {
+            client.batch_execute(&format!("SET search_path TO {schema}, {ext_s}, public"))?;
+        }
+    }
     crate::db::pg::migrations::run_migrations(&mut client)?;
     // FR-EMBED-DIM: a model/dim switch (LEANKG_EMBED_DIM / LEANKG_EMBED_API_DIM)
     // reconciles the pgvector column width here — wiping derived vectors +
@@ -1612,8 +1645,17 @@ fn create_schema_if_missing_sync(schema: &str) -> Result<(), Box<dyn std::error:
             "embedding vector dim changed {stored} -> {desired}; vector store wiped (re-embed required)"
         );
     }
-    client.batch_execute(&format!("SET search_path TO {schema}, public"))?;
-    Ok(())
+    // Restore clean search_path for the caller, still including ext_schema if needed.
+    if let Some(ref ext_s) = ext_schema {
+        if ext_s != schema && ext_s != "public" {
+            client.batch_execute(&format!("SET search_path TO {schema}, {ext_s}, public"))?;
+        } else {
+            client.batch_execute(&format!("SET search_path TO {schema}, public"))?;
+        }
+    } else {
+        client.batch_execute(&format!("SET search_path TO {schema}, public"))?;
+    }
+    Ok(ext_schema)
 }
 
 #[cfg(test)]

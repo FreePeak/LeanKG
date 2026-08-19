@@ -17,12 +17,10 @@ mod tool_registry_tests {
         let tool_names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
 
         let required_tools = vec![
-            "query_file",
             "get_dependencies",
             "get_dependents",
             "get_impact_radius",
             "get_review_context",
-            "find_function",
             "get_call_graph",
             "search_code",
             "get_context",
@@ -194,29 +192,6 @@ mod handler_tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_handler_query_file_empty() {
-        let (handler, _tmp) = create_test_handler().await;
-
-        let result = handler
-            .execute_tool("query_file", &json!({"pattern": "nonexistent"}))
-            .await;
-
-        assert!(result.is_ok());
-        let value = result.unwrap();
-        assert!(value.get("files").is_some());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_handler_query_file_missing_param() {
-        let (handler, _tmp) = create_test_handler().await;
-
-        let result = handler.execute_tool("query_file", &json!({})).await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("pattern"));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn test_handler_get_dependencies_missing_param() {
         let (handler, _tmp) = create_test_handler().await;
 
@@ -253,16 +228,6 @@ mod handler_tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("files"));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_handler_find_function_missing_param() {
-        let (handler, _tmp) = create_test_handler().await;
-
-        let result = handler.execute_tool("find_function", &json!({})).await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("name"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

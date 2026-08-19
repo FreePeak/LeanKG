@@ -20,18 +20,7 @@ If `kg_semantic_context` returns "No embedded vectors found", fall back
 to the ontology layer:
 
 3. `kg_context(query="...")` — ontology-aware concept expansion (no embeddings required).
-4. `search_code(query="...")` / `find_function(name="...")` — bounded name search.
-
-### Embedding-model hot-switch
-
-`set_embed_model(model_id, persist=false, project=…)` switches the
-runtime-active embedding model for the whole MCP process (registry-only ids).
-Both semantic tools also accept a per-request `model` override that queries
-that model's collection without changing the process default. With
-`persist=true` the choice is written to `.leankg/embed-model.json` and
-restored on the next boot. Registered models: `bge-small-en-v1.5-384`
-(default, local), `qwen3-emb-4b-2560`, `jina-embeddings-v3-1024`,
-`gemini-embedding-2-3072`, `gemini-embedding-001-3072` (remote).
+4. `search_code(query="...")` — bounded name search.
 
 ---
 
@@ -41,17 +30,13 @@ restored on the next boot. Registered models: `bge-small-en-v1.5-384`
 User asks about codebase → mcp_status (check initialized)
   │
   ├─ "Where is X?" / "Find Y" (fuzzy / NL / domain) ─► concept_search → semantic_search
-  │   ├─ by name/type ─────────────────────────► search_code(query="X")
-  │   └─ exact function ───────────────────────► find_function(name="parseJson")
-  │                                              scope to file: find_function(name="foo", file="src/bar.rs")
+  │   └─ by name/type ─────────────────────────► search_code(query="X")
   │
   ├─ "What breaks if I change X?" ────────────► get_impact_radius(file="X", depth=2)
   │   └─ use depth<=2 for token budgets (depth=3 returns hundreds of nodes)
   │
   ├─ "How does X work?" / call chain ─────────► get_call_graph(function="X")
   │   └─ keep depth≤2, avoid depth>3 (neighbor explosion)
-  │
-  ├─ "Who calls X?" / callers ────────────────► get_callers(function="X")
   │
   ├─ "What does X import/use?" ───────────────► get_dependencies(file="X")
   ├─ "What uses X?" ──────────────────────────► get_dependents(file="X")
@@ -146,7 +131,7 @@ used in this repo's docker-compose is `/workspace`.
 ### Registering a New Project Directory
 
 **Option A: Docker volume mount**
-1. Add volume mount to `docker-compose.rocksdb.yml`:
+1. Add volume mount to `docker-compose.yml`:
    ```yaml
    volumes:
      - /host/path/to/project:/workspace-new

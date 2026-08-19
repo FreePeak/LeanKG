@@ -69,7 +69,7 @@ const RULES: &[Rule] = &[
     },
     Rule {
         keys: &["dead", "unused", "orphan"],
-        tools: &["find_dead_code", "get_callers", "query_graph"],
+        tools: &["get_call_graph", "query_graph"],
         join_desc:
             "query_graph joins dead-code candidates with caller neighborhoods from the shared graph",
     },
@@ -93,7 +93,7 @@ const RULES: &[Rule] = &[
     },
     Rule {
         keys: &["test", "coverage", "tested"],
-        tools: &["query_file", "get_tested_by", "query_graph"],
+        tools: &["search_code", "get_tested_by", "query_graph"],
         join_desc: "query_graph joins tested_by edges with the element's shared graph neighborhood",
     },
     Rule {
@@ -116,7 +116,7 @@ const RULES: &[Rule] = &[
             "who calls",
             "what calls",
         ],
-        tools: &["get_callers", "get_call_graph", "query_graph"],
+        tools: &["get_call_graph", "query_graph"],
         join_desc: "query_graph joins caller/callee hops into a shared call subgraph",
     },
     Rule {
@@ -132,7 +132,7 @@ const RULES: &[Rule] = &[
         tools: &[
             "semantic_search",
             "concept_search",
-            "query_file",
+            "search_code",
             "query_graph",
         ],
         join_desc:
@@ -143,7 +143,7 @@ const RULES: &[Rule] = &[
         tools: &[
             "get_architecture",
             "get_clusters",
-            "get_cluster_context",
+            "get_cluster_skill",
             "query_graph",
         ],
         join_desc: "query_graph joins cluster neighborhoods over the shared graph",
