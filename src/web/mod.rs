@@ -321,7 +321,7 @@ async fn serve_embedded_file(path: &str) -> Response {
         if file_path.ends_with(".html") || file_path == "index.html" {
             builder = builder
                 .header(header::CACHE_CONTROL, "no-store, must-revalidate")
-                .header("X-LeanKG-UI", "ui-v2");
+                .header("X-LeanKG-UI", "ui-lite");
         }
         builder
             .body(Body::from(data.to_vec()))
@@ -371,6 +371,7 @@ pub async fn start_server(
     let app = Router::new()
         .route("/", get(root_handler))
         .route("/api/elements", get(handlers::api_elements))
+        .route("/api/element", get(handlers::api_element))
         .route("/api/relationships", get(handlers::api_relationships))
         .route("/api/annotations", get(handlers::api_annotations))
         .route("/api/annotations", post(handlers::api_create_annotation))

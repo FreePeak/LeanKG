@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod clustering;
 pub mod context;
+pub mod element_detail;
 pub mod entity_resolve;
 pub mod export;
 pub mod export_select;

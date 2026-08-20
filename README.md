@@ -129,22 +129,15 @@ the server binds (spawned as a background task; the server stays healthy).
 
 ### Web UI
 
-UI talks REST (`:8080`), not MCP (`:9699`). Start the API, then the Vite app in `ui-v2/`:
+Default explorer is **ui-lite** (vis-network, no Vite) embedded in `leankg serve` via `src/embed/`.
 
 ```bash
-# Terminal A — REST API (+ embedded UI if assets are in src/embed/)
 leankg serve --port 8080
-# open http://127.0.0.1:8080/
-
-# Terminal B — hot-reload explorer (recommended for local UI work)
-cd ui-v2
-npm install
-npm run dev
-# open http://127.0.0.1:5173/?path=src
+# open http://127.0.0.1:8080/?path=src
+# click a node → detail panel (signature, neighbors, snippet)
 ```
 
-Vite proxies `/api` → `127.0.0.1:8080`. Status should show **connected**.  
-Details: [ui-v2/README.md](ui-v2/README.md) · [docs/web-ui.md](docs/web-ui.md)
+Optional heavy Vite shells (`ui/`, `ui-v2/`) remain in the repo for experiments; set `LEANKG_UI_DIST` or run `cd ui-v2 && npm run dev` if you need them. Details: [ui-v2/README.md](ui-v2/README.md) · [docs/web-ui.md](docs/web-ui.md)
 
 ---
 
@@ -193,7 +186,7 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 - **Postgres + pgvector** — only storage engine; HNSW semantic search (`--features embeddings` / Docker)
 - **Procedural ontology** — hot-reload `ontology/workflows.yaml` → `kg_trace_workflow`
 - **Impact & deps** — `imports`, `calls`, `tested_by`, `http_calls`, `service_calls`
-- **Web UI v2** — Force / Tree / Circles explorer (`leankg serve` + `cd ui-v2 && npm run dev`)
+- **Web UI (ui-lite)** — lightweight vis-network graph + node details (`leankg serve`); optional Vite `ui-v2/` for experiments
 - **Languages** — Rust, Go, C/C++, Java, Kotlin, TS/JS, Python, Ruby*, PHP*, Dart, Swift*, ObjC*, Terraform, CI YAML (*depth varies)
 
 ---

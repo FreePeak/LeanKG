@@ -764,7 +764,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 | **Multi-repo team deploy** | `LEANKG_PROJECT_DIRS` + Docker HTTP MCP `:9699` + REST `:8080` | Shared HTTP over one `graph.json` | One container serves many mounts; resume embeds day-2 |
 | **Agent depth** | ~85 MCP tools (impact, ontology, services, Android, docs↔req, PR, reflect) | ~9–10 MCP tools | Agents solve blast-radius / env / incident / req-trace without reinventing |
 | **Trust / ops** | Severity-graded impact, incidents, env promotion, service_calls | Edge confidence tags (EXTRACTED/INFERRED) — LeanKG must finish parity | Managers care about **change risk** and **production topology**, not only concept maps |
-| **Human explorer** | Live ui-v2 (Force/Tree/Circles) over REST | Static `graph.html` | Live index stays fresh with watch/auto-index |
+| **Human explorer** | Default **ui-lite** (vis-network) over REST; optional Vite ui-v2 | Static `graph.html` | Live index stays fresh with watch/auto-index |
 | **Where Graphify still teaches us** | Packaging: always-on install, report/HTML artifacts, honest-edge UX | Skill install + `GRAPH_REPORT.md` + vis.js share | Close these in **P1 queue** below — do **not** chase multimodal |
 
 **Ordered company-adoption queue (Focus P1 — after P0 procedural auto-update):**

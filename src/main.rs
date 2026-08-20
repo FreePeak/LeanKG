@@ -4338,11 +4338,12 @@ fn find_ui_dist_path() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. Prefer ui-v2/dist (current explorer shell)
+    // 2. Prefer ui-v2/dist only when explicitly present for local Vite experiments
+    //    (default production UI is rust_embed ui-lite in src/embed/)
     let cwd_ui_v2 = std::path::Path::new("ui-v2/dist");
     if cwd_ui_v2.join("index.html").exists() {
         println!(
-            "📦 Using UI from current directory: {}",
+            "📦 Using UI from current directory (optional Vite override): {}",
             cwd_ui_v2.display()
         );
         return Some(cwd_ui_v2.to_path_buf());
