@@ -209,6 +209,85 @@ pub fn get_tested_file_path(file_path: &str) -> Option<String> {
     }
 }
 
+/// Ensure every element in one file batch carries a unique qualified_name.
+///
+/// Real-world files legitimately declare many same-named symbols — Go methods
+/// named `Error` on different message structs, TS `render` on several classes,
+/// Rust `new` across impl blocks. The extractor keys elements by
+/// `{file}::{name}`, so those collapsed into ONE qualified_name (a large
+/// `.pb.validate.go` produced 764 code_elements rows under a single `::Error`
+/// key). Keyed downstream stores (embedding_state / embedding_vectors PK =
+/// qualified_name) then silently merge distinct symbols into one embedding.
+///
+/// Deterministic disambiguation at the source: the FIRST occurrence keeps its
+/// qualified_name (so keys written by older versions stay stable across
+/// re-index), and each later duplicate is renamed to
+/// `{file}::{parent}::{name}` when the element knows its parent symbol,
+/// else `{qualified_name}#{k}` (k = occurrence index ≥ 2).
+///
+/// Relationship endpoints are rewritten conservatively: only the inline
+/// `contains` edge each extractor creates for its own element is remapped,
+/// keyed by the exact (target, source) pair so same-named sibling instances
+/// attach correctly. Call edges are unaffected — their targets start as
+/// `__unresolved__{name}` and resolve against the final element set.
+fn disambiguate_qualified_names(elements: &mut [CodeElement], relationships: &mut [Relationship]) {
+    use std::collections::HashMap;
+    use std::collections::HashSet;
+
+    // All distinct original qualified_names: exactly the keeper names.
+    let mut used: HashSet<String> = elements.iter().map(|e| e.qualified_name.clone()).collect();
+    let mut occurrences: HashMap<String, u32> = HashMap::with_capacity(elements.len());
+    // (renamed_element_old_qn, its contains-edge source) -> new qn.
+    let mut contains_rewrites: HashMap<(String, String), String> = HashMap::new();
+
+    for el in elements.iter_mut() {
+        let original = el.qualified_name.clone();
+        let count = occurrences.entry(original.clone()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            continue;
+        }
+        let k = *count;
+        let parent = el.parent_qualified.as_deref().filter(|p| !p.is_empty());
+        let base = match parent {
+            Some(p) => format!("{}::{}::{}", el.file_path, p, el.name),
+            None => original.clone(),
+        };
+        let mut candidate = base.clone();
+        if used.contains(&candidate) {
+            candidate = format!("{base}#{k}");
+            let mut n = k;
+            while used.contains(&candidate) {
+                n += 1;
+                candidate = format!("{base}#{n}");
+            }
+        }
+        used.insert(candidate.clone());
+
+        let edge_source = match parent {
+            Some(p) => format!("{}::{}", el.file_path, p),
+            None => el.file_path.clone(),
+        };
+        contains_rewrites.insert((original, edge_source), candidate.clone());
+        el.qualified_name = candidate;
+    }
+
+    if contains_rewrites.is_empty() {
+        return;
+    }
+
+    for rel in relationships.iter_mut() {
+        if rel.target_qualified.starts_with("__unresolved__") {
+            continue;
+        }
+        if let Some(new) =
+            contains_rewrites.get(&(rel.target_qualified.clone(), rel.source_qualified.clone()))
+        {
+            rel.target_qualified = new.clone();
+        }
+    }
+}
+
 impl<'a> EntityExtractor<'a> {
     pub fn new(source: &'a [u8], file_path: &'a str, language: &'a str) -> Self {
         Self {
@@ -345,6 +424,8 @@ impl<'a> EntityExtractor<'a> {
                 ..Default::default()
             });
         }
+
+        disambiguate_qualified_names(&mut elements, &mut relationships);
 
         (elements, relationships)
     }
@@ -2612,6 +2693,22 @@ impl<'a> EntityExtractor<'a> {
             node.kind(),
             "constructor_declaration" | "secondary_constructor" | "constructor_signature"
         );
+        // Go-style receivers: a `method_declaration` sits at file scope (no
+        // syntactic class parent), but its receiver names the owning type.
+        // Derive a parent from it so qualified_names / parent_qualified can
+        // distinguish same-named methods on different types. element_type is
+        // still computed from the SYNTACTIC parent below — flipping
+        // receiver-only methods to "method" would drop them from the typed
+        // call resolver's bare-name maps (which filter element_type ==
+        // "function") and regress call-graph coverage.
+        let receiver_parent: Option<String> = if !is_constructor
+            && parent.is_none()
+            && matches!(node.kind(), "method_declaration" | "method_definition")
+        {
+            self.method_receiver_name(node)
+        } else {
+            None
+        };
         let name = if is_constructor {
             self.get_node_name(node)
                 .or_else(|| parent.map(String::from))
@@ -2641,12 +2738,12 @@ impl<'a> EntityExtractor<'a> {
                 line_start: node.start_position().row as u32 + 1,
                 line_end: node.end_position().row as u32 + 1,
                 language: self.language.to_string(),
-                parent_qualified: parent.map(String::from),
+                parent_qualified: parent.map(String::from).or(receiver_parent.clone()),
                 metadata: self.build_function_metadata(node, signature, sig_end),
                 ..Default::default()
             });
 
-            if let Some(p) = parent {
+            if let Some(p) = parent.or(receiver_parent.as_deref()) {
                 let p_qualified = format!("{}::{}", self.file_path, p);
                 relationships.push(Relationship {
                     id: None,
@@ -2914,6 +3011,39 @@ impl<'a> EntityExtractor<'a> {
         } else {
             None
         }
+    }
+
+    /// Bare receiver type for method-like declarations, e.g.
+    /// `func (m *MsgB) Error()` → `MsgB`. Walks the grammar's receiver field
+    /// (`receiver` in tree-sitter-go, `receiver_type` elsewhere) and returns
+    /// the first type identifier inside it — never the whole parameter-list
+    /// text (`(m *MsgB)`), which would leak receiver variable names into
+    /// qualified_names.
+    fn method_receiver_name(&self, node: Node) -> Option<String> {
+        for field in ["receiver", "receiver_type"] {
+            let Some(recv) = node.child_by_field_name(field) else {
+                continue;
+            };
+            let mut stack = vec![recv];
+            while let Some(cur) = stack.pop() {
+                if matches!(cur.kind(), "type_identifier" | "user_type") {
+                    if let Some(bytes) = self.source.get(cur.byte_range()) {
+                        if let Ok(s) = std::str::from_utf8(bytes) {
+                            let name = s.trim();
+                            if !name.is_empty() {
+                                return Some(name.to_string());
+                            }
+                        }
+                    }
+                }
+                for i in 0..cur.child_count() {
+                    if let Some(child) = cur.child(i as u32) {
+                        stack.push(child);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn extract_type_name(&self, node: Node) -> Option<String> {
@@ -7536,5 +7666,100 @@ class Box {
         let (elements, _) = extractor.extract_regex_only();
         let names: Vec<&str> = elements.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"add"), "expected lisp add, got {:?}", names);
+    }
+
+    fn parse_rust(source: &[u8]) -> Option<tree_sitter::Tree> {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
+        parser.parse(source, None)
+    }
+
+    /// Every element produced from one file batch must carry a unique
+    /// qualified_name. Real-world files declare many same-named symbols — a
+    /// large `.pb.validate.go` yielded 764 rows under the single key
+    /// `...pb.validate.go::Error` — and keyed downstream stores
+    /// (embedding_state / embedding_vectors PK = qualified_name) silently
+    /// merge distinct symbols into one embedding row.
+    #[test]
+    fn duplicate_go_method_names_get_unique_qualified_names() {
+        let source = b"package pb\n\ntype MsgA struct{}\n\nfunc (m *MsgA) Error() string { return \"a\" }\n\ntype MsgB struct{}\n\nfunc (m *MsgB) Error() string { return \"b\" }\n";
+        let tree = parse_go(source).expect("parse go");
+        let extractor = EntityExtractor::new(source, "pb/msg.pb.validate.go", "go");
+        let (elements, relationships) = extractor.extract(&tree);
+
+        let errors: Vec<&str> = elements
+            .iter()
+            .filter(|e| e.name == "Error")
+            .map(|e| e.qualified_name.as_str())
+            .collect();
+        assert_eq!(
+            errors.len(),
+            2,
+            "both Error methods must be extracted, got {errors:?}"
+        );
+        let unique: std::collections::HashSet<&str> = errors.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            errors.len(),
+            "same-named methods on different receivers collapsed to identical qualified_names: {errors:?}"
+        );
+
+        // Disambiguation must keep relationship endpoints pointing at real
+        // elements of this batch.
+        let qns: std::collections::HashSet<&str> =
+            elements.iter().map(|e| e.qualified_name.as_str()).collect();
+        for rel in relationships.iter().filter(|r| r.rel_type == "contains") {
+            assert!(
+                qns.contains(rel.target_qualified.as_str()),
+                "contains target {} no longer resolves to an element",
+                rel.target_qualified
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_class_method_names_get_unique_qualified_names() {
+        let source = b"class Alpha { render(): number { return 1; } }\nclass Beta { render(): number { return 2; } }\n";
+        let tree = parse_typescript(source).expect("parse ts");
+        let extractor = EntityExtractor::new(source, "src/views.ts", "typescript");
+        let (elements, _) = extractor.extract(&tree);
+
+        let renders: Vec<&str> = elements
+            .iter()
+            .filter(|e| e.name == "render")
+            .map(|e| e.qualified_name.as_str())
+            .collect();
+        assert_eq!(renders.len(), 2, "both render methods must be extracted");
+        let unique: std::collections::HashSet<&str> = renders.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            renders.len(),
+            "same-named methods on different classes collapsed: {renders:?}"
+        );
+    }
+
+    /// Rust impl blocks give no syntactic parent to visit_node, so same-named
+    /// inherent methods (`new`) collide without a receiver fallback — the
+    /// deterministic `#k` discriminator must kick in.
+    #[test]
+    fn duplicate_rust_impl_fn_names_get_unique_qualified_names() {
+        let source = b"pub struct Alpha;\npub struct Beta;\nimpl Alpha { pub fn new() -> Self { Alpha } }\nimpl Beta { pub fn new() -> Self { Beta } }\n";
+        let tree = parse_rust(source).expect("parse rust");
+        let extractor = EntityExtractor::new(source, "src/units.rs", "rust");
+        let (elements, _) = extractor.extract(&tree);
+
+        let news: Vec<&str> = elements
+            .iter()
+            .filter(|e| e.name == "new")
+            .map(|e| e.qualified_name.as_str())
+            .collect();
+        assert_eq!(news.len(), 2, "both new fns must be extracted");
+        let unique: std::collections::HashSet<&str> = news.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            news.len(),
+            "same-named impl fns collapsed to identical qualified_names: {news:?}"
+        );
     }
 }

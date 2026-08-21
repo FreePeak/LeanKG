@@ -1114,6 +1114,14 @@ fn synthesize_summary_nodes(
 
     let mut bundles: HashMap<String, FileBundle> = HashMap::new();
     for (i, el) in all_elements.iter().enumerate() {
+        // Container rows from the physical-structure pass carry the raw path
+        // as both qualified_name and file_path. A directory/project row is
+        // hierarchy scaffolding — it must not spawn a summary bundle keyed on
+        // that path (its synthesized "file" node would collide with the
+        // container row's qualified_name).
+        if matches!(el.element_type.as_str(), "directory" | "Project") {
+            continue;
+        }
         let entry = bundles
             .entry(el.file_path.clone())
             .or_insert_with(|| FileBundle {
@@ -1125,9 +1133,15 @@ fn synthesize_summary_nodes(
         if entry.language.is_empty() {
             entry.language = el.language.clone();
         }
-        if el.element_type == "file" {
-            // Record the existing file node's position; do NOT summarize it.
-            entry.existing_file_idx = Some(i);
+        if el.element_type == "file" || el.element_type == "File" {
+            // Record the existing node's position; do NOT summarize it. Both
+            // spellings are accepted: lowercase bare "file" nodes come from
+            // swift/objc/sql extractors, uppercase "File" rows from the
+            // physical-structure pass — that row is upgraded in place into
+            // this path's file-summary node instead of colliding with it.
+            if entry.existing_file_idx.is_none() {
+                entry.existing_file_idx = Some(i);
+            }
             continue;
         }
         if el.element_type == "document" {

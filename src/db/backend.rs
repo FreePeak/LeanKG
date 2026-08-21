@@ -52,7 +52,11 @@ fn normalize_pg_url_for_parse(url: &str) -> String {
     format!("{base}?{}", normalized.join("&"))
 }
 
-fn pg_connect(url: &str) -> Result<postgres::Client, Box<dyn std::error::Error>> {
+/// Connect a `postgres::Client`, applying the crate's URL/TLS rules
+/// (`sslmode=verify-full` normalization, `LEANKG_PG_CA_CERT`, webpki roots).
+/// Public so integration tests can perform admin DDL against the same
+/// managed-Postgres URLs the binary itself accepts.
+pub fn pg_connect(url: &str) -> Result<postgres::Client, Box<dyn std::error::Error>> {
     let normalized = normalize_pg_url_for_parse(url);
     let wants_tls = url_wants_verified_tls(url);
     let cfg: postgres::Config = normalized.parse()?;

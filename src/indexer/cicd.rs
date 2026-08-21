@@ -35,8 +35,11 @@ impl CicdYamlExtractor {
         let platform = self.detect_platform(&yaml);
 
         let line_count = source_str.lines().count() as u32;
+        // The bare file path is owned by the per-file summary node
+        // (file_summary_qualified_name) — suffix the pipeline element so a
+        // CI/CD yaml does not collide with it.
         elements.push(CodeElement {
-            qualified_name: self.file_path.clone(),
+            qualified_name: format!("{}::<cicd>", self.file_path),
             element_type: "cicd".to_string(),
             name: self
                 .file_path

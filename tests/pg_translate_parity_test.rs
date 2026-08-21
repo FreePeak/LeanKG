@@ -51,7 +51,10 @@ impl Scratch {
     fn new() -> Self {
         let url = pg_url();
         let name = scratch_schema_name();
-        let mut admin = postgres::Client::connect(&url, postgres::NoTls)
+        // The crate's TLS-aware connector: managed remote URLs carry
+        // sslmode=verify-full, which tokio-postgres's parser rejects and
+        // NoTls cannot satisfy.
+        let mut admin = leankg::db::backend::pg_connect(&url)
             .unwrap_or_else(|e| panic!("cannot connect to {url}: {e}"));
         admin
             .batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))

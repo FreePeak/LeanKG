@@ -5087,7 +5087,7 @@ impl GraphEngine {
         let total = self.count_elements().map_err(|e| e.to_string())?;
         let rel_count = self.count_relationships().map_err(|e| e.to_string())?;
         let file_count = self
-            .count_elements_by_type("File")
+            .count_elements_by_type_in(&["File", "file"])
             .map_err(|e| e.to_string())?;
         let func_count = self
             .count_elements_by_type("function")
