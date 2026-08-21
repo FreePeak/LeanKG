@@ -136,7 +136,7 @@ workflows:
     aliases:
       - ontology loading
       - concept sync
-    description: Loads concept and workflow definitions from YAML files into the CozoDB knowledge graph.
+    description: Loads concept and workflow definitions from YAML files into the LeanKG knowledge graph database.
     entry_points:
       - src/main.rs::handle_ontology_command
       - src/ontology/sync.rs::sync_from_dir
@@ -202,13 +202,6 @@ workflows:
     entry_points:
       - entrypoint.sh
     steps:
-      - id: setup_rocksdb
-        name: Setup RocksDB Storage
-        code_refs:
-          - entrypoint.sh::rocksdb_dir_for
-        failure_modes:
-          - permission_denied
-          - disk_space_exhausted
       - id: init_project
         name: Initialize LeanKG Project
         code_refs:
@@ -539,7 +532,7 @@ workflows:
           - ui-v2/src/App.tsx
           - src/web/handlers.rs::api_graph_expand_service
         failure_modes:
-          - wrong_project_rocksdb
+          - wrong_project
           - examples_flood_first_page
       - id: load_more_merge
         name: Load more merge into canvas

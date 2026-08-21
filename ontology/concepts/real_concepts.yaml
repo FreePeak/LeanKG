@@ -165,22 +165,6 @@ concepts:
     docs:
       - docs/ontology.md
 
-  - id: rocksdb_storage
-    type_: domain_entity
-    name: RocksDB Storage
-    env: local
-    aliases:
-      - persistent storage
-      - RocksDB engine
-    description: RocksDB-based persistent storage engine for LeanKG with CozoDB interface.
-    owned_by:
-      - db
-    code_refs:
-      - src/db/schema.rs
-      - docker-compose.rocksdb.yml
-    docs:
-      - docs/storage.md
-
   - id: cli_commands
     type_: domain_entity
     name: CLI Commands
@@ -197,22 +181,6 @@ concepts:
       - src/main.rs
     docs:
       - docs/cli.md
-
-  - id: cozo_integration
-    type_: domain_entity
-    name: CozoDB Integration
-    env: local
-    aliases:
-      - Cozo database
-      - Datalog queries
-    description: Integration with CozoDB for storing and querying code elements using Datalog/Cypher-like queries.
-    owned_by:
-      - db
-    code_refs:
-      - src/db/schema.rs
-      - src/db/mod.rs
-    docs:
-      - docs/cozo.md
 
   - id: android_indexing
     type_: domain_entity
