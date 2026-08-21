@@ -102,7 +102,7 @@ impl<'a> WikiGenerator<'a> {
         content.push_str("> Auto-generated documentation from code analysis\n\n");
 
         content.push_str("## Project Overview\n\n");
-        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in CozoDB, and exposes functionality via CLI and MCP protocol.\n\n");
+        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in PostgreSQL with pgvector, and exposes functionality via CLI and MCP protocol.\n\n");
 
         content.push_str("---\n\n## Statistics\n\n");
         let files = elements.iter().filter(|e| e.element_type == "file").count();
@@ -186,7 +186,7 @@ impl<'a> WikiGenerator<'a> {
         content.push_str("└──────────────────────┬──────────────────────────────────┘\n");
         content.push_str("                       │\n");
         content.push_str("┌──────────────────────▼──────────────────────────────────┐\n");
-        content.push_str("│                     CozoDB                          │\n");
+        content.push_str("│            PostgreSQL + pgvector                    │\n");
         content.push_str("│  code_elements │ relationships │ business_logic      │\n");
         content.push_str("└─────────────────────────────────────────────────────┘\n");
         content.push_str("```\n\n");
@@ -196,7 +196,7 @@ impl<'a> WikiGenerator<'a> {
         content.push_str("|--------|-------------|\n");
         content.push_str("| `cli/` | Clap CLI commands |\n");
         content.push_str("| `config/` | Project configuration |\n");
-        content.push_str("| `db/` | CozoDB layer (models, schema) |\n");
+        content.push_str("| `db/` | Postgres backend layer (schema, queries) |\n");
         content.push_str("| `doc/` | Documentation generator |\n");
         content.push_str("| `graph/` | Graph engine, query, traversal |\n");
         content.push_str("| `indexer/` | tree-sitter parsers, entity extraction |\n");

@@ -84,8 +84,8 @@ YAML
 # by two layered mechanisms:
 #
 #   1. `LEANKG_EMBED_BACKGROUND=1` (recommended) — `mcp-http` spawns
-#      an in-process worker thread that shares the CozoDb handle.
-#      MCP stays healthy while HNSW catches up.
+#      an in-process worker thread that shares the Postgres-backed
+#      database handle. MCP stays healthy while HNSW catches up.
 #   2. Legacy foreground embed — only runs when explicitly opted in
 #      via `LEANKG_EMBED_ON_BOOT=1`. This was the default before the
 #      Plan was implemented; we keep it as an escape hatch for users

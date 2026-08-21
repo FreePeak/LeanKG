@@ -31,9 +31,7 @@ ui/out/
 *.bak2
 *.bu
 *.orig
-vendor/cozo/Cargo.toml.orig
 .leankg
-.leankg.bak-pre-cozo-upgrade/
 .leankg.bak-pre-0.17.8-upgrade
 .clauge-worktrees/
 # Local-only docker compose overrides. Holds absolute host paths to
