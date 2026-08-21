@@ -1328,10 +1328,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Migrate {} => {
             // postgres::Client is sync and builds its own tokio runtime; the
             // whole connect+apply must run off the ambient tokio runtime.
-            let report = tokio::task::spawn_blocking(|| {
+            let report = tokio::task::spawn_blocking(move || {
                 let url = db::pg::migrations::pg_url();
-                let mut client = postgres::Client::connect(&url, postgres::NoTls)?;
-                db::pg::migrations::run_migrations(&mut client)
+                // TLS-aware connector (LEANKG_PG_CA_CERT / webpki roots) — a
+                // raw NoTls connect rejects managed-Postgres URLs whose
+                // sslmode=verify-full tokio-postgres cannot even parse.
+                match db::backend::pg_connect(&url) {
+                    Ok(mut client) => {
+                        db::pg::migrations::run_migrations(&mut client).map_err(|e| e.to_string())
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
             })
             .await??;
             for id in &report.applied {

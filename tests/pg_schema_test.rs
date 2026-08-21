@@ -61,7 +61,10 @@ impl ScratchSchema {
             std::process::id(),
             COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        let mut admin = postgres::Client::connect(&url, postgres::NoTls)
+        // The crate's TLS-aware connector: managed remote URLs carry
+        // sslmode=verify-full, which tokio-postgres's parser rejects and
+        // NoTls cannot satisfy.
+        let mut admin = leankg::db::backend::pg_connect(&url)
             .unwrap_or_else(|e| panic!("cannot connect to {url}: {e}"));
         admin
             .batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))
@@ -105,6 +108,7 @@ fn all_16_tables_exist_and_no_query_cache() {
             "002_multi_model_embed".to_string(),
             "003_gemini_embed".to_string(),
             "004_auth".to_string(),
+            "005_hnsw_dims_cleanup".to_string(),
         ],
         "migrations should apply exactly once on a fresh schema"
     );
@@ -147,6 +151,7 @@ fn rerun_is_noop() {
             "002_multi_model_embed".to_string(),
             "003_gemini_embed".to_string(),
             "004_auth".to_string(),
+            "005_hnsw_dims_cleanup".to_string(),
         ]
     );
 }
