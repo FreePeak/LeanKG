@@ -25,15 +25,15 @@ Position LeanKG as the **deterministic, self-hostable, MCP-native code knowledge
 | W2 | Research: competitors + market + monetization | ✅ DONE | agents | §3.2 summary; full reports in roadmap-2027.md §1–2 |
 | W3 | Roadmap 1-year doc | ✅ DONE | primary | docs/roadmap-2027.md |
 | W4 | Enterprise/startup PRD | ✅ DONE | primary | docs/prd-enterprise.md |
-| W5 | Fix red `tests/redundant_tools_matrix.rs` (P0-a) | 🚧 IN PROGRESS | worktree `refactor/cozo-cleanup` | test-only fix, matrix asserts ==76 |
-| W6 | Purge cozo from generated docs + ontology YAMLs (P0-c) | 🚧 IN PROGRESS | worktree `refactor/cozo-cleanup` | generator.rs/wiki.rs → Postgres+pgvector; concepts.yaml cleanup |
-| W7 | Delete orphaned db/mod.rs fns + dead arms + broken script (P1) | ⬜ PENDING | worktree `refactor/cozo-cleanup` | see audit §4 list |
+| W5 | Fix red `tests/redundant_tools_matrix.rs` (P0-a) | ✅ DONE | PR #242 | matrix 6/6 green; REMOVED_TOOLS+11; assert ==76 |
+| W6 | Purge cozo from generated docs + ontology YAMLs (P0-c) | ✅ DONE | PR #242 | generator.rs/wiki.rs truthful; 3 YAMLs purged; rg CozoDB src/doc/ = 0 |
+| W7 | Delete orphaned db/mod.rs fns + dead arms + broken script (P1) | ✅ DONE | PR #242 | −413 lines; pg-cli-sweep.sh deleted; token_budget arms pruned |
 | W8 | SQL-first seam adoption (adopt worktree plan P0) | ⬜ PENDING | branch `feat/remove-cozo-datalog` | existing WIP at orca workspace; land sql.rs seam |
-| W9 | Known finding: qualified_name collision (UNIQUE) | ⬜ PENDING | worktree | 52% dup QNs breaks embed on real data |
-| W10 | Known finding: `leankg index` EEXIST bug | ⬜ PENDING | worktree | re-index fails after wipe |
-| W11 | Tool consolidation round 2 (76→~70) | ⬜ PENDING | after W5 | candidates: get_graph_report, orchestrate, traceability quartet |
+| W9 | Known finding: qualified_name collision | ✅ DONE | PR #243 | extraction-time disambiguation; live: 2711/2711 distinct QNs; regression_qn_collision.rs added |
+| W10 | Known finding: `leankg index` EEXIST bug | ✅ DONE | PR #243 | already fixed by 56a0a86b; locked with tests/regression_index_eexist.rs (CLI e2e double-index exit 0) |
+| W11 | Tool consolidation round 2 (76→~70) | ⬜ PENDING | hackathon backlog | candidates: get_graph_report, orchestrate, traceability quartet |
 | W12 | npm wrapper version sync automation | ⬜ PENDING | quick win | npm/leankg at 0.17.9 vs crate 0.26.0 |
-| W13 | Phase-1 enterprise features (see PRD) | ⬜ PENDING | per-quarter | starts with ENT-1 observability/audit-log foundation |
+| W13 | Phase-1 enterprise features (see PRD) | ⬜ PENDING | **hackathon** | starts with ENT-1 observability/audit-log foundation |
 
 Status legend: ⬜ pending · 🚧 in progress · ✅ done · ⛔ blocked · ❌ cancelled
 
@@ -89,15 +89,35 @@ Status legend: ⬜ pending · 🚧 in progress · ✅ done · ⛔ blocked · ❌
 | 2026-08-22 | Goal created, decomposed into 10 todos | goal persisted ses_fdad784c8ffeoX8syoqqUBMlQ8 |
 | 2026-08-22 | W1+W2 discovery (4 parallel subagents) | Audit + architecture + market + competitor reports done |
 | 2026-08-22 | W3+W4 planning docs | roadmap-2027.md + prd-enterprise.md written |
-| 2026-08-22 | W5+W6+W7 refactor wave 1 | worktree refactor/cozo-cleanup: matrix test fix, doc-lies fix, dead-code purge |
-| 2026-08-22 | W9+W10 known-findings fixes | worktrees: QN UNIQUE dedup + index EEXIST fix |
-| 2026-08-22 | W12 npm sync | release-please/npm version automation |
+| 2026-08-22 | W5+W6+W7 refactor wave 1 → **PR #242 merged** | 12 files +52/−413; all gates green |
+| 2026-08-22 | W9+W10 known-findings fixes → **PR #243 merged** | QN disambiguation live-verified vs remote PG; migrate TLS fix bonus |
+| 2026-08-22 | Final verification on main @ deb8e92e | build 0 warnings · lib 1043✅ · matrix 6/6✅ · fmt✅ · clippy✅ |
+
+> **Process note:** origin/main is now ruleset-protected (squash-only, PR-required). All future work lands via PR from worktree branches. Local `main` tracks `origin/main`.
 
 ---
 
 ## 5. Next Actions (pick up here)
 
-1. Land W5–W7 PR → merge main → update this file.
-2. Start W8 (SQL-first seam) — follow worktree plan doc phases; parity harness gates each wave.
-3. W9/W10 fixes with TDD (repro tests first).
-4. Then begin PRD ENT-1 (audit log foundation) per roadmap Q3'26 theme.
+**ACTIVE: HACKATHON phase** — see §6 below. Branch `feature/hackathon`, worktree `.worktrees/hackathon`.
+After hackathon: W8 (SQL-first seam waves) per `plan-remove-cozo-datalog-sql-migration.md`; then ENT-1.
+
+---
+
+## 6. Hackathon (7-day continuous loop, branch `feature/hackathon`)
+
+**Charter:** 24/7 build loop — brainstorm → plan → implement → test → live test → fix → validate, repeating in rounds until the worktree is fully green and every MCP tool has been live-exercised against the remote PG (`.env LEANKG_PG_URL`, never Docker).
+
+| Round | Focus | Status |
+|-------|-------|--------|
+| R0 | Worktree setup + charter + baseline gates | ✅ |
+| R1 | Live tool sweep: start MCP HTTP server, exercise ALL tools via JSON-RPC, log failures to `.worktrees/hackathon/HACKATHON.md` | 🚧 |
+| R2 | Fix bugs found in sweep (fan-out subagents) | ⬜ |
+| R3 | Feature round 1 — ENT-1 audit-log foundation (PRD) | ⬜ |
+| R4 | Feature round 2 — PLG-1 `leankg connect` client config generator | ⬜ |
+| R5 | Feature round 3 — brainstormed items from R1 findings | ⬜ |
+| R6 | Full validation: build/lib/integration/fmt/clippy + complete live tool sweep re-run | ⬜ |
+| R7+ | Repeat rounds: new bugs/features/ideas until 7-day window closes; keep HACKATHON.md log current | ⬜ |
+
+Exit criteria: zero red gates · full tool sweep clean (or documented known-issues) · features landed as commits on `feature/hackathon` with TDD evidence · HACKATHON.md log complete.
+
