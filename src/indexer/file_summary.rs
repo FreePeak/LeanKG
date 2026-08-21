@@ -120,6 +120,10 @@ pub fn build_file_summary(
         language: language.to_string(),
         ..Default::default()
     });
+    // Upgrade legacy container spellings ("File" from the physical-structure
+    // pass) to the summary node type the embed pipeline filters on — the
+    // enriched row IS this path's file-summary node.
+    element.element_type = "file".to_string();
 
     // Ensure the node name reflects the basename even if the existing node
     // had an empty/stale name.
