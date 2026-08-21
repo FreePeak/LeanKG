@@ -167,8 +167,10 @@ impl DocGenerator {
 
         let mut content = String::from("# Agent Guidelines for LeanKG\n\n");
         content.push_str("## Project Overview\n\n");
-        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in CozoDB, and exposes functionality via CLI and MCP protocol.\n\n");
-        content.push_str("**Tech Stack**: Rust 1.70+, CozoDB (embedded relational-graph), tree-sitter, Axum, Clap, Tokio\n\n");
+        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in PostgreSQL with pgvector, and exposes functionality via CLI and MCP protocol.\n\n");
+        content.push_str(
+            "**Tech Stack**: Rust 1.70+, PostgreSQL + pgvector, tree-sitter, Axum, Clap, Tokio\n\n",
+        );
         content.push_str("---\n\n## Build Commands\n\n### Standard Build\n```bash\ncargo build                    # Debug build\ncargo build --release          # Release build\n```\n\n### Testing\n```bash\ncargo test                     # Run all tests\ncargo test <test_name>         # Run specific test (partial name matches)\ncargo test --package <pkg>     # Test specific package\ncargo test -- --nocapture      # Show println output during tests\n```\n\n### Code Quality\n```bash\ncargo fmt                      # Format code\ncargo fmt -- --check           # Check formatting without changes\ncargo clippy                   # Run linter\ncargo clippy -- -D warnings    # Treat warnings as errors\ncargo check                    # Type check without building\ncargo doc                      # Build documentation\n```\n\n### Codebase Indexing & Server\n```bash\ncargo run -- init              # Initialize LeanKG project\ncargo run -- index ./src       # Index codebase\ncargo run -- serve             # Start MCP server\ncargo run -- impact <file> --depth 3   # Calculate impact radius\ncargo run -- status            # Show index status\n```\n\n---\n\n## Code Structure Overview\n\n");
         content.push_str(&format!(
             "This codebase contains {} elements and {} relationships.\n\n",
@@ -202,7 +204,7 @@ impl DocGenerator {
 
         content.push_str("### Key Modules\n\n");
         if modules.is_empty() {
-            content.push_str("```\nsrc/\n├── cli/          # Clap CLI commands\n├── config/       # Project configuration\n├── db/           # CozoDB layer (models, schema)\n├── doc/          # Documentation generator\n├── graph/        # Graph engine, query, traversal\n├── indexer/      # tree-sitter parsers, entity extraction\n├── mcp/          # MCP protocol implementation\n├── watcher/      # File system watcher\n├── web/          # Axum web server\n└── main.rs       # CLI entry point\n```\n\n");
+            content.push_str("```\nsrc/\n├── cli/          # Clap CLI commands\n├── config/       # Project configuration\n├── db/           # Postgres backend layer (schema, models)\n├── doc/          # Documentation generator\n├── graph/        # Graph engine, query, traversal\n├── indexer/      # tree-sitter parsers, entity extraction\n├── mcp/          # MCP protocol implementation\n├── watcher/      # File system watcher\n├── web/          # Axum web server\n└── main.rs       # CLI entry point\n```\n\n");
         } else {
             for m in modules.iter().take(20) {
                 content.push_str(&format!("- `{}` ({})\n", m.qualified_name, m.file_path));
@@ -284,10 +286,10 @@ impl DocGenerator {
 
         let mut content = String::from("# CLAUDE.md\n\n");
         content.push_str("## Project Overview\n\n");
-        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in CozoDB, and exposes functionality via CLI and MCP protocol.\n\n");
+        content.push_str("LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in PostgreSQL with pgvector, and exposes functionality via CLI and MCP protocol.\n\n");
         content.push_str("---\n\n## Architecture Decisions\n\n");
         content.push_str("### Knowledge Graph Storage\n");
-        content.push_str("- **CozoDB with SQLite**: Provides embedded relational-graph database with Datalog queries\n");
+        content.push_str("- **PostgreSQL + pgvector**: Provides relational storage with SQL queries and vector similarity search\n");
         content.push_str("- **Schema-full design**: Relations defined with explicit schemas for code_elements, relationships, and business_logic\n");
         content.push_str("- **Qualified naming**: Elements identified by `qualified_name` combining file path and element name\n\n");
 

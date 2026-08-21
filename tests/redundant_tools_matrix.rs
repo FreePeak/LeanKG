@@ -2,8 +2,10 @@
 //!
 //! Every registered tool must appear exactly once in [`TOOL_CLASSIFICATION`].
 //! Overlap relationships live in [`OVERLAP_TABLE`] (documentation + keep-both).
-//! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21)
-//! and Wave 1b FR-SURF-13/14 (2026-08-01: `load_layer`, `get_doc_structure`).
+//! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21),
+//! Wave 1b FR-SURF-13/14 (2026-08-01: `load_layer`, `get_doc_structure`),
+//! and commit 541ff626 (11 redundant/thin-wrapper tools; registry 91→80 names,
+//! 76 unconditional after the CozoDB→Postgres backend swap).
 //!
 //! Report: `docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`
 //! Wave 1b: `docs/reports/rel-076-mcp-surf-1b-2026-08-01.md`
@@ -27,6 +29,7 @@ enum Kind {
 
 struct ClassEntry {
     name: &'static str,
+    #[allow(dead_code)]
     kind: Kind,
     #[allow(dead_code)]
     note: &'static str,
@@ -41,7 +44,8 @@ struct OverlapEntry {
     note: &'static str,
 }
 
-/// Tools hard-removed (FR-SURF-03 + find_clones + FR-SURF-07/08 + Wave 1b FR-SURF-13/14).
+/// Tools hard-removed (FR-SURF-03 + find_clones + FR-SURF-07/08 + Wave 1b FR-SURF-13/14
+/// + commit 541ff626 cleanup(mcp): 11 redundant/thin-wrapper tools).
 const REMOVED_TOOLS: &[&str] = &[
     "mcp_hello",
     "mcp_impact",
@@ -51,6 +55,18 @@ const REMOVED_TOOLS: &[&str] = &[
     "search_by_environment",
     "load_layer",
     "get_doc_structure",
+    // commit 541ff626 (replaced by more general tools):
+    "query_file",
+    "find_function",
+    "get_callers",
+    "search_annotations",
+    "get_cluster_context",
+    "kg_concept_map",
+    "get_graph_schema",
+    "find_dead_code",
+    "session_recall",
+    "kg_self_test",
+    "mcp_embed",
 ];
 
 /// Full inventory — must match `ToolRegistry::list_tools()` exactly (one row each).
@@ -87,6 +103,12 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         kind: Kind::KeepUnique,
         note: "US-EMBED-05 idle-gated day-2 embed toggle.",
     },
+    #[cfg(feature = "embeddings")]
+    ClassEntry {
+        name: "set_embed_model",
+        kind: Kind::KeepUnique,
+        note: "Runtime-active embedding model hot-switch.",
+    },
     // --- Search / discovery ---
     ClassEntry {
         name: "concept_search",
@@ -101,12 +123,7 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
     ClassEntry {
         name: "search_code",
         kind: Kind::DomainSpecific,
-        note: "Prefer third; ontology-first paginated name/type search.",
-    },
-    ClassEntry {
-        name: "search_annotations",
-        kind: Kind::DomainSpecific,
-        note: "Annotation-scoped search.",
+        note: "Prefer third; ontology-first paginated name/type search (replaces query_file + find_function).",
     },
     ClassEntry {
         name: "search_knowledge",
@@ -117,16 +134,6 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         name: "search_by_requirement",
         kind: Kind::DomainSpecific,
         note: "Requirement / story traceability search.",
-    },
-    ClassEntry {
-        name: "query_file",
-        kind: Kind::KeepUnique,
-        note: "Find file by name/pattern.",
-    },
-    ClassEntry {
-        name: "find_function",
-        kind: Kind::KeepUnique,
-        note: "Locate function definition by name.",
     },
     // --- Semantic / ontology context ---
     ClassEntry {
@@ -139,11 +146,6 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         name: "kg_semantic_context",
         kind: Kind::DomainSpecific,
         note: "Embeddings + rerank + traverse; prefer after semantic_search.",
-    },
-    ClassEntry {
-        name: "kg_concept_map",
-        kind: Kind::KeepUnique,
-        note: "Concept neighborhood map.",
     },
     ClassEntry {
         name: "kg_trace_workflow",
@@ -159,11 +161,6 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         name: "ontology_control",
         kind: Kind::KeepUnique,
         note: "FR-ONT-PROC-03 admin sync/status for ontology YAML.",
-    },
-    ClassEntry {
-        name: "kg_self_test",
-        kind: Kind::KeepUnique,
-        note: "Ontology tool smoke; replaces removed mcp_hello.",
     },
     // --- File / review context ---
     ClassEntry {
@@ -243,25 +240,15 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         note: "Highest degree nodes; feeds get_graph_report.",
     },
     ClassEntry {
-        name: "get_graph_schema",
-        kind: Kind::Complementary,
-        note: "Type/relationship counts.",
-    },
-    ClassEntry {
         name: "get_graph_report",
         kind: Kind::Complementary,
         note: "Prose graph report wrapping god nodes + suggestions.",
     },
     // --- Calls ---
     ClassEntry {
-        name: "get_callers",
-        kind: Kind::DomainSpecific,
-        note: "Inbound callers (not a subset of get_call_graph).",
-    },
-    ClassEntry {
         name: "get_call_graph",
         kind: Kind::DomainSpecific,
-        note: "Outbound bounded call chain.",
+        note: "Outbound bounded call chain (replaces get_callers at depth=1).",
     },
     ClassEntry {
         name: "get_nav_callers",
@@ -290,24 +277,14 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         note: "List clusters.",
     },
     ClassEntry {
-        name: "get_cluster_context",
-        kind: Kind::Complementary,
-        note: "Cluster members + edges.",
-    },
-    ClassEntry {
         name: "get_cluster_skill",
         kind: Kind::Complementary,
-        note: "Per-cluster SKILL.md generation.",
+        note: "Per-cluster SKILL.md generation (replaces get_cluster_context).",
     },
     ClassEntry {
         name: "get_code_tree",
         kind: Kind::KeepUnique,
         note: "Codebase structure tree.",
-    },
-    ClassEntry {
-        name: "find_dead_code",
-        kind: Kind::KeepUnique,
-        note: "Zero callers + no tests.",
     },
     ClassEntry {
         name: "find_large_functions",
@@ -457,7 +434,7 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
     ClassEntry {
         name: "run_raw_query",
         kind: Kind::KeepUnique,
-        note: "Raw Datalog against CozoDB.",
+        note: "Raw SQL script against the Postgres-backed store.",
     },
     ClassEntry {
         name: "export_graph_snapshot",
@@ -516,22 +493,21 @@ const OVERLAP_TABLE: &[OverlapEntry] = &[
     },
     OverlapEntry {
         primary: "get_call_graph",
-        related: &["get_callers", "get_nav_callers"],
+        related: &["get_nav_callers"],
         kind: Kind::DomainSpecific,
-        note: "Outbound vs inbound vs Android nav.",
+        note: "Outbound vs Android nav inbound (get_callers removed 541ff626).",
     },
     OverlapEntry {
         primary: "get_clusters",
-        related: &["get_cluster_context", "get_cluster_skill"],
+        related: &["get_cluster_skill"],
         kind: Kind::Complementary,
-        note: "List / context / SKILL.md levels.",
+        note: "List vs per-cluster SKILL.md (get_cluster_context removed 541ff626).",
     },
     OverlapEntry {
         primary: "search_code",
         related: &[
             "concept_search",
             "semantic_search",
-            "search_annotations",
             "search_knowledge",
             "search_by_requirement",
         ],
@@ -543,12 +519,6 @@ const OVERLAP_TABLE: &[OverlapEntry] = &[
         related: &["get_overview_context"],
         kind: Kind::Complementary,
         note: "Deep arch vs session overview (load_layer hard-removed Wave 1b).",
-    },
-    OverlapEntry {
-        primary: "get_graph_schema",
-        related: &["get_graph_report", "get_god_nodes"],
-        kind: Kind::Complementary,
-        note: "Counts vs prose report vs hotspots.",
     },
     OverlapEntry {
         primary: "query_incidents",
@@ -600,7 +570,7 @@ fn replacement_tools_remain_registered() {
     for tool in [
         "get_impact_radius",
         "find_related_docs",
-        "kg_self_test",
+        "search_code",
         "mcp_status",
         "get_overview_context",
     ] {
@@ -677,11 +647,11 @@ fn overlap_table_only_references_registered_tools() {
 }
 
 #[test]
-fn registry_has_at_least_80_tools() {
+fn registry_has_exactly_76_tools() {
     let count = registered().len();
-    assert!(
-        count >= 80,
-        "expected ≥80 registered MCP tools, got {count} — drift?"
+    assert_eq!(
+        count, 76,
+        "expected exactly 76 unconditionally registered MCP tools, got {count} — drift?"
     );
 }
 
